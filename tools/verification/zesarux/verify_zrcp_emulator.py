@@ -119,6 +119,11 @@ def find_project_root() -> Path:
     raise RuntimeError("Could not find project root")
 
 
+# Files the server reads and writes (load-binary, snapshot-save): the repository's git-ignored scratch/
+SCRATCH_DIR = find_project_root() / "scratch" / "zrcp-verify"
+SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
+
+
 def port_free(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
@@ -803,10 +808,7 @@ class EmulatorVerifier:
         assert fired == "Breakpoint fired: PC=8003h" and (regs["BC"] >> 8) == 2, (fired, regs["BC"])
         rest, regs = self.run_interrupted()
         self.clear_bp(5)
-        self.known_divergence("pass count fires once (ZEsarUX), the server fires on every later hit",
-                              FIRED not in rest,
-                              f"2nd run stopped again: {rest.splitlines()[0]!r} B={regs['BC'] >> 8} "
-                              f"(zrcpserver.cpp breakpointShouldStop: hitCount < passCount)")
+        assert FIRED not in rest, f"2nd run stopped again: {rest.splitlines()[0]!r} B={regs['BC'] >> 8}"
         return True
 
     def step_pass_count_reset_by_set(self):
@@ -818,9 +820,7 @@ class EmulatorVerifier:
         fired, regs = self.run_to_stop()
         self.clear_bp(6)
         assert fired == "Breakpoint fired: PC=8003h", fired
-        self.known_divergence("set-breakpoint resets the pass count (ZEsarUX)", (regs["BC"] >> 8) == 0,
-                              f"stopped at B={regs['BC'] >> 8}, expected 0 (zrcpserver.cpp handleSetBreakpoint "
-                              f"keeps entry.passCount)")
+        assert (regs["BC"] >> 8) == 0, f"stopped at B={regs['BC'] >> 8}, expected 0 (the first arrival)"
         return True
 
     def step_breakpoint_errors(self):
@@ -837,13 +837,12 @@ class EmulatorVerifier:
         self.ok("set-breakpoint 7 A=1")
         assert len(self.client.logs) == 1 and "can not fire" in self.client.logs[0], self.client.logs
         self.ok("set-breakpoint 7 0")
-        # ZEsarUX: index 1..100 only ("Error. Index out of range" for 0, 101)
-        replies = [self.cmd("set-breakpoint 0 PC=8000h"), self.cmd("set-breakpoint 101 PC=8000h")]
-        self.ok("set-breakpoint 0 0")
-        self.ok("set-breakpoint 101 0")
-        self.known_divergence("set-breakpoint index range 1..100 (ZEsarUX)",
-                              replies == ["Error. Index out of range"] * 2,
-                              f"replies {replies} (zrcpserver.cpp handleSetBreakpoint has no range check)")
+        # ZEsarUX: index 1..100 only ("Error. Index out of range" for 0, 101), the other per-index commands too
+        for line in ("set-breakpoint 0 PC=8000h", "set-breakpoint 101 PC=8000h", "set-breakpointpasscount 0 3",
+                     "set-breakpointpasscount 101 3", "set-breakpointaction 101", "enable-breakpoint 0",
+                     "disable-breakpoint 101"):
+            self.expect(line, "Error. Index out of range")
+        self.ok("set-breakpoint 100 0")
         return True
 
     def step_breakpoint_action(self):
@@ -946,24 +945,19 @@ class EmulatorVerifier:
                                  "((F / #40) - ((F / #80) * 2)) == 1", expected_mem=0x00)
 
     def ram_bank_at_counter(self):
-        """The bank the server's evaluator sees as RAM at 8003h: the MMU word on banked machines; on 48K the
-        evaluator reads DeZog's 48K slot model ({0, 1}: bank 1 at 4000h-FFFFh), not the MMU get-registers prints"""
-        return self.regs()["mmu"][2] if self.banked else 1
+        """RAM in a condition, as ZEsarUX's expression_parser.c has it: the bank paged at C000h on the 128K-style
+        machines (the MMU word of slot 3 get-registers prints), 0 on every other one (the 48K)"""
+        return self.regs()["mmu"][3] if self.banked else 0
 
     def step_cond_ram_matches_mmu(self):
-        # On 48K get-registers prints MMU=8000 0005 0002 0000 (the ZEsarUX 48K layout: bank 2 at 8000h) and the
-        # disassembly zone digit says 2, but RAM in a condition is 1 there (the DeZog 48K slot model)
-        if self.banked:
-            raise Skip("banked machine: RAM and MMU come from the same slots")
-        mmu = self.regs()["mmu"][2]
+        # RAM is the bank at C000h (slot 3 of get-registers' MMU) on banked machines, 0 on the 48K (ZEsarUX), not
+        # the bank at the breakpoint address
+        bank = self.ram_bank_at_counter()
         self.install_counter()
-        self.bp(36, f"PC=8003h AND B=2 AND RAM={mmu}")
+        self.bp(36, f"PC=8003h AND B=2 AND RAM={bank}")
         rest, regs = self.run_interrupted(1.0)
         self.clear_bp(36)
-        assert rest.startswith(FIRED) and regs["BC"] >> 8 == 2, \
-            (f"RAM={mmu} (the MMU bank get-registers reports at 8000h) never holds: zesaruxcondition.cpp "
-             f"bankAtBreakpoint reads getSlots() = {{0, 1}} (dezogdebugadapter.cpp getSlots, ZX48K), while "
-             f"zrcpserver.cpp mmuWordForSlot prints the ZEsarUX 48K layout ROM0, 5, 2, 0")
+        assert rest.startswith(FIRED) and regs["BC"] >> 8 == 2, f"RAM={bank} never held: {rest[:60]!r}"
         return True
 
     def step_cond_refused_bank(self):
@@ -1002,32 +996,32 @@ class EmulatorVerifier:
         self.clear_bp(33)
         b = regs["BC"] >> 8
         stopped = rest.startswith(FIRED) and regs["PC"] == COUNTER_BP
-        self.known_divergence("ZEsarUX flag names (FH=1)", stopped and b == 16,
-                              f"{'stopped at B=%d' % b if stopped else 'never stopped'}, expected B=16: "
-                              f"zesaruxcondition.cpp has no flag names (FH lexes as the number Fh)")
+        assert stopped and b == 16, f"{'stopped at B=%d' % b if stopped else 'never stopped'}, expected B=16"
         return True
 
     def step_cond_bitwise(self):
-        # ZEsarUX has & | ^ (docs/features/conditional-breakpoints.md lists them as taken too); expected B = 16
+        # ZEsarUX's & | ^ (bound like *): the H flag after the 16th INC; expected B = 16, the condition in the core
         self.install_counter()
         self.bp(34, "PC=8003h AND (F & 10h)<>0")
-        fired, regs = self.run_to_stop()
-        self.clear_bp(34)
+        try:
+            if self.webapi:
+                bps = self.core_bps(COUNTER_BP)
+                assert len(bps) == 1 and bps[0].get("condition") == "(F & #10) != 0", bps
+            fired, regs = self.run_to_stop()
+        finally:
+            self.clear_bp(34)
         b = regs["BC"] >> 8
-        self.known_divergence("bitwise & in a condition", b == 16,
-                              f"stopped at B={b}, expected 16: the evaluator and translator have no & | ^ %")
+        assert b == 16, f"stopped at B={b}, expected 16"
         return fired.startswith(FIRED)
 
     def step_cond_pc_not_first(self):
-        # ZEsarUX evaluates the whole text; the server cuts the PC literal out anywhere: "B=5 AND " remains
+        # ZEsarUX evaluates the whole text: a PC literal after another term keeps the whole condition
         self.install_counter()
         self.bp(35, "B=5 AND PC=8003h")
         fired, regs = self.run_to_stop()
         self.clear_bp(35)
         b = regs["BC"] >> 8
-        self.known_divergence("PC literal not first ('B=5 AND PC=8003h')", b == 5,
-                              f"stopped at B={b}, expected 5: zesaruxcondition.cpp extractPcLiteral leaves "
-                              f"'B=5 AND ' (trimLeadingAnd strips a leading AND only), the parse fails")
+        assert b == 5, f"stopped at B={b}, expected 5"
         return regs["PC"] == COUNTER_BP
 
     def step_cond_two_same_address(self):
@@ -1086,8 +1080,7 @@ class EmulatorVerifier:
             self.clear_bp(50)
         assert rest.split("\n")[0] == FIRED + second and regs["BC"] >> 8 == 6, \
             (f"{rest.splitlines()[0]!r}: clearing 49 removed 50's core breakpoint too" +
-             (" (both got the same core breakpoint: the core returns the existing id for a plain breakpoint at "
-              "an address already taken, breakpointmanager.cpp AddMemoryBreakpoint)" if shared else ""))
+             (" (both got the same core breakpoint id)" if shared else ""))
         return True
 
     def step_step_over_onto_user_breakpoint(self):
@@ -1104,8 +1097,7 @@ class EmulatorVerifier:
             self.clear_bp(51)
         assert rest.split("\n")[0] == "Breakpoint fired: PC=8004h", \
             (f"after the step-over the user breakpoint at 8004h no longer stops ({rest.splitlines()[0]!r}, "
-             f"core breakpoints at 8004h: {core}): zrcpserver.cpp handleCpuStepOver removes the temporary "
-             f"breakpoint's id, the core had returned the user's (plain breakpoints share an id)")
+             f"core breakpoints at 8004h: {core}): the step-over's temporary breakpoint must own its id")
         return regs["PC"] == 0x8004
 
     def step_cond_two_both_true(self):
@@ -1370,19 +1362,94 @@ class EmulatorVerifier:
         self.ok("reset-tstates-partial")
         self.expect("get-cpu-frequency", "3500000")
         mmu = self.regs()["mmu"][:4]
-        expected = "".join((f"RO{w & 1} " if w >= 0x8000 else f"RA{w} ") for w in mmu)
+        expected = "".join((f"RO{w & 0x7F} " if w >= 0x8000 else f"RA{w} ") for w in mmu)
         self.expect("get-memory-pages", expected)
         self.expect("get-current-machine", self.machine)
         self.ok("close-all-menus")
         self.ok("")  # a blank line is acknowledged with the prompt
         return True
 
+    def step_write_memory(self):
+        # DeZog's writeMemory: write-memory <decimal address> <decimal value>, then read-memory
+        self.ok("write-memory 36864 171")
+        assert self.read_mem(0x9000, 1) == b"\xab"
+        self.ok("write-memory 9001h 1 2 3")
+        assert self.read_mem(0x9001, 3) == b"\x01\x02\x03"
+        self.expect("write-memory", "ERROR. No parameters set")
+        return True
+
+    def step_hexdump(self):
+        self.write_mem(0x9000, b"AB\x00\x7f" + bytes(range(0x30, 0x3C)) + b"xyz")
+        lines = self.cmd("hexdump 36864 19").split("\n")
+        assert lines[0] == "  9000H 41 42 00 7F 30 31 32 33 34 35 36 37 38 39 3A 3B  |AB..0123456789:;|", lines
+        assert lines[1] == "  9010H 78 79 7A " + "   " * 13 + " |xyz|", lines
+        self.expect("hexdump 36864", "ERROR. Needs two parameters")
+        return True
+
+    def step_load_binary(self):
+        # DeZog's loadObj: load-binary "<path>" <address> 0 (the whole file)
+        path = SCRATCH_DIR / "zrcp-load-binary.bin"
+        path.write_bytes(bytes([0x11, 0x22, 0x33, 0x44]))
+        try:
+            self.ok(f'load-binary "{path}" 36864 0')
+            assert self.read_mem(0x9000, 4) == bytes([0x11, 0x22, 0x33, 0x44])
+            self.ok(f"load-binary {path} 9100h 2")
+            assert self.read_mem(0x9100, 3)[:2] == bytes([0x11, 0x22])
+        finally:
+            path.unlink(missing_ok=True)
+        self.expect('load-binary "/nonexistent/x.bin" 32768 0', "ERROR loading file")
+        self.expect("load-binary x.bin 32768", "ERROR. Needs three parameters")
+        return True
+
+    def step_snapshot_save_load(self):
+        # DeZog's "-state save / restore": snapshot-save / snapshot-load <path>.zsf; the file round-trips the state
+        path = SCRATCH_DIR / "zrcp-state.zsf"
+        try:
+            self.install_counter()
+            self.ok(f"snapshot-save {path}")
+            assert path.exists() and path.stat().st_size > 0, "no snapshot written"
+            self.write_mem(0x9000, b"\x55")
+            self.set_regs(PC=0x8005)
+            self.ok(f"snapshot-load {path}")
+            r = self.regs()
+            assert r["PC"] == PROGRAM_START and self.read_mem(0x9000, 1) == b"\x77", (hex(r["PC"]), self.read_mem(0x9000, 1))
+        finally:
+            path.unlink(missing_ok=True)
+        assert self.cmd("snapshot-load /nonexistent/x.zsf").startswith("ERROR"), "loading a missing file"
+        return True
+
+    def step_get_breakpoints(self):
+        self.ok("set-breakpoint 3 PC=8003h AND B=2")
+        self.ok("enable-breakpoint 3")
+        try:
+            lines = self.cmd("get-breakpoints").split("\n")
+            assert lines[0] == "Breakpoints: On" and len(lines) == 101, lines[:3]
+            assert lines[3] == "Enabled 3: PC=8003h AND B=2", lines[3]
+            # An index no step touches (earlier steps leave theirs as "set-breakpoint N 0": ZEsarUX lists "0")
+            assert lines[77] == "Disabled 77: None", lines[77]
+            self.expect("get-breakpoints 3", "Breakpoints: On\nEnabled 3: PC=8003h AND B=2")
+        finally:
+            self.clear_bp(3)
+        self.expect("get-breakpoints 0", "ERROR. Index out of range")
+        return True
+
+    def step_tbblue_registers(self):
+        # ZEsarUX: "%02XH" on the Next (NR #00 = 10, the machine id), an error elsewhere; DeZog's setSlot sends
+        # tbblue-set-register (0x50 + slot) bank
+        reply = self.cmd("tbblue-get-register 0")
+        if reply == "ERROR. Machine is not TBBlue":
+            self.expect("tbblue-set-register 80 1", "ERROR. Machine is not TBBlue")
+            return True
+        assert reply == "0AH", reply
+        mmu7 = self.cmd("tbblue-get-register 87")
+        self.ok("tbblue-set-register 87 20")
+        self.expect("tbblue-get-register 87", "14H")
+        self.ok(f"tbblue-set-register 87 {int(mmu7[:2], 16)}")
+        return True
+
     def step_unknown_and_unsupported(self):
-        # Unknown commands, and ZEsarUX commands the server does not have (DeZog sends the first four:
-        # write-memory, snapshot-save / snapshot-load for "-state save/restore", load-binary)
-        for line in ("write-memory 36864 1", "snapshot-save /nonexistent/x.zsf", "snapshot-load /nonexistent/x.zsf",
-                     "load-binary \"/nonexistent/x.bin\" 32768 0", "hexdump 32768 16", "get-breakpoints",
-                     "tbblue-get-register 0", "no-such-command", "RUN"):
+        # Unknown commands
+        for line in ("no-such-command", "RUN"):
             self.expect(line, UNKNOWN)
         # ZEsarUX cpu-history sub-commands DeZog does not send
         for sub in ("get-extended 0", "find-pc 32768", "get-pc 0 1", "restore 0"):
@@ -1469,9 +1536,7 @@ class EmulatorVerifier:
             if user_bps():
                 self.webapi.request("DELETE", f"/emulator/{eid}/breakpoints/{user_id}")
         assert survived, (f"the user's breakpoint {user_id} at {user_addr:04X}h is gone after the ZRCP client set and "
-                          f"cleared one there: the core returned the user's id for the plain breakpoint "
-                          f"(breakpointmanager.cpp AddMemoryBreakpoint), the server removed it "
-                          f"(zrcpserver.cpp uninstallBreakpoint)")
+                          f"cleared one there: the server's breakpoint must own its id")
         return True
 
     def run_all(self) -> bool:
@@ -1546,7 +1611,13 @@ class EmulatorVerifier:
             ("extended-stack classification, start, errors", self.step_extended_stack),
             ("cpu-code-coverage forms", self.step_code_coverage),
             ("tstates / frequency / memory-pages / machine", self.step_misc_queries),
-            ("unknown + unsupported commands", self.step_unknown_and_unsupported),
+            ("write-memory (DeZog writeMemory)", self.step_write_memory),
+            ("hexdump lines", self.step_hexdump),
+            ("load-binary (DeZog loadObj)", self.step_load_binary),
+            ("snapshot-save / snapshot-load .zsf round trip", self.step_snapshot_save_load),
+            ("get-breakpoints listing", self.step_get_breakpoints),
+            ("tbblue-* registers off the Next", self.step_tbblue_registers),
+            ("unknown commands", self.step_unknown_and_unsupported),
             ("DeZog flow (disasm and stack dumps)", self.step_dezog_flow),
             ("Restore state + quit sequence + reconnect", self.step_restore_and_quit),
             ("a user breakpoint survives the client's set + clear", self.step_user_breakpoint_survives),

@@ -2,6 +2,7 @@
 #include "zesaruxcondition.h"
 #include "platform-sockets.h"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
@@ -13,6 +14,9 @@ namespace zrcp
 {
 namespace
 {
+/// ZEsarUX MAX_BREAKPOINTS_CONDITIONS: breakpoint indexes 1..100
+constexpr long kMaxBreakpoints = 100;
+
 /// ASCII uppercase. DeZog matches "CALL"/"RST " (and the DZRP disassembly view
 /// expects conventional casing), but our Z80 disassembler emits lowercase.
 std::string toUpperAscii(std::string s)
@@ -79,6 +83,43 @@ bool parseNumber(const std::string& token, long& out)
     return true;
 }
 
+/// ZEsarUX's breakpoint index (remote.c: atoi, 1..MAX_BREAKPOINTS_CONDITIONS): false when out of range
+bool parseBreakpointIndex(const std::string& token, long& out)
+{
+    out = std::strtol(token.c_str(), nullptr, 10);
+    return out >= 1 && out <= kMaxBreakpoints;
+}
+
+/// ZEsarUX's argument split (util_parse_commands_argvc_comillas): words, a "quoted text" one word without the quotes
+std::vector<std::string> splitQuotedArgs(const std::string& s)
+{
+    std::vector<std::string> args;
+    size_t pos = 0;
+    while (pos < s.size())
+    {
+        while (pos < s.size() && std::isspace(static_cast<unsigned char>(s[pos])))
+            ++pos;
+        if (pos >= s.size())
+            break;
+        std::string arg;
+        if (s[pos] == '"')
+        {
+            const size_t close = s.find('"', pos + 1);
+            arg = s.substr(pos + 1, (close == std::string::npos ? s.size() : close) - pos - 1);
+            pos = close == std::string::npos ? s.size() : close + 1;
+        }
+        else
+        {
+            const size_t start = pos;
+            while (pos < s.size() && !std::isspace(static_cast<unsigned char>(s[pos])))
+                ++pos;
+            arg = s.substr(start, pos - start);
+        }
+        args.push_back(arg);
+    }
+    return args;
+}
+
 bool parseYesNo(const std::string& token, bool fallback)
 {
     const std::string upper = toUpperAscii(trimString(token));
@@ -136,8 +177,13 @@ uint16_t mmuWordForSlot(int slot, const std::vector<uint8_t>& slots, bool unbank
         return kUnbanked[slot];
 
     const uint8_t v = slot < static_cast<int>(slots.size()) ? slots[slot] : 0;
-    // dzrp slot encoding: 8 = ROM0, 9 = ROM1, otherwise RAM bank number
-    return v >= 8 ? static_cast<uint16_t>(0x8000 | ((v - 8) & 1)) : v;
+    // dzrp slot encoding (DezogDebugAdapter): 8 = ROM0 (128), 9 = ROM1 (48 BASIC), 0x80 + page another ROM page,
+    // otherwise the RAM bank number
+    if (slot == 0 && (v == 8 || v == 9))
+        return static_cast<uint16_t>(0x8000 | (v - 8));
+    if (slot == 0 && v >= 0x80)
+        return static_cast<uint16_t>(0x8000 | (v & 0x7F));
+    return v;
 }
 
 // Zone digit of the remote_disassemble address prefix: RAM bank / ROM page
@@ -606,7 +652,13 @@ bool Server::handleCommand(int sock, const std::string& line)
         return true;
     }
     if (cmd == "set-breakpointaction")
-        return true;  // no action support; entry is created by set-breakpoint
+    {
+        // No action support (the breakpoint stops); the entry is created by set-breakpoint
+        long id = 0;
+        if (!words.empty() && !parseBreakpointIndex(words[0], id))
+            sendLine(sock, "Error. Index out of range");
+        return true;
+    }
     if (cmd == "set-breakpoint")
     {
         handleSetBreakpoint(sock, words, params);
@@ -614,9 +666,15 @@ bool Server::handleCommand(int sock, const std::string& line)
     }
     if (cmd == "set-breakpointpasscount")
     {
+        // ZEsarUX debug_set_breakpoint_passcount: the count and its counter back to 0
         long id = 0;
         long count = 0;
-        if (words.size() >= 2 && parseNumber(words[0], id) && parseNumber(words[1], count))
+        if (!words.empty() && !parseBreakpointIndex(words[0], id))
+        {
+            sendLine(sock, "Error. Index out of range");
+            return true;
+        }
+        if (words.size() >= 2 && parseNumber(words[1], count))
         {
             BreakpointEntry& entry = m_breakpoints[static_cast<uint16_t>(id)];
             entry.passCount = static_cast<uint32_t>(count);
@@ -627,7 +685,9 @@ bool Server::handleCommand(int sock, const std::string& line)
     if (cmd == "enable-breakpoint")
     {
         long id = 0;
-        if (!words.empty() && parseNumber(words[0], id))
+        if (!words.empty() && !parseBreakpointIndex(words[0], id))
+            sendLine(sock, "Error. Index out of range");
+        else if (!words.empty())
         {
             BreakpointEntry& entry = m_breakpoints[static_cast<uint16_t>(id)];
             entry.enabled = true;
@@ -639,7 +699,9 @@ bool Server::handleCommand(int sock, const std::string& line)
     {
         // Init sends 100 of these; unknown ids are silently tolerated.
         long id = 0;
-        if (!words.empty() && parseNumber(words[0], id))
+        if (!words.empty() && !parseBreakpointIndex(words[0], id))
+            sendLine(sock, "Error. Index out of range");
+        else if (!words.empty())
         {
             auto it = m_breakpoints.find(static_cast<uint16_t>(id));
             if (it != m_breakpoints.end())
@@ -716,7 +778,7 @@ bool Server::handleCommand(int sock, const std::string& line)
         {
             const uint16_t word = mmuWordForSlot(slot, slots, unbanked);
             out += word >= 0x8000 ? "RO" : "RA";
-            out += std::to_string(word >= 0x8000 ? (word & 1) : word);
+            out += std::to_string(word >= 0x8000 ? (word & 0x7F) : word);
             out += ' ';
         }
         sendLine(sock, out);
@@ -735,8 +797,203 @@ bool Server::handleCommand(int sock, const std::string& line)
         return true;
     }
 
+    if (cmd == "write-memory")
+    {
+        handleWriteMemory(sock, words);
+        return true;
+    }
+    if (cmd == "hexdump")
+    {
+        handleHexdump(sock, words);
+        return true;
+    }
+    if (cmd == "load-binary")
+    {
+        handleLoadBinary(sock, params);
+        return true;
+    }
+    if (cmd == "snapshot-save" || cmd == "snapshot-load")
+    {
+        // ZEsarUX takes the rest of the line as the file name
+        const std::string error = cmd == "snapshot-save" ? m_debug->saveSnapshotFile(params)
+                                                          : m_debug->loadSnapshotFile(params);
+        if (!error.empty())
+            sendLine(sock, "ERROR. " + error);
+        return true;
+    }
+    if (cmd == "get-breakpoints")
+    {
+        handleGetBreakpoints(sock, words);
+        return true;
+    }
+    if (cmd == "tbblue-get-register" || cmd == "tbblue-set-register")
+    {
+        handleTbblueRegister(sock, cmd == "tbblue-set-register", words);
+        return true;
+    }
+
     sendLine(sock, "Unknown command");
     return true;
+}
+
+void Server::handleWriteMemory(int sock, const std::vector<std::string>& words)
+{
+    // ZEsarUX: write-memory <address> <value> [<value> ...], each value a byte at the next address
+    if (words.empty())
+    {
+        sendLine(sock, "ERROR. No parameters set");
+        return;
+    }
+    long addr = 0;
+    if (!parseNumber(words[0], addr))
+    {
+        sendLine(sock, "ERROR. Invalid address");
+        return;
+    }
+    std::vector<uint8_t> data;
+    for (size_t i = 1; i < words.size(); ++i)
+    {
+        long value = 0;
+        if (!parseNumber(words[i], value))
+        {
+            sendLine(sock, "ERROR. Invalid value");
+            return;
+        }
+        data.push_back(static_cast<uint8_t>(value & 0xFF));
+    }
+    if (!data.empty())
+        m_debug->writeMemory(static_cast<uint16_t>(addr & 0xFFFF), data);
+}
+
+void Server::handleHexdump(int sock, const std::vector<std::string>& words)
+{
+    // ZEsarUX remote_hexdump: "  8000H 01 02 ... 0F  |ascii|" per 16 bytes (the address 6 wide, 4 digits on the
+    // 64K mapped zone), a short last line padded with "   " per missing byte
+    long addr = 0;
+    long length = 0;
+    if (words.size() != 2 || !parseNumber(words[0], addr) || !parseNumber(words[1], length))
+    {
+        sendLine(sock, "ERROR. Needs two parameters");
+        return;
+    }
+    for (; length > 0; length -= 16, addr += 16)
+    {
+        const int count = length > 16 ? 16 : static_cast<int>(length);
+        const std::vector<uint8_t> bytes = m_debug->readMemory(static_cast<uint16_t>(addr & 0xFFFF),
+                                                               static_cast<uint16_t>(count));
+        std::string line = "  " + hex4Upper(static_cast<uint16_t>(addr & 0xFFFF)) + "H ";
+        for (int i = 0; i < count; ++i)
+            line += hex2Upper(i < static_cast<int>(bytes.size()) ? bytes[i] : 0) + " ";
+        for (int i = count; i < 16; ++i)
+            line += "   ";
+        line += " |";
+        for (int i = 0; i < count; ++i)
+        {
+            const uint8_t c = i < static_cast<int>(bytes.size()) ? bytes[i] : 0;
+            line += (c < 32 || c > 126) ? '.' : static_cast<char>(c);
+        }
+        line += "|";
+        if (!sendLine(sock, line))
+            return;
+    }
+}
+
+void Server::handleLoadBinary(int sock, const std::string& params)
+{
+    // ZEsarUX load_binary_file: <file> <address> <length>, length 0 = the whole file; written through the CPU's
+    // memory map (wrapping at 64K). DeZog's loadObj sends load-binary "<path>" <address> 0
+    const std::vector<std::string> args = splitQuotedArgs(params);
+    if (args.size() < 3)
+    {
+        sendLine(sock, "ERROR. Needs three parameters");
+        return;
+    }
+    long addr = 0;
+    long length = 0;
+    if (!parseNumber(args[1], addr) || !parseNumber(args[2], length) || length < 0)
+    {
+        sendLine(sock, "ERROR loading file");
+        return;
+    }
+    std::FILE* file = std::fopen(args[0].c_str(), "rb");
+    if (!file)
+    {
+        sendLine(sock, "ERROR loading file");
+        return;
+    }
+    constexpr long kWholeFile = 4 * 1024 * 1024;  // ZEsarUX's cap for length 0
+    if (length == 0)
+        length = kWholeFile;
+    std::vector<uint8_t> data;
+    int c;
+    while (static_cast<long>(data.size()) < length && (c = std::fgetc(file)) != EOF)
+        data.push_back(static_cast<uint8_t>(c));
+    std::fclose(file);
+    // One write per 64K wrap (the adapter writes a run in one tool edit)
+    for (size_t done = 0; done < data.size();)
+    {
+        const uint16_t at = static_cast<uint16_t>((addr + static_cast<long>(done)) & 0xFFFF);
+        const size_t chunk = std::min<size_t>(data.size() - done, 0x10000 - at);
+        m_debug->writeMemory(at, std::vector<uint8_t>(data.begin() + static_cast<std::ptrdiff_t>(done),
+                                                      data.begin() + static_cast<std::ptrdiff_t>(done + chunk)));
+        done += chunk;
+    }
+}
+
+void Server::handleGetBreakpoints(int sock, const std::vector<std::string>& words)
+{
+    // ZEsarUX remote_get_breakpoints: "Breakpoints: On", then "Enabled N: cond" / "Disabled N: None" per index
+    long first = 1;
+    long items = kMaxBreakpoints;
+    if (!words.empty())
+    {
+        if (!parseNumber(words[0], first) || first < 1 || first > kMaxBreakpoints)
+        {
+            sendLine(sock, "ERROR. Index out of range");
+            return;
+        }
+        items = 1;
+        if (words.size() > 1)
+            parseNumber(words[1], items);
+    }
+    std::string out = "Breakpoints: On\n";
+    for (long i = first; i <= kMaxBreakpoints && i < first + items; ++i)
+    {
+        auto it = m_breakpoints.find(static_cast<uint16_t>(i));
+        const bool enabled = it != m_breakpoints.end() && it->second.enabled;
+        const std::string condition = it != m_breakpoints.end() ? it->second.condition : std::string();
+        out += (enabled ? "Enabled " : "Disabled ") + std::to_string(i) + ": " +
+               (condition.empty() ? std::string("None") : condition) + "\n";
+    }
+    out.pop_back();
+    sendLine(sock, out);
+}
+
+void Server::handleTbblueRegister(int sock, bool set, const std::vector<std::string>& words)
+{
+    // ZEsarUX: tbblue-get-register <n> -> "%02XH"; tbblue-set-register <n> <value> (DeZog's setSlot: NR #50 + slot)
+    if (m_debug->getMachineType() != dzrp::MachineType::ZXNEXT)
+    {
+        sendLine(sock, "ERROR. Machine is not TBBlue");
+        return;
+    }
+    long reg = 0;
+    long value = 0;
+    if (words.size() < (set ? 2u : 1u))
+    {
+        sendLine(sock, set ? "ERROR. Needs two parameters" : "ERROR. No parameter set");
+        return;
+    }
+    if (!parseNumber(words[0], reg) || reg < 0 || reg > 255 ||
+        (set && (!parseNumber(words[1], value) || value < 0 || value > 255)))
+    {
+        sendLine(sock, "ERROR. Out of range");
+        return;
+    }
+    if (set)
+        m_debug->writeNextReg(static_cast<uint8_t>(reg), static_cast<uint8_t>(value));
+    else
+        sendLine(sock, hex2Upper(m_debug->readNextReg(static_cast<uint8_t>(reg))) + "H");
 }
 
 void Server::handleSetRegister(int sock, const std::string& params)
@@ -953,7 +1210,7 @@ void Server::handleSetBreakpoint(int sock, const std::vector<std::string>& words
         return;
     }
     long id = 0;
-    if (!parseNumber(words[0], id))
+    if (!parseBreakpointIndex(words[0], id))
     {
         sendLine(sock, "Error. Index out of range");
         return;
@@ -968,6 +1225,8 @@ void Server::handleSetBreakpoint(int sock, const std::vector<std::string>& words
     BreakpointEntry& entry = m_breakpoints[static_cast<uint16_t>(id)];
     uninstallBreakpoint(entry);
     entry.condition = condition;
+    // ZEsarUX remote_set_breakpoint -> debug_set_breakpoint(index, condition, 0): the pass count goes with it
+    entry.passCount = 0;
     entry.hitCount = 0;
 
     // DeZog's removal idiom: set-breakpoint <id> 0. A plain numeric
@@ -1459,9 +1718,12 @@ bool Server::breakpointShouldStop(BreakpointEntry& entry)
 
     if (stop && entry.passCount > 0)
     {
-        ++entry.hitCount;
+        // ZEsarUX debug.c: a pass-counted breakpoint fires once, on the hit that reaches the count, never after
         if (entry.hitCount < entry.passCount)
-            stop = false;  // skip the first passCount-1 hits
+            ++entry.hitCount;
+        else
+            entry.hitCount = entry.passCount + 1;  // past the count: stays there
+        stop = entry.hitCount == entry.passCount;
     }
     return stop;
 }

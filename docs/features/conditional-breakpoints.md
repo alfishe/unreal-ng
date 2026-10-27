@@ -171,7 +171,7 @@ every hit and the client decides, as before. The server logs the reason.
 
 | Protocol | Client condition | Taken | Kept by the client |
 |:--|:--|:--|:--|
-| ZRCP (ZEsarUX, DeZog `zrcp`) | `set-breakpoint N PC=8000h AND A=7` | registers, flags, `PEEK`/`PEEKB`/`PEEKW`, `+ - *`, `/` by a nonzero number, `AND OR NOT`, `= <> != < <= > >=` | `ROM`/`RAM` (bank) names, a division by a register, unknown names |
+| ZRCP (ZEsarUX, DeZog `zrcp`) | `set-breakpoint N PC=8000h AND A=7` | registers, flags (`F`, `FS FZ FH FP FV FN FC`), `PEEK`/`PEEKB`/`PEEKW`, `+ - *`, `/` by a nonzero number, `& \| ^` (bound like `*`, as ZEsarUX's calc), `AND OR XOR NOT`, `= <> != < <= > >=` | `ROM`/`RAM` (ZEsarUX's paging: the ROM in slot 0, the bank at `C000h`), a division by a register, unknown names |
 | DZRP (DeZog `remoteType: "cspect"`) | the JavaScript condition of a DeZog breakpoint, `A == 7 && HL > 0x4000` | the registers in any case (`a'`, `IXH`, `IR`), numbers in DeZog's forms (`0x`, `$`, `h`, `b`, decimal, masked to 16 bits), `+ - * %`, the bitwise operators, shifts, comparisons, `&& \|\| !` | labels and letter-led hex (`FFh` could be a label), `/` (a fraction in JavaScript), `**`, a `%` that can divide by 0, values JavaScript truncates to 32 bits, strict equality between a truth and a number, `\|\|`/`&&` used as a number |
 | GDB RSP | `break *0x8000 if $a == 7` (sent as agent expressions: `Z0,8000,1;X…`) | the bytecode of the expression: constants, registers (pairs, `ir`, `iff`, `im`, `p7ffd`), memory reads of 8, 16 and 32 bits, arithmetic, comparisons, sign and zero extension, forward jumps (each `if_goto` a path, at most 64) | loops, `trace`, `printf`, state variables, floats, `p1ffd`/`pfe`, a division by anything but a nonzero constant, a shift by a register |
 

@@ -16,6 +16,17 @@ std::string toUpperAscii(std::string s)
     return s;
 }
 
+std::string trimString(const std::string& s)
+{
+    size_t start = 0;
+    size_t end = s.size();
+    while (start < end && std::isspace(static_cast<unsigned char>(s[start])))
+        ++start;
+    while (end > start && std::isspace(static_cast<unsigned char>(s[end - 1])))
+        --end;
+    return s.substr(start, end - start);
+}
+
 /// The tokens of the ZEsarUX condition subset (see header), shared by the evaluator and the translation
 class Lexer
 {
@@ -113,6 +124,36 @@ protected:
         return _s.substr(start, _pos - start);
     }
 
+    /// ZEsarUX's flag names (expression_parser.c): FS FZ FP FV FH FN FC, each 0 or 1. Checked before a number:
+    /// "FH" would read as the hex number Fh
+    static int flagBit(const std::string& upperName)
+    {
+        static const struct { const char* name; int bit; } kFlags[] = {
+            {"FS", 7}, {"FZ", 6}, {"FH", 4}, {"FP", 2}, {"FV", 2}, {"FN", 1}, {"FC", 0}};
+        for (const auto& flag : kFlags)
+            if (upperName == flag.name)
+                return flag.bit;
+        return -1;
+    }
+
+    /// The flag name at the cursor (consumed), or -1 (nothing consumed)
+    int matchFlagName()
+    {
+        skipWs();
+        size_t end = _pos;
+        while (end < _s.size() && isIdentChar(_s[end]))
+            ++end;
+        if (end - _pos != 2)
+            return -1;
+        std::string word = _s.substr(_pos, 2);
+        for (char& c : word)
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        const int bit = flagBit(word);
+        if (bit >= 0)
+            _pos = end;
+        return bit;
+    }
+
     // number := hexDigits[h|H] | 0x hexDigits | decimal
     bool parseNumber(long long& value)
     {
@@ -189,28 +230,19 @@ public:
 private:
     const ConditionContext& _ctx;
 
-    // Bank visible at the breakpoint address; ROM: 0/1 or -1 (not ROM-backed),
-    // RAM: bank number or -1. Mirrors ZEsarUX "ROM=1"/"RAM=5" semantics.
-    long long bankAtBreakpoint(bool rom) const
+    // ZEsarUX expression_parser.c: on the 128K / +2 / +2A / +3 (and Pentagon) RAM is the bank paged at C000h and
+    // ROM the page in slot 0 (& 127: the ROM number, a RAM page on a +2A all-RAM map); on every other machine both
+    // are 0. Here: the 4-slot DZRP map (slot 0: 8 = ROM 0, 9 = ROM 1, 0x80 + page another ROM, else RAM)
+    long long pagingName(bool rom) const
     {
-        if (!_ctx.slots || _ctx.slots->empty())
-            return -1;
-
-        size_t slot = 0;
-        if (_ctx.breakpointAddr >= 0xC000)
-            slot = 3;
-        else if (_ctx.breakpointAddr >= 0x8000)
-            slot = 2;
-        else if (_ctx.breakpointAddr >= 0x4000)
-            slot = 1;
-        if (slot >= _ctx.slots->size())
-            slot = _ctx.slots->size() - 1;
-
-        const uint8_t bank = (*_ctx.slots)[slot];
-        const bool isRom = bank >= 8;  // dzrp bank encoding: 8 = ROM0, 9 = ROM1
-        if (rom)
-            return isRom ? (bank - 8) : -1;
-        return isRom ? -1 : bank;
+        if (!_ctx.slots || _ctx.slots->size() != 4)
+            return 0;
+        if (!rom)
+            return (*_ctx.slots)[3];
+        const uint8_t bank = (*_ctx.slots)[0];
+        if (bank == 8 || bank == 9)
+            return bank - 8;
+        return bank & 0x7F;
     }
 
     bool lookupName(const std::string& name, long long& value) const
@@ -243,8 +275,8 @@ private:
         else if (name == "IXL") value = r.ix & 0xFF;
         else if (name == "IYH") value = (r.iy >> 8) & 0xFF;
         else if (name == "IYL") value = (r.iy & 0xFF);
-        else if (name == "ROM") value = bankAtBreakpoint(true);
-        else if (name == "RAM") value = bankAtBreakpoint(false);
+        else if (name == "ROM") value = pagingName(true);
+        else if (name == "RAM") value = pagingName(false);
         else
             return false;
         return true;
@@ -281,6 +313,9 @@ private:
             ++_pos;
             return parsePrimary();
         }
+
+        if (const int bit = matchFlagName(); bit >= 0)
+            return (_ctx.regs->af >> bit) & 1;
 
         long long number;
         if (parseNumber(number))
@@ -335,8 +370,15 @@ private:
         while (true)
         {
             skipWs();
+            // ZEsarUX's calculation operators below + and -: * / & | ^ (one level, left to right)
             if (matchOper("*"))
                 value *= parsePrimary();
+            else if (matchOper("&"))
+                value &= parsePrimary();
+            else if (matchOper("|"))
+                value |= parsePrimary();
+            else if (matchOper("^"))
+                value ^= parsePrimary();
             else if (matchOper("/"))
             {
                 const long long divisor = parsePrimary();
@@ -425,12 +467,21 @@ private:
     long long parseOr()
     {
         long long value = parseAnd();
-        while (matchKeyword("OR"))
+        while (true)
         {
-            const long long right = parseAnd();
-            value = (value != 0 || right != 0) ? 1 : 0;
+            if (matchKeyword("OR"))
+            {
+                const long long right = parseAnd();
+                value = (value != 0 || right != 0) ? 1 : 0;
+            }
+            else if (matchKeyword("XOR"))
+            {
+                const long long right = parseAnd();
+                value = ((value != 0) != (right != 0)) ? 1 : 0;
+            }
+            else
+                return value;
         }
-        return value;
     }
 };
 
@@ -519,6 +570,9 @@ private:
             return operand;
         }
 
+        if (const int bit = matchFlagName(); bit >= 0)
+            return Term{"((F & " + hex(1LL << bit) + ") != 0)"};
+
         long long number;
         if (parseNumber(number))
             return Term{hex(number), true, number};
@@ -550,7 +604,7 @@ private:
 
         if (name == "ROM" || name == "RAM")
         {
-            fail(name + " (the bank at the breakpoint address) has no core operand");
+            fail(name + " (the paging: the bank at C000h, the ROM in slot 0) has no core operand");
             return {};
         }
         if (!coreRegister(name))
@@ -569,6 +623,12 @@ private:
             skipWs();
             if (matchOper("*"))
                 value = binary(value, "*", parsePrimary());
+            else if (matchOper("&"))
+                value = binary(value, "&", parsePrimary());
+            else if (matchOper("|"))
+                value = binary(value, "|", parsePrimary());
+            else if (matchOper("^"))
+                value = binary(value, "^", parsePrimary());
             else if (matchOper("/"))
             {
                 // The evaluator stops on a zero divisor, the core keeps the dividend: only a constant one is the same
@@ -641,9 +701,19 @@ private:
     Term parseOr()
     {
         Term value = parseAnd();
-        while (matchKeyword("OR"))
-            value = binary(value, "||", parseAnd());
-        return value;
+        while (true)
+        {
+            if (matchKeyword("OR"))
+                value = binary(value, "||", parseAnd());
+            else if (matchKeyword("XOR"))
+            {
+                // Logical: the truths differ
+                const Term right = parseAnd();
+                value = Term{"((!" + value.text + ") != (!" + right.text + "))"};
+            }
+            else
+                return value;
+        }
     }
 };
 
@@ -732,7 +802,16 @@ bool extractPcLiteral(const std::string& condition, uint16_t& addrOut, std::stri
                     std::strtoul(condition.substr(digitsStart, digitsEnd - digitsStart).c_str(),
                                  nullptr, 16);
                 addrOut = static_cast<uint16_t>(value & 0xFFFF);
-                restOut = trimLeadingAnd(condition.substr(0, pos) + condition.substr(digitsEnd + 1));
+                // DeZog's shape: the literal first, then "AND ..." or nothing - the rest is what stays to check. A
+                // literal anywhere else ("B=5 AND PC=8003h", "(PC=8003h OR ...)") gives the address only: the whole
+                // text is checked, as ZEsarUX evaluates it (PC holds at the address)
+                const std::string before = trimString(condition.substr(0, pos));
+                const std::string after = trimLeadingAnd(condition.substr(digitsEnd + 1));
+                const std::string afterUpper = toUpperAscii(trimString(condition.substr(digitsEnd + 1)));
+                const bool leading = before.empty() &&
+                                     (afterUpper.empty() || (afterUpper.compare(0, 3, "AND") == 0 &&
+                                                             (afterUpper.size() == 3 || !Lexer::isIdentChar(afterUpper[3]))));
+                restOut = leading ? after : trimString(condition);
                 return true;
             }
         }

@@ -160,26 +160,57 @@ TEST_F(ZesaruxCondition_test, SpecialRegisters)
 
 /// region <ROM / RAM banking terms>
 
-TEST_F(ZesaruxCondition_test, RomRamFromBreakpointAddress)
+TEST_F(ZesaruxCondition_test, RomRamAreThePagingNotTheBreakpointAddress)
 {
-    // Breakpoint at 0x8000 sees slot 2 = RAM bank 2
-    EXPECT_TRUE(eval("RAM=2", 0x8000));
-    EXPECT_FALSE(eval("RAM=5", 0x8000));
-    // Breakpoint at 0x0000 sees slot 0 = ROM0
-    EXPECT_TRUE(eval("ROM=0", 0x0000));
+    // ZEsarUX (remote.c, debug.c): RAM is the bank at 0xC000, ROM the ROM page in slot 0, wherever the breakpoint is
+    EXPECT_TRUE(eval("RAM=3", 0x8000));
+    EXPECT_TRUE(eval("RAM=3", 0x0000));
+    EXPECT_FALSE(eval("RAM=2", 0x8000));
+    EXPECT_TRUE(eval("ROM=0", 0x4000));
     EXPECT_FALSE(eval("ROM=1", 0x0000));
-    EXPECT_FALSE(eval("RAM=0", 0x0000));  // ROM-backed: RAM is -1
-    // Breakpoint at 0x4000 sees slot 1 = RAM bank 5
-    EXPECT_TRUE(eval("RAM=5", 0x4000));
-    EXPECT_TRUE(eval("ROM=-1", 0x4000));  // not ROM-backed
+    // The 48K ROM (DeZog bank 9) is ROM 1; the bank at 0xC000 follows a paging change
+    _slots = {9, 5, 2, 7};
+    EXPECT_TRUE(eval("ROM=1"));
+    EXPECT_TRUE(eval("RAM=7"));
+    // A ROM page past the two (DeZog bank 0x80 + page) is that page
+    _slots = {0x80 + 3, 5, 2, 0};
+    EXPECT_TRUE(eval("ROM=3"));
+    // A 48K (two slots): no paging, both are 0
+    _slots = {0, 1};
+    EXPECT_TRUE(eval("RAM=0 and ROM=0"));
 }
 
 TEST_F(ZesaruxCondition_test, DeZogFullBreakpointCondition)
 {
     // The exact shape DeZog's setBreakpointZesarux emits
-    EXPECT_TRUE(eval("PC=08000h and RAM=2"));
+    EXPECT_TRUE(eval("PC=08000h and RAM=3"));
     EXPECT_FALSE(eval("PC=08000h and RAM=5"));
-    EXPECT_FALSE(eval("PC=08001h and RAM=2"));
+    EXPECT_FALSE(eval("PC=08001h and RAM=3"));
+}
+
+TEST_F(ZesaruxCondition_test, FlagNames)
+{
+    _regs.af = 0x12D5;  // F = 1101 0101: S Z H P C set, N clear
+    EXPECT_TRUE(eval("FS=1 and FZ=1 and FH=1 and FP=1 and FC=1"));
+    EXPECT_TRUE(eval("FN=0"));
+    EXPECT_TRUE(eval("FV=FP"));
+    _regs.af = 0x1200;
+    EXPECT_TRUE(eval("FZ=0 and FC=0 and FS=0"));
+    EXPECT_FALSE(eval("FZ"));
+}
+
+TEST_F(ZesaruxCondition_test, BitwiseOperatorsAndXor)
+{
+    // & | ^ bind like * and / (ZEsarUX's calc), above + and the comparisons
+    EXPECT_TRUE(eval("A&0Fh=2"));
+    EXPECT_TRUE(eval("A|1=13h"));
+    EXPECT_TRUE(eval("A^12h=0"));
+    EXPECT_TRUE(eval("(F & 10h) = 10h"));
+    EXPECT_TRUE(eval("1+A&0Fh=3"));
+    // XOR is a logical operator on the OR level
+    EXPECT_TRUE(eval("A=12h XOR B=0"));
+    EXPECT_FALSE(eval("A=12h XOR B=beh"));
+    EXPECT_FALSE(eval("A=0 XOR B=0"));
 }
 
 /// endregion </ROM / RAM banking terms>
@@ -339,6 +370,17 @@ TEST(ZesaruxExtractPc_test, RomCondition)
     EXPECT_EQ(rest, "ROM=0");
 }
 
+TEST(ZesaruxExtractPc_test, ALiteralNotFirstKeepsTheWholeCondition)
+{
+    uint16_t addr = 0;
+    std::string rest;
+    ASSERT_TRUE(extractPcLiteral("B=5 AND PC=8003h", addr, rest));
+    EXPECT_EQ(addr, 0x8003);
+    EXPECT_EQ(rest, "B=5 AND PC=8003h");
+    ASSERT_TRUE(extractPcLiteral("PC=8003h OR A=1", addr, rest));
+    EXPECT_EQ(rest, "PC=8003h OR A=1") << "only a leading literal followed by AND is DeZog's address part";
+}
+
 TEST(ZesaruxExtractPc_test, NoPcLiteralReturnsFalse)
 {
     uint16_t addr = 0;
@@ -484,6 +526,10 @@ TEST_F(ZesaruxConditionCore_test, TranslationAgreesWithTheEvaluator)
         "NOT NOT A",
         "+A = A",
         "1 - 2 * 3 = -5",
+        "FZ = 1 or FC",
+        "(A & 0Fh) = 3 or (B | C) = 0Fh",
+        "A ^ B = 0 or E = 0",
+        "A = 0 XOR B > 8",
     };
     std::mt19937 random(39);
     for (const char* condition : conditions)
@@ -510,7 +556,7 @@ TEST_F(ZesaruxConditionCore_test, TranslationAgreesWithTheEvaluator)
 
 TEST_F(ZesaruxConditionCore_test, WhatTheCoreAnswersDifferentlyIsRefused)
 {
-    EXPECT_NE(Refused("ROM=1").find("ROM"), std::string::npos);
+    EXPECT_NE(Refused("ROM=1").find("ROM"), std::string::npos) << "the paging is not in the core language";
     EXPECT_NE(Refused("A=1 and RAM=5").find("RAM"), std::string::npos);
     EXPECT_NE(Refused("HL / A = 2").find("divisor"), std::string::npos) << "a zero divisor stops in the evaluator";
     EXPECT_NE(Refused("HL / 0 = 2").find("divisor"), std::string::npos);
