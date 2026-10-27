@@ -327,7 +327,26 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
 - [x] Owner question (2026-10-06): should the card's SSG rows run the AY character chain (punch, room crossfeed) the
   socket's chips run? Decided 2026-10-07: yes, done (above)
 - [ ] SAM-6 host MIDI output + sniffer/protocol analyzer: design ready
-  ([tdd-midi-host-output.md](tdd-midi-host-output.md)); implementation later
+  ([tdd-midi-host-output.md](tdd-midi-host-output.md), merged from two drafts 2026-10-27); implementation later.
+  The DLS bank loader of the old SAM-6 row is a separate item, not designed yet. Not on
+  [PLAN.md](../PLAN.md); add a row when SAM-6 is scheduled (design Q11)
+  - [ ] H0 owner review; answers to Q1-Q11 (design §15)
+  - [ ] H1 foundations: public `Uart` / `MidiParser` headers, `SpscRing`, `MidiLineDecoder`, `MidiLine::SetTap` /
+    `FlushTap`, `MidiOutAssembler`, `HostMidiLedger`, steppable scheduler, fake backend; gate: MultiSound suites and the
+    TTD corpus unchanged, frame benchmark A/B with no tap
+  - [ ] H2 `HostMidiService` / `HostMidiStream` / null backend; `[MIDI]` keys `Output`, `HostPort`, `HostPortId`,
+    `HostLatency`, `HostMissing`, `HostResyncReset`, `HostSysExMax`; mixer ramp; live detection; `UNREAL_HOST_MIDI=0`;
+    zero-cost check
+  - [ ] H3 `Synth::ExportControllerState`, full resync, TTD tests (seek, reverse step, replay, pause, turbo), GSPLAYER
+    trace through the host path
+  - [ ] H4 backends CoreMIDI / ALSA seq (dlopen) / WinMM, hot-plug, virtual sources, `ENABLE_HOST_MIDI`, CI packages,
+    smoke tests, zero warnings on macOS / gcc 16 -O3 / MinGW / MSVC, manual check with a real device
+  - [ ] H5 second client: 128K / +2 / +2A / +3 board AY MIDI OUT (`Midi128Out=1`), `MidiStateTracker`, fix the
+    `spectrum128ayioport.h` comment (MIDI OUT is bit 2), AY reset decision (Q9)
+  - [ ] H6 surfaces: WebAPI + OpenAPI, CLI, MCP, Lua, Python, Qt (audio settings group, MIDI Activity line), recipe,
+    feature docs
+  - [ ] H7 later: Windows MIDI Services backend, backend timestamps if measured jitter needs them, libremidi if host
+    MIDI input is taken up
 - [x] SAM-7 Dream-native banks research: format reverse-engineered, POC reader/converter done
   ([sam7-dream-banks.md](sam7-dream-banks.md), `tools/poc/024-dream-banks`); no integration planned (owner decision
   2026-10-08)
