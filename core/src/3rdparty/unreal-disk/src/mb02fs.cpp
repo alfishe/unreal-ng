@@ -1,6 +1,7 @@
 #include "unrealdisk/mb02fs.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <memory>
 
@@ -146,7 +147,7 @@ bool Mb02FileSystem::Open(std::string* why)
     uint8_t dirs[kSector];
     if (!_reader(_boot.dirs, dirs))
         return fail("the DIRS sector does not read");
-    if (!(dirs[0] & 0x80) || (Word(dirs + 2) & kLsn) >= total)
+    if (!(dirs[0] & 0x80) || static_cast<uint32_t>(Word(dirs + 2) & kLsn) >= total)
         return fail("the DIRS sector has no root directory");
     return true;
 }
@@ -551,7 +552,8 @@ bool Mb02FileSystem::Rename(const Mb02File& file, uint8_t dir, const std::string
     std::vector<uint8_t> bytes;
     if (!DirectoryBytes(file.directory, chain, bytes, error))
         return false;
-    std::vector<uint8_t> entry(bytes.begin() + file.entry * kEntry, bytes.begin() + (file.entry + 1) * kEntry);
+    std::array<uint8_t, kEntry> entry;
+    std::copy_n(bytes.begin() + file.entry * kEntry, kEntry, entry.begin());
     PutName(entry.data() + 0x06, name);
     if (dir == file.directory)
     {

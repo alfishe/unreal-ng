@@ -310,7 +310,8 @@ TEST(MdosFs, LoopingChainFailsAndOtherDisksAreNoMdos)
     MdosFileSystem mdos = MdosFileSystem::OnDisk(*disk);
     std::string why;
     EXPECT_FALSE(mdos.Open(&why));
-    for (const DiskFsVolume& v : DiskFs(*disk).Volumes())
+    DiskFs probe(*disk);
+    for (const DiskFsVolume& v : probe.Volumes())
         EXPECT_NE(v.fs, "mdos");
 }
 

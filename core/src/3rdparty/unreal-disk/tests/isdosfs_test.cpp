@@ -315,8 +315,11 @@ TEST(IsdosFs_Test, WrittenFilesReadBackAsTheKernelLaysThemOut)
     EXPECT_EQ(after.catalogues, before.catalogues);
     // device.sys spans blocks 0-2: the descriptor and the bitmap, which keeps the block the catalogue grew by
     for (const auto& [path, crc] : before.each)
-        if (path != "device.sys")
-            EXPECT_EQ(after.each.count(path) ? after.each.at(path) : 0, crc) << path;
+    {
+        if (path == "device.sys")
+            continue;
+        EXPECT_EQ(after.each.count(path) ? after.each.at(path) : 0, crc) << path;
+    }
 
     // More than 255 blocks: segmented (the disk's help files deleted for the room)
     std::vector<IsdosFile> help;

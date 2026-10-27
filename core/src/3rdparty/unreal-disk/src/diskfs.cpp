@@ -2260,8 +2260,8 @@ bool DiskFs::Rename(const std::string& volume, const std::string& path, const st
 
 int64_t DiskFsEntry::Field(const std::string& key, int64_t otherwise) const
 {
-    for (const auto& [name, value] : fields)
-        if (name == key)
+    for (const auto& [field, value] : fields)
+        if (field == key)
             return value;
     return otherwise;
 }
