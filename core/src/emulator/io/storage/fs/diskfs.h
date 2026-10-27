@@ -2,7 +2,7 @@
 
 /// @file diskfs.h
 /// @brief The files on a slot's disk through unreal-disk's DiskFs (unrealdisk/diskfs.h): TR-DOS, +3DOS, iS-DOS /
-/// TASiS, ATM CP/M, FAT on floppies, hard disks and cards. Design: docs/emulator/design/disk-file-systems.md.
+/// TASiS, ATM CP/M, MB-02, FAT on floppies, hard disks and cards. Design: docs/emulator/design/disk-file-systems.md.
 
 #include <memory>
 

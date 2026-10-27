@@ -2551,7 +2551,7 @@ void EmulatorAPI::getDiskCatalog(const HttpRequestPtr& /*req*/,
     ret["drive"] = drive;
     ret["files"] = Json::arrayValue;
 
-    // The files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, ATM CP/M, FAT): unreal-disk's DiskFs, as /media/{slot}/files.
+    // The files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, ATM CP/M, MB-02, FAT): unreal-disk's DiskFs, as /media/{slot}/files.
     // TR-DOS entries keep their catalog fields (type, start, length, sectors, first track / sector)
     DiskFs fs(*diskImage);
     std::vector<DiskFsEntry> entries;

@@ -2189,7 +2189,7 @@ Inspect disk drive status, disk geometry, data contents, and current operations.
 | `disk write <drv> <cyl> <side> <sec> <hex> [--offset N]` | | `[A-D]` `cyl` `0-1` `ID>=1` `hex bytes` | A debugger's write into the sector's data field (the WebAPI `PUT /disk/{drive}/sector/...`): the bytes go in at `--offset` (default 0) as the WD1793 WRITE SECTOR puts them, the data CRC is recalculated, the image counts as modified, a TTD tool edit. Refused with the reason: empty drive, write-protected disk, missing track / sector, ID-only sector, past the data field. Example: `disk write A 0 0 9 4D594449534B --offset 245` renames a TR-DOS disk | ✅ |
 | `disk track [drv] <cyl> <side>` | | `[A-D]` `0-79` `0-1` | Track summary (16 sectors):<br/>• Per-sector: logical number, CRC status<br/>• Interleave table<br/>• Bad sector indicators | ✅ WebAPI |
 | `disk sysinfo [drv]` | | `[A-D]` | Parse TR-DOS system sector (T0/S9):<br/>• Disk type (80T DS/SS, 40T DS/SS)<br/>• Label, file count, free sectors<br/>• First free track/sector<br/>• Signature validity (0x10) | ✅ WebAPI |
-| `disk catalog [drv]` | `disk dir` | `[A-D]` | Show the disk's files (unreal-disk DiskFs, the first file system):<br/>• **TR-DOS**: name, type, length, track / sector<br/>• **+3DOS, iS-DOS, ATM CP/M, FAT** (Sprinter DSS): path, size, start | ✅ WebAPI |
+| `disk catalog [drv]` | `disk dir` | `[A-D]` | Show the disk's files (unreal-disk DiskFs, the first file system):<br/>• **TR-DOS**: name, type, length, track / sector<br/>• **+3DOS, iS-DOS, ATM CP/M, MB-02, FAT** (Sprinter DSS): path, size, start | ✅ WebAPI |
 
 ##### 6.5.3 Raw Data Access (Byte-Level)
 
@@ -4166,7 +4166,7 @@ the same name: `media.recent`, `media.rzx`, `cap.record`, `machine.switches`, `i
 | `mach.start` | `model` (a short name, a variant `TSL-VDAC2` / `PROFI-PLUS` and their aliases, a ZX-Poly configuration), ... | Start a machine (in place by default); the names `machines::Resolve` takes are the ones `EmulatorManager` creates (before 2026-10-21 variants and ZX-Poly configurations were refused here and by `POST /emulator/{id}/model`) | `machine` |
 | `mach.switch` | `name` (`turbo`, `cpm`), `on?` (flips) | The Profi's front panel (v3 / v5 TURBO, v5 CP/M) | `toggle.mach.switch.<name>`, `machine.switches` |
 | `mach.previous` | `replace?`, `stranded?`, `ram_power_on?` | Start the model used before this one (the machine history of the process) | `machine.previous` |
-| `media.insert`, `media.swap`, `media.export`, `media.discard`, `media.rescan`, `media.create` | `drive`, the verb's | The media verbs a key needs; `media.swap` with `with` exchanges two drives' disks; `media.export` writes another format (disk: trd, scl, udi, fdi, dsk, td0, mgt, img, hfe, scp; tape: tap, tzx); `media.create` `format` `trdos` (formatted), `plus3`, `unformatted` (`raw`), `size` for IDE / SD (`64M`) | `media.disk` (with `changed`), `media.tape` |
+| `media.insert`, `media.swap`, `media.export`, `media.discard`, `media.rescan`, `media.create` | `drive`, the verb's | The media verbs a key needs; `media.swap` with `with` exchanges two drives' disks; `media.export` writes another format (disk: trd, scl, udi, fdi, dsk, td0, mgt, img, mb2, hfe, scp; tape: tap, tzx); `media.create` `format` `trdos` (formatted), `plus3`, `unformatted` (`raw`), `size` for IDE / SD (`64M`) | `media.disk` (with `changed`), `media.tape` |
 | `media.open_recent` | `index?`, `kind?` | Open one of the files opened lately ([media.md → Recent files](../../../features/media.md#recent-files)) | `media.recent` |
 | `rzx.play`, `rzx.stop`, `rzx.seek` | play: `path`, `tolerant?`, `switch_model?`; seek: `frame` or `by` | RZX playback (§12) | `media.rzx` |
 | `input.joystick_type` | `kind` (kempston, sinclair1, sinclair2, cursor, fuller, keys, md6, none), `connector?` | The joystick on a connector (§15) | `input.connectors` |
@@ -4441,7 +4441,7 @@ The `disk` commands below keep working for drive-letter scripts.
 | `disk insert <drive> <file> [autostart]` | `<A\|B\|C\|D> <filename> [autostart\|--autostart]` | Insert disk image (.trd, .scl, .fdi, .udi, .dsk, .td0, .mgt, .img). Optional trailing `autostart` (drive A only): quick-reset into TR-DOS and run the disk, same as the Qt UI's drag-and-drop autostart and the WebAPI's `"autostart": true` insert flag. | ✅ Implemented (`CLIProcessor::HandleDiskInsert`) |
 | `disk eject <drive>` | `<A\|B\|C\|D>` | Eject disk from drive. | 🔮 Planned |
 | `disk info <drive>` | `<A\|B\|C\|D>` | Show disk information (format, tracks, sectors, files). | 🔮 Planned |
-| `disk catalog <drive>` | `<A\|B\|C\|D>` | List the files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, ATM CP/M, FAT) through DiskFs; every volume and directory: `media files <drive>`. | ✅ Implemented |
+| `disk catalog <drive>` | `<A\|B\|C\|D>` | List the files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, ATM CP/M, MB-02, FAT) through DiskFs; every volume and directory: `media files <drive>`. | ✅ Implemented |
 | `disk protect <drive> <on\|off>` | `<A\|B\|C\|D> on\|off` | Toggle write protection. | 🔮 Planned |
 
 ### 5. Audio & Video Capture

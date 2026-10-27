@@ -14,6 +14,7 @@ Unreal-NG supports loading and saving disk images in multiple formats. All forma
 | [TD0](td0.md) | `.td0` | ✔ | ✔ | Teledisk (advanced compression, FM, comments) |
 | [MGT/IMG](mgt.md) | `.mgt`, `.img` | ✔ | ✔ | +D/DISCiPLE raw sectors (10×512) |
 | [Raw PC floppy](rawpc.md) | `.img`, `.ima` | ✔ | ✔ | 720 KB (9×512, DD) / 1.44 MB (18×512, HD) sector dump |
+| [MB-02](mb02.md) | `.mb2`, `.mbd` | ✔ | ✔ | MB-02 (BS-DOS) 1024-byte sectors in logical order, recognized by the boot sector |
 | [Hobeta](hobeta.md) | `.$?` | ✔ | ✔ | Single TR-DOS file with header |
 | HFE | `.hfe` | — | — | Planned (flux-level) |
 | SCP | `.scp` | — | — | Planned (SuperCard Pro flux) |
@@ -37,6 +38,7 @@ Formats without signatures use size/extension heuristics:
 - **Hobeta**: 17-byte header with valid checksum
 - **TRD**: size in {163840, 327680, 655360} or TR-DOS volume signature
 - **Raw PC floppy**: size 737280 or 1474560, checked before the TRD rule
+- **MB-02**: the boot sector (`18 .. .. 02`, 2 sides, 1 sector a cluster) and its geometry matching the size, before the TRD and MGT rules
 - **MGT/IMG**: size 819200; `.mgt` = interleaved sides, `.img` = sequential
 
 ## Universal Track Model

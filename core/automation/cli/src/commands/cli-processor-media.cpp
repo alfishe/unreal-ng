@@ -423,7 +423,7 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "                                 (insert takes the descriptor like any file)" << NEWLINE;
     out << "  layers <slot>                - a composite medium's layers" << NEWLINE;
     out << "  changes <slot>               - the guest's unsaved writes as file operations (and their layers)" << NEWLINE;
-    out << "  volumes <slot>               - the file systems on the disk: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M," << NEWLINE
+    out << "  volumes <slot>               - the file systems on the disk: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02," << NEWLINE
         << "                                 FAT (DSS, NedoOS): floppies, FAT partitions, ATM CP/M partitions and" << NEWLINE
         << "                                 iS-DOS devices of an ATM hard disk" << NEWLINE;
     out << "  files <slot> [dir] [--volume id] [--recursive] - a directory's entries (the first volume by default)" << NEWLINE;

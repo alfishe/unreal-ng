@@ -16,7 +16,7 @@
 /// rescan, create, protect, compose (build a composition descriptor without
 /// inserting it: report and layout), layers (a slot's composite medium),
 /// volumes / files / read (the file systems on a slot's disk: TR-DOS, +3DOS,
-/// iS-DOS / TASiS, ATM CP/M, FAT of DSS and NedoOS; DiskFs), write / delete / rename (the
+/// iS-DOS / TASiS, ATM CP/M, MB-02, FAT of DSS and NedoOS; DiskFs), write / delete / rename (the
 /// files on the disk in a slot).
 ///
 /// Example (what a surface does):

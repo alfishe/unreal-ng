@@ -13,6 +13,7 @@ TAPE = os.path.join(ROOT, 'testdata', 'contention', 'rak-timing-test', 'timing.t
 SNAPSHOT = os.path.join(ROOT, 'testdata', 'loaders', 'sna', '7threality.sna')
 ISDOS = os.path.join(ROOT, 'testdata', 'loaders', 'isdos', 'ISDOS50.FDI')
 ATM_CPM = os.path.join(ROOT, 'testdata', 'machines', 'atm', 'cpm', 'prince.trd')
+MB02 = os.path.join(ROOT, 'testdata', 'loaders', 'mb02', 'SYS308.MB2')
 
 
 def test_slots_listed(s):
@@ -176,6 +177,23 @@ def test_disk_atm_cpm(s):
     data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
     expect(base64.b64decode(data)[7:23] == b'Prince of Persia', 'the bytes in the text', r.text[:200])
     r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'NEW.TXT', 'data': 'AA=='}, ok=False)
+    expect(r.is_error and 'read only' in r.text, 'a write is refused', r.text)
+    s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
+
+
+def test_disk_mb02(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': MB02})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'volumes', 'slot': 'A'})
+    expect('mb02: MB-02 BS-DOS' in r.text and 'System 308' in r.text and 'read only' in r.text,
+           'the MB-02 volume, its name, read only, in the text', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A', 'recursive': True})
+    expect('BSdos308 23450 bytes' in r.text and 'Small demo/bbicons' in r.text and 'tma~10' in r.text,
+           'the files, a directory and a second name in the text', r.text[:800])
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'Small demo/cdebusy'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(len(base64.b64decode(data)) == 768, 'the bytes in the text', r.text[:200])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'NEW', 'data': 'AA=='}, ok=False)
     expect(r.is_error and 'read only' in r.text, 'a write is refused', r.text)
     s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
 

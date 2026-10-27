@@ -12,6 +12,7 @@
 #include "unrealdisk/fatvolumereader.h"
 #include "unrealdisk/floppyblockdevice.h"
 #include "unrealdisk/isdosfs.h"
+#include "unrealdisk/mb02fs.h"
 #include "unrealdisk/plus3fs.h"
 #include "unrealdisk/subrangedevice.h"
 #include "unrealdisk/trdoscatalog.h"
@@ -932,6 +933,131 @@ CpmFileSystem::ByteReader CpmReaderAt(BlockDevice& device, const AtmCpmChannel& 
     };
 }
 
+struct Mb02Driver : DiskFs::Driver
+{
+    explicit Mb02Driver(Mb02FileSystem fs) : fs(std::move(fs)) {}
+
+    /// The name bytes as Ascii gives them, the path separators as \xNN too
+    static std::string NameOf(const std::string& raw)
+    {
+        std::string out;
+        for (const char c : raw)
+            out += c == '/' ? "\\x2f" : c == '\\' ? "\\x5c" : Ascii(std::string(1, c));
+        return out;
+    }
+
+    bool All(std::vector<DiskFsEntry>& out, std::vector<std::string>& notes, std::string& error) override
+    {
+        std::vector<Mb02Directory> dirs;
+        if (!fs.Directories(dirs, error))
+            return false;
+        // The tree through the parent bytes: a directory whose parent is missing, itself or its own descendant hangs
+        // under the root
+        std::vector<int> parent(256, -1);
+        for (const Mb02Directory& d : dirs)
+            parent[d.number] = d.number ? d.parent : -1;
+        for (const Mb02Directory& d : dirs)
+        {
+            if (d.number == 0)
+                continue;
+            int p = d.parent;
+            for (int steps = 0; p > 0 && p != d.number && parent[p] >= 0 && steps < 256; steps++)
+                p = parent[p];
+            if (p != 0)
+            {
+                notes.push_back("directory " + std::to_string(d.number) +
+                                " has no parent on the disk: listed at the root");
+                parent[d.number] = 0;
+            }
+        }
+        Emit(0, "", dirs, parent, out, notes, 0);
+        return true;
+    }
+
+    void Emit(uint8_t number, const std::string& prefix, const std::vector<Mb02Directory>& dirs,
+              const std::vector<int>& parent, std::vector<DiskFsEntry>& out, std::vector<std::string>& notes, int depth)
+    {
+        std::vector<Mb02File> files;
+        std::string error;
+        if (!fs.List(number, files, error))
+        {
+            notes.push_back("directory " + std::to_string(number) + ": " + error);
+            return;
+        }
+        std::set<std::string> names;
+        // A later file of a name already there gets ~<entry>, one without a header ~<entry> alone
+        auto unique = [&names](std::string name, const std::string& suffix) {
+            if (name.empty() || !names.insert(Lower(name)).second)
+            {
+                name += suffix;
+                names.insert(Lower(name));
+            }
+            return name;
+        };
+        for (const Mb02File& f : files)
+        {
+            DiskFsEntry e;
+            e.name = unique(NameOf(f.name), "~" + std::to_string(f.entry));
+            e.path = prefix + e.name;
+            e.size = f.length;
+            e.start = f.param1;
+            if (f.date)
+                e.mtime = FatVolumeReader::DosToUnix(f.date, f.time);
+            e.fields = {{"type", f.type},    {"param2", f.param2}, {"address", f.address},      {"entry", f.entry},
+                        {"sector", f.first}, {"flags", f.flags},   {"attributes", f.attributes}};
+            out.push_back(std::move(e));
+        }
+        if (depth >= 256)
+            return;
+        for (const Mb02Directory& d : dirs)
+        {
+            if (d.number == 0 || parent[d.number] != number)
+                continue;
+            DiskFsEntry e;
+            e.name = unique(NameOf(d.name), "~D" + std::to_string(d.number));
+            e.path = prefix + e.name;
+            e.directory = true;
+            e.fields = {{"dir", d.number}, {"sector", d.first}};
+            const std::string path = e.path;
+            out.push_back(std::move(e));
+            Emit(d.number, path + "/", dirs, parent, out, notes, depth + 1);
+        }
+    }
+
+    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    {
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        if (!Stat(path, entry, notes, error))
+            return false;
+        if (entry.directory)
+        {
+            error = path + " is a directory";
+            return false;
+        }
+        std::string dir, name;
+        SplitPath(entry.path, dir, name);
+        uint8_t number = 0;
+        if (!dir.empty())
+        {
+            DiskFsEntry parent;
+            if (!Stat(dir, parent, notes, error))
+                return false;
+            number = static_cast<uint8_t>(parent.Field("dir"));
+        }
+        std::vector<Mb02File> files;
+        if (!fs.List(number, files, error))
+            return false;
+        for (const Mb02File& f : files)
+            if (f.entry == entry.Field("entry"))
+                return fs.Read(f, data, error);
+        error = "no " + path + " on the MB-02 volume";
+        return false;
+    }
+
+    Mb02FileSystem fs;
+};
+
 void DescribeIsdos(const IsdosFileSystem& fs, DiskFsVolume& volume)
 {
     volume.fs = "isdos";
@@ -1029,6 +1155,20 @@ void DiskFs::Probe()
             v.writable = true;
             v.bytes = static_cast<uint64_t>(floppy->SectorCount()) * kSector;
             add(std::move(v), std::make_unique<Plus3Driver>(*_floppy));
+        }
+        // MB-02 before iS-DOS: both keep 1024-byte sectors, and the boot's formatter version sits where an iS-DOS
+        // descriptor keeps its geometry
+        Mb02FileSystem mb02 = Mb02FileSystem::OnDisk(*_floppy);
+        if (mb02.Open())
+        {
+            DiskFsVolume v;
+            v.id = v.fs = "mb02";
+            v.system = "MB-02 BS-DOS";
+            v.label = Ascii(mb02.Boot().name);
+            v.bytes = static_cast<uint64_t>(mb02.Boot().Sectors()) * Mb02FileSystem::kSector;
+            v.freeBytes = static_cast<int64_t>(mb02.FreeSectors()) * Mb02FileSystem::kSector;
+            add(std::move(v), std::make_unique<Mb02Driver>(std::move(mb02)));
+            return;
         }
         IsdosFileSystem isdos = IsdosFileSystem::OnDisk(*_floppy);
         if (isdos.IsIsdos())
