@@ -1,0 +1,56 @@
+# Head Over Heels (ZX Spectrum Next port by Michael Ware / Rusty Pixels, KS2 release V1.02), the NEX started from the
+# SD card's games folder. Controls from the manual (and the title screen, where the keys can be redefined): Q up+right,
+# A down+left, O up+left, P down+right (the iso diagonals, so the d-pad is exactly the QAOP scheme), Space jumps, M
+# jumps and carries, C carries, N fires the hooter or a donut, Enter swaps Head and Heels, H pauses (and opens the
+# shop). The game needs its data files through esxDOS: load it from a card, not as a bare NEX.
+# Haptics (haptics.md §13 H5): the code lives at 0x0000-0x3FFF in the 16K RAM page 26 (8K pages #34 / #35, mapped by
+# the game itself and never changed while playing), so every address is page-qualified: an unqualified write watch
+# also fired while NextZXOS booted. Found with per-frame coverage diffs and whole-RAM diffs, played in real time on
+# an emulator with the probes armed (only events counted, nothing else fired between them):
+#   jump:       exec 0x36DF, the store of the jump timer (0x305E, the "ld (#305E),a" after the jump height is
+#               chosen). Once per jump for both characters (3 presses = 3 fires, a held Space re-jumps on each
+#               landing and fires on each; walking alone never fires).
+#   land-head:  write 0x305D when increased. The byte goes 0 -> FF in the frame Head touches the floor and back two
+#               frames later. 1:1 with Head's jumps, also when the jump started while walking; walking and stopping
+#               do not move it.
+#   land-heels: write 0x3061 when decreased. Heels' fall flag: 0 -> 1 at the jump start, 1 -> 0 on landing, never
+#               while walking. 1:1 with Heels' jumps. (0x305F, the Heels twin of 0x305D, also pulses when Heels
+#               stops walking, so it is left out.)
+#   died:       exec 0x3AD4, the "dec (hl) / jp nz" death countdown reaching zero: the character's lives byte
+#               (0x3864 Heels, 0x3865 Head) drops by one in that same frame and the particle burst starts. Played:
+#               Heels walks into the red hazard at the end of the conveyor in the second room, 8 -> 7 lives.
+#   swap:       exec 0x3C71, the character swap after its checks (0x3C50). Once per Enter, but the game also
+#               swaps by itself 5 frames after a death, so it is an event only and no haptics rule plays it.
+# Rejected: 0x3636 (the gravity step, runs every second frame on the ground), 0x8856 (the animation setter, same
+# frames as the jump but shared), 0x305D / 0x3060 / 0x30A1 as a walking flag (they pulse on every stop), 0x3C81
+# (clears the jump timer, runs inside the swap). Not played because the first two rooms hold no such object (and the
+# rest of the castle was not walked): pickups, the hooter / donut shot, level done, a death of Head (same routine,
+# other lives byte).
+schema: 1
+kind: play
+id: builtin/game/head-over-heels-2
+label: Head Over Heels (Next)
+extends: [scheme/qaop-space]
+match:
+  machines: [NEXT]
+  file_sha256: ["be167780e0d283950cdc6ee87e6d462fc03c6e335ed8a885c7e9a9cd36583523"]
+layers:
+  play:
+    south:        { key: SPACE, label: Jump }
+    east:         { key: M, label: Jump + carry }
+    west:         { key: C, label: Carry }
+    north:        { key: N, label: Fire }
+    menu:         { key: ENTER, label: Swap Head / Heels }
+    view:         { key: H, label: Pause / shop }
+events:
+  jump:       { probe: exec, address: "page:26:0x36DF" }
+  land-head:  { probe: write, address: "page:26:0x305D", when: increased }
+  land-heels: { probe: write, address: "page:26:0x3061", when: decreased }
+  died:       { probe: exec, address: "page:26:0x3AD4" }
+  swap:       { probe: exec, address: "page:26:0x3C71" }
+haptics:
+  rules:
+    - { on: jump, play: tick, target: handle.high }
+    - { on: land-head, play: knock, target: handle.low }
+    - { on: land-heels, play: knock, target: handle.low }
+    - { on: died, play: life-lost }

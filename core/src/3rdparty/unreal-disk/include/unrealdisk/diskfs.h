@@ -5,7 +5,8 @@
 /// file's bytes. Floppies (DiskImage): TR-DOS, +3DOS, iS-DOS / TASiS, FAT12 (Sprinter DSS, MS-DOS 720K / 1.44M).
 /// Hard disks, SD and CF cards (BlockDevice): the FAT partitions of the MBR or a superfloppy (Estex DSS, NedoOS, any
 /// FAT12 / 16 / 32), and iS-DOS / TASiS devices: the whole disk, or runs of cylinders as the ATM-Turbo HDD driver
-/// lays them out (a descriptor at a cylinder boundary). Reading everywhere; writing on TR-DOS and +3DOS floppies.
+/// lays them out (a descriptor at a cylinder boundary). Reading everywhere; writing, deleting and renaming files on
+/// TR-DOS, +3DOS, iS-DOS and FAT (a block device that takes writes).
 ///
 /// Standard C++ only: the emulator (its media verbs `volumes`, `files`, `read` on every automation plane, the
 /// debugger's disk files) and the standalone tools (zxasm, symconv) use the same class. The caller owns the disk and
@@ -37,7 +38,7 @@ struct DiskFsVolume
     uint64_t offset = 0;   ///< block media: the volume's first byte on the disk
     uint64_t bytes = 0;    ///< its size
     int64_t freeBytes = -1;  ///< -1: not known
-    bool writable = false;   ///< Write works on it (TR-DOS, +3DOS)
+    bool writable = false;   ///< Write, Delete and Rename work on it
 };
 
 struct DiskFsEntry
@@ -63,6 +64,8 @@ struct DiskFsWriteOptions
     uint16_t start = 0;        ///< TR-DOS: the start field; +3DOS: a CODE file's load address (param 1)
     bool lengthField = true;   ///< TR-DOS: false leaves 0 in the length field (XAS reads whole sectors)
     bool header = true;        ///< +3DOS: a +3DOS header in front, as +3 BASIC's SAVE writes it
+    int64_t mtime = 0;         ///< FAT, iS-DOS: the file's date and time as UTC seconds of the DOS wall clock
+                               ///< (0: 1980-01-01 00:00)
 };
 
 class DiskFs
@@ -90,10 +93,22 @@ public:
     /// of its last sector past the length (sources saved by XAS keep text there), empty elsewhere
     bool Read(const std::string& volume, const std::string& path, std::vector<uint8_t>& data, std::string& error,
               std::vector<uint8_t>* slack = nullptr);
-    /// `data` as the file `path` (TR-DOS "NAME.T", +3DOS "NAME.TYP"): an older file of that name is deleted first.
-    /// The floppy is changed in place; saving it is the caller's. False on a volume that is not writable
+    /// `data` as the file `path` (TR-DOS "NAME.T", +3DOS "NAME.TYP", FAT and iS-DOS "DIR/name.ext" in a directory
+    /// that is there): an older file of that name is replaced. The disk is changed in place; saving it is the
+    /// caller's. False on a volume that is not writable
     bool Write(const std::string& volume, const std::string& path, const std::vector<uint8_t>& data,
                const DiskFsWriteOptions& options, std::string& error);
+    /// Delete the file `path` (FAT, iS-DOS: an empty directory too). TR-DOS marks it deleted as TR-DOS does (its
+    /// sectors stay used until the disk is compacted). `recursive`: a directory goes with everything in it; every
+    /// entry is checked first (a protected iS-DOS file, a read-only FAT entry), so nothing goes when one would stay
+    bool Delete(const std::string& volume, const std::string& path, std::string& error, bool recursive = false);
+    /// A new empty directory `path` (FAT, iS-DOS) in a directory that is there; `parents`: the missing directories
+    /// on the way are made too, and one that is there already is no error. `mtime` as in DiskFsWriteOptions
+    bool MakeDirectory(const std::string& volume, const std::string& path, bool parents, int64_t mtime, std::string& error);
+    /// The file `path` takes the name `to`: a bare name keeps it in its directory; FAT and iS-DOS take a path from the
+    /// root too ("/name" the root), moving it to another directory of the volume, a directory with its contents (not
+    /// into itself). False when `to` is there already
+    bool Rename(const std::string& volume, const std::string& path, const std::string& to, std::string& error);
 
     /// A file system's reader (diskfs.cpp)
     struct Driver;
@@ -101,6 +116,8 @@ public:
 private:
     void Probe();
     Driver* Find(const std::string& volume, std::string& error, size_t* index = nullptr);
+    /// The driver of a writable volume, else null with the reason
+    Driver* FindWritable(const std::string& volume, std::string& error);
 
     DiskImage* _floppy = nullptr;
     BlockDevice* _device = nullptr;

@@ -238,7 +238,11 @@ private:
     /// fields are used)
     controllers::ProfileContext _program;
     QString _fileName;
-    bool _autoDone = false;      ///< decided (or a kept game profile holds the connectors) for this program
+    /// Latched: the port reads decided the joystick (or a kept game profile holds the connectors) for this program, the
+    /// watch is off. A program that reads the whole keyboard (a menu) decides nothing: the watch goes on until it
+    /// reads a joystick
+    bool _autoDone = false;
+    bool _keyboardNoticed = false;
     std::string _autoConnector;  ///< the connector the decision chose: the first pad drives it
     controllers::AutoDecision _decision;
     std::unique_ptr<controllers::HostInputService> _service;

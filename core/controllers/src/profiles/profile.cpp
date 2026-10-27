@@ -23,7 +23,7 @@ const char* const kOptionFields[] = {"turbo",        "on",           "off",   "c
                                      "saturation",   "diagonal_hold", "gamma", "invert", "repeat",
                                      "curve"};
 const char* const kProfileFields[] = {"schema",  "kind",    "id",     "label",     "match",  "applies_to", "extends",
-                                      "connectors", "players", "options", "layers", "layer_key", "haptics",
+                                      "connectors", "players", "joystick_keys", "options", "layers", "layer_key", "haptics",
                                       "events"};
 
 template <size_t N>
@@ -574,6 +574,12 @@ bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
             }
             profile.players.push_back(pin);
         }
+    }
+    if (root.Find("joystick_keys") != nullptr &&
+        (!StringField(root, "joystick_keys", profile.joystickKeys, error) || profile.joystickKeys.empty()))
+    {
+        error = "'joystick_keys' is the QAOP joystick's keys, like up:q,down:a,left:o,right:p,fire:m";
+        return false;
     }
     profile.options = JsonValue::Object();
     if (const JsonValue* options = root.Find("options"))

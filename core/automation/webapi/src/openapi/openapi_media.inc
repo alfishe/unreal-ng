@@ -116,16 +116,20 @@
         Json::Value& post = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["post"];
         post["summary"] =
             "insert / swap / eject / save / export / discard / rescan / create / protect / layers / changes / flatten / "
-            "volumes / files / read / write";
+            "volumes / files / read / write / delete / rename / mkdir";
         post["description"] =
             "Operations are synchronous: the reply comes when the medium is in or out of the slot (swap delay "
             "included, at most 5 s, then pending = true). async: true replies at once with pending = true. "
             "A dirty medium leaves its slot only with a disposition: save (into its own file), export: <path> "
             "(into a new file) or discard. insert / swap take 'path' (a file or a folder) or the file itself "
             "(multipart/form-data 'file', or a raw body with X-Filename; up to 1 MB, deleted when ejected). "
-            "save / export take 'path' as the target. write puts a file onto the TR-DOS (path NAME.T) or +3DOS "
-            "(NAME.TYP) floppy in the slot, an older file of that name replaced: the bytes as base64 'data', a host "
-            "file 'in', or the body itself (application/octet-stream, ?path=NAME.T); the disk is dirty until saved. "
+            "save / export take 'path' as the target. write puts a file onto the disk in the slot (TR-DOS NAME.T, +3DOS "
+            "NAME.TYP, iS-DOS, FAT), an older file of that name replaced: the bytes as base64 'data', a host file "
+            "'in', or the body itself (application/octet-stream, ?path=NAME.T). delete removes a file or an empty "
+            "iS-DOS / FAT directory (recursive: a directory with its contents); rename takes 'to': a bare name stays "
+            "in the directory, a path from the root (/name: the root) moves the file or directory (iS-DOS, FAT); "
+            "mkdir makes a directory (parents: the missing ones on the way too). The reply's access says where the change went: writethrough is in the "
+            "disk's file, session is dirty until saved. "
             "Options go in the JSON body or the query string:" + verbs;
         post["tags"].append("Media");
         idParameter(post, 0);
@@ -144,10 +148,16 @@
         body["properties"]["path"]["type"] = "string";
         body["properties"]["path"]["description"] =
             "insert / swap: the source; save / export: the target; files / read: a directory or file on the disk; "
-            "write: the file to write";
+            "write / delete / rename: the file or directory; mkdir: the directory";
         body["properties"]["volume"]["type"] = "string";
-        body["properties"]["volume"]["description"] = "files / read / write: the volume id from volumes; left out: the first";
+        body["properties"]["volume"]["description"] = "files / read / write / delete / rename / mkdir: the volume id from volumes; left out: the first";
+        body["properties"]["to"]["type"] = "string";
+        body["properties"]["to"]["description"] =
+            "rename: the new name; a bare name stays in the file's directory, a path from the root moves it (iS-DOS, FAT)";
         body["properties"]["recursive"]["type"] = "boolean";
+        body["properties"]["recursive"]["description"] = "files: the whole tree; delete: a directory with everything in it";
+        body["properties"]["parents"]["type"] = "boolean";
+        body["properties"]["parents"]["description"] = "mkdir: the missing directories on the way too";
         body["properties"]["out"]["type"] = "string";
         body["properties"]["out"]["description"] = "read: write the file's bytes to this host file";
         body["properties"]["data"]["type"] = "string";
@@ -155,7 +165,7 @@
         body["properties"]["in"]["type"] = "string";
         body["properties"]["in"]["description"] = "write: the file's bytes from this host file";
         body["properties"]["start"]["type"] = "string";
-        body["properties"]["start"]["description"] = "write: the TR-DOS start / +3DOS CODE address: 32768, 0x8000 or #8000";
+        body["properties"]["start"]["description"] = "write: the TR-DOS start / +3DOS CODE / iS-DOS load address: 32768, 0x8000 or #8000";
         body["properties"]["header"]["type"] = "boolean";
         body["properties"]["header"]["description"] = "write: +3DOS: false leaves out the 128-byte +3DOS header";
         body["properties"]["descriptor"]["type"] = "object";

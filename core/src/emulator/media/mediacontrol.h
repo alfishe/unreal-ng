@@ -16,8 +16,8 @@
 /// rescan, create, protect, compose (build a composition descriptor without
 /// inserting it: report and layout), layers (a slot's composite medium),
 /// volumes / files / read (the file systems on a slot's disk: TR-DOS, +3DOS,
-/// iS-DOS / TASiS, FAT of DSS and NedoOS; DiskFs), write (a file onto a TR-DOS
-/// or +3DOS floppy in a slot).
+/// iS-DOS / TASiS, FAT of DSS and NedoOS; DiskFs), write / delete / rename (the
+/// files on the disk in a slot).
 ///
 /// Example (what a surface does):
 /// @code
@@ -122,8 +122,9 @@ private:
     MediaReply Changes(const MediaRequest& request);
     /// volumes, files, read: the file systems on a slot's disk (DiskFs)
     MediaReply Files(const MediaRequest& request, const std::string& verb);
-    /// write: a file onto a slot's TR-DOS / +3DOS floppy (DiskFs::Write), a tool's edit at a coherent moment
-    MediaReply WriteFile(const MediaRequest& request);
+    /// write, delete, rename, mkdir: the files on a slot's disk (DiskFs: TR-DOS, +3DOS, iS-DOS, FAT on floppies, hard
+    /// disks and cards), a tool's edit at a coherent moment
+    MediaReply EditFiles(const MediaRequest& request, const std::string& verb);
 
     /// The slot `insert auto` picks for `path` (§3.5)
     MediaResult ChooseSlot(const std::string& path, const std::map<std::string, std::string>& options, std::string& slotId);
