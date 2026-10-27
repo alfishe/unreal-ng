@@ -328,7 +328,9 @@ TEST_F(WsHub_Test, AWelcomeNamesTheVersionSessionInstanceContextScopesAndTarget)
     EXPECT_EQ(welcome["target"]["instance"].asString(), _id);
     EXPECT_EQ(welcome["target"]["mode"].asString(), "instance");
     EXPECT_EQ(welcome["target"]["model"].asString(), "PENTAGON");
-    EXPECT_TRUE(welcome["target"]["view"].isNull()) << "views: SD4";
+    EXPECT_TRUE(welcome["target"]["view"].isNull()) << "headless: no view shows it";
+    ASSERT_TRUE(welcome["views"].isArray()) << "the host's views, front first";
+    EXPECT_EQ(welcome["views"].size(), actions::TargetState::Instance().Views().size());
     EXPECT_EQ(welcome["readouts"].size(), actions::ReadoutNames(*_emulator).size()) << "the whole vocabulary";
     EXPECT_EQ(welcome["serial"].asString(), "A1");
     EXPECT_TRUE(welcome["catalogue_rev"].isIntegral());
@@ -395,7 +397,9 @@ TEST_F(WsHub_Test, AJoinWithWrongFieldsOrATargetItCannotBindIsRefused)
     Send(inbox, R"({"op":"join","name":"deck","model":"x"})");
     EXPECT_EQ(inbox.Last()["error"].asString(), "bad_request") << "no v";
     Send(inbox, R"({"op":"join","v":1,"name":"deck","model":"x","target":{"view":"v1"}})");
-    EXPECT_EQ(inbox.Last()["error"].asString(), "not_now") << "views come with TargetState (SD4)";
+    EXPECT_EQ(inbox.Last()["error"].asString(), "not_now") << "a view pin while the host has no views";
+    Send(inbox, R"({"op":"join","v":1,"name":"deck","model":"x","target":{"view":1}})");
+    EXPECT_EQ(inbox.Last()["error"].asString(), "not_now") << "a scenario's view number: the same";
     Send(inbox, R"({"op":"join","v":1,"name":"deck","model":"x","target":{"instance":"no-such-instance"}})");
     EXPECT_EQ(inbox.Last()["error"].asString(), "Not Found");
     Send(inbox, R"({"op":"join","v":1,"name":"deck","model":"x","target":"elsewhere"})");
@@ -1129,7 +1133,7 @@ TEST_F(WsHub_Test, AFollowingSurfaceFollowsTheSelectionWithTargetCtxAndAFullRead
     EXPECT_EQ(messages[2]["instance"].asString(), second->GetId());
     EXPECT_TRUE(messages[2]["values"].isMember("run.state")) << "the new instance's values in full";
 
-    // A pinned surface keeps its instance; when it goes, its target is null
+    // A pinned surface keeps its instance; when it goes, the pin falls back to following (targeting.md §5)
     Inbox pinned;
     Join(pinned);
     manager->SetSelectedEmulatorId("");
@@ -1139,12 +1143,64 @@ TEST_F(WsHub_Test, AFollowingSurfaceFollowsTheSelectionWithTargetCtxAndAFullRead
     _hub->Refresh();
     const std::vector<Json::Value> targets = pinned.Ops("target");
     ASSERT_EQ(targets.size(), 1u);
-    EXPECT_TRUE(targets[0]["instance"].isNull());
-    EXPECT_EQ(targets[0]["mode"].asString(), "instance");
+    EXPECT_EQ(targets[0]["instance"].asString(), second->GetId());
+    EXPECT_EQ(targets[0]["mode"].asString(), "follow");
     // ...and the follower took the only one left
     EXPECT_EQ(inbox.Ops("target").back()["instance"].asString(), second->GetId());
     EmulatorTestHelper::CleanupEmulator(second);
     actions::ContextState::Instance().Drop(first);
+}
+
+TEST_F(WsHub_Test, ASurfaceIsATargetStateSessionTheHostAndThePinOpCanPin)
+{
+    Emulator* second = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(second, nullptr);
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(_id));
+    actions::TargetState& state = actions::TargetState::Instance();
+
+    Inbox inbox;
+    Connect(inbox);
+    Send(inbox, R"({"op":"join","v":1,"name":"Stream Deck + XL","model":"x","serial":"PIN1"})");
+    ASSERT_EQ(inbox.Last()["op"].asString(), "welcome");
+    const std::string session = inbox.Last()["session"].asString();
+    const std::optional<actions::SurfaceSessionInfo> info = state.Session(session);
+    ASSERT_TRUE(info.has_value()) << "the surface's session is TargetState's (GET /api/v1/surfaces/sessions)";
+    EXPECT_EQ(info->spec.serial, "PIN1");
+    EXPECT_EQ(info->spec.kind, "companion");
+    EXPECT_EQ(info->target.instance, _id);
+
+    // The host pins it (PUT /api/v1/surfaces/sessions/{id}/pin): the surface is told
+    inbox.Clear();
+    std::string error;
+    std::string message;
+    ASSERT_TRUE(state.SetPin(session, actions::Pin::OnInstance(second->GetId()), error, message)) << message;
+    _hub->Refresh();
+    ASSERT_FALSE(inbox.Ops("target").empty());
+    EXPECT_EQ(inbox.Ops("target")[0]["instance"].asString(), second->GetId());
+    EXPECT_EQ(inbox.Ops("target")[0]["mode"].asString(), "instance");
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(_id));
+    _hub->Refresh();
+    EXPECT_EQ(inbox.Ops("target").size(), 1u) << "the pin holds while the selection moves";
+
+    // The surface unpins itself by the pin op: answered by `target`, even when nothing moved
+    inbox.Clear();
+    Send(inbox, R"({"op":"pin","target":"follow","rid":7})");
+    ASSERT_EQ(inbox.Ops("target").size(), 1u);
+    EXPECT_EQ(inbox.Ops("target")[0]["instance"].asString(), _id);
+    EXPECT_EQ(inbox.Ops("target")[0]["mode"].asString(), "follow");
+    EXPECT_EQ(inbox.Ops("target")[0]["rid"].asInt(), 7);
+    inbox.Clear();
+    Send(inbox, R"({"op":"pin","target":"follow","rid":8})");
+    ASSERT_EQ(inbox.Ops("target").size(), 1u);
+    EXPECT_EQ(inbox.Ops("target")[0]["rid"].asInt(), 8);
+    Send(inbox, R"({"op":"pin","target":{"instance":"no-such-instance"},"rid":9})");
+    EXPECT_EQ(inbox.Last()["error"].asString(), "Not Found");
+
+    // The surface ends: its session too
+    Send(inbox, R"({"op":"bye"})");
+    EXPECT_FALSE(state.Session(session).has_value());
+    EmulatorTestHelper::CleanupEmulator(second);
 }
 
 TEST_F(WsHub_Test, ARevokedCompanionIsToldAndClosedAndByeCloses)
