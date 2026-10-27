@@ -5,6 +5,9 @@ supervisor starts, Stream Deck Studio offscreen as an own Stream Deck + XL and a
 through the WebAPI, the daemon's and the studio's automation. Nothing of the user's is touched: not their settings,
 their pairing, their deck or their running daemon.
 
+Status (2026-10-27): the rig only; no ACC check is written yet (TODO SD9), a run says so. `--only none --live` is the
+manual review rig: a visible unreal-qt and the attached deck playing the product scenario.
+
     acceptance.py --build cmake-build-agent-release            # the hardware-free checks
     acceptance.py --build ... --only acc2,acc6                  # some of them
     acceptance.py --build ... --keep                            # leave the rig running (prints its ports)
@@ -119,7 +122,8 @@ class Rig:
         return open(os.path.join(self.folder, name + '.log'), 'ab')
 
     def start(self):
-        for offset in (0, 50, 51, 60, 61, 62, 100, 200):
+        # every port the rig hands out: unreal-qt's servers (env()), the daemon and viewers, the studios
+        for offset in (0, 50, 51, 60, 61, 62, 100, 200, 300, 400, 500):
             expect(free(self.base + offset), f'port {self.base + offset} is free (pick another --port-base)')
         os.makedirs(os.path.join(self.home, '.config', 'unreal-streamdeck'), exist_ok=True)
         # The daemon's pairing as `unreal-streamdeck pair` leaves it: the token the instance was started with
@@ -232,6 +236,8 @@ def run(args):
         rig.start()
         rig.own = None if args.live else rig.studio(['--own', 'plusxl'], 'studio-own')
         print(f'rig: unreal-qt {rig.webapi}, daemon {rig.daemon} (pid {rig.daemon_pid}), studio {rig.own}; {folder}')
+        if not CHECKS and not args.live:
+            print('no acceptance check is written yet (TODO SD9): the rig started and stopped')
         for name, function in CHECKS:
             if args.only and name not in args.only:
                 continue
