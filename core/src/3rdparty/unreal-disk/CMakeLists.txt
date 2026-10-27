@@ -86,6 +86,10 @@ function(unrealdisk_add_tests)
     get_filename_component(UNREAL_DISK_REPO_TESTDATA ${UNREAL_DISK_DIR}/../../../../testdata ABSOLUTE)
     target_compile_definitions(unreal-disk-tests PRIVATE UNREAL_DISK_TESTDATA_DIR="${UNREAL_DISK_REPO_TESTDATA}")
     target_compile_options(unreal-disk-tests PRIVATE ${UNREAL_DISK_WARNINGS_LIST})
+    if (MINGW)
+        # Runs without the MinGW runtime DLLs on the path, as core-tests does
+        target_link_options(unreal-disk-tests PRIVATE -static)
+    endif()
 endfunction()
 
 if (UNREAL_DISK_TESTS)
