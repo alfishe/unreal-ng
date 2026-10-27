@@ -6,14 +6,17 @@
 #include <set>
 
 #include "unrealdisk/blockdevice.h"
+#include "unrealdisk/cpmfs.h"
 #include "unrealdisk/diskimage.h"
 #include "unrealdisk/fatfs.h"
 #include "unrealdisk/fatvolumereader.h"
 #include "unrealdisk/floppyblockdevice.h"
 #include "unrealdisk/isdosfs.h"
+#include "unrealdisk/mb02fs.h"
+#include "unrealdisk/mdosfs.h"
 #include "unrealdisk/plus3fs.h"
-#include "unrealdisk/trdoscatalog.h"
 #include "unrealdisk/subrangedevice.h"
+#include "unrealdisk/trdoscatalog.h"
 #include "unrealdisk/trdosfs.h"
 
 namespace unrealdisk
@@ -21,10 +24,13 @@ namespace unrealdisk
 namespace
 {
 constexpr uint32_t kSector = BlockDevice::kSectorSize;
-/// The cylinder of a hard disk without a geometry in its image (16 heads, 63 sectors: the ATM-Turbo IDE images)
-constexpr uint64_t kDefaultCylinderSectors = 16 * 63;
+/// The geometry of a hard disk without one in its image (16 heads, 63 sectors: the ATM-Turbo IDE images)
+constexpr uint64_t kDefaultHeads = 16;
+constexpr uint64_t kDefaultSectors = 63;
 /// iS-DOS devices are looked for at this many cylinder boundaries at most (a 2 GB disk of 16 x 63 cylinders)
 constexpr uint64_t kMaxCylinderScan = 4096;
+/// Without a #49 partition the first MDOS3 slot is looked for in this many sectors from LBA 0 (2 MiB)
+constexpr uint64_t kMdos3Search = 4096;
 
 std::string Lower(std::string text)
 {
@@ -825,6 +831,310 @@ std::unique_ptr<FatDriver> OpenFat(std::shared_ptr<BlockDevice> device, CodePage
     return driver;
 }
 
+struct CpmDriver : DiskFs::Driver
+{
+    explicit CpmDriver(CpmFileSystem fs) : fs(std::move(fs)) {}
+
+    /// User 0 at the root, users 1-15 in the directories USER1..USER15
+    static std::string PathOf(const CpmFile& f)
+    {
+        const std::string name = Ascii(f.FullName());
+        return f.user ? "USER" + std::to_string(f.user) + "/" + name : name;
+    }
+
+    bool All(std::vector<DiskFsEntry>& out, std::vector<std::string>&, std::string& error) override
+    {
+        std::vector<CpmFile> files;
+        if (!fs.List(files, error))
+            return false;
+        for (uint8_t user = 0; user < 16; user++)
+        {
+            bool listed = false;
+            for (const CpmFile& f : files)
+            {
+                if (f.user != user)
+                    continue;
+                if (user && !listed)
+                {
+                    DiskFsEntry d;
+                    d.name = d.path = "USER" + std::to_string(user);
+                    d.directory = true;
+                    d.fields = {{"user", user}};
+                    out.push_back(std::move(d));
+                }
+                listed = true;
+                DiskFsEntry e;
+                e.path = PathOf(f);
+                e.name = Ascii(f.FullName());
+                e.size = f.size;
+                static const char letters[] = "RSA";
+                for (int bit = 0; bit < 3; bit++)
+                    e.attributes += (f.attributes & (1 << bit)) ? letters[bit] : '.';
+                e.fields = {{"user", f.user}, {"extents", f.extents}, {"block", f.firstBlock}};
+                out.push_back(std::move(e));
+            }
+        }
+        return true;
+    }
+
+    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    {
+        std::vector<CpmFile> files;
+        if (!fs.List(files, error))
+            return false;
+        for (int pass = 0; pass < 2; pass++)
+            for (const CpmFile& f : files)
+                if (pass == 0 ? PathOf(f) == path : Lower(PathOf(f)) == Lower(path))
+                    return fs.Read(f, data, error);
+        error = "no " + path + " on the CP/M volume";
+        return false;
+    }
+
+    CpmFileSystem fs;
+};
+
+void DescribeCpm(const CpmFileSystem& fs, DiskFsVolume& volume)
+{
+    volume.fs = "cpm";
+    volume.system = "ATM CP/M";
+    uint32_t free = 0;
+    if (fs.FreeBlocks(free))
+        volume.freeBytes = static_cast<int64_t>(free) * CpmGeometry::kBlock;
+}
+
+/// The bytes of an ATM CP/M hard disk partition from its directory on: the BIOS's cylinder, head and sector of the
+/// channel's geometry, at the disk's own (`heads` x `sectors`)
+CpmFileSystem::ByteReader CpmReaderAt(BlockDevice& device, const AtmCpmChannel& channel, uint64_t heads,
+                                      uint64_t sectors, std::shared_ptr<SectorCache> cache)
+{
+    const uint64_t directory = static_cast<uint64_t>(channel.reserved) * channel.sectors;
+    const uint64_t perTrack = channel.sectors, partHeads = channel.heads, start = channel.startCylinder;
+    return [&device, directory, perTrack, partHeads, start, heads, sectors, cache](uint64_t offset, uint8_t* dst,
+                                                                                   uint32_t size) {
+        while (size > 0)
+        {
+            const uint64_t logical = directory + offset / kSector;
+            const uint64_t track = logical / perTrack;
+            const uint64_t lba =
+                ((start + track / partHeads) * heads + track % partHeads) * sectors + logical % perTrack;
+            if (lba != cache->lba)
+            {
+                if (!device.ReadSector(lba, cache->sector))
+                {
+                    cache->lba = UINT64_MAX;
+                    return false;
+                }
+                cache->lba = lba;
+            }
+            const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(kSector - offset % kSector));
+            std::memcpy(dst, cache->sector + offset % kSector, n);
+            dst += n;
+            offset += n;
+            size -= n;
+        }
+        return true;
+    };
+}
+
+struct Mb02Driver : DiskFs::Driver
+{
+    explicit Mb02Driver(Mb02FileSystem fs) : fs(std::move(fs)) {}
+
+    /// The name bytes as Ascii gives them, the path separators as \xNN too
+    static std::string NameOf(const std::string& raw)
+    {
+        std::string out;
+        for (const char c : raw)
+            out += c == '/' ? "\\x2f" : c == '\\' ? "\\x5c" : Ascii(std::string(1, c));
+        return out;
+    }
+
+    bool All(std::vector<DiskFsEntry>& out, std::vector<std::string>& notes, std::string& error) override
+    {
+        std::vector<Mb02Directory> dirs;
+        if (!fs.Directories(dirs, error))
+            return false;
+        // The tree through the parent bytes: a directory whose parent is missing, itself or its own descendant hangs
+        // under the root
+        std::vector<int> parent(256, -1);
+        for (const Mb02Directory& d : dirs)
+            parent[d.number] = d.number ? d.parent : -1;
+        for (const Mb02Directory& d : dirs)
+        {
+            if (d.number == 0)
+                continue;
+            int p = d.parent;
+            for (int steps = 0; p > 0 && p != d.number && parent[p] >= 0 && steps < 256; steps++)
+                p = parent[p];
+            if (p != 0)
+            {
+                notes.push_back("directory " + std::to_string(d.number) +
+                                " has no parent on the disk: listed at the root");
+                parent[d.number] = 0;
+            }
+        }
+        Emit(0, "", dirs, parent, out, notes, 0);
+        return true;
+    }
+
+    void Emit(uint8_t number, const std::string& prefix, const std::vector<Mb02Directory>& dirs,
+              const std::vector<int>& parent, std::vector<DiskFsEntry>& out, std::vector<std::string>& notes, int depth)
+    {
+        std::vector<Mb02File> files;
+        std::string error;
+        if (!fs.List(number, files, error))
+        {
+            notes.push_back("directory " + std::to_string(number) + ": " + error);
+            return;
+        }
+        std::set<std::string> names;
+        // A later file of a name already there gets ~<entry>, one without a header ~<entry> alone
+        auto unique = [&names](std::string name, const std::string& suffix) {
+            if (name.empty() || !names.insert(Lower(name)).second)
+            {
+                name += suffix;
+                names.insert(Lower(name));
+            }
+            return name;
+        };
+        for (const Mb02File& f : files)
+        {
+            DiskFsEntry e;
+            e.name = unique(NameOf(f.name), "~" + std::to_string(f.entry));
+            e.path = prefix + e.name;
+            e.size = f.length;
+            e.start = f.param1;
+            if (f.date)
+                e.mtime = FatVolumeReader::DosToUnix(f.date, f.time);
+            e.fields = {{"type", f.type},    {"param2", f.param2}, {"address", f.address},      {"entry", f.entry},
+                        {"sector", f.first}, {"flags", f.flags},   {"attributes", f.attributes}};
+            out.push_back(std::move(e));
+        }
+        if (depth >= 256)
+            return;
+        for (const Mb02Directory& d : dirs)
+        {
+            if (d.number == 0 || parent[d.number] != number)
+                continue;
+            DiskFsEntry e;
+            e.name = unique(NameOf(d.name), "~D" + std::to_string(d.number));
+            e.path = prefix + e.name;
+            e.directory = true;
+            e.fields = {{"dir", d.number}, {"sector", d.first}};
+            const std::string path = e.path;
+            out.push_back(std::move(e));
+            Emit(d.number, path + "/", dirs, parent, out, notes, depth + 1);
+        }
+    }
+
+    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    {
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        if (!Stat(path, entry, notes, error))
+            return false;
+        if (entry.directory)
+        {
+            error = path + " is a directory";
+            return false;
+        }
+        std::string dir, name;
+        SplitPath(entry.path, dir, name);
+        uint8_t number = 0;
+        if (!dir.empty())
+        {
+            DiskFsEntry parent;
+            if (!Stat(dir, parent, notes, error))
+                return false;
+            number = static_cast<uint8_t>(parent.Field("dir"));
+        }
+        std::vector<Mb02File> files;
+        if (!fs.List(number, files, error))
+            return false;
+        for (const Mb02File& f : files)
+            if (f.entry == entry.Field("entry"))
+                return fs.Read(f, data, error);
+        error = "no " + path + " on the MB-02 volume";
+        return false;
+    }
+
+    Mb02FileSystem fs;
+};
+
+struct MdosDriver : DiskFs::Driver
+{
+    explicit MdosDriver(MdosFileSystem fs) : fs(std::move(fs)) {}
+
+    /// "name.T" as TR-DOS names go: the type letter after the dot, the path separators as \\xNN too
+    static std::string PathOf(const MdosFile& f)
+    {
+        std::string out;
+        for (const char c : f.name + "." + std::string(1, f.type))
+            out += c == '/' ? "\\x2f" : c == '\\' ? "\\x5c" : Ascii(std::string(1, c));
+        return out;
+    }
+
+    bool All(std::vector<DiskFsEntry>& out, std::vector<std::string>&, std::string& error) override
+    {
+        std::vector<MdosFile> files;
+        if (!fs.List(files, error))
+            return false;
+        std::set<std::string> names;
+        for (const MdosFile& f : files)
+        {
+            DiskFsEntry e;
+            e.name = e.path = PathOf(f);
+            // A later file of a name already there: ~<slot> before the type
+            if (!names.insert(Lower(e.path)).second)
+            {
+                MdosFile renamed = f;
+                renamed.name += "~" + std::to_string(f.slot);
+                e.name = e.path = PathOf(renamed);
+                names.insert(Lower(e.path));
+            }
+            e.size = f.length;
+            e.start = f.start;
+            static const char letters[] = "HSPARWED";
+            for (int bit = 7; bit >= 0; bit--)
+                e.attributes += (f.attributes & (1 << bit)) ? letters[7 - bit] : '.';
+            e.fields = {{"type", static_cast<uint8_t>(f.type)},
+                        {"param2", f.param2},
+                        {"sector", f.first},
+                        {"slot", f.slot},
+                        {"extra", f.extra}};
+            out.push_back(std::move(e));
+        }
+        return true;
+    }
+
+    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    {
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        if (!Stat(path, entry, notes, error))
+            return false;
+        std::vector<MdosFile> files;
+        if (!fs.List(files, error))
+            return false;
+        for (const MdosFile& f : files)
+            if (f.slot == entry.Field("slot"))
+                return fs.Read(f, data, error);
+        error = "no " + path + " on the MDOS volume";
+        return false;
+    }
+
+    MdosFileSystem fs;
+};
+
+void DescribeMdos(const MdosFileSystem& fs, DiskFsVolume& volume)
+{
+    volume.fs = "mdos";
+    volume.system = "MDOS";
+    volume.label = Ascii(fs.Boot().name);
+    volume.bytes = static_cast<uint64_t>(fs.Boot().Sectors()) * MdosFileSystem::kSector;
+    volume.freeBytes = static_cast<int64_t>(fs.FreeSectors()) * MdosFileSystem::kSector;
+}
+
 void DescribeIsdos(const IsdosFileSystem& fs, DiskFsVolume& volume)
 {
     volume.fs = "isdos";
@@ -866,14 +1176,27 @@ void DiskFs::Probe()
 
     if (_floppy)
     {
-        if (TrdosCatalog::IsTrdos(*_floppy))
+        // ATM CP/M before TR-DOS: its reserved cylinder 0 often holds an empty TR-DOS catalogue, which is no volume
+        // then
+        CpmFileSystem cpm = CpmFileSystem::AtmFloppy(*_floppy);
+        const bool isCpm = cpm.IsCpm();
+        if (isCpm)
+        {
+            DiskFsVolume v;
+            v.id = "cpm";
+            DescribeCpm(cpm, v);
+            v.bytes = static_cast<uint64_t>(_floppy->getCylinders()) * _floppy->getSides() * 16 * 256;
+            add(std::move(v), std::make_unique<CpmDriver>(std::move(cpm)));
+        }
+        TrdosCatalog catalog;
+        const bool parsed = catalog.Parse(*_floppy);
+        if (TrdosCatalog::IsTrdos(*_floppy) && !(isCpm && (!parsed || catalog.FileCount() == 0)))
         {
             DiskFsVolume v;
             v.id = v.fs = "trdos";
             v.system = "TR-DOS";
             v.writable = true;
-            TrdosCatalog catalog;
-            if (catalog.Parse(*_floppy))
+            if (parsed)
                 v.freeBytes = static_cast<int64_t>(catalog.FreeSectors()) * 256;
             // The disk title: 8 bytes at #F5 of the info sector (track 0, sector 9)
             DiskImage::Track* track0 = _floppy->getTrack(0);
@@ -886,6 +1209,16 @@ void DiskFs::Probe()
             }
             v.bytes = static_cast<uint64_t>(_floppy->getCylinders()) * _floppy->getSides() * 16 * 256;
             add(std::move(v), std::make_unique<TrdosDriver>(*_floppy));
+        }
+        // MDOS before FAT and +3DOS: its 512-byte sectors carry no BPB, and its data may pass for a CP/M directory
+        MdosFileSystem mdos = MdosFileSystem::OnDisk(*_floppy);
+        if (mdos.Open())
+        {
+            DiskFsVolume v;
+            v.id = "mdos";
+            DescribeMdos(mdos, v);
+            add(std::move(v), std::make_unique<MdosDriver>(std::move(mdos)));
+            return;
         }
         // FAT before +3DOS: a PC disk has 512-byte sectors too, and its data area may pass for a CP/M directory
         // Writable: whether the disk may change is the caller's (a write-protected drive, a read-only medium)
@@ -909,6 +1242,20 @@ void DiskFs::Probe()
             v.writable = true;
             v.bytes = static_cast<uint64_t>(floppy->SectorCount()) * kSector;
             add(std::move(v), std::make_unique<Plus3Driver>(*_floppy));
+        }
+        // MB-02 before iS-DOS: both keep 1024-byte sectors, and the boot's formatter version sits where an iS-DOS
+        // descriptor keeps its geometry
+        Mb02FileSystem mb02 = Mb02FileSystem::OnDisk(*_floppy);
+        if (mb02.Open())
+        {
+            DiskFsVolume v;
+            v.id = v.fs = "mb02";
+            v.system = "MB-02 BS-DOS";
+            v.label = Ascii(mb02.Boot().name);
+            v.bytes = static_cast<uint64_t>(mb02.Boot().Sectors()) * Mb02FileSystem::kSector;
+            v.freeBytes = static_cast<int64_t>(mb02.FreeSectors()) * Mb02FileSystem::kSector;
+            add(std::move(v), std::make_unique<Mb02Driver>(std::move(mb02)));
+            return;
         }
         IsdosFileSystem isdos = IsdosFileSystem::OnDisk(*_floppy);
         if (isdos.IsIsdos())
@@ -970,6 +1317,126 @@ void DiskFs::Probe()
         }
     }
 
+    const std::optional<BlockGeometry> geometry = device.NativeGeometry();
+    const bool known = geometry && geometry->heads && geometry->sectors;
+    const uint64_t heads = known ? geometry->heads : kDefaultHeads;
+    const uint64_t sectors = known ? geometry->sectors : kDefaultSectors;
+
+    // ATM CP/M: the drives of the configuration record in sector 0, then the hard disk descriptors (.CDS) of the same
+    // unit kept on them (AUTOEXEC.SUB assigns them)
+    std::vector<AtmCpmChannel> channels;
+    if (CpmFileSystem::ParseAtmConfig(s0, channels))
+    {
+        std::set<std::vector<uint32_t>> seen;
+        for (size_t i = 0; i < channels.size(); i++)
+        {
+            const AtmCpmChannel c = channels[i];
+            if (c.driver != 4 || c.sectorSize != kSector || c.heads == 0 || c.sectors == 0 || c.heads > heads ||
+                c.sectors > sectors || !seen.insert({c.startCylinder, c.heads, c.sectors, c.reserved}).second)
+                continue;
+            const CpmGeometry g = c.Geometry();
+            const uint64_t first = static_cast<uint64_t>(c.startCylinder) * heads * sectors;
+            const uint64_t end = first + static_cast<uint64_t>(c.records) * 128 / kSector;
+            bool overlaps = false;
+            for (const auto& [from, to] : taken)
+                overlaps = overlaps || (first < to && from < end);
+            if (g.blocks == 0 || overlaps || end > device.SectorCount())
+                continue;
+            CpmFileSystem fs(CpmReaderAt(device, c, heads, sectors, std::make_shared<SectorCache>()), g);
+            std::string why;
+            if (!fs.IsCpm(&why))
+            {
+                if (c.drive)
+                    _notes.push_back(std::string("ATM CP/M drive ") + c.drive + ": has no directory (" + why + ")");
+                continue;
+            }
+            std::vector<CpmFile> files;
+            fs.List(files, why);
+            for (const CpmFile& f : files)
+            {
+                std::vector<uint8_t> text;
+                AtmCpmChannel cds;
+                if (f.user == 0 && f.type == "CDS" && f.size <= 4096 && fs.Read(f, text, why) &&
+                    CpmFileSystem::ParseCds(std::string(text.begin(), text.end()), cds) && cds.driver == 4 &&
+                    cds.unit == c.unit)
+                {
+                    cds.source = f.FullName();
+                    channels.push_back(cds);
+                }
+            }
+            DiskFsVolume v;
+            v.id = "cpm-" + std::to_string(c.startCylinder);
+            DescribeCpm(fs, v);
+            v.label = c.drive ? std::string(1, c.drive) + ":" : c.source;
+            v.offset = first * kSector;
+            v.bytes = static_cast<uint64_t>(c.records) * 128;
+            taken.emplace_back(first, end);
+            add(std::move(v), std::make_unique<CpmDriver>(std::move(fs)));
+        }
+    }
+
+    // MDOS3 (divIDE), as its firmware finds them (nmi.a80 ZPRACPAR, PARTSEL): the primary MBR partitions of type #49,
+    // else the whole disk from its first sector that starts with "SDOS" (a FAT16 card whose first files are the
+    // slots, an .md3 file). A partition is slots of 1693 sectors, an info sector ("SDOS", the slot's name) and a
+    // virtual disk
+    {
+        struct Mdos3Partition
+        {
+            uint64_t base = 0, count = 0;
+            uint32_t number = 0;  ///< 1..4 for an MBR partition, 0 for the whole disk
+        };
+        std::vector<Mdos3Partition> partitions;
+        if (s0[510] == 0x55 && s0[511] == 0xAA)
+            for (uint32_t number = 0; number < 4; number++)
+            {
+                const uint8_t* entry = s0 + 446 + number * 16;
+                const uint64_t first =
+                    entry[8] | entry[9] << 8 | entry[10] << 16 | static_cast<uint64_t>(entry[11]) << 24;
+                const uint64_t count =
+                    entry[12] | entry[13] << 8 | entry[14] << 16 | static_cast<uint64_t>(entry[15]) << 24;
+                if (entry[4] == 0x49 && count && first < device.SectorCount())
+                    partitions.push_back({first, std::min(count, device.SectorCount() - first), number + 1});
+            }
+        if (partitions.empty())
+        {
+            // The firmware searches the whole disk; here the first kMdos3Search sectors, where a FAT16 card of
+            // 512-byte clusters (MDOS3's how-to) keeps its first file
+            uint8_t s[kSector];
+            const uint64_t last = std::min<uint64_t>(device.SectorCount(), kMdos3Search);
+            for (uint64_t lba = 0; lba < last; lba++)
+                if (device.ReadSector(lba, s) && std::memcmp(s, "SDOS", 4) == 0)
+                {
+                    partitions.push_back({lba, device.SectorCount() - lba, 0});
+                    break;
+                }
+        }
+        for (const auto& [base, count, number] : partitions)
+        {
+            auto read = [&device, base = base](uint64_t lba, uint8_t* dst) {
+                return device.ReadSector(base + lba, dst);
+            };
+            for (const Mdos3Slot& slot : MdosFileSystem::Slots(read, count))
+            {
+                const uint64_t first = base + slot.firstSector;
+                MdosFileSystem fs([&device, first](uint32_t lsn, uint8_t* dst) {
+                    return lsn < MdosFileSystem::kSlotSectors - 1 && device.ReadSector(first + lsn, dst);
+                });
+                if (!fs.Open())
+                    continue;
+                DiskFsVolume v;
+                // A second #49 partition: the partition's number before the slot's
+                v.id = partitions.size() > 1 ? "mdos-p" + std::to_string(number) + "-" + std::to_string(slot.index)
+                                             : "mdos-" + std::to_string(slot.index);
+                DescribeMdos(fs, v);
+                if (!slot.name.empty())
+                    v.label = Ascii(slot.name);
+                v.offset = first * kSector;
+                taken.emplace_back(first - 1, first - 1 + MdosFileSystem::kSlotSectors);
+                add(std::move(v), std::make_unique<MdosDriver>(std::move(fs)));
+            }
+        }
+    }
+
     // iS-DOS: the whole disk is one device, or devices start at cylinder boundaries (the ATM-Turbo HDD driver)
     auto isdosAt = [&](uint64_t lba, const std::string& id) {
         for (const auto& [first, end] : taken)
@@ -995,10 +1462,7 @@ void DiskFs::Probe()
     };
     if (isdosAt(0, "isdos"))
         return;
-    const std::optional<BlockGeometry> geometry = device.NativeGeometry();
-    const uint64_t cylinder = geometry && geometry->heads && geometry->sectors
-                                  ? static_cast<uint64_t>(geometry->heads) * geometry->sectors
-                                  : kDefaultCylinderSectors;
+    const uint64_t cylinder = heads * sectors;
     const uint64_t cylinders = std::min(device.SectorCount() / cylinder, kMaxCylinderScan);
     for (uint64_t c = 1; c < cylinders; c++)
         isdosAt(c * cylinder, "isdos-" + std::to_string(c));

@@ -1,15 +1,16 @@
 // zxdisk - the files of any ZX Spectrum disk image through unreal-disk's DiskFs (unrealdisk/diskfs.h).
 //
-//   zxdisk volumes <image>                           the file systems on the disk: id, what it reads as, label, size, free
-//   zxdisk ls <image> [dir] [-r] [--volume id]       a directory's entries (-r: the whole tree under it)
-//   zxdisk cat <image> <file> [-o out] [--volume id] a file's bytes (to stdout without -o)
-//   zxdisk put <image> <host-file> [name] [--start n] [-o out-image] [--volume id]
+//   zxdisk volumes <image>                           the file systems on the disk: id, what it reads as, label, size,
+//   free zxdisk ls <image> [dir] [-r] [--volume id]       a directory's entries (-r: the whole tree under it) zxdisk
+//   cat <image> <file> [-o out] [--volume id] a file's bytes (to stdout without -o) zxdisk put <image> <host-file>
+//   [name] [--start n] [-o out-image] [--volume id]
 //                                                    a host file onto a floppy (TR-DOS NAME.T, +3DOS NAME.TYP, FAT and
 //                                                    iS-DOS dir/name.ext), an older file of that name replaced
 //   zxdisk rm <image> <file> [-r] [-o out-image] [--volume id]      delete a file or an empty directory (FAT, iS-DOS;
 //                                                    -r: a directory with everything in it)
-//   zxdisk mv <image> <file> <new-name> [-o out-image] [--volume id] rename a file (FAT, iS-DOS: move it or a directory)
-//   zxdisk mkdir <image> <dir> [-p] [-o out-image] [--volume id]    a new directory (FAT, iS-DOS; -p: the missing ones
+//   zxdisk mv <image> <file> <new-name> [-o out-image] [--volume id] rename a file (FAT, iS-DOS: move it or a
+//   directory) zxdisk mkdir <image> <dir> [-p] [-o out-image] [--volume id]    a new directory (FAT, iS-DOS; -p: the
+//   missing ones
 //                                                    on the way too)
 //   zxdisk attrib <image> <file> [+R-H|RA] [--time t] [-o out-image] [--volume id]
 //                                                    set or clear attribute letters (FAT RHSA, iS-DOS RWHD, +3DOS RSA;
@@ -21,8 +22,11 @@
 //   hard disk image is changed in place, or copied to -o first and the copy changed
 //
 // <image>: a floppy in any format unreal-disk reads (TRD, SCL, FDI, UDI, TD0, DSK, MGT, IMG, HFE, SCP, ...) with
-// TR-DOS, +3DOS, iS-DOS / TASiS or FAT12 (Sprinter DSS); else a raw hard disk or card image (512-byte sectors): MBR or
-// superfloppy FAT partitions (Estex DSS, NedoOS), iS-DOS devices (the whole disk or at cylinder boundaries).
+// TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS or FAT12 (Sprinter DSS); else a raw hard disk or card image
+// (512-byte sectors): MBR or superfloppy FAT partitions (Estex DSS, NedoOS), ATM CP/M partitions (the configuration
+// record in sector 0 and the .CDS descriptors), iS-DOS devices (the whole disk or at cylinder boundaries), MDOS3
+// virtual disks (an .md3 container, an MBR partition of type #49, slot files on a FAT16 card). ATM CP/M, MB-02 and MDOS
+// are read only.
 // `--offset n` skips n bytes of a hard disk image's header (HDF: 22 + the identify block).
 //
 // Exit code 0 on success, 1 on errors, 2 on bad usage.

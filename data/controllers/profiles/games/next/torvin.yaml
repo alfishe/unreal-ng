@@ -17,6 +17,9 @@
 #         at the same time: 29 falls of #D43B, 29 fires over an 80 s run. The lethal touch does not fire it.
 #   key   #86B5  a key is picked up (sound 1; the HUD shows "HOLDING" and the key): one fire at the green key of the
 #         first screen, none in thousands of frames of walking, jumping and climbing.
+#   land  #8BA8  the jump state is reset (`xor a / ld (#D441),a / ld a,8 / ld (#D443),a ...`), about 33 frames after the
+#         take-off: five Space taps gave five jumps and five lands, and over 120 s of random play (about 70 jumps) every
+#         `jump` was followed by one `land`.
 #   died  #B284  health reached 0 (sound #41, the game-over screen "Sadly Torvin has fallen"): +1 for a bat's last hit
 #         at health 1 (hurt did not fire), +1 for #D43B poked to 0.
 # TorvinDemo (the older demo): the same game with the data one #300 lower (health #D13B) and other code addresses, found
@@ -25,6 +28,8 @@
 #   the code lives in slot 3; +1 for a bat's last hit, hurt silent). No key probe: its keys were not reached.
 #
 # Left out (named so nobody repeats them):
+#   #B078 / #B080 / #B0C0 (sounds #41 / #40): the game-over screen; #B080 ("die2") fires about ten seconds after `died`, when
+#         the game restarts. Not shown to be a game event.
 #   #8C47 (RealmsDemo): sound 6, `dec (#D43B)`: seen once in the frame #D43B fell by one, never again, so not shown to
 #         be once per event (probably a Warden or Order guard contact; the fall of 32 and 45 pixels on floor 0 did not
 #         reach it). Its twins #83EB and #8C2A never ran. They are damage paths, not proven.
@@ -51,9 +56,11 @@ events:
   hurt: { probe: exec, address: "page:2:0x9B78" }
   key:  { probe: exec, address: "page:2:0x86B5" }
   died: { probe: exec, address: "page:2:0xB284" }
+  land: { probe: exec, address: "page:2:0x8BA8" }
 haptics:
   rules:
     - { on: jump, play: tick, target: handle.high }
+    - { on: land, play: knock, target: handle.low }
     - { on: hurt, play: hit }
     - { on: key, play: pickup }
     - { on: died, play: life-lost }

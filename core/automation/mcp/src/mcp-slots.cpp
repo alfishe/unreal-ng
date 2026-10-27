@@ -347,8 +347,8 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "folder in a CD slot is one anyway; the reply's report lists the tracks and every file not taken); create: auto, "
         "unformatted (raw), plus3 or trdos (floppies; trdos is formatted with an empty catalogue); create on an IDE / SD slot: size in bytes";
     schema["properties"]["volume"]["description"] =
-        "files / read / write / delete / rename / mkdir / attrib / label: the volume id from volumes (trdos, plus3, isdos, fat, p1-p4 MBR partitions, isdos-<cylinder> "
-        "iS-DOS devices of an ATM hard disk); left out: the first";
+        "files / read / write / delete / rename / mkdir / attrib / label: the volume id from volumes (trdos, plus3, isdos, cpm, mb02, mdos, fat, p1-p4 MBR partitions, cpm-<cylinder> "
+        "ATM CP/M partitions, isdos-<cylinder> iS-DOS devices of an ATM hard disk and mdos-<slot> MDOS3 virtual disks); left out: the first";
     schema["properties"]["out"]["description"] = "read: write the file's bytes to this host file instead of answering them";
     schema["properties"]["in"]["description"] = "write: the bytes from this host file";
     schema["properties"]["data"]["description"] = "write: the bytes in base64 (instead of 'in')";
@@ -386,7 +386,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "operations - create, modify, delete, rename, mkdir, rmdir - with the layer each touched), flatten (a composite by a "
         "named strategy: flat <path>, delta, commit - the graft base image takes everything, journaled - or write-back - "
         "the guest's file changes into the writable folder layers), volumes / files / read (the files on a disk in "
-        "a slot: TR-DOS, +3DOS, iS-DOS / TASiS floppies and ATM hard disk devices, FAT of Sprinter DSS and "
+        "a slot: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02 and MDOS (read only) floppies, ATM hard disk devices, MDOS3 virtual disks, FAT of Sprinter DSS and "
         "NedoOS floppies, hard disks and SD cards), write / delete / rename / mkdir (a file on that disk: write takes path "
         "the name, data base64 or in a host file, start, header, and replaces an older file of that name; rename "
         "takes to and moves directories too; delete with recursive:true takes a directory with its contents; mkdir makes "

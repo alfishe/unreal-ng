@@ -873,31 +873,55 @@ bool IsdosFileSystem::TakeSlot(CatalogueImage& c, std::vector<uint8_t>& bits, ui
     const uint32_t csize = Word(head + 14);
     if (nfile * 32 >= csize)
     {
-        // Full: a segmented catalogue grows by 32 bytes, by a block of its own when its blocks are full
-        if (c.continuous)
-        {
-            error = "the catalogue is full (a continuous catalogue does not grow)";
-            return false;
-        }
+        // Full: the catalogue grows by 32 bytes, by a block when its blocks are full. A segmented one (as the kernel)
+        // adds the block to its table; a continuous one (the kernel leaves it full) takes the block after it, else
+        // becomes segmented: a new table with its blocks as the first run and the new block as the second
         if (csize + 32 > c.blocks.size() * kBlock)
         {
-            uint8_t t[kBlock];
-            const uint32_t block = FirstFit(bits, _boot.blocks, 1);
-            if (!Block(c.table, t) || t[0] >= kMaxSegments || block == UINT32_MAX || c.blocks.size() >= kMaxCatalogueBlocks)
+            const std::vector<uint32_t> grow = GrowthBlocks(c, bits);
+            if (grow.empty())
             {
-                error = "the catalogue cannot grow (no free block, or its segment table is full)";
+                error = "the catalogue cannot grow (no free block, its segment table is full or it holds " +
+                        std::to_string(kMaxEntries) + " entries)";
                 return false;
             }
-            PutWord(t + 1 + 3 * t[0], block);
-            t[3 + 3 * t[0]] = 1;
-            t[0]++;
+            const uint32_t block = grow.back();
             const uint8_t zero[kBlock] = {};
-            if (!Put(block, zero) || !Put(c.table, t))
+            uint8_t t[kBlock] = {};
+            bool ok = Put(block, zero);
+            if (!c.continuous)
             {
-                error = "the catalogue's new block " + std::to_string(block) + " cannot be written";
+                ok = ok && Block(c.table, t);
+                PutWord(t + 1 + 3 * t[0], block);
+                t[3 + 3 * t[0]] = 1;
+                t[0]++;
+                ok = ok && Put(c.table, t);
+            }
+            else if (grow.size() == 2)
+            {
+                c.table = static_cast<uint16_t>(grow.front());
+                c.continuous = false;
+                t[0] = 2;
+                PutWord(t + 1, c.first);
+                t[3] = static_cast<uint8_t>(c.blocks.size());
+                PutWord(t + 4, block);
+                t[6] = 1;
+                head[11] = static_cast<uint8_t>(head[11] & ~kContinuous);
+                PutWord(head + 17, c.table);
+                ok = ok && Put(c.table, t);
+                // The parent's entry of it says segmented too (the root has none)
+                CatalogueImage parent;
+                uint32_t entry = 0;
+                if (ok && c.first != _boot.root)
+                    ok = LoadCatalogue(Word(head + 12), parent, error) && FollowHead(parent, c, entry) && StoreEntry(parent, entry);
+            }
+            if (!ok)
+            {
+                error = "the catalogue's new block " + std::to_string(block) + " cannot be written" + (error.empty() ? "" : ": " + error);
                 return false;
             }
-            Mark(bits, block, true);
+            for (const uint32_t b : grow)
+                Mark(bits, b, true);
             c.blocks.push_back(block);
             c.raw.resize(c.blocks.size() * kBlock, 0);
             head = c.raw.data();
@@ -1213,8 +1237,12 @@ bool IsdosFileSystem::Rename(const std::string& path, const std::string& to, std
     }
     const std::vector<uint8_t> before = bits;
     uint32_t index = 0;
+    const bool continuous = target.continuous;
     if (!TakeSlot(target, bits, index, error))
         return false;
+    uint32_t held = 0;
+    if (continuous != target.continuous && slot.catalogue.first == Word(target.raw.data() + 12))
+        FollowHead(slot.catalogue, target, held);  // the target became segmented: its entry here says so too
     std::memcpy(target.raw.data() + index * 32, e, 32);
     std::memcpy(target.raw.data() + index * 32, name, 11);
     target.raw[22]++;
@@ -1298,17 +1326,53 @@ bool IsdosFileSystem::Subtree(uint16_t first, std::vector<std::pair<uint16_t, ui
     return true;
 }
 
-uint32_t IsdosFileSystem::GrowthBlock(const CatalogueImage& c, const std::vector<uint8_t>& bits) const
+std::vector<uint32_t> IsdosFileSystem::GrowthBlocks(const CatalogueImage& c, const std::vector<uint8_t>& bits) const
 {
     const uint8_t* head = c.raw.data();
     const uint32_t nfile = head[21];
     for (uint32_t i = 1; i < nfile; i++)
         if (!(head[i * 32 + 11] & kExists))
-            return UINT32_MAX;
+            return {};
     const uint32_t csize = Word(head + 14);
-    if (c.continuous || nfile * 32 < csize || csize + 32 <= c.blocks.size() * kBlock)
-        return UINT32_MAX;
-    return FirstFit(bits, _boot.blocks, 1);
+    if (nfile * 32 < csize || csize + 32 <= c.blocks.size() * kBlock || c.blocks.size() >= kMaxCatalogueBlocks)
+        return {};
+    if (!c.continuous)
+    {
+        uint8_t t[kBlock];
+        const uint32_t block = FirstFit(bits, _boot.blocks, 1);
+        if (block == UINT32_MAX || !Block(c.table, t) || t[0] >= kMaxSegments)
+            return {};
+        return {block};
+    }
+    const uint32_t next = c.blocks.back() + 1;
+    if (next < _boot.blocks && !Used(bits, next))
+        return {next};
+    std::vector<uint8_t> trial = bits;
+    const uint32_t table = FirstFit(trial, _boot.blocks, 1);
+    if (table == UINT32_MAX)
+        return {};
+    Mark(trial, table, true);
+    const uint32_t block = FirstFit(trial, _boot.blocks, 1);
+    if (block == UINT32_MAX)
+        return {};
+    return {table, block};
+}
+
+bool IsdosFileSystem::FollowHead(CatalogueImage& parent, const CatalogueImage& c, uint32_t& index)
+{
+    const uint8_t* head = c.raw.data();
+    for (uint32_t i = 1; i < parent.raw[21] && (i + 1) * 32 <= parent.raw.size(); i++)
+    {
+        uint8_t* e = parent.raw.data() + i * 32;
+        if ((e[11] & (kExists | kCatalogue)) == (kExists | kCatalogue) && e[11] != 0xFF && Word(e + 19) == c.first)
+        {
+            e[11] = static_cast<uint8_t>((e[11] & ~kContinuous) | (head[11] & kContinuous));
+            PutWord(e + 17, Word(head + 17));
+            index = i;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool IsdosFileSystem::MakeCatalogue(const std::string& path, const WriteOptions& options, std::string& error)
@@ -1350,7 +1414,7 @@ bool IsdosFileSystem::MakeCatalogue(const std::string& path, const WriteOptions&
     // As $crfil lays it out: the slot (a growing parent takes its block first), the table block, one run of blocks
     const uint32_t count = _boot.chic ? 3 : 2;
     std::vector<uint8_t> trial = bits;
-    if (const uint32_t grow = GrowthBlock(parent, trial); grow != UINT32_MAX)
+    for (const uint32_t grow : GrowthBlocks(parent, trial))
         Mark(trial, grow, true);
     const uint32_t table = FirstFit(trial, _boot.blocks, 1);
     if (table != UINT32_MAX)

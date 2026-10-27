@@ -302,6 +302,10 @@ bool LoaderDSK::parseTrack(DiskImage* image, uint8_t cylinder, uint8_t side, con
     spec.idOnly.assign(sectorCount, 0);
     spec.sectorDataLengths.assign(sectorCount, 0);
 
+    // CPDRead (v3.24) writes a 128-byte sector into a 256-byte slot of the file, its data then zero padding, so the
+    // sectors after it start 256 bytes on; the Extended DSK format has the sector data back to back
+    const bool cpdreadSlots = extended && _creator.rfind(CPDREAD_CREATOR, 0) == 0;
+
     const uint8_t* src = info + TRACK_INFO_SIZE;
     for (size_t i = 0; i < sectorCount; i++)
     {
@@ -319,16 +323,25 @@ bool LoaderDSK::parseTrack(DiskImage* image, uint8_t cylinder, uint8_t side, con
         se.stored = extended ? readU16(entry + 6) : storedSizeStandard(n);
         se.src = src;
 
+        const bool noDataMark = (se.st1 & (ST1_NO_DATA | ST1_MISSING_ADDRESS_MARK)) != 0 || (se.st2 & ST2_MISSING_DATA_MARK) != 0;
         if (src + se.stored > dataEnd)
         {
-            warnings.push_back(StringHelper::Format("DSK track cylinder %d side %d: sector data truncated (sector %d, %zu bytes expected)",
-                                                    cylinder, side, entry[2], se.stored));
-            return false;
+            // The slots of a CPDRead track can run past the block it sized for the packed data: what falls out is
+            // the dump of a sector without a data field
+            if (cpdreadSlots && noDataMark && src >= dataEnd)
+            {
+                se.stored = 0;
+            }
+            else
+            {
+                warnings.push_back(StringHelper::Format("DSK track cylinder %d side %d: sector data truncated (sector %d, %zu bytes expected)",
+                                                        cylinder, side, entry[2], se.stored));
+                return false;
+            }
         }
-        src += se.stored;
+        src += (cpdreadSlots && se.stored == CPDREAD_SLOTTED_SIZE) ? CPDREAD_SLOT_SIZE : se.stored;
 
-        const bool idOnly = (se.st1 & (ST1_NO_DATA | ST1_MISSING_ADDRESS_MARK)) != 0 || (se.st2 & ST2_MISSING_DATA_MARK) != 0 ||
-                            (extended && se.stored == 0);
+        const bool idOnly = noDataMark || (extended && se.stored == 0);
         spec.idOnly[i] = idOnly ? 1 : 0;
 
         // N >= 4 (Speedlock +3 and the like, 8 KB sectors bigger than the track): the data field holds what was

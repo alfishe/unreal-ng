@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """media / load_software / rzx_playback: the slots, loading a tape from testdata, errors name the file, the files of
-a disk, writing a file onto a TR-DOS disk"""
+a disk, writing a file onto a TR-DOS disk, an ATM CP/M floppy read"""
 
 import base64
 import os
@@ -12,6 +12,9 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')
 TAPE = os.path.join(ROOT, 'testdata', 'contention', 'rak-timing-test', 'timing.tap')
 SNAPSHOT = os.path.join(ROOT, 'testdata', 'loaders', 'sna', '7threality.sna')
 ISDOS = os.path.join(ROOT, 'testdata', 'loaders', 'isdos', 'ISDOS50.FDI')
+ATM_CPM = os.path.join(ROOT, 'testdata', 'machines', 'atm', 'cpm', 'prince.trd')
+MB02 = os.path.join(ROOT, 'testdata', 'loaders', 'mb02', 'SYS308.MB2')
+MDOS = os.path.join(ROOT, 'testdata', 'loaders', 'mdos', 'bootdisk.d80')
 
 
 def test_slots_listed(s):
@@ -161,6 +164,56 @@ def test_disk_attributes_time_and_label(s):
     expect(r.is_error and 'no file attributes' in r.text, 'TR-DOS has no attributes', r.text)
     for slot in ('A', 'B'):
         s.call('media', {'action': 'eject', 'slot': slot, 'discard': True}, ok=False)
+
+
+def test_disk_atm_cpm(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': ATM_CPM})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'volumes', 'slot': 'A'})
+    expect('cpm: ATM CP/M' in r.text and 'read only' in r.text, 'the CP/M volume, read only, in the text', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A', 'recursive': True})
+    expect('PRINCE.DOC 11904 bytes' in r.text and 'USER15/CONFIG.DAT' in r.text, 'the files and user 15 in the text',
+           r.text[:800])
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'PRINCE.DOC'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(base64.b64decode(data)[7:23] == b'Prince of Persia', 'the bytes in the text', r.text[:200])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'NEW.TXT', 'data': 'AA=='}, ok=False)
+    expect(r.is_error and 'read only' in r.text, 'a write is refused', r.text)
+    s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
+
+
+def test_disk_mb02(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': MB02})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'volumes', 'slot': 'A'})
+    expect('mb02: MB-02 BS-DOS' in r.text and 'System 308' in r.text and 'read only' in r.text,
+           'the MB-02 volume, its name, read only, in the text', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A', 'recursive': True})
+    expect('BSdos308 23450 bytes' in r.text and 'Small demo/bbicons' in r.text and 'tma~10' in r.text,
+           'the files, a directory and a second name in the text', r.text[:800])
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'Small demo/cdebusy'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(len(base64.b64decode(data)) == 768, 'the bytes in the text', r.text[:200])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'NEW', 'data': 'AA=='}, ok=False)
+    expect(r.is_error and 'read only' in r.text, 'a write is refused', r.text)
+    s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
+
+
+def test_disk_mdos(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': MDOS})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'volumes', 'slot': 'A'})
+    expect('mdos: MDOS' in r.text and 'bootdisk' in r.text and 'read only' in r.text,
+           'the MDOS volume, its name, read only, in the text', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A'})
+    expect('run.P 94 bytes' in r.text and 'H...RWED' in r.text, 'the files and their attributes in the text',
+           r.text[:800])
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'bootconf.B'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(len(base64.b64decode(data)) == 512, 'the bytes in the text', r.text[:200])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'new.B', 'data': 'AA=='}, ok=False)
+    expect(r.is_error and 'read only' in r.text, 'a write is refused', r.text)
+    s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
 
 
 if __name__ == '__main__':
