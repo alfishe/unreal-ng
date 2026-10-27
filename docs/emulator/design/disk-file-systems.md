@@ -34,7 +34,7 @@ the label, its offset and size on the disk and the free bytes (-1 when not known
 | Medium | Probe (in this order) | Volume ids |
 |---|---|---|
 | Floppy | ATM CP/M (the directory at #2000); TR-DOS (the system sector 9: label at +0xF5, free sectors; an empty catalogue on an ATM CP/M disk is no volume); MDOS (`SDOS` in the boot sector, the FAT reserving LSN 0-13; it ends the probe); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); +3DOS (skipped when FAT matched); MB-02 (the boot sector, the FAT, the root in the DIRS sector; it ends the probe); iS-DOS / TASiS (the descriptor in block 0) | `cpm`, `trdos`, `mdos`, `fat`, `plus3`, `mb02`, `isdos` |
-| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them; MDOS3: the slots of each MBR partition of type #31, or of the whole device when sector 0 is a slot's info sector (an `.md3` file); iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary outside the FAT and CP/M partitions | `fat`, `p1`..`p4`, `cpm-<cylinder>`, `mdos-<slot>`, `isdos`, `isdos-<cylinder>` |
+| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them; MDOS3: the slots of each primary MBR partition of type #49, else of the whole device from the first sector in its first 4096 that starts with `SDOS` (an `.md3` file, slot files copied first onto a FAT16 card); iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary outside the FAT and CP/M partitions | `fat`, `p1`..`p4`, `cpm-<cylinder>`, `mdos-<slot>`, `isdos`, `isdos-<cylinder>` |
 
 A cylinder is the device's native geometry (heads x sectors), else 16 x 63 as the ATM-Turbo HDD driver lays out its
 devices (`ATM_HDD.HDD` has devices at cylinders 70, 103, ...). At most 4096 cylinders are scanned. A device found
@@ -143,17 +143,21 @@ Didaktik D40 / D80, MDOS 1 / 2 and the MDOS3 virtual disks of divIDE (`mdosfs.h`
   sector with n bytes (#E00: all 512), else the next LSN.
 - **Directory** (LSN 6-13): 128 entries of 32 bytes. #00 the type letter (`P` program, `B` bytes, `N` / `C` arrays,
   `S` snapshot, `Q` sequential; #00 and #E5 a free entry), #01 the name (10), #0B the length (24 bits with #15), #0D
-  the start, #0F the second parameter (a program's length without its variables), #11 the first LSN, #13 an
-  undocumented byte, #14 the attributes `HSPARWED` (bit 7 to bit 0). Data from LSN 14 on.
-- **MDOS3**: a partition (MBR type #31) is slots of 1693 sectors: an info sector (`SDOS`, the slot's 32-character
-  name at 4: the volume's `label`) and a 94 x 2 x 9 disk (MDOS3 enlarges the 80 cylinders of a D80). An `.md3` file
-  is such a partition alone; a slot whose info sector has no `SDOS` is empty.
+  the start, #0F the second parameter (a program's length without its variables), #11 the first LSN, #13 the flag
+  byte of a headless file (type `H`, the tape emulator's), #14 the attributes `HSPARWED` (bit 7 to bit 0). Data from LSN 14 on.
+- **MDOS3**: a partition (primary MBR entry of type #49) is slots of 1693 sectors: an info sector (`SDOS`, the slot's
+  32-character name at 4: the volume's `label`, `0` / `1` at 36 for write protection, #E5 past it) and a 94 x 2 x 9
+  disk (MDOS3 enlarges the 80 cylinders of a D80). An `.md3` file is such a partition alone; a slot whose info sector
+  has no `SDOS` is empty. With no #49 partition the firmware (`nmi.a80`) takes the whole disk from its first sector
+  that starts with `SDOS`: the how-to's card is FAT16 with 512-byte clusters whose first files, copied first onto an
+  empty volume, are the slots in a row (`0bootdisk` a whole `.md3`, then `1infosec.bin` + `1moved.d80` +
+  `1space.bin`). The volumes are numbered from that sector; with two #49 partitions or more, `mdos-p<n>-<slot>`.
 
 A volume is taken when the boot sector has the mark and a geometry of 1..94 cylinders and 1..18 sectors a track, and
 the FAT reserves LSN 0-13. A chain that loops, leaves the disk or holds fewer bytes than the length does not read. On
 `mdos3-discs1.md3` (the MDOS3 distribution, 99 slots) the 19 disks give their 860 files; two on slot 13 have short
 chains in the image itself (`TOOLS_3_27.P`, `zdrojak.B`). `testdata/loaders/mdos/` keeps its boot disk as a D80 and
-its first 3 slots.
+its first 3 slots, and a FAT16 card built per the how-to from its `my_CF_16M` files (`MdosFs.Mdos3CardOfFat16Files`).
 
 ## Surfaces
 
@@ -268,7 +272,8 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
   partition found names it.
 - MB-02 is read only; floppies only. The BS-DOS 309 hard disk (a #47 partition of virtual discs) is not read: no
   image to check its layout. MB-01 (BS-DOS 52-105, #01 at #03) is not read.
-- MDOS is read only. An MDOS3 partition is found by its MBR type #31 (the MDOS3 documentation's); no real hard disk
-  image to check it, only the `.md3` container. The info sector's bytes past the name are not read.
+- MDOS is read only. An MDOS3 partition is found by its MBR type #49 (`nmi.a80`); without one the first `SDOS` sector
+  is looked for in the first 4096 sectors (2 MiB) only, the firmware searches the whole disk. The info sector's write
+  protection byte is not read.
 - Not read: other file systems of a hard disk.
 - An iS-DOS device on a hard disk is found at a cylinder boundary only.

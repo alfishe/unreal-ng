@@ -29,6 +29,8 @@ constexpr uint64_t kDefaultHeads = 16;
 constexpr uint64_t kDefaultSectors = 63;
 /// iS-DOS devices are looked for at this many cylinder boundaries at most (a 2 GB disk of 16 x 63 cylinders)
 constexpr uint64_t kMaxCylinderScan = 4096;
+/// Without a #49 partition the first MDOS3 slot is looked for in this many sectors from LBA 0 (2 MiB)
+constexpr uint64_t kMdos3Search = 4096;
 
 std::string Lower(std::string text)
 {
@@ -1373,12 +1375,18 @@ void DiskFs::Probe()
         }
     }
 
-    // MDOS3 (divIDE): MBR partitions of type #31 (49), else the whole disk when it starts with a slot (an .md3 file);
-    // a partition is slots of 1693 sectors, an info sector ("SDOS", the slot's name) and a virtual disk
+    // MDOS3 (divIDE), as its firmware finds them (nmi.a80 ZPRACPAR, PARTSEL): the primary MBR partitions of type #49,
+    // else the whole disk from its first sector that starts with "SDOS" (a FAT16 card whose first files are the
+    // slots, an .md3 file). A partition is slots of 1693 sectors, an info sector ("SDOS", the slot's name) and a
+    // virtual disk
     {
-        std::vector<std::pair<uint64_t, uint64_t>> partitions;
-        if (s0[510] == 0x55 && s0[511] == 0xAA && std::memcmp(s0, "SDOS", 4) != 0)
+        struct Mdos3Partition
         {
+            uint64_t base = 0, count = 0;
+            uint32_t number = 0;  ///< 1..4 for an MBR partition, 0 for the whole disk
+        };
+        std::vector<Mdos3Partition> partitions;
+        if (s0[510] == 0x55 && s0[511] == 0xAA)
             for (uint32_t number = 0; number < 4; number++)
             {
                 const uint8_t* entry = s0 + 446 + number * 16;
@@ -1386,13 +1394,23 @@ void DiskFs::Probe()
                     entry[8] | entry[9] << 8 | entry[10] << 16 | static_cast<uint64_t>(entry[11]) << 24;
                 const uint64_t count =
                     entry[12] | entry[13] << 8 | entry[14] << 16 | static_cast<uint64_t>(entry[15]) << 24;
-                if (entry[4] == 0x31 && count && first < device.SectorCount())
-                    partitions.emplace_back(first, std::min(count, device.SectorCount() - first));
+                if (entry[4] == 0x49 && count && first < device.SectorCount())
+                    partitions.push_back({first, std::min(count, device.SectorCount() - first), number + 1});
             }
+        if (partitions.empty())
+        {
+            // The firmware searches the whole disk; here the first kMdos3Search sectors, where a FAT16 card of
+            // 512-byte clusters (MDOS3's how-to) keeps its first file
+            uint8_t s[kSector];
+            const uint64_t last = std::min<uint64_t>(device.SectorCount(), kMdos3Search);
+            for (uint64_t lba = 0; lba < last; lba++)
+                if (device.ReadSector(lba, s) && std::memcmp(s, "SDOS", 4) == 0)
+                {
+                    partitions.push_back({lba, device.SectorCount() - lba, 0});
+                    break;
+                }
         }
-        else if (std::memcmp(s0, "SDOS", 4) == 0)
-            partitions.emplace_back(0, device.SectorCount());
-        for (const auto& [base, count] : partitions)
+        for (const auto& [base, count, number] : partitions)
         {
             auto read = [&device, base = base](uint64_t lba, uint8_t* dst) {
                 return device.ReadSector(base + lba, dst);
@@ -1406,7 +1424,9 @@ void DiskFs::Probe()
                 if (!fs.Open())
                     continue;
                 DiskFsVolume v;
-                v.id = "mdos-" + std::to_string(slot.index);
+                // A second #49 partition: the partition's number before the slot's
+                v.id = partitions.size() > 1 ? "mdos-p" + std::to_string(number) + "-" + std::to_string(slot.index)
+                                             : "mdos-" + std::to_string(slot.index);
                 DescribeMdos(fs, v);
                 if (!slot.name.empty())
                     v.label = Ascii(slot.name);

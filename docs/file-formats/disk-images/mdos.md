@@ -39,3 +39,5 @@ byte for byte (`MdosFs.D80DiskListsAndReads`).
 
 An `.md3` file is not a floppy: it is an MDOS3 partition alone (slots of 1693 sectors, an info sector and a 94 x 2 x 9
 disk each). It goes into a hard disk slot, or to `zxdisk`, as a raw block image; every slot is a volume `mdos-<slot>`.
+On a hard disk or card the slots sit in a primary MBR partition of type #49, else from the disk's first
+sector that starts with `SDOS` (the how-to's FAT16 card of slot files).

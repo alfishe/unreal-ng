@@ -182,21 +182,84 @@ TEST(MdosFs, Mdos3ContainerAndPartitionSlots)
     EXPECT_EQ(entries[3].name, "tools128.B");
     EXPECT_EQ(entries[3].size, 25438u);
 
-    // The same slots in an MBR partition of type #31 (MDOS3's MAKER) from sector 2048
+    // The same slots in an MBR partition of type #49 (MDOS3's MAKER) from sector 2048, and its first slot again in a
+    // second one: the partition's number names the volumes then
     std::vector<uint8_t> disk(2048 * 512, 0);
-    uint8_t* entry = disk.data() + 446;
-    entry[4] = 0x31;
-    entry[9] = 0x08;  // first 2048
-    const uint32_t count = 3 * 1693;
-    std::memcpy(entry + 12, &count, 4);  // little endian on every host this builds for
+    auto partition = [&disk](int number, uint8_t type, uint32_t first, uint32_t count) {
+        uint8_t* entry = disk.data() + 446 + number * 16;
+        entry[4] = type;
+        for (int k = 0; k < 4; k++)
+        {
+            entry[8 + k] = static_cast<uint8_t>(first >> (8 * k));
+            entry[12 + k] = static_cast<uint8_t>(count >> (8 * k));
+        }
+    };
+    partition(0, 0x49, 2048, 3 * 1693);
     disk[510] = 0x55;
     disk[511] = 0xAA;
-    disk.insert(disk.end(), md3.begin(), md3.end());
-    MemoryDevice hdd(disk);
+    std::vector<uint8_t> one = disk;
+    one.insert(one.end(), md3.begin(), md3.end());
+    MemoryDevice hdd(one);
     DiskFs partitioned(hdd);
     ASSERT_EQ(partitioned.Volumes().size(), 3u);
+    EXPECT_EQ(partitioned.Volumes()[1].id, "mdos-1");
     EXPECT_EQ(partitioned.Volumes()[1].offset, (2048u + 1693 + 1) * 512);
     EXPECT_EQ(ReadFile(partitioned, "mdos-1", "overlays.B"), overlays);
+
+    partition(1, 0x49, 2048 + 3 * 1693, 1693);
+    std::vector<uint8_t> two = disk;
+    two.insert(two.end(), md3.begin(), md3.end());
+    two.insert(two.end(), md3.begin(), md3.begin() + 1693 * 512);
+    MemoryDevice hdd2(two);
+    DiskFs both(hdd2);
+    ASSERT_EQ(both.Volumes().size(), 4u);
+    EXPECT_EQ(both.Volumes()[2].id, "mdos-p1-2");
+    EXPECT_EQ(both.Volumes()[3].id, "mdos-p2-0");
+    EXPECT_EQ(both.Volumes()[3].label, "BOOT 20.1.2006");
+
+    // Another type (#31 here) is no MDOS3 partition: the firmware takes the whole disk and finds the slots from
+    // the first "SDOS" sector on, wherever it is
+    partition(0, 0x31, 2048, 3 * 1693);
+    partition(1, 0, 0, 0);
+    std::vector<uint8_t> other = disk;
+    other.resize(other.size() - 100 * 512);  // the slots 1948 sectors from the start
+    other.insert(other.end(), md3.begin(), md3.end());
+    MemoryDevice hdd3(other);
+    DiskFs searched(hdd3);
+    ASSERT_EQ(searched.Volumes().size(), 3u);
+    EXPECT_EQ(searched.Volumes()[0].offset, (1948u + 1) * 512);
+}
+
+TEST(MdosFs, Mdos3CardOfFat16Files)
+{
+    // MDOS3's how-to, version 1: a FAT16 partition of 512-byte clusters whose first files are the slots: 0bootdisk,
+    // then 1infosec.bin + 1moved.d80 + 1space.bin (the files of my_CF_16M in the MDOS3 2010-03-02 distribution)
+    MemoryDevice card(Bytes("loaders/mdos/mdos3-cf-fat16.img"));
+    DiskFs fs(card);
+    const std::vector<DiskFsVolume>& volumes = fs.Volumes();
+    ASSERT_EQ(volumes.size(), 3u);
+    EXPECT_EQ(volumes[0].id, "p1");
+    EXPECT_EQ(volumes[0].fs, "fat16");
+    EXPECT_EQ(volumes[1].id, "mdos-0");
+    EXPECT_EQ(volumes[1].label, "bootdisk");
+    EXPECT_EQ(volumes[1].offset, (116u + 1) * 512);  // the first cluster of 0bootdisk, its info sector
+    EXPECT_EQ(volumes[2].id, "mdos-1");
+    EXPECT_EQ(volumes[2].label, "moved disk (.d80 format)");
+    EXPECT_EQ(volumes[2].bytes, 737280u);
+
+    // The slot is the D80 file it was copied from, byte for byte, and lists as one
+    const std::vector<uint8_t> file = ReadFile(fs, "p1", "1moved.d80");
+    ASSERT_EQ(file.size(), 737280u);
+    std::vector<uint8_t> slot(file.size());
+    for (uint64_t k = 0; k < slot.size() / 512; k++)
+        ASSERT_TRUE(card.ReadSector(volumes[2].offset / 512 + k, slot.data() + k * 512));
+    EXPECT_TRUE(file == slot);
+    std::vector<DiskFsEntry> entries;
+    std::string error;
+    ASSERT_TRUE(fs.List("mdos-1", "", false, entries, error)) << error;
+    ASSERT_EQ(entries.size(), 11u);
+    EXPECT_EQ(entries[1].name, "intro4yes!.B");
+    EXPECT_EQ(ReadFile(fs, "mdos-1", entries[1].path).size(), entries[1].size);
 }
 
 TEST(MdosFs, LoopingChainFailsAndOtherDisksAreNoMdos)

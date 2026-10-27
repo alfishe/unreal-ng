@@ -43,7 +43,7 @@ struct MdosFile
     uint16_t start = 0;      ///< 13: the load address, a program's autostart line
     uint16_t param2 = 0;     ///< 15: a program's length without its variables
     uint16_t first = 0;      ///< 17: the first sector
-    uint8_t extra = 0;       ///< 19 (undocumented)
+    uint8_t extra = 0;       ///< 19: the flag byte of a headless file (type 'H', the tape emulator's)
     uint8_t attributes = 0;  ///< 20: H S P A R W E D, bit 7 to bit 0
 };
 
