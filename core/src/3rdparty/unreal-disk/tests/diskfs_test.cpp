@@ -7,6 +7,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <memory>
 
 #include "testdata.h"
 #include "unrealdisk/blockdevice.h"
@@ -270,11 +271,12 @@ TEST(DiskFs_Test, FatOnAFloppyAndAHardDisk)
         EXPECT_NE(error.find("not found"), std::string::npos) << error;
 
         // The space is back; a file larger than the free space is refused before anything changes
-        DiskFs again = fs.get() == filesystems[0].get() ? DiskFs(*floppy) : DiskFs(hdd);
-        EXPECT_EQ(again.Volumes()[0].freeBytes, free);
-        EXPECT_FALSE(again.Write("", "HUGE.BIN", std::vector<uint8_t>(static_cast<size_t>(free) + 1), {}, error));
+        auto again =
+            fs.get() == filesystems[0].get() ? std::make_unique<DiskFs>(*floppy) : std::make_unique<DiskFs>(hdd);
+        EXPECT_EQ(again->Volumes()[0].freeBytes, free);
+        EXPECT_FALSE(again->Write("", "HUGE.BIN", std::vector<uint8_t>(static_cast<size_t>(free) + 1), {}, error));
         EXPECT_NE(error.find("free"), std::string::npos) << error;
-        EXPECT_FALSE(Exists(again, "HUGE.BIN"));
+        EXPECT_FALSE(Exists(*again, "HUGE.BIN"));
     }
 }
 

@@ -320,7 +320,6 @@ bool CpmFileSystem::List(std::vector<CpmFile>& out, std::string& error) const
         uint32_t extent = 0;
         uint32_t first = UINT32_MAX;
     };
-    // A fixed-size key: gcc 16 at -O3 sees an unbounded memcmp in vector's <=> (-Wstringop-overread)
     std::map<std::array<uint8_t, 12>, size_t> index;
     std::vector<Last> last;
     for (uint32_t i = 0; i < _geometry.entries; i++)
@@ -329,9 +328,9 @@ bool CpmFileSystem::List(std::vector<CpmFile>& out, std::string& error) const
         if (e[0] > 15)
             continue;
         std::vector<uint8_t> key = Key(e);
-        std::array<uint8_t, 12> fixed;
-        std::copy_n(key.begin(), fixed.size(), fixed.begin());
-        auto [it, fresh] = index.emplace(fixed, out.size());
+        std::array<uint8_t, 12> sorted;
+        std::copy_n(key.begin(), sorted.size(), sorted.begin());
+        auto [it, fresh] = index.emplace(sorted, out.size());
         if (fresh)
         {
             CpmFile f;
