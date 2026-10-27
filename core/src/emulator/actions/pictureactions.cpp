@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -11,7 +12,9 @@
 #include "emulator/actions/actionparams.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/execution/automationgate.h"
+#include "emulator/video/screen.h"
 #include "emulator/video/viewportcontrol.h"
 #include "emulator/video/windowdisplay.h"
 
@@ -124,6 +127,80 @@ Executor Switch(const char* what, Field field, std::function<bool(const WindowDi
 }
 
 /// endregion </Rules and results>
+
+/// region <Temporal effects>
+
+/// The temporal effects as the GUI's Temporal Effects dialog has them: one switch, then one effect at a time - frame
+/// blending (the window's) or the ZX DLSS de-flicker (the screen's). The effect and the de-flicker algorithm a switch
+/// turns back on are kept while it is off (process-wide, like the window)
+struct TemporalChoice
+{
+    std::mutex mutex;
+    bool dlss = false;
+    std::string algorithm = "mod-tpgwafsd";
+};
+
+TemporalChoice& Temporal()
+{
+    static TemporalChoice choice;
+    return choice;
+}
+
+Screen* ScreenOf(Emulator& emulator)
+{
+    EmulatorContext* context = emulator.GetContext();
+    return context != nullptr ? context->pScreen : nullptr;
+}
+
+/// Which effect runs now: "blend", "dlss" or "" (off)
+std::string RunningEffect(Emulator& emulator, const WindowDisplaySettings& window)
+{
+    Screen* screen = ScreenOf(emulator);
+    if (screen != nullptr && !screen->GetTemporalAlgorithm().empty())
+        return "dlss";
+    return window.blending ? "blend" : "";
+}
+
+/// The effect a switch turns on: the running one, else the one kept
+std::string ChosenEffect(Emulator& emulator, const WindowDisplaySettings& window)
+{
+    const std::string running = RunningEffect(emulator, window);
+    if (!running.empty())
+        return running;
+    std::lock_guard<std::mutex> lock(Temporal().mutex);
+    return Temporal().dlss ? "dlss" : "blend";
+}
+
+/// Runs `effect` ("blend", "dlss" or "" for none) and stops the other one
+ActionResult ApplyTemporal(Emulator& emulator, const std::string& effect)
+{
+    Screen* screen = ScreenOf(emulator);
+    if (screen == nullptr)
+        return ActionResult::Failure("Conflict", "Screen not available");
+    std::string algorithm;
+    {
+        std::lock_guard<std::mutex> lock(Temporal().mutex);
+        if (!effect.empty())
+            Temporal().dlss = effect == "dlss";
+        if (const std::string running = screen->GetTemporalAlgorithm(); !running.empty())
+            Temporal().algorithm = running;  // the de-flicker as it ran: the one a switch turns back on
+        algorithm = Temporal().algorithm;
+    }
+    WindowDisplayChange change;
+    change.blending = effect == "blend";
+    const WindowDisplay::Result r = WindowDisplay::Set(change);
+    if (!r.Ok())
+        return FromWindow(r, {});
+    if (!screen->SetTemporalAlgorithm(effect == "dlss" ? algorithm : std::string()))
+        return BadRequest("Unknown temporal algorithm '" + algorithm + "'");
+    ActionResult result = FromWindow(r, effect.empty() ? std::string("Temporal effects off")
+                                                       : "Temporal effects: " + std::string(effect == "dlss" ? "ZX DLSS" : "frame blending"));
+    result.body["temporal"] = !effect.empty();
+    result.body["effect"] = effect.empty() ? ChosenEffect(emulator, r.settings) : effect;
+    return result;
+}
+
+/// endregion </Temporal effects>
 
 /// region <Readouts>
 
@@ -272,6 +349,59 @@ std::vector<RegistrationHandle> RegisterPictureActions(ActionRegistry& registry)
             change.blendingWeights = "exponential";
             return FromWindow(WindowDisplay::Set(change),
                               "Blending decay " + WindowDisplay::NumberWord(*change.blendingDecay));
+        },
+        WindowRules());
+    {
+        ActionRules rules = WindowRules();
+        rules.state = [](Emulator& emulator, const ActionValue&) -> std::optional<bool> {
+            const std::optional<WindowDisplaySettings> settings = WindowView::PublishedSettings();
+            if (!settings)
+                return std::nullopt;
+            return !RunningEffect(emulator, *settings).empty();
+        };
+        add(
+            "video.temporal_toggle", "Temporal effects", video, ValueKind::Press, "on? (else flips)",
+            "Switch the temporal effects on or off: on runs the chosen effect (video.temporal_effect: frame blending "
+            "or the ZX DLSS de-flicker), off stops whichever runs and keeps the choice.",
+            [](const ActionCall& call) {
+                ActionResult failure;
+                const std::optional<WindowDisplaySettings> now = Current(failure);
+                if (!now)
+                    return failure;
+                const std::string running = RunningEffect(*call.emulator, *now);
+                const std::optional<bool> on = OnOrFlip(call.value, !running.empty(), failure);
+                if (!on)
+                    return failure;
+                return ApplyTemporal(*call.emulator, *on ? ChosenEffect(*call.emulator, *now) : std::string());
+            },
+            std::move(rules));
+    }
+    add(
+        "video.temporal_effect", "Temporal effect", video, ValueKind::Press, "effect? (blend|dlss|next; next)",
+        "Choose the temporal effect: frame blending or the ZX DLSS de-flicker (or the other one); while the effects "
+        "run it switches at once, else the switch turns it on later.",
+        [](const ActionCall& call) {
+            ActionResult failure;
+            const std::optional<WindowDisplaySettings> now = Current(failure);
+            if (!now)
+                return failure;
+            const std::string running = RunningEffect(*call.emulator, *now);
+            std::string effect = WindowDisplay::Lower(TextParam(call.value, "effect").value_or("next"));
+            if (effect == "next" || effect == "prev")
+                effect = ChosenEffect(*call.emulator, *now) == "dlss" ? "blend" : "dlss";
+            if (effect != "blend" && effect != "dlss")
+                return BadRequest("effect: blend, dlss or next");
+            if (!running.empty())
+                return ApplyTemporal(*call.emulator, effect);
+            {
+                std::lock_guard<std::mutex> lock(Temporal().mutex);
+                Temporal().dlss = effect == "dlss";
+            }
+            StateNode body = WindowDisplay::Report(*now);
+            body["temporal"] = false;
+            body["effect"] = effect;
+            return ActionResult::Success(std::move(body), "Temporal effect " + std::string(effect == "dlss" ? "ZX DLSS" : "frame blending") +
+                                                              " (off: video.temporal_toggle runs it)");
         },
         WindowRules());
     {
@@ -485,7 +615,8 @@ std::vector<RegistrationHandle> RegisterPictureActions(ActionRegistry& registry)
 
 const std::vector<std::string>& PictureReadoutNames()
 {
-    static const std::vector<std::string> names = {"video.window", "video.crt_params", "video.viewport"};
+    static const std::vector<std::string> names = {"video.window", "video.crt_params", "video.viewport",
+                                                   "video.temporal"};
     return names;
 }
 
@@ -518,6 +649,20 @@ StateNode ReadPictureReadout(Emulator& emulator, const std::string& name)
     }
     if (name == "video.viewport")
         return VideoViewport::Report(emulator);
+    if (name == "video.temporal")
+    {
+        // {on, effect, dlss}: whether the temporal effects run and the effect a switch runs (a key shows it)
+        const std::optional<WindowDisplaySettings> settings = WindowView::PublishedSettings();
+        if (!settings)
+            return Unavailable("no window");
+        StateNode node = StateNode::Object();
+        const std::string effect = ChosenEffect(emulator, *settings);
+        node["available"] = true;
+        node["on"] = !RunningEffect(emulator, *settings).empty();
+        node["effect"] = effect;
+        node["dlss"] = effect == "dlss";
+        return node;
+    }
     return {};
 }
 

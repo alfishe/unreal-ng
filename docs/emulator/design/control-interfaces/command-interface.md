@@ -3999,6 +3999,8 @@ companion scope (their routes change nothing).
 | `video.crt_params_reset` | press | `name?` | The active profile's parameters (or one) back to their initial values | |
 | `video.blending` | press | `on?`, `frames?`, `weights?`, `decay?` | Temporal blending on / off; with only `frames` / `weights` / `decay` the switch stays | `toggle.video.blending` |
 | `video.blending_decay_by` | delta | | The exponential decay by steps of 0.1 (0.1..0.9; switches the weights to exponential) | |
+| `video.temporal_toggle` | press | `on?` | The temporal effects as the Temporal Effects dialog has them: on runs the chosen effect, off stops whichever runs and keeps the choice | `toggle.video.temporal_toggle` |
+| `video.temporal_effect` | press | `effect?` (`blend`, `dlss`, `next`; next) | The effect: frame blending or the ZX DLSS de-flicker, one at a time; while on it switches at once (readout `video.temporal`) | |
 | `video.viewport` | press | `viewport?` (a name, `next`, `prev`; next) | The overscan frame's crop | |
 | `view.fullscreen` | press | `on?` | Full screen on / off | `toggle.view.fullscreen` |
 | `view.scale` | press | `scale?` (1..4, `next`, `prev`; next) | Fit the window to the picture at that zoom | |

@@ -1,12 +1,29 @@
 # The product scenario for the Stream Deck + XL (4 x 9 keys, 6 dials, the strip): the use cases of
 # docs/inprogress/2026-10-19-streamdeck-integration/use-cases.md. Format and commands: docs/companions/streamdeck/pipeline.md
 #
-# Home holds what every session needs in fixed places: row 0 the machine and speed, row 1 the pages, row 2 time and
-# the game, row 3 the debugger's everyday keys. Every page keeps the back key at [0, 0]; the TTD timeline is on the strip.
+# Home holds what every session needs in fixed places, the user's keys above the programmer's: row 0 running the
+# machine, row 1 loading and saving (states, media, the tape), then the game and BASIC, row 2 the settings pages
+# (machine, sound, picture) and capture last, row 3 the debugger and time pages, the history (rewind, live, recording,
+# a bookmark) and monitoring in the last corner (stepping and breakpoints live in the debugger page). Every page keeps
+# the back key at [0, 0]; the TTD timeline is on the strip.
 scenario: unreal
 model: plusxl
 settings: {brightness: 60, activity: {ignore: [ttd.seek_by, audio.volume_by, run.pace_by, run.step_by, ttd.jog_frames, ttd.jog_instructions]}}
 
+# +-- screen home: Home (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | PAUSE      RESET      NMI        TURBO      HOLD       X1         >SPEED     MUTE       FULL
+# 1 | S1         L1         >STATE     >MEDIA     TAPE       LAST FILE  .          >GAME      >BASIC
+# 2 | >MODEL     >SOUND     >PICTURE   .          .          .          SHOT       VIDEO REC  AUDIO REC
+# 3 | >DEBUG     >TIME      .          -5S        LIVE       TTD REC    MARK       .          >MONITOR
+# opens: [0,6] speed, [1,2] state, [1,3] media, [1,7] game, [1,8] basic, [2,0] machine, [2,1] sound, [2,2] picture
+#        [3,0] debug, [3,1] time, [3,8] monitor
+# dial 0 FRAMES: turn ttd.jog_frames, press run.pause_toggle
+# dial 1 TIME: turn ttd.seek_by, press run.pause_toggle
+# dial 2 OPS: turn ttd.jog_instructions, press ttd.resume_live
+# dial 3 PACE: turn run.pace_by, press run.pace_toggle
+# dial 5 VOLUME: turn audio.volume_by, press audio.mute_toggle
+# +--
 menu home:
   title: Home
   context: play
@@ -16,10 +33,9 @@ menu home:
     1: {label: TIME, uc: [U2.1, D3.2], turn: {action: ttd.seek_by, value: {d: $ticks, rate: $rate, unit: seconds, min: 1, max: 50}}, press: {action: run.pause_toggle}}
     2: {label: OPS, uc: D3.3, turn: {action: ttd.jog_instructions, value: {d: $ticks}}, press: {action: ttd.resume_live}}
     3: {label: PACE, uc: D1.1, turn: {action: run.pace_by, value: {d: $ticks}}, press: {action: run.pace_toggle}}
-    4: {label: STEP, uc: D2.2, turn: {action: run.step_by, value: {d: $ticks, unit: instructions}}, press: {action: run.step_in}}
     5: {label: VOLUME, uc: C8.2, turn: {action: audio.volume_by, value: {d: $ticks}}, press: {action: audio.mute_toggle}}
   keys:
-    # C1, C2: the machine and the speed
+    # C1, C2, C8.1, C9.1: running the machine, the speed, mute and full screen
     pause:   {at: [0, 0], uc: C1.1, action: run.pause_toggle}
     reset:   {at: [0, 1], uc: C1.2, action: mach.reset}
     nmi:     {at: [0, 2], uc: C1.3, action: mach.nmi, label: NMI}
@@ -28,39 +44,41 @@ menu home:
     x1:      {at: [0, 5], uc: C2.5, action: set.speed, value: {value: 1}, label: X1, show: {readout: run.state.speed, format: 'X{}'}}
     speed:   {at: [0, 6], open: speed}
     mute:    {at: [0, 7], uc: C8.1, action: audio.mute_toggle}
-    shot:    {at: [0, 8], uc: C7.5, action: cap.screenshot}
-    # The pages
+    full:    {at: [0, 8], uc: C9.1, action: view.fullscreen}
+    # C6, C4: loading and saving (quick slots, states, media, the tape, the last file); U1, U4: the game and BASIC
     qsave:   {at: [1, 0], uc: C6.1, action: snapshot.quick, value: {op: save, slot: 1}, label: S1}
     qload:   {at: [1, 1], uc: C6.1, action: snapshot.quick, value: {op: load, slot: 1}, label: L1}
     state:   {at: [1, 2], open: state}
     media:   {at: [1, 3], open: media}
-    machine: {at: [1, 4], open: machine}
-    record:  {at: [1, 5], open: record}
-    sound:   {at: [1, 6], open: sound}
-    picture: {at: [1, 7], open: picture}
-    monitor: {at: [1, 8], open: monitor}
-    # U2, C7.1, U1: time and the game
-    back5:   {at: [2, 0], uc: U2.2, action: ttd.unit_back, value: {unit: seconds, count: 5}, label: -5S}
-    live:    {at: [2, 1], uc: [U2.3, D3.6], action: ttd.resume_live, label: LIVE}
-    ttdrec:  {at: [2, 2], uc: C7.1, action: ttd.record_toggle, label: TTD REC}
-    mark:    {at: [2, 3], uc: D3.7, action: ttd.bookmark_add, label: MARK}
-    game:    {at: [2, 4], open: game}
-    basic:   {at: [2, 5], open: basic}
-    tape:    {at: [2, 6], uc: C4.2, action: media.tape, value: {op: toggle}, label: TAPE, show: {readout: media.tape, format: '{block}/{blocks}'}}
-    recent:  {at: [2, 7], uc: C4.3, action: media.open_recent, value: {index: 0}, label: LAST FILE}
-    full:    {at: [2, 8], uc: C9.1, action: view.fullscreen}
-    # D2, D4, D6: the debugger's everyday keys
-    stepin:  {at: [3, 0], uc: D2.1, action: run.step_in, label: STEP IN}
-    stepovr: {at: [3, 1], uc: D2.1, action: run.step_over, label: STEP OVER}
-    stepout: {at: [3, 2], uc: D2.1, action: run.step_out, label: STEP OUT}
-    frame:   {at: [3, 3], uc: D2.3, action: run.frame_step, label: FRAME}
-    bppc:    {at: [3, 4], uc: D4.1, action: dbg.breakpoint_toggle_pc, label: BP PC}
-    bpclr:   {at: [3, 5], uc: D4.3, action: dbg.breakpoints_clear, label: CLEAR BP}
-    dbgopen: {at: [3, 6], uc: D6.1, action: dbg.open, label: DEBUGGER}
-    time:    {at: [3, 7], open: time}
-    debug:   {at: [3, 8], open: debug}
+    tape:    {at: [1, 4], uc: C4.2, action: media.tape, value: {op: toggle}, label: TAPE, show: {readout: media.tape, format: '{block}/{blocks}'}}
+    recent:  {at: [1, 5], uc: C4.3, action: media.open_recent, value: {index: 0}, label: LAST FILE}
+    game:    {at: [1, 7], open: game}
+    basic:   {at: [1, 8], open: basic}
+    # C3, C8, C9: the settings pages; C7: capture last (the screenshot, video and audio recording)
+    machine: {at: [2, 0], open: machine}
+    sound:   {at: [2, 1], open: sound}
+    picture: {at: [2, 2], open: picture}
+    shot:    {at: [2, 6], uc: C7.5, action: cap.screenshot}
+    vrec:    {at: [2, 7], uc: C7.2, action: cap.record_toggle, value: {preset: gameplay}, label: VIDEO REC}
+    arec:    {at: [2, 8], uc: C7.2a, action: cap.record_toggle, value: {preset: music}, label: AUDIO REC}
+    # D2, D4, D6, D1, D3: the programmer's pages; U2, C7.1, D3.7: rewind, the history recording, a bookmark;
+    # C10: monitoring in the last corner
+    debug:   {at: [3, 0], open: debug}
+    time:    {at: [3, 1], open: time}
+    back5:   {at: [3, 3], uc: U2.2, action: ttd.unit_back, value: {unit: seconds, count: 5}, label: -5S}
+    live:    {at: [3, 4], uc: [U2.3, D3.6], action: ttd.resume_live, label: LIVE}
+    ttdrec:  {at: [3, 5], uc: C7.1, action: ttd.record_toggle, label: TTD REC}
+    mark:    {at: [3, 6], uc: D3.7, action: ttd.bookmark_add, label: MARK}
+    monitor: {at: [3, 8], open: monitor}
 
 # C6: save state. Rows 1 and 2 are the nine quick slots, row 0 the files and the disks.
+# +-- screen state: Save state (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      SAVE SZX   SAVE A     SAVE B     SAVE C     SAVE D     A > SCL    SAVE TTD   LOAD TTD
+# 1 | S1         S2         S3         S4         S5         S6         S7         S8         S9
+# 2 | L1         L2         L3         L4         L5         L6         L7         L8         L9
+# 3 | .          .          .          .          .          .          .          .          .
+# +--
 menu state:
   title: Save state
   label: STATE
@@ -95,6 +113,13 @@ menu state:
     l9:      {at: [2, 8], uc: C6.1, action: snapshot.quick, value: {op: load, slot: 9}, label: L9}
 
 # C4, C5: software and the drives. Row 0 recent files and RZX, row 1 the tape, rows 2-3 a column per drive A..D.
+# +-- screen media: Media (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      1          2          3          4          5          .          RZX        STOP RZX
+# 1 | PLAY       TPAUSE     TSTOP      TREW       TEJECT     .          A-B        NEW A      DISCARD A
+# 2 | A          B          C          D          .          SAVE A     SAVE B     SAVE C     SAVE D
+# 3 | A          B          C          D          .          TR-DOS     FAST TAPE  TURBO TAP  FAST DISK
+# +--
 menu media:
   title: Media
   label: MEDIA
@@ -134,6 +159,13 @@ menu media:
     fdisk:   {at: [3, 8], uc: C2.4, action: set.toggle, value: {name: fast_disk}, label: FAST DISK}
 
 # C3: the machine. A row per family; a press starts the model in place.
+# +-- screen machine: Machine (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      PREVIOUS   COLD RST   NOW        .          .          .          TURBO      CP/M
+# 1 | 48K        128K       +2         +2A        +3         .          NEXT       SPRINTER   .
+# 2 | P128       P512       P1024      SCORP      SC1024     PROF       POLY48     POLY128    POLY P
+# 3 | ATM450     ATM710     EVO        TSCONF     VDAC2      PROFI      PROFI512   PROFI3     PROFI+
+# +--
 menu machine:
   title: Machine
   label: MODEL
@@ -171,35 +203,21 @@ menu machine:
     mprofi3: {at: [3, 7], uc: C3.1, action: mach.start, value: {model: PROFI3, replace: true}, label: PROFI3}
     mprofip: {at: [3, 8], uc: C3.1, action: mach.start, value: {model: PROFI-PLUS, replace: true}, label: PROFI+}
 
-# C7: record. Row 0 video presets, row 1 audio, the clip and the screenshot, row 2 the TTD history.
-menu record:
-  title: Record
-  label: REC
-  uc: C7
-  glyph: cap.record
-  keys:
-    vgame:   {at: [0, 1], uc: C7.2, action: cap.record_toggle, value: {preset: gameplay}, label: GAME}
-    vhq:     {at: [0, 2], uc: C7.2, action: cap.record_toggle, value: {preset: hq}, label: HQ}
-    vgif:    {at: [0, 3], uc: C7.2, action: cap.record_toggle, value: {preset: gif}, label: GIF}
-    vmulti:  {at: [0, 4], uc: C7.2, action: cap.record_toggle, value: {preset: multitrack}, label: MULTI}
-    vpause:  {at: [0, 5], uc: C7.2, action: cap.record_pause}
-    vlen:    {at: [0, 7], uc: C10.9, label: LENGTH, show: {readout: cap.record.seconds, format: '{:.0f}S'}}
-    vsize:   {at: [0, 8], uc: C10.9, label: SIZE, show: {readout: cap.record.bytes, format: '{:b}'}}
-    amusic:  {at: [1, 0], uc: C7.2a, action: cap.record_toggle, value: {preset: music}, label: FLAC}
-    awav:    {at: [1, 1], uc: C7.2a, action: cap.record_toggle, value: {preset: audio}, label: WAV}
-    aay:     {at: [1, 2], uc: C7.4, action: cap.audio_capture, value: {source: ay1, seconds: 10}, label: AY 10S}
-    clip:    {at: [1, 4], uc: C7.3, action: cap.clip_last, value: {seconds: 10, format: mp4}, label: 10S}
-    clipgif: {at: [1, 5], uc: C7.3, action: cap.clip_last, value: {seconds: 10, format: gif}, label: GIF 10S}
-    recshot: {at: [1, 7], uc: C7.5, action: cap.screenshot}
-    shotpng: {at: [1, 8], uc: C7.5, action: cap.screenshot_save, value: {path: $user/screenshots/deck.png}, label: PNG}
-    tstart:  {at: [2, 0], uc: C7.1, action: ttd.start, label: START}
-    rectstop: {at: [2, 1], uc: C7.1, action: ttd.stop, label: STOP}
-    tdrop:   {at: [2, 2], uc: C7.1, action: ttd.invalidate, label: DROP}
-    tclip:   {at: [2, 4], uc: C7.3, action: ttd.export_clip, value: {path: $user/clips/history.mp4}, label: EXPORT}
-    rectdump: {at: [2, 6], uc: C7.1, action: ttd.dump, value: {path: $user/sessions/deck.ttd}, label: SAVE TTD}
-    rectload: {at: [2, 7], uc: C7.1, action: ttd.load, value: {path: $user/sessions/deck.ttd}, label: LOAD TTD}
-
 # C8: sound. A column per source: mute above, solo below; the dials set the volumes of the first six.
+# +-- screen sound: Sound (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      SOUMUTE    >AY CHANS  .          STEREO     FIR        PUNCH      DC         .
+# 1 | BEEP       AY1        AY2        AY3        FM1        COVOX      GS         MS FM      MS PCM
+# 2 | BEEP       AY1        AY2        AY3        FM1        COVOX      GS         MS FM      MS PCM
+# 3 | N AY1      N AY2      N AY3      N DAC      FM2        GS MP3     MIDI       CD         SAA
+# opens: [0,2] ay
+# dial 0 BEEPER: turn audio.volume_by, press audio.source_mute
+# dial 1 AY1: turn audio.volume_by, press audio.source_mute
+# dial 2 AY2: turn audio.volume_by, press audio.source_mute
+# dial 3 COVOX: turn audio.volume_by, press audio.source_mute
+# dial 4 GS: turn audio.volume_by, press audio.source_mute
+# dial 5 MASTER: turn audio.volume_by, press audio.mute_toggle
+# +--
 menu sound:
   title: Sound
   label: SOUND
@@ -248,6 +266,19 @@ menu sound:
     msaa:    {at: [3, 8], uc: C8.2, action: audio.source_mute, value: {source: ms_saa}, label: SAA}
 
 # C8.3: the AY channels, a column per channel of the three chips (mute above, solo below); the dials set A, B, C of AY1.
+# +-- screen ay: AY channels (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      .          .          .          .          .          .          .          .
+# 1 | 1A         1B         1C         2A         2B         2C         3A         3B         3C
+# 2 | 1A         1B         1C         2A         2B         2C         3A         3B         3C
+# 3 | .          .          .          .          .          .          .          .          .
+# dial 0 AY1 A: turn audio.volume_by, press audio.source_mute
+# dial 1 AY1 B: turn audio.volume_by, press audio.source_mute
+# dial 2 AY1 C: turn audio.volume_by, press audio.source_mute
+# dial 3 AY2 A: turn audio.volume_by, press audio.source_mute
+# dial 4 AY2 B: turn audio.volume_by, press audio.source_mute
+# dial 5 AY2 C: turn audio.volume_by, press audio.source_mute
+# +--
 menu ay:
   title: AY channels
   label: AY CHANS
@@ -280,14 +311,22 @@ menu ay:
     s3b:     {at: [2, 7], uc: C8.3, action: audio.source_solo, value: {source: ay3.b}, label: 3B}
     s3c:     {at: [2, 8], uc: C8.3, action: audio.source_solo, value: {source: ay3.c}, label: 3C}
 
-# C9: the picture. Row 0 the window, row 1 the CRT, row 2 de-flicker and blending, row 3 HUD and the keyboard.
+# C9: the picture. Row 0 the window, row 1 the CRT (on / off, the profile, back to basic), row 2 the temporal effects (one switch, then the effect: blending or ZX DLSS), row 3 HUD and the keyboard.
+# +-- screen picture: Picture (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      PICFULL    SCALE      GPU        BORDER     CROP       .          TOOLBAR    STATUS
+# 1 | CRT        PROFILE    CRT BASIC  .          .          .          .          .          .
+# 2 | TEMPORAL   EFFECT     .          .          .          .          .          .          .
+# 3 | HUD        HUD LOOK   .          KEYBOARD   KB LOOK    .          .          .          .
+# dial 0 DECAY: turn video.blending_decay_by, press video.temporal_toggle
+# +--
 menu picture:
   title: Picture
-  label: VIDEO
+  label: PICTURE
   uc: C9
   glyph: video.menu
   dials:
-    0: {label: DECAY, uc: C9.5, turn: {action: video.blending_decay_by, value: {d: $ticks}}, press: {action: video.blending}}
+    0: {label: DECAY, uc: C9.5, turn: {action: video.blending_decay_by, value: {d: $ticks}}, press: {action: video.temporal_toggle}}
   keys:
     picfull: {at: [0, 1], uc: C9.1, action: view.fullscreen}
     scale:   {at: [0, 2], uc: C9.1, action: view.scale, value: {scale: next}, label: SCALE}
@@ -297,11 +336,10 @@ menu picture:
     toolbar: {at: [0, 7], uc: C9.8, action: view.toolbar, label: TOOLBAR}
     status:  {at: [0, 8], uc: C9.8, action: view.status_bar, label: STATUS}
     crt:     {at: [1, 0], uc: C9.4, action: video.crt_toggle, label: CRT}
-    crtprev: {at: [1, 1], uc: C9.4, action: video.crt_profile, value: {profile: prev}, label: CRT PREV}
-    crtnext: {at: [1, 2], uc: C9.4, action: video.crt_profile, value: {profile: next}, label: CRT, show: {readout: video.window.crt_profile, format: '{}'}}
-    crtrst:  {at: [1, 3], uc: C9.4, action: video.crt_params_reset, label: CRT RST}
-    dlss:    {at: [2, 0], uc: C9.5, action: video.temporal, label: TEMPORAL}
-    blend:   {at: [2, 1], uc: C9.5, action: video.blending, label: BLEND}
+    crtnext: {at: [1, 1], uc: C9.4, action: video.crt_profile, value: {profile: next}, label: PROFILE, show: {readout: video.window.crt_profile, format: '{}'}}
+    crtbasic: {at: [1, 2], uc: C9.4, action: video.crt_profile, value: {profile: basic}, label: CRT BASIC}
+    temporal: {at: [2, 0], uc: C9.5, action: video.temporal_toggle, label: TEMPORAL}
+    teffect: {at: [2, 1], uc: C9.5, action: video.temporal_effect, value: {effect: next}, label: EFFECT, show: {readout: video.temporal.dlss, format: '{?ZX DLSS|BLEND}'}}
     hud:     {at: [3, 0], uc: C9.6, action: hud.toggle, label: HUD}
     hudth:   {at: [3, 1], uc: C9.6, action: hud.theme, value: {theme: next}, label: HUD LOOK}
     osdkb:   {at: [3, 3], uc: C9.7, action: osd.keyboard, label: KEYBOARD}
@@ -310,6 +348,14 @@ menu picture:
 # C10: monitoring, read-only (a press changes nothing): value keys show the readouts (row 0 the instances and the host,
 # row 1 the emulation and the peripherals, row 2 breakpoints, labels and time travel, row 3 the profilers and
 # recording).
+# +-- screen monitor: Monitoring (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      COUNT      MODEL      STATE      CPU        MEMORY     THREADS    CLIENTS    PAIRED
+# 1 | FPS        SPEED      BUDGET     WORK US    MHZ        INT/FR     MEDIA      PLUGGED    AUDIO
+# 2 | .          .          BPS        HIT AT     LABELS     TTD        FRAMES     TTD MEM    MARKS
+# 3 | >BUFFERS   .          OPCODES    CALLS      COVER      RECORD     LENGTH     SIZE       VIDEO
+# opens: [3,0] buffers
+# +--
 menu monitor:
   title: Monitoring
   label: MONITOR
@@ -352,6 +398,13 @@ menu monitor:
 
 # C10.8: how full each trace buffer is (read-only): slots used of the capacity, the bytes they take under it. Row 0 the
 # CPU's traces, row 1 the ports and the sound, row 2 time travel.
+# +-- screen buffers: Trace buffers (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      OPCODES    CALLS      CALLS HOT  PC HIST    COVERAGE   .          .          .
+# 1 | .          PORTS      GS PORTS   AY LOG     .          .          .          .          .
+# 2 | .          TTD HIST   TTD MEM    JOURNAL    CHECKPTS   .          .          .          .
+# 3 | .          .          .          .          .          .          .          .          .
+# +--
 menu buffers:
   title: Trace buffers
   label: BUFFERS
@@ -372,6 +425,13 @@ menu buffers:
     bttdc:   {at: [2, 4], uc: C10.7, label: CHECKPTS, show: {readout: debug.buffers.ttd.checkpoints, format: "{}"}}
 
 # U1: a game. The joystick on the right-hand block, the keys a game asks for on the left.
+# +-- screen game: Game (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      KEMP       SINC1      SINC2      CURSOR     MOUSE      JOYSTICK   .          RELEASE
+# 1 | SPACE      ENTER      BREAK      .          .          .          UP         .          FIRE
+# 2 | Y          N          .          .          .          LEFT       DOWN       RIGHT      .
+# 3 | 1          2          3          4          .          .          .          -5S        L1
+# +--
 menu game:
   title: Game
   label: GAME
@@ -404,6 +464,13 @@ menu game:
     gamqload: {at: [3, 8], uc: U2.4, action: snapshot.quick, value: {op: load, slot: 1}, label: L1}
 
 # U4: BASIC and the ROM.
+# +-- screen basic: BASIC (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      48K        128K       .          .          .          .          .          .
+# 1 | RUN        LOAD       NEW        .          .          .          .          .          .
+# 2 | CAT        FORMAT     ERASE      MOVE       .          E          G          .          BREAK
+# 3 | TRAPS      .          .          .          .          .          .          .          .
+# +--
 menu basic:
   title: BASIC
   label: BASIC
@@ -425,6 +492,18 @@ menu basic:
     traps:   {at: [3, 0], uc: U4.4, action: set.toggle, value: {name: trdos_traps}, label: TRAPS}
 
 # D1, D3: time. Row 0 the pace, rows 1-2 the history in units, row 3 bookmarks and the search.
+# +-- screen time: Time (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      25FPS      5FPS       1FPS       LINE       OP         PACE       STOP       FULL
+# 1 | START      -FRAME     -LINE      -OP        .          +OP        +LINE      +FRAME     END
+# 2 | REV RUN    REV STEP   .          BACK       FRAME      FORWARD    .          .          LIVE
+# 3 | MARK <     MARK       MARK >     MARKS      .          WRITE      READ       EXEC       TTD REC
+# dial 0 FRAMES: turn ttd.jog_frames, press run.pause_toggle
+# dial 1 SCRUB: turn ttd.seek_by, press run.pause_toggle
+# dial 2 LINES: turn run.step_by, press run.to_pixel
+# dial 3 T-STATES: turn run.step_by, press run.wait_int
+# dial 4 PACE: turn run.pace_by, press run.pace_toggle
+# +--
 menu time:
   title: Time
   label: TIME
@@ -469,7 +548,16 @@ menu time:
     laste:   {at: [3, 7], uc: D5.1, action: ttd.find_last, value: {access: execute}, label: EXEC}
     timttdrec: {at: [3, 8], uc: C7.1, action: ttd.record_toggle, label: TTD REC}
 
-# D2, D4, D6, D8, D10: the debugger. Row 0 steps, row 1 breakpoints, row 2 the panes, row 3 symbols and profilers.
+# D2, D4, D6, D8, D10: the debugger. Row 0 pause and the steps, row 1 breakpoints, row 2 the panes, row 3 symbols and profilers.
+# +-- screen debug: Debugger (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      DEBPAUSE   STEP IN    STEP OVER  STEP OUT   TO CURSOR  TO INT     FRAME      LINE
+# 1 | BP PC      BP CUR     OUT FE     7FFD       BPS ON     CLEAR BP   HITS 0     TO PIXEL   DEBUG MOD
+# 2 | SHOW DEBU  PANE <     PANE >     PGUP       CUP        PGDN       FOLLOW     MEM PC     LABELS
+# 3 | LOAD SYM   LIVE SYM   SAVE SYM   CLEFT      CDOWN      CRIGHT     PROF OPS   COVERAGE   CALLS
+# dial 0 STEP: turn run.step_by, press run.step_in
+# dial 1 FRAMES: turn run.step_by, press run.frame_step
+# +--
 menu debug:
   title: Debugger
   label: DEBUG
@@ -480,14 +568,14 @@ menu debug:
     0: {label: STEP, uc: D2.2, turn: {action: run.step_by, value: {d: $ticks, unit: instructions}}, press: {action: run.step_in}}
     1: {label: FRAMES, uc: D2.3, turn: {action: run.step_by, value: {d: $ticks, unit: frames}}, press: {action: run.frame_step}}
   keys:
-    debstepin: {at: [0, 1], uc: D2.1, action: run.step_in, label: STEP IN}
-    debstepovr: {at: [0, 2], uc: D2.1, action: run.step_over, label: STEP OVER}
-    debstepout: {at: [0, 3], uc: D2.1, action: run.step_out, label: STEP OUT}
-    debcursor: {at: [0, 4], uc: D2.6, action: run.to_cursor, label: TO CURSOR}
-    int:     {at: [0, 5], uc: D2.3, action: run.wait_int, label: TO INT}
-    debframe: {at: [0, 6], uc: D2.3, action: run.frame_step, label: FRAME}
-    line:    {at: [0, 7], uc: D2.7, action: run.step_line, label: LINE}
-    pixel:   {at: [0, 8], uc: D2.4, action: run.to_pixel, label: TO PIXEL}
+    debpause: {at: [0, 1], uc: C1.1, action: run.pause_toggle}
+    debstepin: {at: [0, 2], uc: D2.1, action: run.step_in, label: STEP IN}
+    debstepovr: {at: [0, 3], uc: D2.1, action: run.step_over, label: STEP OVER}
+    debstepout: {at: [0, 4], uc: D2.1, action: run.step_out, label: STEP OUT}
+    debcursor: {at: [0, 5], uc: D2.6, action: run.to_cursor, label: TO CURSOR}
+    int:     {at: [0, 6], uc: D2.3, action: run.wait_int, label: TO INT}
+    debframe: {at: [0, 7], uc: D2.3, action: run.frame_step, label: FRAME}
+    line:    {at: [0, 8], uc: D2.7, action: run.step_line, label: LINE}
     debbppc: {at: [1, 0], uc: D4.1, action: dbg.breakpoint_toggle_pc, label: BP PC}
     bpcur:   {at: [1, 1], uc: D4.1, action: dbg.breakpoint_toggle_cursor, label: BP CUR}
     bpfe:    {at: [1, 2], uc: D4.2, action: dbg.bp_add, value: {kind: out, preset: fe}, label: OUT FE}
@@ -495,6 +583,7 @@ menu debug:
     bpall:   {at: [1, 4], uc: D4.3, action: dbg.bp_toggle, label: BPS ON}
     debbpclear: {at: [1, 5], uc: D4.3, action: dbg.breakpoints_clear, label: CLEAR BP}
     debbphits: {at: [1, 6], uc: D4.3, action: dbg.breakpoint_hits_reset, label: HITS 0}
+    pixel:   {at: [1, 7], uc: D2.4, action: run.to_pixel, label: TO PIXEL}
     debdbgmode: {at: [1, 8], uc: D4.4, action: dbg.mode_toggle, label: DEBUG MODE}
     open:    {at: [2, 0], uc: D6.1, action: dbg.open, label: SHOW DEBUG}
     pprev:   {at: [2, 1], uc: D6.1, action: dbg.focus_prev_pane, label: PANE <}
