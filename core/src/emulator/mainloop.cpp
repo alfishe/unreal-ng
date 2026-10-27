@@ -299,6 +299,9 @@ bool MainLoop::Park(Emulator* emulator, execution::ExecutionArbiter* arbiter)
         // Nothing plays while paused: cleared here, on the thread that renders the sound (Emulator::OnIntentEdge)
         if (_soundManager)
             _soundManager->onEmulatorPaused();
+        // Nothing to keep the picture in step with: the frames latched are due at once
+        if (_context->pScreen)
+            _context->pScreen->SettlePresentTiming();
     }
     return arbiter->LoopWait();
 }

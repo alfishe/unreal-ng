@@ -289,7 +289,7 @@ bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error
     return true;
 }
 
-void DeviceScreenWrapper::setFrameSource(std::function<bool(uint8_t*, size_t)> fn)
+void DeviceScreenWrapper::setFrameSource(FrameSourceFn fn)
 {
     if (_useGPU && _gpuWindow)
         _gpuWindow->setFrameSource(fn);

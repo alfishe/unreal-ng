@@ -22,7 +22,8 @@ struct FrameTimingInput
     int64_t audioNs = 0;          // when the frame's last sample is heard
     bool haveEmulated = false;
     int64_t emulatedNs = 0;       // when the frame ends on the emulated clock
-    int64_t emulatedDelayNs = 0;  // the video delay on the emulated and latch clocks
+    int64_t emulatedDelayNs = 0;  // the video delay on the emulated clock
+    int64_t latchDelayNs = 0;     // ... on the latch clock: a temporal effect's look-ahead only (no sound to wait for)
     int64_t offsetNs = 0;         // the lip-sync trim
 };
 

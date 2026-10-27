@@ -4,6 +4,7 @@
 #include "crtrenderer.h"
 
 #include <QDebug>
+#include <QTimer>
 #include <QFocusEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -161,10 +162,22 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         // Draw into the widget's FULL rect - QPainter clips to event->rect()
         // automatically. Targeting event->rect() squeezed the whole framebuffer
         // into partial dirty rects (move/scroll damage), stretching the image.
+        const int64_t now = SteadyNowNs();
+        PresentFrameInfo info;
         if (_frameSource && !_latchedFrame.isNull() &&
-            _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
+            _frameSource(now, _latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes()), &info))
         {
             drawImage = &_latchedFrame;
+            // The next frame is due later than this paint: a repaint at its time (frames by time, no vsync here)
+            if (info.nextSerial != 0 && !_repaintScheduled)
+            {
+                _repaintScheduled = true;
+                const int64_t waitMs = std::clamp<int64_t>((info.nextTargetNs - now + 999'999) / 1'000'000, 1, 100);
+                QTimer::singleShot(static_cast<int>(waitMs), this, [this] {
+                    _repaintScheduled = false;
+                    refresh();
+                });
+            }
         }
         // A frame source is installed: never fall back to devicePixels. It wraps the emulator's framebuffer, which is
         // freed and reallocated when the guest switches video mode (Profi 352x288 <-> 512x240 hi-res, ATM, AlCo)
@@ -332,10 +345,11 @@ QRectF DeviceScreen::displaySourceRect() const
 QImage DeviceScreen::grabFramebuffer()
 {
     QImage frame;
-    if (_frameSource && !_latchedFrame.isNull() &&
-        _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
+    QImage grabbed(_latchedFrame.size(), _latchedFrame.format());
+    if (_frameSource && !grabbed.isNull() &&
+        _frameSource(SteadyNowNs(), grabbed.bits(), static_cast<size_t>(grabbed.sizeInBytes()), nullptr))
     {
-        frame = _latchedFrame;  // Tear-free latched frame (shared bits; copied below)
+        frame = grabbed;  // Tear-free latched frame, the one on screen now
     }
     else if (!_frameSource && devicePixels != nullptr)
     {

@@ -273,7 +273,7 @@ TEST(TemporalEffects_Test, LiveMachineDelaysVideoAndAudioByTheAlgorithmsLookAhea
     ASSERT_TRUE(context->pFeatureManager->setFeature(Features::kZXDLSS, true));
     Screen* screen = context->pScreen;
     ASSERT_TRUE(screen->SetTemporalAlgorithm("mod-tpgwafsd"));
-    const uint8_t base = screen->GetPresentDelayFrames();
+    const uint8_t base = Screen::AUDIO_PATH_DELAY_FRAMES;
     // Plane B switches on at the next frame start: the first frame has none (inactive)
     emulator->RunFrame();
     ASSERT_NE(screen->GetTemporalStats().inactiveReason.find("plane B"), std::string::npos);
@@ -310,7 +310,7 @@ TEST(TemporalEffects_Test, LiveMachineDelaysVideoAndAudioByTheAlgorithmsLookAhea
     EXPECT_EQ(screen->GetEffectivePresentDelayFrames(), 7);
     EXPECT_EQ(context->pSoundManager->getOutputDelayFrames(), 7 - base);
 
-    // Off: the configured delay again, the audio catches up
+    // Off: the audio path's own delay again, the audio catches up
     ASSERT_TRUE(screen->SetTemporalAlgorithm(""));
     emulator->RunFrame();
     EXPECT_EQ(screen->GetEffectivePresentDelayFrames(), base);

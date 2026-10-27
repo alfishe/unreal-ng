@@ -10,6 +10,7 @@
 #include "emulator/video/screen.h"
 #include "emulator/video/windowview.h"
 #include "crtprofiles.h"
+#include "framesource.h"
 #include "slangpresetrunner.h"
 
 class Emulator;
@@ -66,8 +67,8 @@ public:
     /// @brief Request screen refresh
     void refresh();
 
-    /// @brief Set frame copy function for tear-free rendering
-    void setFrameSource(std::function<bool(uint8_t*, size_t)> fn);
+    /// @brief Set the frame source: the frame due at a time, tear-free (framesource.h)
+    void setFrameSource(FrameSourceFn fn);
 
     /// @brief Thread-safe cut of the frame source and legacy live-buffer path.
     /// Safe to call from the MessageCenter worker while an emulator instance

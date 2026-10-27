@@ -22,6 +22,7 @@ struct Sequence
     int64_t audio = 0;  // when the frame's sound is heard: latch + audioDelay
     int64_t audioDelay = 52 * MS;
     int64_t emulatedDelay = PERIOD;
+    int64_t latchDelay = 0;
     std::vector<int64_t> targets;
 
     FrameTimingResult Frame(bool haveAudio, bool haveEmulated = true, int64_t period = PERIOD)
@@ -35,6 +36,7 @@ struct Sequence
         in.haveEmulated = haveEmulated;
         in.emulatedNs = latch;
         in.emulatedDelayNs = emulatedDelay;
+        in.latchDelayNs = latchDelay;
         const FrameTimingResult r = clock.Next(in);
         targets.push_back(r.targetNs);
         return r;
@@ -127,7 +129,8 @@ TEST(FrameClock_Test, GapCuts)
     EXPECT_EQ(s.clock.GetStats().carryNs, 0);
 }
 
-/// Turbo: latch times, no cadence, no carry; leaving turbo starts over on the audio clock
+/// Turbo: latch times (no delay but a temporal effect's), no cadence, no carry; leaving turbo starts over on the
+/// audio clock
 TEST(FrameClock_Test, TurboUsesLatchTimes)
 {
     Sequence s;
@@ -135,8 +138,10 @@ TEST(FrameClock_Test, TurboUsesLatchTimes)
     {
         const FrameTimingResult r = s.Frame(false, false, PERIOD / 10);
         EXPECT_EQ(r.source, FrameClockSource::Latch);
-        EXPECT_EQ(r.targetNs, s.latch + s.emulatedDelay);
+        EXPECT_EQ(r.targetNs, s.latch) << "nothing to wait for";
     }
+    s.latchDelay = 7 * PERIOD;  // ZX DLSS looks ahead
+    EXPECT_EQ(s.Frame(false, false, PERIOD / 10).targetNs, s.latch + s.latchDelay);
     const FrameTimingResult r = s.Frame(true);
     EXPECT_EQ(r.targetNs, s.latch + s.audioDelay);
     EXPECT_EQ(s.clock.GetStats().carried, 0u);

@@ -35,7 +35,7 @@ FrameTimingResult FrameClock::Next(const FrameTimingInput& in)
     else
     {
         result.source = FrameClockSource::Latch;
-        raw = in.latchNs + in.emulatedDelayNs;
+        raw = in.latchNs + in.latchDelayNs;
     }
     raw += in.offsetNs;
 

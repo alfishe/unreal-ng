@@ -1071,11 +1071,12 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: unsupported [SOUND] DecimatorQuality='%s', using Reference", line);
 	}
 	// VIDEO section
-	// A/V sync video delay: auto (-1) = match the audio path latency
-	// (~2 frames); 0 = lowest input latency (audio trails by the ring depth)
+	// A/V sync: every frame is shown when its sound is heard (frame presenter design, section 3); the user trims it
 	{
-		long delay = inimanager.GetLongValue(video, "AVSyncDelayFrames", -1);  // "auto" parses as 0 - use -1 default
-		config.videoPresentDelayFrames = (delay >= -1 && delay <= 3) ? (int)delay : -1;
+		// The frame-count delay it replaces: the audio clock does its job, the key is ignored
+		if (inimanager.GetValue(video, "AVSyncDelayFrames", nullptr) != nullptr)
+			MLOGWARNING("Config: [VIDEO] AVSyncDelayFrames is retired and ignored: video follows the audio clock, "
+						"[VIDEO] LipSyncOffsetMs trims it");
 		const long lipSync = inimanager.GetLongValue(video, "LipSyncOffsetMs", 0);
 		config.lipSyncOffsetMs = (lipSync >= -200 && lipSync <= 200) ? (int)lipSync : 0;
 	}

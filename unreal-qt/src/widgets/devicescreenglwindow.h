@@ -4,7 +4,9 @@
 // Mute macOS OpenGL deprecation warnings
 #define GL_SILENCE_DEPRECATION
 
-#include <QOpenGLWindow>
+#include <QOffscreenSurface>
+#include <QOpenGLContext>
+#include <QWindow>
 #include <QOpenGLFunctions>
 #include <QOpenGLTexture>
 #include <QOpenGLBuffer>
@@ -24,14 +26,21 @@
 #include "crtprofiles.h"
 #include "crtrenderer.h"
 #include "framehistory.h"
+#include "framesource.h"
 #include "slangpresetrunner.h"
 
 class Emulator;
+class MetalPresenter;
+class QTimer;
 
-/// GPU-accelerated renderer using QOpenGLWindow for tear-free direct buffer swapping.
-/// Unlike QOpenGLWidget (which renders to FBO then gets composited), this renders
-/// directly to the window surface with proper vsync control.
-class DeviceScreenGLWindow : public QOpenGLWindow, protected QOpenGLFunctions
+/// GPU renderer of the emulator's screen (CRT composition, beam models, presets, HUD), on a window of its own with
+/// its own GL context. Two ways to the screen (frame presenter design, docs/inprogress/2026-10-26-frame-presenter):
+/// - GL: the window's GL surface, swapped on vsync; every refresh draws the frame due when it reaches the screen
+///   (b-vsync, section 4.2). Every platform.
+/// - Native (macOS): the window is a Metal surface. GL draws each frame into an IOSurface, and MetalPresenter shows
+///   it at the frame's audio time (c-vrr, section 4.1): on a VRR display every frame is on screen for its own period.
+///   UNREAL_PRESENTER=gl keeps the GL way.
+class DeviceScreenGLWindow : public QWindow, protected QOpenGLFunctions
 {
     Q_OBJECT
 
@@ -50,11 +59,15 @@ public:
     void init(uint16_t width, uint16_t height, void* buffer, float aspect = 0.0f);
     void detach();
 
-    using FrameCopyFn = std::function<bool(uint8_t* dst, size_t dstSize)>;
-    void setFrameSource(FrameCopyFn frameSource)
+    /// The frames by time: every refresh draws the frame due when it reaches the screen. While frames come, the
+    /// window repaints on every refresh (requestUpdate), and stops once nothing is pending
+    void setFrameSource(FrameSourceFn frameSource)
     {
-        std::lock_guard<std::mutex> lock(_frameSourceMutex);
-        _frameSource = std::move(frameSource);
+        {
+            std::lock_guard<std::mutex> lock(_frameSourceMutex);
+            _frameSource = std::move(frameSource);
+        }
+        _uploadedSerial = 0;
     }
 
     /// Thread-safe cut of every paint path into the emulator's framebuffer
@@ -62,6 +75,20 @@ public:
     /// the legacy wrapper borrows the live buffer). Safe to call from the
     /// MessageCenter worker; paints after it simply find no source.
     void clearFrameSource();
+
+    /// The window shows its frames through the native presenter (decided at construction)
+    bool nativePresent() const { return _native; }
+    /// The presenter and its on-screen timing, one line (empty without the native presenter)
+    QString presenterStatus() const;
+
+    /// The context exists and the GL objects are made (the first paint)
+    bool isValid() const { return _context && _glInitialized; }
+    /// The window's context current (on the window's surface, or the offscreen one of the native way)
+    bool makeCurrent();
+    void doneCurrent();
+    QOpenGLContext* context() const { return _context.get(); }
+    /// A paint soon (requests coalesce); with frames flowing on the native way, the next timed present takes it
+    void update();
 
     static constexpr int kNativeWidth = 352;
     static constexpr int kNativeHeight = 288;
@@ -72,6 +99,7 @@ signals:
     void dragLeft();
 
 public slots:
+    /// A new frame was latched: the refresh loop runs
     void refresh();
     void handleExternalKeyPress(QKeyEvent* event);
     void handleExternalKeyRelease(QKeyEvent* event);
@@ -140,9 +168,10 @@ public:
     float temporalDecay() const { return _temporalDecay; }
 
 protected:
-    void initializeGL() override;
-    void resizeGL(int w, int h) override;
-    void paintGL() override;
+    void initializeGL();
+    void resizeGL(int w, int h);
+    /// Draws the frame in _texture (updateTexture) and the HUD into the bound framebuffer
+    void paintGL();
 
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
@@ -154,7 +183,28 @@ protected:
     bool event(QEvent* event) override;
 
 private:
-    void updateTexture();
+    /// The context made and current, the GL objects initialised on the first call
+    bool prepareContext();
+    /// GL way: draw the frame due at the next refresh and swap
+    void renderGL();
+    /// Native way: draw the frame due at now + lead into an IOSurface and present it at its target; then the timer
+    /// for the next frame. `force`: present even with no new frame (a setting, the HUD, a resize)
+    void renderNative(bool force);
+    /// Native way: the timer for the next frame (its target - lead), or a poll while frames may come
+    void scheduleNative();
+    /// The frame due at `hostNs` into _texture, if it is not there yet
+    void updateTexture(int64_t hostNs);
+    /// When the refresh being drawn reaches the screen: one refresh after now (the swap waits for the vblank)
+    int64_t refreshTargetNs() const;
+    int64_t refreshPeriodNs() const;  ///< the display's refresh (60 Hz when it does not say)
+    /// Native way: how long before a frame's target it is drawn and handed over. The window server composes a
+    /// refresh ahead, so a drawable needs about a refresh before its vsync, and the draw (a GL fence wait up to 10 ms
+    /// on a busy GPU) comes on top. Frames latch some 60 ms before their target, so a long lead costs nothing (at
+    /// 60 Hz under load, frames a refresh late: lead 6 ms 65 %, 18 ms 15 %, 23 ms 2 %): a refresh plus 6 ms, unless
+    /// UNREAL_PRESENT_LEAD_MS sets it
+    int64_t presentLeadNs() const;
+    /// After a swap: the next refresh, while frames are pending
+    void onFrameSwapped();
     void setupVSync();
     bool compileCustomShader(const QString& source);  ///< the context current; empty: none
     bool applySlangPreset(const QString& name);       ///< the context current; empty: none
@@ -168,8 +218,23 @@ private:
     QRectF _devicePixelsRect;
     QImage* _devicePixels = nullptr;
     QImage _latchedFrame;
-    FrameCopyFn _frameSource;
+    FrameSourceFn _frameSource;
     mutable std::mutex _frameSourceMutex;  // Guards _frameSource + _devicePixels across threads
+    PresentFrameInfo _shownInfo;           ///< the frame in _latchedFrame
+    uint64_t _uploadedSerial = 0;          ///< its serial in _texture (0: none, or a source without serials)
+    int _idleRefreshes = 0;                ///< refreshes in a row with no new frame and none pending
+
+    const bool _native;
+    std::unique_ptr<QOpenGLContext> _context;
+    std::unique_ptr<QOffscreenSurface> _offscreen;  ///< the native way's surface to make the context current on
+    bool _glInitialized = false;
+    QSize _glSize;                                ///< the surface size resizeGL saw, device pixels
+    std::unique_ptr<MetalPresenter> _metal;       ///< native way, made on the first paint (needs the NSView)
+    QTimer* _presentTimer = nullptr;              ///< native way: the next frame's present
+    bool _presentPending = false;                 ///< native way: a forced present asked for
+    int64_t _presentLeadNs = 0;                   ///< native way: UNREAL_PRESENT_LEAD_MS, 0 = presentLeadNs() picks
+    int64_t _statusLogNs = 0;                     ///< native way: the last stats line in the log
+    int64_t _presentPlannedNs = 0;                ///< native way: the wake the timer was set for (trace)
 
     QOpenGLTexture* _texture = nullptr;
     std::atomic<bool> _textureNeedsUpdate{true};

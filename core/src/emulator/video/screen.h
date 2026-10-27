@@ -991,14 +991,9 @@ protected:
     // copies instead of the live _framebuffer, which the emulator overwrites
     // concurrently (the source of mid-frame tearing).
     //
-    // A/V sync (audio-sync design): audio is presented ~DRC_TARGET_MS + HW
-    // buffer (~50 ms ~= 2 frames) behind the emulated frame that produced
-    // it - the ring depth is structural (production is bursty per-frame,
-    // the DAC drains continuously). Instead of shrinking the ring into
-    // underrun territory, VIDEO presentation is delayed by
-    // _presentDelayFrames so both land at the same constant latency and
-    // the net A/V offset collapses to ~0. Recording is unaffected: it taps
-    // emulated time upstream of both presentation paths.
+    // A/V sync (frame presenter design, section 3): every slot gets the time its sound is heard
+    // (StampPresentTiming), and readers are served the frame due at their time (CopyFrameAt). The audio path's ring
+    // and device buffer (~52 ms) are the video's delay; nothing is configured.
     //
     // Temporal effects (ZX DLSS) delay the video further: the algorithm's
     // look-ahead + 1 frame for its worker (TemporalEffects::VideoDelayFrames,
@@ -1018,12 +1013,11 @@ protected:
     uint64_t _presentSerial = 0;
     uint64_t _presentLatchCounter = 0;  // Total frames latched (next write index)
     size_t _presentBufferSize = 0;  // Authoritative size for readers; set under _presentMutex
-    std::atomic<uint8_t> _presentDelayFrames{2};  // Frames of video delay (0..PRESENT_SLOTS-1)
     std::mutex _presentMutex;
     // Plane B latched with each present slot (under _presentMutex); empty while
     // plane B is off, so the feature-off latch copies nothing
     std::vector<uint16_t> _presentPlaneB[PRESENT_SLOTS];
-    const uint8_t* PresentedSlotLocked(size_t* index) const;  // the slot CopyPresentedFramebuffer serves
+    const uint8_t* PresentedSlotLocked(size_t* index) const;  // the slot CopyPresentedFramebuffer serves: due now
 
     // Temporal effects (created on first use: no worker thread otherwise)
     std::unique_ptr<TemporalEffects> _temporal;
@@ -1060,6 +1054,12 @@ protected:
     size_t EligibleSlotsLocked(size_t* indices) const;
     int64_t SlotTargetLocked(size_t index) const;
     void MarkShownLocked(size_t index) const;
+    /// The slot a refresh reaching the screen at hostNs shows, and the one after it (PRESENT_SLOTS: none). A temporal
+    /// effect's frames are served only once its look-ahead has passed them, as when the delay was counted in frames.
+    /// @return false when nothing is latched
+    bool ChooseSlotLocked(int64_t hostNs, size_t* chosen, size_t* next, bool* early) const;
+    mutable uint64_t _shownSerial = 0;     // the frame served last (under _presentMutex)
+    mutable int64_t _shownDelayNs = 0;     // its target minus its latch
     TemporalFrame _temporalFrame;                      // emulation thread: reused every latch
 
     /// Emulation thread, at the latch, while an algorithm is selected: the frame's ZX
@@ -1117,8 +1117,8 @@ public:
     /// @brief Flush the present queue and publish the current framebuffer.
     ///
     /// The present queue exists for A/V sync: CopyPresentedFramebuffer() serves
-    /// the frame latched _presentDelayFrames ago so video trails audio by a
-    /// constant latency. That is right while frames keep arriving and wrong
+    /// the frame whose sound is heard now, so video trails the latch by the
+    /// audio path's latency. That is right while frames keep arriving and wrong
     /// after a seek, where the machine repaints once and stops — a plain latch
     /// would leave the UI showing a queued older frame with nothing coming to
     /// push it through.
@@ -1131,22 +1131,16 @@ public:
     /// Steady-clock timestamp (us) of the last completed latch (0 = never)
     uint64_t GetLastLatchTimestampUs() const { return _lastLatchTimestampUs.load(std::memory_order_acquire); }
 
-    /// Video presentation delay in frames (A/V sync: match the audio path's
-    /// ring + HW buffer latency, ~2 frames). 0 = present immediately
-    /// (lowest input latency, audio trails by the full ring depth).
-    void SetPresentDelayFrames(uint8_t frames)
-    {
-        _presentDelayFrames.store(frames < PRESENT_SLOTS ? frames : PRESENT_SLOTS - 1, std::memory_order_release);
-    }
-    uint8_t GetPresentDelayFrames() const { return _presentDelayFrames.load(std::memory_order_acquire); }
+    /// The audio path's own delay in machine frames (the DRC ring target 40 ms + the device buffer ~12 ms, 2.6 frames
+    /// at 50 Hz, rounded down): the look-ahead a temporal effect gets without delaying the sound further
+    static constexpr uint8_t AUDIO_PATH_DELAY_FRAMES = 2;
 
-    /// The delay actually applied: the configured one, or more while a temporal
-    /// effect needs its look-ahead (the audio is delayed by the difference)
+    /// The video's delay behind the latch in frames: the audio path's, or more while a temporal effect needs its
+    /// look-ahead (the audio is delayed by the difference)
     uint8_t GetEffectivePresentDelayFrames() const
     {
-        const uint8_t base = _presentDelayFrames.load(std::memory_order_acquire);
         const uint8_t temporal = _temporalDelayFrames.load(std::memory_order_acquire);
-        const uint8_t native = temporal > base ? temporal : base;
+        const uint8_t native = temporal > AUDIO_PATH_DELAY_FRAMES ? temporal : AUDIO_PATH_DELAY_FRAMES;
         return IsExternalPictureActive() ? ExternalDelayFrames(native) : native;
     }
     /// The native delay (machine frames) as external frames of the same
@@ -1164,15 +1158,11 @@ public:
     TemporalEffects::Stats GetTemporalStats();
 
 
-    /// Present delay in microseconds at the current frame duration (for the
-    /// video presentation latency readout: paint-to-latch delta measures the
-    /// NEWEST latch, but the presented frame is GetPresentDelayFrames older)
-    uint32_t GetPresentDelayUs() const
-    {
-        if (IsExternalPictureActive())
-            return static_cast<uint32_t>(GetEffectivePresentDelayFrames() * static_cast<uint64_t>(_externalFramePeriodUs));
-        return static_cast<uint32_t>(GetEffectivePresentDelayFrames() * static_cast<uint64_t>(NativeFramePeriodUs()));
-    }
+    /// The frame served last: its target minus its latch, in microseconds (the video's delay as measured; before
+    /// any frame was served: GetEffectivePresentDelayFrames periods)
+    uint32_t GetPresentDelayUs();
+    /// The frame served last: how many frames were latched after it (0 = the newest)
+    uint32_t GetShownDelayFrames();
     /// One machine frame in microseconds (the native present delay's unit)
     uint32_t NativeFramePeriodUs() const
     {
@@ -1196,13 +1186,18 @@ public:
     /// frame once at its target. @return false when there is none yet
     bool CopyNextFrame(uint64_t afterSerial, uint8_t* dst, size_t dstSize, PresentFrameInfo* info);
 
+    /// Emulation side, when the machine stops (a pause, the end of a direct run): nothing plays, nothing to keep in
+    /// step with. Every latched frame is due at once (a temporal effect's look-ahead still applies), so a reader
+    /// after the stop gets the newest frame whatever the time, and the frame clock starts over on the next frame
+    void SettlePresentTiming();
+
     /// Any thread: the frame clock's counters (which clock times the frames, carried steps, cuts)
     FrameClock::Stats GetFrameClockStats();
 
     /// endregion </Frames by time>
 
-    /// @brief Copy the latched (tear-free) frame into a caller-provided buffer.
-    /// Safe to call from any thread.
+    /// @brief Copy the latched (tear-free) frame due now (CopyFrameAt at the steady clock's now) into a
+    /// caller-provided buffer. Safe to call from any thread.
     /// @param dst Destination buffer
     /// @param dstSize Destination size in bytes; must be >= framebuffer size
     /// @return true if a frame was copied

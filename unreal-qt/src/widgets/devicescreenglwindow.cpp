@@ -17,8 +17,11 @@
 #include <QOpenGLContext>
 #include <QOffscreenSurface>
 #include <QOpenGLFramebufferObject>
+#include <QOpenGLPaintDevice>
 #include <QOpenGLPixelTransferOptions>
+#include <QScreen>
 #include <QSurfaceFormat>
+#include <QTimer>
 #include <QUrl>
 #include <QVector2D>
 #include <QVector4D>
@@ -26,6 +29,9 @@
 #include <cstring>
 
 #include "emulator/emulator.h"
+#ifdef __APPLE__
+#include "platform/macos/metalpresenter.h"
+#endif
 #include "emulator/emulatorcontext.h"
 #include "emulator/keyboardmanager.h"
 #include "3rdparty/message-center/messagecenter.h"
@@ -45,10 +51,207 @@ void main() {
 )";
 
 
-DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent)
-    : QOpenGLWindow(QOpenGLWindow::NoPartialUpdate, parent)
+namespace
 {
+/// The native presenter where the platform has one, unless UNREAL_PRESENTER=gl
+bool UseNativePresenter()
+{
+#ifdef __APPLE__
+    return qEnvironmentVariable("UNREAL_PRESENTER").compare(QStringLiteral("gl"), Qt::CaseInsensitive) != 0;
+#else
+    return false;
+#endif
+}
+}  // namespace
+
+DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent) : QWindow(parent), _native(UseNativePresenter())
+{
+    setSurfaceType(_native ? QSurface::MetalSurface : QSurface::OpenGLSurface);
     setupVSync();
+    if (_native)
+    {
+        bool ok = false;
+        const int leadMs = qEnvironmentVariableIntValue("UNREAL_PRESENT_LEAD_MS", &ok);
+        if (ok && leadMs >= 1 && leadMs <= 40)
+            _presentLeadNs = static_cast<int64_t>(leadMs) * 1'000'000;
+        _presentTimer = new QTimer(this);
+        _presentTimer->setSingleShot(true);
+        _presentTimer->setTimerType(Qt::PreciseTimer);
+        connect(_presentTimer, &QTimer::timeout, this, [this]() { renderNative(false); });
+    }
+}
+
+bool DeviceScreenGLWindow::prepareContext()
+{
+    if (!_context)
+    {
+        auto context = std::make_unique<QOpenGLContext>();
+        context->setFormat(surfaceFormat());
+        context->setShareContext(QOpenGLContext::globalShareContext());
+        if (!context->create())
+        {
+            qWarning() << "DeviceScreenGLWindow: GL context creation failed";
+            return false;
+        }
+        if (_native)
+        {
+            _offscreen = std::make_unique<QOffscreenSurface>();
+            _offscreen->setFormat(context->format());
+            _offscreen->create();
+        }
+        _context = std::move(context);
+    }
+    if (!makeCurrent())
+        return false;
+    if (!_glInitialized)
+    {
+        initializeGL();
+        _glInitialized = true;
+    }
+    return true;
+}
+
+bool DeviceScreenGLWindow::makeCurrent()
+{
+    if (!_context)
+        return false;
+    if (_native)
+        return _offscreen && _context->makeCurrent(_offscreen.get());
+    return handle() && _context->makeCurrent(this);
+}
+
+void DeviceScreenGLWindow::doneCurrent()
+{
+    if (_context)
+        _context->doneCurrent();
+}
+
+void DeviceScreenGLWindow::update()
+{
+    if (_native)
+    {
+        // Frames flowing: the next timed present draws the change; else a present at once
+        _presentPending = true;
+        if (!_presentTimer->isActive())
+            _presentTimer->start(0);
+        return;
+    }
+    requestUpdate();
+}
+
+void DeviceScreenGLWindow::renderGL()
+{
+    if (_isShuttingDown || !isExposed() || !prepareContext())
+        return;
+    const QSize pixels = (QSizeF(size()) * devicePixelRatio()).toSize();
+    glBindFramebuffer(GL_FRAMEBUFFER, _context->defaultFramebufferObject());
+    if (pixels != _glSize)
+    {
+        _glSize = pixels;
+        resizeGL(pixels.width(), pixels.height());
+    }
+    updateTexture(refreshTargetNs());
+    paintGL();
+    _context->swapBuffers(this);
+    onFrameSwapped();
+}
+
+void DeviceScreenGLWindow::renderNative(bool force)
+{
+#ifdef __APPLE__
+    if (_isShuttingDown || !isExposed() || !handle() || !prepareContext())
+    {
+        static bool told = false;
+        if (!_isShuttingDown && !told)
+        {
+            told = true;
+            qInfo() << "DeviceScreenGLWindow: native present waits: exposed" << isExposed() << "handle"
+                    << (handle() != nullptr) << "context" << (_context != nullptr);
+        }
+        return;
+    }
+    force = force || _presentPending;
+    _presentPending = false;
+    if (!_metal)
+    {
+        _metal = MetalPresenter::Create(reinterpret_cast<void*>(winId()));
+        if (!_metal)
+        {
+            qWarning() << "DeviceScreenGLWindow: no Metal presenter for the window";
+            return;
+        }
+        qInfo() << "DeviceScreenGLWindow: native presenter (Metal, present at the frame's audio time), lead"
+                << presentLeadNs() / 1'000'000 << "ms";
+    }
+
+    // The frame due a lead from now: drawn now, shown at its own target
+    const int64_t now = SteadyNowNs();
+    const uint64_t uploads = _frameSerial;
+    const int64_t lead = presentLeadNs();
+    updateTexture(now + lead);
+    const bool newFrame = _frameSerial != uploads;
+    // Occluded: the system would drop every present; the texture keeps up, the GPU rests
+    if ((newFrame || force) && _metal->IsVisible())
+    {
+        const QSize pixels = (QSizeF(size()) * devicePixelRatio()).toSize();
+        if (_metal->BeginFrame(pixels.width(), pixels.height()) != 0)
+        {
+            if (pixels != _glSize)
+            {
+                _glSize = pixels;
+                resizeGL(pixels.width(), pixels.height());
+            }
+            paintGL();
+            // A forced repaint of the frame on screen goes at once; a new frame at its target
+            const int64_t at = newFrame && _shownInfo.targetNs > 0 ? _shownInfo.targetNs : 0;
+            _metal->PresentFrame(at, {_shownInfo.serial, _shownInfo.latchNs, _presentPlannedNs, now});
+        }
+    }
+
+    static const bool logStats = qEnvironmentVariableIsSet("UNREAL_PRESENT_LOG");
+    if (logStats && now - _statusLogNs > 5'000'000'000)
+    {
+        _statusLogNs = now;
+        qInfo().noquote() << "DeviceScreenGLWindow:" << presenterStatus();
+    }
+    scheduleNative();
+#else
+    (void)force;
+#endif
+}
+
+void DeviceScreenGLWindow::scheduleNative()
+{
+    if (_isShuttingDown)
+        return;
+    const int64_t now = SteadyNowNs();
+    int64_t wakeNs = 0;
+    if (_shownInfo.nextSerial != 0 && _shownInfo.nextSerial != _uploadedSerial && _shownInfo.nextTargetNs > 0)
+    {
+        wakeNs = _shownInfo.nextTargetNs - presentLeadNs();  // the next frame is known: wake for it
+    }
+    else
+    {
+        // Nothing timed after the frame on screen: poll a refresh while frames may come, stop after a quarter second
+        // idle (a paused machine); the next latch starts it again (refresh)
+        const int idleLimit = std::max(15, static_cast<int>(1e9 / static_cast<double>(refreshPeriodNs()) / 4.0));
+        if (_idleRefreshes > idleLimit)
+            return;
+        wakeNs = now + refreshPeriodNs();
+    }
+    // Rounded up: a wake before the target - lead would find the same frame and spin
+    const int64_t delayMs = std::max<int64_t>(0, (wakeNs - now + 999'999) / 1'000'000);
+    _presentPlannedNs = wakeNs;
+    _presentTimer->start(static_cast<int>(std::min<int64_t>(delayMs, 1000)));
+}
+
+QString DeviceScreenGLWindow::presenterStatus() const
+{
+#ifdef __APPLE__
+    if (_metal)
+        return QString::fromStdString(_metal->Describe());
+#endif
+    return {};
 }
 
 void DeviceScreenGLWindow::setupVSync()
@@ -126,7 +329,13 @@ bool DeviceScreenGLWindow::probeGPUAcceleration()
 
 DeviceScreenGLWindow::~DeviceScreenGLWindow()
 {
-    makeCurrent();
+    if (_presentTimer)
+        _presentTimer->stop();
+    if (!makeCurrent())
+    {
+        detach();
+        return;
+    }
     delete _texture;
     delete _gradedTexture;
     delete _indexTexture;
@@ -139,6 +348,9 @@ DeviceScreenGLWindow::~DeviceScreenGLWindow()
     _slangRunner.reset();
     _quadBuffer.destroy();
     _quadVao.destroy();
+#ifdef __APPLE__
+    _metal.reset();  // its GL objects in this context
+#endif
     doneCurrent();
     detach();
 }
@@ -194,8 +406,46 @@ void DeviceScreenGLWindow::refresh()
     if (_isShuttingDown)
         return;
 
+    // A source without serials (the legacy buffer, a ZX-Poly display) has a new frame now
     _textureNeedsUpdate = true;
-    update();
+    _idleRefreshes = 0;
+    if (_native)
+    {
+        // The timer runs while frames come; started again after an idle stop
+        if (!_presentTimer->isActive())
+            _presentTimer->start(0);
+        return;
+    }
+    requestUpdate();  // one update request however many come before it
+}
+
+void DeviceScreenGLWindow::onFrameSwapped()
+{
+    // Frames by time (frame presenter design, section 4.2): each refresh draws the frame due when it reaches the
+    // screen, so the window repaints on every refresh while frames come. A quarter second with nothing new and nothing
+    // pending stops it (a paused machine); the next latch starts it again
+    if (_isShuttingDown || !isExposed())
+        return;
+    const int idleLimit = std::max(15, static_cast<int>(1e9 / static_cast<double>(refreshPeriodNs()) / 4.0));
+    if (_idleRefreshes <= idleLimit)
+        requestUpdate();
+}
+
+int64_t DeviceScreenGLWindow::refreshPeriodNs() const
+{
+    const QScreen* display = screen();
+    const double hz = display ? display->refreshRate() : 60.0;
+    return static_cast<int64_t>(1e9 / (hz >= 20.0 && hz <= 1000.0 ? hz : 60.0));
+}
+
+int64_t DeviceScreenGLWindow::presentLeadNs() const
+{
+    return _presentLeadNs > 0 ? _presentLeadNs : refreshPeriodNs() + 6'000'000;
+}
+
+int64_t DeviceScreenGLWindow::refreshTargetNs() const
+{
+    return SteadyNowNs() + refreshPeriodNs();
 }
 
 void DeviceScreenGLWindow::prepareForShutdown()
@@ -230,10 +480,12 @@ QImage DeviceScreenGLWindow::grabFramebuffer()
     QImage frame;
     {
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
-        if (_frameSource && !_latchedFrame.isNull() &&
-            _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
+        // The frame on screen now; into an image of its own, the texture's frame stays as it is
+        QImage grabbed(_latchedFrame.size(), _latchedFrame.format());
+        if (_frameSource && !grabbed.isNull() &&
+            _frameSource(SteadyNowNs(), grabbed.bits(), static_cast<size_t>(grabbed.sizeInBytes()), nullptr))
         {
-            frame = _latchedFrame;
+            frame = grabbed;
         }
         // A frame source is installed: never fall back to _devicePixels. It wraps the emulator's framebuffer, which
         // is freed and reallocated when the guest switches video mode (Profi 352x288 <-> 512x240 hi-res, ATM, AlCo)
@@ -532,9 +784,8 @@ void DeviceScreenGLWindow::resizeGL(int w, int h)
 
 QImage DeviceScreenGLWindow::renderWindowImage(bool hud, int pictureHeight)
 {
-    if (!isValid())
+    if (!isValid() || !makeCurrent())
         return {};
-    makeCurrent();
     const qreal ratio = devicePixelRatio();
     if (pictureHeight > 0)
         _renderPicture = QSize(static_cast<int>(pictureHeight * static_cast<double>(this->ratio)), pictureHeight);
@@ -546,6 +797,7 @@ QImage DeviceScreenGLWindow::renderWindowImage(bool hud, int pictureHeight)
         glViewport(0, 0, pixels.width(), pixels.height());
         // The HUD's QPainter would paint into the window, not this FBO: it goes onto the image below
         _renderingImage = true;
+        updateTexture(refreshTargetNs());
         paintGL();
         _renderingImage = false;
         fbo.release();
@@ -562,33 +814,52 @@ QImage DeviceScreenGLWindow::renderWindowImage(bool hud, int pictureHeight)
     return image;
 }
 
-void DeviceScreenGLWindow::updateTexture()
+void DeviceScreenGLWindow::updateTexture(int64_t hostNs)
 {
-    if (!_textureNeedsUpdate.load(std::memory_order_relaxed))
-        return;
-
-    // Selection under the frame-source mutex (see clearFrameSource): the
-    // legacy fallback deep-copies so post-lock texture upload only touches
-    // owned memory.
+    // The source is asked on every refresh (the frame due changes with the time), the legacy buffer only when a frame
+    // came. Selection under the frame-source mutex (see clearFrameSource): the legacy fallback deep-copies so
+    // post-lock texture upload only touches owned memory.
+    const bool forced = _textureNeedsUpdate.exchange(false, std::memory_order_relaxed);
     QImage* sourceImage = nullptr;
+    bool newFrame = forced;
     {
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
+        PresentFrameInfo info;
         if (_frameSource && !_latchedFrame.isNull() &&
-            _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
+            _frameSource(hostNs, _latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes()), &info))
         {
             sourceImage = &_latchedFrame;
+            newFrame = info.serial == 0 || info.serial != _uploadedSerial;
+            // Nothing new and nothing pending: one more idle refresh
+            if (newFrame || info.nextSerial != 0)
+                _idleRefreshes = 0;
+            else
+                _idleRefreshes++;
+            _shownInfo = info;
         }
         // A frame source is installed: never fall back to _devicePixels. It wraps the emulator's framebuffer, which
         // is freed and reallocated when the guest switches video mode (Profi 352x288 <-> 512x240 hi-res, ATM, AlCo)
         // before the queued re-attach runs - a null or dangling image would be uploaded to the GPU.
         else if (!_frameSource && _devicePixels != nullptr)
         {
+            if (!forced && _texture->isCreated())
+            {
+                _idleRefreshes++;
+                return;
+            }
             _legacyFrame = _devicePixels->copy();
             sourceImage = &_legacyFrame;
+        }
+        else
+        {
+            _idleRefreshes++;
         }
     }
 
     if (!sourceImage || sourceImage->isNull())
+        return;
+    // The frame is in the texture already (a viewport change forces the upload, it does not repeat the frame)
+    if (!newFrame && !forced && _texture->isCreated())
         return;
 
     QImage* uploadImage = sourceImage;
@@ -604,7 +875,8 @@ void DeviceScreenGLWindow::updateTexture()
             _blendedFrame = QImage(srcWidth, srcHeight, QImage::Format_RGBA8888);
         }
 
-        _frameHistory.pushFrame(sourceImage->bits(), sourceImage->sizeInBytes());
+        if (newFrame)
+            _frameHistory.pushFrame(sourceImage->bits(), sourceImage->sizeInBytes());
 
         if (_frameHistory.hasMinimumHistory())
         {
@@ -636,7 +908,7 @@ void DeviceScreenGLWindow::updateTexture()
 
     _shownFrame = uploadImage;
     ++_frameSerial;
-    _textureNeedsUpdate = false;
+    _uploadedSerial = sourceImage == &_latchedFrame ? _shownInfo.serial : 0;
 }
 
 namespace
@@ -681,8 +953,6 @@ void DeviceScreenGLWindow::paintGL()
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // a preset's framebuffers clear to other colours
     glClear(GL_COLOR_BUFFER_BIT);
 
-    updateTexture();
-
     const QRect picture = pictureDeviceRect();
     if (_texture && _texture->isCreated() && !picture.isEmpty())
     {
@@ -706,8 +976,11 @@ void DeviceScreenGLWindow::paintGL()
 
     if (_hudOverlay && _hudOverlay->isVisible() && !_renderingImage)
     {
-        QPainter painter(this);
-        _hudOverlay->renderHUD(painter, width(), height(), devicePixelRatio());
+        // Into the bound framebuffer: the window's surface or the native way's IOSurface
+        QOpenGLPaintDevice device(QSize(surfaceWidth, surfaceHeight));
+        device.setDevicePixelRatio(dpr);
+        QPainter painter(&device);
+        _hudOverlay->renderHUD(painter, width(), height(), dpr);
     }
 }
 
@@ -892,7 +1165,7 @@ void DeviceScreenGLWindow::mousePressEvent(QMouseEvent* event)
     if (_mouseCapture && _mouseCapture->handleMousePress(event))
         event->accept();
     else
-        QOpenGLWindow::mousePressEvent(event);
+        QWindow::mousePressEvent(event);
 }
 
 void DeviceScreenGLWindow::mouseReleaseEvent(QMouseEvent* event)
@@ -900,7 +1173,7 @@ void DeviceScreenGLWindow::mouseReleaseEvent(QMouseEvent* event)
     if (_mouseCapture && _mouseCapture->handleMouseRelease(event))
         event->accept();
     else
-        QOpenGLWindow::mouseReleaseEvent(event);
+        QWindow::mouseReleaseEvent(event);
 }
 
 void DeviceScreenGLWindow::mouseMoveEvent(QMouseEvent* event)
@@ -908,7 +1181,7 @@ void DeviceScreenGLWindow::mouseMoveEvent(QMouseEvent* event)
     if (_mouseCapture && _mouseCapture->handleMouseMove(event))
         event->accept();
     else
-        QOpenGLWindow::mouseMoveEvent(event);
+        QWindow::mouseMoveEvent(event);
 }
 
 void DeviceScreenGLWindow::wheelEvent(QWheelEvent* event)
@@ -916,7 +1189,7 @@ void DeviceScreenGLWindow::wheelEvent(QWheelEvent* event)
     if (_mouseCapture && _mouseCapture->handleWheel(event))
         event->accept();
     else
-        QOpenGLWindow::wheelEvent(event);
+        QWindow::wheelEvent(event);
 }
 
 void DeviceScreenGLWindow::focusOutEvent(QFocusEvent* event)
@@ -925,7 +1198,7 @@ void DeviceScreenGLWindow::focusOutEvent(QFocusEvent* event)
         _mouseCapture->handleFocusOut();
     // Keys held while the focus left never send their release here: let a PS/2 machine see them go up
     KeyboardManager::postHeldKeyReleases(_emulator ? _emulator->GetUUID().toString() : std::string());
-    QOpenGLWindow::focusOutEvent(event);
+    QWindow::focusOutEvent(event);
 }
 
 QRectF DeviceScreenGLWindow::displaySourceRect() const
@@ -1022,10 +1295,30 @@ bool DeviceScreenGLWindow::event(QEvent* event)
             }
             break;
         }
+        case QEvent::UpdateRequest:
+            // Native way: the HUD's requests go with the next timed present, never ahead of a frame's own time
+            if (_native)
+                update();
+            else
+                renderGL();
+            return true;
+        case QEvent::Expose:
+            if (isExposed())
+            {
+                if (_native)
+                    renderNative(true);
+                else
+                    renderGL();
+            }
+            break;
+        case QEvent::Resize:
+            if (_native && isExposed())
+                renderNative(true);
+            break;
         default:
             break;
     }
-    return QOpenGLWindow::event(event);
+    return QWindow::event(event);
 }
 
 void DeviceScreenGLWindow::handleExternalKeyPress(QKeyEvent* event)

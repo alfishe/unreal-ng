@@ -10,6 +10,7 @@
 
 #include "emulator/video/screen.h"  // For DisplayViewport
 #include "framehistory.h"
+#include "framesource.h"
 #include "crtprofiles.h"
 
 class CRTBeamModel;
@@ -42,14 +43,10 @@ public:
     /// the framebuffer geometry changes (model/video-mode switch).
     void fitToParent();
 
-    /// Copies the latched (tear-free) frame into dst; returns true on success.
-    using FrameCopyFn = std::function<bool(uint8_t* dst, size_t dstSize)>;
-
-    /// When set, paintEvent pulls frames into an owned backing image via this
-    /// callback (Screen::CopyPresentedFramebuffer) instead of reading the
-    /// emulator's live framebuffer, which the emulation thread overwrites
-    /// concurrently and causes mid-frame tearing.
-    void setFrameSource(FrameCopyFn frameSource)
+    /// When set, paintEvent pulls the frame due now (Screen::CopyFrameAt) into an owned backing image via this
+    /// callback instead of reading the emulator's live framebuffer, which the emulation thread overwrites
+    /// concurrently and causes mid-frame tearing. A frame due later gets its own repaint
+    void setFrameSource(FrameSourceFn frameSource)
     {
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
         _frameSource = std::move(frameSource);
@@ -161,7 +158,8 @@ private:
     QRectF devicePixelsRect;
     QImage* devicePixels = nullptr;
     QImage _latchedFrame;           // Owned backing store filled via _frameSource
-    FrameCopyFn _frameSource;       // Tear-free frame provider (empty = legacy live-buffer path)
+    FrameSourceFn _frameSource;     // Tear-free frame provider (empty = legacy live-buffer path)
+    bool _repaintScheduled = false; // a repaint waits for the next frame's target
     mutable std::mutex _frameSourceMutex;  // Guards _frameSource + devicePixels across threads
 
     static constexpr float kNativeRatio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);

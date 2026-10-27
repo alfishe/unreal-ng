@@ -174,6 +174,29 @@ QString buildFilterGroup(const QString& label, const QStringList& exts)
 {
     return QString("%1 (%2)").arg(label, buildExtPattern(exts));
 }
+
+// The screen's frames by time for the screen widget, and the video presentation latency readout (EMA 1/8, half of
+// the realtime A/V offset): when the frame reaches the screen minus its latch
+FrameSourceFn TimedFrameSource(Screen* screen, EmulatorContext* context)
+{
+    return [screen, context](int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFrameInfo* info) {
+        PresentFrameInfo shown;
+        if (!context || !screen->CopyFrameAt(hostNs, dst, dstSize, &shown))
+            return false;
+        if (info)
+            *info = shown;
+        if (shown.latchNs != 0)
+        {
+            // Signed EMA: unsigned (sample - prev) wraps when the new sample is smaller, exploding the average
+            const int64_t sample = std::clamp<int64_t>((hostNs - shown.latchNs) / 1000, 0, 1000000);
+            const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+            const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+            context->pVideoPresentLatencyUs.store(static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)),
+                                                  std::memory_order_relaxed);
+        }
+        return true;
+    };
+}
 }  // namespace
 
 // region <Constructors / destructors>
@@ -2651,31 +2674,7 @@ void MainWindow::handleVideoModeChanged(int id, Message* message)
 
             // init() -> detach() clears the tear-free frame source - re-install
             Screen* screen = context->pScreen;
-            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
-                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
-                    return false;
-
-                // Stamp video presentation latency (paint - latch), EMA 1/8:
-                // half of the realtime A/V offset readout
-                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
-                if (latchUs != 0)
-                {
-                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                                               std::chrono::steady_clock::now().time_since_epoch())
-                                               .count();
-                    // Signed EMA: unsigned (sample - prev) wraps when the new
-                    // sample is smaller, exploding the average
-                    // Include the A/V-sync present delay: the painted frame is
-                    // GetPresentDelayFrames older than the newest latch
-                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
-                                           screen->GetPresentDelayUs();
-                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
-                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
-                    context->pVideoPresentLatencyUs.store(
-                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
-                }
-                return true;
-            });
+            _screenWrapper->setFrameSource(TimedFrameSource(screen, context));
         },
         Qt::QueuedConnection);
 }
@@ -2813,7 +2812,12 @@ bool MainWindow::attachScreenToZXPolyDisplay()
                          static_cast<uint16_t>(group->GetDisplayHeight()),
                          const_cast<uint32_t*>(group->GetDisplayBuffer()));
     _screenWrapper->clearDisplayViewport();
-    _screenWrapper->setFrameSource([group](uint8_t* dst, size_t dstSize) { return group->CopyDisplay(dst, dstSize); });
+    // The group composes its display from its machines' frames on request: no serials, no times
+    _screenWrapper->setFrameSource([group](int64_t, uint8_t* dst, size_t dstSize, PresentFrameInfo* info) {
+        if (info)
+            *info = PresentFrameInfo{};
+        return group->CopyDisplay(dst, dstSize);
+    });
     return true;
 }
 
@@ -4277,31 +4281,7 @@ void MainWindow::handleOverscanModeToggled(bool enabled)
 
             // init() -> detach() clears the tear-free frame source - re-install it
             Screen* screen = context->pScreen;
-            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
-                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
-                    return false;
-
-                // Stamp video presentation latency (paint - latch), EMA 1/8:
-                // half of the realtime A/V offset readout
-                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
-                if (latchUs != 0)
-                {
-                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                                               std::chrono::steady_clock::now().time_since_epoch())
-                                               .count();
-                    // Signed EMA: unsigned (sample - prev) wraps when the new
-                    // sample is smaller, exploding the average
-                    // Include the A/V-sync present delay: the painted frame is
-                    // GetPresentDelayFrames older than the newest latch
-                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
-                                           screen->GetPresentDelayUs();
-                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
-                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
-                    context->pVideoPresentLatencyUs.store(
-                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
-                }
-                return true;
-            });
+            _screenWrapper->setFrameSource(TimedFrameSource(screen, context));
 
             if (enabled)
             {
@@ -4774,9 +4754,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
             auto& fb = screen->GetFramebufferDescriptor();
             _screenWrapper->init(fb, *context->pScreen);
 
-            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
-                return context && screen->CopyPresentedFramebuffer(dst, dstSize);
-            });
+            _screenWrapper->setFrameSource(TimedFrameSource(screen, context));
         }
         _screenWrapper->setEmulator(_emulator);
     }
@@ -5601,31 +5579,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
             // overwrites the live buffer while the GUI thread paints it).
             // _screenWrapper->detach() clears this on emulator switch/shutdown.
             Screen* screen = context->pScreen;
-            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
-                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
-                    return false;
-
-                // Stamp video presentation latency (paint - latch), EMA 1/8:
-                // half of the realtime A/V offset readout
-                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
-                if (latchUs != 0)
-                {
-                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                                               std::chrono::steady_clock::now().time_since_epoch())
-                                               .count();
-                    // Signed EMA: unsigned (sample - prev) wraps when the new
-                    // sample is smaller, exploding the average
-                    // Include the A/V-sync present delay: the painted frame is
-                    // GetPresentDelayFrames older than the newest latch
-                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
-                                           screen->GetPresentDelayUs();
-                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
-                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
-                    context->pVideoPresentLatencyUs.store(
-                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
-                }
-                return true;
-            });
+            _screenWrapper->setFrameSource(TimedFrameSource(screen, context));
 
             // A ZX-Poly master (started here or through automation) shows its
             // group's double-resolution display frame instead

@@ -380,7 +380,7 @@ classDiagram
         GetFrameStatistics + kernel vblanks
     }
     class GlPresenter {
-        QOpenGLWindow requestUpdate()
+        QWindow + GL context, requestUpdate()
         today's path, b-vsync pick
     }
     FramePresenter <|-- MetalPresenter
@@ -389,17 +389,43 @@ classDiagram
 ```
 
 - The screen widget becomes a `QWindow` with a native surface: `QSurface::MetalSurface` on macOS, a plain HWND on
-  Windows. It is embedded with `createWindowContainer` as today's GL window is. The presenter draws into it from its
-  own thread.
+  Windows. It is embedded with `createWindowContainer` as today's GL window is. The macOS presenter runs on the GUI
+  thread on a precise timer (below); its own thread is an option if the GUI thread's stalls show in the tail.
   - POC: a Qt `QWindow` with the native presenter measured the same as an SDL3 window with the same presenter (Mac
     `c-vrr` 28.4 vs 28.1 ms p50; Windows `b-vsync` 10.3 vs 10.4 ms).
   - Qt therefore stays the shell. SDL3 has nothing to add here: `SDL_GPU` has no present-at-time and no presentation
     feedback, so the native presenter is needed under SDL3 too.
-- The draw is what `DeviceScreenGLWindow::paintGL` does today: the texture upload, the integer or fit scaling, the
-  shaders, plus the blend of section 4.3. It is ported to Metal and D3D11. The GL path stays as the fallback (Linux
-  until a Vulkan presenter exists) and runs the `b-vsync` pick.
-- The overlays now drawn by `DeviceScreenGLWindow` (OSD, HUD) move with it. They are textures composited in the same
-  pass, never blended between frames.
+- **GL draws, the native presenter shows** (owner decision, 2026-10-26). The draw stays what
+  `DeviceScreenGLWindow::paintGL` does: the texture upload, the integer or fit scaling, the CRT profiles, the beam
+  models, the slang presets, custom shaders, the HUD and the OSD, plus the blend of section 4.3. It draws into a
+  texture shared with the native API, and the presenter only copies that into its drawable and presents it at the
+  frame's time:
+  - macOS: a ring of three IOSurfaces, each a `GL_TEXTURE_RECTANGLE` framebuffer for GL
+    (`CGLTexImageIOSurface2D`) and an `MTLTexture` for Metal. A GL fence (`glClientWaitSync`) before the Metal pass
+    reads it; the pass turns the rows over (GL counts from the bottom).
+  - Windows: `WGL_NV_DX_interop2` onto a D3D11 texture (phase 4).
+
+  Every effect works under VRR at once, with one renderer to keep. A full Metal / D3D11 renderer is not ported now;
+  once GL plus native works, how much more a native renderer would gain is measured, then decided.
+- The GL path stays as the fallback (`UNREAL_PRESENTER=gl`, Linux until a Vulkan presenter exists) and runs the
+  `b-vsync` pick.
+- macOS, as built (phase 3): `DeviceScreenGLWindow` is a `QWindow` with its own GL context. In native mode its
+  surface is a `MetalSurface` and GL draws on an offscreen surface into the IOSurface. A precise timer on the GUI
+  thread wakes a lead before the next frame's target, draws that frame and hands it to `presentDrawable:atTime:`
+  at its target. A forced repaint (HUD, settings) rides with the next timed present, or goes at once when nothing is
+  timed (a paused machine). An occluded window draws nothing: the system would drop every present.
+  - **The lead is a refresh plus 6 ms.** The window server composes a refresh ahead, so a drawable needs about a
+    refresh before its vsync, and the draw comes on top. Measured on a fixed 60 Hz display (M1 Ultra, Pentagon at
+    48.8 Hz): lead 6 ms showed 65 % of the frames a refresh late (on-screen error p50 19.5 ms against the target);
+    18 ms 4-15 % (by load); 23 ms 2 %, error p50 8.1 ms, which is the wait for the next vsync on a fixed display
+    (uniform 0-16.7 ms). Frames latch 60-75 ms before their target, so the lead costs nothing.
+  - The rest of the late tail is the GL fence wait on a busy GPU (p50 0.7 ms, up to 11 ms with other GPU work).
+    `nextDrawable` waits under 0.1 ms. The system rounds a present to the nearest vsync: 2-3 % of the frames show
+    up to 0.5 ms before their target.
+  - Diagnostics: `UNREAL_PRESENT_LOG` (stats every 5 s), `UNREAL_PRESENT_TRACE` (one line per present),
+    `UNREAL_PRESENT_DUMP` (the drawable as shown, read back: checked upright with crt-geom and the HUD).
+- The overlays now drawn by `DeviceScreenGLWindow` (OSD, HUD) are drawn by GL into the same texture, never blended
+  between frames.
 - Linux: a Vulkan presenter later. `VK_KHR_present_wait` / `VK_GOOGLE_display_timing` where the compositor offers them,
   `wp_presentation` on Wayland. The Steam Deck client has its own presenter (rendering.md) and shares `FrameClock`.
 
@@ -484,7 +510,9 @@ Each phase lands on its own with tests and docs.
    first visible gain (Windows high refresh, A/V at every rate), and it is the fallback for everything after. The
    other readers of `CopyPresentedFramebuffer` (screenshots, recording, the video wall) move to time as well, and
    `AVSyncDelayFrames` goes. Measured on a real device: the audio clock's target interval error (section 9).
-3. **Metal presenter** (macOS): `b-vsync` and `c-vrr`, `presentedTime` stats, occlusion, `beginActivity`.
+3. **Metal presenter** (macOS): `b-vsync` and `c-vrr`, `presentedTime` stats, occlusion, `beginActivity`. On the
+   branch: `c-vrr` present-at-time from the GL draw, the stats, occlusion, the lead (section 6.2); not yet `b-vsync`
+   on a display link and `beginActivity`.
 4. **DXGI presenter** (Windows): `b-vsync` and `c-vrr`, the waitable object, the vblank watch, VRR verification and
    fallback, `ES_DISPLAY_REQUIRED`.
 5. **Smooth motion**, at once after phases 3-4 are stable on the VRR hosts (owner decision):

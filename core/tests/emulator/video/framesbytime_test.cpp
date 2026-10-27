@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <chrono>
 #include <cstring>
 #include <vector>
 
@@ -206,4 +207,74 @@ TEST_F(FramesByTime_Test, UnstampedScreenUsesLatchTimes)
     ASSERT_TRUE(_screen->CopyFrameAt(now, out.data(), out.size(), &info));
     EXPECT_EQ(out[0], Marker(1));
     EXPECT_EQ(info.source, FrameClockSource::None);
+}
+
+/// CopyPresentedFramebuffer (screenshots, captures, the video wall) serves the frame due now, not the newest latched
+TEST_F(FramesByTime_Test, PresentedFramebufferIsTheFrameDueNow)
+{
+    // Four frames 100 ms apart on the emulated clock, timed so that the third is due now and the fourth 50 ms later
+    constexpr int64_t P = 100'000'000;
+    const int64_t now =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const int64_t start = now - 7 * P / 2;
+    for (int k = 0; k < 4; k++)
+    {
+        Latch();
+        FrameStampInput in;
+        in.periodNs = P;
+        in.haveEmulated = true;
+        in.emulatedEndNs = start + k * P;  // target: one period later
+        in.nowNs = now;
+        _screen->StampPresentTiming(in);
+    }
+    std::vector<uint8_t> out(_size);
+    ASSERT_TRUE(_screen->CopyPresentedFramebuffer(out.data(), out.size()));
+    EXPECT_EQ(out[0], Marker(2));
+    EXPECT_EQ(_screen->GetShownDelayFrames(), 1u) << "one frame latched after it";
+    EXPECT_EQ(_screen->GetPresentDelayUs(), 0u) << "the emulated clock times the frame end, the latch is now";
+}
+
+/// A machine that stops (a pause, the end of a direct run) has nothing to keep in step with: every frame it latched
+/// is due at once, so a capture after the stop gets the newest whatever the time
+TEST_F(FramesByTime_Test, SettleMakesEveryFrameDue)
+{
+    const int64_t now =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    for (int k = 0; k < 3; k++)
+    {
+        Latch();
+        FrameStampInput in;
+        in.periodNs = PERIOD;
+        in.haveEmulated = true;
+        in.emulatedEndNs = now + 1'000'000'000 + k * PERIOD;  // a second ahead
+        in.nowNs = now;
+        _screen->StampPresentTiming(in);
+    }
+    Latch();  // its sound not delivered yet
+
+    std::vector<uint8_t> out(_size);
+    PresentFrameInfo info;
+    ASSERT_TRUE(_screen->CopyFrameAt(now, out.data(), out.size(), &info));
+    EXPECT_TRUE(info.early) << "nothing due yet";
+    EXPECT_EQ(out[0], Marker(0));
+
+    _screen->SettlePresentTiming();
+    ASSERT_TRUE(_screen->CopyPresentedFramebuffer(out.data(), out.size()));
+    EXPECT_EQ(out[0], Marker(3)) << "the newest, even the one not stamped yet";
+    EXPECT_EQ(_screen->GetShownDelayFrames(), 0u);
+
+    // The next frame starts a new sequence: timed again, not due before its time. The settled frames are due at the
+    // settle's time, after `now`
+    const int64_t later =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    Latch();
+    FrameStampInput again;
+    again.periodNs = PERIOD;
+    again.haveEmulated = true;
+    again.emulatedEndNs = later + 1'000'000'000;
+    again.nowNs = later;
+    _screen->StampPresentTiming(again);
+    ASSERT_TRUE(_screen->CopyFrameAt(later, out.data(), out.size(), &info));
+    EXPECT_EQ(out[0], Marker(3));
+    EXPECT_EQ(info.nextSerial, info.serial + 1);
 }
