@@ -194,7 +194,13 @@ struct Stride
     /// Empty: none of them came from a copy
     std::vector<Interval> origins;
     bool originsMore = false;
+    /// A pass over the image (L1Result::DiscountSweeps): this read and a write of its loop went over the same range of
+    /// at least kSweepBytes and wrote every byte back unchanged. Its accesses are not in the byte uses
+    bool sweep = false;
 };
+
+/// The smallest range a pass over the image covers (L1Result::DiscountSweeps)
+constexpr uint32_t kSweepBytes = 4096;
 
 struct Loop
 {
@@ -424,7 +430,7 @@ struct L1Result
     std::vector<PageTable> pageTables;
     std::vector<BranchCondition> branches;
     std::vector<PointerUse> pointers;       ///< sorted by (form, origin)
-    std::vector<BlockCopy> copies;          ///< sorted by (instruction, src, dst, length); at most 4096
+    std::vector<BlockCopy> copies;          ///< sorted by (instruction, src, dst, length); at most 65536
     /// Per physical byte: what the code did with it (pages with a data access or code, sorted by page). Not in ToJson
     std::vector<BytePage> bytePages;
     /// The mapped pages' contents at the start and the end of the replay (sorted by page). Not in ToJson
@@ -448,6 +454,11 @@ struct L1Result
     /// The byte at @p key at the start / the end of the replay (false: the page was not mapped then)
     bool StartByte(PhysKey key, uint8_t& value) const;
     bool EndByte(PhysKey key, uint8_t& value) const;
+    /// Takes the passes over the image out of the byte uses, once the images are in: a loop that reads every byte of
+    /// a range of at least kSweepBytes and writes it back unchanged (a decryption that leaves the bytes as they were,
+    /// a pause made of memory reads) says nothing of what the bytes are, yet it would make each one read and written
+    /// by the same routine. Its read and write strides get `sweep`; a byte only they touched becomes untouched
+    void DiscountSweeps();
     /// The physical key of Z80 address @p z80 through the start's paging
     PhysKey StartKey(uint16_t z80) const { return MakeKey(startBanks[z80 >> 14], z80); }
     uint32_t IndexOf(const Routine& routine) const { return static_cast<uint32_t>(&routine - routines.data()); }

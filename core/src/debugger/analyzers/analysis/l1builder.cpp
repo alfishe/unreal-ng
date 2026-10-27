@@ -564,6 +564,7 @@ struct L1Builder::Impl
     uint64_t loopInstances = 0;
 
     PairTag pairs[5];
+    PairTag shadowPairs[3];  ///< BC', DE', HL' (EXX swaps them with pairs[0..2])
     PairTag hTag;
     uint64_t lFromRegSeq = 0;  ///< blockSeq + 1 of the last LD L,r (0: none)
     Prov prov[7];
@@ -584,6 +585,7 @@ struct L1Builder::Impl
     bool frameBaseSet = false;
     // Pointer provenance of the 8-bit registers, and the pointer uses it found
     Origin origins[kOriginSlots];
+    Origin shadowOrigins[6];  ///< B', C', D', E', H', L' (EXX swaps them with origins[0..5])
     std::vector<PointerAcc> ptrs;
     std::unordered_map<uint16_t, Origin> stackOrigins;  ///< stack slot -> the provenance a PUSH left there
     /// The block copy in progress, and the runs seen: (first node, src, dst, length, dir) -> count
@@ -606,7 +608,7 @@ struct L1Builder::Impl
         PhysKey dstKey = 0;
     };
     std::map<std::tuple<uint32_t, uint16_t, uint16_t, uint32_t, int>, CopySeen> copyRuns;
-    static constexpr size_t kMaxCopies = 4096;
+    static constexpr size_t kMaxCopies = 65536;  // a back buffer copied a row at a time is hundreds of distinct runs
 
     void FlushCopy()
     {
@@ -903,6 +905,12 @@ struct L1Builder::Impl
                     return;
                 }
             }
+        }
+        // EXX: the pointers wait in the shadow set (a blitter keeps its source in DE' while it works on HL)
+        if (op.cls == OpClass::Exchange && w == (reg::kBC | reg::kDE | reg::kHL | reg::kAlt))
+        {
+            std::swap_ranges(origins, origins + 6, shadowOrigins);
+            return;
         }
         if (op.cls == OpClass::Exchange && w == (reg::kDE | reg::kHL))
         {
@@ -1553,6 +1561,12 @@ struct L1Builder::Impl
             hTag = PairTag{};
             lFromRegSeq = 0;
         }
+        else if (op.cls == OpClass::Exchange && w == (reg::kBC | reg::kDE | reg::kHL | reg::kAlt))
+        {
+            std::swap_ranges(pairs, pairs + 3, shadowPairs);
+            hTag = PairTag{};
+            lFromRegSeq = 0;
+        }
         else
         {
             int keep = -1;
@@ -1772,6 +1786,15 @@ struct L1Builder::Impl
             // The return address was changed: a patched return goes somewhere else
             ++nodes[stack.back().entry].patchedReturns;
             PopFrame(now, true);
+            nodes[succNode].entryKinds |= entry::kDispatch;
+            AddSucc(n, succNode, EdgeKind::Dispatch);
+            return;
+        }
+        // A return address the code wrote into the stack slots itself (LD (HL),n, not a PUSH): a dispatch too
+        const auto hiSlot = static_cast<uint16_t>(spBefore + 1);
+        if ((UseOf(pageOf(spBefore), spBefore).flags & use::kOtherWrite) != 0 &&
+            (UseOf(pageOf(hiSlot), hiSlot).flags & use::kOtherWrite) != 0)
+        {
             nodes[succNode].entryKinds |= entry::kDispatch;
             AddSucc(n, succNode, EdgeKind::Dispatch);
             return;

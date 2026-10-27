@@ -9,9 +9,12 @@
 ///
 /// Kinds: a tile when a loop around the blit walked a map one byte a pass; a font when 8 x 8 frames sit on the
 /// lattice of one character set: base + 8 * code for the characters of the text the detectors found (at least three,
-/// three quarters of the frames), the claim then covers the 96 characters 32..127; a sprite otherwise. An object
-/// inside a buffer is also claimed in each of the buffer's sources at the same offset: observed where the copy
-/// provenance of the bytes the blit read shows that source, inferred otherwise.
+/// three quarters of the frames, not one run of consecutive codes; no font when the walk around each of its blits read
+/// a map and no text), the claim then covers the 96 characters 32..127; 8 x 8 frames in RAM the ROM's character loop
+/// (PR_ALL) drew are a font with no text needed: the 21 user-defined graphics at (UDG), the 96 characters at (CHARS) +
+/// 256, or else the frames drawn;
+/// a sprite otherwise. An object inside a buffer is also claimed in each of the buffer's sources at the same offset:
+/// observed where the copy provenance of the bytes the blit read shows that source, inferred otherwise.
 
 #include <algorithm>
 #include <cstdio>
@@ -29,6 +32,9 @@ namespace
 {
 
 using media::Blit;
+
+constexpr uint16_t kPrAll = 0x0B7F;     ///< the 48K ROM's PR_ALL: a character's 8 rows to the display
+constexpr uint16_t kPrAllEnd = 0x0BDB;  ///< PO_ATTR follows
 
 struct Shape
 {
@@ -91,13 +97,20 @@ public:
     {
         _buffers = media::Buffers(context);
         for (const Region& r : context.out.store.Regions())
+        {
+            if (r.kind == RegionKind::Code && r.detector == DetectorId::Signatures && r.label == "PR_ALL")
+                _romPrint = r.lo;
             if (r.kind == RegionKind::Text)
+            {
+                _textRanges.emplace_back(r.z80, r.Z80End());
                 for (const char c : r.geometry.text)
                 {
                     const auto code = static_cast<uint8_t>(static_cast<unsigned char>(c) & 0x7F);
                     if (code >= 32 && code < 128)
                         _text.insert(code);
                 }
+            }
+        }
     }
 
     void Run()
@@ -119,7 +132,9 @@ private:
     std::vector<PointerRange> _pointers;
     std::vector<media::BufferCopy> _buffers;
     std::set<uint8_t> _text;
+    std::vector<std::pair<uint16_t, uint16_t>> _textRanges;  ///< the text claims, [lo, hi] (Z80)
     std::set<std::tuple<uint16_t, uint16_t, uint8_t>> _claimed;
+    PhysKey _romPrint = kNoKey;  ///< the ROM's character loop (PR_ALL), when its signature matched
 
     bool Split(uint32_t a, uint32_t b) const
     {
@@ -198,7 +213,7 @@ private:
         }
         for (Object& o : objects)
         {
-            if (glyphs && (o.sparse || o.step == 8) && Font(shape, o))
+            if (glyphs && (((o.sparse || o.step == 8) && Font(shape, o)) || RomCharacters(shape, o)))
                 continue;
             if (o.sparse)
             {
@@ -231,10 +246,30 @@ private:
         }
     }
 
+    /// The walk around every blit of @p o read a map, no text: the frames are picked by map cells (tiles drawn by a
+    /// print routine), not by character codes
+    bool PickedByMap(const Object& o) const
+    {
+        for (const Blit* b : BlitsOf(o))
+        {
+            if (b->mapRead == nullptr || b->mapRead->rangesMore)
+                return false;
+            for (const Interval& r : b->mapRead->ranges)
+            {
+                const uint32_t lo = r.z80;
+                const uint32_t hi = lo + (r.hi - r.lo);
+                for (const auto& [tlo, thi] : _textRanges)
+                    if (lo <= thi && tlo <= hi)
+                        return false;
+            }
+        }
+        return true;
+    }
+
     /// A character set: the frames on base + 8 * code for the text's characters
     bool Font(const Shape& shape, const Object& o)
     {
-        if (_text.empty() || o.seen < 3)
+        if (_text.empty() || o.seen < 3 || PickedByMap(o))
             return false;
         std::vector<uint16_t> drawn;
         for (uint32_t a = o.first; a <= o.last; a += 8)
@@ -259,17 +294,23 @@ private:
                     bestBase = base;
                 }
             }
-        // Frames drawn (not filled) that are text characters: at least three, three quarters of them
+        // Frames drawn (not filled) that are text characters: at least three, three quarters of them, and not one run
+        // of codes (frames side by side fit consecutive codes on some base: an animation, a strip of tiles)
         uint32_t drawnText = 0, drawnAll = 0;
+        std::set<int64_t> codes;
         for (const Blit* b : BlitsOf(o))
             for (const uint16_t s : b->starts)
                 if (s >= o.first && s <= o.last && (s - o.first) % 8 == 0)
                 {
                     ++drawnAll;
                     const int64_t code = (static_cast<int64_t>(s) - bestBase) / 8;
-                    drawnText += (code >= 32 && code < 128 && _text.count(static_cast<uint8_t>(code)) != 0) ? 1 : 0;
+                    const bool text = code >= 32 && code < 128 && _text.count(static_cast<uint8_t>(code)) != 0;
+                    drawnText += text ? 1 : 0;
+                    if (text)
+                        codes.insert(code);
                 }
-        if (bestBase < 0 || drawnText < 3 || drawnText * 4 < drawnAll * 3)
+        if (bestBase < 0 || drawnText < 3 || drawnText * 4 < drawnAll * 3 || codes.size() < 3 ||
+            *codes.rbegin() - *codes.begin() + 1 == static_cast<int64_t>(codes.size()))
             return false;
         const uint32_t lo = static_cast<uint32_t>(bestBase) + 32 * 8;
         const uint32_t hi = static_cast<uint32_t>(bestBase) + 128 * 8 - 1;
@@ -289,6 +330,52 @@ private:
         Evidence(r, o, shape);
         r.evidence.push_back(analysis::Evidence{"characters", static_cast<uint16_t>(bestBase + 256), drawnText,
                                                 "glyphs drawn at base + 8 x the code of a text character"});
+        Add(std::move(r), static_cast<uint16_t>(lo), static_cast<uint16_t>(hi));
+        return true;
+    }
+
+    /// Characters in RAM the ROM drew (its character loop, PR_ALL): the user-defined graphics at (UDG) + 8 x (code -
+    /// 144), 21 of them, or the character set at (CHARS) + 8 x code, 96; what lies in neither, the frames drawn
+    bool RomCharacters(const Shape& shape, const Object& o)
+    {
+        if (_romPrint == kNoKey || o.first < 0x4000)
+            return false;
+        for (const Blit* b : BlitsOf(o))
+        {
+            if (KeyPage(b->loop->header) != KeyPage(_romPrint) || b->loop->z80 < kPrAll || b->loop->z80 >= kPrAllEnd)
+                return false;
+        }
+        const auto word = [&](uint16_t at) {
+            return static_cast<uint32_t>(_context.End(at) | (_context.End(static_cast<uint16_t>(at + 1)) << 8));
+        };
+        const uint32_t udg = word(0x5C7B), chars = word(0x5C36);
+        const uint32_t end = static_cast<uint32_t>(o.last) + 7;
+        uint32_t lo = o.first, hi = end, frames = (o.last - o.first) / 8 + 1;
+        std::string what = "Characters";
+        if (o.first >= udg && end < udg + 21 * 8)
+        {
+            lo = udg, hi = udg + 21 * 8 - 1, frames = 21;
+            what = "User-defined graphics, 21 characters of 8 x 8 (codes 144-164)";
+        }
+        else if (o.first >= chars + 32 * 8 && end < chars + 128 * 8)
+        {
+            lo = chars + 32 * 8, hi = chars + 128 * 8 - 1, frames = 96;
+            what = "Font, 96 characters of 8 x 8 (codes 32-127)";
+        }
+        if (hi > 0xFFFF || (lo >> 14) != (hi >> 14))
+            return false;
+        Region r;
+        r.kind = RegionKind::Font;
+        r.detector = DetectorId::Graphics;
+        r.status = RegionStatus::Observed;
+        r.geometry.width = 8;
+        r.geometry.height = 8;
+        r.geometry.frames = frames;
+        r.geometry.stride = 8;
+        r.geometry.layout = "rows";
+        r.confidence = confidence::FromCount(700, 900, o.seen, 8);
+        r.title = what + ", printed through the ROM";
+        Evidence(r, o, shape);
         Add(std::move(r), static_cast<uint16_t>(lo), static_cast<uint16_t>(hi));
         return true;
     }

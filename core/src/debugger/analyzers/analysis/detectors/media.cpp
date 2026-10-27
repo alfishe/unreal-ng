@@ -15,6 +15,8 @@ namespace
 {
 
 constexpr uint32_t kMinDisplayCopy = 32;
+constexpr uint32_t kMinRowCopy = 8;         ///< a row of a back buffer one short copy (an LDI chain a row)
+constexpr uint32_t kMinCopierBytes = 512;   ///< what the copier of short rows moved in all
 constexpr int kMaxChain = 8;
 
 bool WrittenByCode(const ByteUse& u)
@@ -107,21 +109,31 @@ DisplayInfo FindDisplay(const DetectorContext& context)
     for (uint32_t a = 0x5800; a < 0x5B00; ++a)
         d.map[a] = kAttributes;
 
-    // Copies by source, destination and length (the lowest byte of each range)
+    // Copies by source, destination and length (the lowest byte of each range). A short copy counts when its copier
+    // moved enough in all and it goes to the screen: a back buffer copied a row at a time (POP the row's display
+    // address, an LDI chain)
+    const auto lowest = [](const BlockCopy& c, uint16_t first) {
+        return c.dir > 0 ? first : static_cast<uint16_t>(first - (c.length - 1));
+    };
+    const auto moves = [&](const BlockCopy& c) {
+        const uint16_t src = lowest(c, c.src), dst = lowest(c, c.dst);
+        if (c.length < kMinRowCopy || c.length > 0x4000 || static_cast<uint32_t>(src) + c.length - 1 > 0xFFFF ||
+            static_cast<uint32_t>(dst) + c.length - 1 > 0xFFFF)
+            return false;
+        // A fill (the source overlaps the destination) or a scroll inside the screen moves no picture
+        return !(src < dst + c.length && dst < src + c.length) &&
+               !(src >= 0x4000 && static_cast<uint32_t>(src) + c.length - 1 < 0x5B00);
+    };
+    std::map<PhysKey, uint64_t> copierBytes;
+    for (const BlockCopy& c : context.l1.copies)
+        if (moves(c))
+            copierBytes[c.instruction] += c.length;
     std::map<std::tuple<uint16_t, uint16_t, uint32_t>, DisplayCopy> byKey;
     for (const BlockCopy& c : context.l1.copies)
     {
-        if (c.length < kMinDisplayCopy || c.length > 0x4000)
+        if (!moves(c) || (c.length < kMinDisplayCopy && copierBytes[c.instruction] < kMinCopierBytes))
             continue;
-        const uint16_t src = c.dir > 0 ? c.src : static_cast<uint16_t>(c.src - (c.length - 1));
-        const uint16_t dst = c.dir > 0 ? c.dst : static_cast<uint16_t>(c.dst - (c.length - 1));
-        if (static_cast<uint32_t>(src) + c.length - 1 > 0xFFFF || static_cast<uint32_t>(dst) + c.length - 1 > 0xFFFF)
-            continue;
-        // A fill (the source overlaps the destination) or a scroll inside the screen moves no picture
-        if (src < dst + c.length && dst < src + c.length)
-            continue;
-        if (src >= 0x4000 && static_cast<uint32_t>(src) + c.length - 1 < 0x5B00)
-            continue;
+        const uint16_t src = lowest(c, c.src), dst = lowest(c, c.dst);
         DisplayCopy& copy = byKey[{src, dst, c.length}];
         copy.src = src;
         copy.dst = dst;
@@ -147,6 +159,10 @@ DisplayInfo FindDisplay(const DetectorContext& context)
             if (taken[i])
                 continue;
             DisplayCopy& c = all[i];
+            // A short copy is a row only into the screen itself: one into a back buffer is a copy routine's chunk
+            const bool screen = c.dst >= 0x4000 && c.dst + c.length - 1 < 0x5B00;
+            if (c.length < kMinDisplayCopy && !screen)
+                continue;
             uint32_t pixels = 0, attributes = 0;
             for (uint32_t k = 0; k < c.length; ++k)
             {
@@ -159,7 +175,7 @@ DisplayInfo FindDisplay(const DetectorContext& context)
             taken[i] = 1;
             changed = true;
             c.type = pixels >= attributes ? kPixels : kAttributes;
-            c.toScreen = c.dst >= 0x4000 && c.dst + c.length - 1 < 0x5B00;
+            c.toScreen = screen;
             for (uint32_t k = 0; k < c.length && !c.written; ++k)
                 c.written = WrittenByCode(context.Use(static_cast<uint16_t>(c.src + k)));
             if (c.written)

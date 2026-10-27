@@ -2,18 +2,26 @@
 ///
 /// Printed text: a run of printable bytes ($20..$7E, the last may carry bit 7) that code read as data and never
 /// wrote, read by a routine on a print path: one that reads a font (a Font claim: the ROM character set or one the
-/// font detector found) or prints through the ROM (RST $10, the ROM print routines), itself or through a callee
-/// (two calls deep). The terminator is a zero after the run, bit 7 on its last character, a length byte before it,
-/// or none (the printing code holds the count).
+/// font detector found), runs a glyph blit (one byte by 8 rows to the pixels, three or more frames on one lattice of
+/// 8: the font of the game, which the font detector can only name once the text is known) or prints through the ROM
+/// (RST $10, the ROM print routines), itself or through a callee (two calls deep). The terminator is a zero after the run, bit 7 on its last character, a length byte before it,
+/// or none (the printing code holds the count). Text in a buffer: bytes only block copies wrote (a room's name copied
+/// to the room buffer and printed from there) are text when they are printable in every source the copies brought
+/// them from; the text is claimed in the buffer and in each source. What a block copy took to the screen is a picture,
+/// not text, at either end. A byte the glyph reader reads (an instruction that reads a font's bytes) is pixels too: a
+/// blitter that draws the characters and the sprites (Hungry Horace) reads both, the text is what selects a glyph.
 ///
 /// Source remnant: a run of bytes no code touched (the stack aside) that parses as tokenized assembler source - at
 /// least four lines of [line number lo, hi][length][text] with rising line numbers - is Unused, with the decoded
 /// lines as its text.
 
 #include <algorithm>
+#include <cstdio>
 #include <set>
+#include <string>
 
 #include "debugger/analyzers/analysis/detectors/detectors.h"
+#include "debugger/analyzers/analysis/detectors/media.h"
 
 namespace analysis
 {
@@ -24,6 +32,16 @@ namespace
 constexpr uint32_t kMinText = 3;
 constexpr uint32_t kMinRemnant = 64;
 constexpr int kMinSourceLines = 4;
+constexpr uint32_t kMinBufferCopy = 16;  ///< the shortest block copy whose destination is a buffer (records.cpp)
+constexpr uint32_t kDisplayStart = 0x4000;
+constexpr uint32_t kDisplayEnd = 0x5B00;
+
+std::string Hex4(uint16_t v)
+{
+    char text[8];
+    std::snprintf(text, sizeof(text), "$%04X", v);
+    return text;
+}
 
 bool Printable(uint8_t c)
 {
@@ -41,8 +59,16 @@ bool IsPrintSignature(const std::string& label)
     return std::any_of(std::begin(kPrint), std::end(kPrint), [&](const char* p) { return label == p; });
 }
 
+/// A blit that draws characters: 8 x 8 frames one byte wide to the pixels, at least three frames on one lattice of 8
+bool GlyphBlit(const media::Blit& b)
+{
+    if (b.rowBytes != 1 || b.height != 8 || b.mask || !b.toPixels || b.starts.size() < 3)
+        return false;
+    return std::all_of(b.starts.begin(), b.starts.end(), [&](uint16_t s) { return (s - b.starts.front()) % 8 == 0; });
+}
+
 /// Routine indices on a print path (directly)
-std::set<uint32_t> PrintRoutines(DetectorContext& context)
+std::set<uint32_t> PrintRoutines(DetectorContext& context, const std::vector<media::Blit>& blits)
 {
     const L1Result& l1 = context.l1;
     std::vector<const Region*> fonts;
@@ -77,6 +103,10 @@ std::set<uint32_t> PrintRoutines(DetectorContext& context)
         if (ins.bytes[0] == 0xD7)  // RST $10
             if (const Routine* r = l1.RoutineOf(ins.key))
                 out.insert(l1.IndexOf(*r));
+    for (const media::Blit& b : blits)
+        if (GlyphBlit(b))
+            if (const Routine* r = l1.RoutineOf(b.loop->header))
+                out.insert(l1.IndexOf(*r));
     return out;
 }
 
@@ -104,24 +134,98 @@ int PrintDepth(const L1Result& l1, uint32_t routine, const std::set<uint32_t>& p
 void PrintedText(DetectorContext& context)
 {
     const L1Result& l1 = context.l1;
-    const std::set<uint32_t> printers = PrintRoutines(context);
+    const std::vector<media::Blit> blits = media::FindBlits(context, media::FindDisplay(context));
+    const std::set<uint32_t> printers = PrintRoutines(context, blits);
     if (printers.empty())
         return;
 
-    // Per byte: read, never written, printable, by a printing reader
+    // The block copies into buffers: (destination, length, source), the lowest byte of each range
+    struct Copy
+    {
+        uint16_t dst = 0;
+        uint32_t length = 0;
+        uint16_t src = 0;
+    };
+    std::vector<Copy> copies;
+    std::vector<uint8_t> picture(0x10000, 0);  // the sources of copies to the screen
+    for (const BlockCopy& c : l1.copies)
+    {
+        if (c.length < kMinBufferCopy)
+            continue;
+        const auto dst = static_cast<uint16_t>(c.dir > 0 ? c.dst : c.dst - (c.length - 1));
+        const auto src = static_cast<uint16_t>(c.dir > 0 ? c.src : c.src - (c.length - 1));
+        if (static_cast<uint32_t>(dst) + c.length - 1 > 0xFFFF || static_cast<uint32_t>(src) + c.length - 1 > 0xFFFF)
+            continue;
+        // A copy to the screen is a picture, whatever a reader of the attribute file or of its source takes from it
+        if (dst < kDisplayEnd && static_cast<uint32_t>(dst) + c.length > kDisplayStart)
+        {
+            if (src >= kDisplayEnd || static_cast<uint32_t>(src) + c.length <= kDisplayStart)
+                std::fill(picture.begin() + src, picture.begin() + src + c.length, 1);
+            continue;
+        }
+        if (std::none_of(copies.begin(), copies.end(),
+                         [&](const Copy& o) { return o.dst == dst && o.length == c.length && o.src == src; }))
+            copies.push_back(Copy{dst, c.length, src});
+    }
+    const auto printable = [](uint8_t c) { return Printable(c) || Printable(static_cast<uint8_t>(c & 0x7F)); };
+    // A byte only block copies wrote: printable in every source (its first source's value; false: not such text)
+    const auto copied = [&](uint16_t z80, uint8_t& value) {
+        bool any = false;
+        for (const Copy& c : copies)
+        {
+            if (z80 < c.dst || z80 > c.dst + c.length - 1)
+                continue;
+            const uint8_t v = context.Start(static_cast<uint16_t>(c.src + (z80 - c.dst)));
+            if (!printable(v))
+                return false;
+            if (!any)
+                value = v;
+            any = true;
+        }
+        return any;
+    };
+
+    // The instructions that read glyphs: what else they read is drawn as pixels
+    std::set<PhysKey> glyphReaders;
+    for (const Region& f : context.out.store.Regions())
+        if (f.kind == RegionKind::Font)
+            for (uint32_t g = f.z80; g <= f.Z80End(); ++g)
+            {
+                const ByteUse& u = context.Use(static_cast<uint16_t>(g));
+                for (const PhysKey reader : {u.firstReader, u.lastReader})
+                    if (reader != kNoKey)
+                        glyphReaders.insert(reader);
+            }
+    for (const media::Blit& b : blits)
+        if (GlyphBlit(b))
+            for (const uint16_t reader : b.readers)
+                glyphReaders.insert(context.Key(reader));
+
+    // Per byte: read, never written (or written by block copies only: text in a buffer), printable, by a printing
+    // reader
     std::vector<uint8_t> depthOf(0x10000, 0);
     std::vector<uint16_t> readerOf(0x10000, 0);
+    std::vector<uint8_t> valueOf(0x10000, 0);
+    std::vector<uint8_t> buffered(0x10000, 0);
     for (uint32_t a = 0; a <= 0xFFFF; ++a)
     {
         const auto z80 = static_cast<uint16_t>(a);
         if (!context.InScope(z80))
             continue;
         const ByteUse& u = context.Use(z80);
-        if ((u.flags & use::kRead) == 0 || (u.flags & use::kWrite) != 0 || DetectorContext::Code(u))
+        if ((u.flags & use::kRead) == 0 || DetectorContext::Code(u) || picture[a] != 0 ||
+            glyphReaders.count(u.firstReader) != 0 || glyphReaders.count(u.lastReader) != 0)
             continue;
-        const uint8_t c = context.Start(z80);
-        if (!Printable(c) && !Printable(static_cast<uint8_t>(c & 0x7F)))
+        uint8_t c = context.Start(z80);
+        if ((u.flags & use::kWrite) != 0)
+        {
+            if ((u.flags & (use::kOtherWrite | use::kIncDec)) != 0 || !copied(z80, c))
+                continue;
+            buffered[a] = 1;
+        }
+        else if (!printable(c))
             continue;
+        valueOf[a] = c;
         int best = 0;
         for (const PhysKey reader : {u.firstReader, u.lastReader})
         {
@@ -148,8 +252,8 @@ void PrintedText(DetectorContext& context)
         }
         uint32_t b = a;
         // A bit-7 character ends a string
-        while (b + 1 <= 0xFFFF && depthOf[b + 1] != 0 && ((b + 1) >> 14) == (a >> 14) &&
-               (context.Start(static_cast<uint16_t>(b)) & 0x80) == 0)
+        while (b + 1 <= 0xFFFF && depthOf[b + 1] != 0 && buffered[b + 1] == buffered[a] &&
+               ((b + 1) >> 14) == (a >> 14) && (valueOf[b] & 0x80) == 0)
             ++b;
         const uint32_t length = b - a + 1;
         if (length >= kMinText)
@@ -164,14 +268,16 @@ void PrintedText(DetectorContext& context)
             {
                 depth = std::min<int>(depth, depthOf[i]);
                 readers.insert(readerOf[i]);
-                r.geometry.text += static_cast<char>(context.Start(static_cast<uint16_t>(i)) & 0x7F);
+                r.geometry.text += static_cast<char>(valueOf[i] & 0x7F);
             }
             r.confidence = depth == 1 ? 900 : 800;
-            const uint8_t last = context.Start(static_cast<uint16_t>(b));
+            const uint8_t last = valueOf[b];
             const uint8_t after = context.Start(static_cast<uint16_t>(b + 1));
             const uint8_t before = context.Start(static_cast<uint16_t>(a - 1));
             if ((last & 0x80) != 0)
                 r.geometry.terminator = "bit7";
+            else if (buffered[a] != 0)
+                r.geometry.terminator = "count-in-code";
             else if (after == 0 && (context.Use(static_cast<uint16_t>(b + 1)).flags & use::kRead) != 0)
                 r.geometry.terminator = "zero";
             else if (before == length)
@@ -187,6 +293,27 @@ void PrintedText(DetectorContext& context)
             uint32_t hi = b;
             if (r.geometry.terminator == "zero")
                 hi = b + 1;
+            if (buffered[a] != 0)
+            {
+                // The same text in each source, its own characters
+                std::set<uint16_t> sources;
+                for (const Copy& c : copies)
+                    if (a >= c.dst && b <= c.dst + c.length - 1u)
+                        sources.insert(static_cast<uint16_t>(c.src + (a - c.dst)));
+                r.evidence.push_back(Evidence{"copy", static_cast<uint16_t>(a), sources.size(),
+                                              "block copies brought it from " + std::to_string(sources.size()) +
+                                                  (sources.size() == 1 ? " source" : " sources")});
+                for (const uint16_t at : sources)
+                {
+                    Region source = r;
+                    source.geometry.text.clear();
+                    for (uint32_t i = 0; i < length; ++i)
+                        source.geometry.text += static_cast<char>(context.Start(static_cast<uint16_t>(at + i)) & 0x7F);
+                    source.evidence.back().detail = "copied to the buffer at " + Hex4(static_cast<uint16_t>(a)) +
+                                                    " and printed there";
+                    context.Claim(std::move(source), at, static_cast<uint16_t>(at + length - 1));
+                }
+            }
             context.Claim(std::move(r), static_cast<uint16_t>(a), static_cast<uint16_t>(hi));
         }
         a = b + 1;

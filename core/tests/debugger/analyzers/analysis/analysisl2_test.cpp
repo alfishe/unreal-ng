@@ -358,6 +358,42 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorText_SourceRemnant)
     EXPECT_TRUE(Claims(static_cast<uint16_t>(At("read_copy") + 8), RegionKind::Unused).empty());
 }
 
+/// Text a routine draws from a buffer the code fills by block copies only: the text is the copied bytes, claimed in
+/// the buffer and in each source the replay copied (a copy is all that wrote the buffer, a count in the code ends it)
+TEST_F(AnalysisL2_Test, AnalysisDetectorText_InABuffer)
+{
+    Run("room-buffer.asm", 4);
+    ASSERT_FALSE(HasFailure());
+    const Region* name = StartsAt(0x9010, RegionKind::Text);
+    ASSERT_NE(name, nullptr);
+    EXPECT_EQ(name->geometry.width, 16u);
+    EXPECT_EQ(name->geometry.terminator, "count-in-code");
+    for (const char* room : {"room0", "room1"})
+    {
+        const auto start = static_cast<uint16_t>(At(room) + 16);
+        const std::vector<const Region*> texts = Claims(start, RegionKind::Text);
+        EXPECT_TRUE(std::any_of(texts.begin(), texts.end(), [start](const Region* r) {
+            return r->z80 == start && r->geometry.width == 16u &&
+                   std::any_of(r->evidence.begin(), r->evidence.end(), [](const Evidence& e) { return e.what == "copy"; });
+        })) << room;
+    }
+    // Negative: the room layouts before the names are not printable, no text there
+    EXPECT_TRUE(NoStrongClaim(At("room0"), static_cast<uint16_t>(At("room0") + 15), RegionKind::Text));
+}
+
+/// One blitter draws the characters (from the ROM set) and a sprite: the sprite's bytes are read by the glyph reader,
+/// they are pixels even where they are printable; the message that selects the glyphs is text
+TEST_F(AnalysisL2_Test, AnalysisDetectorText_GlyphReaderReadsPixels)
+{
+    Run("glyph-blit.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* message = StartsAt(At("message"), RegionKind::Text);
+    ASSERT_NE(message, nullptr);
+    EXPECT_EQ(message->geometry.text, "HELLO");
+    EXPECT_TRUE(Claims(At("sprite"), RegionKind::Text).empty());
+    EXPECT_TRUE(Claims(static_cast<uint16_t>(At("sprite") + 4), RegionKind::Text).empty());
+}
+
 // ---------------------------------------------------------------------------------------------------- init tables
 
 TEST_F(AnalysisL2_Test, AnalysisDetectorInitTables_Test)
@@ -418,6 +454,51 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorRecords_HlWalkWithAWord)
     EXPECT_TRUE(HasField(*recs, 3, 1));
     // Negative: only copied by LDIR
     EXPECT_TRUE(NoStrongClaim(At("bytes"), static_cast<uint16_t>(At("bytes") + 16), RegionKind::RecordArray));
+}
+
+/// A buffer with text: one more source on the step of the sources the replay copied, where the text is printable
+/// too (inferred); the lattice stops at code (below) and at a slot whose text offsets hold no text (above)
+TEST_F(AnalysisL2_Test, AnalysisDetectorRecords_LatticeSources)
+{
+    Run("room-buffer.asm", 4);
+    ASSERT_FALSE(HasFailure());
+    const Region* buffer = StartsAt(0x9000, RegionKind::Buffer);
+    ASSERT_NE(buffer, nullptr);
+    EXPECT_EQ(buffer->geometry.stride, 32u);
+    EXPECT_EQ(buffer->geometry.instances, (std::vector<uint16_t>{At("room0"), At("room1"), At("room2")}));
+    EXPECT_TRUE(std::any_of(buffer->evidence.begin(), buffer->evidence.end(),
+                            [this](const Evidence& e) { return e.what == "lattice" && e.z80 == At("room2"); }));
+    const Region* inferred = StartsAt(static_cast<uint16_t>(At("room2") + 16), RegionKind::Text);
+    ASSERT_NE(inferred, nullptr) << "the buffer's text, projected into the inferred source";
+    EXPECT_EQ(inferred->status, RegionStatus::Inferred);
+    EXPECT_LT(inferred->confidence, confidence::kMax);
+    // Negative: the zeros after room2 are no source
+    EXPECT_TRUE(Claims(At("after"), RegionKind::Text).empty());
+}
+
+/// Each source of a buffer is an entry of its own in the draft, numbered from 0 and titled by its text
+TEST_F(AnalysisL2_Test, SourceEntriesInTheDraft)
+{
+    Run("room-buffer.asm", 4);
+    ASSERT_FALSE(HasFailure());
+    const ExportResult ctl = ExportDraft("ctl");
+    ASSERT_TRUE(ctl.ok) << ctl.error;
+    const std::vector<std::string> lines = Lines(ctl.text);
+    const struct
+    {
+        const char* label;
+        const char* title;
+    } sources[] = {{"room0", "Source 0 of the buffer at $9000: The Hall"},
+                   {"room1", "Source 1 of the buffer at $9000: The Kitchen"},
+                   {"room2", "Source 2 of the buffer at $9000: The Cellar"}};
+    for (const auto& source : sources)
+    {
+        char entry[16];
+        std::snprintf(entry, sizeof(entry), "b $%04X ", At(source.label));
+        const size_t line = Find(lines, entry);
+        ASSERT_NE(line, std::string::npos) << source.label << "\n" << ctl.text;
+        EXPECT_NE(lines[line].find(source.title), std::string::npos) << lines[line];
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------- tables
@@ -730,6 +811,47 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorLevelMaps_Test)
         << MediaClaims(b.l2);
 }
 
+/// Tiles on the lattice of the text's codes (Hungry Horace's maze tiles): the walk that picked them read a map, no
+/// text, so they are tiles, not a font
+TEST_F(AnalysisL2_Test, AnalysisDetectorFonts_TilesPickedByAMap)
+{
+    const Built& b = Run("print-tiles.asm", 8);
+    ASSERT_FALSE(HasFailure());
+    const uint16_t tiles = At("tiles");
+    for (const Region& r : b.l2.store.Regions())
+        EXPECT_FALSE(r.kind == RegionKind::Font && r.z80 <= tiles + 47 && tiles <= r.Z80End())
+            << "a font over the tiles at $" << std::hex << r.z80 << "\n" << MediaClaims(b.l2);
+    EXPECT_NE(StartsAt(tiles, RegionKind::Tile, DetectorId::Graphics), nullptr) << MediaClaims(b.l2);
+    EXPECT_NE(StartsAt(At("message"), RegionKind::Text), nullptr) << "the font rule needs the text";
+}
+
+/// Two maps side by side, one walk of the map loop each: two maps of the walk's size, not one map over both
+TEST_F(AnalysisL2_Test, AnalysisDetectorLevelMaps_SideBySide)
+{
+    const Built& b = Run("maps-side.asm", 8);
+    ASSERT_FALSE(HasFailure());
+    for (const char* name : {"level0", "level1"})
+    {
+        const Region* map = StartsAt(At(name), RegionKind::LevelMap, DetectorId::LevelMaps);
+        ASSERT_NE(map, nullptr) << name << "\n" << MediaClaims(b.l2);
+        EXPECT_EQ(map->Size(), 256u) << name;
+        EXPECT_EQ(map->geometry.width, 32u) << name;
+        EXPECT_EQ(map->geometry.height, 8u) << name;
+    }
+}
+
+/// One map in two walks drawn to different places (the halves of a screen): one map, not two
+TEST_F(AnalysisL2_Test, AnalysisDetectorLevelMaps_HalvesAreOneMap)
+{
+    const Built& b = Run("map-halves.asm", 8);
+    ASSERT_FALSE(HasFailure());
+    const Region* map = StartsAt(At("level0"), RegionKind::LevelMap, DetectorId::LevelMaps);
+    ASSERT_NE(map, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(map->Size(), 512u);
+    EXPECT_EQ(map->geometry.width, 32u);
+    EXPECT_EQ(map->geometry.height, 16u);
+}
+
 TEST_F(AnalysisL2_Test, AnalysisDetectorScreens_Test)
 {
     const Built& b = Run("tiles-level.asm", 8);
@@ -764,6 +886,29 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorFonts_Test)
     EXPECT_EQ(font->Size(), 768u);
     // Negative: the summed copy of the characters is no font
     EXPECT_TRUE(NoStrongClaim(At("plain"), static_cast<uint16_t>(At("plain") + 4), RegionKind::Font));
+}
+
+/// The game's own font, no ROM printing: the glyph blit puts the message on a print path, the message's codes name the
+/// font; the glyph bytes the blit read are pixels, not text
+TEST_F(AnalysisL2_Test, AnalysisDetectorFonts_OwnFontThroughTheGlyphBlit)
+{
+    const Built& b = Run("print-own-font.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* text = StartsAt(At("message"), RegionKind::Text);
+    ASSERT_NE(text, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(text->geometry.text, "PRESS FIRE");
+    const Region* font = StartsAt(At("font"), RegionKind::Font, DetectorId::Graphics);
+    ASSERT_NE(font, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(font->Size(), 768u);
+    EXPECT_TRUE(NoStrongClaim(At("font"), static_cast<uint16_t>(At("font") + 767), RegionKind::Text)) << MediaClaims(b.l2);
+}
+
+/// Glyphs drawn with codes in one contiguous run (0-3) are user graphics, not a character set
+TEST_F(AnalysisL2_Test, AnalysisDetectorFonts_ContiguousCodesAreNoFont)
+{
+    const Built& b = Run("udg-run.asm");
+    ASSERT_FALSE(HasFailure());
+    EXPECT_TRUE(NoStrongClaim(At("udgs"), static_cast<uint16_t>(At("udgs") + 31), RegionKind::Font)) << MediaClaims(b.l2);
 }
 
 TEST_F(AnalysisL2_Test, AnalysisDetectorRng_Test)
@@ -813,6 +958,83 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorMusic_Test)
         EXPECT_FALSE(r.z80 == At("header_copy") && r.detector == DetectorId::Signatures) << r.label;
     EXPECT_TRUE(NoStrongClaim(At("header_copy"), static_cast<uint16_t>(At("header_copy") + 33),
                               RegionKind::MusicData));
+}
+
+/// A routine that plays the AY and calls the drawing: its tune is music, the picture the drawing callee reads is not
+TEST_F(AnalysisL2_Test, AnalysisDetectorMusic_PlayerThatDraws)
+{
+    const Built& b = Run("ay-and-draw.asm", 4);
+    ASSERT_FALSE(HasFailure());
+    bool tune = false;
+    for (const Region& r : b.l2.store.Regions())
+        tune = tune || (r.kind == RegionKind::MusicData && r.z80 <= At("tune") + 8 && r.Z80End() >= At("tune") + 16);
+    EXPECT_TRUE(tune) << MediaClaims(b.l2);
+    EXPECT_TRUE(NoStrongClaim(At("picture"), static_cast<uint16_t>(At("picture") + 23), RegionKind::MusicData))
+        << MediaClaims(b.l2);
+}
+
+/// The AY written by a helper that reads nothing: its caller's tune is the music
+TEST_F(AnalysisL2_Test, AnalysisDetectorMusic_RegisterWriteHelper)
+{
+    const Built& b = Run("ay-helper.asm", 4);
+    ASSERT_FALSE(HasFailure());
+    bool tune = false;
+    for (const Region& r : b.l2.store.Regions())
+        tune = tune || (r.kind == RegionKind::MusicData && r.z80 <= At("tune") + 8 && r.Z80End() >= At("tune") + 24);
+    EXPECT_TRUE(tune) << MediaClaims(b.l2);
+}
+
+/// The AY sent from a register copy another routine fills: that routine's tune is the music
+TEST_F(AnalysisL2_Test, AnalysisDetectorMusic_RegisterCopy)
+{
+    const Built& b = Run("ay-shadow.asm", 4);
+    ASSERT_FALSE(HasFailure());
+    bool tune = false;
+    for (const Region& r : b.l2.store.Regions())
+        tune = tune || (r.kind == RegionKind::MusicData && r.z80 <= At("tune") + 8 && r.Z80End() >= At("tune") + 24);
+    EXPECT_TRUE(tune) << MediaClaims(b.l2);
+    EXPECT_TRUE(NoStrongClaim(At("regs"), static_cast<uint16_t>(At("regs") + 13), RegionKind::MusicData));
+}
+
+/// A register store helper between the player and the copy: store reads nothing nothing wrote, its caller tick is the
+/// player, the tune it reads is music
+TEST_F(AnalysisL2_Test, AnalysisDetectorMusic_RegisterStoreHelper)
+{
+    const Built& b = Run("ay-store.asm", 4);
+    ASSERT_FALSE(HasFailure());
+    bool tune = false;
+    for (const Region& r : b.l2.store.Regions())
+        tune = tune || (r.kind == RegionKind::MusicData && r.z80 <= At("tune") + 8 && r.Z80End() >= At("tune") + 24);
+    EXPECT_TRUE(tune) << MediaClaims(b.l2);
+    EXPECT_TRUE(NoStrongClaim(At("regs"), static_cast<uint16_t>(At("regs") + 13), RegionKind::MusicData));
+}
+
+/// Characters the ROM drew (PR_ALL) from RAM are a font with no text: the 21 user-defined graphics at (UDG)
+TEST_F(AnalysisL2_Test, AnalysisDetectorFonts_UdgThroughTheRom)
+{
+    const Built& b = Run("rom-udg.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* udg = StartsAt(At("udgs"), RegionKind::Font);
+    ASSERT_NE(udg, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(udg->Z80End(), At("udgs") + 21 * 8 - 1);
+    EXPECT_EQ(udg->geometry.frames, 21u);
+}
+
+/// A back buffer copied by short rows (an LDI chain a row) is display: the frames drawn into it are graphics
+TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_BackBufferCopiedByRows)
+{
+    const Built& b = Run("backbuffer-rows.asm", 4);
+    ASSERT_FALSE(HasFailure());
+    const Region* sprite = StartsAt(At("frames"), RegionKind::Sprite, DetectorId::Graphics);
+    ASSERT_NE(sprite, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(sprite->geometry.height, 8u);
+    EXPECT_EQ(sprite->geometry.frames, 4u) << MediaClaims(b.l2);
+    // The buffer is one claim: 24 rows of 32 bytes, 24 of each copied
+    const Region* buffer = StartsAt(At("buffer"), RegionKind::Screen, DetectorId::Screens);
+    ASSERT_NE(buffer, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(buffer->geometry.width, 256u);
+    EXPECT_EQ(buffer->geometry.height, 24u);
+    EXPECT_EQ(buffer->Z80End(), At("buffer") + 23 * 32 + 23) << MediaClaims(b.l2);
 }
 
 /// The export states the graphics: an image macro SkoolKit draws (in #UDGTABLE, which skool2asm drops) and the
@@ -1067,6 +1289,109 @@ TEST_F(AnalysisL2_Test, SkoolDraftOrgAfterAnInstruction)
     const std::vector<std::string> lines = Lines(skool.text);
     EXPECT_NE(Find(lines, "@org"), std::string::npos) << skool.text;
     EXPECT_NE(Find(lines, "@isub=+ORG #8100"), std::string::npos) << skool.text;
+}
+
+/// A page-aligned table first in the range has no line before it for its ALIGN 256: it stays, the moved region
+/// starts after it with an ORG
+TEST_F(AnalysisL2_Test, LayoutRegionStartsAfterAnAlignedTable)
+{
+    Run("aligned-start.asm");
+    ASSERT_FALSE(HasFailure());
+    const ExportResult layout = ExportDraft("layout");
+    ASSERT_TRUE(layout.ok) << layout.error;
+    EXPECT_NE(layout.text.find("REGION_START := 0x8100"), std::string::npos) << layout.text;
+    const ExportResult skool = ExportDraft("skool");
+    ASSERT_TRUE(skool.ok) << skool.error;
+    const std::vector<std::string> lines = Lines(skool.text);
+    EXPECT_NE(Find(lines, "@isub=+ORG #8100"), std::string::npos) << skool.text;
+    EXPECT_NE(Find(lines, "/256"), std::string::npos) << skool.text;
+    // Negative: the same table after the code (page-table.asm) has its ALIGN, the region starts at the range
+    Run("page-table.asm");
+    ASSERT_FALSE(HasFailure());
+    const ExportResult plain = ExportDraft("layout");
+    ASSERT_TRUE(plain.ok) << plain.error;
+    EXPECT_NE(plain.text.find("REGION_START := 0x8000"), std::string::npos) << plain.text;
+}
+
+/// The fixed tail starts after the last unused block below the first data found by index arithmetic
+TEST_F(AnalysisL2_Test, LayoutFixedTailBelowArithmeticData)
+{
+    Run("arith-table.asm");
+    ASSERT_FALSE(HasFailure());
+    const ExportResult layout = ExportDraft("layout");
+    ASSERT_TRUE(layout.ok) << layout.error;
+    EXPECT_NE(layout.text.find("SHIFT_END := 0x9800"), std::string::npos) << layout.text;
+}
+
+/// An aligned table in the moved part: a $101 shift moves what follows it by $200, the fixed tail goes after an
+/// unused block that takes that
+TEST_F(AnalysisL2_Test, LayoutFixedTailMakesRoomForAlignment)
+{
+    Run("aligned-tail.asm");
+    ASSERT_FALSE(HasFailure());
+    const ExportResult skool = ExportDraft("skool");
+    ASSERT_TRUE(skool.ok) << skool.error;
+    EXPECT_NE(skool.text.find("ALIGN 256"), std::string::npos) << skool.text;
+    const ExportResult layout = ExportDraft("layout");
+    ASSERT_TRUE(layout.ok) << layout.error;
+    EXPECT_NE(layout.text.find("SHIFT_END := 0x9680"), std::string::npos) << layout.text;
+}
+
+/// No unused block of $200 below the data found by arithmetic: the tail stays after the block of $101 (one above that
+/// data would move it)
+TEST_F(AnalysisL2_Test, LayoutFixedTailStaysBelowArithmeticData)
+{
+    Run("aligned-tail-above.asm");
+    ASSERT_FALSE(HasFailure());
+    const ExportResult layout = ExportDraft("layout");
+    ASSERT_TRUE(layout.ok) << layout.error;
+    EXPECT_NE(layout.text.find("SHIFT_END := 0x8400"), std::string::npos) << layout.text;
+}
+
+/// A return address built from two byte immediates: the RET is a dispatch, both immediates follow the target's label
+TEST_F(AnalysisL2_Test, BuiltReturnAddressFollowsTheLabel)
+{
+    const Built& b = Run("built-return.asm");
+    ASSERT_FALSE(HasFailure());
+    const Routine* target = b.l1.RoutineAtZ80(At("target"));
+    ASSERT_NE(target, nullptr);
+    EXPECT_TRUE(target->kinds & entry::kDispatch) << EntryKindNames(target->kinds);
+    EXPECT_TRUE(std::any_of(b.l1.calls.begin(), b.l1.calls.end(), [&](const CallEdge& c) {
+        return c.kind == CallKind::Dispatch && &b.l1.routines[c.callee] == target;
+    }));
+    const ExportResult skool = ExportDraft("skool");
+    ASSERT_TRUE(skool.ok) << skool.error;
+    const std::vector<std::string> lines = Lines(skool.text);
+    const size_t high = Find(lines, "@isub=LD (HL),");
+    ASSERT_NE(high, std::string::npos) << skool.text;
+    EXPECT_NE(lines[high].find("/256"), std::string::npos) << lines[high];
+    const size_t low = Find(lines, "@isub=LD (HL),", high + 1);
+    ASSERT_NE(low, std::string::npos) << skool.text;
+    EXPECT_NE(lines[low].find("%256"), std::string::npos) << lines[low];
+}
+
+/// A pointer kept through EXX (the alternate set): the pointer use names its LD HL,nn, the draft keeps no number
+TEST_F(AnalysisL2_Test, PointerThroughTheAlternateSet)
+{
+    const Built& b = Run("exx-pointer.asm");
+    ASSERT_FALSE(HasFailure());
+    EXPECT_TRUE(std::any_of(b.l1.pointers.begin(), b.l1.pointers.end(), [this](const PointerUse& p) {
+        return p.form == PointerForm::Immediate && p.z80 == At("load") && p.value == At("frames") && p.uses > 0 &&
+               p.minDelta == 0 && p.maxDelta == 24;
+    }));
+    const ExportResult skool = ExportDraft("skool");
+    ASSERT_TRUE(skool.ok) << skool.error;
+    const std::vector<std::string> lines = Lines(skool.text);
+    char at[16];
+    std::snprintf(at, sizeof(at), "$%04X LD HL,", At("load"));
+    const size_t hl = Find(lines, at);
+    ASSERT_NE(hl, std::string::npos) << skool.text;
+    EXPECT_NE(lines[hl - 1], "@keep") << skool.text;
+    // Negative: the same value used as a count stays a number
+    std::snprintf(at, sizeof(at), "$%04X LD BC,", At("count"));
+    const size_t bc = Find(lines, at);
+    ASSERT_NE(bc, std::string::npos) << skool.text;
+    EXPECT_EQ(lines[bc - 1], "@keep") << skool.text;
 }
 
 TEST(AnalysisExport_Test, CommentAddressesToRefs)

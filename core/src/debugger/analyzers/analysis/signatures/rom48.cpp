@@ -38,6 +38,8 @@ const std::vector<Signature>& Rom48()
          SignatureCheck::AtAddress, "ROM: load bytes"},
         {"rom48.print-out", "rom48", "PRINT_OUT", "CD ?? ?? FE 20 D2 ?? ?? FE 06 38 69", 0x09F4, 0, RegionKind::Code,
          SignatureCheck::AtAddress, "ROM: the print routine of the main channels"},
+        {"rom48.pr-all", "rom48", "PR_ALL", "79 3D 3E 21 20 0E 05 4F FD CB 01 4E", 0x0B7F, 0, RegionKind::Code,
+         SignatureCheck::AtAddress, "ROM: draw a character's 8 rows to the display"},
         {"rom48.po-msg", "rom48", "PO_MSG", "E5 26 00 E3 18 04 11 95 00 F5", 0x0C0A, 0, RegionKind::Code,
          SignatureCheck::AtAddress, "ROM: print a message"},
         {"rom48.cls", "rom48", "CLS", "CD ?? ?? 21 3C 5C CB AE CB C6 CD ?? ??", 0x0D6B, 0, RegionKind::Code,

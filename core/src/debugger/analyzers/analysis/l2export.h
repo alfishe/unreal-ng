@@ -95,6 +95,10 @@ struct DraftEntry
     bool org = false;     ///< an @org starts here (a range start, the fixed tail)
     bool align = false;   ///< ALIGN 256 before it when shifted (a page-aligned table starts here or inside)
     const Region* region = nullptr;
+    /// A source of a buffer (the copies brought it there; Geometry::instances): written as the buffer is, one entry
+    /// with its claims as sub-blocks; `sourceIndex` counts the sources on their step from the lowest
+    const Region* source = nullptr;
+    uint32_t sourceIndex = 0;
 };
 
 struct DraftPlan

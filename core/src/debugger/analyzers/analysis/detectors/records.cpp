@@ -61,15 +61,79 @@ std::vector<BufferInfo> Buffers(const DetectorContext& context)
     return out;
 }
 
+bool Printable(uint8_t c)
+{
+    c = static_cast<uint8_t>(c & 0x7F);
+    return c >= 0x20 && c < 0x7F;
+}
+
+/// The buffer's sources the replay did not reach: more slots on the sources' lattice (the step: the smallest distance
+/// between two sources, the length with one source) between, below and above them in their 16 K bank, while a slot
+/// holds no code and no other claim and the buffer's text (its Text claims) is printable there too. A buffer without
+/// text gets none: nothing would tell one more level from what follows the levels
+std::vector<uint16_t> LatticeSources(const DetectorContext& context, const BufferInfo& b,
+                                     const std::vector<uint8_t>& claimed)
+{
+    std::vector<uint16_t> out;
+    if (b.sources.empty())
+        return out;
+    const uint32_t end = b.dst + b.length - 1;
+    std::vector<std::pair<uint32_t, uint32_t>> texts;  // offset, characters
+    for (const Region* r : context.out.store.Overlapping(context.Key(b.dst), context.Key(static_cast<uint16_t>(end))))
+        if (r->kind == RegionKind::Text && r->z80 >= b.dst && r->Z80End() <= end && r->geometry.width != 0)
+            texts.emplace_back(r->z80 - b.dst, r->geometry.width);
+    if (texts.empty())
+        return out;
+    const uint32_t first = *b.sources.begin();
+    const uint32_t last = *b.sources.rbegin();
+    uint32_t step = 0;
+    for (auto it = std::next(b.sources.begin()); it != b.sources.end(); ++it)
+    {
+        const uint32_t d = static_cast<uint32_t>(*it) - *std::prev(it);
+        step = step == 0 ? d : std::min(step, d);
+    }
+    step = step == 0 ? b.length : step;
+    if (step < b.length)
+        return out;
+    const uint32_t bankLo = first & 0xC000u;
+    const uint32_t bankHi = bankLo + 0x3FFFu;
+    for (const uint16_t src : b.sources)
+        if ((src - first) % step != 0 || src + b.length - 1 > bankHi)
+            return out;
+    const auto fits = [&](uint32_t slot) {
+        if (slot < bankLo || slot + b.length - 1 > bankHi || (slot <= end && slot + b.length - 1 >= b.dst))
+            return false;
+        for (uint32_t a = slot; a < slot + b.length; ++a)
+            if (!context.InScope(static_cast<uint16_t>(a)) || claimed[a] != 0 ||
+                DetectorContext::Code(context.Use(static_cast<uint16_t>(a))))
+                return false;
+        for (const auto& [offset, size] : texts)
+            for (uint32_t i = 0; i < size; ++i)
+                if (!Printable(context.Start(static_cast<uint16_t>(slot + offset + i))))
+                    return false;
+        return true;
+    };
+    for (uint32_t slot = first + step; slot < last; slot += step)
+        if (b.sources.count(static_cast<uint16_t>(slot)) == 0 && fits(slot))
+            out.push_back(static_cast<uint16_t>(slot));
+    for (uint32_t slot = first; slot >= bankLo + step && fits(slot - step); slot -= step)
+        out.push_back(static_cast<uint16_t>(slot - step));
+    for (uint32_t slot = last + step; fits(slot); slot += step)
+        out.push_back(static_cast<uint16_t>(slot));
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 }  // namespace
 
 void DetectRecords(DetectorContext& context)
 {
     const L1Result& l1 = context.l1;
-    const std::vector<BufferInfo> buffers = Buffers(context);
+    std::vector<BufferInfo> buffers = Buffers(context);
+    const std::vector<uint8_t> claimed = context.ClaimedMap();
 
     // Buffers first: the record arrays inside them take their instances
-    for (const BufferInfo& b : buffers)
+    for (BufferInfo& b : buffers)
     {
         const uint32_t end = b.dst + b.length - 1;
         if (end > 0xFFFF || (b.dst >> 14) != (end >> 14))
@@ -84,6 +148,8 @@ void DetectRecords(DetectorContext& context)
         }
         if (used < kMinBufferUse)
             continue;
+        const size_t observed = b.sources.size();
+        const std::vector<uint16_t> inferred = LatticeSources(context, b, claimed);
         Region r;
         r.kind = RegionKind::Buffer;
         r.detector = DetectorId::Records;
@@ -97,8 +163,39 @@ void DetectRecords(DetectorContext& context)
                                           std::to_string(b.sources.size()) + " sources, " +
                                               std::to_string(b.length) + " bytes"});
         r.evidence.push_back(Evidence{"used", b.dst, used, "bytes the code read or wrote after the copy"});
+        if (!inferred.empty())
+        {
+            r.evidence.push_back(Evidence{"lattice", inferred.front(), inferred.size(),
+                                          std::to_string(inferred.size()) +
+                                              " more sources on the sources' step, the buffer's text printable "
+                                              "there too (inferred)"});
+            r.geometry.instances.insert(r.geometry.instances.end(), inferred.begin(), inferred.end());
+            std::sort(r.geometry.instances.begin(), r.geometry.instances.end());
+            r.geometry.count = static_cast<uint16_t>(r.geometry.instances.size());
+            b.sources.insert(inferred.begin(), inferred.end());
+        }
         r.users = context.UsersOf(b.dst, static_cast<uint16_t>(end));
+        // The buffer's text in each inferred source
+        std::vector<Region> texts;
+        for (const Region* t : context.out.store.Overlapping(context.Key(b.dst), context.Key(static_cast<uint16_t>(end))))
+            if (t->kind == RegionKind::Text && t->z80 >= b.dst && t->Z80End() <= end && t->geometry.width != 0)
+                texts.push_back(*t);
         context.Claim(std::move(r), b.dst, static_cast<uint16_t>(end));
+        for (const uint16_t slot : inferred)
+            for (const Region& t : texts)
+            {
+                Region copy = t;
+                const auto at = static_cast<uint16_t>(slot + (t.z80 - b.dst));
+                copy.status = RegionStatus::Inferred;
+                copy.confidence = 700;
+                copy.users.clear();
+                copy.geometry.text.clear();
+                for (uint32_t i = 0; i < t.geometry.width; ++i)
+                    copy.geometry.text += static_cast<char>(context.Start(static_cast<uint16_t>(at + i)) & 0x7F);
+                copy.evidence = {Evidence{"lattice", b.dst, observed,
+                                          "a source of the buffer on its sources' step: the buffer's text there"}};
+                context.Claim(std::move(copy), at, static_cast<uint16_t>(at + t.geometry.width - 1));
+            }
     }
 
     const auto bufferOf = [&](uint16_t lo, uint16_t hi) -> const BufferInfo* {

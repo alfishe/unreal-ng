@@ -154,6 +154,15 @@ const char* LabelPrefix(const Region& r)
     }
 }
 
+/// @p text without the spaces around it
+std::string Trim(const std::string& text)
+{
+    const size_t from = text.find_first_not_of(' ');
+    if (from == std::string::npos)
+        return {};
+    return text.substr(from, text.find_last_not_of(' ') - from + 1);
+}
+
 std::string Plural(uint64_t n, const char* one, const char* many)
 {
     return std::to_string(n) + " " + (n == 1 ? one : many);
@@ -345,6 +354,9 @@ struct Exporter
     const ExportOptions& options;
     DraftPlan plan;
     Relocation reloc;
+    ExportRange movedRange;  ///< the range the relocation layout moves
+    uint16_t tailOrg = 0;    ///< the fixed tail's ORG entry
+    bool tailOrgSet = false;  ///< PlaceFixedTail set that ORG (no range starts there)
     std::vector<uint8_t> image;      ///< the start image in the Z80 view
     std::vector<const CodeLine*> lineAt;  ///< instruction starting at an address
     std::vector<const CodeLine*> lineOver;  ///< instruction covering an address
@@ -514,12 +526,55 @@ struct Exporter
             if (note.entry || !note.kind.empty())
                 entryStarts.insert(address);
 
+        // The sources of buffers: an entry each, like their buffer (none where code is, or another buffer)
+        std::map<uint16_t, std::pair<const Region*, uint32_t>> sourceAt;
+        for (const Region& r : l2.store.Regions())
+        {
+            if (r.kind != RegionKind::Buffer || r.geometry.instances.empty() || container[r.z80] != &r)
+                continue;
+            const std::vector<uint16_t>& instances = r.geometry.instances;
+            uint32_t step = 0;
+            for (size_t i = 1; i < instances.size(); ++i)
+                step = step == 0 ? instances[i] - instances[i - 1] : std::min<uint32_t>(step, instances[i] - instances[i - 1]);
+            for (const uint16_t at : instances)
+            {
+                const uint32_t end = static_cast<uint32_t>(at) + r.Size() - 1;
+                bool free = end <= 0xFFFF && (step == 0 || step >= r.Size());
+                for (uint32_t a = at; free && a <= end; ++a)
+                    free = lineOver[a] == nullptr && container[a] == nullptr;
+                if (free)
+                    sourceAt[at] = {&r, step != 0 && (at - instances.front()) % step == 0
+                                            ? (at - instances.front()) / step
+                                            : static_cast<uint32_t>(sourceAt.size())};
+            }
+        }
+
         for (const ExportRange& range : plan.ranges)
         {
             uint32_t a = range.start;
             bool first = true;
             while (a <= range.end)
             {
+                if (const auto it = sourceAt.find(static_cast<uint16_t>(a));
+                    it != sourceAt.end() && a + it->second.first->Size() - 1 <= range.end)
+                {
+                    DraftEntry e;
+                    e.start = static_cast<uint16_t>(a);
+                    e.end = static_cast<uint16_t>(a + it->second.first->Size() - 1);
+                    e.ctl = 'b';
+                    e.source = it->second.first;
+                    e.sourceIndex = it->second.second;
+                    e.org = first;
+                    BufferSubs(e, owner);
+                    // The source's text names it (a level's name)
+                    for (uint32_t b = e.start; b <= e.end && e.title.empty(); ++b)
+                        if (owner[b] != nullptr && owner[b]->kind == RegionKind::Text && owner[b]->z80 == b)
+                            e.title = Trim(owner[b]->geometry.text);
+                    plan.entries.push_back(std::move(e));
+                    a = static_cast<uint32_t>(plan.entries.back().end) + 1;
+                    first = false;
+                    continue;
+                }
                 const Region* box = container[a];
                 if (box != nullptr && box->z80 == a && box->z80 + box->Size() - 1 <= range.end)
                 {
@@ -537,7 +592,9 @@ struct Exporter
                 }
                 const Region* o = owner[a];
                 uint32_t b = a;
-                while (b + 1 <= range.end && owner[b + 1] == o && (container[b + 1] == nullptr || container[b + 1]->z80 != b + 1))
+                while (b + 1 <= range.end && owner[b + 1] == o &&
+                       (container[b + 1] == nullptr || container[b + 1]->z80 != b + 1) &&
+                       sourceAt.count(static_cast<uint16_t>(b + 1)) == 0)
                 {
                     if (o != nullptr && o->kind == RegionKind::Code && entryStarts.count(static_cast<uint16_t>(b + 1)) != 0)
                         break;
@@ -557,8 +614,7 @@ struct Exporter
             }
         }
 
-        // The relocation layout: the range with the most code moves; its fixed tail starts after its last unused
-        // block of at least $101 bytes
+        // The relocation layout: the range with the most code moves; its fixed tail is placed by PlaceFixedTail
         uint32_t bestCode = 0;
         const ExportRange* moved = plan.ranges.empty() ? nullptr : &plan.ranges.front();
         for (const ExportRange& range : plan.ranges)
@@ -574,20 +630,10 @@ struct Exporter
         }
         if (moved != nullptr)
         {
+            movedRange = *moved;
             plan.regionStart = moved->start;
             plan.shiftEnd = static_cast<uint16_t>(std::min<uint32_t>(moved->end + 1u, 0xFFFF));
-            const DraftEntry* lastUnused = nullptr;
-            for (const DraftEntry& e : plan.entries)
-                if (e.start >= moved->start && e.end <= moved->end && e.ctl == 'u' &&
-                    static_cast<uint32_t>(e.end - e.start + 1) >= 0x101)
-                    lastUnused = &e;
-            if (lastUnused != nullptr && lastUnused->end < moved->end)
-            {
-                plan.shiftEnd = static_cast<uint16_t>(lastUnused->end + 1);
-                for (DraftEntry& e : plan.entries)
-                    if (e.start == plan.shiftEnd)
-                        e.org = true;
-            }
+            PlaceFixedTail(0x101, false);
         }
 
         // Labels: entries first
@@ -601,9 +647,14 @@ struct Exporter
                     if (en.first == e.start && !en.second.empty())
                         name = en.second;
             if (name.empty())
-                name = HexName(e.region != nullptr ? LabelPrefix(*e.region) : "data_", e.start);
+                name = HexName(e.region != nullptr ? LabelPrefix(*e.region) : e.source != nullptr ? "source_" : "data_",
+                               e.start);
             e.label = name;
-            e.title = e.region != nullptr ? TitleOf(*e.region, e.end - e.start + 1u) : "Not claimed";
+            if (e.source != nullptr)
+                e.title = "Source " + std::to_string(e.sourceIndex) + " of the buffer at " + Hex4(e.source->z80) +
+                          (e.title.empty() ? "" : ": " + e.title);
+            else
+                e.title = e.region != nullptr ? TitleOf(*e.region, e.end - e.start + 1u) : "Not claimed";
             if (e.region != nullptr && e.region->kind == RegionKind::Code && e.region->z80 != e.start)
                 e.title = (e.region->status == RegionStatus::Observed ? "Routine at " : "Code at ") + Hex4(e.start) +
                           (e.region->status == RegionStatus::Observed ? "" : " (not executed in the replay)");
@@ -612,6 +663,94 @@ struct Exporter
         ApplyNoteLabels();
         Describe();
         ApplyNoteComments();
+    }
+
+    /// The first byte of @p range the code reached through a register no immediate, page or pointer word explains
+    /// (a table found by index arithmetic: the relocation leaves such an address as it is), 0x10000: none. An
+    /// immediate or a pointer word explains its value plus the offsets seen (from -$100, below $4000); a page
+    /// (LD H,n) explains its pages. The accessors are the byte's first and last reader and writer
+    /// The fixed tail starts after an unused block of at least @p minGap bytes (the moved part grows into it), the
+    /// last one below the first data byte found by arithmetic (FoundByArithmetic: the relocation cannot follow it
+    /// there). With no such block the layout stays as it is; with @p belowOnly, also when the only blocks are above
+    /// that byte
+    void PlaceFixedTail(uint32_t minGap, bool belowOnly)
+    {
+        const uint32_t limit = FoundByArithmetic(movedRange);
+        const auto gap = [](const DraftEntry& e) {
+            return e.ctl == 'u' || (e.region != nullptr && e.region->kind == RegionKind::Untouched);
+        };
+        const DraftEntry* lastUnused = nullptr;
+        const DraftEntry* firstUnused = nullptr;
+        for (const DraftEntry& e : plan.entries)
+            if (e.start >= movedRange.start && e.end < movedRange.end && gap(e) &&
+                static_cast<uint32_t>(e.end - e.start + 1) >= minGap)
+            {
+                firstUnused = firstUnused != nullptr ? firstUnused : &e;
+                if (e.end < limit)
+                    lastUnused = &e;
+            }
+        // Data found by arithmetic below every unused block: the first block (the shift test may fail, the reviewer
+        // moves the tail)
+        lastUnused = lastUnused != nullptr || belowOnly ? lastUnused : firstUnused;
+        if (lastUnused == nullptr || lastUnused->end >= movedRange.end)
+            return;
+        for (DraftEntry& e : plan.entries)
+            if (e.start == tailOrg && tailOrgSet)
+                e.org = false;
+        plan.shiftEnd = static_cast<uint16_t>(lastUnused->end + 1);
+        for (DraftEntry& e : plan.entries)
+            if (e.start == plan.shiftEnd)
+            {
+                tailOrgSet = !e.org;
+                tailOrg = e.start;
+                e.org = true;
+            }
+    }
+
+    /// An ALIGN 256 in the moved part pads the shift to whole pages: what follows it moves by the shift rounded up
+    /// ($200 for the shift test's $101), and the unused block before the fixed tail must take that. Only a block
+    /// below the data found by arithmetic: above it the tail would move that data (the reviewer moves the tail)
+    void FixTailForAlignment()
+    {
+        const auto first = reloc.align.lower_bound(plan.regionStart);
+        if (first != reloc.align.end() && *first < plan.shiftEnd)
+            PlaceFixedTail(0x200, true);
+    }
+
+    uint32_t FoundByArithmetic(const ExportRange& range) const
+    {
+        std::vector<uint8_t> explained(0x10000, 0);
+        for (const PointerUse& p : l1.pointers)
+        {
+            if (p.uses == 0 || p.code || p.minDelta < -0x100 || p.maxDelta >= 0x4000)
+                continue;
+            int32_t lo = p.value + p.minDelta, hi = p.value + p.maxDelta;
+            if (p.form == PointerForm::ImmediateHigh)
+            {
+                lo = ((p.value << 8) + p.minDelta) & ~0xFF;
+                hi = ((p.value << 8) + p.maxDelta) | 0xFF;
+            }
+            for (int32_t a = std::max(lo, 0); a <= std::min(hi, 0xFFFF); ++a)
+                explained[static_cast<size_t>(a)] = 1;
+        }
+        const auto indexed = [this](PhysKey key) {
+            const Instruction* ins = key != kNoKey ? l1.InstructionAt(key) : nullptr;
+            if (ins == nullptr)
+                return false;
+            const MemForm form = DecodeOp(ins->bytes).mem;
+            return form == MemForm::HL || form == MemForm::BC || form == MemForm::DE || form == MemForm::IX ||
+                   form == MemForm::IY || form == MemForm::Block;
+        };
+        for (uint32_t a = range.start; a <= range.end; ++a)
+        {
+            if (lineOver[a] != nullptr || explained[a] != 0)
+                continue;
+            const ByteUse* u = l1.UseAt(l1.StartKey(static_cast<uint16_t>(a)));
+            if (u != nullptr && (indexed(u->firstReader) || indexed(u->lastReader) || indexed(u->firstWriter) ||
+                                 indexed(u->lastWriter)))
+                return a;
+        }
+        return 0x10000;
     }
 
     /// Sub-blocks of a plain entry: words for tables and word variables, a record's fields per record
@@ -730,6 +869,16 @@ struct Exporter
                 callers[l1.routines[c.callee].z80].insert(l1.routines[c.caller].z80);
         for (DraftEntry& e : plan.entries)
         {
+            if (e.source != nullptr)
+            {
+                const bool seen = std::any_of(l1.copies.begin(), l1.copies.end(), [&](const BlockCopy& c) {
+                    return (c.dir > 0 ? c.src : static_cast<uint16_t>(c.src - (c.length - 1))) == e.start;
+                });
+                e.description.push_back("Copied to the buffer at #R" + Hex4(e.source->z80) +
+                                        (seen ? " (seen in the replay)." : " (inferred: on the step of the sources "
+                                                                           "the replay copied)."));
+                continue;
+            }
             if (e.region == nullptr)
                 continue;
             const Region& r = *e.region;
@@ -912,6 +1061,43 @@ struct Exporter
                 AlignFor(table);
             }
         });
+        // A return address the code builds from two byte immediates (LD (HL),n into the stack slots, then RET): both
+        // halves follow the label of the routine it returns to
+        for (const CallEdge& call : l1.calls)
+        {
+            if (call.kind != CallKind::Dispatch)
+                continue;
+            const uint16_t target = l1.routines[call.callee].z80;
+            if (!inRanges(target))
+                continue;
+            const CodeLine* high = nullptr;
+            const CodeLine* low = nullptr;
+            ForEachLine([&](const CodeLine& c) {
+                if (!inRanges(c.z80) || reloc.isub.count(c.z80) != 0 || l1.RoutineOf(c.key) != &l1.routines[call.caller])
+                    return;
+                uint8_t b[4];
+                for (int i = 0; i < 4; ++i)
+                    b[i] = image[static_cast<uint16_t>(c.z80 + i)];
+                const OpInfo& op = DecodeOp(b);
+                if (op.immBytes != 1 || !op.memWrite || op.mem == MemForm::Stack)
+                    return;
+                const uint8_t n = b[op.immOffset];
+                if (high == nullptr && n == (target >> 8))
+                    high = &c;
+                else if (low == nullptr && n == (target & 0xFF))
+                    low = &c;
+            });
+            if (high == nullptr || low == nullptr)
+                continue;
+            const std::string name = LabelFor(target, high->z80);
+            const std::string hi = Replace(Text(*high), target >> 8, false, name + "/256");
+            const std::string lo = Replace(Text(*low), target & 0xFF, false, name + "%256");
+            if (!hi.empty() && !lo.empty())
+            {
+                reloc.isub[high->z80] = hi;
+                reloc.isub[low->z80] = lo;
+            }
+        }
         for (const auto& [c, v] : midRefs)
         {
             const CodeLine* over = lineOver[v];
@@ -963,7 +1149,28 @@ struct Exporter
                 reloc.keep.insert(c.z80);
         });
         ApplyNoteInnerLabels();
+        FixAlignedRegionStart();
+        FixTailForAlignment();
         plan.labels = reloc.labels;
+    }
+
+    /// A page-aligned table first in the moved region: no line comes before it to carry its ALIGN 256 (the writer
+    /// drops it), so an odd shift would put the table off its page. The table stays where it is and the region
+    /// starts after it, with an ORG there
+    void FixAlignedRegionStart()
+    {
+        if (plan.entries.empty() || plan.entries.front().start != plan.regionStart ||
+            reloc.align.count(plan.regionStart) == 0)
+            return;
+        // The table may span several entries of one region; an aligned table after it has the table's last line
+        // before it for its own ALIGN
+        auto next = plan.entries.begin() + 1;
+        while (next != plan.entries.end() && next->region != nullptr && next->region == plan.entries.front().region)
+            ++next;
+        if (next == plan.entries.end() || next->start >= plan.shiftEnd)
+            return;
+        plan.regionStart = next->start;
+        next->org = true;
     }
 
     /// The @isub texts Relocate wrote name a label that is renamed after them: the whole identifier, not a prefix

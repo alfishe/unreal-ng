@@ -5,6 +5,11 @@
 /// the back buffers the code copies to it) and the blit loops (loops that move bytes read from memory into the
 /// display set, one pixel row a pass). Internal to the detectors.
 ///
+/// The display set: the screen, and back through chains of copies the sources code wrote of block copies (LDIR /
+/// LDDR, LDI / LDD chains) whose destinations are display: copies of 32 bytes or more, or of 8 or more when their
+/// copier moved 512 bytes in all and they go to the screen itself (a back buffer copied a row at a time: POP the
+/// row's display address, 24 LDI).
+///
 /// A blit: a loop whose write strides land in display pixels and whose reads of one base register (one source
 /// stream: (DE), (HL), (IX+d) ...) come from outside the display set and load A (or an ALU operand), never an
 /// address register (a table of screen addresses walked by IX is not graphics). Its geometry: height = the loop's

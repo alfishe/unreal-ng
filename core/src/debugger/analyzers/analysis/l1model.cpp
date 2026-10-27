@@ -230,6 +230,108 @@ bool L1Result::EndByte(PhysKey key, uint8_t& value) const
     return true;
 }
 
+void L1Result::DiscountSweeps()
+{
+    const auto useAt = [this](PhysKey key) -> ByteUse* {
+        const auto it = std::lower_bound(bytePages.begin(), bytePages.end(), KeyPage(key),
+                                         [](const BytePage& p, uint16_t value) { return p.page < value; });
+        if (it == bytePages.end() || it->page != KeyPage(key) || it->bytes.size() <= KeyOffset(key))
+            return nullptr;
+        return &it->bytes[KeyOffset(key)];
+    };
+    const auto bytesOf = [](const std::vector<Interval>& ranges) {
+        uint32_t n = 0;
+        for (const Interval& r : ranges)
+            n += r.hi - r.lo + 1u;
+        return n;
+    };
+    for (Loop& loop : loops)
+        for (Stride& read : loop.strides)
+        {
+            if (read.write || !read.constant || (read.stride != 1 && read.stride != -1) || read.rangesMore ||
+                bytesOf(read.ranges) < kSweepBytes)
+                continue;
+            for (Stride& write : loop.strides)
+            {
+                if (!write.write || !write.constant || write.stride != read.stride || write.rangesMore ||
+                    write.ranges.size() != read.ranges.size() ||
+                    !std::equal(write.ranges.begin(), write.ranges.end(), read.ranges.begin(),
+                                [](const Interval& a, const Interval& b) { return a.lo == b.lo && a.hi == b.hi; }))
+                    continue;
+                // Unchanged: the bytes only this write wrote hold their start value; most of the range is such
+                uint32_t own = 0, same = 0;
+                for (const Interval& r : write.ranges)
+                    for (PhysKey k = r.lo; k <= r.hi; ++k)
+                    {
+                        const ByteUse* u = UseAt(k);
+                        uint8_t start = 0;
+                        if (u == nullptr || u->firstWriter != write.instruction || u->lastWriter != write.instruction ||
+                            u->multiWriter || !StartByte(k, start))
+                            continue;
+                        ++own;
+                        same += u->distinct == 1 && u->minWritten == start && u->maxWritten == start ? 1u : 0u;
+                    }
+                const uint32_t size = bytesOf(write.ranges);
+                if (own * 2u < size || same * 20u < own * 19u)
+                    continue;
+                read.sweep = true;
+                write.sweep = true;
+                constexpr uint16_t kData = use::kRead | use::kWrite | use::kStackRead | use::kStackWrite |
+                                           use::kBlockRead | use::kBlockWrite | use::kWordRead | use::kWordWrite;
+                for (const Interval& r : write.ranges)
+                    for (PhysKey k = r.lo; k <= r.hi; ++k)
+                    {
+                        ByteUse* u = useAt(k);
+                        if (u == nullptr)
+                            continue;
+                        const uint32_t passes = std::max<uint32_t>(read.startsSeen, 1u);
+                        const bool onlyRead = u->firstReader == read.instruction && u->lastReader == read.instruction &&
+                                              !u->multiReader;
+                        const bool onlyWritten = u->firstWriter == write.instruction &&
+                                                 u->lastWriter == write.instruction && !u->multiWriter;
+                        if (onlyRead)
+                        {
+                            u->firstReader = u->lastReader = kNoKey;
+                            u->reads = 0;
+                            u->flags = static_cast<uint16_t>(u->flags & ~use::kRead);
+                        }
+                        else
+                        {
+                            if (u->firstReader == read.instruction)
+                                u->firstReader = u->lastReader;
+                            if (u->lastReader == read.instruction)
+                                u->lastReader = u->firstReader;
+                            u->reads = u->reads > passes ? u->reads - passes : u->reads;
+                        }
+                        if (onlyWritten)
+                        {
+                            u->firstWriter = u->lastWriter = kNoKey;
+                            u->writes = 0;
+                            u->distinct = 0;
+                            u->minWritten = 0xFF;
+                            u->maxWritten = 0;
+                            u->flags = static_cast<uint16_t>(u->flags & ~(use::kWrite | use::kOtherWrite | use::kSmc));
+                        }
+                        else
+                        {
+                            if (u->firstWriter == write.instruction)
+                                u->firstWriter = u->lastWriter;
+                            if (u->lastWriter == write.instruction)
+                                u->lastWriter = u->firstWriter;
+                            u->writes = u->writes > passes ? u->writes - passes : u->writes;
+                        }
+                        if ((u->flags & kData) == 0)
+                        {
+                            u->flags = static_cast<uint16_t>(u->flags & ~(use::kIndexed | use::kAbsolute));
+                            if ((u->flags & (use::kOpcode | use::kOperand)) == 0)
+                                u->firstFrame = u->lastFrame = 0;
+                        }
+                    }
+                break;
+            }
+        }
+}
+
 void L1Result::BuildIndex()
 {
     byZ80.resize(instructions.size());
@@ -389,6 +491,8 @@ StateNode LoopNode(const Loop& loop)
             entry["origins"] = IntervalList(s.origins);
         if (s.originsMore)
             entry["origins_more"] = true;
+        if (s.sweep)
+            entry["sweep"] = true;
         strides.push(std::move(entry));
     }
     node["strides"] = std::move(strides);
@@ -823,7 +927,8 @@ std::string L1Result::FactSheet(const Routine& routine, const Disassemble& disas
             line += " " + loop.induction[i].reg + SignedText(loop.induction[i].step);
         for (size_t i = 0; i < loop.strides.size() && i < 3; ++i)
             line += std::string(" ") + (loop.strides[i].write ? "w" : "r") + Hex4(loop.strides[i].z80) +
-                    (loop.strides[i].constant ? SignedText(loop.strides[i].stride) : "~");
+                    (loop.strides[i].constant ? SignedText(loop.strides[i].stride) : "~") +
+                    (loop.strides[i].sweep ? " sweep" : "");
         text += line + "\n";
     }
     int fieldsShown = 0;

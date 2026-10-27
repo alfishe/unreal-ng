@@ -544,6 +544,43 @@ TEST_F(AnalysisL1_Test, ReplayDeterministic)
     }
 }
 
+TEST_F(AnalysisL1_Test, PassOverTheImageIsNoUse)
+{
+    const L1Result l1 = Run("sweep.asm", 8);
+    ASSERT_FALSE(HasFailure());
+    // The read and the write that leave every byte as it was are a pass over the image
+    const Loop* sweep = LoopAt(l1, At("sweep"));
+    ASSERT_NE(sweep, nullptr);
+    const Stride* read = StrideAt(*sweep, At("sweep"));
+    ASSERT_NE(read, nullptr);
+    EXPECT_TRUE(read->sweep);
+    const Stride* write = StrideAt(*sweep, static_cast<uint16_t>(At("sweep") + 4));
+    ASSERT_NE(write, nullptr);
+    EXPECT_TRUE(write->sweep);
+    // A loop that changes the bytes uses them
+    const Loop* decrypt = LoopAt(l1, At("decrypt"));
+    ASSERT_NE(decrypt, nullptr);
+    for (const Stride& s : decrypt->strides)
+        EXPECT_FALSE(s.sweep) << s.z80;
+    const ByteUse* changed = l1.UseAt(l1.StartKey(0xB800));
+    ASSERT_NE(changed, nullptr);
+    EXPECT_NE(changed->flags & use::kWrite, 0u);
+
+    // Only the sweep touched $A800: untouched now; the table keeps its one real reader
+    const ByteUse* unused = l1.UseAt(l1.StartKey(0xA800));
+    ASSERT_NE(unused, nullptr);
+    EXPECT_EQ(unused->flags, 0u);
+    EXPECT_EQ(unused->firstReader, kNoKey);
+    EXPECT_EQ(unused->firstWriter, kNoKey);
+    const ByteUse* table = l1.UseAt(l1.StartKey(At("table")));
+    ASSERT_NE(table, nullptr);
+    EXPECT_NE(table->flags & use::kRead, 0u);
+    EXPECT_EQ(table->flags & use::kWrite, 0u);
+    ASSERT_NE(l1.InstructionAt(table->firstReader), nullptr);
+    EXPECT_EQ(l1.InstructionAt(table->firstReader)->z80, At("readtab"));
+    EXPECT_EQ(table->firstReader, table->lastReader);
+}
+
 TEST_F(AnalysisL1_Test, FactSheetBudget)
 {
     const L1Result l1 = Run("fields.asm", 1);

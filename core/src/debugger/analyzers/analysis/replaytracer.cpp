@@ -291,6 +291,7 @@ bool ReplayBuild(const TraceBundle& bundle, const ReplayOptions& options, L1Resu
     std::sort(images.begin(), images.end(), [](const PageImage& a, const PageImage& b) { return a.page < b.page; });
     out.images = std::move(images);
     std::copy(std::begin(startBanks), std::end(startBanks), std::begin(out.startBanks));
+    out.DiscountSweeps();
     out.replay.hostMicros = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count());
     return true;
