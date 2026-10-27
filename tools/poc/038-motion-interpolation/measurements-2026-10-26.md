@@ -32,3 +32,29 @@ Observations:
   neighbouring block's vector). The 3x3 agreement choice fixed it at +0.3 ms.
 - Without the search budget and with ±16 px on consecutive pairs the cost was 3-8 ms p50 with 100+ ms peaks on
   full-screen effects.
+
+## Stage 2: the game's own pictures (cadence)
+
+Owner (2026-10-26): no added latency; measure the game's picture period and smooth by it. `interp cadence-eval`:
+a burst of changes on consecutive frames is one picture (Darkwing Duck redraws the play area, then the status row a
+frame later); the period is the median distance between pictures. Variants on pictures, not frames:
+
+- interpolation (`c-block` between pictures i-1 and i+1 at the middle, against picture i): what `e-cadence` shows
+  when the next picture is already in the lookahead;
+- `d-carry`: the motion of pictures i-1 -> i carried one picture on (w = 2), against picture i+1: the error left is
+  the jump seen when the real picture arrives; `repeat` is today's (picture i until i+1). Where nothing agrees the
+  output is picture i; extrapolating, a moving vector draws only pixels whose source changed (the static border was
+  pulled into the scrolling window before).
+
+| Title | Period | Pictures | interp `b-blend` | interp `c-block` | `repeat` | `d-carry` | carry ms p50 |
+|---|---|---|---|---|---|---|---|
+| Darkwing Duck (RZX gameplay) | 5 | 37 | 78.3 / 0 % | 22.5 / 80.9 % | 78.5 / 36.5 % | 19.5 / 84.9 % | 3.11 |
+| Thundercats | 4 | 17 | 113.9 / 0 % | 69.6 / 57.0 % | 109.0 / 41.8 % | 80.1 / 57.3 % | 1.29 |
+| Garfield | 3 | 53 | 159.9 / 0 % | 109.7 / 48.8 % | 158.0 / 37.1 % | 118.1 / 52.8 % | 1.34 |
+| Green Beret | 3 | 48 | 100.4 / 0 % | 90.4 / 20.3 % | 102.3 / 39.1 % | 101.5 / 39.5 % | 1.56 |
+| Dizzy X | 4 | 49 | 193.4 / 0 % | 193.4 / 0 % | 193.4 / 0 % | 157.3 / 15.7 % | 1.21 |
+
+(MAE / exact over the pixels changing across the three pictures.) Dizzy and Green Beret cycle animation frames in
+place (no translation): interpolation has nothing to find. `interp cadence-render`: 60 Hz videos, four panels
+`a-repeat | c-block consecutive frames | e-cadence (lookahead 2 frames) | f-carry`:
+`scratch/2026-10-26-poc-038/*-cadence-60hz.mp4`.

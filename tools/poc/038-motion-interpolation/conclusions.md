@@ -11,9 +11,15 @@
    - Under 2 ms per pair: met at p50 (1.3-2.3 ms, scalar, one thread, a loaded machine), not at p95 (4.4-6.2 ms;
      the load inflates it, a quiet run is pending). SIMD or the GPU (the search is per block, independent) bring it
      well under.
-3. **Games are not helped, and should not be.** Most draw every 2nd-5th frame; the in-between of two repeated
-   pictures is the same picture. Smoothing a game's own 10-25 Hz cadence would need frames from its future (latency)
-   and change how it looks. The presenter interpolates only between consecutive emulated frames.
+3. **Games, by their own cadence (stage 2).** Most draw every 2nd-5th frame, so consecutive frames give nothing.
+   Between the game's own pictures the search works: Darkwing Duck's scroll 78 -> 22.5 (81 % exact) interpolated,
+   78 -> 19.5 (85 %) carried on; Thundercats and Garfield about a third less error. Without added latency
+   (owner): the period is measured (half a second), and
+   - `e-cadence` interpolates to the next picture once it is in the lookahead (the audio delay holds about two
+     frames): the full step for 25 Hz games, the last two frames of the period for slower ones;
+   - `f-carry` carries the last motion on through the period and the real picture replaces it; uniform motion, a
+     small correction where the motion changes; artefacts where content enters the window.
+   Animation cycles in place (Dizzy, Green Beret) gain nothing either way.
 4. **The fallback holds visually:** where nothing matches (full-screen effects, colour cycling) the output is the
    blend; raster tears of the source stay as they are.
 

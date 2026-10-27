@@ -41,7 +41,7 @@ struct Frame
 
 /// A frame with PAD pixels of its edge repeated around it: a warp within RANGE (and the last partial block) reads
 /// without clamping
-constexpr int PAD = RANGE + BLOCK;
+constexpr int PAD = 2 * RANGE + BLOCK;  // extrapolation warps by up to twice the vector
 struct Padded
 {
     int stride = 0;
@@ -131,6 +131,7 @@ struct Stats
 /// which the warped A and B agree, else the unwarped blend
 /// `range`: the full search's reach (RANGE for the hold-out's two-frame motion, half of it for consecutive frames);
 /// `budget`: full searches per pair, the rest of the unmatched blocks fall back to the blend (full-screen effects)
+/// `w` > 1 extrapolates past B along the motion from A to B; where nothing agrees, the output is then B itself
 void Interpolate(const Frame& a, const Frame& b, float w, uint32_t* out, Stats* stats, int range = RANGE,
                  int budget = 1 << 30)
 {
@@ -243,6 +244,16 @@ void Interpolate(const Frame& a, const Frame& b, float w, uint32_t* out, Stats* 
                         const uint32_t va = pa.Row(y + k.ay)[x + k.ax];
                         if (va != pb.Row(y + k.by)[x + k.bx])
                             continue;
+                        // Extrapolating, a moving vector draws only what moved: one of its sources must change from
+                        // A to B. A static area beyond a scrolling window (the border, a frame) agrees with itself
+                        // under any vector and would be pulled into the window, where the real content is not
+                        // known yet. (Interpolating, B holds that content: the rule would only cost quality)
+                        if (w > 1.0f && !(cands[c] == Vec{}))
+                        {
+                            const int sax = x + k.ax, say = y + k.ay, sbx = x + k.bx, sby = y + k.by;
+                            if (pa.Row(say)[sax] == pb.Row(say)[sax] && pa.Row(sby)[sbx] == pb.Row(sby)[sbx])
+                                continue;
+                        }
                         int score = 0;
                         for (int dy = -1; dy <= 1; dy++)
                         {
@@ -258,7 +269,8 @@ void Interpolate(const Frame& a, const Frame& b, float w, uint32_t* out, Stats* 
                             found = true;
                         }
                     }
-                    out[static_cast<size_t>(y) * a.width + x] = found ? pixel : Mix(a.At(x, y), b.At(x, y), w);
+                    out[static_cast<size_t>(y) * a.width + x] =
+                        found ? pixel : (w > 1.0f ? b.At(x, y) : Mix(a.At(x, y), b.At(x, y), w));
                 }
         }
 }
@@ -427,6 +439,157 @@ int Render(const char* path, int width, int height, int count, double sourceHz, 
     std::printf("%d refreshes at %.3f Hz, %dx%d\n", refreshes, displayHz, width * 3, height);
     return 0;
 }
+
+/// A game's pictures: the frames where the screen changed, a burst of changes on consecutive frames counting as one
+/// picture (Darkwing Duck redraws the play area, then the status row a frame later), unless the content changes
+/// every frame (then every frame is a picture)
+struct Cadence
+{
+    std::vector<int> keys;  // frame index of each complete picture (the burst's last frame)
+    double period = 1.0;    // median frames between pictures
+};
+
+Cadence DetectCadence(const std::vector<uint32_t>& seq, size_t size, int count)
+{
+    std::vector<int> changes;
+    for (int k = 1; k < count; k++)
+        if (std::memcmp(seq.data() + size * k, seq.data() + size * (k - 1), size * 4) != 0)
+            changes.push_back(k);
+    Cadence c;
+    if (changes.empty())
+        return c;
+    size_t single = 0;
+    for (size_t i = 1; i < changes.size(); i++)
+        single += changes[i] - changes[i - 1] == 1;
+    const bool everyFrame = single * 2 > changes.size();
+    for (size_t i = 0; i < changes.size(); i++)
+    {
+        const bool burstGoesOn = !everyFrame && i + 1 < changes.size() && changes[i + 1] - changes[i] == 1;
+        if (!burstGoesOn)
+            c.keys.push_back(changes[i]);
+    }
+    std::vector<int> gaps;
+    for (size_t i = 1; i < c.keys.size(); i++)
+        gaps.push_back(c.keys[i] - c.keys[i - 1]);
+    if (!gaps.empty())
+    {
+        std::nth_element(gaps.begin(), gaps.begin() + gaps.size() / 2, gaps.end());
+        c.period = gaps[gaps.size() / 2];
+    }
+    return c;
+}
+
+/// Cadence quality on the game's own pictures:
+///   interpolation: pictures i-1 and i+1 at the middle against picture i (as `eval`, on pictures, not frames);
+///   extrapolation: pictures i-1 and i carried one picture on (w = 2) against picture i+1; the error left is the
+///   jump the eye sees when the real picture arrives, against the repeat's (picture i shown until i+1)
+int CadenceEval(const char* path, int width, int height, int count)
+{
+    const size_t size = static_cast<size_t>(width) * height;
+    const std::vector<uint32_t> seq = Load(path, size * count);
+    const Cadence cad = DetectCadence(seq, size, count);
+    std::printf("pictures %zu, period %.0f frames\n", cad.keys.size(), cad.period);
+    const auto key = [&](size_t i) { return Frame{width, height, seq.data() + size * cad.keys[i]}; };
+    std::vector<uint32_t> out(size);
+    Stats stats;
+    double err[4] = {0, 0, 0, 0};
+    uint64_t px[4] = {0, 0, 0, 0};
+    uint64_t exact[4] = {0, 0, 0, 0};
+    std::vector<double> ns;
+    for (size_t i = 1; i + 1 < cad.keys.size(); i++)
+    {
+        const Frame prev = key(i - 1), cur = key(i), next = key(i + 1);
+        Blend(prev, next, 0.5f, out.data());
+        ScoreFrame(out.data(), prev, cur, next, &err[0], &px[0], &exact[0]);
+        Interpolate(prev, next, 0.5f, out.data(), &stats);
+        ScoreFrame(out.data(), prev, cur, next, &err[1], &px[1], &exact[1]);
+        // Extrapolation: the truth is `next`; the pixels that count are the ones changing over the three pictures
+        std::memcpy(out.data(), cur.pixels, size * 4);
+        ScoreFrame(out.data(), prev, next, cur, &err[2], &px[2], &exact[2]);
+        const auto t0 = std::chrono::steady_clock::now();
+        Interpolate(prev, cur, 2.0f, out.data(), &stats);
+        ns.push_back(std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count());
+        ScoreFrame(out.data(), prev, next, cur, &err[3], &px[3], &exact[3]);
+    }
+    const char* names[4] = {"interp b-blend", "interp c-block", "extrap repeat", "extrap d-carry"};
+    for (int v = 0; v < 4; v++)
+        std::printf("%-15s changed px %8llu  MAE %6.2f  exact %5.1f%%\n", names[v],
+                    static_cast<unsigned long long>(px[v]), px[v] ? err[v] / (3.0 * px[v]) : 0.0,
+                    px[v] ? 100.0 * exact[v] / px[v] : 100.0);
+    if (!ns.empty())
+    {
+        std::sort(ns.begin(), ns.end());
+        std::printf("extrapolation ms p50 %.2f max %.2f\n", ns[ns.size() / 2] / 1e6, ns.back() / 1e6);
+    }
+    return 0;
+}
+
+/// What a display at displayHz shows, four panels: a-repeat | c-block on consecutive frames | e-cadence (the step
+/// between the game's pictures spread over the frames the lookahead already holds) | f-carry (the motion of the last
+/// two pictures carried on through the period, the real picture replacing it on arrival)
+int CadenceRender(const char* path, int width, int height, int count, double sourceHz, double displayHz,
+                  int lookahead, const char* outPath)
+{
+    const size_t size = static_cast<size_t>(width) * height;
+    const std::vector<uint32_t> seq = Load(path, size * count);
+    const Cadence cad = DetectCadence(seq, size, count);
+    const auto frame = [&](int k) { return Frame{width, height, seq.data() + size * k}; };
+    FILE* f = std::fopen(outPath, "wb");
+    if (!f)
+        return 1;
+    constexpr int PANELS = 4;
+    std::vector<std::vector<uint32_t>> panels(PANELS, std::vector<uint32_t>(size));
+    std::vector<uint32_t> row(static_cast<size_t>(width) * PANELS);
+    Stats stats;
+    int refreshes = 0;
+    for (int n = 0;; n++)
+    {
+        const double t = n / displayHz * sourceHz;
+        const int k = static_cast<int>(std::floor(t));
+        if (k + 1 >= count)
+            break;
+        std::memcpy(panels[0].data(), frame(k).pixels, size * 4);
+        Interpolate(frame(k), frame(k + 1), static_cast<float>(t - k), panels[1].data(), &stats, RANGE / 2, BUDGET);
+
+        // The game's picture shown at t, and the next one
+        size_t i = 0;
+        while (i + 1 < cad.keys.size() && cad.keys[i + 1] <= k)
+            i++;
+        const bool havePicture = !cad.keys.empty() && cad.keys[i] <= k;
+        std::memcpy(panels[2].data(), frame(k).pixels, size * 4);
+        std::memcpy(panels[3].data(), frame(k).pixels, size * 4);
+        if (havePicture && i + 1 < cad.keys.size())
+        {
+            const int f0 = cad.keys[i];
+            const int f1 = cad.keys[i + 1];
+            // e-cadence: the next picture is visible once it is within the lookahead; the step runs from then on
+            const double start = std::max(static_cast<double>(f0), static_cast<double>(f1 - lookahead));
+            if (t >= start && f1 - f0 > 1)
+                Interpolate(frame(f0), frame(f1), static_cast<float>((t - start) / (f1 - start)), panels[2].data(),
+                            &stats);
+            // f-carry: the last two pictures' motion carried on by the time since this picture, at most a period
+            if (i > 0 && f1 - f0 > 1)
+            {
+                const double into = std::min((t - f0) / cad.period, 1.0);
+                if (into > 0.0)
+                    Interpolate(frame(cad.keys[i - 1]), frame(f0), static_cast<float>(1.0 + into), panels[3].data(),
+                                &stats);
+            }
+        }
+        for (int y = 0; y < height; y++)
+        {
+            for (int v = 0; v < PANELS; v++)
+                std::memcpy(&row[static_cast<size_t>(v) * width], &panels[v][static_cast<size_t>(y) * width],
+                            static_cast<size_t>(width) * 4);
+            std::fwrite(row.data(), 4, row.size(), f);
+        }
+        refreshes++;
+    }
+    std::fclose(f);
+    std::printf("%d refreshes, pictures %zu, period %.0f, %dx%d\n", refreshes, cad.keys.size(), cad.period,
+                width * PANELS, height);
+    return 0;
+}
 }  // namespace
 
 int main(int argc, char** argv)
@@ -436,8 +599,15 @@ int main(int argc, char** argv)
     if (argc >= 9 && std::strcmp(argv[1], "render") == 0)
         return Render(argv[2], std::atoi(argv[3]), std::atoi(argv[4]), std::atoi(argv[5]), std::atof(argv[6]),
                       std::atof(argv[7]), argv[8]);
+    if (argc >= 6 && std::strcmp(argv[1], "cadence-eval") == 0)
+        return CadenceEval(argv[2], std::atoi(argv[3]), std::atoi(argv[4]), std::atoi(argv[5]));
+    if (argc >= 10 && std::strcmp(argv[1], "cadence-render") == 0)
+        return CadenceRender(argv[2], std::atoi(argv[3]), std::atoi(argv[4]), std::atoi(argv[5]), std::atof(argv[6]),
+                             std::atof(argv[7]), std::atoi(argv[8]), argv[9]);
     std::fprintf(stderr,
                  "usage: interp eval <seq.rgba> <w> <h> <count>\n"
-                 "       interp render <seq.rgba> <w> <h> <count> <sourceHz> <displayHz> <out.rgba>\n");
+                 "       interp render <seq.rgba> <w> <h> <count> <sourceHz> <displayHz> <out.rgba>\n"
+                 "       interp cadence-eval <seq.rgba> <w> <h> <count>\n"
+                 "       interp cadence-render <seq.rgba> <w> <h> <count> <sourceHz> <displayHz> <lookahead> <out.rgba>\n");
     return 2;
 }
