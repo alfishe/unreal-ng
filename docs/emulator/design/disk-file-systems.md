@@ -296,12 +296,15 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
 
 ## Limits
 
-- iS-DOS: a catalogue is made segmented of the standard size (as `mkdir.com`); there is no continuous one.
+- iS-DOS: a catalogue is made segmented of the standard size (as `mkdir.com`); there is no continuous one (TASiS
+  disks have them, but no tool at hand makes one, so its layout is not known).
 - iS-DOS: files are written with no R / W / hidden bits (`attrib` sets them after).
 - ATM CP/M: no directories (USER1..USER15 are user areas, there while a file is in one). A hard disk partition is
   found only when the configuration record or a `.CDS` file on a partition found names it.
 - MB-02: files are written as CODE (type 3) with a tape header, no attributes. The BS-DOS 309 hard disk layout
-  comes from its BIOS source, not from an image of a real disk. MB-01 (BS-DOS 52-105, #01 at #03) is not read.
+  comes from its BIOS source, not from an image of a real disk. MB-01 (BS-DOS 52-105, #01 at #03) is not read: no
+  MB-01 disk or BS-DOS 52-105 binary is at hand, and its description (`mb02form.htm`) leaves the checksums it
+  mentions, the date encoding and how the two lists grow open.
 - MDOS: no file times (MDOS keeps none). An MDOS3 partition is found by its MBR type #49 (`nmi.a80`); without one the first `SDOS` sector
   is looked for in the first 4096 sectors (2 MiB) only, the firmware searches the whole disk.
 - Not read: other file systems of a hard disk.
