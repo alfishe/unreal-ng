@@ -327,6 +327,30 @@ TEST(DiskFs_Test, MediaWriteOnADrive)
     reply = run("delete", "SHELL");
     EXPECT_EQ(reply.result.error, MediaError::BadRequest) << "a catalogue with files stays";
 
+    // iS-DOS catalogues: made with their parents, moved with their tree, deleted with their files
+    reply = run("mkdir", "WORK/SUB");
+    EXPECT_EQ(reply.result.error, MediaError::UnreadableSource) << reply.result.message;  // no WORK yet
+    reply = run("mkdir", "WORK/SUB", {{"parents", "true"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(run("mkdir", "WORK").result.error, MediaError::BadRequest);  // there already
+    ASSERT_TRUE(run("write", "WORK/SUB/a.txt", {{"data", base64::Encode(code)}}).result.Ok());
+    reply = run("rename", "WORK/SUB", {{"to", "/SUB"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(run("read", "SUB/a.txt").body.find("size")->i, 4);
+    EXPECT_EQ(run("rename", "SUB", {{"to", "/SUB/SUB"}}).result.error, MediaError::BadRequest);  // into itself
+    ASSERT_TRUE(run("rename", "SUB", {{"to", "WORK/SUB"}}).result.Ok());
+    EXPECT_EQ(run("delete", "WORK").result.error, MediaError::BadRequest);  // not empty
+    reply = run("delete", "WORK", {{"recursive", "true"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(run("read", "WORK/SUB/a.txt").result.error, MediaError::UnreadableSource);
+    EXPECT_EQ(run("delete", "WORK", {{"recursive", "maybe"}}).result.error, MediaError::BadRequest);
+
+    // TR-DOS has no directories
+    ASSERT_TRUE(run("create", "", {{"format", "trdos"}, {"discard", "true"}}).result.Ok());
+    reply = run("mkdir", "WORK");
+    EXPECT_EQ(reply.result.error, MediaError::NotSupported) << reply.result.message;
+    EXPECT_NE(reply.result.message.find("no directories"), std::string::npos) << reply.result.message;
+
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
@@ -382,5 +406,23 @@ TEST(DiskFs_Test, MediaEditOnAHardDisk)
     ASSERT_TRUE(onFile.Read("p1", "THROUGH.TXT", data, error)) << error;
     EXPECT_EQ(data, text);
     EXPECT_TRUE(onFile.Read("p1", "AUTOEXEC.BAT", data, error)) << "the session's delete was discarded";
+
+    // FAT directories: a chain made, a directory moved with its files, then deleted with them
+    ASSERT_TRUE(run("insert", fat.path(), {{"access", "session"}}).result.Ok());
+    reply = run("mkdir", "Projects/Game/src", {{"parents", "true"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    ASSERT_TRUE(run("write", "Projects/Game/src/main.asm", {{"data", base64::Encode(text)}}).result.Ok());
+    ASSERT_TRUE(run("rename", "Projects/Game", {{"to", "/Game"}}).result.Ok());
+    EXPECT_EQ(run("read", "Game/src/main.asm").body.find("size")->i, 3000);
+    EXPECT_EQ(run("rename", "Game", {{"to", "/Game/src/Game"}}).result.error, MediaError::BadRequest);  // into itself
+    EXPECT_EQ(run("delete", "Game").result.error, MediaError::BadRequest);  // not empty
+    ASSERT_TRUE(run("delete", "Game", {{"recursive", "true"}}).result.Ok());
+    EXPECT_EQ(run("read", "Game/src/main.asm").result.error, MediaError::UnreadableSource);
+    reply = run("files", "");
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    std::vector<std::string> names;
+    for (const StateNode& entry : reply.body.find("entries")->items)
+        names.push_back(entry.find("name")->s);
+    EXPECT_EQ(names, (std::vector<std::string>{"AUTOEXEC.BAT", "THROUGH.TXT", "Projects"}));
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

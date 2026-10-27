@@ -121,12 +121,22 @@ public:
     /// case ignored) is replaced, keeping its slot. False with the reason: no such catalogue, a bad name, a protected
     /// or system file, no room in the catalogue or on the device
     bool Write(const std::string& path, const std::vector<uint8_t>& bytes, const WriteOptions& options, std::string& error);
-    /// Delete a file or an empty catalogue: its blocks freed, its status bit 0 cleared. Delete-protected and system
-    /// files are refused
+    /// Delete a file or an empty catalogue: its blocks freed, its status bit 0 cleared (a catalogue's parent entry
+    /// loses bit 5 and the level byte +16, its own entry 0 bit 0, as delete.com leaves them). Delete-protected and
+    /// system files are refused
     bool Delete(const std::string& path, std::string& error);
-    /// `path` takes the name `to`: a bare name stays in its catalogue, a path ("DIR/new.ext") moves a file to another
-    /// catalogue (a catalogue is only renamed: its level would change)
+    /// Whether Delete would take `path` as far as the entry goes (not a system or delete-protected file)
+    bool Deletable(const std::string& path, std::string& error) const;
+    /// `path` takes the name `to`: a bare name stays in its catalogue, a path ("DIR/new.ext") moves the entry to
+    /// another catalogue. A moved catalogue takes its tree along: its entry 0 names the new parent, the levels of it
+    /// and every catalogue under it follow (the kernel has no such call; move.com skips catalogues). Not into itself,
+    /// not deeper than kMaxLevel
     bool Rename(const std::string& path, const std::string& to, std::string& error);
+    /// A new empty catalogue `path` ("DIR/NAME", upper-cased) as mkdir.com makes it: segmented (status #21), a table
+    /// block, then one run of 2 blocks (Classic) or 3 (Chic); entry 0 names the parent, the level one deeper (+16
+    /// Classic, +23 Chic), NFILE 1; at most kMaxLevel levels under the root
+    bool MakeCatalogue(const std::string& path, const WriteOptions& options, std::string& error);
+    static constexpr uint32_t kMaxLevel = 6;   ///< mkdir.com refuses a parent of level 6
     /// `name` (UTF-8, Cyrillic as CP866) as the 8 + 3 bytes of a descriptor: 1-8 characters, a type of up to 3, the
     /// characters iS-DOS takes (letters, digits, # $ & + - = _ ` ! @ % ' ( ) { | } ~); a catalogue's in upper case
     static bool EncodeName(const std::string& name, bool catalogue, uint8_t out[11]);
@@ -179,6 +189,13 @@ private:
     bool Held(const uint8_t* entry, std::vector<uint32_t>& blocks, std::string& error) const;
     /// A free slot of `c` (the first deleted one, else NFILE, growing a segmented catalogue by a block from `bits`)
     bool TakeSlot(CatalogueImage& c, std::vector<uint8_t>& bits, uint32_t& index, std::string& error);
+    /// The block TakeSlot would add to `c` (UINT32_MAX: none needed), without changing anything
+    uint32_t GrowthBlock(const CatalogueImage& c, const std::vector<uint8_t>& bits) const;
+    /// A catalogue's level from its entry 0 (Classic +16, Chic +23), and where it goes
+    static uint32_t LevelOf(const uint8_t* entry0) { return static_cast<uint32_t>(entry0[16] | entry0[23]); }
+    void SetLevel(uint8_t* entry0, uint32_t level) const;
+    /// The first blocks of the catalogues under `first`, any depth, with their level below it (1: its children)
+    bool Subtree(uint16_t first, std::vector<std::pair<uint16_t, uint32_t>>& out, uint32_t depth, std::string& error) const;
 
     BlockReader _reader;
     BlockWriter _writer;

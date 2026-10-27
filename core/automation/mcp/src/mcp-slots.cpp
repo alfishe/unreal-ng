@@ -46,8 +46,9 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"files", {"volume", "recursive"}},
         {"read", {"volume", "out"}},
         {"write", {"volume", "in", "data", "start", "header"}},
-        {"delete", {"volume"}},
+        {"delete", {"volume", "recursive"}},
         {"rename", {"volume", "to"}},
+        {"mkdir", {"volume", "parents"}},
     };
     return actions;
 }
@@ -173,10 +174,11 @@ namespace
                 out << "\n(too long for the text: the bytes are in structuredContent.data, or give 'out' to write a host file)";
             return out.str();
         }
-        if (action == "write" || action == "delete" || action == "rename")
+        if (action == "write" || action == "delete" || action == "rename" || action == "mkdir")
         {
             out << (action == "write"    ? "wrote " + reply["path"].asString() + " (" + std::to_string(reply["size"].asUInt64()) + " bytes)"
                     : action == "delete" ? "deleted " + reply["path"].asString()
+                    : action == "mkdir"  ? "made " + reply["path"].asString()
                                          : "renamed " + reply["path"].asString() + " to " + reply["to"].asString())
                 << " on " << reply["slot"].asString() << " volume " << reply["volume"].asString();
             if (reply["access"].asString() == "writethrough")
@@ -261,13 +263,13 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "insert / swap: a file or a folder on the emulator host; save / export: the target file; targets: the file "
         "or folder to place; compose: a *.ucompose.yaml descriptor; files: a directory on the disk (empty: the root); "
         "read: a file on the disk (SHELL/HELP/exit.hlp, BOOT.B, games/klad.exe); write / delete / rename: the file "
-        "(TR-DOS NAME.T, +3DOS NAME.TYP, FAT and iS-DOS dir/name.ext)";
+        "(TR-DOS NAME.T, +3DOS NAME.TYP, FAT and iS-DOS dir/name.ext) or directory; mkdir: the directory to make";
     schema["properties"]["descriptor"]["type"] = "object";
     schema["properties"]["descriptor"]["description"] =
         "insert / swap / compose: a composition descriptor inline (version, target, layers) instead of a path";
 
     // Every option any verb takes, typed; MediaControl checks which verb takes which
-    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force", "plan", "strict", "recursive", "header"};
+    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force", "plan", "strict", "recursive", "header", "parents"};
     const std::set<std::string> integers = {"free", "cylinders", "sides", "size"};
     std::set<std::string> options;
     std::string perVerb;
@@ -327,7 +329,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "folder in a CD slot is one anyway; the reply's report lists the tracks and every file not taken); create: auto, "
         "unformatted (raw), plus3 or trdos (floppies; trdos is formatted with an empty catalogue); create on an IDE / SD slot: size in bytes";
     schema["properties"]["volume"]["description"] =
-        "files / read / write / delete / rename: the volume id from volumes (trdos, plus3, isdos, fat, p1-p4 MBR partitions, isdos-<cylinder> "
+        "files / read / write / delete / rename / mkdir: the volume id from volumes (trdos, plus3, isdos, fat, p1-p4 MBR partitions, isdos-<cylinder> "
         "iS-DOS devices of an ATM hard disk); left out: the first";
     schema["properties"]["out"]["description"] = "read: write the file's bytes to this host file instead of answering them";
     schema["properties"]["in"]["description"] = "write: the bytes from this host file";
@@ -336,7 +338,9 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "write: the TR-DOS start field / the +3DOS CODE / the iS-DOS load address: 32768, 0x8000 or #8000";
     schema["properties"]["to"]["description"] =
         "rename: the new name; a bare name keeps the file in its directory, FAT and iS-DOS take a path from the root "
-        "(moving the file)";
+        "(/name: the root), moving the file or the directory";
+    schema["properties"]["recursive"]["description"] = "files: the whole tree under the directory; delete: a directory with everything in it";
+    schema["properties"]["parents"]["description"] = "mkdir: make the missing directories on the way too (one there already is no error)";
     schema["properties"]["header"]["description"] = "write: +3DOS: false writes the file without its 128-byte header";
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
@@ -356,9 +360,10 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "named strategy: flat <path>, delta, commit - the graft base image takes everything, journaled - or write-back - "
         "the guest's file changes into the writable folder layers), volumes / files / read (the files on a disk in "
         "a slot: TR-DOS, +3DOS, iS-DOS / TASiS floppies and ATM hard disk devices, FAT of Sprinter DSS and "
-        "NedoOS floppies, hard disks and SD cards), write / delete / rename (a file on that disk: write takes path "
+        "NedoOS floppies, hard disks and SD cards), write / delete / rename / mkdir (a file on that disk: write takes path "
         "the name, data base64 or in a host file, start, header, and replaces an older file of that name; rename "
-        "takes to; a session disk turns dirty until saved, a write-through one takes it into its file). Operations are synchronous (the reply "
+        "takes to and moves directories too; delete with recursive:true takes a directory with its contents; mkdir makes "
+        "a directory, parents:true the missing ones on the way; a session disk turns dirty until saved, a write-through one takes it into its file). Operations are synchronous (the reply "
         "comes when the medium is in or out; async:true returns at once). A dirty medium leaves its slot only with "
         "save:true, export:'<path>' or discard:true; save:true follows the composite's writes.save (or strategy), and a "
         "commit / write-back that fails keeps the writes as a session delta. rescan leaves a medium whose sources did "

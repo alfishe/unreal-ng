@@ -1998,7 +1998,7 @@ namespace PythonBindings
                  py::arg("slot"), "A composite medium's layers and layout")
             .def("media_changes", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "changes", slot, "", py::kwargs()); },
                  py::arg("slot"), "The guest's unsaved writes as file operations, with the layer each touched")
-            // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); write, delete, rename
+            // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); write, delete, rename, mkdir
             .def("media_volumes", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "volumes", slot, "", py::kwargs()); },
                  py::arg("slot"), "The file systems on the disk in a slot (floppy, hard disk, SD card)")
             .def("media_files", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
@@ -2035,7 +2035,11 @@ namespace PythonBindings
                  "in_='host file' (start=0x8000, header=False, volume=)")
             .def("media_delete", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "delete", slot, path, options);
-                 }, py::arg("slot"), py::arg("path"), "Delete a file (or an empty iS-DOS / FAT directory) on the disk (volume=)")
+                 }, py::arg("slot"), py::arg("path"),
+                 "Delete a file or an empty iS-DOS / FAT directory on the disk (volume=, recursive=True: a directory with its contents)")
+            .def("media_mkdir", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "mkdir", slot, path, options);
+                 }, py::arg("slot"), py::arg("path"), "A new directory on the disk: FAT, iS-DOS catalogue (volume=, parents=True)")
             .def("media_rename", [](Emulator& self, const std::string& slot, const std::string& path, const std::string& to,
                                     const py::kwargs& options) {
                      py::kwargs all;
@@ -2044,7 +2048,7 @@ namespace PythonBindings
                      all["to"] = to;
                      return MediaCallPy(self, "rename", slot, path, all);
                  }, py::arg("slot"), py::arg("path"), py::arg("to"),
-                 "Rename a file on the disk: a bare name stays in its directory, a path from the root moves it (iS-DOS, FAT) "
+                 "Rename a file or directory on the disk: a bare name stays in its directory, a path from the root moves it (iS-DOS, FAT) "
                  "(volume=)")
             .def("media_insert", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "insert", slot, path, options);

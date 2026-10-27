@@ -115,5 +115,30 @@ def test_disk_delete_and_rename_on_isdos(s):
     s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
 
 
+def test_disk_catalogues_on_isdos(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': ISDOS})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'mkdir', 'slot': 'A', 'path': 'WORK/SUB', 'parents': True})
+    expect('made WORK/SUB' in r.text, 'the catalogues made, in the text', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'WORK/SUB/a.txt', 'data': base64.b64encode(b'deep').decode()})
+    expect(not r.is_error, 'a file into the new catalogue', r.text)
+    r = s.call('media', {'action': 'rename', 'slot': 'A', 'path': 'WORK/SUB', 'to': '/SUB'})
+    expect('renamed WORK/SUB to /SUB' in r.text, 'the catalogue moved', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A', 'path': 'SUB'})
+    expect('a.txt' in r.text, 'its file moved with it', r.text)
+    r = s.call('media', {'action': 'rename', 'slot': 'A', 'path': 'SUB', 'to': '/SUB/IN'}, ok=False)
+    expect(r.is_error and 'into itself' in r.text, 'not into itself', r.text)
+    r = s.call('media', {'action': 'delete', 'slot': 'A', 'path': 'SUB'}, ok=False)
+    expect(r.is_error and 'not empty' in r.text, 'a catalogue with a file stays', r.text)
+    for path in ('SUB', 'WORK'):
+        r = s.call('media', {'action': 'delete', 'slot': 'A', 'path': path, 'recursive': True})
+        expect(f'deleted {path}' in r.text, f'{path} deleted with its contents', r.text)
+    r = s.call('media', {'action': 'create', 'slot': 'B', 'format': 'trdos', 'discard': True})
+    r = s.call('media', {'action': 'mkdir', 'slot': 'B', 'path': 'X'}, ok=False)
+    expect(r.is_error and 'no directories' in r.text, 'TR-DOS has no directories', r.text)
+    for slot in ('A', 'B'):
+        s.call('media', {'action': 'eject', 'slot': slot, 'discard': True}, ok=False)
+
+
 if __name__ == '__main__':
     sys.exit(main(globals()))

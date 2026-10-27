@@ -116,7 +116,7 @@
         Json::Value& post = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["post"];
         post["summary"] =
             "insert / swap / eject / save / export / discard / rescan / create / protect / layers / changes / flatten / "
-            "volumes / files / read / write / delete / rename";
+            "volumes / files / read / write / delete / rename / mkdir";
         post["description"] =
             "Operations are synchronous: the reply comes when the medium is in or out of the slot (swap delay "
             "included, at most 5 s, then pending = true). async: true replies at once with pending = true. "
@@ -125,9 +125,10 @@
             "(multipart/form-data 'file', or a raw body with X-Filename; up to 1 MB, deleted when ejected). "
             "save / export take 'path' as the target. write puts a file onto the disk in the slot (TR-DOS NAME.T, +3DOS "
             "NAME.TYP, iS-DOS, FAT), an older file of that name replaced: the bytes as base64 'data', a host file "
-            "'in', or the body itself (application/octet-stream, ?path=NAME.T). delete removes a file (or an empty "
-            "iS-DOS / FAT directory); rename takes 'to': a bare name stays in the directory, a path from the root "
-            "moves the file (iS-DOS, FAT). The reply's access says where the change went: writethrough is in the "
+            "'in', or the body itself (application/octet-stream, ?path=NAME.T). delete removes a file or an empty "
+            "iS-DOS / FAT directory (recursive: a directory with its contents); rename takes 'to': a bare name stays "
+            "in the directory, a path from the root (/name: the root) moves the file or directory (iS-DOS, FAT); "
+            "mkdir makes a directory (parents: the missing ones on the way too). The reply's access says where the change went: writethrough is in the "
             "disk's file, session is dirty until saved. "
             "Options go in the JSON body or the query string:" + verbs;
         post["tags"].append("Media");
@@ -147,13 +148,16 @@
         body["properties"]["path"]["type"] = "string";
         body["properties"]["path"]["description"] =
             "insert / swap: the source; save / export: the target; files / read: a directory or file on the disk; "
-            "write / delete / rename: the file";
+            "write / delete / rename: the file or directory; mkdir: the directory";
         body["properties"]["volume"]["type"] = "string";
-        body["properties"]["volume"]["description"] = "files / read / write / delete / rename: the volume id from volumes; left out: the first";
+        body["properties"]["volume"]["description"] = "files / read / write / delete / rename / mkdir: the volume id from volumes; left out: the first";
         body["properties"]["to"]["type"] = "string";
         body["properties"]["to"]["description"] =
             "rename: the new name; a bare name stays in the file's directory, a path from the root moves it (iS-DOS, FAT)";
         body["properties"]["recursive"]["type"] = "boolean";
+        body["properties"]["recursive"]["description"] = "files: the whole tree; delete: a directory with everything in it";
+        body["properties"]["parents"]["type"] = "boolean";
+        body["properties"]["parents"]["description"] = "mkdir: the missing directories on the way too";
         body["properties"]["out"]["type"] = "string";
         body["properties"]["out"]["description"] = "read: write the file's bytes to this host file";
         body["properties"]["data"]["type"] = "string";

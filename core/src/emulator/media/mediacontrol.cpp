@@ -304,7 +304,7 @@ const std::vector<std::string>& MediaControl::Verbs()
     static const std::vector<std::string> verbs = {"list", "info", "formats", "targets", "insert", "eject", "swap",
                                                    "save", "export", "discard", "rescan", "create", "protect",
                                                    "compose", "layers", "changes", "flatten", "volumes", "files",
-                                                   "read", "write", "delete", "rename"};
+                                                   "read", "write", "delete", "rename", "mkdir"};
     return verbs;
 }
 
@@ -333,7 +333,8 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"files", {"volume", "recursive"}},
         {"read", {"volume", "out"}},
         {"write", {"volume", "in", "data", "start", "header"}},
-        {"delete", {"volume"}},
+        {"delete", {"volume", "recursive"}},
+        {"mkdir", {"volume", "parents"}},
         {"rename", {"volume", "to"}},
     };
     static const std::vector<std::string> none;
@@ -412,7 +413,7 @@ MediaReply MediaControl::Run(const MediaRequest& request)
         reply = Changes(request);
     else if (verb == "volumes" || verb == "files" || verb == "read")
         reply = Files(request, verb);
-    else if (verb == "write" || verb == "delete" || verb == "rename")
+    else if (verb == "write" || verb == "delete" || verb == "rename" || verb == "mkdir")
         reply = EditFiles(request, verb);
     else
         reply = Protect(request);
@@ -669,10 +670,15 @@ MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::strin
     const std::string volume = o.count("volume") ? Trim(o.at("volume")) : std::string();
     if (Trim(request.path).empty())
         return Fail(MediaError::BadRequest, verb == "write" ? "name the file to write (TR-DOS NAME.T, +3DOS NAME.TYP, FAT / iS-DOS dir/name.ext)"
-                                                            : "name the file to " + verb);
+                                                            : verb == "mkdir" ? "name the directory to make" : "name the file to " + verb);
     const std::string to = o.count("to") ? Trim(o.at("to")) : std::string();
     if (verb == "rename" && to.empty())
         return Fail(MediaError::BadRequest, "give the new name as 'to'");
+    bool recursive = false, parents = false;
+    if (auto it = o.find("recursive"); it != o.end() && !ParseBool(it->second, recursive))
+        return Fail(MediaError::BadRequest, "option 'recursive': expected true or false, got '" + it->second + "'");
+    if (auto it = o.find("parents"); it != o.end() && !ParseBool(it->second, parents))
+        return Fail(MediaError::BadRequest, "option 'parents': expected true or false, got '" + it->second + "'");
 
     // write: the bytes as base64 `data` or the host file `in`, one of them
     std::vector<uint8_t> data;
@@ -713,9 +719,9 @@ MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::strin
         }
         if (auto it = o.find("header"); it != o.end() && !ParseBool(it->second, options.header))
             return Fail(MediaError::BadRequest, "option 'header': expected true or false, got '" + it->second + "'");
-        // FAT and iS-DOS stamp the host's wall clock, as a DOS on the machine would stamp its own
-        options.mtime = LocalWallClock();
     }
+    // FAT and iS-DOS stamp the host's wall clock, as a DOS on the machine would stamp its own
+    options.mtime = LocalWallClock();
 
     const std::optional<SlotInfo> info = _manager->Info(reply.slot);
     if (info && info->writeProtect)
@@ -762,23 +768,32 @@ MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::strin
             if (verb == "write")
                 done = fs->Write(volume, request.path, data, options, error);
             else if (verb == "delete")
-                done = fs->Delete(volume, request.path, error);
+                done = fs->Delete(volume, request.path, error, recursive);
+            else if (verb == "mkdir")
+                done = fs->MakeDirectory(volume, request.path, parents, options.mtime, error);
             else
                 done = fs->Rename(volume, request.path, to, error);
         };
         std::string refused;
         if (emulator)
-            refused = emulator->EditMemoryFromTool(verb == "write" ? "media write" : verb == "delete" ? "media delete" : "media rename", edit);
+            refused = emulator->EditMemoryFromTool(verb == "write"    ? "media write"
+                                                   : verb == "delete" ? "media delete"
+                                                   : verb == "mkdir"  ? "media mkdir"
+                                                                      : "media rename",
+                                                   edit);
         else
             edit();
         if (!refused.empty())
             result = MediaResult::Fail(MediaError::Recording, refused);
         else if (!done)
         {
-            const bool missing = error.find("not found") != std::string::npos || error.find("no file") != std::string::npos;
-            result = MediaResult::Fail(error.find("read only") != std::string::npos ? MediaError::NotSupported
-                                       : missing                                    ? MediaError::UnreadableSource
-                                                                                    : MediaError::BadRequest,
+            // "not found" (FAT), "no file x", "no x on the <device>" (the others)
+            const bool missing = error.find("not found") != std::string::npos || error.find("no file") != std::string::npos ||
+                                 (error.compare(0, 3, "no ") == 0 && error.find(" on the ") != std::string::npos);
+            const bool unable = error.find("read only") != std::string::npos || error.find("has no directories") != std::string::npos;
+            result = MediaResult::Fail(unable    ? MediaError::NotSupported
+                                       : missing ? MediaError::UnreadableSource
+                                                 : MediaError::BadRequest,
                                        "slot '" + reply.slot + "': " + error);
         }
         else

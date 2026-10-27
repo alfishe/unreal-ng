@@ -11,6 +11,7 @@
 #include "testdata.h"
 #include "unrealdisk/blockdevice.h"
 #include "unrealdisk/diskfs.h"
+#include "unrealdisk/fatfs.h"
 #include "unrealdisk/floppyformats.h"
 #include "unrealdisk/loaders/loader_trd.h"
 
@@ -274,6 +275,78 @@ TEST(DiskFs_Test, FatOnAFloppyAndAHardDisk)
         EXPECT_NE(error.find("free"), std::string::npos) << error;
         EXPECT_FALSE(Exists(again, "HUGE.BIN"));
     }
+}
+
+/// FAT directories: made (with the missing parents), moved with their contents (not into themselves), deleted with
+/// everything in them; a read-only entry keeps the whole tree
+TEST(DiskFs_Test, FatDirectories)
+{
+    MemoryDevice hdd(Bytes("machines/sprinter/dss_1_62_92.img"), true);
+    DiskFs fs(hdd);
+    ASSERT_EQ(fs.Volumes().size(), 1u);
+    const int64_t free = fs.Volumes()[0].freeBytes;
+    std::string error;
+    DiskFsEntry entry;
+
+    ASSERT_TRUE(fs.MakeDirectory("", "Work", false, 1767225600, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "work", entry, error)) << error;
+    EXPECT_TRUE(entry.directory);
+    EXPECT_EQ(entry.mtime, 1767225600);
+    EXPECT_FALSE(fs.MakeDirectory("", "Work", false, 0, error));
+    EXPECT_NE(error.find("already"), std::string::npos) << error;
+    EXPECT_FALSE(fs.MakeDirectory("", "NONE/SUB", false, 0, error));  // no parents
+    ASSERT_TRUE(fs.MakeDirectory("", "Work/a/b/c", true, 0, error)) << error;
+    ASSERT_TRUE(fs.MakeDirectory("", "Work/a/b/c", true, 0, error)) << error;  // there already: fine with parents
+    ASSERT_TRUE(fs.Write("", "Work/a/b/c/deep.txt", {1, 2, 3}, {}, error)) << error;
+    ASSERT_TRUE(fs.Write("", "Work/a/top.txt", {4}, {}, error)) << error;
+    EXPECT_FALSE(fs.MakeDirectory("", "Work/a/top.txt/x", true, 0, error));
+    EXPECT_NE(error.find("is a file"), std::string::npos) << error;
+
+    // Moved with its contents; ".." follows (listing the moved tree works)
+    ASSERT_TRUE(fs.MakeDirectory("", "Archive", false, 0, error)) << error;
+    ASSERT_TRUE(fs.Rename("", "Work/a", "/Archive/a", error)) << error;
+    EXPECT_FALSE(Exists(fs, "Work/a"));
+    EXPECT_EQ(ReadFile(fs, "", "Archive/a/b/c/deep.txt"), (std::vector<uint8_t>{1, 2, 3}));
+    std::vector<DiskFsEntry> tree;
+    ASSERT_TRUE(fs.List("", "Archive", true, tree, error)) << error;
+    EXPECT_EQ(tree.size(), 5u);  // a, a/b, a/b/c, a/b/c/deep.txt, a/top.txt
+    EXPECT_FALSE(fs.Rename("", "Archive/a", "/Archive/a/b/a", error));
+    EXPECT_NE(error.find("into itself"), std::string::npos) << error;
+    ASSERT_TRUE(fs.Rename("", "Archive/a", "renamed", error)) << error;  // a bare name: in place
+    ASSERT_TRUE(fs.Stat("", "Archive/renamed/b", entry, error)) << error;
+
+    // Not empty: refused without recursive. A read-only file keeps the whole tree
+    EXPECT_FALSE(fs.Delete("", "Archive", error));
+    {
+        FatFs raw(hdd);
+        ASSERT_TRUE(raw.Open());
+        FatNode node;
+        ASSERT_TRUE(raw.Resolve("/Archive/renamed/top.txt", node));
+        ASSERT_TRUE(raw.SetAttributes(node, FatNode::kReadOnly));
+    }
+    DiskFs again(hdd);
+    EXPECT_FALSE(again.Delete("", "Archive", error, true));
+    EXPECT_NE(error.find("read only"), std::string::npos) << error;
+    EXPECT_TRUE(Exists(again, "Archive/renamed/b/c/deep.txt"));
+    {
+        FatFs raw(hdd);
+        ASSERT_TRUE(raw.Open());
+        FatNode node;
+        ASSERT_TRUE(raw.Resolve("/Archive/renamed/top.txt", node));
+        ASSERT_TRUE(raw.SetAttributes(node, 0));
+    }
+    DiskFs third(hdd);
+    ASSERT_TRUE(third.Delete("", "Archive", error, true)) << error;
+    ASSERT_TRUE(third.Delete("", "Work", error, true)) << error;
+    EXPECT_FALSE(Exists(third, "Archive"));
+    EXPECT_EQ(DiskFs(hdd).Volumes()[0].freeBytes, free);
+
+    // +3DOS has no directories
+    std::unique_ptr<DiskImage> plus3 = Load("loaders/dsk/plus3-blank.dsk");
+    ASSERT_NE(plus3, nullptr);
+    DiskFs flat(*plus3);
+    EXPECT_FALSE(flat.MakeDirectory("", "DIR", false, 0, error));
+    EXPECT_NE(error.find("no directories"), std::string::npos) << error;
 }
 
 TEST(DiskFs_Test, IsdosOnAWritableHardDisk)

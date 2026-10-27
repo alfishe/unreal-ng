@@ -99,11 +99,15 @@ public:
     bool Write(const std::string& volume, const std::string& path, const std::vector<uint8_t>& data,
                const DiskFsWriteOptions& options, std::string& error);
     /// Delete the file `path` (FAT, iS-DOS: an empty directory too). TR-DOS marks it deleted as TR-DOS does (its
-    /// sectors stay used until the disk is compacted)
-    bool Delete(const std::string& volume, const std::string& path, std::string& error);
+    /// sectors stay used until the disk is compacted). `recursive`: a directory goes with everything in it; every
+    /// entry is checked first (a protected iS-DOS file, a read-only FAT entry), so nothing goes when one would stay
+    bool Delete(const std::string& volume, const std::string& path, std::string& error, bool recursive = false);
+    /// A new empty directory `path` (FAT, iS-DOS) in a directory that is there; `parents`: the missing directories
+    /// on the way are made too, and one that is there already is no error. `mtime` as in DiskFsWriteOptions
+    bool MakeDirectory(const std::string& volume, const std::string& path, bool parents, int64_t mtime, std::string& error);
     /// The file `path` takes the name `to`: a bare name keeps it in its directory; FAT and iS-DOS take a path from the
-    /// root too, moving it to another directory of the volume (an iS-DOS catalogue is only renamed). False when `to`
-    /// is there already
+    /// root too ("/name" the root), moving it to another directory of the volume, a directory with its contents (not
+    /// into itself). False when `to` is there already
     bool Rename(const std::string& volume, const std::string& path, const std::string& to, std::string& error);
 
     /// A file system's reader (diskfs.cpp)

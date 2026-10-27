@@ -1793,6 +1793,7 @@ public:
         // media_volumes(slot), media_files(slot [, dir, opts]), media_read(slot, file [, opts]),
         // media_read_bytes(slot, file [, volume]), media_write(slot, file, bytes [, opts]) (bytes nil: opts["in"]
         // names a host file), media_delete(slot, file [, opts]), media_rename(slot, file, to [, opts]),
+        // media_mkdir(slot, dir [, opts]),
         // and media(verb, slot, path, opts).
         // slot: fdd.b, B, b:, sd, floppy:1, tag:sd+neogs ("auto" for insert).
         // opts: {access="readonly", save=true, export="x.trd", discard=true, async=true, ...}.
@@ -2212,7 +2213,7 @@ public:
         lua.set_function("media_changes", [mediaCall](sol::this_state s, const std::string& slot) {
             return mediaCall(s, "changes", slot, "", sol::nullopt);
         });
-        // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); write, delete, rename
+        // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); write, delete, rename, mkdir
         lua.set_function("media_volumes", [mediaCall](sol::this_state s, const std::string& slot) {
             return mediaCall(s, "volumes", slot, "", sol::nullopt);
         });
@@ -2257,6 +2258,11 @@ public:
         lua.set_function("media_delete", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
                                                      sol::optional<sol::table> opts) {
             return mediaCall(s, "delete", slot, path, opts);
+        });
+        // A new directory (FAT, iS-DOS catalogue); opts {parents = true} makes the missing ones on the way
+        lua.set_function("media_mkdir", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
+                                                    sol::optional<sol::table> opts) {
+            return mediaCall(s, "mkdir", slot, path, opts);
         });
         // A bare `to` stays in the file's directory; a path from the root moves it (iS-DOS, FAT)
         lua.set_function("media_rename", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,

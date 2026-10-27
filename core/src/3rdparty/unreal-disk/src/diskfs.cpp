@@ -160,6 +160,10 @@ struct DiskFs::Driver
         error = "the volume is read only";
         return false;
     }
+    /// A new empty directory; false with no reason: the file system has none
+    virtual bool MakeDirectory(const std::string&, int64_t, std::string&) { return false; }
+    /// Whether the entry may be deleted (a recursive delete checks every entry before it deletes one)
+    virtual bool Deletable(const DiskFsEntry&, std::string&) { return true; }
 
     virtual bool List(const std::string& dir, bool recursive, std::vector<DiskFsEntry>& out, std::vector<std::string>& notes,
                       std::string& error)
@@ -447,6 +451,15 @@ struct IsdosDriver : DiskFs::Driver
         return fs.Rename(path, to, error);
     }
 
+    bool MakeDirectory(const std::string& path, int64_t mtime, std::string& error) override
+    {
+        IsdosFileSystem::WriteOptions write;
+        FatVolumeReader::UnixToDos(mtime, write.date, write.time);
+        return fs.MakeCatalogue(path, write, error);
+    }
+
+    bool Deletable(const DiskFsEntry& entry, std::string& error) override { return fs.Deletable(entry.path, error); }
+
     IsdosFileSystem fs;
 };
 
@@ -550,6 +563,27 @@ struct FatDriver : DiskFs::Driver
         });
     }
 
+    bool Deletable(const DiskFsEntry& entry, std::string& error) override
+    {
+        if (entry.attributes.empty() || entry.attributes[0] != 'R')
+            return true;
+        error = entry.path + " is read only";
+        return false;
+    }
+
+    bool MakeDirectory(const std::string& path, int64_t mtime, std::string& error) override
+    {
+        std::string dir, name;
+        SplitPath(path, dir, name);
+        return Edit(path, error, [&](FatFs& fs) {
+            uint16_t date = 0, time = 0;
+            FatVolumeReader::UnixToDos(mtime, date, time);
+            fs.SetClock(date, time);
+            FatNode parent, made;
+            return fs.Resolve("/" + dir, parent) && fs.Create(parent, name, true, made);
+        });
+    }
+
     bool Rename(const std::string& path, const std::string& to, std::string& error) override
     {
         // A bare name stays in the file's directory; a path moves it
@@ -558,6 +592,14 @@ struct FatDriver : DiskFs::Driver
         SplitPath(path, from, ignored);
         if (to.find('/') == std::string::npos)
             dir = from;
+        if (!dir.empty() && dir.front() == '/')
+            dir.erase(0, 1);  // "/name": the root
+        // A directory does not go into itself
+        if (dir == path || dir.compare(0, path.size() + 1, path + "/") == 0)
+        {
+            error = "a directory cannot move into itself (" + path + " -> " + to + ")";
+            return false;
+        }
         return Edit(path + " -> " + to, error, [&](FatFs& fs) {
             FatNode node, parent, moved;
             return fs.Resolve("/" + path, node) && fs.Resolve("/" + dir, parent) && fs.Rename(node, parent, name, moved);
@@ -937,7 +979,7 @@ bool DiskFs::Write(const std::string& volume, const std::string& path, const std
     return driver && driver->Write(clean, data, options, error);
 }
 
-bool DiskFs::Delete(const std::string& volume, const std::string& path, std::string& error)
+bool DiskFs::Delete(const std::string& volume, const std::string& path, std::string& error, bool recursive)
 {
     Driver* driver = FindWritable(volume, error);
     const std::string clean = CleanPath(path);
@@ -946,7 +988,76 @@ bool DiskFs::Delete(const std::string& volume, const std::string& path, std::str
         error = "name a file";
         return false;
     }
-    return driver && driver->Delete(clean, error);
+    if (!driver)
+        return false;
+    DiskFsEntry entry;
+    if (!recursive || !Stat(volume, clean, entry, error) || !entry.directory)
+        return driver->Delete(clean, error);
+
+    // Every entry checked before one goes; then the deepest first (a listing puts a directory before its contents)
+    std::vector<DiskFsEntry> entries;
+    if (!List(volume, clean, true, entries, error))
+        return false;
+    entries.insert(entries.begin(), entry);
+    for (const DiskFsEntry& e : entries)
+        if (!driver->Deletable(e, error))
+            return false;
+    for (auto it = entries.rbegin(); it != entries.rend(); ++it)
+        if (!driver->Delete(it->path, error))
+            return false;
+    return true;
+}
+
+bool DiskFs::MakeDirectory(const std::string& volume, const std::string& path, bool parents, int64_t mtime, std::string& error)
+{
+    size_t index = 0;
+    if (!Find(volume, error, &index))
+        return false;
+    Driver* driver = FindWritable(volume, error);
+    const std::string clean = CleanPath(path);
+    if (driver && clean.empty())
+    {
+        error = "name the directory";
+        return false;
+    }
+    if (!driver)
+        return false;
+    auto make = [&](const std::string& dir) {
+        error.clear();
+        if (driver->MakeDirectory(dir, mtime, error))
+            return true;
+        if (error.empty())
+            error = "the " + _volumes[index].system + " volume '" + _volumes[index].id + "' has no directories";
+        return false;
+    };
+    DiskFsEntry entry;
+    std::string missing;
+    if (!parents)
+    {
+        if (Stat(volume, clean, entry, missing))
+        {
+            error = clean + " is there already";
+            return false;
+        }
+        return make(clean);
+    }
+    // Each directory on the way: there already, or made
+    for (size_t at = clean.find('/');; at = clean.find('/', at + 1))
+    {
+        const std::string step = clean.substr(0, at);
+        if (Stat(volume, step, entry, missing))
+        {
+            if (!entry.directory)
+            {
+                error = step + " is a file";
+                return false;
+            }
+        }
+        else if (!make(step))
+            return false;
+        if (at == std::string::npos)
+            return true;
+    }
 }
 
 bool DiskFs::Rename(const std::string& volume, const std::string& path, const std::string& to, std::string& error)

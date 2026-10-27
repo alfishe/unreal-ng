@@ -361,7 +361,8 @@ TEST(IsdosFs_Test, RefusalsSayWhy)
     EXPECT_NE(error.find("not empty"), std::string::npos) << error;
     EXPECT_FALSE(fs.Rename("SHELL/coca.com", "copy.com", error));
     EXPECT_NE(error.find("already"), std::string::npos) << error;
-    EXPECT_FALSE(fs.Rename("SHELL", "UTIL/SHELL", error));
+    EXPECT_FALSE(fs.Rename("SHELL", "SHELL/HELP/SHELL", error));
+    EXPECT_NE(error.find("into itself"), std::string::npos) << error;
     EXPECT_FALSE(fs.Delete("SHELL/nothing.txt", error));
     EXPECT_NE(error.find("no file"), std::string::npos) << error;
 
@@ -399,4 +400,176 @@ TEST(IsdosFs_Test, AWrittenFloppySavesAndLoads)
     IsdosFileSystem fs = IsdosFileSystem::OnDisk(*again);
     EXPECT_EQ(ReadBack(fs, "saved.bin"), bytes);
     Walk(fs);  // every file still reads, no notes
+}
+
+namespace
+{
+/// Block `block` of the device as it is stored (read as a 256-byte continuous file there)
+std::vector<uint8_t> RawBlock(const IsdosFileSystem& fs, uint16_t block)
+{
+    IsdosFile f;
+    f.status = 0x41;
+    f.first = block;
+    f.length = 256;
+    std::vector<uint8_t> data;
+    std::string error;
+    EXPECT_TRUE(fs.Read(f, data, error)) << error;
+    data.resize(256);
+    return data;
+}
+
+uint16_t Word(const std::vector<uint8_t>& b, size_t at)
+{
+    return static_cast<uint16_t>(b[at] | (b[at + 1] << 8));
+}
+
+/// The entry named `name11` (live or deleted) of the catalogue at block `catalogue`, its blocks taken in a row
+std::vector<uint8_t> EntryIn(const IsdosFileSystem& fs, uint16_t catalogue, const char* name11)
+{
+    const uint16_t blocks = Word(RawBlock(fs, catalogue), 14) / 256;
+    for (uint16_t k = 0; k < blocks; k++)
+    {
+        const std::vector<uint8_t> b = RawBlock(fs, static_cast<uint16_t>(catalogue + k));
+        for (size_t i = k == 0 ? 1 : 0; i < 8; i++)
+            if (std::memcmp(b.data() + i * 32, name11, 11) == 0)
+                return {b.begin() + i * 32, b.begin() + i * 32 + 32};
+    }
+    ADD_FAILURE() << name11 << " not in catalogue " << catalogue;
+    return std::vector<uint8_t>(32);
+}
+}  // namespace
+
+/// Catalogues as mkdir.com makes them on a Classic disk (level at +16), moved with their tree (levels follow),
+/// deleted as delete.com leaves them; the rest of the disk stays as it was
+TEST(IsdosFs_Test, CataloguesAsMkdirMakesThem)
+{
+    auto disk = Load("loaders/isdos/ISDOS50.FDI");
+    ASSERT_NE(disk, nullptr);
+    IsdosFileSystem fs = IsdosFileSystem::OnDisk(*disk);
+    ASSERT_FALSE(fs.Boot().chic);
+    const Tree before = Walk(fs);
+    uint32_t free0 = 0, free1 = 0;
+    ASSERT_TRUE(fs.FreeBlocks(free0));
+    std::string error;
+    IsdosFileSystem::WriteOptions options;
+    options.date = 0x5B5A;
+
+    ASSERT_TRUE(fs.MakeCatalogue("work", options, error)) << error;  // upper-cased
+    IsdosFile work;
+    ASSERT_TRUE(fs.Find("WORK", work, error)) << error;
+    EXPECT_TRUE(work.directory);
+    EXPECT_EQ(work.status, 0x21);
+    EXPECT_EQ(work.length, 512u);
+    EXPECT_EQ(work.date, 0x5B5A);
+    ASSERT_TRUE(fs.FreeBlocks(free1));
+    EXPECT_EQ(free0 - free1, 3u);  // the table and 2 blocks
+    const std::vector<uint8_t> parentEntry = EntryIn(fs, fs.Boot().root, "WORK       ");
+    const uint16_t table = Word(parentEntry, 17);
+    EXPECT_EQ(Word(parentEntry, 19), work.first);
+    const std::vector<uint8_t> t = RawBlock(fs, table);
+    EXPECT_EQ(std::vector<uint8_t>(t.begin(), t.begin() + 5),
+              (std::vector<uint8_t>{1, static_cast<uint8_t>(work.first), static_cast<uint8_t>(work.first >> 8), 2, 0}));
+    const std::vector<uint8_t> head = RawBlock(fs, work.first);
+    EXPECT_EQ(std::memcmp(head.data(), "WORK       \x21", 12), 0);
+    EXPECT_EQ(Word(head, 12), fs.Boot().root);  // the parent
+    EXPECT_EQ(Word(head, 14), 512);
+    EXPECT_EQ(head[16], 1);   // the level, Classic
+    EXPECT_EQ(head[21], 1);   // NFILE
+    EXPECT_EQ(head[22], 0);   // NEFIL
+    EXPECT_EQ(head[23], 0);
+    EXPECT_EQ(Word(head, 30), 0x5B5A);
+
+    // Files go in; refusals
+    ASSERT_TRUE(fs.Write("WORK/a.txt", Pattern(600, 4), {}, error)) << error;
+    EXPECT_EQ(ReadBack(fs, "work/a.txt"), Pattern(600, 4));
+    EXPECT_FALSE(fs.MakeCatalogue("WORK", {}, error));
+    EXPECT_NE(error.find("already"), std::string::npos) << error;
+    EXPECT_FALSE(fs.MakeCatalogue("WORK/A.TXT", {}, error));  // no type
+    EXPECT_FALSE(fs.MakeCatalogue("NONE/SUB", {}, error));
+
+    // Six levels deep at most
+    std::string deep = "WORK";
+    for (const char* name : {"L2", "L3", "L4", "L5", "L6"})
+    {
+        deep += std::string("/") + name;
+        ASSERT_TRUE(fs.MakeCatalogue(deep, {}, error)) << deep << ": " << error;
+    }
+    EXPECT_FALSE(fs.MakeCatalogue(deep + "/L7", {}, error));
+    EXPECT_NE(error.find("levels"), std::string::npos) << error;
+    IsdosFile l6;
+    ASSERT_TRUE(fs.Find(deep, l6, error)) << error;
+    EXPECT_EQ(RawBlock(fs, l6.first)[16], 6);
+
+    // Moved with its tree: the parent and every level follow; not into itself, not too deep
+    ASSERT_TRUE(fs.Rename("WORK/L2/L3", "/TOP", error)) << error;
+    IsdosFile top, l4, l5;
+    ASSERT_TRUE(fs.Find("TOP", top, error)) << error;
+    ASSERT_TRUE(fs.Find("TOP/L4", l4, error)) << error;
+    ASSERT_TRUE(fs.Find("TOP/L4/L5/L6", l6, error)) << error;
+    EXPECT_FALSE(fs.Find("WORK/L2/L3", top, error));
+    ASSERT_TRUE(fs.Find("TOP", top, error)) << error;
+    const std::vector<uint8_t> topHead = RawBlock(fs, top.first);
+    EXPECT_EQ(std::memcmp(topHead.data(), "TOP        ", 11), 0);
+    EXPECT_EQ(Word(topHead, 12), fs.Boot().root);
+    EXPECT_EQ(topHead[16], 1);
+    EXPECT_EQ(RawBlock(fs, l4.first)[16], 2);
+    EXPECT_EQ(RawBlock(fs, l6.first)[16], 4);
+    EXPECT_FALSE(fs.Rename("TOP", "TOP/L4/TOP", error));
+    EXPECT_NE(error.find("into itself"), std::string::npos) << error;
+    ASSERT_TRUE(fs.MakeCatalogue("WORK/L2/X3", {}, error)) << error;
+    EXPECT_FALSE(fs.Rename("TOP", "WORK/L2/X3/TOP", error));  // TOP at 4, L6 at 7
+    EXPECT_NE(error.find("levels"), std::string::npos) << error;
+    ASSERT_TRUE(fs.Rename("TOP", "WORK/L2/TOP", error)) << error;  // back at 3: L6 at 6
+    ASSERT_TRUE(fs.Find("WORK/L2/TOP/L4/L5/L6", l6, error)) << error;
+    EXPECT_EQ(RawBlock(fs, l6.first)[16], 6);
+
+    // Deleted as delete.com leaves it: the parent entry without bits 0 and 5 and the level byte, entry 0 without bit 0
+    ASSERT_TRUE(fs.Find("WORK/L2/TOP/L4/L5", l5, error)) << error;
+    EXPECT_FALSE(fs.Delete("WORK/L2/TOP/L4/L5", error));
+    EXPECT_NE(error.find("not empty"), std::string::npos) << error;
+    ASSERT_TRUE(fs.Delete("WORK/L2/TOP/L4/L5/L6", error)) << error;
+    const std::vector<uint8_t> gone = EntryIn(fs, l5.first, "L6         ");
+    EXPECT_EQ(gone[11], 0x00);
+    EXPECT_EQ(gone[16], 0);
+    EXPECT_EQ(RawBlock(fs, l6.first)[11] & 1, 0);
+    for (const char* path : {"WORK/L2/TOP/L4/L5", "WORK/L2/TOP/L4", "WORK/L2/TOP", "WORK/L2/X3", "WORK/L2", "WORK/a.txt", "WORK"})
+        ASSERT_TRUE(fs.Delete(path, error)) << path << ": " << error;
+    ASSERT_TRUE(fs.FreeBlocks(free1));
+    EXPECT_EQ(free1, free0);
+    const Tree after = Walk(fs);
+    EXPECT_EQ(after.root, before.root);
+    EXPECT_EQ(after.files, before.files);
+    EXPECT_EQ(after.catalogues, before.catalogues);
+}
+
+/// A Chic device (HDDNEMO): the level at +23, a catalogue of 3 blocks
+TEST(IsdosFs_Test, ChicCatalogueOnAHardDiskDevice)
+{
+    std::vector<uint8_t> bytes = Bytes("loaders/isdos/HDDNEMO.img");
+    IsdosFileSystem fs = IsdosFileSystem::OnBytes(bytes.data(), bytes.size());
+    fs.SetWriter([&bytes](uint32_t block, const uint8_t* src) {
+        std::memcpy(bytes.data() + block * 256u, src, 256);
+        return true;
+    });
+    ASSERT_TRUE(fs.Boot().chic);
+    std::string error;
+    IsdosFile help;
+    ASSERT_TRUE(fs.Find("HDD_NEMO/HELP", help, error)) << error;
+    EXPECT_EQ(RawBlock(fs, help.first)[23], 2) << "the disk's own catalogues keep the level at +23";
+    ASSERT_TRUE(fs.Delete("HDD_NEMO/HELP/ide+5.hlp", error)) << error;  // the device is full
+
+    ASSERT_TRUE(fs.MakeCatalogue("HDD_NEMO/NEW", {}, error)) << error;
+    IsdosFile made;
+    ASSERT_TRUE(fs.Find("HDD_NEMO/NEW", made, error)) << error;
+    EXPECT_EQ(made.length, 768u);
+    std::vector<uint8_t> head = RawBlock(fs, made.first);
+    EXPECT_EQ(head[16], 0);
+    EXPECT_EQ(head[23], 2);
+    ASSERT_TRUE(fs.Write("HDD_NEMO/NEW/x.bin", Pattern(100, 1), {}, error)) << error;
+    ASSERT_TRUE(fs.Rename("HDD_NEMO/NEW", "/NEW", error)) << error;
+    ASSERT_TRUE(fs.Find("NEW", made, error)) << error;
+    head = RawBlock(fs, made.first);
+    EXPECT_EQ(head[23], 1);
+    EXPECT_EQ(ReadBack(fs, "NEW/x.bin"), Pattern(100, 1));
+    Walk(fs);
 }

@@ -31,7 +31,7 @@ namespace
     {
         return verb == "insert" || verb == "swap" || verb == "save" || verb == "export" || verb == "targets" ||
                verb == "compose" || verb == "files" || verb == "read" || verb == "write" || verb == "delete" ||
-               verb == "rename";
+               verb == "rename" || verb == "mkdir";
     }
 
     /// `media compose` / `media layers`: the layout and one line per layer
@@ -306,13 +306,15 @@ void CLIProcessor::HandleMedia(const ClientSession& session, const std::vector<s
         for (const StateNode& n : body.find("notes")->items)
             out << "  note: " << n.s << NEWLINE;
     }
-    else if (verb == "write" || verb == "delete" || verb == "rename")
+    else if (verb == "write" || verb == "delete" || verb == "rename" || verb == "mkdir")
     {
         const std::string& path = body.find("path")->s;
         if (verb == "write")
             out << "  wrote " << path << " (" << body.find("size")->i << " bytes)";
         else if (verb == "delete")
             out << "  deleted " << path;
+        else if (verb == "mkdir")
+            out << "  made " << path;
         else
             out << "  renamed " << path << " to " << body.find("to")->s;
         out << " on slot " << reply.slot << ", volume " << body.find("volume")->s << NEWLINE;
@@ -395,9 +397,13 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
         << "                                 dir/name.ext), an older file of that name replaced; --start: the TR-DOS" << NEWLINE
         << "                                 start / +3DOS CODE / iS-DOS load address (#8000, 0x8000, 32768);" << NEWLINE
         << "                                 --header=false: +3DOS without its header" << NEWLINE;
-    out << "  delete <slot> <file> [--volume id] - delete a file (FAT, iS-DOS: an empty directory too)" << NEWLINE;
+    out << "  delete <slot> <file> [--volume id] [--recursive] - delete a file or an empty directory (FAT, iS-DOS);" << NEWLINE
+        << "                                 --recursive: a directory with everything in it" << NEWLINE;
     out << "  rename <slot> <file> <new-name> [--volume id] - a bare new name keeps it in its directory; FAT and" << NEWLINE
-        << "                                 iS-DOS take a path from the root, moving the file" << NEWLINE;
+        << "                                 iS-DOS take a path from the root (/name: the root), moving the file or" << NEWLINE
+        << "                                 the directory" << NEWLINE;
+    out << "  mkdir <slot> <dir> [--volume id] [--parents] - a new directory (FAT, iS-DOS catalogue); --parents:" << NEWLINE
+        << "                                 the missing ones on the way too" << NEWLINE;
     out << "  flatten <slot> [path] --strategy flat|delta|commit|write-back [--plan] [--force]" << NEWLINE
         << "                               [--onConflict refuse|keep-both]" << NEWLINE
         << "                               - a composite by a named strategy (commit: into the graft base image;" << NEWLINE

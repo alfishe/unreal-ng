@@ -1066,9 +1066,9 @@ bool IsdosFileSystem::Delete(const std::string& path, std::string& error)
         error = slot.file.path + " is protected (a system file or delete protected)";
         return false;
     }
+    CatalogueImage sub;
     if (slot.file.directory)
     {
-        CatalogueImage sub;
         if (!LoadCatalogue(slot.file.first, sub, error))
             return false;
         for (uint32_t i = 1; i < sub.raw[21]; i++)
@@ -1085,6 +1085,18 @@ bool IsdosFileSystem::Delete(const std::string& path, std::string& error)
     for (const uint32_t b : held)
         if (b < _boot.blocks)
             Mark(bits, b, false);
+    if (slot.file.directory)
+    {
+        // As delete.com: its own entry 0 loses bit 0; the parent entry bit 5 and the old level byte
+        sub.raw[11] = static_cast<uint8_t>(sub.raw[11] & ~kExists);
+        if (!StoreEntry(sub, 0))
+        {
+            error = "the catalogue's header cannot be written";
+            return false;
+        }
+        e[11] = static_cast<uint8_t>(e[11] & ~kCatalogue);
+        e[16] = 0;
+    }
     e[11] = static_cast<uint8_t>(e[11] & ~kExists);
     if (slot.catalogue.raw[22])
         slot.catalogue.raw[22]--;
@@ -1154,12 +1166,6 @@ bool IsdosFileSystem::Rename(const std::string& path, const std::string& to, std
         return true;
     }
 
-    // Into another catalogue: a file only (a catalogue's level and its whole tree would change)
-    if (slot.file.directory)
-    {
-        error = "a catalogue is renamed in place only: give a bare name";
-        return false;
-    }
     CatalogueImage target;
     std::vector<uint8_t> bits;
     if (!LoadCatalogue(first, target, error) || !LoadBitmap(bits, error))
@@ -1168,6 +1174,37 @@ bool IsdosFileSystem::Rename(const std::string& path, const std::string& to, std
     {
         error = "the catalogue has a " + Listed(name) + " already";
         return false;
+    }
+
+    // A catalogue goes with its tree: not into itself, not deeper than mkdir.com would make it
+    CatalogueImage moved;
+    std::vector<std::pair<uint16_t, uint32_t>> tree;
+    uint32_t level = 0;
+    if (slot.file.directory)
+    {
+        for (uint16_t up = first, steps = 0;; steps++)
+        {
+            CatalogueImage c;
+            if (up == slot.file.first)
+            {
+                error = "a catalogue cannot move into itself (" + path + " -> " + to + ")";
+                return false;
+            }
+            if (up == _boot.root || steps > kMaxEntries || !LoadCatalogue(up, c, error))
+                break;
+            up = Word(c.raw.data() + 12);
+        }
+        if (!LoadCatalogue(slot.file.first, moved, error) || !Subtree(slot.file.first, tree, 1, error))
+            return false;
+        level = LevelOf(target.raw.data()) + 1;
+        uint32_t deepest = 0;
+        for (const auto& [block, depth] : tree)
+            deepest = std::max(deepest, depth);
+        if (level + deepest > kMaxLevel)
+        {
+            error = "the tree would go " + std::to_string(level + deepest) + " levels deep (iS-DOS makes at most " + std::to_string(kMaxLevel) + ")";
+            return false;
+        }
     }
     const std::vector<uint8_t> before = bits;
     uint32_t index = 0;
@@ -1183,6 +1220,176 @@ bool IsdosFileSystem::Rename(const std::string& path, const std::string& to, std
         !StoreEntry(slot.catalogue, 0))
     {
         error = "the catalogues cannot be written";
+        return false;
+    }
+    if (!slot.file.directory)
+        return true;
+
+    // The moved catalogue names its new parent and level; the catalogues under it follow its level
+    std::memcpy(moved.raw.data(), name, 11);
+    PutWord(moved.raw.data() + 12, first);
+    SetLevel(moved.raw.data(), level);
+    if (!StoreEntry(moved, 0))
+    {
+        error = "the moved catalogue's header cannot be written";
+        return false;
+    }
+    for (const auto& [block, depth] : tree)
+    {
+        CatalogueImage c;
+        if (!LoadCatalogue(block, c, error))
+            return false;
+        SetLevel(c.raw.data(), level + depth);
+        if (!StoreEntry(c, 0))
+        {
+            error = "catalogue block " + std::to_string(block) + " cannot be written";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsdosFileSystem::Deletable(const std::string& path, std::string& error) const
+{
+    Slot slot;
+    if (!Locate(path, slot, error))
+        return false;
+    const uint8_t* e = slot.catalogue.raw.data() + slot.index * 32;
+    if (Fixed(e) || (e[11] & kDeleteProtected))
+    {
+        error = slot.file.path + " is protected (a system file or delete protected)";
+        return false;
+    }
+    return true;
+}
+
+void IsdosFileSystem::SetLevel(uint8_t* entry0, uint32_t level) const
+{
+    // Classic keeps the level at +16 (CSIZE is 2 bytes), Chic and TASiS at +23 (CSIZE 3 bytes)
+    entry0[_boot.chic ? 16 : 23] = 0;
+    entry0[_boot.chic ? 23 : 16] = static_cast<uint8_t>(level);
+}
+
+bool IsdosFileSystem::Subtree(uint16_t first, std::vector<std::pair<uint16_t, uint32_t>>& out, uint32_t depth, std::string& error) const
+{
+    CatalogueImage c;
+    if (depth > kMaxLevel + 1 || !LoadCatalogue(first, c, error))
+    {
+        if (error.empty())
+            error = "catalogue block " + std::to_string(first) + ": the tree is deeper than iS-DOS goes (a loop?)";
+        return false;
+    }
+    for (uint32_t i = 1; i < c.raw[21]; i++)
+    {
+        const uint8_t* e = c.raw.data() + i * 32;
+        if ((e[11] & kExists) && (e[11] & kCatalogue) && !Fixed(e))
+        {
+            const uint16_t sub = Word(e + 19);
+            out.emplace_back(sub, depth);
+            if (!Subtree(sub, out, depth + 1, error))
+                return false;
+        }
+    }
+    return true;
+}
+
+uint32_t IsdosFileSystem::GrowthBlock(const CatalogueImage& c, const std::vector<uint8_t>& bits) const
+{
+    const uint8_t* head = c.raw.data();
+    const uint32_t nfile = head[21];
+    for (uint32_t i = 1; i < nfile; i++)
+        if (!(head[i * 32 + 11] & kExists))
+            return UINT32_MAX;
+    const uint32_t csize = Word(head + 14);
+    if (c.continuous || nfile * 32 < csize || csize + 32 <= c.blocks.size() * kBlock)
+        return UINT32_MAX;
+    return FirstFit(bits, _boot.blocks, 1);
+}
+
+bool IsdosFileSystem::MakeCatalogue(const std::string& path, const WriteOptions& options, std::string& error)
+{
+    if (!_writer)
+    {
+        error = "the iS-DOS device is read only";
+        return false;
+    }
+    if (!RootOk())
+    {
+        error = _descriptor ? "the iS-DOS main catalogue does not open" : "no iS-DOS device descriptor in block 0";
+        return false;
+    }
+    const std::vector<std::string> parts = SplitPath(path);
+    uint8_t name[11];
+    if (parts.empty() || !EncodeName(parts.back(), true, name))
+    {
+        error = "an iS-DOS catalogue is a name of up to 8 letters, digits or signs, no type (" + path + ")";
+        return false;
+    }
+    uint16_t first = 0;
+    CatalogueImage parent;
+    std::vector<uint8_t> bits;
+    if (!ParentOf(parts, first, error) || !LoadCatalogue(first, parent, error) || !LoadBitmap(bits, error))
+        return false;
+    if (Named(parent.raw, name, 0))
+    {
+        error = "the catalogue has a " + Listed(name) + " already";
+        return false;
+    }
+    const uint32_t level = LevelOf(parent.raw.data()) + 1;
+    if (level > kMaxLevel)
+    {
+        error = path + ": iS-DOS makes at most " + std::to_string(kMaxLevel) + " levels of catalogues";
+        return false;
+    }
+
+    // As $crfil lays it out: the slot (a growing parent takes its block first), the table block, one run of blocks
+    const uint32_t count = _boot.chic ? 3 : 2;
+    std::vector<uint8_t> trial = bits;
+    if (const uint32_t grow = GrowthBlock(parent, trial); grow != UINT32_MAX)
+        Mark(trial, grow, true);
+    const uint32_t table = FirstFit(trial, _boot.blocks, 1);
+    if (table != UINT32_MAX)
+        Mark(trial, table, true);
+    const uint32_t start = table == UINT32_MAX ? UINT32_MAX : FirstFit(trial, _boot.blocks, count);
+    if (start == UINT32_MAX)
+    {
+        error = "the device has no room: a catalogue needs a table block and " + std::to_string(count) + " blocks in a row";
+        return false;
+    }
+    const std::vector<uint8_t> before = bits;
+    uint32_t index = 0;
+    if (!TakeSlot(parent, bits, index, error))
+        return false;
+    Mark(bits, table, true);
+    for (uint32_t k = 0; k < count; k++)
+        Mark(bits, start + k, true);
+
+    uint8_t e[32] = {};
+    std::memcpy(e, name, 11);
+    e[11] = kExists | kCatalogue;
+    PutWord(e + 14, count * kBlock);
+    PutWord(e + 17, table);
+    PutWord(e + 19, start);
+    PutWord(e + 30, options.date);
+    std::memcpy(parent.raw.data() + index * 32, e, 32);
+    parent.raw[22]++;
+
+    uint8_t t[kBlock] = {};
+    t[0] = 1;
+    PutWord(t + 1, start);
+    t[3] = static_cast<uint8_t>(count);
+    uint8_t head[kBlock] = {};
+    std::memcpy(head, e, 32);
+    PutWord(head + 12, first);
+    head[21] = 1;
+    SetLevel(head, level);
+    const uint8_t zero[kBlock] = {};
+    bool ok = Put(table, t) && Put(start, head);
+    for (uint32_t k = 1; k < count && ok; k++)
+        ok = Put(start + k, zero);
+    if (!ok || !StoreBitmap(before, bits) || !StoreEntry(parent, index) || !StoreEntry(parent, 0))
+    {
+        error = "the new catalogue, its parent or the bitmap cannot be written";
         return false;
     }
     return true;
