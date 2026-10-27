@@ -18,6 +18,8 @@ Task recipe: [.recipe/analysis/conditional-breakpoints.md](../../.recipe/analysi
 - [Checks when a condition is set](#checks-when-a-condition-is-set)
 - [A condition that fails at run time](#a-condition-that-fails-at-run-time)
 - [Every plane](#every-plane)
+- [Debugger protocols](#debugger-protocols)
+- [Game events and haptics](#game-events-and-haptics)
 - [Limits of this version](#limits-of-this-version)
 
 ## The language
@@ -92,6 +94,7 @@ the label: `.PC` is the label `PC`, not the register.
 | `DOS` | 1 while TR-DOS is paged in |
 | `PG0 PG1 PG2 PG3` | the RAM page in each 16K slot (`#FF` for ROM) |
 | `ROMPG` | the ROM page in slot 0 (`#FF` for RAM) |
+| `x@prev` | the value of `x` at the previous check of this condition (the first check: `x` itself), at most 16 in a condition: `M(#5C3A) < M(#5C3A)@prev` holds when the byte went down. A branch `&&` / `\|\|` skipped does not update its value |
 
 Each access operand exists only on the breakpoint kinds that supply it:
 
@@ -174,6 +177,12 @@ every hit and the client decides, as before. The server logs the reason.
 
 The server advertises `ConditionalBreakpoints+` in its `qSupported` reply, so gdb sends the condition with the
 breakpoint by itself (`set breakpoint condition-evaluation auto`).
+
+## Game events and haptics
+
+A game profile's sources (`events:`, `haptics.sources`) take `if:` in this language: a breakpoint probe checks it at
+the access, any other source at the frame end. See
+[haptics.md §5](../inprogress/2026-10-17-controller-manager/haptics.md).
 
 ## Limits of this version
 

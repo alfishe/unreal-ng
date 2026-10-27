@@ -247,6 +247,9 @@ what it built.
    - Planes: `condition` / `if` (design.md phase 1). Hit counting after the condition.
    - An A/B on the hit path and the miss path.
 2. **Conditions on taps:** the profile key `if:`, and `@prev` with the `before` byte for `decreased` / `increased`.
+   Built 2026-10-26: `if:` on every source (a breakpoint probe's tap condition, else a frame-end condition), checked
+   at profile parse and at arm, the reason in `game.events` `condition_error`; `x@prev` in the language (any operand,
+   16 slots). An `each_write` probe with `if:` keeps the byte of the last write the condition held for as `before`.
 3. **Deferred callbacks** on Lua and Python: the per-script ring, the stats, and the policies without `unpaced`;
    plus `on_game_event`.
 4. **The Lua hook state:** frame and sync modes, the instruction budget, and `unpaced` pacing.

@@ -144,7 +144,6 @@ struct BreakpointDescriptor
     // enabled again; it never stops the machine. Written by the emulation thread once, as hitCount is
     BreakpointConditionPtr condition;
     uint8_t conditionFailed = 0;
-    char conditionError[120] = {};
 
     // Used if breakpoint is set to any matching address in specific memory page (independently of Z80 address)
     uint8_t page = 0xFF;                     // Page number (ROM 0-63 or RAM 0-255)
@@ -170,6 +169,8 @@ struct BreakpointDescriptor
         "interactive";  // Owner: "interactive" for user/CLI, or "analyzer_manager" if set by analyzer manager
     std::string note;   // Annotation for the breakpoint
     std::string group = "default";  // Group name for organizing breakpoints
+    // The condition's failure (`condition` above), last: cold, kept off the lines the walk reads
+    char conditionError[120] = {};
 };
 
 constexpr uint8_t BRK_NO_TAP = 0;
@@ -753,9 +754,10 @@ protected:
     /// never stops: a hit that passes its policy goes to its sink with `kind`, `address` and `value`
     uint16_t WalkCandidates(uint32_t set, int slot, uint16_t first, BreakpointTapKind kind, uint16_t address,
                             int value = -1);
-    /// The candidate's condition on this access (out of line: only breakpoints with one get here). A failure marks
-    /// the breakpoint and reports it once
-    bool ConditionHolds(BreakpointDescriptor& bp, BreakpointTapKind kind, uint16_t address, int value);
+    /// The candidate's condition on this access: counts the match, false when the condition does not hold or failed
+    /// before. Never inlined: the walk without conditions keeps its size (the hit path A/B). A failure marks the
+    /// breakpoint and reports it once
+    UNREAL_NOINLINE bool ConditionHolds(BreakpointDescriptor& bp, BreakpointTapKind kind, uint16_t address, int value);
     /// Whether a breakpoint covers the access (for the lookups that are not on the hot path)
     static bool CoversMemory(const BreakpointDescriptor& bp, uint16_t address, const MemoryPageDescriptor& page);
 

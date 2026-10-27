@@ -183,6 +183,17 @@ Built (2026-10-23):
   writes and OUTs in order (`probeEvents`, the first 64; for a write, the byte before and after).
 - **A write undone within one frame.** `write` with `each_write` sees every write, so a decrease followed by the
   restore in the same frame fires. A frame-end watch never sees it.
+- **Conditions (`if:`, 2026-10-26).** Any source can take `if:`, a condition in the core language
+  ([conditional-breakpoints.md](../../features/conditional-breakpoints.md)).
+  - On a breakpoint probe it is the tap's condition, checked at the access with its operands (`MDT`, `VAL`, `PORT`):
+    `{probe: write, address: 0x5f20, each_write: true, if: "MDT < M(#5F21)"}`. A hit it rejects is not counted.
+  - On any other source it is checked at the frame end, on the registers and memory there (no access operands); the
+    source fires only when it holds. A gated source still reads its byte and runs its filters.
+  - `x@prev` is x at the previous check: `if: "M(#5F20) < M(#5F20)@prev"`.
+  - The profile is checked when it is read (the language, the operands of the source's kind) and again when it is
+    armed on a machine (the labels). A condition the machine refuses or that fails at run time never fires; its event
+    shows the reason in `condition_error` (`game.events`).
+  - An `each_write` probe's byte before is then the byte of the last write the condition held for.
 - **Port probes.** `port-in` / `port-out` take `port` and `port_mask`. `port-out` can also take `value` / `mask` on the
   written byte: `{probe: port-out, port: 0xFE, port_mask: 0x01, value: 2, mask: 7}` is a red border.
 - **Cost.** Measured in §12.

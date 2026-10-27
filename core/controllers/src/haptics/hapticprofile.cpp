@@ -1,6 +1,7 @@
 #include "haptics/hapticprofile.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -297,7 +298,34 @@ bool ParseStreamFilter(const JsonValue& spec, const std::string& stream, HapticS
     return true;
 }
 
+std::atomic<HapticConditionCheck> g_conditionCheck{nullptr};
+
+/// `if:` of a parsed source: the text, checked when the core installed its check
+bool ParseCondition(const JsonValue& spec, HapticSource& source, std::string& error, const std::string& where)
+{
+    if (!Text(spec, "if", source.condition, error, where))
+        return false;
+    if (source.condition.empty())
+        return true;
+    std::string why;
+    if (const HapticConditionCheck check = g_conditionCheck.load(std::memory_order_acquire))
+        if (!check(source.condition, source.ConditionTrigger(), why))
+        {
+            error = where + ": 'if' " + why;
+            return false;
+        }
+    return true;
+}
+
+bool ParseSourceBody(const std::string& name, const JsonValue& spec, HapticSource& source, std::string& error);
+
 bool ParseSource(const std::string& name, const JsonValue& spec, HapticSource& source, std::string& error)
+{
+    return ParseSourceBody(name, spec, source, error) &&
+           ParseCondition(spec, source, error, "haptics.sources." + name);
+}
+
+bool ParseSourceBody(const std::string& name, const JsonValue& spec, HapticSource& source, std::string& error)
 {
     const std::string where = "haptics.sources." + name;
     if (!spec.IsObject())
@@ -560,6 +588,8 @@ bool AddHapticProbeSource(JsonValue& haptics, const HapticProbe& probe, const st
             source.Set("each_write", JsonValue::Bool(true));
         }
     }
+    if (!probe.condition.empty())
+        source.Set("if", JsonValue::String(probe.condition));
     sources.Set(name, std::move(source));
     std::vector<JsonValue> items = rules.Items();
     items.push_back(JsonValue::Object({{"on", JsonValue::String(name)}, {"play", JsonValue::String(play)}}));
@@ -570,6 +600,27 @@ bool AddHapticProbeSource(JsonValue& haptics, const HapticProbe& probe, const st
         return false;
     haptics = std::move(section);
     return true;
+}
+
+void SetHapticConditionCheck(HapticConditionCheck check)
+{
+    g_conditionCheck.store(check, std::memory_order_release);
+}
+
+uint8_t HapticSource::ConditionTrigger() const
+{
+    // The values of breakpointcondition.h's BreakpointConditionTrigger (this library uses the core header-only)
+    constexpr uint8_t kExec = 0x01, kRead = 0x02, kWrite = 0x04, kPortIn = 0x08, kPortOut = 0x10;
+    if (!IsBreakpointProbe())
+        return 0;
+    switch (kind)
+    {
+        case HapticSourceKind::Read: return kRead;
+        case HapticSourceKind::Write: return kWrite;
+        case HapticSourceKind::PortIn: return kPortIn;
+        case HapticSourceKind::PortOut: return kPortOut;
+        default: return kExec;
+    }
 }
 
 HapticProbe HapticSource::Probe() const
@@ -603,6 +654,7 @@ HapticProbe HapticSource::Probe() const
         probe.address = probe.end = address;
         probe.page = page;
     }
+    probe.condition = condition;
     return probe;
 }
 

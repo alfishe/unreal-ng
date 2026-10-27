@@ -349,10 +349,13 @@ public:
             return nullptr;
         }
         program->_fast = MatchFast(root);
+        program->_previous.assign(_prevSlots, 0);
+        program->_primed.assign(_prevSlots, 0);
         return program;
     }
 
     static constexpr int kMaxStack = 32;
+    static constexpr unsigned kMaxPrevious = 16;
 
 private:
     struct Token
@@ -365,7 +368,7 @@ private:
 
     struct Node
     {
-        enum Kind { Const, Reg8, Reg16, Var, Mem8, Mem16, Unary, Binary, LogicalAnd, LogicalOr } kind = Const;
+        enum Kind { Const, Reg8, Reg16, Var, Mem8, Mem16, Unary, Binary, LogicalAnd, LogicalOr, Prev } kind = Const;
         Op op = Op::Const;
         uint8_t arg = 0;
         int64_t value = 0;
@@ -458,7 +461,7 @@ private:
             return;
         }
         static const char* const kOperators[] = {"&&", "||", "==", "!=", "<>", "<=", ">=", "<<", ">>", "->",
-                                                 "+", "-", "*", "/", "%", "&", "|", "^", "!", "~", "<", ">", "="};
+                                                 "+", "-", "*", "/", "%", "&", "|", "^", "!", "~", "<", ">", "=", "@"};
         for (const char* op : kOperators)
         {
             const size_t n = std::char_traits<char>::length(op);
@@ -596,6 +599,30 @@ private:
             mem.kind = Node::Mem8;
             mem.left = Add(sum);
             operand = Add(mem);
+        }
+        // x@prev: the value x had when this condition was evaluated before (the first time: x now)
+        while (_error.empty() && _token.kind == Token::Operator && _token.text == "@")
+        {
+            const size_t column = _token.column;
+            Next();
+            std::string name = _token.text;
+            std::transform(name.begin(), name.end(), name.begin(), [](char ch) { return static_cast<char>(std::toupper(static_cast<unsigned char>(ch))); });
+            if (_token.kind != Token::Name || name != "PREV")
+            {
+                Fail("'@' takes 'prev'", column);
+                return -1;
+            }
+            if (_prevSlots >= kMaxPrevious)
+            {
+                Fail("at most " + std::to_string(kMaxPrevious) + " @prev in a condition", column);
+                return -1;
+            }
+            Next();
+            Node prev;
+            prev.kind = Node::Prev;
+            prev.left = operand;
+            prev.arg = static_cast<uint8_t>(_prevSlots++);
+            operand = Add(prev);
         }
         return operand;
     }
@@ -776,6 +803,7 @@ private:
             case Node::Var: return NameOf(kVarNames, std::size(kVarNames), n.arg);
             case Node::Mem8: return "M(" + Print(n.left, true) + ")";
             case Node::Mem16: return "W(" + Print(n.left, true) + ")";
+            case Node::Prev: return Print(n.left, false) + "@prev";
             case Node::Unary: return std::string(OpText(n.op)) + Print(n.left, false);
             default:
             {
@@ -811,6 +839,10 @@ private:
             case Node::Unary:
                 Emit(n.left, code, depth, maxDepth);
                 Push(code, Instruction{n.op}, depth, maxDepth, 0);
+                return;
+            case Node::Prev:
+                Emit(n.left, code, depth, maxDepth);
+                Push(code, Instruction{Op::Prev, n.arg}, depth, maxDepth, 0);
                 return;
             case Node::Binary:
                 Emit(n.left, code, depth, maxDepth);
@@ -903,6 +935,7 @@ private:
     std::string _error;
     size_t _errorColumn = 0;
     bool _usesLabels = false;
+    unsigned _prevSlots = 0;
 };
 
 /// endregion </Compiler>
@@ -925,6 +958,7 @@ std::shared_ptr<const BreakpointConditionProgram> BreakpointConditionProgram::Co
             error = "the condition does not evaluate here: " + why;
             return nullptr;
         }
+        program->ResetPrevious();  // the dry run is not a hit: @prev starts from the first real evaluation
     }
     return program;
 }
@@ -1035,6 +1069,15 @@ BreakpointConditionResult BreakpointConditionProgram::EvaluateCode(const Breakpo
                     sp--;
                 break;
             case Op::Bool: stack[sp - 1] = stack[sp - 1] != 0 ? 1 : 0; break;
+            case Op::Prev:
+            {
+                const int64_t now = stack[sp - 1];
+                if (_primed[in.arg])
+                    stack[sp - 1] = _previous[in.arg];
+                _previous[in.arg] = now;
+                _primed[in.arg] = 1;
+                break;
+            }
             case Op::End:
                 return sp > 0 && stack[sp - 1] != 0 ? BreakpointConditionResult::True : BreakpointConditionResult::False;
             default:

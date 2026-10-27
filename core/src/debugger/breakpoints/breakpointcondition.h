@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -15,7 +16,11 @@ struct EmulatorState;
 /// conditions-and-callbacks.md): an expression compiled once into a program, evaluated on the emulation thread only
 /// after the breakpoint's trigger matched. The canonical language is Unreal's (debugger-model rules.md §5.3):
 ///
-///   precedence (high to low): ! ~ - (unary), M(x) W(x) a->b | * / % | + - | << >> | comparisons | & | ^ | | | && | ||
+///   precedence (high to low): ! ~ - (unary), M(x) W(x) a->b x@prev | * / % | + - | << >> | comparisons | & | ^ | | |
+///   && | ||
+///
+/// `x@prev` is the value x had at this condition's evaluation before (x itself the first time): `M(5C78) <
+/// M(5C78)@prev` on a write tap holds when the byte went down. A branch && / || skips does not update its @prev.
 ///
 /// Numbers are hex unless written as decimal (`123d`); `#FF`, `$FF`, `0xFF`, `FFh` are hex; `'c'` is a character.
 /// Names are case-insensitive. A false condition costs no store; an error is reported once and the breakpoint is
@@ -70,7 +75,8 @@ enum class BreakpointConditionResult : uint8_t
     Error
 };
 
-/// A compiled condition: immutable, shared by the descriptor that owns it and every copy of it
+/// A compiled condition: immutable, shared by the descriptor that owns it and every copy of it - except the @prev
+/// slots, which the evaluations write (on the emulation thread, the only one that evaluates)
 class BreakpointConditionProgram
 {
 public:
@@ -82,6 +88,7 @@ public:
         Lt, Gt, Le, Ge, Eq, Ne,
         And, Xor, Or,
         JumpIfZero, JumpIfNotZero, Bool,
+        Prev,  ///< x@prev: the slot `arg` holds x of the evaluation before; it takes x now
         End
     };
     struct Instruction
@@ -109,6 +116,10 @@ public:
     /// Whether the condition names a label (it must be compiled again when the labels change)
     bool UsesLabels() const { return _usesLabels; }
     bool IsFast() const { return _fast.kind != Fast::Kind::None; }
+    /// Whether the condition keeps values from its last evaluation (x@prev)
+    bool UsesPrevious() const { return !_previous.empty(); }
+    /// Forget the @prev values: the next evaluation starts again (x@prev is x then)
+    void ResetPrevious() const { std::fill(_primed.begin(), _primed.end(), 0); }
     const std::vector<Instruction>& Code() const { return _code; }
 
     /// One evaluation. `error`, when the result is Error, says why ("address 1FFFF outside memory")
@@ -134,6 +145,8 @@ private:
     std::vector<Instruction> _code;
     Fast _fast;
     bool _usesLabels = false;
+    mutable std::vector<int64_t> _previous;  ///< per @prev: x at the evaluation before
+    mutable std::vector<uint8_t> _primed;    ///< per @prev: evaluated once already
 };
 
 typedef std::shared_ptr<const BreakpointConditionProgram> BreakpointConditionPtr;

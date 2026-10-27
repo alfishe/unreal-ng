@@ -199,7 +199,7 @@ TEST_F(BreakpointCondition_Test, RefusalsNameTheProblemAndItsColumn)
     EXPECT_EQ(Refused("A == 1)"), "unexpected ')' at column 7");
     EXPECT_EQ(Refused("QQ == 1"), "unknown name 'QQ' at column 1");
     EXPECT_EQ(Refused("A == 12G"), "bad number '12G' at column 6");
-    EXPECT_EQ(Refused("A @ 1"), "unexpected '@' at column 3");
+    EXPECT_EQ(Refused("A @ 1"), "'@' takes 'prev' at column 3");
     EXPECT_EQ(Refused("A == #12345678901234567"), "bad hex number at column 6") << "17 digits do not fit 64 bits";
     EXPECT_TRUE(Compile("A == #1234567890123456"));
     // The trigger supplies the access operands: none of these can ever hold, so they are refused, not inert
@@ -325,4 +325,48 @@ TEST_F(BreakpointCondition_Test, DialectNames)
     EXPECT_TRUE(BreakpointConditionProgram::ParseDialect("C", dialect));
     EXPECT_EQ(dialect, BreakpointConditionDialect::C);
     EXPECT_FALSE(BreakpointConditionProgram::ParseDialect("pascal", dialect));
+}
+
+TEST_F(BreakpointCondition_Test, PrevIsTheValueOfTheEvaluationBefore)
+{
+    BreakpointConditionPtr down = Compile("M(#5C78) < M(#5C78)@prev");
+    ASSERT_TRUE(down);
+    EXPECT_TRUE(down->UsesPrevious());
+    EXPECT_FALSE(down->IsFast());
+    EXPECT_EQ(down->Canonical(), "M(#5C78) < M(#5C78)@prev");
+    auto evaluate = [&](uint8_t value) {
+        _memory->DirectWriteToZ80Memory(0x5C78, value);
+        return down->Evaluate(Context());
+    };
+    EXPECT_EQ(evaluate(5), Result::False) << "the first evaluation: x@prev is x";
+    EXPECT_EQ(evaluate(4), Result::True) << "went down";
+    EXPECT_EQ(evaluate(4), Result::False);
+    EXPECT_EQ(evaluate(7), Result::False) << "went up";
+    EXPECT_EQ(evaluate(3), Result::True);
+    down->ResetPrevious();
+    EXPECT_EQ(evaluate(1), Result::False) << "after a reset it starts again";
+
+    // An expression in brackets, two slots, any case; the canonical text compiles back
+    BreakpointConditionPtr pair = Compile("(A + 1)@PREV != (A + 1) && B@prev == B");
+    ASSERT_TRUE(pair);
+    _cpu.a = 1;
+    _cpu.b = 2;
+    EXPECT_EQ(pair->Evaluate(Context()), Result::False);
+    _cpu.a = 2;
+    EXPECT_EQ(pair->Evaluate(Context()), Result::True);
+    EXPECT_TRUE(Compile(pair->Canonical()));
+
+    // A compile-time dry run does not count as the evaluation before
+    std::string error;
+    _memory->DirectWriteToZ80Memory(0x5C78, 9);
+    const BreakpointConditionContext dry = Context();
+    BreakpointConditionPtr checked =
+        BreakpointConditionProgram::Compile("M(5C78) != M(5C78)@prev", BRK_COND_ANY, nullptr, error,
+                                            BreakpointConditionDialect::Unreal, &dry);
+    ASSERT_TRUE(checked) << error;
+    _memory->DirectWriteToZ80Memory(0x5C78, 8);
+    EXPECT_EQ(checked->Evaluate(Context()), Result::False);
+
+    EXPECT_NE(Refused("A@next").find("'@' takes 'prev'"), std::string::npos);
+    EXPECT_NE(Refused("A@").find("'@' takes 'prev'"), std::string::npos);
 }

@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "debugger/breakpoints/breakpointmanager.h"
@@ -28,8 +29,10 @@ public:
     HapticProbes(const HapticProbes&) = delete;
     HapticProbes& operator=(const HapticProbes&) = delete;
 
-    /// Replace the armed probes (at most HapticFrame::kMaxProbes). Emulation thread (or the CPU held)
-    void Arm(const std::vector<HapticProbe>& probes);
+    /// Replace the armed probes (at most HapticFrame::kMaxProbes). A probe whose condition does not compile on this
+    /// machine is not armed (it never hits): @p errors, when given, gets the reason per probe ("" for the armed ones).
+    /// Emulation thread (or the CPU held)
+    void Arm(const std::vector<HapticProbe>& probes, std::vector<std::string>* errors = nullptr);
     /// Remove every probe; nothing armed costs nothing
     void Disarm();
     bool Armed() const

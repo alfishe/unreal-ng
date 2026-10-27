@@ -641,6 +641,12 @@ StateNode GameEvents(Emulator& emulator)
             entry["last_frame"] = static_cast<int64_t>(event.lastFrame);
             entry["level"] = std::round(static_cast<double>(event.current) * 1000.0) / 1000.0;
             entry["value"] = event.value >= 0 ? StateNode(static_cast<int64_t>(event.value)) : StateNode();
+            if (!event.condition.empty())
+            {
+                entry["condition"] = event.condition;
+                if (!event.conditionError.empty())
+                    entry["condition_error"] = event.conditionError;
+            }
         }
         StateNode& recent = node["recent"];
         recent = StateNode::Array();

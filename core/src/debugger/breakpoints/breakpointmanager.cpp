@@ -2394,14 +2394,9 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t firs
         // Every matching access counts as a match; a condition then decides whether it is a hit (a failed one no
         // longer matches), and the policy whether the hit stops, or for a tap whether its sink is told. Without a
         // condition every match is a hit: only hitCount is kept (the snapshot reports it as both)
-        if (bp->condition)
-        {
-            if (bp->conditionFailed)
-                continue;
-            ++bp->matchCount;
+        if (bp->condition) [[unlikely]]
             if (!ConditionHolds(*bp, kind, address, value))
                 continue;
-        }
         const uint32_t n = ++bp->hitCount;
         bool stop = true;
         switch (bp->hitMode)
@@ -2435,6 +2430,9 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t firs
 
 bool BreakpointManager::ConditionHolds(BreakpointDescriptor& bp, BreakpointTapKind kind, uint16_t address, int value)
 {
+    if (bp.conditionFailed)
+        return false;
+    ++bp.matchCount;
     BreakpointConditionContext x;
     if (_context)
     {
