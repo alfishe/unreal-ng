@@ -348,7 +348,7 @@ private:
     // is left is the note. False with the reason in `error`
     bool ParseBreakpointArgs(const std::vector<std::string>& args, size_t addressIndex, size_t flagsFrom,
                              BreakpointSpec& spec, std::string& error) const;
-    // `--cpu main|gs` anywhere in a breakpoint command: taken out of `args`, the CPU in `cpu` (main without it).
+    // `--cpu main|gs|ms` anywhere in a breakpoint command: taken out of `args`, the CPU in `cpu` (main without it).
     // False after the reply when the name is not one
     bool TakeCpuOption(const ClientSession& session, std::vector<std::string>& args, DebugCpuId& cpu) const;
     // The breakpoints of that CPU (a card's: gs-debugger design §3.1)

@@ -47,6 +47,8 @@ protected:
     std::unique_ptr<class ScriptCallbackManager> _scriptCallbacks;
     // The card CPU in the General Sound slot (gs-debugger design §3.2): its breakpoints and hooks
     std::unique_ptr<class GSCardTarget> _gsTarget;
+    // The General Sound of a MultiSound slot card (the `ms` CPU)
+    std::unique_ptr<class GSCardTarget> _msTarget;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -79,12 +81,17 @@ public:
     /// The General Sound slot's card CPU (exists for the machine's lifetime; Available() while a card with a CPU is
     /// fitted)
     GSCardTarget* GetGSTarget() { return _gsTarget.get(); }
+    /// A card CPU's target (gs, ms); nullptr for the main CPU
+    GSCardTarget* GetCardTarget(DebugCpuId cpu);
     /// The breakpoints of a CPU: the main CPU's (GetBreakpointsManager), or a card's
     BreakpointManager* GetBreakpointsManager(DebugCpuId cpu);
-    /// The CPU of a surface name ("main", "gs"; "neogs" names the same slot); false for an unknown name
+    /// The CPU of a surface name ("main", "gs", "ms"; "neogs" names the GS slot, "multisound" the MultiSound's GS);
+    /// false for an unknown name
     static bool ParseCpuName(const std::string& name, DebugCpuId& out);
     /// The General Sound slot's card was created or replaced (SoundManager): the card hooks follow it
     void OnGeneralSoundCardCreated();
+    /// The slot cards were built or released (SlotManager): the MultiSound GS's hooks follow its card
+    void OnSlotCardsChanged();
 
     /// endregion </Properties>
 

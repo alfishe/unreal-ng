@@ -138,7 +138,10 @@ and measurements on [conditions-and-callbacks.md](../../../inprogress/2026-10-26
 
 The General Sound / NeoGS card's Z80 has its own breakpoints (`GSCardTarget`, `core/src/debugger/targets/`, design
 on [gs-debugger §4](../../../inprogress/2026-09-27-gs-debugger/design.md)). `DebugManager::GetBreakpointsManager(cpu)`
-picks the manager: `main` (also `z80` or nothing) the machine's, `gs` (or `neogs`) the card's.
+picks the manager: `main` (also `z80` or nothing) the machine's, `gs` (or `neogs`) the card's, `ms` (or `multisound`)
+the General Sound on a MultiSound slot card (a second `GSCardTarget`, the card found through
+`ICard::DebugGeneralSound`; `SlotManager` tells it when the cards are built or released). Everything below holds for
+both card CPUs; `--cpu ms`, `cpu="ms"`, `?cpu=ms` name the MultiSound's.
 
 - **Kinds.** Execute, memory read / write (addresses of the card's CPU, `--page romN` / `ramN` its flash / ROM and RAM
   pages), port in / out, and the protocol events (`BRK_EVENT`). The card refuses the rest (NextREG, beam, keyboard).
@@ -148,7 +151,10 @@ picks the manager: `main` (also `z80` or nothing) the machine's, `gs` (or `neogs
   the machine's `T`, `FD` and `DOS`; labels are not passed. See
   [conditional-breakpoints.md](../../../features/conditional-breakpoints.md#the-sound-cards-cpu).
 - **Events.** The card's: `int`, `nmi`, `reset`, `page` (a page switch), `card_command`, `card_data` (the card read the
-  host's command / data byte), `card_reply` (it wrote its reply). The host's: `host_command` (#BB), `host_data` (#B3 written),
+  host's command / data byte), `card_reply` (it wrote its reply), and the card's hardware: `dac_fetch` (the player
+  fetched a sample; the detail is the DAC channel 0..3), `clock_change` (NeoGS GSCFG0 changed the clock; the detail is
+  the clock in MHz, the value GSCFG0), `dma_start` / `dma_done` (a NeoGS DMA module, the value its number; the detail of
+  `dma_done` is 1 for a finished block, 0 for an abort). The host's: `host_command` (#BB), `host_data` (#B3 written),
   `host_reply` (#B3 read), on the main CPU's manager; each kind on the other CPU is refused. `value` / `vmask` filter
   the byte.
 - **Where it stops.** An execute breakpoint before the instruction; a watchpoint, a port or an event at the card's next
@@ -164,9 +170,15 @@ picks the manager: `main` (also `z80` or nothing) the machine's, `gs` (or `neogs
 | CLI | `--cpu gs` on `bp`, `wp`, `bport`, `bplist`, `bpclear`, `bpon`, `bpoff`, `bptoggle`, `bphits`, `bpgroup`, `bpnote` | `bevent <kind> [--value V [--vmask M]] [--hits ...] [--cpu ...]` |
 | Lua | `cpu="gs"` in the options; `bp_remove`, `bp_enable`, `bp_disable`, `bp_clear`, `bp_count`, `bp_list` take it last | `bp_event(kind, {value=, vmask=, hits=, cpu=})` |
 | Python | `cpu="gs"` keyword on `bp`, `bp_read`, `bp_write`, `bp_port_*`, `bp_remove`, `bp_enable`, `bp_disable`, `bp_clear`, `bp_count`, `bp_list` | `emu.bp_event(kind, value=, vmask=, hits=, cpu=)` |
-| MCP | `control_execution` `cpu` on every `bp_*` action except the groups | `bp_add` `type` `event`, `event` |
+| MCP | `control_execution` `cpu` on every `bp_*` action | `bp_add` `type` `event`, `event` |
 | REST | `?cpu=gs` or the body's `cpu` on `/breakpoints...` (400 for another name) | `POST /breakpoints {type: "event", event, value, value_mask}` |
 | WebSocket | the REST routes as `call`s; `cpu` / `cpu_pc` in `breakpoint` events | the same |
 
 The event kind's default CPU is its side (`bevent card_reply` and `bp_event("int")` go to the card). The groups'
-listing (`GET /breakpoints/groups`) is the main CPU's only.
+listing takes the CPU too (`GET /breakpoints/groups?cpu=gs`, `bp_groups("gs")`, `emu.bp_groups(cpu="gs")`, MCP
+`bp_groups` with `cpu`) and names it in the answer (`cpu`).
+
+The card's events have named callbacks too (`gs_on_command`, `gs_on_data`, `gs_on_reply`, `gs_on_int`, `gs_on_nmi`,
+`gs_on_page`, `gs_on_dac_fetch`, `gs_on_clock_change`, `gs_on_dma_start`, `gs_on_dma_done`, `gs_on_port_in(port)`,
+`gs_on_port_out(port)` in Lua and Python): taps on the card CPU, the hit's `arg` the event's detail
+([script-callbacks.md](../../../features/script-callbacks.md#the-sound-cards-cpu)).

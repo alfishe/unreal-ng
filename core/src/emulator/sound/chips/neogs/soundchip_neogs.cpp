@@ -487,6 +487,9 @@ void SoundChip_NeoGS::applyClockChange()
     _dma.onClockChange(now, _ticksPerCycle, _nextTicksPerCycle);
     _ticksPerCycle = _nextTicksPerCycle;
     reschedule();
+    if (_debugHooks) [[unlikely]]
+        _debugHooks->onEvent(GSCardEvent::ClockChange,
+                             static_cast<uint16_t>(TICKS_PER_SECOND / 1e6 / static_cast<double>(_ticksPerCycle) + 0.5), _gscfg0);
 }
 
 void SoundChip_NeoGS::writeSctrl(uint8_t value)
@@ -860,6 +863,8 @@ void SoundChip_NeoGS::dacCapture(uint16_t addr, uint8_t value)
     _activityCounters.lastDacFetchGsCycle = _runner.now();
     _activityCounters.lastDacFetchFrame = currentFrameNumber();
     traceEvent(GSTraceSide::DacFetch, addr, value, false, static_cast<uint8_t>(channel));
+    if (_debugHooks) [[unlikely]]
+        _debugHooks->onEvent(GSCardEvent::DacFetch, static_cast<uint16_t>(channel), value);
 }
 
 /// endregion </Audio>

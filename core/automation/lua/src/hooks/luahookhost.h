@@ -21,6 +21,7 @@
 #include <sol/sol.hpp>
 
 #include "debugger/callbacks/scripthookhost.h"
+#include "debugger/targets/debugcpuid.h"
 
 class LuaHookHost : public IScriptHookHost
 {
@@ -54,4 +55,5 @@ private:
     bool _aborted = false;
     HookEdits* _edits = nullptr;  ///< a logic call's writes
     bool _card = false;           ///< the call is on a hit of the sound card's CPU
+    DebugCpuId _cardCpu = DebugCpuId::Main;  ///< which card's (gs, ms)
 };

@@ -1287,12 +1287,15 @@ void RegisterControlExecution(ToolRegistry& registry)
         "event, see event; no address)";
     schema["properties"]["cpu"]["type"] = "string";
     schema["properties"]["cpu"]["description"] =
-        "For bp_*: whose breakpoints, main (default) or gs (the CPU of the General Sound / NeoGS card: execution, read, "
-        "write, port and card events; a gs stop parks the machine, wait reports the card instruction)";
+        "For bp_*: whose breakpoints, main (default), gs (the CPU of the General Sound / NeoGS card: execution, read, "
+        "write, port and card events; a gs stop parks the machine, wait reports the card instruction) or ms (the "
+        "General Sound on a MultiSound card, the same way)";
     schema["properties"]["event"]["type"] = "string";
     schema["properties"]["event"]["description"] =
-        "For bp_add of event: int, nmi, reset, page, card_command, card_data, card_reply (cpu gs), host_command, "
-        "host_data, host_reply (cpu main: the host's access to #B3 / #BB); value / value_mask filter the byte";
+        "For bp_add of event: int, nmi, reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, "
+        "dma_start, dma_done (cpu gs; the last four from the card's hardware, the DMA ones NeoGS only), host_command, "
+        "host_data, host_reply (cpu main: the host's access to #B3 / #BB); value / value_mask filter the byte (the DAC "
+        "byte, GSCFG0, the DMA module 0 ZX / 1 SD / 2 MP3)";
     schema["properties"]["hc"]["type"] = "integer";
     schema["properties"]["hc"]["description"] = "For bp_add of beam: the pixel clock in the row (0..511, default 0)";
     schema["properties"]["address_end"]["oneOf"][0]["type"] = "integer";
@@ -1735,11 +1738,14 @@ void RegisterControlExecution(ToolRegistry& registry)
                 }
                 if (action == "bp_groups")
                 {
-                    ForwardCall("GET", Endpoint(id, "/breakpoints/groups"), nullptr, caller, "", [done](ToolResult result) {
+                    ForwardCall("GET", Endpoint(id, "/breakpoints/groups" + cpuQuery), nullptr, caller, "", [done](ToolResult result) {
                         if (!result.isError)
                         {
                             std::ostringstream out;
-                            out << "Breakpoint groups: " << result.structured["groups"].size();
+                            out << "Breakpoint groups";
+                            if (result.structured["cpu"].asString() != "main")
+                                out << " (" << result.structured["cpu"].asString() << " CPU)";
+                            out << ": " << result.structured["groups"].size();
                             for (const Json::Value& group : result.structured["groups"])
                                 out << "\n" << group["name"].asString() << ": " << group["active"].asUInt() << " of "
                                     << group["total"].asUInt() << " on";

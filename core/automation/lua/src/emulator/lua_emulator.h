@@ -484,7 +484,7 @@ protected:
             cpu = options->as<sol::table>().get<sol::optional<std::string>>("cpu").value_or("");
         BreakpointManager* bpm = ScriptBreakpoints(cpu);
         if (!bpm)
-            return {-1, std::string(effectiveEmulator() ? "cpu must be 'main' or 'gs'" : "no emulator")};
+            return {-1, std::string(effectiveEmulator() ? "cpu must be 'main', 'gs' or 'ms'" : "no emulator")};
         BreakpointSpec spec;
         spec.type = type;
         spec.access = access;
@@ -3528,7 +3528,7 @@ public:
             return AddScriptPositionBreakpoint(BRK_MAGIC, opcode == "ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01, options);
         });
         // bp_event(kind, {value=, vmask=, hits=, cpu=}) stops on a General Sound / NeoGS protocol event: the card's (int, nmi,
-        // reset, page, card_command, card_data, card_reply) on the gs CPU, the host's (host_command, host_data, host_reply)
+        // reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done) on the gs CPU, the host's (host_command, host_data, host_reply)
         // on the main one; cpu defaults to the kind's side. The id; -1 and the reason when refused
         lua.set_function("bp_event", [this](const std::string& kindName, sol::optional<sol::table> options)
                                          -> std::tuple<int, sol::optional<std::string>> {
@@ -3559,7 +3559,7 @@ public:
             }
             BreakpointManager* bpm = ScriptBreakpoints(cpu);
             if (!bpm)
-                return {-1, std::string(effectiveEmulator() ? "cpu must be 'main' or 'gs'" : "no emulator")};
+                return {-1, std::string(effectiveEmulator() ? "cpu must be 'main', 'gs' or 'ms'" : "no emulator")};
             std::string error;
             if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
                 return {-1, error};
@@ -3609,7 +3609,7 @@ public:
                 return {false, std::string("no emulator")};
             BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or(""));
             if (!bpm)
-                return {false, std::string("cpu must be 'main' or 'gs'")};
+                return {false, std::string("cpu must be 'main', 'gs' or 'ms'")};
             BreakpointConditionDialect d = BreakpointConditionDialect::Unreal;
             if (!BreakpointConditionProgram::ParseDialect(dialect.value_or(""), d))
                 return {false, std::string("dialect must be 'unreal' or 'c'")};
@@ -3684,11 +3684,12 @@ public:
             return bpm ? bpm->GetBreakpointsCount() : 0;
         });
 
-        // bp_groups() -> {ok, instance, groups = {{name, total, active, ids}}}: as GET .../breakpoints/groups
-        lua.set_function("bp_groups", [this](sol::this_state s) {
+        // bp_groups([cpu]) -> {ok, instance, cpu, groups = {{name, total, active, ids}}}: as GET .../breakpoints/groups
+        lua.set_function("bp_groups", [this](sol::this_state s, sol::optional<std::string> cpu) {
             StateNode args = StateNode::Object();
             if (Emulator* emulator = effectiveEmulator())
                 args["instance"] = emulator->GetId();
+            args["cpu"] = cpu.value_or("");
             return StateNodeToLua(s, monitoring::Call("breakpoint_groups", args).body);
         });
 
@@ -7742,14 +7743,14 @@ public:
                 {"port_out", {BRK_IO, BRK_IO_OUT}}};
             const std::string cpu = where.get<sol::optional<std::string>>("cpu").value_or("");
             if (!DebugManager::ParseCpuName(cpu, spec.cpu))
-                return {-1, std::string("cpu must be 'main' or 'gs'")};
+                return {-1, std::string("cpu must be 'main', 'gs' or 'ms'")};
             // A card event (the sound card's CPU): no address
             if (auto event = where.get<sol::optional<std::string>>("event"))
             {
                 GSCardEvent kind = GSCardEvent::Count;
                 if (!ParseGSCardEvent(event->c_str(), kind) || GSCardEventIsHostSide(kind))
                     return {-1, "event must be a card event (int, nmi, reset, page, card_command, card_data, "
-                                "card_reply), not '" + *event + "'"};
+                                "card_reply, dac_fetch, clock_change, dma_start, dma_done), not '" + *event + "'"};
                 if (cpu.empty())
                     spec.cpu = DebugCpuId::GS;
                 spec.tap.type = BRK_EVENT;
@@ -7794,6 +7795,55 @@ public:
             spec.event = event;
             return RegisterCallback(spec, fn, options);
         });
+        // The card's events by name (gs-debugger requirements X13): on_tap({event = ...}) on the sound card CPU;
+        // options.cpu "ms" picks the MultiSound's General Sound (default "gs")
+        auto cardCpu = [](const sol::optional<sol::table>& options, DebugCpuId& cpu) -> bool {
+            cpu = DebugCpuId::GS;
+            if (!options)
+                return true;
+            const sol::optional<std::string> name = (*options)["cpu"];
+            return !name || (DebugManager::ParseCpuName(*name, cpu) && IsCardCpu(cpu));
+        };
+        auto cardEvent = [this, cardCpu](GSCardEvent kind) {
+            return [this, kind, cardCpu](const sol::object& fn, sol::optional<sol::table> options)
+                       -> std::tuple<int, sol::optional<std::string>> {
+                CallbackSpec spec;
+                spec.trigger = CallbackTrigger::Tap;
+                if (!cardCpu(options, spec.cpu))
+                    return {-1, std::string("cpu must be a card's: 'gs' or 'ms'")};
+                spec.tap.type = BRK_EVENT;
+                spec.tap.access = 0;
+                spec.tap.address = static_cast<uint16_t>(kind);
+                return RegisterCallback(spec, fn, options);
+            };
+        };
+        lua.set_function("gs_on_command", cardEvent(GSCardEvent::CardCommandRead));
+        lua.set_function("gs_on_data", cardEvent(GSCardEvent::CardDataRead));
+        lua.set_function("gs_on_reply", cardEvent(GSCardEvent::CardReplyWrite));
+        lua.set_function("gs_on_int", cardEvent(GSCardEvent::Int));
+        lua.set_function("gs_on_nmi", cardEvent(GSCardEvent::Nmi));
+        lua.set_function("gs_on_page", cardEvent(GSCardEvent::PageSwitch));
+        lua.set_function("gs_on_dac_fetch", cardEvent(GSCardEvent::DacFetch));
+        lua.set_function("gs_on_clock_change", cardEvent(GSCardEvent::ClockChange));
+        lua.set_function("gs_on_dma_start", cardEvent(GSCardEvent::DmaStart));
+        lua.set_function("gs_on_dma_done", cardEvent(GSCardEvent::DmaDone));
+        // A card port (its 8-bit decode): gs_on_port_in(port, fn [, options]), gs_on_port_out
+        auto cardPort = [this, cardCpu](uint8_t access) {
+            return [this, access, cardCpu](int port, const sol::object& fn, sol::optional<sol::table> options)
+                       -> std::tuple<int, sol::optional<std::string>> {
+                CallbackSpec spec;
+                spec.trigger = CallbackTrigger::Tap;
+                if (!cardCpu(options, spec.cpu))
+                    return {-1, std::string("cpu must be a card's: 'gs' or 'ms'")};
+                spec.tap.type = BRK_IO;
+                spec.tap.access = access;
+                spec.tap.address = static_cast<uint16_t>(port & 0xFF);
+                spec.tap.portMask = 0x00FF;
+                return RegisterCallback(spec, fn, options);
+            };
+        };
+        lua.set_function("gs_on_port_in", cardPort(BRK_IO_IN));
+        lua.set_function("gs_on_port_out", cardPort(BRK_IO_OUT));
         lua.set_function("callbacks", [this](sol::this_state state) -> sol::table {
             sol::state_view lua(state);
             sol::table list = lua.create_table();

@@ -3,6 +3,8 @@
 #include "debugger/asm/sync/asmsyncservice.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/targets/gscardtarget.h"
+#include "emulator/slots/card.h"
+#include "emulator/slots/slotmanager.h"
 
 #include "debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -35,6 +37,15 @@ DebugManager::DebugManager(EmulatorContext* context)
     _asmSync = std::make_unique<AsmSyncService>(_context);
     _scriptCallbacks = std::make_unique<ScriptCallbackManager>(_context);
     _gsTarget = std::make_unique<GSCardTarget>(_context);
+    _msTarget = std::make_unique<GSCardTarget>(_context, DebugCpuId::MultiSoundGS, [context]() -> GeneralSoundCard* {
+        SlotManager* slots = context->pSlotManager;
+        if (slots == nullptr)
+            return nullptr;
+        for (const std::unique_ptr<ICard>& card : slots->Cards())
+            if (GeneralSoundCard* gs = card->DebugGeneralSound())
+                return gs;
+        return nullptr;
+    });
     
     // Keyboard injection manager for automation
     _keyboardManager = new DebugKeyboardManager(_context);
@@ -65,9 +76,25 @@ DebugManager::DebugManager(EmulatorContext* context)
 
 BreakpointManager* DebugManager::GetBreakpointsManager(DebugCpuId cpu)
 {
-    if (cpu == DebugCpuId::GS)
-        return _gsTarget ? _gsTarget->GetBreakpointManager() : nullptr;
+    if (IsCardCpu(cpu))
+    {
+        GSCardTarget* target = GetCardTarget(cpu);
+        return target ? target->GetBreakpointManager() : nullptr;
+    }
     return _breakpoints;
+}
+
+GSCardTarget* DebugManager::GetCardTarget(DebugCpuId cpu)
+{
+    switch (cpu)
+    {
+        case DebugCpuId::GS:
+            return _gsTarget.get();
+        case DebugCpuId::MultiSoundGS:
+            return _msTarget.get();
+        default:
+            return nullptr;
+    }
 }
 
 bool DebugManager::ParseCpuName(const std::string& name, DebugCpuId& out)
@@ -76,6 +103,8 @@ bool DebugManager::ParseCpuName(const std::string& name, DebugCpuId& out)
         out = DebugCpuId::Main;
     else if (name == "gs" || name == "neogs")
         out = DebugCpuId::GS;
+    else if (name == "ms" || name == "multisound")
+        out = DebugCpuId::MultiSoundGS;
     else
         return false;
     return true;
@@ -87,6 +116,12 @@ void DebugManager::OnGeneralSoundCardCreated()
         _gsTarget->OnCardCreated();
 }
 
+void DebugManager::OnSlotCardsChanged()
+{
+    if (_msTarget)
+        _msTarget->OnCardCreated();
+}
+
 DebugManager::~DebugManager()
 {
     // AnalyzerManager::~AnalyzerManager() deactivates every analyzer, which releases their
@@ -94,6 +129,7 @@ DebugManager::~DebugManager()
     // (as a unique_ptr member it would otherwise be destroyed after this body has run).
     _asmSync.reset();   // its worker publishes into _labels: stopped first
     _scriptCallbacks.reset();  // its taps go before the breakpoints
+    _msTarget.reset();
     _gsTarget.reset();         // its hooks leave the card (the sound manager outlives this one)
     _commandTyper.reset();
     _analyzerManager.reset();

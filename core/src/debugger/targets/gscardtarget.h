@@ -27,6 +27,8 @@ public:
     explicit GSCardTarget(EmulatorContext* context);
     /// `cardSource` finds the card instead of the context's sound manager (tests: a card of their own)
     GSCardTarget(EmulatorContext* context, std::function<GeneralSoundCard*()> cardSource);
+    /// Another card's CPU (`ms`: the MultiSound's General Sound), found by `cardSource`
+    GSCardTarget(EmulatorContext* context, DebugCpuId id, std::function<GeneralSoundCard*()> cardSource);
     ~GSCardTarget() override;
 
     GSCardTarget(const GSCardTarget&) = delete;
@@ -59,8 +61,8 @@ public:
     bool HooksAttached() const { return _attached != nullptr; }
 
     // IDebugTarget
-    DebugCpuId Id() const override { return DebugCpuId::GS; }
-    const char* Name() const override { return "gs"; }
+    DebugCpuId Id() const override { return _id; }
+    const char* Name() const override { return DebugCpuName(_id); }
     bool Available() const override { return Card() != nullptr; }
     MemoryPageDescriptor MapAddress(uint16_t address) const override;
     uint32_t PageCount(MemoryBankModeEnum kind) const override;
@@ -86,6 +88,7 @@ private:
     void Park(Stop stop, uint16_t boundaryPc);
 
     EmulatorContext* _context = nullptr;
+    DebugCpuId _id = DebugCpuId::GS;
     std::function<GeneralSoundCard*()> _cardSource;
     std::unique_ptr<BreakpointManager> _breakpoints;
     bool _wanted = false;                    // an active breakpoint asks for the hooks

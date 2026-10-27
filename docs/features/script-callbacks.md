@@ -149,7 +149,8 @@ The function gets one argument: the hit, a table (Lua) or a dict (Python).
 | `breakpoint` | the id of the tap or of the breakpoint |
 | `kind` | `exec`, `read`, `write`, `port_in`, `port_out`, `card_event` (a sound card event), `stop` (a breakpoint stop) or `event` (a game event) |
 | `event` | the game event's or the card event's name (game event and card event callbacks only) |
-| `cpu` | `main`, or `gs` for a tap of the sound card's CPU (then `pc` and `regs` are the card's) |
+| `cpu` | `main`, or `gs` / `ms` for a tap of a sound card's CPU (then `pc` and `regs` are the card's; `ms` the MultiSound's General Sound) |
+| `arg` | a card event's detail: the DAC channel of `dac_fetch`, the clock in MHz of `clock_change`, 1 (finished) or 0 (aborted) of `dma_done`; absent (Lua) / not in the dict (Python) otherwise |
 | `regs` | `af bc de hl af_ bc_ de_ hl_ ix iy sp pc i r a f` at the hit |
 
 The hit is a snapshot taken when it happened. Live state read inside the function (`memory`, `get_registers`) is the
@@ -159,7 +160,8 @@ state of the machine now, which is later.
 
 A tap with `cpu = "gs"` watches the CPU of the General Sound / NeoGS card ([gs-debugger](../emulator/design/debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)):
 its memory reads, writes and executions (the card's addresses), its port accesses, and its events (`event`: `int`,
-`nmi`, `reset`, `page`, `card_command`, `card_data`, `card_reply`). The card runs its debug loop while such a tap is
+`nmi`, `reset`, `page`, `card_command`, `card_data`, `card_reply`, `dac_fetch`, `clock_change`, `dma_start`,
+`dma_done`). The card runs its debug loop while such a tap is
 armed; a condition is refused.
 
 - `pc` and `regs` in the hit are the card's; `frame` and `t` stay the machine's.
@@ -175,6 +177,22 @@ armed; a condition is refused.
 on_tap({port_in = 4, mask = 0xFF, cpu = "gs"}, [[return function(hit) return hit.value & 0xFE end]], {mode = "sync"})
 -- Count the card's interrupts
 on_tap({event = "int"}, [[return function(hit) shared_set("ints", (shared_get("ints") or 0) + 1) end]], {mode = "sync"})
+```
+
+The named callbacks are the same taps, one per event: `gs_on_command`, `gs_on_data`, `gs_on_reply`, `gs_on_int`,
+`gs_on_nmi`, `gs_on_page`, `gs_on_dac_fetch`, `gs_on_clock_change`, `gs_on_dma_start`, `gs_on_dma_done` take
+`(fn [, options])`; `gs_on_port_in(port, fn [, options])` and `gs_on_port_out` watch a card port (its 8-bit decode).
+`cpu = "ms"` in the options (Python: `cpu="ms"`) puts them on the MultiSound card's General Sound.
+Python takes the same keywords as `on_tap` (`policy`, `budget_us`, `ring`, `label`, `mode`, `instructions`, `role`).
+
+```lua
+gs_on_dac_fetch([[return function(hit) shared_set("ch" .. hit.arg, hit.value) end]], {mode = "sync"})
+gs_on_port_in(4, [[return function(hit) shared_set("status", hit.value) end]], {mode = "sync"})
+```
+
+```python
+emu.gs_on_clock_change(lambda hit: print("card clock", hit["arg"], "MHz"))
+emu.gs_on_dma_done(lambda hit: print("DMA", hit["value"], "finished" if hit["arg"] else "aborted"))
 ```
 
 ## Lua

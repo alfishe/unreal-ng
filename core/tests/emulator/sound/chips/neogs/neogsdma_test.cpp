@@ -44,6 +44,11 @@ struct Host : NeoGSDma::Host
     void dmaStall(int64_t units) override { stalled += units; }
     int64_t dmaUnitsPerCycle() const override { return kUnitsPerCycle; }
     void dmaSdByteDone(uint8_t received) override { lastSd = received; }
+    // What a debugger hears (the card's dma_start / dma_done events)
+    std::vector<int> started;
+    std::vector<std::pair<int, bool>> ended;
+    void dmaStarted(NeoGSDma::Module m) override { started.push_back(m); }
+    void dmaEnded(NeoGSDma::Module m, bool finished) override { ended.emplace_back(m, finished); }
 };
 
 struct Fixture
@@ -121,6 +126,9 @@ TEST(NeoGSDma, SdBlockToRamWithTokenWaitStallAndInterrupt)
     EXPECT_EQ(f.dma.address(NeoGSDma::SD), 0x012200u) << "the address moved past the block";
     EXPECT_EQ(f.host.stalled, (512 * 2 + 4) * kUnitsPerCycle) << "2 clocks a byte plus the grant";
     EXPECT_EQ(f.sd.exchanges, 8 + 1 + 512 + 2);
+    ASSERT_EQ(f.host.started, std::vector<int>{NeoGSDma::SD});
+    ASSERT_EQ(f.host.ended.size(), 1u);
+    EXPECT_EQ(f.host.ended[0], std::make_pair(static_cast<int>(NeoGSDma::SD), true)) << "done, with its interrupt";
 }
 
 TEST(NeoGSDma, SdErrorTokenStopsWithoutWritingButStillInterrupts)
@@ -149,6 +157,8 @@ TEST(NeoGSDma, SdWaitsForeverAndClearingCstAborts)
     EXPECT_FALSE(f.dma.running(NeoGSDma::SD));
     EXPECT_EQ(f.irq.readRequest() & NeoGSInterrupts::REQ_SD_DMA, 0) << "an abort raises nothing";
     EXPECT_EQ(f.dma.nextEvent(), NeoGSDma::kNever);
+    ASSERT_EQ(f.host.ended.size(), 1u);
+    EXPECT_EQ(f.host.ended[0], std::make_pair(static_cast<int>(NeoGSDma::SD), false)) << "aborted";
 }
 
 TEST(NeoGSDma, SdByteTimingIs18Clocks)

@@ -34,7 +34,7 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
   Docs: [breakpoints-and-traces.md §8](../../emulator/design/debugger/breakpoints-and-traces.md#8-the-sound-card-cpu).
 - [x] Tests: the machine's NeoGS (`TheMachinesCardStopsWhereItLoops`), live MCP
   `tools/verification/mcp/test_gs_debugger.py`.
-- [ ] `GET /breakpoints/groups` per CPU (main only now).
+- [x] `GET /breakpoints/groups` per CPU (`?cpu=gs`, Lua / Python `bp_groups(cpu)`, MCP `bp_groups` `cpu`), 2026-10-27.
 
 ### C. Read-value script callbacks (design §8A.7)
 
@@ -44,9 +44,16 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
   HandleReplaceableRead` / `HandleReplaceablePortIn`); kept while time travel records or browses.
 - [x] Tests: `LuaGSCardHook_Test` (gs105a's `IN A,(4)` takes the hook's byte), live `test_gs_debugger.py` (Python).
   Docs: [script-callbacks.md](../../features/script-callbacks.md#the-sound-cards-cpu).
-- [ ] Callbacks named after the events (`on_command`, `on_reply`, `on_int`, `on_dac_fetch`, `on_dma_done`,
-  `on_clock_change`; X13): the card event taps cover int / command / reply, DAC fetch, DMA done and clock change have
-  no event yet. The headless runner (`--headless --script --exit-on-script`).
+- [x] Callbacks named after the events (X13, 2026-10-27): `gs_on_command`, `gs_on_data`, `gs_on_reply`, `gs_on_int`,
+  `gs_on_nmi`, `gs_on_page`, `gs_on_dac_fetch`, `gs_on_clock_change`, `gs_on_dma_start`, `gs_on_dma_done`,
+  `gs_on_port_in` / `gs_on_port_out` (Lua, Python). New card events `dac_fetch` (GS and NeoGS), `clock_change`
+  (GSCFG0), `dma_start` / `dma_done` (`NeoGSDma::Host` hooks); the hit's `arg` carries the detail. Tests:
+  `GSCardTarget_Test.TheDacFetchAndTheClockChangeAreCardEvents`, `NeoGSDma_Test`, `LuaGSCardHook_Test.Named*`.
+- [x] The headless runner (2026-10-27): `unreal-qt --headless --script f.lua --exit-on-script` (`HeadlessScriptRunner`,
+  `AutomationLua::runFile`): the chunk's result is the exit code, the emulator muted, the window closed unattended.
+  Tests: `AutomationLua_Test.RunFileAnswersTheScriptsExitCode`, `tools/verification/headless/test_headless_runner.py`.
+- [x] The MultiSound card's General Sound as the `ms` CPU (2026-10-27): a second `GSCardTarget` found through
+  `ICard::DebugGeneralSound`; `--cpu ms`, `cpu="ms"`, `?cpu=ms`. Test: `GSCardTarget_Test.TheMultiSoundsGeneralSoundIsTheMsCpu`.
 
 ### Later
 

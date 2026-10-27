@@ -27,7 +27,7 @@ bool CLIProcessor::TakeCpuOption(const ClientSession& session, std::vector<std::
             continue;
         if (i + 1 >= args.size() || !DebugManager::ParseCpuName(args[i + 1], cpu))
         {
-            session.SendResponse("Error: --cpu needs main or gs");
+            session.SendResponse("Error: --cpu needs main, gs or ms");
             return false;
         }
         args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
@@ -190,7 +190,7 @@ std::string CLIProcessor::AddBreakpointAndDescribe(BreakpointManager& manager, c
 // HandleBreakpoint
 void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
-    // --cpu main|gs anywhere: whose breakpoints
+    // --cpu main|gs|ms anywhere: whose breakpoints
     std::vector<std::string> args = rawArgs;
     DebugCpuId cpu = DebugCpuId::Main;
     if (!TakeCpuOption(session, args, cpu))
@@ -240,7 +240,7 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
 // HandleBPList - lines 1439-1468
 void CLIProcessor::HandleBPList(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
-    // --cpu main|gs anywhere: whose breakpoints
+    // --cpu main|gs|ms anywhere: whose breakpoints
     std::vector<std::string> args = rawArgs;
     DebugCpuId cpu = DebugCpuId::Main;
     if (!TakeCpuOption(session, args, cpu))
@@ -277,7 +277,7 @@ void CLIProcessor::HandleBPList(const ClientSession& session, const std::vector<
 // HandleWatchpoint
 void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
-    // --cpu main|gs anywhere: whose breakpoints
+    // --cpu main|gs|ms anywhere: whose breakpoints
     std::vector<std::string> args = rawArgs;
     DebugCpuId cpu = DebugCpuId::Main;
     if (!TakeCpuOption(session, args, cpu))
@@ -334,7 +334,7 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
 // HandlePortBreakpoint
 void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
-    // --cpu main|gs anywhere: whose breakpoints
+    // --cpu main|gs|ms anywhere: whose breakpoints
     std::vector<std::string> args = rawArgs;
     DebugCpuId cpu = DebugCpuId::Main;
     if (!TakeCpuOption(session, args, cpu))
@@ -576,7 +576,8 @@ void CLIProcessor::HandleEventBreakpoint(const ClientSession& session, const std
            << "Stops on a General Sound / NeoGS protocol event (gs-debugger design §4). The card's events stop the" << NEWLINE
            << "machine at the card's next instruction boundary; the host's stop the main CPU after its access." << NEWLINE
            << "Card (the gs CPU): int, nmi, reset, page (a page register written), card_command, card_data (the card" << NEWLINE
-           << "  read the mailbox), card_reply (it wrote the reply)" << NEWLINE
+           << "  read the mailbox), card_reply (it wrote the reply), dac_fetch (a #6000-#7FFF read latched a DAC)," << NEWLINE
+           << "  clock_change (NeoGS GSCFG0: the byte), dma_start, dma_done (NeoGS DMA: the module 0 ZX, 1 SD, 2 MP3)" << NEWLINE
            << "Host (the main CPU): host_command (OUT #BB), host_data (OUT #B3), host_reply (IN #B3)" << NEWLINE
            << "--value / --vmask filter the event's byte." << NEWLINE << "Examples:" << NEWLINE
            << "  bevent card_command --value 0x0F  - the card takes command #0F" << NEWLINE
@@ -608,7 +609,7 @@ void CLIProcessor::HandleEventBreakpoint(const ClientSession& session, const std
 // HandleBPHits: bphits reset [id]
 void CLIProcessor::HandleBPHits(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
-    // --cpu main|gs anywhere: whose breakpoints
+    // --cpu main|gs|ms anywhere: whose breakpoints
     std::vector<std::string> args = rawArgs;
     DebugCpuId cpu = DebugCpuId::Main;
     if (!TakeCpuOption(session, args, cpu))
@@ -649,7 +650,7 @@ void CLIProcessor::HandleBPHits(const ClientSession& session, const std::vector<
 // HandleBPClear - lines 1664-1836
 void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
-    // --cpu main|gs anywhere: whose breakpoints
+    // --cpu main|gs|ms anywhere: whose breakpoints
     std::vector<std::string> args = rawArgs;
     DebugCpuId cpu = DebugCpuId::Main;
     if (!TakeCpuOption(session, args, cpu))
@@ -831,7 +832,7 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
 // HandleBPGroup - lines 1838-1940
 void CLIProcessor::HandleBPGroup(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
-    // --cpu main|gs anywhere: whose breakpoints
+    // --cpu main|gs|ms anywhere: whose breakpoints
     std::vector<std::string> args = rawArgs;
     DebugCpuId cpu = DebugCpuId::Main;
     if (!TakeCpuOption(session, args, cpu))
@@ -959,7 +960,7 @@ void CLIProcessor::HandleBPGroup(const ClientSession& session, const std::vector
 // HandleBPActivate - lines 1942-2073
 void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
-    // --cpu main|gs anywhere: whose breakpoints
+    // --cpu main|gs|ms anywhere: whose breakpoints
     std::vector<std::string> args = rawArgs;
     DebugCpuId cpu = DebugCpuId::Main;
     if (!TakeCpuOption(session, args, cpu))
@@ -1100,7 +1101,7 @@ void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vec
 // HandleBPDeactivate - lines 2075-2206
 void CLIProcessor::HandleBPDeactivate(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
-    // --cpu main|gs anywhere: whose breakpoints
+    // --cpu main|gs|ms anywhere: whose breakpoints
     std::vector<std::string> args = rawArgs;
     DebugCpuId cpu = DebugCpuId::Main;
     if (!TakeCpuOption(session, args, cpu))
@@ -1265,7 +1266,7 @@ bool CLIProcessor::ApplyBreakpointSelection(const ClientSession& session, Breakp
 // HandleBPToggle: bptoggle [all | <id> | <kind> | group:<name>]
 void CLIProcessor::HandleBPToggle(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
-    // --cpu main|gs anywhere: whose breakpoints
+    // --cpu main|gs|ms anywhere: whose breakpoints
     std::vector<std::string> args = rawArgs;
     DebugCpuId cpu = DebugCpuId::Main;
     if (!TakeCpuOption(session, args, cpu))
@@ -1380,7 +1381,7 @@ void CLIProcessor::HandleKeyBreakpoint(const ClientSession& session, const std::
 // HandleBPCondition: bpcond <id> [--dialect c] [condition] (no condition: clear)
 void CLIProcessor::HandleBPCondition(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
-    // --cpu main|gs anywhere: whose breakpoints
+    // --cpu main|gs|ms anywhere: whose breakpoints
     std::vector<std::string> args = rawArgs;
     DebugCpuId cpu = DebugCpuId::Main;
     if (!TakeCpuOption(session, args, cpu))
@@ -1433,7 +1434,7 @@ void CLIProcessor::HandleBPCondition(const ClientSession& session, const std::ve
 // HandleBPNote: bpnote <id> [text] (no text: clear)
 void CLIProcessor::HandleBPNote(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
-    // --cpu main|gs anywhere: whose breakpoints
+    // --cpu main|gs|ms anywhere: whose breakpoints
     std::vector<std::string> args = rawArgs;
     DebugCpuId cpu = DebugCpuId::Main;
     if (!TakeCpuOption(session, args, cpu))

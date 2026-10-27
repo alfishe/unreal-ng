@@ -205,6 +205,7 @@ struct BreakpointTapHit
     // A read the CPU has not taken yet (HandleMemoryRead / HandlePortIn with a byte to replace: the sound card CPU's
     // debug path): the sink may change the byte the CPU sees. Null everywhere else
     uint8_t* replace = nullptr;
+    int arg = -1;                         // an event's detail (gsdebughooks.h: the DAC channel, the clock), else -1
 };
 
 /// Where the hits of a sink's taps go: on the emulation thread, inside the access, so it must only note the hit.
@@ -743,9 +744,9 @@ public:
     /// The copper completed the instruction at list index `pc`: the copper-instruction breakpoint that stops, or BRK_INVALID
     /// The CPU completed an instruction whose opcode word is `opcodeWord`: the magic breakpoint that stops, or BRK_INVALID
     /// A General Sound event (BRK_EVENT): `value` the byte it carries (0 when none)
-    uint16_t HandleEvent(GSCardEvent kind, uint8_t value)
+    uint16_t HandleEvent(GSCardEvent kind, uint8_t value, int arg = -1)
     {
-        return _hotState.hasEvent ? ResolveEvent(kind, value) : BRK_INVALID;
+        return _hotState.hasEvent ? ResolveEvent(kind, value, arg) : BRK_INVALID;
     }
     uint16_t HandleMagic(uint16_t opcodeWord)
     {
@@ -801,7 +802,7 @@ protected:
     uint16_t ResolveNextReg(int direction, uint8_t reg, uint8_t value, uint8_t door);
     uint16_t ResolveCopperPc(uint16_t pc);
     uint16_t ResolveMagic(uint16_t opcodeWord);
-    uint16_t ResolveEvent(GSCardEvent kind, uint8_t value);
+    uint16_t ResolveEvent(GSCardEvent kind, uint8_t value, int arg);
     uint16_t ResolveKeyboard(uint8_t selectedRows, const uint8_t rows[8]);
     uint16_t ResolveBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed);
     /// Walks one candidate set: counts every candidate that matches, returns the first that stops (or

@@ -328,6 +328,11 @@ void MultiSoundSlotCard::CollectTtdDevices(std::vector<CardTtdDevice>& out)
     out.push_back({ &gs, base + ".gs", &gs });
 }
 
+GeneralSoundCard* MultiSoundSlotCard::DebugGeneralSound()
+{
+    return &_card.Gs();
+}
+
 void MultiSoundSlotCard::TtdFingerprint(std::vector<std::pair<std::string, uint64_t>>& out) const
 {
     out.emplace_back("slots." + SlotId() + ".bank", Sam2695Ttd::BankFingerprint(_card.Synth()));

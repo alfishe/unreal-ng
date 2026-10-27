@@ -75,9 +75,30 @@ The model is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
 
 ### Running Scripts
 
-#### From Command Line
+#### From Command Line (the headless runner)
 ```bash
-unreal-emulator --lua-script macro.lua
+unreal-qt --headless --script check.lua --exit-on-script [snapshot.sna]
+echo $?    # the script's exit code
+```
+
+- `--script <file>` runs the file once the Lua interpreter and the emulator are up (a file to open on the command
+  line is opened first; without one the runner starts the Machine menu's machine, as Start does). The window's sole
+  emulator becomes the selected one, the one the script acts on. Its `print` goes to stdout. The script runs on the interpreter's thread; deferred
+  callbacks run when it calls `callbacks_run()`.
+- `--exit-on-script` quits when the script ends. The exit code is the chunk's result: an integer as is, `true` 0,
+  `false` 1, nothing 0; an error (also a missing file, or an interpreter that did not start within 30 s) is 1, with
+  the message on stderr. Return the code; `os.exit` ends the process without the emulator's shutdown.
+- `--headless` uses the offscreen platform (no windows; an explicit `QT_QPA_PLATFORM` wins) and mutes the emulator
+  (the mixer's master) before the script runs.
+
+```lua
+-- check.lua: all four DAC channels of the General Sound play within 100 frames
+gs_on_dac_fetch([[return function(hit) shared_set("ch" .. hit.arg, true) end]], {mode = "sync"})
+run_frames(100)
+for ch = 0, 3 do
+    if not shared_get("ch" .. ch) then print("channel " .. ch .. " silent"); return 1 end
+end
+return 0
 ```
 
 #### From CLI Interface
@@ -794,8 +815,14 @@ id = bp_magic("ed_ff")         -- ZX Next: stop after the magic opcode ED FF (or
 id = bp_beam(99, {hc=255})     -- ZX Next: the beam passes line 99 (the copper's counter) at pixel clock 255
 id = bp_copper(12, {to=14})    -- ZX Next: the copper completes list instruction 12..14
 id = bp(0x0038, {cpu="gs"})    -- the sound card CPU's (General Sound / NeoGS); bp_remove(id, "gs"), bp_list("gs") ...
+                               -- cpu="ms": the MultiSound card's General Sound, the same way
 id, why = bp_event("card_command", {value=0x23})  -- a GS protocol event: int, nmi, reset, page, card_command, card_data,
-                               -- card_reply (the card's), host_command, host_data, host_reply (the main CPU's); cpu= defaults to the side
+                               -- card_reply, dac_fetch, clock_change, dma_start, dma_done (the card's), host_command,
+                               -- host_data, host_reply (the main CPU's); cpu= defaults to the side
+id = gs_on_dac_fetch(fn, {mode="sync"})  -- a card event callback (hit.arg its detail); also gs_on_command, gs_on_data,
+                               -- gs_on_reply, gs_on_int, gs_on_nmi, gs_on_page, gs_on_clock_change, gs_on_dma_start,
+                               -- gs_on_dma_done, gs_on_port_in(port, fn), gs_on_port_out(port, fn); {cpu="ms"} the
+                               -- MultiSound's
 bp_reset_hits(id)              -- hit counter back to 0 (no id: all)
 bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)

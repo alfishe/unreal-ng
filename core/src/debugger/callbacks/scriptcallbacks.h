@@ -110,6 +110,7 @@ struct CallbackHit
     uint16_t af = 0, bc = 0, de = 0, hl = 0, af2 = 0, bc2 = 0, de2 = 0, hl2 = 0, ix = 0, iy = 0, sp = 0, pc = 0;
     uint8_t i = 0, r = 0;
     uint8_t cpu = 0;            ///< DebugCpuId: the registers are this CPU's
+    int32_t arg = -1;           ///< a card event's detail (the DAC channel, the clock in MHz, the DMA end), else -1
 
     static constexpr uint8_t kKindStop = 0x80;
     static constexpr uint8_t kKindEvent = 0x81;
@@ -299,7 +300,7 @@ private:
     mutable std::mutex _mutex;  ///< the slots and every non-hot field
     std::array<std::shared_ptr<Entry>, kMaxCallbacks> _slots{};  ///< by slot; a tap's cookie is its slot
     uint32_t _nextId = 1;
-    std::array<uint8_t, 2> _sinks{BRK_NO_TAP, BRK_NO_TAP};  ///< by DebugCpuId: this manager's sink in its breakpoints
+    std::array<uint8_t, kDebugCpuCount> _sinks{BRK_NO_TAP, BRK_NO_TAP, BRK_NO_TAP};  ///< by DebugCpuId: this manager's sink in its breakpoints
     std::atomic<int> _gameEventCallbacks{0};
     std::atomic<int> _breakpointCallbacks{0};
     std::atomic<int> _hookCallbacks{0};  ///< frame and sync callbacks

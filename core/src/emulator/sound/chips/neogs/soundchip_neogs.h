@@ -398,6 +398,16 @@ private:
     void dmaStall(int64_t units) override { _runner.stall(units); }
     int64_t dmaUnitsPerCycle() const override { return _ticksPerCycle; }
     void dmaSdByteDone(uint8_t received) override { _spi.state(NeoGSSpi::SD).rx = received; }
+    void dmaStarted(NeoGSDma::Module m) override
+    {
+        if (_debugHooks) [[unlikely]]
+            _debugHooks->onEvent(GSCardEvent::DmaStart, 0, static_cast<uint8_t>(m));
+    }
+    void dmaEnded(NeoGSDma::Module m, bool finished) override
+    {
+        if (_debugHooks) [[unlikely]]
+            _debugHooks->onEvent(GSCardEvent::DmaDone, finished ? 1 : 0, static_cast<uint8_t>(m));
+    }
 
     // NeoGSZxDma::Host (neogs-zxdma-design.md §5.5)
     void zxCatchUp() override { flush(); }

@@ -1163,8 +1163,13 @@ id = emu.bp_magic("ed_ff")         # ZX Next: stop after the magic opcode ED FF 
 id = emu.bp_beam(99, hc=255)        # ZX Next: the beam passes line 99 (the copper's counter) at pixel clock 255
 id = emu.bp_copper(12, to=14)       # ZX Next: the copper completes list instruction 12..14
 id = emu.bp(0x0038, cpu="gs")       # the sound card CPU's (General Sound / NeoGS); bp_remove(id, cpu="gs"), bp_list(cpu="gs") ...
-id = emu.bp_event("card_command", value=0x23)  # a GS protocol event (int, nmi, reset, page, card_*, host_*);
+                                    # cpu="ms": the MultiSound card's General Sound, the same way
+id = emu.bp_event("card_command", value=0x23)  # a GS event (int, nmi, reset, page, card_*, dac_fetch, clock_change,
+                                    # dma_start, dma_done, host_*);
                                     # cpu= defaults to the kind's side; ValueError with the reason when refused
+id = emu.gs_on_dma_done(fn)          # a card event callback (hit["arg"] its detail); also gs_on_command, gs_on_data,
+                                    # gs_on_reply, gs_on_int, gs_on_nmi, gs_on_page, gs_on_dac_fetch, gs_on_clock_change,
+                                    # gs_on_dma_start, gs_on_port_in(port, fn), gs_on_port_out(port, fn); cpu="ms"
 emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)

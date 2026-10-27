@@ -61,6 +61,9 @@ def test_lists_are_per_cpu(s):
     main_list = s.call('control_execution', {'action': 'bp_list'}).text
     expect('(gs CPU)' in gs and 'event card_command' in gs and '0x0038' not in gs, 'the card list', gs)
     expect('gs-check' not in main_list and '0x0038' in main_list, 'the main list', main_list)
+    groups = s.call('control_execution', {'action': 'bp_groups', 'cpu': 'gs'})
+    expect('(gs CPU): 1' in groups.text and groups.structured['groups'][0]['total'] == 1, "the card's groups",
+           groups.text)
     clear(s)
 
 

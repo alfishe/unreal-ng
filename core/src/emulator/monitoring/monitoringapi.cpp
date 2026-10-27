@@ -279,12 +279,14 @@ StateNode BreakpointsSummary(Emulator& emulator)
     });
 }
 
-/// Every group of the user breakpoints with its ids (the verb `breakpoint_groups`, GET .../breakpoints/groups)
-StateNode BreakpointGroups(Emulator& emulator)
+/// Every group of the user breakpoints with its ids (the verb `breakpoint_groups`, GET .../breakpoints/groups) of
+/// one CPU's manager (main, gs)
+StateNode BreakpointGroups(Emulator& emulator, DebugCpuId cpu)
 {
     EmulatorContext* context = emulator.GetContext();
-    BreakpointManager* manager = context->pDebugManager ? context->pDebugManager->GetBreakpointsManager() : nullptr;
+    BreakpointManager* manager = context->pDebugManager ? context->pDebugManager->GetBreakpointsManager(cpu) : nullptr;
     StateNode node = StateNode::Object();
+    node["cpu"] = DebugCpuName(cpu);
     StateNode& groups = node["groups"];
     groups = StateNode::Array();
     if (manager == nullptr)
@@ -850,8 +852,11 @@ Reply Call(std::string_view verbView, const StateNode& args)
     std::shared_ptr<Emulator> emulator = id.empty() ? nullptr : manager->GetEmulator(id);
     if (!emulator)
         return Fail(404, "Not Found", error.empty() ? "no instance" : error);
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (verb == kBreakpointGroups && !DebugManager::ParseCpuName(Text(args, "cpu"), cpu))
+        return Fail(400, "Bad Request", "cpu must be main, gs or ms");
     reply.body["instance"] = id;
-    StateNode read = verb == kBreakpointGroups ? BreakpointGroups(*emulator) : ReadInstance(verb, *emulator);
+    StateNode read = verb == kBreakpointGroups ? BreakpointGroups(*emulator, cpu) : ReadInstance(verb, *emulator);
     for (auto& [name, value] : read.members)
         reply.body[name] = std::move(value);
     return reply;

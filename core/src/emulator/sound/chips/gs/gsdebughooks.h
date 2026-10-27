@@ -30,13 +30,19 @@ enum class GSCardEvent : uint8_t
     HostCommandWrite,  ///< the host wrote a command (OUT #BB)
     HostDataWrite,     ///< the host wrote a data byte (OUT #B3)
     HostReplyRead,     ///< the host read the card's reply (IN #B3)
+    // Card hardware (appended: the values above are stored in breakpoints). `port` carries the event's detail, the
+    // tap hit's `arg`
+    DacFetch,          ///< a read in #6000-#7FFF latched a DAC: `port` the channel (0-3), `value` the byte
+    ClockChange,       ///< the card CPU's clock changed (NeoGS GSCFG0): `port` the new clock in MHz, `value` GSCFG0
+    DmaStart,          ///< a NeoGS DMA module started: `value` the module (0 ZX-DMA, 1 SD, 2 MP3)
+    DmaDone,           ///< a NeoGS DMA module ended: `value` the module, `port` 1 when it finished (interrupt), 0 aborted
     Count
 };
 
 /// The host side's events fire on the main CPU, the others on the card's
 constexpr bool GSCardEventIsHostSide(GSCardEvent kind)
 {
-    return kind >= GSCardEvent::HostCommandWrite && kind < GSCardEvent::Count;
+    return kind >= GSCardEvent::HostCommandWrite && kind <= GSCardEvent::HostReplyRead;
 }
 
 /// The surfaces' names ("int", "nmi", "reset", "page", "card_command", ...)
@@ -54,6 +60,10 @@ inline const char* GSCardEventName(GSCardEvent kind)
         case GSCardEvent::HostCommandWrite: return "host_command";
         case GSCardEvent::HostDataWrite: return "host_data";
         case GSCardEvent::HostReplyRead: return "host_reply";
+        case GSCardEvent::DacFetch: return "dac_fetch";
+        case GSCardEvent::ClockChange: return "clock_change";
+        case GSCardEvent::DmaStart: return "dma_start";
+        case GSCardEvent::DmaDone: return "dma_done";
         case GSCardEvent::Count: break;
     }
     return "unknown";

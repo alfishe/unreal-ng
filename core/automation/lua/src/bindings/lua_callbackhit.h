@@ -24,6 +24,8 @@ inline sol::table LuaCallbackHitTable(sol::state_view lua, const CallbackHit& hi
     t["cpu"] = DebugCpuName(static_cast<DebugCpuId>(hit.cpu));
     if (!event.empty())
         t["event"] = event;
+    if (hit.arg >= 0)
+        t["arg"] = hit.arg;
     sol::table regs = lua.create_table();
     regs["af"] = hit.af; regs["bc"] = hit.bc; regs["de"] = hit.de; regs["hl"] = hit.hl;
     regs["af_"] = hit.af2; regs["bc_"] = hit.bc2; regs["de_"] = hit.de2; regs["hl_"] = hit.hl2;

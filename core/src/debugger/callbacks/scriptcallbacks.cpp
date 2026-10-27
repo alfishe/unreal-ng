@@ -234,7 +234,7 @@ ScriptCallbackManager::ScriptCallbackManager(EmulatorContext* context)
 ScriptCallbackManager::~ScriptCallbackManager()
 {
     // Unregistering the sink removes its taps; the breakpoint managers outlive this (DebugManager's order)
-    for (DebugCpuId cpu : {DebugCpuId::Main, DebugCpuId::GS})
+    for (DebugCpuId cpu : {DebugCpuId::Main, DebugCpuId::GS, DebugCpuId::MultiSoundGS})
         if (BreakpointManager* breakpoints = Breakpoints(cpu);
             breakpoints != nullptr && _sinks[static_cast<size_t>(cpu)] != BRK_NO_TAP)
             breakpoints->UnregisterTapSink(_sinks[static_cast<size_t>(cpu)]);
@@ -881,10 +881,10 @@ void ScriptCallbackManager::Fill(CallbackHit& hit, DebugCpuId cpu) const
     if (z80 != nullptr)
         hit.t = z80->t;
     hit.cpu = static_cast<uint8_t>(cpu);
-    if (cpu == DebugCpuId::GS)
+    if (IsCardCpu(cpu))
     {
         // The card's registers at its access (the frame and the T-state stay the machine's)
-        GSCardTarget* target = _context->pDebugManager != nullptr ? _context->pDebugManager->GetGSTarget() : nullptr;
+        GSCardTarget* target = _context->pDebugManager != nullptr ? _context->pDebugManager->GetCardTarget(cpu) : nullptr;
         GeneralSoundCard* card = target != nullptr ? target->Card() : nullptr;
         Z80CpuRegisters regs{};
         if (card == nullptr || !card->cardRegisters(regs))
@@ -967,6 +967,7 @@ void ScriptCallbackManager::OnTap(const BreakpointTapHit& hit)
     record.breakpointId = hit.breakpointID;
     record.kind = static_cast<uint8_t>(hit.kind);
     record.value = hit.value;
+    record.arg = hit.arg;
     // The card reports the byte of every access; the main CPU's memory holds it
     if (cpu == DebugCpuId::Main && (hit.kind == BRK_TAP_WRITE || hit.kind == BRK_TAP_READ))
         if (_context != nullptr && _context->pMemory != nullptr)

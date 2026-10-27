@@ -1022,6 +1022,9 @@ MainWindow::~MainWindow()
     _streamDeckSupervision = nullptr;
     delete _controllersDialog;
     _controllersDialog = nullptr;
+    // The status bar's refresh timer reads the controllers' connector LED: off them before they go
+    if (_statusBarManager)
+        _statusBarManager->setControllers(nullptr);
     delete _hostControllers;
     _hostControllers = nullptr;
 
@@ -1399,6 +1402,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
     _streamDeckSupervision = nullptr;
     delete _controllersDialog;
     _controllersDialog = nullptr;
+    // The status bar's refresh timer reads the controllers' connector LED: off them before they go
+    if (_statusBarManager)
+        _statusBarManager->setControllers(nullptr);
     delete _hostControllers;
     _hostControllers = nullptr;
     if (networkWindow)
@@ -2550,7 +2556,7 @@ void MainWindow::updateUnsavedMediaMark()
 bool MainWindow::confirmUnsavedMedia()
 {
     EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
-    if (!context || !context->pMediaManager)
+    if (!context || !context->pMediaManager || _unattendedClose)
         return true;
     const ClosePrompt prompt = ClosePromptFor(context->pMediaManager->Unsaved());
     if (!prompt.ask)

@@ -941,6 +941,8 @@ void SoundChip_GeneralSound::dacFetch(uint16_t addr, uint8_t value)
     traceEvent(GSTraceSide::DacFetch, addr, value, false, static_cast<uint8_t>(channel));
     if (_busObserver) [[unlikely]]
         _busObserver->GsDacFetch(hostTimeNow(), addr, value);
+    if (_debugHooks) [[unlikely]]
+        _debugHooks->onEvent(GSCardEvent::DacFetch, static_cast<uint16_t>(channel), value);
     if (_profile.dacSink)
     {
         sinkSample(channel, value);

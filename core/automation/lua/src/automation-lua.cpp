@@ -153,6 +153,56 @@ bool AutomationLua::executeFile(const std::string& path, std::string& errorMessa
     return executeCode(path, errorMessage, capturedOutput);
 }
 
+int AutomationLua::runFile(const std::string& path, std::string& errorMessage)
+{
+    if (!ready())
+    {
+        errorMessage = "Lua interpreter not initialized";
+        return 1;
+    }
+
+    try
+    {
+        return dispatchSync([&path, &errorMessage](sol::state& lua) -> int {
+            // Protected, as executeCode: the script's error comes back as a result
+            const sol::protected_function_result result = lua.safe_script_file(path, sol::script_pass_on_error);
+            if (!result.valid())
+            {
+                const sol::error error = result;
+                errorMessage = error.what();
+                return 1;
+            }
+            if (result.return_count() == 0)
+                return 0;
+            const sol::object value = result.get<sol::object>(0);
+            switch (value.get_type())
+            {
+                case sol::type::number:
+                    return static_cast<int>(value.as<double>());
+                case sol::type::boolean:
+                    return value.as<bool>() ? 0 : 1;
+                case sol::type::lua_nil:
+                    return 0;
+                default:
+                    errorMessage = "the script returned a " + std::string(sol::type_name(lua.lua_state(), value.get_type())) +
+                                   ", not an exit code";
+                    return 1;
+            }
+        });
+    }
+    catch (const std::exception& e)
+    {
+        errorMessage = std::string("C++ error: ") + e.what();
+        return 1;
+    }
+}
+
+bool AutomationLua::ready()
+{
+    std::lock_guard<std::mutex> lock(_initMutex);
+    return _thread && _initialized && _lua;
+}
+
 std::string AutomationLua::getStatusString() const
 {
     std::ostringstream oss;

@@ -5,12 +5,15 @@
 #include <gtest/gtest.h>
 
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
+#include "_helpers/testpathhelper.h"
 #include "_helpers/testwaithelper.h"
 #include "automation-lua.h"  // its LuaEmulator declares the Automation singleton
 #include "debugger/callbacks/scriptcallbacks.h"
@@ -81,6 +84,41 @@ TEST_F(AutomationLua_Test, AScriptErrorAnswersAnErrorAndTheInterpreterKeepsRunni
     EXPECT_EQ(output, "alive\t2\n");
     ASSERT_TRUE(_lua.executeCode("print('all', nil, 3, 4, 5, 6, 7)", message, output)) << message;
     EXPECT_EQ(output, "all\tnil\t3\t4\t5\t6\t7\n") << "every argument, nil included, as Lua's print";
+}
+
+/// The headless runner's file (unreal-qt --script): the chunk's result is the exit code; an error is 1 with its message
+TEST_F(AutomationLua_Test, RunFileAnswersTheScriptsExitCode)
+{
+    const std::filesystem::path dir = TestPathHelper::GetUniqueTestScratchPath("runfile");
+    std::filesystem::create_directories(dir);
+    const struct
+    {
+        const char* code;
+        int exitCode;
+        const char* message;
+    } cases[] = {
+        {"return 3", 3, ""},
+        {"return true", 0, ""},
+        {"return false", 1, ""},
+        {"local x = 1", 0, ""},
+        {"return 'text'", 1, "not an exit code"},
+        {"error('boom')", 1, "boom"},
+    };
+    int index = 0;
+    for (const auto& c : cases)
+    {
+        const std::filesystem::path file = dir / ("script" + std::to_string(index++) + ".lua");
+        std::ofstream(file) << c.code;
+        std::string message;
+        EXPECT_EQ(_lua.runFile(file.string(), message), c.exitCode) << c.code;
+        EXPECT_NE(message.find(c.message), std::string::npos) << c.code << ": " << message;
+        if (!*c.message)
+            EXPECT_TRUE(message.empty()) << c.code << ": " << message;
+    }
+    std::string message;
+    EXPECT_EQ(_lua.runFile((dir / "absent.lua").string(), message), 1);
+    EXPECT_FALSE(message.empty());
+    EXPECT_TRUE(_lua.ready());
 }
 
 namespace
@@ -461,5 +499,53 @@ TEST(LuaGSCardHook_Test, ACardReadHookReplacesTheByteTheCardSees)
     EXPECT_EQ(list[1].target, "tap in #0004 (gs CPU)");
     lua.stop();
     EXPECT_TRUE(callbacks->List().empty());
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// The named card callbacks (gs-debugger requirements X13): gs_on_page and gs_on_dac_fetch are taps on the card's
+/// events, gs_on_port_in a tap on its 8-bit port decode; a DAC fetch's hit carries its channel in hit.arg
+TEST(LuaGSCardHook_Test, NamedCardCallbacksSeeTheCardsEvents)
+{
+    SoundCardScope sound(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::Z80));
+    auto* card = dynamic_cast<SoundChip_GeneralSound*>(context->pSoundManager->getGeneralSound());
+    ASSERT_NE(card, nullptr);
+    ScriptCallbackManager* callbacks = context->pDebugManager->GetScriptCallbacks();
+
+    BoundLua lua;
+    lua.start();
+    lua.Bind(emulator);
+    std::string message;
+    std::string output;
+    ASSERT_TRUE(lua.executeCode(R"(
+        page = gs_on_page([[return function(hit) shared_set("page", hit.event) end]], {mode = "sync"})
+        dac = gs_on_dac_fetch([[return function(hit)
+            if hit.arg ~= nil then shared_set("channel", hit.arg) end
+            shared_set("dac", hit.event)
+        end]], {mode = "sync"})
+        status = gs_on_port_in(4, [[return function(hit) shared_set("status", hit.cpu) end]], {mode = "sync"})
+        main, why = gs_on_int(function() end, {cpu = "main"})
+        print(page, dac, status, main, why)
+    )", message, output)) << message;
+    EXPECT_EQ(output, "1\t2\t3\t-1\tcpu must be a card's: 'gs' or 'ms'\n");
+
+    for (int i = 0; i < 200 && (callbacks->SharedGet("dac").kind == CallbackValue::Kind::Nil ||
+                                callbacks->SharedGet("status").kind == CallbackValue::Kind::Nil);
+         i++)
+        emulator->RunNFrames(1, false);
+
+    for (const CallbackInfo& info : callbacks->List())
+        EXPECT_EQ(info.stats.errors, 0u) << info.target << ": " << info.stats.lastError;
+    EXPECT_EQ(callbacks->SharedGet("page").s, "page");
+    EXPECT_EQ(callbacks->SharedGet("dac").s, "dac_fetch") << "fetches: " << card->getActivityCounters().dacFetches;
+    ASSERT_EQ(callbacks->SharedGet("channel").kind, CallbackValue::Kind::Integer) << "a DAC fetch names its channel";
+    EXPECT_LT(callbacks->SharedGet("channel").i, 4);
+    EXPECT_EQ(callbacks->SharedGet("status").s, "gs");
+    for (const CallbackInfo& info : callbacks->List())
+        EXPECT_EQ(info.cpu, DebugCpuId::GS);
+    lua.stop();
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

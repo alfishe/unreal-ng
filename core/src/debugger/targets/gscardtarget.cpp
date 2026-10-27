@@ -11,7 +11,12 @@
 GSCardTarget::GSCardTarget(EmulatorContext* context) : GSCardTarget(context, nullptr) {}
 
 GSCardTarget::GSCardTarget(EmulatorContext* context, std::function<GeneralSoundCard*()> cardSource)
-    : _context(context), _cardSource(std::move(cardSource))
+    : GSCardTarget(context, DebugCpuId::GS, std::move(cardSource))
+{
+}
+
+GSCardTarget::GSCardTarget(EmulatorContext* context, DebugCpuId id, std::function<GeneralSoundCard*()> cardSource)
+    : _context(context), _id(id), _cardSource(std::move(cardSource))
 {
     _breakpoints = std::make_unique<BreakpointManager>(context, this);
 }
@@ -143,7 +148,7 @@ void GSCardTarget::Park(Stop stop, uint16_t boundaryPc)
     _lastStop = stop;
     _stopCount++;
     if (_context && _context->pEmulator)
-        _context->pEmulator->OnTargetBreakpointHit(DebugCpuId::GS, *_breakpoints, stop.breakpointId, stop.address,
+        _context->pEmulator->OnTargetBreakpointHit(_id, *_breakpoints, stop.breakpointId, stop.address,
                                                    stop.kind, stop.pc);
 }
 
@@ -202,8 +207,8 @@ void GSCardTarget::onPortOut(uint16_t pc, uint16_t port, uint8_t value)
 
 void GSCardTarget::onEvent(GSCardEvent kind, uint16_t port, uint8_t value)
 {
-    (void)port;
-    const uint16_t id = _breakpoints->HandleEvent(kind, value);
+    // The card hardware's events carry their detail in `port` (gsdebughooks.h)
+    const uint16_t id = _breakpoints->HandleEvent(kind, value, kind >= GSCardEvent::DacFetch ? port : -1);
     if (id == BRK_INVALID)
         return;
     // The instruction the event came with (an accepted INT or NMI: the CPU already at the handler)

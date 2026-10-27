@@ -170,7 +170,7 @@ inline BreakpointManager* PythonBreakpoints(Emulator& self, const std::string& c
 {
     DebugCpuId cpu = DebugCpuId::Main;
     if (!DebugManager::ParseCpuName(cpuName, cpu))
-        throw py::value_error("cpu must be 'main' or 'gs'");
+        throw py::value_error("cpu must be 'main', 'gs' or 'ms'");
     EmulatorContext* ctx = self.GetContext();
     return ctx && ctx->pDebugManager ? ctx->pDebugManager->GetBreakpointsManager(cpu) : nullptr;
 }
@@ -1224,6 +1224,8 @@ namespace PythonBindings
         d["cpu"] = DebugCpuName(static_cast<DebugCpuId>(hit.cpu));
         if (!info.event.empty())
             d["event"] = info.event;
+        if (hit.arg >= 0)
+            d["arg"] = hit.arg;
         py::dict regs;
         regs["af"] = hit.af; regs["bc"] = hit.bc; regs["de"] = hit.de; regs["hl"] = hit.hl;
         regs["af_"] = hit.af2; regs["bc_"] = hit.bc2; regs["de_"] = hit.de2; regs["hl_"] = hit.hl2;
@@ -1711,13 +1713,14 @@ namespace PythonBindings
                 CallbackSpec spec;
                 spec.trigger = CallbackTrigger::Tap;
                 if (!DebugManager::ParseCpuName(cpu, spec.cpu))
-                    throw py::value_error("cpu must be 'main' or 'gs'");
+                    throw py::value_error("cpu must be 'main', 'gs' or 'ms'");
                 GSCardEvent cardEvent = GSCardEvent::Count;
                 if (kind == "event")
                 {
                     if (!ParseGSCardEvent(event.c_str(), cardEvent) || GSCardEventIsHostSide(cardEvent))
                         throw py::value_error("event must be a card event (int, nmi, reset, page, card_command, "
-                                              "card_data, card_reply), not '" + event + "'");
+                                              "card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done), "
+                                              "not '" + event + "'");
                     if (cpu.empty())
                         spec.cpu = DebugCpuId::GS;
                     spec.tap.type = BRK_EVENT;
@@ -1746,7 +1749,8 @@ namespace PythonBindings
                "Lua source returning the function, run by the hook state (mode frame or sync, instructions per call, role "
                "view or logic: logic writes are recorded by time travel). cpu 'gs': the sound card CPU's accesses "
                "(its registers in hit.regs); kind 'event' with event= a card event (int, nmi, reset, page, "
-               "card_command, card_data, card_reply). A sync chunk on a card read or port_in may return a byte: the "
+               "card_command, card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done; hit['arg'] its "
+               "detail). A sync chunk on a card read or port_in may return a byte: the "
                "card sees it. The id; ValueError when refused. docs/features/script-callbacks.md",
                py::arg("fn"), py::arg("kind"), py::arg("address") = 0, py::arg("to") = -1, py::arg("page") = "",
                py::arg("mask") = -1, py::arg("condition") = "", py::arg("dialect") = "", py::arg("policy") = "suspend",
@@ -3369,12 +3373,13 @@ namespace PythonBindings
                 BreakpointManager* bpm = PythonBreakpoints(self, cpu);
                 return bpm ? bpm->GetBreakpointsCount() : 0;
             }, "Get breakpoint count (cpu 'gs': the sound card CPU's)", py::arg("cpu") = "")
-            .def("bp_groups", [](Emulator& self) {
+            .def("bp_groups", [](Emulator& self, const std::string& cpu) {
                 StateNode args = StateNode::Object();
                 args["instance"] = self.GetId();
+                args["cpu"] = cpu;
                 return StateNodeToPy(monitoring::Call("breakpoint_groups", args).body);
-            }, "The breakpoint groups: {ok, instance, groups: [{name, total, active, ids}]} as WebAPI "
-               "GET /api/v1/emulator/{id}/breakpoints/groups")
+            }, "The breakpoint groups: {ok, instance, cpu, groups: [{name, total, active, ids}]} as WebAPI "
+               "GET /api/v1/emulator/{id}/breakpoints/groups (cpu 'gs': the sound card CPU's)", py::arg("cpu") = "")
             .def("bp_list", [](Emulator& self, const std::string& cpu) -> std::string {
                 BreakpointManager* bpm = PythonBreakpoints(self, cpu);
                 return bpm ? bpm->GetBreakpointListAsString() : "";
@@ -6211,6 +6216,60 @@ namespace PythonBindings
         // step out, skip until, memory find, screen digest, beam, frame cost,
         // coverage, AY log, audio capture, assembler, label resolve, listings.
         // ================================================================
+
+        // The card's events by name (gs-debugger requirements X13): on_tap(kind="event", event=...) on the gs CPU
+        static const std::pair<const char*, GSCardEvent> kCardEventCallbacks[] = {
+            {"gs_on_command", GSCardEvent::CardCommandRead}, {"gs_on_data", GSCardEvent::CardDataRead},
+            {"gs_on_reply", GSCardEvent::CardReplyWrite},    {"gs_on_int", GSCardEvent::Int},
+            {"gs_on_nmi", GSCardEvent::Nmi},                 {"gs_on_page", GSCardEvent::PageSwitch},
+            {"gs_on_dac_fetch", GSCardEvent::DacFetch},      {"gs_on_clock_change", GSCardEvent::ClockChange},
+            {"gs_on_dma_start", GSCardEvent::DmaStart},      {"gs_on_dma_done", GSCardEvent::DmaDone}};
+        for (const auto& [name, kind] : kCardEventCallbacks)
+        {
+            const GSCardEvent event = kind;
+            emulatorClass.def(name, [event](Emulator& self, const py::object& fn, const std::string& policy,
+                                            uint32_t budget_us, uint32_t ring, const std::string& label,
+                                            const std::string& mode, uint64_t instructions, const std::string& role,
+                                            const std::string& cpu) -> int {
+                CallbackSpec spec;
+                spec.trigger = CallbackTrigger::Tap;
+                if (!DebugManager::ParseCpuName(cpu, spec.cpu) || !IsCardCpu(spec.cpu))
+                    throw py::value_error("cpu must be a card's: 'gs' or 'ms'");
+                spec.tap.type = BRK_EVENT;
+                spec.tap.access = 0;
+                spec.tap.address = static_cast<uint16_t>(event);
+                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label, mode, instructions, role);
+            }, "Call fn(hit) on this sound card CPU event (on_tap(kind='event', event=...) on cpu 'gs', or 'ms' the "
+               "MultiSound's General Sound; hit['value'] the event's byte, hit['arg'] its detail). The id; ValueError "
+               "when refused",
+               py::arg("fn"), py::arg("policy") = "suspend", py::arg("budget_us") = 1000, py::arg("ring") = 256,
+               py::arg("label") = "", py::arg("mode") = "", py::arg("instructions") = 0, py::arg("role") = "view",
+               py::arg("cpu") = "gs");
+        }
+        for (const auto& [name, access] : {std::pair<const char*, uint8_t>{"gs_on_port_in", BRK_IO_IN},
+                                           std::pair<const char*, uint8_t>{"gs_on_port_out", BRK_IO_OUT}})
+        {
+            const uint8_t direction = access;
+            emulatorClass.def(name, [direction](Emulator& self, uint8_t port, const py::object& fn,
+                                                const std::string& policy, uint32_t budget_us, uint32_t ring,
+                                                const std::string& label, const std::string& mode,
+                                                uint64_t instructions, const std::string& role,
+                                                const std::string& cpu) -> int {
+                CallbackSpec spec;
+                spec.trigger = CallbackTrigger::Tap;
+                if (!DebugManager::ParseCpuName(cpu, spec.cpu) || !IsCardCpu(spec.cpu))
+                    throw py::value_error("cpu must be a card's: 'gs' or 'ms'");
+                spec.tap.type = BRK_IO;
+                spec.tap.access = direction;
+                spec.tap.address = port;
+                spec.tap.portMask = 0x00FF;
+                return PythonRegisterCallback(self, spec, fn, policy, budget_us, ring, label, mode, instructions, role);
+            }, "Call fn(hit) on the sound card CPU's IN / OUT of this port (its 8-bit decode). The id; ValueError when "
+               "refused",
+               py::arg("port"), py::arg("fn"), py::arg("policy") = "suspend", py::arg("budget_us") = 1000,
+               py::arg("ring") = 256, py::arg("label") = "", py::arg("mode") = "", py::arg("instructions") = 0,
+               py::arg("role") = "view", py::arg("cpu") = "gs");
+        }
 
         emulatorClass.def("step_out", [](Emulator& self) -> py::dict {
             py::dict d;

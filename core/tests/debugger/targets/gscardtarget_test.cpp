@@ -18,6 +18,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/targets/gscardtarget.h"
+#include "emulator/slots/cards/multisound/multisoundstagedmachine.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
@@ -377,6 +378,23 @@ TEST(GSCardTarget_Test, TheNeoGSStopsOnItsLoaderAndItsPageWrites)
     EXPECT_EQ(card.target->LastStop().kind, BreakpointHitKind::Event);
 }
 
+// The card hardware's events: the classic card's DAC fetches (its POST plays through the DACs), the NeoGS loader's
+// clock switch (GSCFG0)
+TEST(GSCardTarget_Test, TheDacFetchAndTheClockChangeAreCardEvents)
+{
+    Card card;
+    const uint16_t dac = card.add(Event(GSCardEvent::DacFetch));
+    ASSERT_TRUE(card.runUntilStop(200)) << "dac fetches " << card.chip->getActivityCounters().dacFetches;
+    EXPECT_EQ(card.target->LastStop().breakpointId, dac);
+    EXPECT_EQ(card.target->LastStop().address, static_cast<uint16_t>(GSCardEvent::DacFetch));
+
+    NeoCard neo;
+    const uint16_t clock = neo.add(Event(GSCardEvent::ClockChange));
+    ASSERT_TRUE(neo.runUntilStop(50));
+    EXPECT_EQ(neo.target->LastStop().breakpointId, clock);
+    EXPECT_EQ(neo.target->LastStop().value, neo.chip->gscfg0()) << "the byte is GSCFG0";
+}
+
 // The card of a whole machine (the PENTAGON's NeoGS): a card breakpoint puts the hooks on the card the machine runs,
 // and its stop ends the main CPU's direct run. Without an SD card the loader polls it with interrupts off: the
 // instruction the card is at comes round again
@@ -405,4 +423,40 @@ TEST(GSCardTarget_Test, TheMachinesCardStopsWhereItLoops)
     EXPECT_EQ(target->LastStop().breakpointId, id);
     EXPECT_EQ(target->LastStop().boundaryPc, regs.pc);
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// The MultiSound's General Sound is the `ms` CPU (platform-debugging P1): its own target and breakpoints, found on
+/// the slot card; the General Sound slot's target stays empty. An execute breakpoint where its firmware loops stops
+/// there; the stop names the CPU
+TEST(GSCardTarget_Test, TheMultiSoundsGeneralSoundIsTheMsCpu)
+{
+    multisoundtest::StagedMachine m("pentagon128k", "zxbus.1 = multisound\nzxbus.1.dip = ym,saa,gs");
+    ASSERT_TRUE(m.Ok());
+    MultiSoundSlotCard* card = m.Card();
+    ASSERT_NE(card, nullptr);
+    m.Machine().GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    DebugManager* debug = m.Context()->pDebugManager;
+    GSCardTarget* target = debug->GetCardTarget(DebugCpuId::MultiSoundGS);
+    ASSERT_NE(target, nullptr);
+    EXPECT_EQ(target->Card(), card->DebugGeneralSound());
+    EXPECT_STREQ(target->Name(), "ms");
+    EXPECT_EQ(target->Id(), DebugCpuId::MultiSoundGS);
+    DebugCpuId parsed = DebugCpuId::Main;
+    EXPECT_TRUE(DebugManager::ParseCpuName("ms", parsed));
+    EXPECT_EQ(parsed, DebugCpuId::MultiSoundGS);
+    m.Machine().RunNFrames(2);
+
+    Z80CpuRegisters regs{};
+    ASSERT_TRUE(card->Card().Gs().cardRegisters(regs));
+    std::string error;
+    const uint16_t id = debug->GetBreakpointsManager(DebugCpuId::MultiSoundGS)->AddBreakpoint(Exec(regs.pc), error);
+    ASSERT_NE(id, BRK_INVALID) << error;
+    EXPECT_TRUE(target->HooksAttached());
+    EXPECT_FALSE(debug->GetGSTarget()->HooksAttached()) << "the General Sound slot's target is another";
+    EXPECT_EQ(debug->GetBreakpointsManager(DebugCpuId::GS)->GetBreakpointsCount(), 0u);
+
+    m.Machine().RunNFrames(1, false);
+    EXPECT_GT(target->StopCount(), 0u);
+    EXPECT_EQ(target->LastStop().breakpointId, id);
+    EXPECT_EQ(target->LastStop().boundaryPc, regs.pc);
 }

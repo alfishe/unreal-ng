@@ -712,8 +712,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  bcopper <index> - Break when the copper completes a list instruction (ZX Next)" << NEWLINE;
     oss << "  bevent <kind> [--value V] - Break on a General Sound / NeoGS event (card_command, host_data, int, ...)" << NEWLINE;
     oss << "  bplist        - List all breakpoints" << NEWLINE;
-    oss << "  --cpu gs      - On bp / wp / bport / bplist / bpclear / bpon / bpoff / bptoggle / bphits / bpgroup /" << NEWLINE;
-    oss << "                  bpnote / bpcond: the sound card CPU's breakpoints (default: main)" << NEWLINE;
+    oss << "  --cpu gs|ms   - On bp / wp / bport / bplist / bpclear / bpon / bpoff / bptoggle / bphits / bpgroup /" << NEWLINE;
+    oss << "                  bpnote / bpcond: the sound card CPU's breakpoints, ms the MultiSound's GS (default: main)" << NEWLINE;
     oss << "  bpclear       - Clear breakpoints" << NEWLINE;
     oss << "  bpgroup <add|remove|list> <group> [bp_id] - Manage breakpoint groups" << NEWLINE;
     oss << "  bpon <all|group <name>|id <id>>        - Activate breakpoints" << NEWLINE;

@@ -2396,7 +2396,7 @@ uint16_t BreakpointManager::ResolveMagic(uint16_t opcodeWord)
     return result;
 }
 
-uint16_t BreakpointManager::ResolveEvent(GSCardEvent kind, uint8_t value)
+uint16_t BreakpointManager::ResolveEvent(GSCardEvent kind, uint8_t value, int arg)
 {
     if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
         return BRK_INVALID;
@@ -2418,6 +2418,7 @@ uint16_t BreakpointManager::ResolveEvent(GSCardEvent kind, uint8_t value)
                 hit.breakpointID = bp->breakpointID;
                 hit.address = static_cast<uint16_t>(kind);
                 hit.value = value;
+                hit.arg = arg;
                 hit.kind = BRK_TAP_EVENT;
                 sink->OnTap(hit);
             }

@@ -104,6 +104,15 @@ public:
     /// A file named on the command line. zxpolyModel: machine of a ZX-Poly group
     /// (skips the model question); a .trd/.scl with it boots as a ZX-Poly disk
     void openFromCommandLine(const QString& filePath, const QString& zxpolyModel);
+    /// The headless runner (--script without a file): the machine the Machine menu picks, as Start does
+    void startEmulatorIfNone() { handleStartEmulator(); }
+    /// The headless runner's end: closes as the window's close does, without the unsaved media question (the media
+    /// policy decides, as for an unattended open)
+    void closeUnattended()
+    {
+        _unattendedClose = true;
+        close();
+    }
     virtual ~MainWindow() override;
 
     // Disable object copy
@@ -338,6 +347,7 @@ private:
     QTimer _dropHoldTimer;  ///< 1.5 s hold before the drop zones appear
     QString _dragPath;      ///< the file being dragged over the window
     bool _dragActive = false;
+    bool _unattendedClose = false;  // closeUnattended: no question on the way out
     /// The placement waiting for the chooser's answer
     struct PendingPlacement
     {

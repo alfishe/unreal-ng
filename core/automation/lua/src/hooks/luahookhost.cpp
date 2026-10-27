@@ -23,25 +23,25 @@ LuaHookHost*& HostOf(lua_State* L)
     return *static_cast<LuaHookHost**>(lua_getextraspace(L));
 }
 
-GeneralSoundCard* CardOf(EmulatorContext* context)
+GeneralSoundCard* CardOf(EmulatorContext* context, DebugCpuId cpu)
 {
     GSCardTarget* target =
-        context != nullptr && context->pDebugManager != nullptr ? context->pDebugManager->GetGSTarget() : nullptr;
+        context != nullptr && context->pDebugManager != nullptr ? context->pDebugManager->GetCardTarget(cpu) : nullptr;
     return target != nullptr ? target->Card() : nullptr;
 }
 
-uint8_t PeekCard(EmulatorContext* context, uint16_t address)
+uint8_t PeekCard(EmulatorContext* context, DebugCpuId cpu, uint16_t address)
 {
     uint8_t value = 0xFF;
-    if (GeneralSoundCard* card = CardOf(context))
+    if (GeneralSoundCard* card = CardOf(context, cpu))
         card->peekCardMemory(address, value);
     return value;
 }
 
 /// A register of the card's CPU by the debugger's name (any case); false for an unknown one
-bool CardRegister(EmulatorContext* context, std::string name, uint16_t& value)
+bool CardRegister(EmulatorContext* context, DebugCpuId cpu, std::string name, uint16_t& value)
 {
-    GeneralSoundCard* card = CardOf(context);
+    GeneralSoundCard* card = CardOf(context, cpu);
     Z80CpuRegisters r{};
     if (card == nullptr || !card->cardRegisters(r))
         return false;
@@ -120,7 +120,7 @@ void LuaHookHost::RegisterApi()
 
     lua["peek"] = [this, context](int address) -> int {
         if (_card)
-            return PeekCard(context, static_cast<uint16_t>(address));
+            return PeekCard(context, _cardCpu, static_cast<uint16_t>(address));
         if (context == nullptr || context->pMemory == nullptr)
             return 0;
         return context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(address));
@@ -128,7 +128,7 @@ void LuaHookHost::RegisterApi()
     lua["peek16"] = [this, context](int address) -> int {
         const auto at = static_cast<uint16_t>(address);
         if (_card)
-            return PeekCard(context, at) | (PeekCard(context, static_cast<uint16_t>(at + 1)) << 8);
+            return PeekCard(context, _cardCpu, at) | (PeekCard(context, _cardCpu, static_cast<uint16_t>(at + 1)) << 8);
         if (context == nullptr || context->pMemory == nullptr)
             return 0;
         return context->pMemory->DirectReadFromZ80Memory(at) |
@@ -153,7 +153,7 @@ void LuaHookHost::RegisterApi()
         uint16_t value = 0;
         if (_card)
         {
-            if (!CardRegister(context, name, value))
+            if (!CardRegister(context, _cardCpu, name, value))
                 throw std::runtime_error("reg: unknown register '" + name + "' of the card CPU");
             return value;
         }
@@ -255,7 +255,8 @@ HookCallResult LuaHookHost::Call(uint32_t id, const CallbackHit& hit, const std:
     _budget = std::max<uint64_t>(instructionBudget, kInstructionStep);
     _aborted = false;
     _edits = edits;
-    _card = hit.cpu == static_cast<uint8_t>(DebugCpuId::GS);
+    _cardCpu = static_cast<DebugCpuId>(hit.cpu);
+    _card = IsCardCpu(_cardCpu);
     lua_State* L = _lua->lua_state();
     lua_sethook(L, &LuaHookHost::CountHook, LUA_MASKCOUNT, kInstructionStep);
     {

@@ -10,8 +10,8 @@
         "({kind, page}) and slot_only for a physical one; port_mask for a masked port; hit_mode, hit_target and the "
         "live hit_count. The user's breakpoints only: the ones the BASIC typer, the debugger adapters and steps own "
         "are left out unless all=true (then with owner and hidden). cpu=gs (a query parameter on every /breakpoints "
-        "route, or the body's cpu): the sound card CPU's breakpoints (General Sound / NeoGS); main (default) the "
-        "machine's; another name is a 400.";
+        "route, or the body's cpu): the sound card CPU's breakpoints (General Sound / NeoGS); cpu=ms the MultiSound "
+        "card's General Sound; main (default) the machine's; another name is a 400.";
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][1]["name"] = "all";
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][1]["in"] = "query";
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][1]["required"] = false;
@@ -33,8 +33,9 @@
         "with a mask, a hit policy (hits / hit_mode + hit_target). Errors name the field: a range ending before it "
         "starts, a page range leaving its page, a page the machine lacks, a mask on memory, a policy without a target. "
         "type event: a General Sound protocol breakpoint, 'event' its kind (int, nmi, reset, page, card_command, "
-        "card_data, card_reply on cpu gs; host_command, host_data, host_reply on the main CPU), value / value_mask "
-        "filter the byte. cpu gs: the card CPU's (execute, memory, port, event; no conditions).";
+        "card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done on cpu gs; host_command, host_data, "
+        "host_reply on the main CPU), value / value_mask filter the byte. cpu gs: the card CPU's (execute, memory, "
+        "port, event; conditions on its registers and memory).";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["201"]["description"] = "Breakpoint created";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["400"]["description"] =
         "Bad address or type, a page on a port breakpoint, a malformed page or one the machine does not have, a range "

@@ -48,6 +48,9 @@ public:
         virtual void dmaStall(int64_t units) = 0;        // CPU off the bus for `units`
         virtual int64_t dmaUnitsPerCycle() const = 0;     // current card clock
         virtual void dmaSdByteDone(uint8_t received) = 0; // SD master's last byte (SD_READ)
+        /// A module started, or ended (`finished`: done with its interrupt; false: aborted). For a debugger
+        virtual void dmaStarted(Module m) { (void)m; }
+        virtual void dmaEnded(Module m, bool finished) { (void)m; (void)finished; }
     };
 
     static constexpr int BLOCK = 512;
