@@ -1,0 +1,93 @@
+# Aliens Neoplasma II (ZX Next NEX, Sanchez Crew), v1.6.1 and the v1.6 demo. Default keys (Settings > Redefine keys, and
+# the readme): W A S D move, B shoots, N jumps, M throws a grenade (hold it for distance), P pauses / skips a cutscene,
+# Y / N answer "Are you sure?". Jump + down drops through a ladder or platform; W at a terminal starts its talk. The NEX
+# loads from NextZXOS and opens ./Data/NN.bin, so the SD card's root needs the game's data folder as /Data.
+# Haptics (haptics.md §13 H5): the code is in the fixed 48K (bank 5 at #4000, bank 2 at #8000, the NEX's own banks), so
+# the probes are qualified with the bank (page:5:0x29D3 is #69D3, page:2:0x31C2 is #B1C2). Found by per-frame coverage diffs (key press, jump on the spot, walking off an edge,
+# dying), then the data around them. Checked by play on a Next (NextZXOS booted from the card, New game, the first
+# corridor), first by the coverage of each address after every frame, then by the game.events monitor in real time
+# (3 jumps give 3 jump + 3 land; two deaths give 2 died; nothing fires while idle or walking). run_frames does not feed
+# exec probes, only a running emulator does:
+#   #69D3 is the jump start (LD (#7F7D),#FF inside the jump branch): once per N press, also while N is held, and not when
+#         the hero only walks off an edge;
+#   #69F4 is the landing (CALL #6300 with sound 9, the landing branch of the same routine): once per touch-down after a
+#         jump (20 frames later) and after a walk-off fall or a ladder drop (also the splash into the water, 2 frames
+#         before the death), quiet while walking, idle or in the air;
+#   #B1C2 is the hero's kill branch (reached from the blood routine #B14A when the object is the hero: energy #7F70 := 0,
+#         death timer 100): the water of the corridor pits ends there once per death, the body bursts and the level
+#         restarts about 100 frames later at #B81D (energy back to 5).
+# Left out: the damage routine #B27D (energy minus A, callers #6A5B, #6F39, #7911, #7C9F, #B6EA) and the "hurt" sound
+# sites #6715 (water), #779F, #7C92: the first area has no armed enemy and the hero starts without a weapon, so a
+# non-lethal hurt, a shot, a grenade, a pickup and an explosion were not reached by play (other deaths, a lethal bite
+# or a hard fall through #B27D / #B7AE, may skip #B1C2). A watch on the energy byte #7F70 (`decreased`, or `== 0`) was
+# rejected: it also fires with the death, and `== 0` fired once at New game. The jump counter #7F77 and the object loop at #BA89 run
+# every frame. The first screens (Hydra / Achilles talk) are cutscenes: the door opens after W at the terminal.
+# The demo (ANP2_DEMO.nex, same banks and header) has the same code a few bytes lower: the jump at #69C8 and the
+# landing at #69E9 were taken from the byte patterns of the two files (`3E FF 32 7D 7F 21 E4 08` and `3E 09 CD 00 63
+# AF 32 78 7F`), #B1CD and the variables are at the same addresses; the demo itself was not played.
+schema: 1
+kind: play
+id: builtin/game/aliens-neoplasma-2
+label: Aliens Neoplasma II
+extends: [scheme/wasd]
+match:
+  machines: [NEXT]
+  file_sha256: ["7b779f4ec2afeeb31d878dca4e2eb7b34bdbfaa4bdeb2869888e4d4a579ec203"]
+layers:
+  play:
+    south:        { key: N, label: Jump }
+    west:         { key: B, label: Shoot }
+    east:         { key: M, label: Grenade (hold for distance) }
+    north:        { key: Y, label: Yes }
+    rt.click:     { key: B, label: Shoot }
+    menu:         { key: P, label: Pause / skip }
+events:
+  jump: { probe: exec, address: "page:5:0x29D3" }
+  land: { probe: exec, address: "page:5:0x29F4" }
+  died: { probe: exec, address: "page:2:0x31C2" }
+  # Found in the owner's TTD recording: the energy byte #7F70 went 5 -> 0 in one write, from #B7AE. That is the
+  # instant kill of an enemy bullet (the object loop #BA89 calls it, sound #13): it does not pass #B27D or #B1C2, so
+  # the hero's death by a bullet was silent. #B7AA is its first instruction after the "energy not zero" checks
+  bullet: { probe: exec, address: "page:2:0x37AA" }
+  # Any loss of energy (a bullet, gas, a fall): the byte at the frame end, once per drop; the respawn's rise is not one
+  hurt: { probe: write, address: "page:5:0x3F70", when: decreased }
+  # The energy reaching 0 is every death (a bullet, gas, water, a fall): the one that plays the life-lost knock. The byte
+  # is read at the frame end and fires on the change only, so the 100 frames the body takes to burst play nothing more.
+  # #B1C2 (died) is the water's end of the same death and stays an event only, so a death is not played twice
+  dead: { probe: write, address: "page:5:0x3F70", when: "==", value: 0 }
+haptics:
+  rules:
+    - { on: jump, play: tick, target: handle.high }
+    - { on: land, play: knock, target: handle.low }
+    - { on: dead, play: life-lost }
+    - { on: bullet, play: impact }
+    - { on: hurt, play: hit }
+---
+schema: 1
+kind: play
+id: builtin/game/aliens-neoplasma-2-demo
+label: Aliens Neoplasma II (demo)
+extends: [scheme/wasd]
+match:
+  machines: [NEXT]
+  file_sha256: ["0597a1e7da32642881c0fb8d2340f943f02e7b87fa64562e5f69035b228e91dd"]
+layers:
+  play:
+    south:        { key: N, label: Jump }
+    west:         { key: B, label: Shoot }
+    east:         { key: M, label: Grenade (hold for distance) }
+    north:        { key: Y, label: Yes }
+    rt.click:     { key: B, label: Shoot }
+    menu:         { key: P, label: Pause / skip }
+events:
+  jump: { probe: exec, address: "page:5:0x29C8" }
+  land: { probe: exec, address: "page:5:0x29E9" }
+  died: { probe: exec, address: "page:2:0x31C2" }
+  hurt: { probe: write, address: "page:5:0x3F70", when: decreased }
+  dead: { probe: write, address: "page:5:0x3F70", when: "==", value: 0 }
+haptics:
+  rules:
+    - { on: jump, play: tick, target: handle.high }
+    - { on: land, play: knock, target: handle.low }
+    - { on: dead, play: life-lost }
+    - { on: hurt, play: hit }

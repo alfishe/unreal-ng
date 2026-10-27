@@ -124,6 +124,10 @@ struct HapticRule
     uint8_t target = 0;  ///< 0: the effect's own; else the first of `trigger.right|handle.high`
     std::vector<uint8_t> fallbacks;  ///< the rest, in order: the first a device has plays (Haptics_Fallback)
     uint8_t priority = 0;            ///< `priority`: over the effect's own when set
+    /// `if: {source, equals}`: the rule plays only while the byte a `value` source watches equals `gateValue` at the
+    /// frame the event fires (the direction of a blow); empty: always
+    std::string gate;
+    uint8_t gateValue = 0;
     /// `hd: {frequency_hz, low_hz, high_hz}`: the HD frequency of each band over the effect's own (0: the effect's);
     /// `frequency_hz` sets both bands, `low_hz` / `high_hz` one each
     uint16_t lowHz = 0;

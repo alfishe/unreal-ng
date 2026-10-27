@@ -1882,6 +1882,14 @@
    "face_on": "video.temporal.on",
    "state": "toggle.video.temporal"
   },
+  "video.temporal_toggle": {
+   "face": "video.temporal",
+   "face_on": "video.temporal.on",
+   "state": "toggle.video.temporal_toggle"
+  },
+  "video.temporal_effect": {
+   "face": "video.blending"
+  },
   "dbg.mode_toggle": {
    "face": "dbg.mode",
    "face_on": "dbg.mode.on",

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-19 |
-| **Status** | v2 implemented 2026-10-20 (SD5, the parts without the surface topic); the scenario pipeline 2026-10-22 (§9); the default scenario waits for its spec (§9) |
+| **Status** | v2 implemented 2026-10-20 (SD5, the parts without the surface topic); the scenario pipeline 2026-10-22 (§9); the default scenario ships 2026-10-26 (§9) |
 | **Base** | `*.deck.json` v1 (`streamdeck-emulator/docs/scenario-editor/03-technical-design.md §2`, `streamdeck-bridge/include/sdb/scenario.hpp`) |
 
 v2 adds fields; a v1 file loads (its `webapi` steps keep working through the REST escape hatch, §2) and the studio
@@ -320,6 +320,12 @@ goes back. The product scenario's monitoring page is one.
 ```
 
 ## 9. The default scenario
+
+**Ships (2026-10-26):** `data/streamdeck/scenarios/unreal.deck.yaml`, built by `deckflow.py` from
+`src/unreal.spec.yaml` (the screen map of every menu sits above it in the spec, written by `deckflow build`), is what
+`unreal-streamdeck run` plays without a file on decks of the model it is made for (Stream Deck + XL); other models
+get the idle scenario, `--idle` gives the idle one everywhere ([daemon.md](../../companions/streamdeck/daemon.md#commands)).
+The history below is how it got there.
 
 **Waits (owner, 2026-10-20):** most of the old deck content is test material. Order: (1) audit the icons and build one
 icon set, (2) a document with every use case and its menu hierarchy mapped to icons, (3) only then the scenarios,

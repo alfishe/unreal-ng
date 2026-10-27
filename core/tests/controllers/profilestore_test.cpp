@@ -569,3 +569,20 @@ TEST(ProfileStore_Test, Aliases_APromotedDeviceKeepsItsProfilesAcrossRestarts)
     EXPECT_FALSE(ProfileStore::ParseAliases("aliases:\n  - from: x\n", parsed, error));
     std::filesystem::remove_all(root);
 }
+
+TEST(ProfileStore_Test, JoystickKeys_TheGamesKeysForTheQaopJoystickThePortReadsPick)
+{
+    ProfileStore store;
+    std::string error;
+    ASSERT_TRUE(store.AddText("schema: 1\nkind: play\nid: user/game\nmatch: { file_sha256: [\"ab\"] }\n"
+                              "joystick_keys: \"up:q,down:a,left:o,right:p,fire:m\"\n",
+                              ProfileScope::User, error))
+        << error;
+    ProfileContext context;
+    EXPECT_TRUE(store.Resolve(context).joystickKeys.empty()) << "no game: the plug's own keys";
+    context.fileSha256 = {"ab"};
+    EXPECT_EQ(store.Resolve(context).joystickKeys, "up:q,down:a,left:o,right:p,fire:m");
+
+    EXPECT_FALSE(store.AddText("schema: 1\nkind: play\nid: user/bad\njoystick_keys: \"\"\n", ProfileScope::User, error));
+    EXPECT_NE(error.find("joystick_keys"), std::string::npos) << error;
+}

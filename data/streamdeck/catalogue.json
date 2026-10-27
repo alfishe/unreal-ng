@@ -865,6 +865,24 @@
    "params": "delta = tenths"
   },
   {
+   "id": "video.temporal_toggle",
+   "label": "Temporal effects",
+   "group": "Video",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "on? (else flips)"
+  },
+  {
+   "id": "video.temporal_effect",
+   "label": "Temporal effect",
+   "group": "Video",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "effect? (blend|dlss|next; next)"
+  },
+  {
    "id": "video.viewport",
    "label": "Overscan viewport",
    "group": "Video",

@@ -53,18 +53,6 @@ root:
         value:
           d: $ticks
     -
-      index: 4
-      label: STEP
-      press:
-        id: run.step_in
-        kind: action
-      turn:
-        id: run.step_by
-        kind: action
-        value:
-          d: $ticks
-          unit: instructions
-    -
       index: 5
       label: VOLUME
       press:
@@ -138,6 +126,7 @@ root:
         label: TURBO
       face_on:
         glyph: mach.turbo.on
+        label: TURBO
       id: turbo
       state: toggle.mach.turbo_toggle
       tags:
@@ -211,14 +200,17 @@ root:
         - 0
         - 8
       do:
-        id: cap.screenshot
+        id: view.fullscreen
         kind: action
       face:
-        glyph: cap.screenshot
-      id: shot
+        glyph: view.fullscreen
+      face_on:
+        glyph: view.fullscreen.on
+      id: full
+      state: toggle.view.fullscreen
       tags:
-        - uc:C7.5
-      title: Screenshot
+        - uc:C9.1
+      title: "Full screen"
       type: action
     -
       at:
@@ -1253,6 +1245,7 @@ root:
             label: TR-DOS
           face_on:
             glyph: settings.toggle.on
+            label: TR-DOS
           id: trdos
           state: toggle.set.toggle.trdos_traps
           tags:
@@ -1273,6 +1266,7 @@ root:
             label: "FAST TAPE"
           face_on:
             glyph: settings.toggle.on
+            label: "FAST TAPE"
           id: ftape
           state: toggle.set.toggle.fast_tape
           tags:
@@ -1293,6 +1287,7 @@ root:
             label: "TURBO TAPE"
           face_on:
             glyph: settings.toggle.on
+            label: "TURBO TAPE"
           id: ttape
           state: toggle.set.toggle.turbo_tape
           tags:
@@ -1313,6 +1308,7 @@ root:
             label: "FAST DISK"
           face_on:
             glyph: settings.toggle.on
+            label: "FAST DISK"
           id: fdisk
           state: toggle.set.toggle.fast_disk
           tags:
@@ -1332,6 +1328,719 @@ root:
       at:
         - 1
         - 4
+      do:
+        id: media.tape
+        kind: action
+        value:
+          op: toggle
+      face:
+        glyph: media.tape.play
+        label: TAPE
+        value:
+          format: "{block}/{blocks}"
+          readout: media.tape
+      id: tape
+      tags:
+        - uc:C4.2
+      title: Tape
+      type: action
+    -
+      at:
+        - 1
+        - 5
+      do:
+        id: media.open_recent
+        kind: action
+        value:
+          index: 0
+      face:
+        glyph: media.open_recent
+        label: "LAST FILE"
+      id: recent
+      tags:
+        - uc:C4.3
+      title: "Open a recent file"
+      type: action
+    -
+      at:
+        - 1
+        - 7
+      context: play
+      face:
+        glyph: input.joystick
+        label: GAME
+      id: game
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: input.joystick_type
+            kind: action
+            value:
+              kind: kempston
+          face:
+            glyph: input.joystick_type
+            label: KEMP
+          id: kemp
+          tags:
+            - uc:U1.3
+          title: "Joystick type"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: input.joystick_type
+            kind: action
+            value:
+              kind: sinclair1
+          face:
+            glyph: input.joystick_type
+            label: SINC1
+          id: sinc1
+          tags:
+            - uc:U1.3
+          title: "Joystick type"
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            id: input.joystick_type
+            kind: action
+            value:
+              kind: sinclair2
+          face:
+            glyph: input.joystick_type
+            label: SINC2
+          id: sinc2
+          tags:
+            - uc:U1.3
+          title: "Joystick type"
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          do:
+            id: input.joystick_type
+            kind: action
+            value:
+              kind: cursor
+          face:
+            glyph: input.joystick_type
+            label: CURSOR
+          id: cursor
+          tags:
+            - uc:U1.3
+          title: "Joystick type"
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            id: feature.toggle
+            kind: action
+            value:
+              name: kempstonmouse
+          face:
+            glyph: settings.toggle
+            label: MOUSE
+          face_on:
+            glyph: settings.toggle.on
+            label: MOUSE
+          id: mouse
+          state: toggle.feature.kempstonmouse
+          tags:
+            - uc:U1.5
+          title: "Toggle a feature"
+          type: action
+        -
+          at:
+            - 0
+            - 6
+          face:
+            label: JOYSTICK
+            value:
+              format: "{}"
+              readout: input.connectors.connectors.0.kind
+          id: joynow
+          tags:
+            - uc:U1.3
+          title: joynow
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          do:
+            id: input.release_all
+            kind: action
+          face:
+            glyph: input.release_all
+            label: RELEASE
+          id: release
+          tags:
+            - uc:U1.4
+          title: "Release all keys and buttons"
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: space
+          face:
+            glyph: input.key
+            label: SPACE
+          id: space
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: enter
+          face:
+            glyph: input.key
+            label: ENTER
+          id: enter
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: caps+space
+          face:
+            glyph: input.key
+            label: BREAK
+          id: brk
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 6
+          do:
+            hold: true
+            id: input.joystick
+            kind: action
+            value:
+              buttons: up
+              hold: true
+          face:
+            glyph: input.joy.up
+            label: UP
+          id: up
+          tags:
+            - uc:U1.2
+          title: Joystick
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          do:
+            hold: true
+            id: input.joystick
+            kind: action
+            value:
+              buttons: fire
+              hold: true
+          face:
+            glyph: input.joy.fire
+            label: FIRE
+          id: fire
+          tags:
+            - uc:U1.2
+          title: Joystick
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: y
+          face:
+            glyph: input.key
+            label: Y
+          id: keyy
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: n
+          face:
+            glyph: input.key
+            label: N
+          id: keyn
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          do:
+            hold: true
+            id: input.joystick
+            kind: action
+            value:
+              buttons: left
+              hold: true
+          face:
+            glyph: input.joy.left
+            label: LEFT
+          id: left
+          tags:
+            - uc:U1.2
+          title: Joystick
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          do:
+            hold: true
+            id: input.joystick
+            kind: action
+            value:
+              buttons: down
+              hold: true
+          face:
+            glyph: input.joy.down
+            label: DOWN
+          id: down
+          tags:
+            - uc:U1.2
+          title: Joystick
+          type: action
+        -
+          at:
+            - 2
+            - 7
+          do:
+            hold: true
+            id: input.joystick
+            kind: action
+            value:
+              buttons: right
+              hold: true
+          face:
+            glyph: input.joy.right
+            label: RIGHT
+          id: right
+          tags:
+            - uc:U1.2
+          title: Joystick
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "1"
+          face:
+            glyph: input.key
+            label: "1"
+          id: k1
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 1
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "2"
+          face:
+            glyph: input.key
+            label: "2"
+          id: k2
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 2
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "3"
+          face:
+            glyph: input.key
+            label: "3"
+          id: k3
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 3
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "4"
+          face:
+            glyph: input.key
+            label: "4"
+          id: k4
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 7
+          do:
+            id: ttd.unit_back
+            kind: action
+            value:
+              count: 5
+              unit: seconds
+          face:
+            glyph: ttd.unit_back
+            label: -5S
+          id: gamback5
+          tags:
+            - uc:U2.2
+          title: "Back one unit"
+          type: action
+        -
+          at:
+            - 3
+            - 8
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 1
+          face:
+            glyph: snapshot.quick_load
+            label: L1
+          id: gamqload
+          tags:
+            - uc:U2.4
+          title: "Quick snapshot"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+      tags:
+        - uc:U1
+      title: Game
+      type: menu
+    -
+      at:
+        - 1
+        - 8
+      face:
+        glyph: basic.menu
+        label: BASIC
+      id: basic
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: basic.mode
+            kind: action
+            value:
+              mode: 48k
+          face:
+            glyph: basic.mode.48
+            label: 48K
+          id: b48
+          tags:
+            - uc:U4.1
+          title: "BASIC mode from the 128K menu"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: basic.mode
+            kind: action
+            value:
+              mode: 128k
+          face:
+            glyph: basic.mode.128
+            label: 128K
+          id: b128
+          tags:
+            - uc:U4.1
+          title: "BASIC mode from the 128K menu"
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            id: basic.run
+            kind: action
+          face:
+            glyph: basic.run
+            label: RUN
+          id: run
+          tags:
+            - uc:U4.2
+          title: "Run a BASIC command"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: basic.run
+            kind: action
+            value:
+              command: "LOAD \"\""
+          face:
+            glyph: media.tape.load
+            label: LOAD
+          id: load
+          tags:
+            - uc:U4.2
+          title: "Run a BASIC command"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: basic.clear
+            kind: action
+          face:
+            glyph: basic.clear
+            label: NEW
+          id: new
+          tags:
+            - uc:U4.2
+          title: "NEW (clear the program)"
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: cat
+          face:
+            glyph: input.macro
+            label: CAT
+          id: cat
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: format
+          face:
+            glyph: input.macro
+            label: FORMAT
+          id: format
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: erase
+          face:
+            glyph: input.macro
+            label: ERASE
+          id: erase
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: move
+          face:
+            glyph: input.macro
+            label: MOVE
+          id: move
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: e_mode
+          face:
+            glyph: input.macro
+            label: E
+          id: emode
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: g_mode
+          face:
+            glyph: input.macro
+            label: G
+          id: gmode
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 2
+            - 8
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: break
+          face:
+            glyph: input.macro
+            label: BREAK
+          id: basbrk
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            id: set.toggle
+            kind: action
+            value:
+              name: trdos_traps
+          face:
+            glyph: settings.toggle
+            label: TRAPS
+          face_on:
+            glyph: settings.toggle.on
+            label: TRAPS
+          id: traps
+          state: toggle.set.toggle.trdos_traps
+          tags:
+            - uc:U4.4
+          title: "Toggle a setting"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+      tags:
+        - uc:U4
+      title: BASIC
+      type: menu
+    -
+      at:
+        - 2
+        - 0
       face:
         glyph: mach.start
         label: MODEL
@@ -1398,6 +2107,7 @@ root:
             label: TURBO
           face_on:
             glyph: mach.switch.on
+            label: TURBO
           id: pturbo
           state: toggle.mach.switch.turbo
           tags:
@@ -1418,6 +2128,7 @@ root:
             label: CP/M
           face_on:
             glyph: mach.switch.on
+            label: CP/M
           id: pcpm
           state: toggle.mach.switch.cpm
           tags:
@@ -1891,368 +2602,8 @@ root:
       type: menu
     -
       at:
+        - 2
         - 1
-        - 5
-      face:
-        glyph: cap.record
-        label: REC
-      id: record
-      items:
-        -
-          at:
-            - 0
-            - 1
-          do:
-            id: cap.record_toggle
-            kind: action
-            value:
-              preset: gameplay
-          face:
-            glyph: cap.record
-            label: GAME
-          face_on:
-            glyph: cap.record.on
-          id: vgame
-          state: toggle.cap.record_toggle
-          tags:
-            - uc:C7.2
-          title: "Record video"
-          type: action
-        -
-          at:
-            - 0
-            - 2
-          do:
-            id: cap.record_toggle
-            kind: action
-            value:
-              preset: hq
-          face:
-            glyph: cap.record
-            label: HQ
-          face_on:
-            glyph: cap.record.on
-          id: vhq
-          state: toggle.cap.record_toggle
-          tags:
-            - uc:C7.2
-          title: "Record video"
-          type: action
-        -
-          at:
-            - 0
-            - 3
-          do:
-            id: cap.record_toggle
-            kind: action
-            value:
-              preset: gif
-          face:
-            glyph: cap.record
-            label: GIF
-          face_on:
-            glyph: cap.record.on
-          id: vgif
-          state: toggle.cap.record_toggle
-          tags:
-            - uc:C7.2
-          title: "Record video"
-          type: action
-        -
-          at:
-            - 0
-            - 4
-          do:
-            id: cap.record_toggle
-            kind: action
-            value:
-              preset: multitrack
-          face:
-            glyph: cap.record
-            label: MULTI
-          face_on:
-            glyph: cap.record.on
-          id: vmulti
-          state: toggle.cap.record_toggle
-          tags:
-            - uc:C7.2
-          title: "Record video"
-          type: action
-        -
-          at:
-            - 0
-            - 5
-          do:
-            id: cap.record_pause
-            kind: action
-          face:
-            glyph: cap.record_pause
-          id: vpause
-          tags:
-            - uc:C7.2
-          title: "Pause recording"
-          type: action
-        -
-          at:
-            - 0
-            - 7
-          face:
-            label: LENGTH
-            value:
-              format: "{:.0f}S"
-              readout: cap.record.seconds
-          id: vlen
-          tags:
-            - uc:C10.9
-          title: vlen
-          type: action
-        -
-          at:
-            - 0
-            - 8
-          face:
-            label: SIZE
-            value:
-              format: "{:b}"
-              readout: cap.record.bytes
-          id: vsize
-          tags:
-            - uc:C10.9
-          title: vsize
-          type: action
-        -
-          at:
-            - 1
-            - 0
-          do:
-            id: cap.record_toggle
-            kind: action
-            value:
-              preset: music
-          face:
-            glyph: cap.record
-            label: FLAC
-          face_on:
-            glyph: cap.record.on
-          id: amusic
-          state: toggle.cap.record_toggle
-          tags:
-            - uc:C7.2a
-          title: "Record video"
-          type: action
-        -
-          at:
-            - 1
-            - 1
-          do:
-            id: cap.record_toggle
-            kind: action
-            value:
-              preset: audio
-          face:
-            glyph: cap.record
-            label: WAV
-          face_on:
-            glyph: cap.record.on
-          id: awav
-          state: toggle.cap.record_toggle
-          tags:
-            - uc:C7.2a
-          title: "Record video"
-          type: action
-        -
-          at:
-            - 1
-            - 2
-          do:
-            id: cap.audio_capture
-            kind: action
-            value:
-              seconds: 10
-              source: ay1
-          face:
-            glyph: cap.audio_capture
-            label: "AY 10S"
-          id: aay
-          tags:
-            - uc:C7.4
-          title: "Capture audio"
-          type: action
-        -
-          at:
-            - 1
-            - 4
-          do:
-            id: cap.clip_last
-            kind: action
-            value:
-              format: mp4
-              seconds: 10
-          face:
-            glyph: cap.clip_last
-            label: 10S
-          id: clip
-          tags:
-            - uc:C7.3
-          title: "Clip the last seconds"
-          type: action
-        -
-          at:
-            - 1
-            - 5
-          do:
-            id: cap.clip_last
-            kind: action
-            value:
-              format: gif
-              seconds: 10
-          face:
-            glyph: cap.clip_last
-            label: "GIF 10S"
-          id: clipgif
-          tags:
-            - uc:C7.3
-          title: "Clip the last seconds"
-          type: action
-        -
-          at:
-            - 1
-            - 7
-          do:
-            id: cap.screenshot
-            kind: action
-          face:
-            glyph: cap.screenshot
-          id: recshot
-          tags:
-            - uc:C7.5
-          title: Screenshot
-          type: action
-        -
-          at:
-            - 1
-            - 8
-          do:
-            id: cap.screenshot_save
-            kind: action
-            value:
-              path: $user/screenshots/deck.png
-          face:
-            glyph: cap.screenshot_save
-            label: PNG
-          id: shotpng
-          tags:
-            - uc:C7.5
-          title: "Save a screenshot"
-          type: action
-        -
-          at:
-            - 2
-            - 0
-          do:
-            id: ttd.start
-            kind: action
-          face:
-            glyph: ttd.record.on
-            label: START
-          id: tstart
-          tags:
-            - uc:C7.1
-          title: "Start recording"
-          type: action
-        -
-          at:
-            - 2
-            - 1
-          do:
-            id: ttd.stop
-            kind: action
-          face:
-            glyph: ttd.stop
-            label: STOP
-          id: rectstop
-          tags:
-            - uc:C7.1
-          title: "Stop recording"
-          type: action
-        -
-          at:
-            - 2
-            - 2
-          do:
-            id: ttd.invalidate
-            kind: action
-          face:
-            glyph: ttd.invalidate
-            label: DROP
-          id: tdrop
-          tags:
-            - uc:C7.1
-          title: "Drop the history"
-          type: action
-        -
-          at:
-            - 2
-            - 4
-          do:
-            id: ttd.export_clip
-            kind: action
-            value:
-              path: $user/clips/history.mp4
-          face:
-            glyph: ttd.export_clip
-            label: EXPORT
-          id: tclip
-          tags:
-            - uc:C7.3
-          title: "Export a range as a clip"
-          type: action
-        -
-          at:
-            - 2
-            - 6
-          do:
-            id: ttd.dump
-            kind: action
-            value:
-              path: $user/sessions/deck.ttd
-          face:
-            glyph: ttd.dump
-            label: "SAVE TTD"
-          id: rectdump
-          tags:
-            - uc:C7.1
-          title: "Save the session"
-          type: action
-        -
-          at:
-            - 2
-            - 7
-          do:
-            id: ttd.load
-            kind: action
-            value:
-              path: $user/sessions/deck.ttd
-          face:
-            glyph: ttd.load
-            label: "LOAD TTD"
-          id: rectload
-          tags:
-            - uc:C7.1
-          title: "Open a session"
-          type: action
-      nav:
-        back:
-          - 0
-          - 0
-      tags:
-        - uc:C7
-      title: Record
-      type: menu
-    -
-      at:
-        - 1
-        - 6
       dials:
         -
           index: 0
@@ -2804,6 +3155,7 @@ root:
             label: FIR
           face_on:
             glyph: settings.toggle.on
+            label: FIR
           id: fir
           state: toggle.set.toggle.fir_filter
           tags:
@@ -2824,6 +3176,7 @@ root:
             label: PUNCH
           face_on:
             glyph: settings.toggle.on
+            label: PUNCH
           id: aypunch
           state: toggle.set.toggle.ay_punch
           tags:
@@ -2844,6 +3197,7 @@ root:
             label: DC
           face_on:
             glyph: settings.toggle.on
+            label: DC
           id: dc
           state: toggle.set.toggle.covox_dc_removal
           tags:
@@ -3326,14 +3680,14 @@ root:
       type: menu
     -
       at:
-        - 1
-        - 7
+        - 2
+        - 2
       dials:
         -
           index: 0
           label: DECAY
           press:
-            id: video.blending
+            id: video.temporal_toggle
             kind: action
           turn:
             id: video.blending_decay_by
@@ -3342,7 +3696,7 @@ root:
               d: $ticks
       face:
         glyph: video.menu
-        label: VIDEO
+        label: PICTURE
       id: picture
       items:
         -
@@ -3391,6 +3745,7 @@ root:
             label: GPU
           face_on:
             glyph: video.gpu.on
+            label: GPU
           id: gpu
           state: toggle.video.gpu_toggle
           tags:
@@ -3409,6 +3764,7 @@ root:
             label: BORDER
           face_on:
             glyph: video.overscan.on
+            label: BORDER
           id: over
           state: toggle.video.overscan_toggle
           tags:
@@ -3447,6 +3803,7 @@ root:
             label: TOOLBAR
           face_on:
             glyph: view.toolbar.on
+            label: TOOLBAR
           id: toolbar
           state: toggle.view.toolbar
           tags:
@@ -3465,6 +3822,7 @@ root:
             label: STATUS
           face_on:
             glyph: view.status_bar.on
+            label: STATUS
           id: status
           state: toggle.view.status_bar
           tags:
@@ -3483,6 +3841,7 @@ root:
             label: CRT
           face_on:
             glyph: video.crt.on
+            label: CRT
           id: crt
           state: toggle.video.crt_toggle
           tags:
@@ -3497,11 +3856,14 @@ root:
             id: video.crt_profile
             kind: action
             value:
-              profile: prev
+              profile: next
           face:
             glyph: video.crt_profile
-            label: "CRT PREV"
-          id: crtprev
+            label: PROFILE
+            value:
+              format: "{}"
+              readout: video.window.crt_profile
+          id: crtnext
           tags:
             - uc:C9.4
           title: "CRT profile"
@@ -3514,68 +3876,53 @@ root:
             id: video.crt_profile
             kind: action
             value:
-              profile: next
+              profile: basic
           face:
             glyph: video.crt_profile
-            label: CRT
-            value:
-              format: "{}"
-              readout: video.window.crt_profile
-          id: crtnext
+            label: "CRT BASIC"
+          id: crtbasic
           tags:
             - uc:C9.4
           title: "CRT profile"
           type: action
         -
           at:
-            - 1
-            - 3
-          do:
-            id: video.crt_params_reset
-            kind: action
-          face:
-            glyph: video.crt_reset
-            label: "CRT RST"
-          id: crtrst
-          tags:
-            - uc:C9.4
-          title: "Reset CRT parameters"
-          type: action
-        -
-          at:
             - 2
             - 0
           do:
-            id: video.temporal
+            id: video.temporal_toggle
             kind: action
           face:
             glyph: video.temporal
             label: TEMPORAL
           face_on:
             glyph: video.temporal.on
-          id: dlss
-          state: toggle.video.temporal
+            label: TEMPORAL
+          id: temporal
+          state: toggle.video.temporal_toggle
           tags:
             - uc:C9.5
-          title: "De-flicker (ZX DLSS)"
+          title: "Temporal effects"
           type: action
         -
           at:
             - 2
             - 1
           do:
-            id: video.blending
+            id: video.temporal_effect
             kind: action
+            value:
+              effect: next
           face:
             glyph: video.blending
-            label: BLEND
-          face_on:
-            glyph: video.blending.on
-          id: blend
-          state: toggle.video.blending
+            label: EFFECT
+            value:
+              format: "{?ZX DLSS|BLEND}"
+              readout: video.temporal.dlss
+          id: teffect
           tags:
             - uc:C9.5
-          title: "Frame blending"
+          title: "Temporal effect"
           type: action
         -
           at:
@@ -3589,6 +3936,7 @@ root:
             label: HUD
           face_on:
             glyph: hud.on
+            label: HUD
           id: hud
           state: toggle.hud.toggle
           tags:
@@ -3656,7 +4004,1298 @@ root:
       type: menu
     -
       at:
+        - 2
+        - 6
+      do:
+        id: cap.screenshot
+        kind: action
+      face:
+        glyph: cap.screenshot
+      id: shot
+      tags:
+        - uc:C7.5
+      title: Screenshot
+      type: action
+    -
+      at:
+        - 2
+        - 7
+      do:
+        id: cap.record_toggle
+        kind: action
+        value:
+          preset: gameplay
+      face:
+        glyph: cap.record
+        label: "VIDEO REC"
+      face_on:
+        glyph: cap.record.on
+        label: "VIDEO REC"
+      id: vrec
+      state: toggle.cap.record_toggle
+      tags:
+        - uc:C7.2
+      title: "Record video"
+      type: action
+    -
+      at:
+        - 2
+        - 8
+      do:
+        id: cap.record_toggle
+        kind: action
+        value:
+          preset: music
+      face:
+        glyph: cap.record
+        label: "AUDIO REC"
+      face_on:
+        glyph: cap.record.on
+        label: "AUDIO REC"
+      id: arec
+      state: toggle.cap.record_toggle
+      tags:
+        - uc:C7.2a
+      title: "Record video"
+      type: action
+    -
+      at:
+        - 3
+        - 0
+      context: debug
+      dials:
+        -
+          index: 0
+          label: STEP
+          press:
+            id: run.step_in
+            kind: action
+          turn:
+            id: run.step_by
+            kind: action
+            value:
+              d: $ticks
+              unit: instructions
+        -
+          index: 1
+          label: FRAMES
+          press:
+            id: run.frame_step
+            kind: action
+          turn:
+            id: run.step_by
+            kind: action
+            value:
+              d: $ticks
+              unit: frames
+      face:
+        glyph: dbg.mode
+        label: DEBUG
+      id: debug
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: run.pause_toggle
+            kind: action
+          face:
+            glyph: run.pause
+          face_on:
+            glyph: run.play
+          id: debpause
+          state: run.state.paused
+          tags:
+            - uc:C1.1
+          title: "Pause / continue"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: run.step_in
+            kind: action
+          face:
+            glyph: run.step_in
+            label: "STEP IN"
+          id: debstepin
+          tags:
+            - uc:D2.1
+          title: "Step in"
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            id: run.step_over
+            kind: action
+          face:
+            glyph: run.step_over
+            label: "STEP OVER"
+          id: debstepovr
+          tags:
+            - uc:D2.1
+          title: "Step over"
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          do:
+            id: run.step_out
+            kind: action
+          face:
+            glyph: run.step_out
+            label: "STEP OUT"
+          id: debstepout
+          tags:
+            - uc:D2.1
+          title: "Step out"
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            id: run.to_cursor
+            kind: action
+          face:
+            glyph: run.to_cursor
+            label: "TO CURSOR"
+          id: debcursor
+          tags:
+            - uc:D2.6
+          title: "Run to the cursor"
+          type: action
+        -
+          at:
+            - 0
+            - 6
+          do:
+            id: run.wait_int
+            kind: action
+          face:
+            glyph: run.wait_int
+            label: "TO INT"
+          id: int
+          tags:
+            - uc:D2.3
+          title: "Run to interrupt"
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          do:
+            id: run.frame_step
+            kind: action
+          face:
+            glyph: run.frame_step
+            label: FRAME
+          id: debframe
+          tags:
+            - uc:D2.3
+          title: "Frame step"
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          do:
+            id: run.step_line
+            kind: action
+          face:
+            glyph: run.step_line
+            label: LINE
+          id: line
+          tags:
+            - uc:D2.7
+          title: "Step a source line"
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            id: dbg.breakpoint_toggle_pc
+            kind: action
+          face:
+            glyph: dbg.breakpoint_toggle_pc
+            label: "BP PC"
+          id: debbppc
+          tags:
+            - uc:D4.1
+          title: "Toggle a breakpoint at PC"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: dbg.breakpoint_toggle_cursor
+            kind: action
+          face:
+            glyph: dbg.breakpoint_toggle_cursor
+            label: "BP CUR"
+          id: bpcur
+          tags:
+            - uc:D4.1
+          title: "Toggle a breakpoint at the cursor"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: dbg.bp_add
+            kind: action
+            value:
+              kind: out
+              preset: fe
+          face:
+            glyph: dbg.bp_add
+            label: "OUT FE"
+          id: bpfe
+          tags:
+            - uc:D4.2
+          title: "Add a breakpoint"
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          do:
+            id: dbg.bp_add
+            kind: action
+            value:
+              kind: out
+              preset: 7ffd
+          face:
+            glyph: dbg.bp_add
+            label: 7FFD
+          id: bp7ffd
+          tags:
+            - uc:D4.2
+          title: "Add a breakpoint"
+          type: action
+        -
+          at:
+            - 1
+            - 4
+          do:
+            id: dbg.bp_toggle
+            kind: action
+          face:
+            glyph: dbg.bp_toggle
+            label: "BPS ON"
+          id: bpall
+          tags:
+            - uc:D4.3
+          title: "Toggle breakpoints"
+          type: action
+        -
+          at:
+            - 1
+            - 5
+          do:
+            id: dbg.breakpoints_clear
+            kind: action
+          face:
+            glyph: dbg.breakpoints_clear
+            label: "CLEAR BP"
+          id: debbpclear
+          tags:
+            - uc:D4.3
+          title: "Clear breakpoints"
+          type: action
+        -
+          at:
+            - 1
+            - 6
+          do:
+            id: dbg.breakpoint_hits_reset
+            kind: action
+          face:
+            glyph: dbg.breakpoint_hits_reset
+            label: "HITS 0"
+          id: debbphits
+          tags:
+            - uc:D4.3
+          title: "Reset hit counts"
+          type: action
+        -
+          at:
+            - 1
+            - 7
+          do:
+            id: run.to_pixel
+            kind: action
+          face:
+            glyph: run.to_pixel
+            label: "TO PIXEL"
+          id: pixel
+          tags:
+            - uc:D2.4
+          title: "Run to the first paper pixel"
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          do:
+            id: dbg.mode_toggle
+            kind: action
+          face:
+            glyph: dbg.mode
+            label: "DEBUG MODE"
+          face_on:
+            glyph: dbg.mode.on
+            label: "DEBUG MODE"
+          id: debdbgmode
+          state: debug.mode.enabled
+          tags:
+            - uc:D4.4
+          title: "Debug mode"
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            id: dbg.open
+            kind: action
+          face:
+            glyph: debug.menu
+            label: "SHOW DEBUG"
+          id: open
+          tags:
+            - uc:D6.1
+          title: "Open the debugger"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            id: dbg.focus_prev_pane
+            kind: action
+          face:
+            glyph: dbg.focus_prev_pane
+            label: "PANE <"
+          id: pprev
+          tags:
+            - uc:D6.1
+          title: "Previous debugger pane"
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          do:
+            id: dbg.focus_next_pane
+            kind: action
+          face:
+            glyph: dbg.focus_next_pane
+            label: "PANE >"
+          id: pnext
+          tags:
+            - uc:D6.1
+          title: "Next debugger pane"
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          do:
+            hold: true
+            id: dbg.page_up
+            kind: action
+          face:
+            glyph: dbg.page_up
+          id: pgup
+          tags:
+            - uc:D6.2
+          title: "Page up in the pane"
+          type: action
+        -
+          at:
+            - 2
+            - 4
+          do:
+            hold: true
+            id: dbg.cursor_up
+            kind: action
+          face:
+            glyph: dbg.cursor_up
+          id: cup
+          tags:
+            - uc:D6.2
+          title: "Cursor up in the pane"
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          do:
+            hold: true
+            id: dbg.page_down
+            kind: action
+          face:
+            glyph: dbg.page_down
+          id: pgdn
+          tags:
+            - uc:D6.2
+          title: "Page down in the pane"
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          do:
+            id: dbg.follow_pc
+            kind: action
+          face:
+            glyph: dbg.follow_pc
+            label: FOLLOW
+          id: follow
+          tags:
+            - uc:D6.4
+          title: "Disassembly follows PC"
+          type: action
+        -
+          at:
+            - 2
+            - 7
+          do:
+            hold: true
+            id: dbg.memory_follow
+            kind: action
+          face:
+            glyph: dbg.memory_follow
+            label: "MEM PC"
+          id: memf
+          tags:
+            - uc:D6.3
+          title: "Memory follows the value under the cursor"
+          type: action
+        -
+          at:
+            - 2
+            - 8
+          do:
+            id: dbg.labels_toggle
+            kind: action
+          face:
+            glyph: dbg.labels_toggle
+            label: LABELS
+          id: labels
+          tags:
+            - uc:D6.4
+          title: "Labels in the disassembly"
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            id: sym.import
+            kind: action
+            value:
+              path: $user/build/main.sym
+          face:
+            glyph: sym.import
+            label: "LOAD SYM"
+          id: symload
+          tags:
+            - uc:D8.2
+          title: "Load symbols"
+          type: action
+        -
+          at:
+            - 3
+            - 1
+          do:
+            id: sym.import_live
+            kind: action
+          face:
+            glyph: sym.import_live
+            label: "LIVE SYM"
+          id: symlive
+          tags:
+            - uc:D8.2
+          title: "Import an assembler's labels from RAM"
+          type: action
+        -
+          at:
+            - 3
+            - 2
+          do:
+            id: sym.export
+            kind: action
+            value:
+              path: $user/build/deck.sym
+          face:
+            glyph: sym.export
+            label: "SAVE SYM"
+          id: symsave
+          tags:
+            - uc:D8.2
+          title: "Save symbols"
+          type: action
+        -
+          at:
+            - 3
+            - 3
+          do:
+            hold: true
+            id: dbg.cursor_left
+            kind: action
+          face:
+            glyph: dbg.cursor_left
+          id: cleft
+          tags:
+            - uc:D6.2
+          title: "Cursor left in the pane"
+          type: action
+        -
+          at:
+            - 3
+            - 4
+          do:
+            hold: true
+            id: dbg.cursor_down
+            kind: action
+          face:
+            glyph: dbg.cursor_down
+          id: cdown
+          tags:
+            - uc:D6.2
+          title: "Cursor down in the pane"
+          type: action
+        -
+          at:
+            - 3
+            - 5
+          do:
+            hold: true
+            id: dbg.cursor_right
+            kind: action
+          face:
+            glyph: dbg.cursor_right
+          id: cright
+          tags:
+            - uc:D6.2
+          title: "Cursor right in the pane"
+          type: action
+        -
+          at:
+            - 3
+            - 6
+          do:
+            id: prof.toggle
+            kind: action
+            value:
+              name: opcode
+          face:
+            glyph: prof.toggle
+            label: "PROF OPS"
+          face_on:
+            glyph: prof.toggle.on
+            label: "PROF OPS"
+          id: prof
+          state: toggle.profiler.opcode
+          tags:
+            - uc:D10.1
+          title: "Profiler / trace on / off"
+          type: action
+        -
+          at:
+            - 3
+            - 7
+          do:
+            id: prof.toggle
+            kind: action
+            value:
+              name: coverage
+          face:
+            glyph: prof.toggle
+            label: COVERAGE
+          face_on:
+            glyph: prof.toggle.on
+            label: COVERAGE
+          id: cover
+          state: toggle.profiler.coverage
+          tags:
+            - uc:D10.1
+          title: "Profiler / trace on / off"
+          type: action
+        -
+          at:
+            - 3
+            - 8
+          do:
+            id: prof.toggle
+            kind: action
+            value:
+              name: calltrace
+          face:
+            glyph: prof.toggle
+            label: CALLS
+          face_on:
+            glyph: prof.toggle.on
+            label: CALLS
+          id: trace
+          state: toggle.profiler.calltrace
+          tags:
+            - uc:D10.1
+          title: "Profiler / trace on / off"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+        dials: own
+      tags:
+        - uc:D2
+        - uc:D4
+        - uc:D6
+        - uc:D8
+        - uc:D10
+        - dial.0.uc:D2.2
+        - dial.1.uc:D2.3
+      title: Debugger
+      type: menu
+    -
+      at:
+        - 3
         - 1
+      dials:
+        -
+          index: 0
+          label: FRAMES
+          press:
+            id: run.pause_toggle
+            kind: action
+          turn:
+            id: ttd.jog_frames
+            kind: action
+            value:
+              d: $ticks
+        -
+          index: 1
+          label: SCRUB
+          press:
+            id: run.pause_toggle
+            kind: action
+          turn:
+            id: ttd.seek_by
+            kind: action
+            value:
+              d: $ticks
+              rate: $rate
+        -
+          index: 2
+          label: LINES
+          press:
+            id: run.to_pixel
+            kind: action
+          turn:
+            id: run.step_by
+            kind: action
+            value:
+              d: $ticks
+              unit: scanlines
+        -
+          index: 3
+          label: T-STATES
+          press:
+            id: run.wait_int
+            kind: action
+          turn:
+            id: run.step_by
+            kind: action
+            value:
+              d: $ticks
+              unit: tstates
+        -
+          index: 4
+          label: PACE
+          press:
+            id: run.pace_toggle
+            kind: action
+          turn:
+            id: run.pace_by
+            kind: action
+            value:
+              d: $ticks
+      face:
+        glyph: ttd.menu
+        label: TIME
+      id: time
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: run.pace_set
+            kind: action
+            value:
+              preset: 25fps
+          face:
+            glyph: run.pace
+            label: 25FPS
+          id: p25
+          tags:
+            - uc:D1.1
+          title: Pace
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: run.pace_set
+            kind: action
+            value:
+              preset: 5fps
+          face:
+            glyph: run.pace
+            label: 5FPS
+          id: p5
+          tags:
+            - uc:D1.1
+          title: Pace
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            id: run.pace_set
+            kind: action
+            value:
+              preset: 1fps
+          face:
+            glyph: run.pace
+            label: 1FPS
+          id: p1
+          tags:
+            - uc:D1.1
+          title: Pace
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          do:
+            id: run.pace_set
+            kind: action
+            value:
+              preset: 1line
+          face:
+            glyph: run.pace
+            label: LINE
+          id: pline
+          tags:
+            - uc:D1.1
+          title: Pace
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            id: run.pace_set
+            kind: action
+            value:
+              preset: 1op
+          face:
+            glyph: run.pace
+            label: OP
+          id: pop
+          tags:
+            - uc:D1.1
+          title: Pace
+          type: action
+        -
+          at:
+            - 0
+            - 6
+          do:
+            id: run.pace_step
+            kind: action
+          face:
+            glyph: run.pace_step
+            label: PACE
+            value:
+              format: "{}"
+              readout: run.state.pace.label
+          id: pstep
+          tags:
+            - uc:D1.2
+          title: "One step at the pace"
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          do:
+            id: run.pace_stop
+            kind: action
+          face:
+            glyph: run.pace_stop
+            label: STOP
+          id: pstop
+          tags:
+            - uc:D1.2
+          title: "Stop the pace"
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          do:
+            id: run.pace_set
+            kind: action
+            value:
+              preset: full
+          face:
+            glyph: run.pace
+            label: FULL
+          id: pfull
+          tags:
+            - uc:D1.1
+          title: Pace
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            id: ttd.seek_start
+            kind: action
+          face:
+            glyph: ttd.go_start
+          id: start
+          tags:
+            - uc:D3.4
+          title: "The history's start"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: ttd.step_back_frame
+            kind: action
+          face:
+            glyph: ttd.step_back_frame
+            label: -FRAME
+          id: bframe
+          tags:
+            - uc:D3.3
+          title: "Back one frame"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: ttd.step_back_scanline
+            kind: action
+          face:
+            glyph: ttd.step_back_scanline
+            label: -LINE
+          id: bline
+          tags:
+            - uc:D3.3
+          title: "Back one scanline"
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          do:
+            id: ttd.step_back_instruction
+            kind: action
+          face:
+            glyph: ttd.step_back_instruction
+            label: -OP
+          id: bop
+          tags:
+            - uc:D3.3
+          title: "Back one instruction"
+          type: action
+        -
+          at:
+            - 1
+            - 5
+          do:
+            id: ttd.step_forward_instruction
+            kind: action
+          face:
+            glyph: ttd.step_forward_instruction
+            label: +OP
+          id: fop
+          tags:
+            - uc:D3.3
+          title: "Forward one instruction"
+          type: action
+        -
+          at:
+            - 1
+            - 6
+          do:
+            id: ttd.step_forward_scanline
+            kind: action
+          face:
+            glyph: ttd.step_forward_scanline
+            label: +LINE
+          id: fline
+          tags:
+            - uc:D3.3
+          title: "Forward one scanline"
+          type: action
+        -
+          at:
+            - 1
+            - 7
+          do:
+            id: ttd.step_forward_frame
+            kind: action
+          face:
+            glyph: ttd.step_forward_frame
+            label: +FRAME
+          id: fframe
+          tags:
+            - uc:D3.3
+          title: "Forward one frame"
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          do:
+            id: ttd.seek_end
+            kind: action
+          face:
+            glyph: ttd.go_end
+          id: end
+          tags:
+            - uc:D3.4
+          title: "The history's end"
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            id: ttd.reverse_continue
+            kind: action
+          face:
+            glyph: ttd.reverse_continue
+            label: "REV RUN"
+          id: rcont
+          tags:
+            - uc:D3.5
+          title: "Reverse continue"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            id: ttd.reverse_step
+            kind: action
+          face:
+            glyph: ttd.reverse_step
+            label: "REV STEP"
+          id: rstep
+          tags:
+            - uc:D3.5
+          title: "Reverse step"
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          do:
+            id: ttd.unit_back
+            kind: action
+          face:
+            glyph: ttd.unit_back
+            label: BACK
+          id: uback
+          tags:
+            - uc:D3.3
+          title: "Back one unit"
+          type: action
+        -
+          at:
+            - 2
+            - 4
+          face:
+            label: FRAME
+            value:
+              format: "{}"
+              readout: ttd.position.current.frame
+          id: tframe
+          tags:
+            - uc:D3.2
+          title: tframe
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          do:
+            id: ttd.unit_forward
+            kind: action
+          face:
+            glyph: ttd.unit_forward
+            label: FORWARD
+          id: ufwd
+          tags:
+            - uc:D3.3
+          title: "Forward one unit"
+          type: action
+        -
+          at:
+            - 2
+            - 8
+          do:
+            id: ttd.resume_live
+            kind: action
+          face:
+            glyph: ttd.resume_live
+            label: LIVE
+          id: timlive
+          tags:
+            - uc:D3.6
+          title: "Resume live"
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            id: ttd.bookmark_prev
+            kind: action
+          face:
+            glyph: ttd.bookmark_prev
+            label: "MARK <"
+          id: bmprev
+          tags:
+            - uc:D3.7
+          title: "Previous bookmark"
+          type: action
+        -
+          at:
+            - 3
+            - 1
+          do:
+            id: ttd.bookmark_add
+            kind: action
+          face:
+            glyph: ttd.bookmark_add
+            label: MARK
+          id: bmadd
+          tags:
+            - uc:D3.7
+          title: "Add a bookmark"
+          type: action
+        -
+          at:
+            - 3
+            - 2
+          do:
+            id: ttd.bookmark_next
+            kind: action
+          face:
+            glyph: ttd.bookmark_next
+            label: "MARK >"
+          id: bmnext
+          tags:
+            - uc:D3.7
+          title: "Next bookmark"
+          type: action
+        -
+          at:
+            - 3
+            - 3
+          do:
+            id: ttd.bookmarks
+            kind: action
+          face:
+            glyph: ttd.bookmark
+            label: MARKS
+          id: bmlist
+          tags:
+            - uc:D3.7
+          title: Bookmarks
+          type: action
+        -
+          at:
+            - 3
+            - 5
+          do:
+            id: ttd.find_last_write
+            kind: action
+          face:
+            glyph: ttd.find_last_write
+            label: WRITE
+          id: lastw
+          tags:
+            - uc:D5.1
+          title: "Last write here"
+          type: action
+        -
+          at:
+            - 3
+            - 6
+          do:
+            id: ttd.find_last
+            kind: action
+            value:
+              access: read
+          face:
+            glyph: ttd.find_last
+            label: READ
+          id: lastr
+          tags:
+            - uc:D5.1
+          title: "Last access here"
+          type: action
+        -
+          at:
+            - 3
+            - 7
+          do:
+            id: ttd.find_last
+            kind: action
+            value:
+              access: execute
+          face:
+            glyph: ttd.find_last
+            label: EXEC
+          id: laste
+          tags:
+            - uc:D5.1
+          title: "Last access here"
+          type: action
+        -
+          at:
+            - 3
+            - 8
+          do:
+            id: ttd.record_toggle
+            kind: action
+          face:
+            glyph: ttd.record
+            label: "TTD REC"
+          face_on:
+            glyph: ttd.record.on
+            label: "TTD REC"
+          id: timttdrec
+          state: toggle.ttd.record_toggle
+          tags:
+            - uc:C7.1
+          title: "Start / stop recording"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+        dials: own
+      strip:
+        content: title
+        status: ttd
+        target: true
+      tags:
+        - uc:D1
+        - uc:D3
+        - dial.0.uc:D3.3
+        - dial.1.uc:D3.2
+        - dial.2.uc:D2.4
+        - dial.3.uc:D2.5
+        - dial.4.uc:D1.1
+      title: Time
+      type: menu
+    -
+      at:
+        - 3
+        - 3
+      do:
+        id: ttd.unit_back
+        kind: action
+        value:
+          count: 5
+          unit: seconds
+      face:
+        glyph: ttd.unit_back
+        label: -5S
+      id: back5
+      tags:
+        - uc:U2.2
+      title: "Back one unit"
+      type: action
+    -
+      at:
+        - 3
+        - 4
+      do:
+        id: ttd.resume_live
+        kind: action
+      face:
+        glyph: ttd.resume_live
+        label: LIVE
+      id: live
+      tags:
+        - uc:U2.3
+        - uc:D3.6
+      title: "Resume live"
+      type: action
+    -
+      at:
+        - 3
+        - 5
+      do:
+        id: ttd.record_toggle
+        kind: action
+      face:
+        glyph: ttd.record
+        label: "TTD REC"
+      face_on:
+        glyph: ttd.record.on
+        label: "TTD REC"
+      id: ttdrec
+      state: toggle.ttd.record_toggle
+      tags:
+        - uc:C7.1
+      title: "Start / stop recording"
+      type: action
+    -
+      at:
+        - 3
+        - 6
+      do:
+        id: ttd.bookmark_add
+        kind: action
+      face:
+        glyph: ttd.bookmark_add
+        label: MARK
+      id: mark
+      tags:
+        - uc:D3.7
+      title: "Add a bookmark"
+      type: action
+    -
+      at:
+        - 3
         - 8
       face:
         glyph: analyzer.toggle.on
@@ -4294,2051 +5933,6 @@ root:
         - uc:C10
       title: Monitoring
       type: menu
-    -
-      at:
-        - 2
-        - 0
-      do:
-        id: ttd.unit_back
-        kind: action
-        value:
-          count: 5
-          unit: seconds
-      face:
-        glyph: ttd.unit_back
-        label: -5S
-      id: back5
-      tags:
-        - uc:U2.2
-      title: "Back one unit"
-      type: action
-    -
-      at:
-        - 2
-        - 1
-      do:
-        id: ttd.resume_live
-        kind: action
-      face:
-        glyph: ttd.resume_live
-        label: LIVE
-      id: live
-      tags:
-        - uc:U2.3
-        - uc:D3.6
-      title: "Resume live"
-      type: action
-    -
-      at:
-        - 2
-        - 2
-      do:
-        id: ttd.record_toggle
-        kind: action
-      face:
-        glyph: ttd.record
-        label: "TTD REC"
-      face_on:
-        glyph: ttd.record.on
-      id: ttdrec
-      state: toggle.ttd.record_toggle
-      tags:
-        - uc:C7.1
-      title: "Start / stop recording"
-      type: action
-    -
-      at:
-        - 2
-        - 3
-      do:
-        id: ttd.bookmark_add
-        kind: action
-      face:
-        glyph: ttd.bookmark_add
-        label: MARK
-      id: mark
-      tags:
-        - uc:D3.7
-      title: "Add a bookmark"
-      type: action
-    -
-      at:
-        - 2
-        - 4
-      context: play
-      face:
-        glyph: input.joystick
-        label: GAME
-      id: game
-      items:
-        -
-          at:
-            - 0
-            - 1
-          do:
-            id: input.joystick_type
-            kind: action
-            value:
-              kind: kempston
-          face:
-            glyph: input.joystick_type
-            label: KEMP
-          id: kemp
-          tags:
-            - uc:U1.3
-          title: "Joystick type"
-          type: action
-        -
-          at:
-            - 0
-            - 2
-          do:
-            id: input.joystick_type
-            kind: action
-            value:
-              kind: sinclair1
-          face:
-            glyph: input.joystick_type
-            label: SINC1
-          id: sinc1
-          tags:
-            - uc:U1.3
-          title: "Joystick type"
-          type: action
-        -
-          at:
-            - 0
-            - 3
-          do:
-            id: input.joystick_type
-            kind: action
-            value:
-              kind: sinclair2
-          face:
-            glyph: input.joystick_type
-            label: SINC2
-          id: sinc2
-          tags:
-            - uc:U1.3
-          title: "Joystick type"
-          type: action
-        -
-          at:
-            - 0
-            - 4
-          do:
-            id: input.joystick_type
-            kind: action
-            value:
-              kind: cursor
-          face:
-            glyph: input.joystick_type
-            label: CURSOR
-          id: cursor
-          tags:
-            - uc:U1.3
-          title: "Joystick type"
-          type: action
-        -
-          at:
-            - 0
-            - 5
-          do:
-            id: feature.toggle
-            kind: action
-            value:
-              name: kempstonmouse
-          face:
-            glyph: settings.toggle
-            label: MOUSE
-          face_on:
-            glyph: settings.toggle.on
-          id: mouse
-          state: toggle.feature.kempstonmouse
-          tags:
-            - uc:U1.5
-          title: "Toggle a feature"
-          type: action
-        -
-          at:
-            - 0
-            - 6
-          face:
-            label: JOYSTICK
-            value:
-              format: "{}"
-              readout: input.connectors.connectors.0.kind
-          id: joynow
-          tags:
-            - uc:U1.3
-          title: joynow
-          type: action
-        -
-          at:
-            - 0
-            - 8
-          do:
-            id: input.release_all
-            kind: action
-          face:
-            glyph: input.release_all
-            label: RELEASE
-          id: release
-          tags:
-            - uc:U1.4
-          title: "Release all keys and buttons"
-          type: action
-        -
-          at:
-            - 1
-            - 0
-          do:
-            hold: true
-            id: input.key
-            kind: action
-            value:
-              hold: true
-              key: space
-          face:
-            glyph: input.key
-            label: SPACE
-          id: space
-          tags:
-            - uc:U1.4
-          title: Key
-          type: action
-        -
-          at:
-            - 1
-            - 1
-          do:
-            hold: true
-            id: input.key
-            kind: action
-            value:
-              hold: true
-              key: enter
-          face:
-            glyph: input.key
-            label: ENTER
-          id: enter
-          tags:
-            - uc:U1.4
-          title: Key
-          type: action
-        -
-          at:
-            - 1
-            - 2
-          do:
-            hold: true
-            id: input.key
-            kind: action
-            value:
-              hold: true
-              key: caps+space
-          face:
-            glyph: input.key
-            label: BREAK
-          id: brk
-          tags:
-            - uc:U1.4
-          title: Key
-          type: action
-        -
-          at:
-            - 1
-            - 6
-          do:
-            hold: true
-            id: input.joystick
-            kind: action
-            value:
-              buttons: up
-              hold: true
-          face:
-            glyph: input.joy.up
-            label: UP
-          id: up
-          tags:
-            - uc:U1.2
-          title: Joystick
-          type: action
-        -
-          at:
-            - 1
-            - 8
-          do:
-            hold: true
-            id: input.joystick
-            kind: action
-            value:
-              buttons: fire
-              hold: true
-          face:
-            glyph: input.joy.fire
-            label: FIRE
-          id: fire
-          tags:
-            - uc:U1.2
-          title: Joystick
-          type: action
-        -
-          at:
-            - 2
-            - 0
-          do:
-            hold: true
-            id: input.key
-            kind: action
-            value:
-              hold: true
-              key: y
-          face:
-            glyph: input.key
-            label: Y
-          id: keyy
-          tags:
-            - uc:U1.4
-          title: Key
-          type: action
-        -
-          at:
-            - 2
-            - 1
-          do:
-            hold: true
-            id: input.key
-            kind: action
-            value:
-              hold: true
-              key: n
-          face:
-            glyph: input.key
-            label: N
-          id: keyn
-          tags:
-            - uc:U1.4
-          title: Key
-          type: action
-        -
-          at:
-            - 2
-            - 5
-          do:
-            hold: true
-            id: input.joystick
-            kind: action
-            value:
-              buttons: left
-              hold: true
-          face:
-            glyph: input.joy.left
-            label: LEFT
-          id: left
-          tags:
-            - uc:U1.2
-          title: Joystick
-          type: action
-        -
-          at:
-            - 2
-            - 6
-          do:
-            hold: true
-            id: input.joystick
-            kind: action
-            value:
-              buttons: down
-              hold: true
-          face:
-            glyph: input.joy.down
-            label: DOWN
-          id: down
-          tags:
-            - uc:U1.2
-          title: Joystick
-          type: action
-        -
-          at:
-            - 2
-            - 7
-          do:
-            hold: true
-            id: input.joystick
-            kind: action
-            value:
-              buttons: right
-              hold: true
-          face:
-            glyph: input.joy.right
-            label: RIGHT
-          id: right
-          tags:
-            - uc:U1.2
-          title: Joystick
-          type: action
-        -
-          at:
-            - 3
-            - 0
-          do:
-            hold: true
-            id: input.key
-            kind: action
-            value:
-              hold: true
-              key: "1"
-          face:
-            glyph: input.key
-            label: "1"
-          id: k1
-          tags:
-            - uc:U1.4
-          title: Key
-          type: action
-        -
-          at:
-            - 3
-            - 1
-          do:
-            hold: true
-            id: input.key
-            kind: action
-            value:
-              hold: true
-              key: "2"
-          face:
-            glyph: input.key
-            label: "2"
-          id: k2
-          tags:
-            - uc:U1.4
-          title: Key
-          type: action
-        -
-          at:
-            - 3
-            - 2
-          do:
-            hold: true
-            id: input.key
-            kind: action
-            value:
-              hold: true
-              key: "3"
-          face:
-            glyph: input.key
-            label: "3"
-          id: k3
-          tags:
-            - uc:U1.4
-          title: Key
-          type: action
-        -
-          at:
-            - 3
-            - 3
-          do:
-            hold: true
-            id: input.key
-            kind: action
-            value:
-              hold: true
-              key: "4"
-          face:
-            glyph: input.key
-            label: "4"
-          id: k4
-          tags:
-            - uc:U1.4
-          title: Key
-          type: action
-        -
-          at:
-            - 3
-            - 7
-          do:
-            id: ttd.unit_back
-            kind: action
-            value:
-              count: 5
-              unit: seconds
-          face:
-            glyph: ttd.unit_back
-            label: -5S
-          id: gamback5
-          tags:
-            - uc:U2.2
-          title: "Back one unit"
-          type: action
-        -
-          at:
-            - 3
-            - 8
-          do:
-            id: snapshot.quick
-            kind: action
-            value:
-              op: load
-              slot: 1
-          face:
-            glyph: snapshot.quick_load
-            label: L1
-          id: gamqload
-          tags:
-            - uc:U2.4
-          title: "Quick snapshot"
-          type: action
-      nav:
-        back:
-          - 0
-          - 0
-      tags:
-        - uc:U1
-      title: Game
-      type: menu
-    -
-      at:
-        - 2
-        - 5
-      face:
-        glyph: basic.menu
-        label: BASIC
-      id: basic
-      items:
-        -
-          at:
-            - 0
-            - 1
-          do:
-            id: basic.mode
-            kind: action
-            value:
-              mode: 48k
-          face:
-            glyph: basic.mode.48
-            label: 48K
-          id: b48
-          tags:
-            - uc:U4.1
-          title: "BASIC mode from the 128K menu"
-          type: action
-        -
-          at:
-            - 0
-            - 2
-          do:
-            id: basic.mode
-            kind: action
-            value:
-              mode: 128k
-          face:
-            glyph: basic.mode.128
-            label: 128K
-          id: b128
-          tags:
-            - uc:U4.1
-          title: "BASIC mode from the 128K menu"
-          type: action
-        -
-          at:
-            - 1
-            - 0
-          do:
-            id: basic.run
-            kind: action
-          face:
-            glyph: basic.run
-            label: RUN
-          id: run
-          tags:
-            - uc:U4.2
-          title: "Run a BASIC command"
-          type: action
-        -
-          at:
-            - 1
-            - 1
-          do:
-            id: basic.run
-            kind: action
-            value:
-              command: "LOAD \"\""
-          face:
-            glyph: media.tape.load
-            label: LOAD
-          id: load
-          tags:
-            - uc:U4.2
-          title: "Run a BASIC command"
-          type: action
-        -
-          at:
-            - 1
-            - 2
-          do:
-            id: basic.clear
-            kind: action
-          face:
-            glyph: basic.clear
-            label: NEW
-          id: new
-          tags:
-            - uc:U4.2
-          title: "NEW (clear the program)"
-          type: action
-        -
-          at:
-            - 2
-            - 0
-          do:
-            id: input.macro
-            kind: action
-            value:
-              name: cat
-          face:
-            glyph: input.macro
-            label: CAT
-          id: cat
-          tags:
-            - uc:U4.3
-          title: "Key macro"
-          type: action
-        -
-          at:
-            - 2
-            - 1
-          do:
-            id: input.macro
-            kind: action
-            value:
-              name: format
-          face:
-            glyph: input.macro
-            label: FORMAT
-          id: format
-          tags:
-            - uc:U4.3
-          title: "Key macro"
-          type: action
-        -
-          at:
-            - 2
-            - 2
-          do:
-            id: input.macro
-            kind: action
-            value:
-              name: erase
-          face:
-            glyph: input.macro
-            label: ERASE
-          id: erase
-          tags:
-            - uc:U4.3
-          title: "Key macro"
-          type: action
-        -
-          at:
-            - 2
-            - 3
-          do:
-            id: input.macro
-            kind: action
-            value:
-              name: move
-          face:
-            glyph: input.macro
-            label: MOVE
-          id: move
-          tags:
-            - uc:U4.3
-          title: "Key macro"
-          type: action
-        -
-          at:
-            - 2
-            - 5
-          do:
-            id: input.macro
-            kind: action
-            value:
-              name: e_mode
-          face:
-            glyph: input.macro
-            label: E
-          id: emode
-          tags:
-            - uc:U4.3
-          title: "Key macro"
-          type: action
-        -
-          at:
-            - 2
-            - 6
-          do:
-            id: input.macro
-            kind: action
-            value:
-              name: g_mode
-          face:
-            glyph: input.macro
-            label: G
-          id: gmode
-          tags:
-            - uc:U4.3
-          title: "Key macro"
-          type: action
-        -
-          at:
-            - 2
-            - 8
-          do:
-            id: input.macro
-            kind: action
-            value:
-              name: break
-          face:
-            glyph: input.macro
-            label: BREAK
-          id: basbrk
-          tags:
-            - uc:U4.3
-          title: "Key macro"
-          type: action
-        -
-          at:
-            - 3
-            - 0
-          do:
-            id: set.toggle
-            kind: action
-            value:
-              name: trdos_traps
-          face:
-            glyph: settings.toggle
-            label: TRAPS
-          face_on:
-            glyph: settings.toggle.on
-          id: traps
-          state: toggle.set.toggle.trdos_traps
-          tags:
-            - uc:U4.4
-          title: "Toggle a setting"
-          type: action
-      nav:
-        back:
-          - 0
-          - 0
-      tags:
-        - uc:U4
-      title: BASIC
-      type: menu
-    -
-      at:
-        - 2
-        - 6
-      do:
-        id: media.tape
-        kind: action
-        value:
-          op: toggle
-      face:
-        glyph: media.tape.play
-        label: TAPE
-        value:
-          format: "{block}/{blocks}"
-          readout: media.tape
-      id: tape
-      tags:
-        - uc:C4.2
-      title: Tape
-      type: action
-    -
-      at:
-        - 2
-        - 7
-      do:
-        id: media.open_recent
-        kind: action
-        value:
-          index: 0
-      face:
-        glyph: media.open_recent
-        label: "LAST FILE"
-      id: recent
-      tags:
-        - uc:C4.3
-      title: "Open a recent file"
-      type: action
-    -
-      at:
-        - 2
-        - 8
-      do:
-        id: view.fullscreen
-        kind: action
-      face:
-        glyph: view.fullscreen
-      face_on:
-        glyph: view.fullscreen.on
-      id: full
-      state: toggle.view.fullscreen
-      tags:
-        - uc:C9.1
-      title: "Full screen"
-      type: action
-    -
-      at:
-        - 3
-        - 0
-      do:
-        id: run.step_in
-        kind: action
-      face:
-        glyph: run.step_in
-        label: "STEP IN"
-      id: stepin
-      tags:
-        - uc:D2.1
-      title: "Step in"
-      type: action
-    -
-      at:
-        - 3
-        - 1
-      do:
-        id: run.step_over
-        kind: action
-      face:
-        glyph: run.step_over
-        label: "STEP OVER"
-      id: stepovr
-      tags:
-        - uc:D2.1
-      title: "Step over"
-      type: action
-    -
-      at:
-        - 3
-        - 2
-      do:
-        id: run.step_out
-        kind: action
-      face:
-        glyph: run.step_out
-        label: "STEP OUT"
-      id: stepout
-      tags:
-        - uc:D2.1
-      title: "Step out"
-      type: action
-    -
-      at:
-        - 3
-        - 3
-      do:
-        id: run.frame_step
-        kind: action
-      face:
-        glyph: run.frame_step
-        label: FRAME
-      id: frame
-      tags:
-        - uc:D2.3
-      title: "Frame step"
-      type: action
-    -
-      at:
-        - 3
-        - 4
-      do:
-        id: dbg.breakpoint_toggle_pc
-        kind: action
-      face:
-        glyph: dbg.breakpoint_toggle_pc
-        label: "BP PC"
-      id: bppc
-      tags:
-        - uc:D4.1
-      title: "Toggle a breakpoint at PC"
-      type: action
-    -
-      at:
-        - 3
-        - 5
-      do:
-        id: dbg.breakpoints_clear
-        kind: action
-      face:
-        glyph: dbg.breakpoints_clear
-        label: "CLEAR BP"
-      id: bpclr
-      tags:
-        - uc:D4.3
-      title: "Clear breakpoints"
-      type: action
-    -
-      at:
-        - 3
-        - 6
-      do:
-        id: dbg.open
-        kind: action
-      face:
-        glyph: debug.menu
-        label: DEBUGGER
-      id: dbgopen
-      tags:
-        - uc:D6.1
-      title: "Open the debugger"
-      type: action
-    -
-      at:
-        - 3
-        - 7
-      dials:
-        -
-          index: 0
-          label: FRAMES
-          press:
-            id: run.pause_toggle
-            kind: action
-          turn:
-            id: ttd.jog_frames
-            kind: action
-            value:
-              d: $ticks
-        -
-          index: 1
-          label: SCRUB
-          press:
-            id: run.pause_toggle
-            kind: action
-          turn:
-            id: ttd.seek_by
-            kind: action
-            value:
-              d: $ticks
-              rate: $rate
-        -
-          index: 2
-          label: LINES
-          press:
-            id: run.to_pixel
-            kind: action
-          turn:
-            id: run.step_by
-            kind: action
-            value:
-              d: $ticks
-              unit: scanlines
-        -
-          index: 3
-          label: T-STATES
-          press:
-            id: run.wait_int
-            kind: action
-          turn:
-            id: run.step_by
-            kind: action
-            value:
-              d: $ticks
-              unit: tstates
-        -
-          index: 4
-          label: PACE
-          press:
-            id: run.pace_toggle
-            kind: action
-          turn:
-            id: run.pace_by
-            kind: action
-            value:
-              d: $ticks
-      face:
-        glyph: ttd.menu
-        label: TIME
-      id: time
-      items:
-        -
-          at:
-            - 0
-            - 1
-          do:
-            id: run.pace_set
-            kind: action
-            value:
-              preset: 25fps
-          face:
-            glyph: run.pace
-            label: 25FPS
-          id: p25
-          tags:
-            - uc:D1.1
-          title: Pace
-          type: action
-        -
-          at:
-            - 0
-            - 2
-          do:
-            id: run.pace_set
-            kind: action
-            value:
-              preset: 5fps
-          face:
-            glyph: run.pace
-            label: 5FPS
-          id: p5
-          tags:
-            - uc:D1.1
-          title: Pace
-          type: action
-        -
-          at:
-            - 0
-            - 3
-          do:
-            id: run.pace_set
-            kind: action
-            value:
-              preset: 1fps
-          face:
-            glyph: run.pace
-            label: 1FPS
-          id: p1
-          tags:
-            - uc:D1.1
-          title: Pace
-          type: action
-        -
-          at:
-            - 0
-            - 4
-          do:
-            id: run.pace_set
-            kind: action
-            value:
-              preset: 1line
-          face:
-            glyph: run.pace
-            label: LINE
-          id: pline
-          tags:
-            - uc:D1.1
-          title: Pace
-          type: action
-        -
-          at:
-            - 0
-            - 5
-          do:
-            id: run.pace_set
-            kind: action
-            value:
-              preset: 1op
-          face:
-            glyph: run.pace
-            label: OP
-          id: pop
-          tags:
-            - uc:D1.1
-          title: Pace
-          type: action
-        -
-          at:
-            - 0
-            - 6
-          do:
-            id: run.pace_step
-            kind: action
-          face:
-            glyph: run.pace_step
-            label: PACE
-            value:
-              format: "{}"
-              readout: run.state.pace.label
-          id: pstep
-          tags:
-            - uc:D1.2
-          title: "One step at the pace"
-          type: action
-        -
-          at:
-            - 0
-            - 7
-          do:
-            id: run.pace_stop
-            kind: action
-          face:
-            glyph: run.pace_stop
-            label: STOP
-          id: pstop
-          tags:
-            - uc:D1.2
-          title: "Stop the pace"
-          type: action
-        -
-          at:
-            - 0
-            - 8
-          do:
-            id: run.pace_set
-            kind: action
-            value:
-              preset: full
-          face:
-            glyph: run.pace
-            label: FULL
-          id: pfull
-          tags:
-            - uc:D1.1
-          title: Pace
-          type: action
-        -
-          at:
-            - 1
-            - 0
-          do:
-            id: ttd.seek_start
-            kind: action
-          face:
-            glyph: ttd.go_start
-          id: start
-          tags:
-            - uc:D3.4
-          title: "The history's start"
-          type: action
-        -
-          at:
-            - 1
-            - 1
-          do:
-            id: ttd.step_back_frame
-            kind: action
-          face:
-            glyph: ttd.step_back_frame
-            label: -FRAME
-          id: bframe
-          tags:
-            - uc:D3.3
-          title: "Back one frame"
-          type: action
-        -
-          at:
-            - 1
-            - 2
-          do:
-            id: ttd.step_back_scanline
-            kind: action
-          face:
-            glyph: ttd.step_back_scanline
-            label: -LINE
-          id: bline
-          tags:
-            - uc:D3.3
-          title: "Back one scanline"
-          type: action
-        -
-          at:
-            - 1
-            - 3
-          do:
-            id: ttd.step_back_instruction
-            kind: action
-          face:
-            glyph: ttd.step_back_instruction
-            label: -OP
-          id: bop
-          tags:
-            - uc:D3.3
-          title: "Back one instruction"
-          type: action
-        -
-          at:
-            - 1
-            - 5
-          do:
-            id: ttd.step_forward_instruction
-            kind: action
-          face:
-            glyph: ttd.step_forward_instruction
-            label: +OP
-          id: fop
-          tags:
-            - uc:D3.3
-          title: "Forward one instruction"
-          type: action
-        -
-          at:
-            - 1
-            - 6
-          do:
-            id: ttd.step_forward_scanline
-            kind: action
-          face:
-            glyph: ttd.step_forward_scanline
-            label: +LINE
-          id: fline
-          tags:
-            - uc:D3.3
-          title: "Forward one scanline"
-          type: action
-        -
-          at:
-            - 1
-            - 7
-          do:
-            id: ttd.step_forward_frame
-            kind: action
-          face:
-            glyph: ttd.step_forward_frame
-            label: +FRAME
-          id: fframe
-          tags:
-            - uc:D3.3
-          title: "Forward one frame"
-          type: action
-        -
-          at:
-            - 1
-            - 8
-          do:
-            id: ttd.seek_end
-            kind: action
-          face:
-            glyph: ttd.go_end
-          id: end
-          tags:
-            - uc:D3.4
-          title: "The history's end"
-          type: action
-        -
-          at:
-            - 2
-            - 0
-          do:
-            id: ttd.reverse_continue
-            kind: action
-          face:
-            glyph: ttd.reverse_continue
-            label: "REV RUN"
-          id: rcont
-          tags:
-            - uc:D3.5
-          title: "Reverse continue"
-          type: action
-        -
-          at:
-            - 2
-            - 1
-          do:
-            id: ttd.reverse_step
-            kind: action
-          face:
-            glyph: ttd.reverse_step
-            label: "REV STEP"
-          id: rstep
-          tags:
-            - uc:D3.5
-          title: "Reverse step"
-          type: action
-        -
-          at:
-            - 2
-            - 3
-          do:
-            id: ttd.unit_back
-            kind: action
-          face:
-            glyph: ttd.unit_back
-            label: BACK
-          id: uback
-          tags:
-            - uc:D3.3
-          title: "Back one unit"
-          type: action
-        -
-          at:
-            - 2
-            - 4
-          face:
-            label: FRAME
-            value:
-              format: "{}"
-              readout: ttd.position.current.frame
-          id: tframe
-          tags:
-            - uc:D3.2
-          title: tframe
-          type: action
-        -
-          at:
-            - 2
-            - 5
-          do:
-            id: ttd.unit_forward
-            kind: action
-          face:
-            glyph: ttd.unit_forward
-            label: FORWARD
-          id: ufwd
-          tags:
-            - uc:D3.3
-          title: "Forward one unit"
-          type: action
-        -
-          at:
-            - 2
-            - 8
-          do:
-            id: ttd.resume_live
-            kind: action
-          face:
-            glyph: ttd.resume_live
-            label: LIVE
-          id: timlive
-          tags:
-            - uc:D3.6
-          title: "Resume live"
-          type: action
-        -
-          at:
-            - 3
-            - 0
-          do:
-            id: ttd.bookmark_prev
-            kind: action
-          face:
-            glyph: ttd.bookmark_prev
-            label: "MARK <"
-          id: bmprev
-          tags:
-            - uc:D3.7
-          title: "Previous bookmark"
-          type: action
-        -
-          at:
-            - 3
-            - 1
-          do:
-            id: ttd.bookmark_add
-            kind: action
-          face:
-            glyph: ttd.bookmark_add
-            label: MARK
-          id: bmadd
-          tags:
-            - uc:D3.7
-          title: "Add a bookmark"
-          type: action
-        -
-          at:
-            - 3
-            - 2
-          do:
-            id: ttd.bookmark_next
-            kind: action
-          face:
-            glyph: ttd.bookmark_next
-            label: "MARK >"
-          id: bmnext
-          tags:
-            - uc:D3.7
-          title: "Next bookmark"
-          type: action
-        -
-          at:
-            - 3
-            - 3
-          do:
-            id: ttd.bookmarks
-            kind: action
-          face:
-            glyph: ttd.bookmark
-            label: MARKS
-          id: bmlist
-          tags:
-            - uc:D3.7
-          title: Bookmarks
-          type: action
-        -
-          at:
-            - 3
-            - 5
-          do:
-            id: ttd.find_last_write
-            kind: action
-          face:
-            glyph: ttd.find_last_write
-            label: WRITE
-          id: lastw
-          tags:
-            - uc:D5.1
-          title: "Last write here"
-          type: action
-        -
-          at:
-            - 3
-            - 6
-          do:
-            id: ttd.find_last
-            kind: action
-            value:
-              access: read
-          face:
-            glyph: ttd.find_last
-            label: READ
-          id: lastr
-          tags:
-            - uc:D5.1
-          title: "Last access here"
-          type: action
-        -
-          at:
-            - 3
-            - 7
-          do:
-            id: ttd.find_last
-            kind: action
-            value:
-              access: execute
-          face:
-            glyph: ttd.find_last
-            label: EXEC
-          id: laste
-          tags:
-            - uc:D5.1
-          title: "Last access here"
-          type: action
-        -
-          at:
-            - 3
-            - 8
-          do:
-            id: ttd.record_toggle
-            kind: action
-          face:
-            glyph: ttd.record
-            label: "TTD REC"
-          face_on:
-            glyph: ttd.record.on
-          id: timttdrec
-          state: toggle.ttd.record_toggle
-          tags:
-            - uc:C7.1
-          title: "Start / stop recording"
-          type: action
-      nav:
-        back:
-          - 0
-          - 0
-        dials: own
-      strip:
-        content: title
-        status: ttd
-        target: true
-      tags:
-        - uc:D1
-        - uc:D3
-        - dial.0.uc:D3.3
-        - dial.1.uc:D3.2
-        - dial.2.uc:D2.4
-        - dial.3.uc:D2.5
-        - dial.4.uc:D1.1
-      title: Time
-      type: menu
-    -
-      at:
-        - 3
-        - 8
-      context: debug
-      dials:
-        -
-          index: 0
-          label: STEP
-          press:
-            id: run.step_in
-            kind: action
-          turn:
-            id: run.step_by
-            kind: action
-            value:
-              d: $ticks
-              unit: instructions
-        -
-          index: 1
-          label: FRAMES
-          press:
-            id: run.frame_step
-            kind: action
-          turn:
-            id: run.step_by
-            kind: action
-            value:
-              d: $ticks
-              unit: frames
-      face:
-        glyph: dbg.mode
-        label: DEBUG
-      id: debug
-      items:
-        -
-          at:
-            - 0
-            - 1
-          do:
-            id: run.step_in
-            kind: action
-          face:
-            glyph: run.step_in
-            label: "STEP IN"
-          id: debstepin
-          tags:
-            - uc:D2.1
-          title: "Step in"
-          type: action
-        -
-          at:
-            - 0
-            - 2
-          do:
-            id: run.step_over
-            kind: action
-          face:
-            glyph: run.step_over
-            label: "STEP OVER"
-          id: debstepovr
-          tags:
-            - uc:D2.1
-          title: "Step over"
-          type: action
-        -
-          at:
-            - 0
-            - 3
-          do:
-            id: run.step_out
-            kind: action
-          face:
-            glyph: run.step_out
-            label: "STEP OUT"
-          id: debstepout
-          tags:
-            - uc:D2.1
-          title: "Step out"
-          type: action
-        -
-          at:
-            - 0
-            - 4
-          do:
-            id: run.to_cursor
-            kind: action
-          face:
-            glyph: run.to_cursor
-            label: "TO CURSOR"
-          id: debcursor
-          tags:
-            - uc:D2.6
-          title: "Run to the cursor"
-          type: action
-        -
-          at:
-            - 0
-            - 5
-          do:
-            id: run.wait_int
-            kind: action
-          face:
-            glyph: run.wait_int
-            label: "TO INT"
-          id: int
-          tags:
-            - uc:D2.3
-          title: "Run to interrupt"
-          type: action
-        -
-          at:
-            - 0
-            - 6
-          do:
-            id: run.frame_step
-            kind: action
-          face:
-            glyph: run.frame_step
-            label: FRAME
-          id: debframe
-          tags:
-            - uc:D2.3
-          title: "Frame step"
-          type: action
-        -
-          at:
-            - 0
-            - 7
-          do:
-            id: run.step_line
-            kind: action
-          face:
-            glyph: run.step_line
-            label: LINE
-          id: line
-          tags:
-            - uc:D2.7
-          title: "Step a source line"
-          type: action
-        -
-          at:
-            - 0
-            - 8
-          do:
-            id: run.to_pixel
-            kind: action
-          face:
-            glyph: run.to_pixel
-            label: "TO PIXEL"
-          id: pixel
-          tags:
-            - uc:D2.4
-          title: "Run to the first paper pixel"
-          type: action
-        -
-          at:
-            - 1
-            - 0
-          do:
-            id: dbg.breakpoint_toggle_pc
-            kind: action
-          face:
-            glyph: dbg.breakpoint_toggle_pc
-            label: "BP PC"
-          id: debbppc
-          tags:
-            - uc:D4.1
-          title: "Toggle a breakpoint at PC"
-          type: action
-        -
-          at:
-            - 1
-            - 1
-          do:
-            id: dbg.breakpoint_toggle_cursor
-            kind: action
-          face:
-            glyph: dbg.breakpoint_toggle_cursor
-            label: "BP CUR"
-          id: bpcur
-          tags:
-            - uc:D4.1
-          title: "Toggle a breakpoint at the cursor"
-          type: action
-        -
-          at:
-            - 1
-            - 2
-          do:
-            id: dbg.bp_add
-            kind: action
-            value:
-              kind: out
-              preset: fe
-          face:
-            glyph: dbg.bp_add
-            label: "OUT FE"
-          id: bpfe
-          tags:
-            - uc:D4.2
-          title: "Add a breakpoint"
-          type: action
-        -
-          at:
-            - 1
-            - 3
-          do:
-            id: dbg.bp_add
-            kind: action
-            value:
-              kind: out
-              preset: 7ffd
-          face:
-            glyph: dbg.bp_add
-            label: 7FFD
-          id: bp7ffd
-          tags:
-            - uc:D4.2
-          title: "Add a breakpoint"
-          type: action
-        -
-          at:
-            - 1
-            - 4
-          do:
-            id: dbg.bp_toggle
-            kind: action
-          face:
-            glyph: dbg.bp_toggle
-            label: "BPS ON"
-          id: bpall
-          tags:
-            - uc:D4.3
-          title: "Toggle breakpoints"
-          type: action
-        -
-          at:
-            - 1
-            - 5
-          do:
-            id: dbg.breakpoints_clear
-            kind: action
-          face:
-            glyph: dbg.breakpoints_clear
-            label: "CLEAR BP"
-          id: debbpclear
-          tags:
-            - uc:D4.3
-          title: "Clear breakpoints"
-          type: action
-        -
-          at:
-            - 1
-            - 6
-          do:
-            id: dbg.breakpoint_hits_reset
-            kind: action
-          face:
-            glyph: dbg.breakpoint_hits_reset
-            label: "HITS 0"
-          id: debbphits
-          tags:
-            - uc:D4.3
-          title: "Reset hit counts"
-          type: action
-        -
-          at:
-            - 1
-            - 8
-          do:
-            id: dbg.mode_toggle
-            kind: action
-          face:
-            glyph: dbg.mode
-            label: "DEBUG MODE"
-          face_on:
-            glyph: dbg.mode.on
-          id: debdbgmode
-          state: debug.mode.enabled
-          tags:
-            - uc:D4.4
-          title: "Debug mode"
-          type: action
-        -
-          at:
-            - 2
-            - 0
-          do:
-            id: dbg.open
-            kind: action
-          face:
-            glyph: debug.menu
-            label: "SHOW DEBUG"
-          id: open
-          tags:
-            - uc:D6.1
-          title: "Open the debugger"
-          type: action
-        -
-          at:
-            - 2
-            - 1
-          do:
-            id: dbg.focus_prev_pane
-            kind: action
-          face:
-            glyph: dbg.focus_prev_pane
-            label: "PANE <"
-          id: pprev
-          tags:
-            - uc:D6.1
-          title: "Previous debugger pane"
-          type: action
-        -
-          at:
-            - 2
-            - 2
-          do:
-            id: dbg.focus_next_pane
-            kind: action
-          face:
-            glyph: dbg.focus_next_pane
-            label: "PANE >"
-          id: pnext
-          tags:
-            - uc:D6.1
-          title: "Next debugger pane"
-          type: action
-        -
-          at:
-            - 2
-            - 3
-          do:
-            hold: true
-            id: dbg.page_up
-            kind: action
-          face:
-            glyph: dbg.page_up
-          id: pgup
-          tags:
-            - uc:D6.2
-          title: "Page up in the pane"
-          type: action
-        -
-          at:
-            - 2
-            - 4
-          do:
-            hold: true
-            id: dbg.cursor_up
-            kind: action
-          face:
-            glyph: dbg.cursor_up
-          id: cup
-          tags:
-            - uc:D6.2
-          title: "Cursor up in the pane"
-          type: action
-        -
-          at:
-            - 2
-            - 5
-          do:
-            hold: true
-            id: dbg.page_down
-            kind: action
-          face:
-            glyph: dbg.page_down
-          id: pgdn
-          tags:
-            - uc:D6.2
-          title: "Page down in the pane"
-          type: action
-        -
-          at:
-            - 2
-            - 6
-          do:
-            id: dbg.follow_pc
-            kind: action
-          face:
-            glyph: dbg.follow_pc
-            label: FOLLOW
-          id: follow
-          tags:
-            - uc:D6.4
-          title: "Disassembly follows PC"
-          type: action
-        -
-          at:
-            - 2
-            - 7
-          do:
-            hold: true
-            id: dbg.memory_follow
-            kind: action
-          face:
-            glyph: dbg.memory_follow
-            label: "MEM PC"
-          id: memf
-          tags:
-            - uc:D6.3
-          title: "Memory follows the value under the cursor"
-          type: action
-        -
-          at:
-            - 2
-            - 8
-          do:
-            id: dbg.labels_toggle
-            kind: action
-          face:
-            glyph: dbg.labels_toggle
-            label: LABELS
-          id: labels
-          tags:
-            - uc:D6.4
-          title: "Labels in the disassembly"
-          type: action
-        -
-          at:
-            - 3
-            - 0
-          do:
-            id: sym.import
-            kind: action
-            value:
-              path: $user/build/main.sym
-          face:
-            glyph: sym.import
-            label: "LOAD SYM"
-          id: symload
-          tags:
-            - uc:D8.2
-          title: "Load symbols"
-          type: action
-        -
-          at:
-            - 3
-            - 1
-          do:
-            id: sym.import_live
-            kind: action
-          face:
-            glyph: sym.import_live
-            label: "LIVE SYM"
-          id: symlive
-          tags:
-            - uc:D8.2
-          title: "Import an assembler's labels from RAM"
-          type: action
-        -
-          at:
-            - 3
-            - 2
-          do:
-            id: sym.export
-            kind: action
-            value:
-              path: $user/build/deck.sym
-          face:
-            glyph: sym.export
-            label: "SAVE SYM"
-          id: symsave
-          tags:
-            - uc:D8.2
-          title: "Save symbols"
-          type: action
-        -
-          at:
-            - 3
-            - 3
-          do:
-            hold: true
-            id: dbg.cursor_left
-            kind: action
-          face:
-            glyph: dbg.cursor_left
-          id: cleft
-          tags:
-            - uc:D6.2
-          title: "Cursor left in the pane"
-          type: action
-        -
-          at:
-            - 3
-            - 4
-          do:
-            hold: true
-            id: dbg.cursor_down
-            kind: action
-          face:
-            glyph: dbg.cursor_down
-          id: cdown
-          tags:
-            - uc:D6.2
-          title: "Cursor down in the pane"
-          type: action
-        -
-          at:
-            - 3
-            - 5
-          do:
-            hold: true
-            id: dbg.cursor_right
-            kind: action
-          face:
-            glyph: dbg.cursor_right
-          id: cright
-          tags:
-            - uc:D6.2
-          title: "Cursor right in the pane"
-          type: action
-        -
-          at:
-            - 3
-            - 6
-          do:
-            id: prof.toggle
-            kind: action
-            value:
-              name: opcode
-          face:
-            glyph: prof.toggle
-            label: "PROF OPS"
-          face_on:
-            glyph: prof.toggle.on
-          id: prof
-          state: toggle.profiler.opcode
-          tags:
-            - uc:D10.1
-          title: "Profiler / trace on / off"
-          type: action
-        -
-          at:
-            - 3
-            - 7
-          do:
-            id: prof.toggle
-            kind: action
-            value:
-              name: coverage
-          face:
-            glyph: prof.toggle
-            label: COVERAGE
-          face_on:
-            glyph: prof.toggle.on
-          id: cover
-          state: toggle.profiler.coverage
-          tags:
-            - uc:D10.1
-          title: "Profiler / trace on / off"
-          type: action
-        -
-          at:
-            - 3
-            - 8
-          do:
-            id: prof.toggle
-            kind: action
-            value:
-              name: calltrace
-          face:
-            glyph: prof.toggle
-            label: CALLS
-          face_on:
-            glyph: prof.toggle.on
-          id: trace
-          state: toggle.profiler.calltrace
-          tags:
-            - uc:D10.1
-          title: "Profiler / trace on / off"
-          type: action
-      nav:
-        back:
-          - 0
-          - 0
-        dials: own
-      tags:
-        - uc:D2
-        - uc:D4
-        - uc:D6
-        - uc:D8
-        - uc:D10
-        - dial.0.uc:D2.2
-        - dial.1.uc:D2.3
-      title: Debugger
-      type: menu
   nav:
     dials: own
   strip:
@@ -6351,7 +5945,6 @@ root:
     - dial.1.uc:D3.2
     - dial.2.uc:D3.3
     - dial.3.uc:D1.1
-    - dial.4.uc:D2.2
     - dial.5.uc:C8.2
   title: Home
   type: menu

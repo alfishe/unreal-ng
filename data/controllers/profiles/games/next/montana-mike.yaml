@@ -1,0 +1,55 @@
+# Montana Mike (ZX Spectrum Next, Software Amusements 2018). A 48K snapshot (MontanaMike.sna and MontanaMike.snx are the
+# same 49179 bytes, so one hash) that loads its modules from game/*.bin on the SD card: it needs NextZXOS (esxDOS), so
+# start it from the Browser with the card's games/montana folder. The game reads Q A O P + Space (Q jumps, A ducks, Space
+# fires) and a Kempston joystick; the five blue eggs are the goal, the hearts are the lives, 0 hearts is Game Over.
+# The lash is out while the hero's state byte #7D09 is 5 (about 20 frames), `whipOut` holds the drag that long.
+# The hero's direction is the byte #7D0A (2 = left, 3 = right, set by the walk keys and kept); the whip rules read it
+# at the frame `fire` happens, so the crack of the lash lands on the trigger of the side he faces.
+# Haptics (haptics.md §13 H5). Found with per-frame coverage, a counter hunt on the hearts byte #7D07 and the sound
+# routine #768F (the game plays an effect by CALLing it with the effect number in A; the callers are the event map).
+# The hero's module sits in the MMU window at #C000 (A = #10 given to #6C5B, 16K RAM page 8), the rest in page 5.
+# Checked by play on a NEXT (card + NextZXOS + Browser, real time): jump 5 taps = 5 `jump` and 5 `land`; fire 4 taps = 4
+# `fire`; idle 5 s, walking left / right 2 s each = nothing; the first level's hazards cost 3 hearts = 3 `hurt`, the
+# third one one `died` three frames later (screenshot: GAME OVER). Known limits: a hit knocks the hero up, so each `hurt`
+# is followed by a `jump` and a `land` (the game really jumps him); `land` also fires on a landing from a fall; a jump
+# against a wall or a low ceiling gives `land` without `jump`. Exec probes need the real-time run: the frame-stepped
+# run_frames API does not tell the probes. Left out: #659F (sound 4 every few steps while walking), #64C5 neighbours,
+# the enemy-kill sound sites of the level modules (#C5D6 etc., one copy per enemy slot and per level module, not played),
+# the hearts byte #7D07 as a write probe (it is 0 before the game initialises it, so `== 0` fires at boot).
+schema: 1
+kind: play
+id: builtin/game/montana-mike
+label: Montana Mike
+extends: [scheme/qaop-space]
+match:
+  machines: [NEXT]
+  file_sha256: ["0c71903f1a96bb949be50b97ca5a62989db3ede7256debb10b1f5af967855d2c"]
+layers:
+  play:
+    south:        { key: SPACE, label: Fire }
+    east:         { key: Q, label: Jump }
+    dpad.up:      { key: Q, label: Jump }
+    lstick.up:    { key: Q, label: Jump }
+    dpad.down:    { key: A, label: Duck }
+    lstick.down:  { key: A, label: Duck }
+events:
+  jump: { probe: exec, address: "page:8:0xC8EE" }
+  land: { probe: exec, address: "page:8:0xCA1F" }
+  fire: { probe: exec, address: "page:8:0xC119" }
+  hurt: { probe: write, address: "0x7D07", when: decreased }
+  hurtSpikes: { probe: exec, address: "0x64C5" }
+  hearts: { probe: value, address: "0x7D07" }
+  died: { probe: exec, address: "0x62E1" }
+  facing: { probe: value, address: "0x7D0A" }
+  whipOut: { probe: frame, address: "0x7D09", value: 5 }
+haptics:
+  rules:
+    - { on: jump, play: tick, target: handle.high }
+    - { on: land, play: knock, target: handle.low }
+    - { on: fire, play: whip-left, if: { source: facing, equals: 2 } }
+    - { on: fire, play: whip, if: { source: facing, equals: 3 } }
+    - { on: whipOut, play: whip-drag-left, if: { source: facing, equals: 2 } }
+    - { on: whipOut, play: whip-drag, if: { source: facing, equals: 3 } }
+    - { on: hurt, play: hit }
+    - { on: hurt, play: life-lost, if: { source: hearts, equals: 0 } }
+    - { on: died, play: life-lost }

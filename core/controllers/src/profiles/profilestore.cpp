@@ -503,6 +503,8 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
                 resolved.connectors[connector] = plan;
             if (!profile.players.empty())
                 resolved.players = profile.players;
+            if (!profile.joystickKeys.empty())
+                resolved.joystickKeys = profile.joystickKeys;
             if (profile.kind == ProfileKind::Play && !profile.haptics.IsNull())
             {
                 resolved.haptics = profile.haptics;
@@ -671,6 +673,8 @@ JsonValue ProfileStore::ToJson(const Profile& profile)
                 {{"device", JsonValue::String(pin.device)}, {"connector", JsonValue::String(pin.connector)}}));
         root.Set("players", JsonValue::Array(std::move(players)));
     }
+    if (!profile.joystickKeys.empty())
+        root.Set("joystick_keys", JsonValue::String(profile.joystickKeys));
     if (!profile.options.GetMembers().empty())
         root.Set("options", profile.options);
 

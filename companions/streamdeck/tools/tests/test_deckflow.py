@@ -264,6 +264,26 @@ class BuildTest(Base):
                     out[os.path.relpath(p, root)] = fh.read()
         return out
 
+    def test_screen_maps(self):
+        """build writes a map of every page above its `menu ID:` line (a cell per key, `>` opens a page, `<BACK`),
+        keeps one map per page however often it runs, and check says when a map no longer matches the keys"""
+        self.build()
+        text = read(self.paths.spec("fx"))
+        self.assertIn("# +-- screen home: ", text)
+        self.assertEqual(text.count("# +-- screen home: "), 1)
+        head = text.index("# +-- screen home: ")
+        self.assertLess(head, text.index("\nmenu home:"))
+        self.assertIn("NMI", text[head:text.index("\nmenu home:")])  # no label: the key's id
+        self.assertEqual(self.build()[0], [])  # the maps are up to date: nothing to write
+        with open(self.paths.spec("fx"), "w", encoding="utf-8") as f:
+            f.write(text.replace("action: mach.nmi}", "action: mach.nmi, label: MAGIC}", 1))
+        pipe = df.Pipeline(self.paths, self.vocab, log=lambda *_: None)
+        self.assertTrue([i for i in pipe.check("fx") if "screen maps" in str(i)])
+        self.build()
+        text = read(self.paths.spec("fx"))
+        self.assertEqual(text.count("# +-- screen home: "), 1)
+        self.assertIn("MAGIC", text[text.index("# +-- screen home: "):text.index("\nmenu home:")])
+
     def test_no_faces_rendered(self):
         self.build()
         for d, dirs, files in os.walk(self.tmp):
@@ -447,7 +467,8 @@ class SyncTest(Base):
         with self.assertRaises(df.Failed) as e:
             self.build()
         msg = str(e.exception)
-        self.assertIn("fx.spec.yaml:14: error: conflict: reset at: spec [0, 3], project", msg)
+        line = spec.split("\n").index(next(l for l in spec.split("\n") if l.lstrip().startswith("reset:"))) + 1
+        self.assertIn(f"fx.spec.yaml:{line}: error: conflict: reset at: spec [0, 3], project", msg)
         self.assertIn("[0, 4], last sync [0, 1]", msg)
         self.assertEqual((read(self.paths.spec("fx")), read(self.paths.project("fx")), read(self.paths.base("fx"))),
                          (spec, proj, base))  # nothing written
