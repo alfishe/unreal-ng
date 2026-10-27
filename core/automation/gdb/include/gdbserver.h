@@ -16,6 +16,7 @@ class GDBSession;
 class GDBPacketReader;
 class Emulator;
 class EmulatorContext;
+class BreakpointManager;
 
 /// @brief GDB RSP server managing TCP connections and client sessions
 ///
@@ -118,6 +119,9 @@ private:
     // Breakpoints
     std::string handleSetBreakpoint(const std::string& params);
     std::string handleRemoveBreakpoint(const std::string& params);
+    // Removes this session's Z0 / Z1 breakpoint at the address (when another owner's was adopted, only the record);
+    // false when the session set none there
+    bool forgetExecutionBreakpoint(BreakpointManager& breakpoints, uint16_t address);
 
     // Execution control
     std::string handleContinue();
@@ -150,6 +154,10 @@ private:
 
     std::string _attachedInstanceId;
     std::unique_ptr<GDBPacketReader> _reader;
+
+    // This session's execution breakpoints (Z0 / Z1) by address: a conditional one has no address key in the
+    // manager, and a repeated Z0 replaces the conditions
+    std::unordered_map<uint16_t, uint16_t> _executionBreakpoints;
 
     // Attached emulator
     std::shared_ptr<Emulator> _emulator;

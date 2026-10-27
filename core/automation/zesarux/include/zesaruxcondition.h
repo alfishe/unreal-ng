@@ -19,7 +19,7 @@
 //   factor  := number | name | func(factor) | ( expr ) | - factor | + factor
 //   number  := hexDigits[h|H] | 0x hexDigits | decimal
 //   name    : PC SP AF BC DE HL IX IY AF' BC' HL' DE' I R IM A F B C D E H L
-//             IXH IXL IYH IYL ROM RAM
+//             IXH IXL IYH IYL ROM RAM (any case)
 //   func    : PEEK(expr) PEEKB(expr) PEEKW(expr)
 //
 // ROM evaluates to the ROM index visible at the breakpoint address (0/1) or
@@ -55,6 +55,13 @@ public:
     static bool evaluate(const std::string& condition, const ConditionContext& ctx,
                          std::string* errorOut = nullptr);
 };
+
+// Writes the condition in the core breakpoint-condition language (breakpointcondition.h, every operation in
+// brackets) so the core skips the false hits without stopping the machine. The evaluator above stays the reference
+// and still runs on every stop: the core form only has to be true whenever the evaluator would be. False, with the
+// reason, for what the core answers differently: ROM / RAM (the bank at the breakpoint address), a division by
+// anything but a nonzero number (the evaluator stops on a zero divisor), and text the evaluator can not parse
+bool translateToCore(const std::string& condition, std::string& coreOut, std::string& reasonOut);
 
 // Extracts the leading "PC=<hex>h" literal DeZog emits for address breakpoints.
 // Returns false when the condition has no PC literal (stepOut-style).

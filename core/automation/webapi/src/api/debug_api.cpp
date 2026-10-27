@@ -196,6 +196,14 @@ Json::Value BreakpointJson(const BreakpointDescriptor& bp)
     if (bp.hitMode != BRK_HIT_ALWAYS)
         j["hit_target"] = static_cast<Json::UInt>(bp.hitTarget);
     j["hit_count"] = static_cast<Json::UInt>(bp.hitCount);
+    if (bp.condition)
+    {
+        // Counted on every match; hit_count counts the matches whose condition held
+        j["condition"] = bp.condition->Canonical();
+        j["match_count"] = static_cast<Json::UInt>(bp.matchCount);
+        if (bp.conditionFailed)
+            j["condition_error"] = bp.conditionError;
+    }
     j["active"] = bp.active;
     j["note"] = bp.note;
     j["group"] = bp.group;
@@ -1125,6 +1133,22 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         badRequest("'hit_mode' must be always, equal, at_least or multiple");
         return;
     }
+    // Condition: an expression in the Unreal language (condition_dialect "c": C precedence, decimal numbers)
+    if (body.isMember("condition"))
+    {
+        if (!body["condition"].isString())
+        {
+            badRequest("'condition' must be a string");
+            return;
+        }
+        spec.condition = body["condition"].asString();
+    }
+    if (body.isMember("condition_dialect") &&
+        !BreakpointConditionProgram::ParseDialect(body["condition_dialect"].asString(), spec.conditionDialect))
+    {
+        badRequest("'condition_dialect' must be unreal or c");
+        return;
+    }
     if (body.isMember("note") && body["note"].isString())
         spec.note = body["note"].asString();
     if (body.isMember("group") && body["group"].isString())
@@ -1642,6 +1666,54 @@ void EmulatorAPI::setBreakpointNote(const HttpRequestPtr& req, std::function<voi
     if (!bpm->SetBreakpointNote(static_cast<uint16_t>(bpId), (*json)["note"].asString()))
     {
         ReplyError(callback, HttpStatusCode::k404NotFound, "Not Found", "No breakpoint " + bpIdStr);
+        return;
+    }
+    const BreakpointSnapshot bp = bpm->GetBreakpointById(static_cast<uint16_t>(bpId));
+    Json::Value ret = bp ? BreakpointJson(*bp) : Json::Value(Json::objectValue);
+    ret["status"] = "success";
+    ReplyJson(callback, ret, HttpStatusCode::k200OK);
+}
+
+/// @brief PUT /api/v1/emulator/{id}/breakpoints/{bp_id}/condition - {condition, dialect?}: the breakpoint's condition
+/// ("" clears it). A text that does not compile for the breakpoint's trigger is refused with the reason and leaves the
+/// old condition in place
+void EmulatorAPI::setBreakpointCondition(const HttpRequestPtr& req,
+                                         std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id,
+                                         const std::string& bpIdStr) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator)
+        return;
+    BreakpointManager* bpm = ManagerOrError(emulator, callback);
+    if (!bpm)
+        return;
+    auto json = req->getJsonObject();
+    uint32_t bpId = 0;
+    if (!ParseJsonUInt(Json::Value(bpIdStr), 0xFFFE, bpId))
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "The breakpoint id is a number");
+        return;
+    }
+    if (!json || !(*json)["condition"].isString())
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "Body: {\"condition\": \"expression\"}");
+        return;
+    }
+    BreakpointConditionDialect dialect = BreakpointConditionDialect::Unreal;
+    if (json->isMember("dialect") && !BreakpointConditionProgram::ParseDialect((*json)["dialect"].asString(), dialect))
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "'dialect' must be unreal or c");
+        return;
+    }
+    if (!bpm->GetBreakpointById(static_cast<uint16_t>(bpId)))
+    {
+        ReplyError(callback, HttpStatusCode::k404NotFound, "Not Found", "No breakpoint " + bpIdStr);
+        return;
+    }
+    std::string error;
+    if (!bpm->SetBreakpointCondition(static_cast<uint16_t>(bpId), (*json)["condition"].asString(), error, dialect))
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", error);
         return;
     }
     const BreakpointSnapshot bp = bpm->GetBreakpointById(static_cast<uint16_t>(bpId));

@@ -198,3 +198,24 @@
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["responses"]["400"]["description"] = "No note in the body";
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["responses"]["404"]["description"] = "No such breakpoint";
 
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["summary"] = "Set a breakpoint's condition";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["description"] =
+        "Body {condition, dialect?}: an expression in the Unreal language (dialect \"c\": C precedence, decimal numbers); \"\" clears it. Checked against the breakpoint's trigger and refused with the reason (the old condition stays). Memory and port breakpoints only. Answers the breakpoint.";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][1]["name"] = "bp_id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["condition"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["condition"]["description"] = "The condition (\"\": none)";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["dialect"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["dialect"]["description"] = "unreal (default) or c";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["responses"]["200"]["description"] = "The breakpoint";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["responses"]["400"]["description"] = "No condition in the body, or one that does not compile (the reason and its column)";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["responses"]["404"]["description"] = "No such breakpoint";
+

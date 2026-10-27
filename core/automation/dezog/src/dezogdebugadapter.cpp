@@ -290,7 +290,7 @@ DezogDebugAdapter::Registers DezogDebugAdapter::getRegisters() const
     regs.bc2 = z80->alt.bc;
     regs.de2 = z80->alt.de;
     regs.hl2 = z80->alt.hl;
-    regs.r = z80->r_low;
+    regs.r = static_cast<uint8_t>((z80->r_low & 0x7F) | (z80->r_hi & 0x80));  // bit 7 is kept apart (LD R,A)
     regs.i = z80->i;
     regs.im = z80->im;
 
@@ -350,7 +350,7 @@ void DezogDebugAdapter::setRegister(dzrp::RegisterId regId, uint16_t value)
             case R::L2: z80->alt.l = lo; break;
             case R::H2: z80->alt.h = lo; break;
 
-            case R::R: z80->r_low = lo; break;
+            case R::R: z80->r_low = lo; z80->r_hi = static_cast<uint8_t>(lo & 0x80); break;
             case R::I: z80->i = lo; break;
 
             default:
@@ -714,7 +714,7 @@ void DezogDebugAdapter::writeNextReg(uint8_t reg, uint8_t value)
 
 /// region <Breakpoints>
 
-uint16_t DezogDebugAdapter::addBreakpoint(uint16_t addr, uint8_t bank, const std::string& /*condition*/,
+uint16_t DezogDebugAdapter::addBreakpoint(uint16_t addr, uint8_t bank, const std::string& condition,
                                           bool temporary)
 {
     auto emulator = resolveEmulator();
@@ -727,21 +727,24 @@ uint16_t DezogDebugAdapter::addBreakpoint(uint16_t addr, uint8_t bank, const std
 
     ensureDebugEnabled(*emulator);
 
-    uint16_t id;
-    if (bank == 0)
-    {
-        id = bpManager->AddExecutionBreakpoint(addr, BREAKPOINT_OWNER);
-    }
-    else
+    BreakpointSpec spec;
+    spec.address = addr;
+    spec.owner = BREAKPOINT_OWNER;
+    // DeZog's own: removing it (or clearing a temporary at a user breakpoint's address) leaves the others
+    spec.shared = false;
+    spec.condition = condition;
+    if (bank != 0)
     {
         // Wire format is bank+1
-        uint8_t dzrpBank = static_cast<uint8_t>(bank - 1);
-        if (dzrpBank >= ROM_BANK_BASE)
-            id = bpManager->AddExecutionBreakpointInPage(addr, static_cast<uint8_t>(dzrpBank - ROM_BANK_BASE),
-                                                         BANK_ROM, BREAKPOINT_OWNER);
-        else
-            id = bpManager->AddExecutionBreakpointInPage(addr, dzrpBank, BANK_RAM, BREAKPOINT_OWNER);
+        const uint8_t dzrpBank = static_cast<uint8_t>(bank - 1);
+        spec.hasPage = true;
+        spec.pageType = dzrpBank >= ROM_BANK_BASE ? BANK_ROM : BANK_RAM;
+        spec.page = dzrpBank >= ROM_BANK_BASE ? static_cast<uint8_t>(dzrpBank - ROM_BANK_BASE) : dzrpBank;
     }
+    std::string error;
+    const uint16_t id = bpManager->AddBreakpoint(spec, error);
+    if (id == BRK_INVALID && !condition.empty())
+        std::cout << "[DZRP] Breakpoint condition '" << condition << "' refused: " << error << "\n";
 
     if (id == BRK_INVALID)
         return 0;

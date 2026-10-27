@@ -797,6 +797,9 @@ bp_reset_hits(id)              -- hit counter back to 0 (no id: all)
 bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)
 bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id
+id, why = bp_write(0x5C78, {condition = "VAL == 0"})  -- a condition (any bp / bp_read / bp_write / bp_port_*; dialect = "c");
+                               -- refused: -1 and the reason
+ok, why = bp_condition(id, "VAL == 80")  -- change it ("" clears): true, or false and the reason (the old one stays)
 bp_group(id, "game")           -- group, created on use; switched on / off together (CLI bpgroup)
 id = bp_key("space")           -- keyboard: the first keyboard read that sees SPACE go down; {on="release"|"both", hits=, group=, note=}; "any"
 bp_select("group:game", "disable")  -- a selection (all, an id, a kind, group:<name>): enable | disable | toggle | remove
@@ -809,6 +812,7 @@ analyzer_list(); analyzer_enable("trdos"); analyzer_disable("trdos"); analyzer_a
 n = bp_count()
 print(bp_list())               -- the text table: range "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
 st = bp_status()               -- the last hit: {valid, id, type, address, access, active, note, group, hit_count, page = {kind, page}}
+                               -- with a condition also condition, match_count (every match), condition_error
 ```
 
 ### Analyzer Management

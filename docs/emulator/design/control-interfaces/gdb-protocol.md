@@ -152,7 +152,8 @@ All values in hex, little-endian where applicable.
 #### Breakpoint Commands
 | Packet | Command | Description |
 | :--- | :--- | :--- |
-| `Z0,<addr>,<kind>` | Set SW breakpoint | Execution breakpoint |
+| `Z0,<addr>,<kind>` | Set SW breakpoint | Execution breakpoint. Optional `;X<len>,<hex>[;X…]`: the agent-expression conditions gdb evaluates on the target (`ConditionalBreakpoints+`), written as a core breakpoint condition; the core stops only when one holds. An expression the core can not say the same way (a loop, `trace`, a division by a register; [the subset](../../../features/conditional-breakpoints.md#debugger-protocols)) leaves the breakpoint unconditional and gdb decides. Setting the address again replaces the condition |
+| `Z1,<addr>,<kind>` | Set HW breakpoint | The same as `Z0` |
 | `z0,<addr>,<kind>` | Remove SW breakpoint | Remove execution BP |
 | `Z2,<addr>,<kind>` | Set write watchpoint | Memory write |
 | `z2,<addr>,<kind>` | Remove write WP | Remove write WP |
@@ -169,7 +170,7 @@ All values in hex, little-endian where applicable.
 #### Query Commands
 | Packet | Command | Description |
 | :--- | :--- | :--- |
-| `qSupported` | Supported features | Capability negotiation (advertises `qXfer:features:read+`, `qXfer:osdata:read+`, `ReverseStep+`, `ReverseContinue+`, `multiprocess-`) |
+| `qSupported` | Supported features | Capability negotiation (advertises `qXfer:features:read+`, `qXfer:osdata:read+`, `ConditionalBreakpoints+`, `ReverseStep+`, `ReverseContinue+`, `multiprocess-`) |
 | `qAttached` | Attached status | Is process attached? |
 | `qC` | Current thread | Current thread ID (1) |
 | `qfThreadInfo` | Thread info | First thread (1) |

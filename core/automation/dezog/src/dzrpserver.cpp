@@ -1,4 +1,6 @@
 #include "dzrpserver.h"
+
+#include "dezogcondition.h"
 #include "platform-sockets.h"
 #include <cstring>
 #include <iostream>
@@ -634,7 +636,16 @@ Response Server::handleAddBreakpoint(const Command& cmd)
         std::string condition = Protocol::readNulString(
             cmd.payload.data() + 3, cmd.payload.size() - 3);
 
-        bpId = m_debug->addBreakpoint(addr, bank, condition);
+        // DeZog checks the condition on every pause anyway; the core form only spares the pauses where it is
+        // false. What does not translate is set without a condition (DeZog alone decides)
+        std::string coreCondition;
+        std::string reason;
+        if (!condition.empty() && !translateCondition(condition, coreCondition, reason))
+            std::cout << "[DZRP] Condition '" << condition << "' is checked by DeZog only (" << reason << ")\n";
+        if (!coreCondition.empty())
+            bpId = m_debug->addBreakpoint(addr, bank, coreCondition);
+        if (!bpId)
+            bpId = m_debug->addBreakpoint(addr, bank, "");
         m_breakpoints[bpId] = addr;
     }
 

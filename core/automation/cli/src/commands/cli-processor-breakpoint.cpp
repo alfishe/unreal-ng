@@ -40,13 +40,32 @@ bool CLIProcessor::ParseBreakpointArgs(const std::vector<std::string>& args, siz
         spec.addressEnd = end;
     }
 
-    // Flags anywhere after the fixed arguments; the rest is the note
+    // Flags anywhere after the fixed arguments; the rest is the note. "if" takes the rest of the line as the condition
     std::string note;
     for (size_t i = flagsFrom; i < args.size(); i++)
     {
         const std::string& a = args[i];
         const bool hasValue = i + 1 < args.size();
-        if (a == "--page")
+        if (a == "if" || a == "--if")
+        {
+            for (size_t j = i + 1; j < args.size(); j++)
+                spec.condition += (spec.condition.empty() ? "" : " ") + args[j];
+            if (spec.condition.empty())
+            {
+                error = "if needs a condition (e.g. if A == 7 && M(5C3A) != 0)";
+                return false;
+            }
+            break;
+        }
+        else if (a == "--dialect")
+        {
+            if (!hasValue || !BreakpointConditionProgram::ParseDialect(args[++i], spec.conditionDialect))
+            {
+                error = "--dialect needs unreal or c";
+                return false;
+            }
+        }
+        else if (a == "--page")
         {
             if (!hasValue || !BreakpointManager::ParsePageInto(args[++i], spec, error))
             {
@@ -153,11 +172,15 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
     if (args.empty())
     {
         stringstream ss;
-        ss << "Usage: bp <address>[-<end>] [--page ramN|romN|cacheN [--slot-only]] [--hits N|>=N|%N] [note]" << NEWLINE
+        ss << "Usage: bp <address>[-<end>] [--page ramN|romN|cacheN [--slot-only]] [--hits N|>=N|%N] [note]"
+           << " [if <condition>]" << NEWLINE
            << "Sets an execution breakpoint: one address or a range. With a page it fires on that page through any"
            << NEWLINE << "slot that shows it (--slot-only: only through the slot of the address). --hits stops on the"
            << NEWLINE << "Nth hit only, from the Nth on (>=N) or on every Nth (%N); every hit is counted." << NEWLINE
+           << "if: the rest of the line is a condition (Unreal language, numbers hex unless 123d; --dialect c" << NEWLINE
+           << "before it: C precedence, decimal numbers); only the hits where it holds count for --hits." << NEWLINE
            << "Examples:" << NEWLINE << "  bp 0x1234            - Breakpoint at 0x1234" << NEWLINE
+           << "  bp 0x8000 if A == 7 && M(5C3A) != 0 - Only when A is 7 and #5C3A is not 0 (hex in the condition)" << NEWLINE
            << "  bp 0x8000-0x80FF     - Anywhere in 0x8000-0x80FF" << NEWLINE
            << "  bp 0xC000 --page ram32 - RAM page 32 offset 0, in whatever slot it is mapped" << NEWLINE
            << "  bp 0x0038 --hits 50  - The 50th interrupt" << NEWLINE
@@ -233,7 +256,8 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
            << "Examples:" << NEWLINE << "  wp 0x1234 r          - Reads at 0x1234" << NEWLINE
            << "  wp 0x4000-0x57FF w   - Writes to the screen bitmap" << NEWLINE
            << "  wp 0x0100 w --page ram7 - Writes to RAM page 7 offset #0100, in whatever slot" << NEWLINE
-           << "  wp #5C3A rw --hits >=10 IY area - From the 10th access on, with a note";
+           << "  wp #5C3A rw --hits >=10 IY area - From the 10th access on, with a note" << NEWLINE
+           << "  wp 0x4000-0x57FF w if VAL != 0 - Writes of a non-zero byte (if <condition>, as for bp)";
         session.SendResponse(ss.str());
         return;
     }
@@ -283,7 +307,8 @@ void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std:
            << "  o    - Watch for port OUT operations" << NEWLINE << "  io   - Watch for both IN and OUT operations"
            << NEWLINE << "Examples:" << NEWLINE << "  bport 0x7FFD o       - OUT to 0x7FFD" << NEWLINE
            << "  bport 0xFE i --mask 0x00FF - IN from #FE with any high byte (the keyboard)" << NEWLINE
-           << "  bport 254 io Keyboard port - IN/OUT with a note";
+           << "  bport 254 io Keyboard port - IN/OUT with a note" << NEWLINE
+           << "  bport 0xFE o --mask 0xFF if (VAL & 7) == 2 - Border set to red (if <condition>, as for bp)";
         session.SendResponse(ss.str());
         return;
     }
@@ -1221,6 +1246,54 @@ void CLIProcessor::HandleKeyBreakpoint(const ClientSession& session, const std::
     }
     spec.note = note;
     session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Keyboard breakpoint"));
+}
+
+// HandleBPCondition: bpcond <id> [--dialect c] [condition] (no condition: clear)
+void CLIProcessor::HandleBPCondition(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    uint16_t id = 0;
+    if (args.empty() || !ParseAddress(args[0], id))
+    {
+        session.SendResponse("Usage: bpcond <id> [--dialect c] [condition]   (no condition clears it)" + std::string(NEWLINE) +
+                             "  bpcond 3 B == 0 && HL >= 4000");
+        return;
+    }
+    size_t from = 1;
+    BreakpointConditionDialect dialect = BreakpointConditionDialect::Unreal;
+    if (args.size() > 2 && args[1] == "--dialect")
+    {
+        if (!BreakpointConditionProgram::ParseDialect(args[2], dialect))
+        {
+            session.SendResponse("Error: --dialect needs unreal or c");
+            return;
+        }
+        from = 3;
+    }
+    std::string condition;
+    for (size_t i = from; i < args.size(); i++)
+        condition += (condition.empty() ? "" : " ") + args[i];
+    std::string error;
+    if (!bpManager->SetBreakpointCondition(id, condition, error, dialect))
+    {
+        session.SendResponse("Error: " + error);
+        return;
+    }
+    onBreakpointsChanged();
+    session.SendResponse(condition.empty() ? "Breakpoint #" + std::to_string(id) + " condition cleared"
+                                           : "Breakpoint #" + std::to_string(id) + " condition set:" +
+                                                 bpManager->FormatBreakpointInfo(id));
 }
 
 // HandleBPNote: bpnote <id> [text] (no text: clear)

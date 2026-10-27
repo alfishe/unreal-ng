@@ -182,7 +182,7 @@ protected:
     bool _writeTapDemand = false;
     const BreakpointHotState* _tapFilter = nullptr;   // the breakpoint manager's filters (SetWriteTapDemand)
     void RefreshWriteHooks();
-    void MemoryWriteTapped(uint16_t addr);
+    void MemoryWriteTapped(uint16_t addr, uint8_t value);
 
     // Feature-gate flags
     bool _feature_memorytracking_enabled = false;

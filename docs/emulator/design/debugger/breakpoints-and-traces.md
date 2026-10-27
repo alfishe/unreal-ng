@@ -91,3 +91,45 @@ The catalogue adds `dbg.register_set` (`Emulator::SetRegisterFromTool`), `mem.wr
 | `1ffd` | `#1FFD` | `#F002` | +3 paging |
 | `fffd` | `#FFFD` | `#C002` | AY register select |
 | `bffd` | `#BFFD` | `#C002` | AY data |
+
+## 6. The debug path follows the breakpoints
+
+`FeatureManager::debugModeInEffect` is true while the `debugmode` feature is on, a replay or taps hold it, or
+(`setBreakpointDebugHold`) an active stopping breakpoint exists and the `breakpoints` feature is on.
+`BreakpointManager::ApplyTapDemand` pushes that last hold at each repaint (`BreakpointTapDemand::stop`), and Memory's
+breakpoint gate follows it. So a breakpoint is never accepted and inert because `debugmode` went off (the hidden Qt
+debugger, a client); without breakpoints `debugmode` alone decides and the fast path stays.
+
+## 7. Conditions
+
+A memory or port breakpoint can carry a condition (`core/src/debugger/breakpoints/breakpointcondition.h`); the
+language is on [docs/features/conditional-breakpoints.md](../../../features/conditional-breakpoints.md), the design
+and measurements on [conditions-and-callbacks.md](../../../inprogress/2026-10-26-breakpoint-taps/conditions-and-callbacks.md).
+
+- **Compiled once.** `BreakpointConditionProgram::Compile` tokenizes, parses (the Unreal order, or the `c` dialect)
+  and emits a stack-machine program, checks every access operand against the breakpoint's trigger
+  (`BRK_COND_EXEC`/`READ`/`WRITE`/`PORT_IN`/`PORT_OUT`), resolves labels, and with a machine runs it once on the
+  current state. A refusal carries the reason and the column; nothing is added or changed. Common shapes (a register,
+  a variable or a byte against a constant) run without the stack machine and fall back to it when their context is
+  missing.
+- **Only after a match.** The filters and candidate sets of the hot path are unchanged: the condition runs in
+  `WalkCandidates` for the breakpoint that matched, with the access the hot path saw (`ResolveMemory` /
+  `ResolvePort` pass the value: the byte read or written, the OUT's byte; an IN has none). Bytes are read with
+  `DirectReadFromZ80Memory`, without side effects.
+- **The hit order.** `++matchCount`, the condition, then `++hitCount` and the hit policy on `hitCount`. A breakpoint
+  without a condition counts both. A tap with a condition tells its sink only on condition-true hits.
+- **Never shared.** A conditional breakpoint is never plain (`IsPlainMemory` / `IsPlainPort`): it is not in the key
+  maps and no request adopts it; setting a condition later moves a plain one out of them.
+- **The error mark.** An evaluation error sets `conditionFailed`, writes `conditionError` (the reason, the frame, the
+  PC), bumps the revision and posts one `NC_BREAKPOINTS_CHANGED` with the id; the breakpoint is skipped until
+  `ActivateBreakpoint` or `SetBreakpointCondition` clears the mark. The machine never stops on it.
+
+| Plane | Set | Change, clear | Read |
+| :--- | :--- | :--- | :--- |
+| CLI | `bp`, `wp`, `bport ... [--dialect c] if <cond>` | `bpcond <id> [cond]` | `bplist` |
+| Lua | `condition=`, `dialect=` in the options of `bp`, `bp_read`, `bp_write`, `bp_port_in/out` | `bp_condition(id, text[, dialect])` | `bp_status()` |
+| Python | `condition=`, `dialect=` | `emu.bp_condition(id, text, dialect)` | `emu.bp_status()` |
+| MCP | `control_execution` `bp_add` `condition`, `condition_dialect` | `bp_condition` | `bp_list` |
+| REST | `POST /breakpoints {condition, condition_dialect}` | `PUT /breakpoints/{bp_id}/condition {condition, dialect}` | `condition`, `match_count`, `condition_error` |
+| WebSocket | the REST routes as `call`s | the same | `breakpoints_changed` |
+| Catalogue | `dbg.bp_add` (condition, dialect) | - | - |

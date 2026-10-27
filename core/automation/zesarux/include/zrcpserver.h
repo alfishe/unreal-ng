@@ -112,7 +112,9 @@ private:
     // --- breakpoint management ---
     void installBreakpoint(BreakpointEntry& entry);
     void uninstallBreakpoint(BreakpointEntry& entry);
-    BreakpointEntry* findBreakpointByAddr(uint16_t addr);
+    // The first enabled breakpoint at addr whose condition and pass count say stop (all of them are checked);
+    // known: some breakpoint is set there
+    BreakpointEntry* stoppingBreakpointAt(uint16_t addr, bool& known);
     bool breakpointShouldStop(BreakpointEntry& entry);  // condition + pass count
 
     // Instruction length when disassembleInstruction() reports none

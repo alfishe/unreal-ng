@@ -166,6 +166,7 @@ if (ENABLE_DEZOG_AUTOMATION)
     list(APPEND TEST_CPP_FILES
         ${ROOT_DIR}/core/automation/dezog/src/dzrpprotocol.cpp
         ${ROOT_DIR}/core/automation/dezog/src/dzrpserver.cpp
+        ${ROOT_DIR}/core/automation/dezog/src/dezogcondition.cpp
         ${ROOT_DIR}/core/automation/dezog/src/dezogdebugadapter.cpp
         ${ROOT_DIR}/core/automation/dezog/src/automation-dezog.cpp
     )

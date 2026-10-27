@@ -164,8 +164,11 @@ inline py::dict StepOutcome(const Emulator& emulator, unsigned executed)
 
 /// bp / bp_read / bp_write / bp_port_in / bp_port_out: the options as keyword arguments (BreakpointManager::
 /// ApplyScriptOptions). The breakpoint id, or -1 when refused
+/// `condition` (empty: none) in `dialect` ("unreal", "c"); a condition that does not compile raises ValueError with
+/// the reason and its column, the other refusals answer -1
 inline int PythonScriptBreakpoint(Emulator& self, BreakpointTypeEnum type, uint8_t access, uint16_t address,
-                                  const std::string& page, int32_t to, bool slotOnly, int32_t mask, const std::string& hits)
+                                  const std::string& page, int32_t to, bool slotOnly, int32_t mask, const std::string& hits,
+                                  const std::string& condition = "", const std::string& dialect = "")
 {
     BreakpointManager* bpm = self.GetBreakpointManager();
     if (!bpm)
@@ -177,7 +180,12 @@ inline int PythonScriptBreakpoint(Emulator& self, BreakpointTypeEnum type, uint8
     std::string error;
     if (!BreakpointManager::ApplyScriptOptions(spec, page, to, slotOnly, mask, hits, error))
         return -1;
+    spec.condition = condition;
+    if (!BreakpointConditionProgram::ParseDialect(dialect, spec.conditionDialect))
+        throw py::value_error("dialect must be 'unreal' or 'c'");
     const uint16_t id = bpm->AddBreakpoint(spec, error);
+    if (id == BRK_INVALID && !condition.empty() && error.rfind("condition", 0) == 0)
+        throw py::value_error(error);
     return id == BRK_INVALID ? -1 : static_cast<int>(id);
 }
 
@@ -2770,36 +2778,49 @@ namespace PythonBindings
             
             // Breakpoint management
             .def("bp", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
-                             const std::string& hits) -> int {
-                return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_EXECUTE, addr, page, to, slot_only, -1, hits);
+                             const std::string& hits, const std::string& condition, const std::string& dialect) -> int {
+                return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_EXECUTE, addr, page, to, slot_only, -1, hits, condition,
+                                              dialect);
             }, "Add a breakpoint (bp); page 'ram32' / 'rom3' / 'cache0': physical, through any slot that shows "
-               "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'. -1 when refused",
+               "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
+               "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
+               "reason when it does not compile). -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
-               py::arg("hits") = "")
+               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "")
             .def("bp_read", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
-                             const std::string& hits) -> int {
-                return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_READ, addr, page, to, slot_only, -1, hits);
+                             const std::string& hits, const std::string& condition, const std::string& dialect) -> int {
+                return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_READ, addr, page, to, slot_only, -1, hits, condition,
+                                              dialect);
             }, "Add a breakpoint (bp_read); page 'ram32' / 'rom3' / 'cache0': physical, through any slot that shows "
-               "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'. -1 when refused",
+               "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
+               "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
+               "reason when it does not compile). -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
-               py::arg("hits") = "")
+               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "")
             .def("bp_write", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
-                             const std::string& hits) -> int {
-                return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_WRITE, addr, page, to, slot_only, -1, hits);
+                             const std::string& hits, const std::string& condition, const std::string& dialect) -> int {
+                return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_WRITE, addr, page, to, slot_only, -1, hits, condition,
+                                              dialect);
             }, "Add a breakpoint (bp_write); page 'ram32' / 'rom3' / 'cache0': physical, through any slot that shows "
-               "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'. -1 when refused",
+               "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
+               "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
+               "reason when it does not compile). -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
-               py::arg("hits") = "")
-            .def("bp_port_in", [](Emulator& self, uint16_t port, int32_t mask, const std::string& hits) -> int {
-                return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_IN, port, "", -1, false, mask, hits);
+               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "")
+            .def("bp_port_in", [](Emulator& self, uint16_t port, int32_t mask, const std::string& hits,
+                             const std::string& condition, const std::string& dialect) -> int {
+                return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_IN, port, "", -1, false, mask, hits, condition, dialect);
             }, "Add a port breakpoint (bp_port_in); mask: matches every port with (port & mask) == (port & mask); "
-               "hits '5' / '>=5' / '%5'. -1 when refused",
-               py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "")
-            .def("bp_port_out", [](Emulator& self, uint16_t port, int32_t mask, const std::string& hits) -> int {
-                return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_OUT, port, "", -1, false, mask, hits);
+               "hits '5' / '>=5' / '%5'; condition as for bp. -1 when refused",
+               py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "", py::arg("condition") = "",
+               py::arg("dialect") = "")
+            .def("bp_port_out", [](Emulator& self, uint16_t port, int32_t mask, const std::string& hits,
+                             const std::string& condition, const std::string& dialect) -> int {
+                return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_OUT, port, "", -1, false, mask, hits, condition, dialect);
             }, "Add a port breakpoint (bp_port_out); mask: matches every port with (port & mask) == (port & mask); "
-               "hits '5' / '>=5' / '%5'. -1 when refused",
-               py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "")
+               "hits '5' / '>=5' / '%5'; condition as for bp. -1 when refused",
+               py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "", py::arg("condition") = "",
+               py::arg("dialect") = "")
             .def("bp_nextreg_write", [](Emulator& self, uint16_t reg, int32_t to, const std::string& doors, int32_t value,
                              int32_t vmask, const std::string& hits) -> int {
                 return PythonScriptNextRegBreakpoint(self, BRK_IO_OUT, reg, to, doors, value, vmask, hits);
@@ -2868,6 +2889,21 @@ namespace PythonBindings
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
                 return bpm ? bpm->SetBreakpointNote(id, note) : false;
             }, "Set a breakpoint's note (empty clears it); False for an unknown id", py::arg("id"), py::arg("note"))
+            .def("bp_condition", [](Emulator& self, uint16_t id, const std::string& condition,
+                                    const std::string& dialect) -> bool {
+                BreakpointManager* bpm = self.GetBreakpointManager();
+                if (!bpm || !bpm->GetBreakpointById(id))
+                    return false;
+                BreakpointConditionDialect d = BreakpointConditionDialect::Unreal;
+                if (!BreakpointConditionProgram::ParseDialect(dialect, d))
+                    throw py::value_error("dialect must be 'unreal' or 'c'");
+                std::string error;
+                if (!bpm->SetBreakpointCondition(id, condition, error, d))
+                    throw py::value_error(error);
+                return true;
+            }, "Set a breakpoint's condition (empty clears it); ValueError with the reason when it does not compile "
+               "(the old condition stays); False for an unknown id",
+               py::arg("id"), py::arg("condition"), py::arg("dialect") = "")
             .def("bp_group", [](Emulator& self, uint16_t id, const std::string& group) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return false;
@@ -2974,6 +3010,13 @@ namespace PythonBindings
                     result["note"] = info.note;
                     result["group"] = info.group;
                     result["hit_count"] = info.hitCount;
+                    if (!info.condition.empty())
+                    {
+                        result["condition"] = info.condition;
+                        result["match_count"] = info.matchCount;
+                    }
+                    if (!info.conditionError.empty())
+                        result["condition_error"] = info.conditionError;
                     if (!info.pageKind.empty())
                     {
                         py::dict page;

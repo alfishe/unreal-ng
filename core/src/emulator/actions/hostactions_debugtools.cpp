@@ -326,6 +326,13 @@ bool BreakpointSpecFromParams(Emulator& emulator, const ActionValue& value, Brea
     if (const std::optional<std::string> hits = TextParam(value, "hits"))
         if (!BreakpointManager::ParseHitSpec(*hits, spec.hitMode, spec.hitTarget, error))
             return false;
+    spec.condition = TextParam(value, "condition").value_or("");
+    if (const std::optional<std::string> dialect = TextParam(value, "dialect"))
+        if (!BreakpointConditionProgram::ParseDialect(*dialect, spec.conditionDialect))
+        {
+            error = "dialect: unreal or c";
+            return false;
+        }
     spec.note = TextParam(value, "note").value_or("");
     spec.group = TextParam(value, "group").value_or("");
     return true;

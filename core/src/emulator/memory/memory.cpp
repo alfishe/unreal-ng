@@ -103,8 +103,10 @@ Memory::Memory(EmulatorContext* context)
         // It's probably better to have a master switch
         bool debugMode = fm->isEnabled(Features::kDebugMode);
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
-        // The taps' hold (FeatureManager::setTapDebugHold): their breakpoints are checked anyway
-        _feature_breakpoints_enabled = (debugMode && fm->isEnabled(Features::kBreakpoints)) || fm->tapDebugHold();
+        // The taps' hold (FeatureManager::setTapDebugHold): their breakpoints are checked anyway; the breakpoints'
+        // hold (setBreakpointDebugHold): a stopping breakpoint is checked while 'breakpoints' is on
+        _feature_breakpoints_enabled =
+            (fm->isEnabled(Features::kBreakpoints) && (debugMode || fm->breakpointDebugHold())) || fm->tapDebugHold();
         _feature_sharedmemory_enabled = fm->isEnabled(Features::kSharedMemory);
         // TTD requires debugMode (uses the debug write path) AND the runtime timetravel flag.
         // Per TDD §6.2 the gate is the same shape as _feature_memorytracking_enabled:
@@ -380,7 +382,7 @@ void Memory::ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, t
         Emulator& emulator = *_context->pEmulator;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
-        uint16_t breakpointID = brk.HandleMemoryRead(addr);
+        uint16_t breakpointID = brk.HandleMemoryRead(addr, result);
         if (breakpointID != BRK_INVALID)
         {
             // Pause and park, or during a direct run end it after this instruction
@@ -431,7 +433,7 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
         *(_bank_write[bank] + addressInBank) = value;
         // A write tap: the write filter's bit, then the resolve (told after the store)
         if ((_writeHooks & kWriteHookTap) && _tapFilter->MemoryBit(BRK_KIND_WRITE, addr))
-            MemoryWriteTapped(addr);
+            MemoryWriteTapped(addr, value);
         return;
     }
 
@@ -441,10 +443,10 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
 
 /// A write the write filter marks, on the fast path: the taps there are told; a stopping breakpoint does not stop off
 /// the debug path (it is counted only)
-void Memory::MemoryWriteTapped(uint16_t addr)
+void Memory::MemoryWriteTapped(uint16_t addr, uint8_t value)
 {
     if (_context->pDebugManager != nullptr)
-        (void)_context->pDebugManager->GetBreakpointsManager()->HandleMemoryWrite(addr);
+        (void)_context->pDebugManager->GetBreakpointsManager()->HandleMemoryWrite(addr, value);
 }
 
 void Memory::SetWriteTapDemand(bool on, const BreakpointHotState* filter)
@@ -530,7 +532,7 @@ void Memory::WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physP
     {
         Emulator& emulator = *_context->pEmulator;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
-        uint16_t breakpointID = brk.HandleMemoryWrite(addr);
+        uint16_t breakpointID = brk.HandleMemoryWrite(addr, value);
         if (breakpointID != BRK_INVALID)
         {
             // Pause and park, or during a direct run end it after this instruction
@@ -2175,8 +2177,10 @@ void Memory::UpdateFeatureCache()
     {
         bool debugMode = fm->isEnabled(Features::kDebugMode);
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
-        // The taps' hold (FeatureManager::setTapDebugHold): their breakpoints are checked anyway
-        _feature_breakpoints_enabled = (debugMode && fm->isEnabled(Features::kBreakpoints)) || fm->tapDebugHold();
+        // The taps' hold (FeatureManager::setTapDebugHold): their breakpoints are checked anyway; the breakpoints'
+        // hold (setBreakpointDebugHold): a stopping breakpoint is checked while 'breakpoints' is on
+        _feature_breakpoints_enabled =
+            (fm->isEnabled(Features::kBreakpoints) && (debugMode || fm->breakpointDebugHold())) || fm->tapDebugHold();
         // A TTD replay observes accesses whatever the user's debug mode: it
         // engages the debug path for its own duration (EnterReplayMode)
         _feature_ttd_enabled = (debugMode && fm->isEnabled(Features::kTimeTravel)) || _context->ttdReplayActive;

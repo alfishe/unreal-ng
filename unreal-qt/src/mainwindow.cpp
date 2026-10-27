@@ -5656,8 +5656,12 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
     // 7. UI state
     updateMenuStates();
 
-    // Debug instrumentation follows the debugger window: on only while it is visible
-    applyDebugInstrumentation(debuggerWindow && debuggerWindow->isVisible());
+    // Debug instrumentation follows the debugger window: on only while it is visible. An adopted machine keeps the
+    // debug mode its creator set (an automation client's breakpoints would be accepted and never fire): the window
+    // only adds it
+    const bool debuggerShown = debuggerWindow && debuggerWindow->isVisible();
+    if (origin == EmulatorOrigin::CreatedByGui || debuggerShown)
+        applyDebugInstrumentation(debuggerShown);
 
     // Turbo render cap for this emulator: the display refresh rate we are on
     if (MainLoop* mainLoop = _emulator->GetMainLoop())

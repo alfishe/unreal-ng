@@ -1354,9 +1354,10 @@ void Server::runUntilStop(int sock, bool reportStop)
             addr = m_runAddr;
         }
 
+        bool known = false;
         BreakpointEntry* entry =
-            reason == dzrp::BreakReason::BREAKPOINT ? findBreakpointByAddr(addr) : nullptr;
-        if (entry && !breakpointShouldStop(*entry))
+            reason == dzrp::BreakReason::BREAKPOINT ? stoppingBreakpointAt(addr, known) : nullptr;
+        if (known && !entry)
             continue;  // condition false / pass count not reached: resume silently
 
         if (reason == dzrp::BreakReason::BREAKPOINT && reportStop)
@@ -1389,9 +1390,20 @@ void Server::installBreakpoint(BreakpointEntry& entry)
 {
     if (entry.adapterId || !entry.hasAddress)
         return;
-    // Conditions/pass counts are evaluated server-side on each hit; the
-    // adapter only needs the address
-    entry.adapterId = m_debug->addBreakpoint(entry.addr, 0, "", false);
+    // The condition goes to the core too when it translates: the core then skips the false hits without stopping
+    // the machine. Conditions and pass counts are still evaluated here on every stop (the reference)
+    std::string coreCondition;
+    std::string reason;
+    if (!entry.conditionRest.empty() && !translateToCore(entry.conditionRest, coreCondition, reason))
+        std::cout << "[ZRCP] Condition '" << entry.conditionRest << "' stays in the server (" << reason << ")\n";
+    if (!coreCondition.empty())
+    {
+        entry.adapterId = m_debug->addBreakpoint(entry.addr, 0, coreCondition, false);
+        if (!entry.adapterId)
+            std::cout << "[ZRCP] The core refused condition '" << coreCondition << "': it stays in the server\n";
+    }
+    if (!entry.adapterId)
+        entry.adapterId = m_debug->addBreakpoint(entry.addr, 0, "", false);
     if (!entry.adapterId)
         std::cout << "[ZRCP] Failed to install breakpoint at " << hex4Upper(entry.addr) << "h\n";
 }
@@ -1405,14 +1417,21 @@ void Server::uninstallBreakpoint(BreakpointEntry& entry)
     }
 }
 
-Server::BreakpointEntry* Server::findBreakpointByAddr(uint16_t addr)
+Server::BreakpointEntry* Server::stoppingBreakpointAt(uint16_t addr, bool& known)
 {
+    // Every breakpoint at the address gets its condition and pass count checked (each counts its own hits): the
+    // core stopped for one of them, which one it was is not reported
+    known = false;
+    BreakpointEntry* stopping = nullptr;
     for (auto& [id, entry] : m_breakpoints)
     {
-        if (entry.enabled && entry.hasAddress && entry.addr == addr)
-            return &entry;
+        if (!entry.enabled || !entry.hasAddress || entry.addr != addr)
+            continue;
+        known = true;
+        if (breakpointShouldStop(entry) && !stopping)
+            stopping = &entry;
     }
-    return nullptr;
+    return stopping;
 }
 
 bool Server::breakpointShouldStop(BreakpointEntry& entry)

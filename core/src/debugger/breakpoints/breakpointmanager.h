@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "common/modulelogger.h"
+#include "debugger/breakpoints/breakpointcondition.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
@@ -76,8 +77,8 @@ enum BreakpointAddressMatchEnum : uint8_t
                          // shows the page; with slotOnly only through the slot of z80address
 };
 
-/// When a matching access stops the run (conditional-breakpoints design F5). hitCount counts every matching
-/// access; the policy decides which of them stop
+/// When a matching access stops the run (conditional-breakpoints design F5). matchCount counts every matching
+/// access, hitCount the ones whose condition held (every match without a condition); the policy counts hitCount
 enum BreakpointHitModeEnum : uint8_t
 {
     BRK_HIT_ALWAYS = 0,  // every hit stops
@@ -130,10 +131,20 @@ struct BreakpointDescriptor
     // breakpoint fires on the read that sees the change it waits for, not on every read of a scanning loop
     uint8_t keySeenRows = 0;
 
-    // Hit counting (design F5)
+    // Hit counting (design F5): matchCount every match, hitCount the matches whose condition held. matchCount is
+    // kept only while there is a condition (without one it equals hitCount, and the hot path skips the store)
     BreakpointHitModeEnum hitMode = BRK_HIT_ALWAYS;
     uint32_t hitTarget = 0;
     uint32_t hitCount = 0;
+    uint32_t matchCount = 0;
+
+    // The condition (design F1; breakpoint-taps conditions-and-callbacks.md): evaluated after the trigger matched,
+    // before the hit policy. Null: none. A condition that fails to evaluate marks the breakpoint (conditionFailed,
+    // the reason in conditionError) and it stops matching until the condition is set again or the breakpoint is
+    // enabled again; it never stops the machine. Written by the emulation thread once, as hitCount is
+    BreakpointConditionPtr condition;
+    uint8_t conditionFailed = 0;
+    char conditionError[120] = {};
 
     // Used if breakpoint is set to any matching address in specific memory page (independently of Z80 address)
     uint8_t page = 0xFF;                     // Page number (ROM 0-63 or RAM 0-255)
@@ -146,6 +157,9 @@ struct BreakpointDescriptor
 
     bool active = true;   // Breakpoint can be temporarily disabled
     bool hidden = false;  // Internal/temporary breakpoint (e.g. step-over, step-out, traps)
+    // False: never merged with an equal plain breakpoint (a debugger protocol owns its ids: removing its breakpoint
+    // must not take another surface's, and two of its own at one address are two)
+    bool shared = true;
     // A tap (docs/inprogress/2026-10-26-breakpoint-taps §3): the non-stopping action. A hit never stops; it is
     // counted (and passes the hit policy) and goes to the sink registered as tapSink (RegisterTapSink) with tapCookie,
     // the client's own index. BRK_NO_TAP: a breakpoint that stops
@@ -191,15 +205,18 @@ public:
 
 /// What the armed taps need of the machine (breakpoint-taps §4), derived at each repaint and pushed to the CPU, the
 /// memory and the feature manager: exec taps the instruction start's check, write taps the write hook (or the debug
-/// path where the machine has no hook), read taps the debug path. Stopping breakpoints still need the debug mode
+/// path where the machine has no hook), read taps the debug path. Stopping breakpoints need the debug mode: `stop`
+/// (an active breakpoint that is not a tap) holds it on while the 'breakpoints' feature is on, so a breakpoint is never
+/// accepted and silently inert because a window or a client switched 'debugmode' off
 struct BreakpointTapDemand
 {
     bool exec = false;
     bool read = false;
     bool write = false;
+    bool stop = false;
     bool operator==(const BreakpointTapDemand& other) const
     {
-        return exec == other.exec && read == other.read && write == other.write;
+        return exec == other.exec && read == other.read && write == other.write && stop == other.stop;
     }
     bool operator!=(const BreakpointTapDemand& other) const { return !(*this == other); }
 };
@@ -274,9 +291,12 @@ struct BreakpointSpec
     uint16_t beamHc = 0;               // BRK_BEAM only: the pixel clock in the row
     BreakpointHitModeEnum hitMode = BRK_HIT_ALWAYS;
     uint32_t hitTarget = 0;
+    std::string condition;             // memory and port breakpoints: the condition's text (empty: none)
+    BreakpointConditionDialect conditionDialect = BreakpointConditionDialect::Unreal;
     std::string note;
     std::string group;                 // empty: "default"
     std::string owner;                 // empty: interactive
+    bool shared = true;                // false: a breakpoint of its own even when an equal plain one exists
 };
 
 /// endregion </Types>
@@ -420,7 +440,10 @@ public:
         std::string page;           // "ram32" for a breakpoint bound to a page, "" otherwise
         std::string pageKind;       // "ram" / "rom" / "cache" with pageNumber (protocol {kind, page}), "" otherwise
         uint8_t pageNumber = 0;
-        uint32_t hitCount = 0;      // matching accesses so far (the hit policy decides which stop)
+        uint32_t hitCount = 0;      // matches whose condition held (the hit policy decides which stop)
+        uint32_t matchCount = 0;    // matching accesses so far
+        std::string condition;      // the condition's canonical form, "" for none
+        std::string conditionError; // why the condition failed to evaluate, "" while it works
     };
 
     /// Get structured info about the last triggered breakpoint
@@ -499,7 +522,15 @@ public:
     static bool ParseKeyboardInto(const std::string& key, const std::string& on, BreakpointSpec& spec, std::string& error);
     static bool ApplyNextRegOptions(BreakpointSpec& spec, int32_t to, const std::string& doors, int32_t value, int32_t valueMask,
                                     const std::string& hits, std::string& error);
-    /// Hit counters back to 0: one breakpoint (false for an unknown id) or all
+    /// The condition of a memory or port breakpoint (empty `text`: none). Compiled and checked against the breakpoint's
+    /// trigger and this machine; false with the reason in `error`, the old condition kept. Clears a failed one
+    bool SetBreakpointCondition(uint16_t breakpointID, const std::string& text, std::string& error,
+                                BreakpointConditionDialect dialect = BreakpointConditionDialect::Unreal);
+    /// Compiles a condition for a breakpoint of `type` watching `access` (BRK_MEM_* / BRK_IO_*) on this machine:
+    /// the labels it names, the access operands its trigger supplies, a dry evaluation on the current state
+    BreakpointConditionPtr CompileCondition(BreakpointTypeEnum type, uint8_t access, const std::string& text,
+                                            BreakpointConditionDialect dialect, std::string& error) const;
+    /// Hit and match counters back to 0: one breakpoint (false for an unknown id) or all
     bool ResetHitCount(uint16_t breakpointID);
     void ResetAllHitCounts();
     /// The execution breakpoint at `address` lets the next instruction start there through without a hit or
@@ -616,11 +647,12 @@ public:
             return BRK_INVALID;
         return ResolveMemory(BRK_KIND_EXEC, pc);
     }
-    uint16_t HandleMemoryRead(uint16_t readAddress)
+    /// `value`: the byte read, for the conditions (-1: not known)
+    uint16_t HandleMemoryRead(uint16_t readAddress, int value = -1)
     {
         if (!_hotState.hasRead || !_hotState.MemoryBit(BRK_KIND_READ, readAddress))
             return BRK_INVALID;
-        return ResolveMemory(BRK_KIND_READ, readAddress);
+        return ResolveMemory(BRK_KIND_READ, readAddress, value);
     }
     /// An access to a page of another memory space (its own hooks, not the CPU's address): the watchpoint that
     /// stops, or BRK_INVALID. `offset` is in the 16 KB page
@@ -630,11 +662,12 @@ public:
             return BRK_INVALID;
         return ResolveSpace(spacePage, offset, write);
     }
-    uint16_t HandleMemoryWrite(uint16_t writeAddress)
+    /// `value`: the byte written, for the conditions (-1: not known)
+    uint16_t HandleMemoryWrite(uint16_t writeAddress, int value = -1)
     {
         if (!_hotState.hasWrite || !_hotState.MemoryBit(BRK_KIND_WRITE, writeAddress))
             return BRK_INVALID;
-        return ResolveMemory(BRK_KIND_WRITE, writeAddress);
+        return ResolveMemory(BRK_KIND_WRITE, writeAddress, value);
     }
     uint16_t HandlePortIn(uint16_t portAddress)
     {
@@ -708,7 +741,7 @@ protected:
     /// A filter "maybe": the candidates of the CPU address and of the page the slot shows; the slot filter,
     /// the hit policy (counting), the TTD-replay suppression. The id of the first candidate that stops
     uint16_t ResolveSpace(uint16_t spacePage, uint16_t offset, bool write);
-    uint16_t ResolveMemory(int kind, uint16_t address);
+    uint16_t ResolveMemory(int kind, uint16_t address, int value = -1);
     uint16_t ResolvePort(int direction, uint16_t port, int value = -1);
     uint16_t ResolveNextReg(int direction, uint8_t reg, uint8_t value, uint8_t door);
     uint16_t ResolveCopperPc(uint16_t pc);
@@ -720,6 +753,9 @@ protected:
     /// never stops: a hit that passes its policy goes to its sink with `kind`, `address` and `value`
     uint16_t WalkCandidates(uint32_t set, int slot, uint16_t first, BreakpointTapKind kind, uint16_t address,
                             int value = -1);
+    /// The candidate's condition on this access (out of line: only breakpoints with one get here). A failure marks
+    /// the breakpoint and reports it once
+    bool ConditionHolds(BreakpointDescriptor& bp, BreakpointTapKind kind, uint16_t address, int value);
     /// Whether a breakpoint covers the access (for the lookups that are not on the hot path)
     static bool CoversMemory(const BreakpointDescriptor& bp, uint16_t address, const MemoryPageDescriptor& page);
 

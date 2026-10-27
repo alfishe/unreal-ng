@@ -93,6 +93,12 @@ bool FeatureManager::debugModeInEffect() const
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (_replayDebugHold || _tapDebugHold)
         return true;
+    if (_breakpointDebugHold)
+    {
+        auto breakpointsIt = _features.find(Features::kBreakpoints);
+        if (breakpointsIt != _features.end() && breakpointsIt->second.enabled)
+            return true;
+    }
     auto debugIt = _features.find(Features::kDebugMode);
     return debugIt != _features.end() && debugIt->second.enabled;
 }
@@ -123,6 +129,23 @@ bool FeatureManager::tapDebugHold() const
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     return _tapDebugHold;
+}
+
+void FeatureManager::setBreakpointDebugHold(bool on)
+{
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        if (_breakpointDebugHold == on)
+            return;
+        _breakpointDebugHold = on;
+    }
+    applyDebugMode();
+}
+
+bool FeatureManager::breakpointDebugHold() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    return _breakpointDebugHold;
 }
 
 void FeatureManager::applyDebugMode()

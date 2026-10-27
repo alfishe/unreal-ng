@@ -245,3 +245,60 @@ TEST_F(McpDebugTools_Test, AnalyzePerformance_GsPortTraceControlsThroughTheContr
     EXPECT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/control/audio/gs/porttrace"), nullptr);
     EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/state/audio/gs/porttrace"), nullptr);
 }
+
+TEST_F(McpDebugTools_Test, ControlExecution_ConditionsInTheArgumentsAndTheText)
+{
+    Json::Value added;
+    added["id"] = 7;
+    added["condition"] = "A == 7";
+    _caller->routes["POST /api/v1/emulator/emu-1/breakpoints"] = {201, added};
+    Json::Value feature;
+    feature["enabled"] = true;
+    _caller->routes["GET /api/v1/emulator/emu-1/feature/breakpoints"] = {200, feature};
+
+    Json::Value add;
+    add["action"] = "bp_add";
+    add["address"] = "0x8000";
+    add["condition"] = "a==7";
+    add["condition_dialect"] = "c";
+    const mcp::ToolResult result = Run("control_execution", add);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeCaller::RecordedCall* post = _caller->Last("POST", "/api/v1/emulator/emu-1/breakpoints");
+    ASSERT_NE(post, nullptr);
+    EXPECT_EQ(post->body["condition"].asString(), "a==7");
+    EXPECT_EQ(post->body["condition_dialect"].asString(), "c");
+    EXPECT_NE(result.text.find("#7 if A == 7"), std::string::npos) << "the text shows the condition: " << result.text;
+
+    Json::Value set;
+    set["action"] = "bp_condition";
+    set["bp_id"] = "7";
+    EXPECT_TRUE(Run("control_execution", set).isError) << "bp_condition needs a condition";
+    set["condition"] = "B == 0";
+    Json::Value answer;
+    answer["condition"] = "B == 0";
+    _caller->routes["PUT /api/v1/emulator/emu-1/breakpoints/7/condition"] = {200, answer};
+    const mcp::ToolResult changed = Run("control_execution", set);
+    ASSERT_FALSE(changed.isError);
+    EXPECT_EQ(_caller->Last("PUT", "/api/v1/emulator/emu-1/breakpoints/7/condition")->body["condition"].asString(),
+              "B == 0");
+    EXPECT_EQ(changed.text, "Condition set: B == 0");
+
+    Json::Value bp;
+    bp["id"] = 7;
+    bp["type"] = "memory";
+    bp["address"] = 0x8000;
+    bp["execute"] = true;
+    bp["active"] = true;
+    bp["hit_count"] = 2;
+    bp["match_count"] = 9;
+    bp["condition"] = "B == 0";
+    bp["condition_error"] = "no CPU (frame 3, PC #8000)";
+    Json::Value list;
+    list["breakpoints"].append(bp);
+    _caller->routes["GET /api/v1/emulator/emu-1/breakpoints"] = {200, list};
+    Json::Value ls;
+    ls["action"] = "bp_list";
+    const mcp::ToolResult listed = Run("control_execution", ls);
+    EXPECT_NE(listed.text.find("hits 2 matched 9 if B == 0 [condition failed: no CPU"), std::string::npos)
+        << listed.text;
+}

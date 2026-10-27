@@ -1180,7 +1180,7 @@ void RegisterControlExecution(ToolRegistry& registry)
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "run_to_scanline", "run_scanlines", "run_to_pixel",
                                "run_until_pc", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
-                               "bp_list", "bp_reset_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note",
+                               "bp_list", "bp_reset_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note", "bp_condition",
                                "set_register", "port_out", "wait", "take_control", "release_control"})
     {
         schema["properties"]["action"]["enum"].append(action);
@@ -1267,13 +1267,25 @@ void RegisterControlExecution(ToolRegistry& registry)
         "Sprinter's video RAM page, the address its offset) - a physical breakpoint on that "
         "page at offset address & #3FFF, through whatever slot shows the page (slot_only: only through the slot of "
         "address)";
+    schema["properties"]["condition"]["type"] = "string";
+    schema["properties"]["condition"]["description"] =
+        "Optional for bp_add of execution / read / write / port_in / port_out, and for bp_condition ('' clears): stop "
+        "only when this holds. Unreal language: registers (A, HL, IX, SP, A', I, R, IFF1), flags (Z, NZ, CY), M(addr) "
+        "byte, W(addr) word, the access (RD, WR, VAL, PORT, ADDR), FRAME, T, PG0-PG3, labels; == != < > <= >= && || "
+        "! & | ^ ~ + - * / % << >>; comparisons bind tighter than & | ^; numbers hex unless written 123d ('0D' is "
+        "decimal 0: write #0D). Refused with the reason and its column; hit policies count only the hits where it "
+        "holds (bp_list: hits = condition true, matched = every match)";
+    schema["properties"]["condition_dialect"]["type"] = "string";
+    schema["properties"]["condition_dialect"]["description"] =
+        "Optional with condition: unreal (default) or c (C precedence, decimal numbers)";
     schema["properties"]["note"]["type"] = "string";
     schema["properties"]["note"]["description"] = "Optional annotation for bp_add";
     schema["properties"]["group"]["type"] = "string";
     schema["properties"]["group"]["description"] = "Optional group for bp_add (created on use; default 'default')";
     schema["properties"]["bp_id"]["type"] = "string";
     schema["properties"]["bp_id"]["description"] =
-        "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits/bp_group_set/bp_note (bp_reset_hits without it: all)";
+        "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits/bp_group_set/bp_note/bp_condition (bp_reset_hits "
+        "without it: all)";
     schema["properties"]["select"]["type"] = "string";
     schema["properties"]["select"]["description"] =
         "Instead of bp_id, for bp_remove/bp_enable/bp_disable/bp_toggle: all, a kind (exec, read, write, mem, port, in, out, "
@@ -1303,9 +1315,10 @@ void RegisterControlExecution(ToolRegistry& registry)
         "run_tstates, run_to_interrupt, run_to_scanline, run_scanlines, run_to_pixel (the first paper pixel), "
         "run_until_pc (until PC = pc), pace (run at a pace: 25 / 5 / 1 fps, a frame, lines or an instruction per "
         "interval). Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list/"
-        "bp_reset_hits; bp_add takes ranges, physical pages, port masks, hit policies and keyboard keys; bp_remove / "
-        "bp_enable / bp_disable / bp_toggle take a bp_id or a select: all, a kind, group:<name>; bp_groups lists the "
-        "groups, bp_group_set / bp_note change a breakpoint's group / note). set_register writes a CPU register (name, "
+        "bp_reset_hits; bp_add takes ranges, physical pages, port masks, hit policies, conditions and keyboard keys; "
+        "bp_remove / bp_enable / bp_disable / bp_toggle take a bp_id or a select: all, a kind, group:<name>; bp_groups "
+        "lists the groups, bp_group_set / bp_note / bp_condition change a breakpoint's group / note / condition). "
+        "set_register writes a CPU register (name, "
         "value). "
         "port_out writes a port through the machine's decoder like a CPU OUT (paging, TS-Conf registers, AY, border), "
         "without breakpoints or device waits, as a TTD tool edit; it works paused or running. "
@@ -1464,6 +1477,10 @@ void RegisterControlExecution(ToolRegistry& registry)
                                 << (bp["execute"].asBool() ? "X" : "") << (bp["read"].asBool() ? "R" : "")
                                 << (bp["write"].asBool() ? "W" : "")
                                 << " hits " << bp["hit_count"].asUInt();
+                            if (bp["condition"].isString())
+                                out << " matched " << bp["match_count"].asUInt() << " if " << bp["condition"].asString();
+                            if (bp["condition_error"].isString())
+                                out << " [condition failed: " << bp["condition_error"].asString() << "]";
                             if (!bp["active"].asBool())
                                 out << " off";
                             if (bp["hit_mode"].isString() && bp["hit_mode"].asString() != "always")
@@ -1506,7 +1523,8 @@ void RegisterControlExecution(ToolRegistry& registry)
                         body["address"] = args["address"];
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
                     for (const char* key : {"address_end", "page", "slot_only", "port_mask", "hits", "hit_mode", "hit_target",
-                                            "note", "group", "doors", "value", "value_mask", "hc", "key", "on"})
+                                            "note", "group", "doors", "value", "value_mask", "hc", "key", "on",
+                                            "condition", "condition_dialect"})
                         if (args.isMember(key))
                             body[key] = args[key];
                     // A breakpoint never fires while the breakpoints feature is off, and the add itself says nothing:
@@ -1518,6 +1536,11 @@ void RegisterControlExecution(ToolRegistry& registry)
                             done(std::move(added));
                             return;
                         }
+                        // An agent may see only the text: the id and the condition as it was understood
+                        if (added.structured["id"].isUInt() || added.structured["id"].isInt())
+                            added.text += ": #" + std::to_string(added.structured["id"].asUInt());
+                        if (added.structured["condition"].isString())
+                            added.text += " if " + added.structured["condition"].asString();
                         auto result = std::make_shared<ToolResult>(std::move(added));
                         caller.Call("GET", Endpoint(id, "/feature/breakpoints"), nullptr,
                                     [id, &caller, done, result](int status, Json::Value feature) {
@@ -1637,6 +1660,27 @@ void RegisterControlExecution(ToolRegistry& registry)
                                     << group["total"].asUInt() << " on";
                             result.text = out.str();
                         }
+                        done(std::move(result));
+                    });
+                    return;
+                }
+                if (action == "bp_condition")
+                {
+                    if (!args.isMember("bp_id") || !args.isMember("condition"))
+                    {
+                        done(ToolResult::Error("bp_condition requires 'bp_id' and 'condition' ('' clears it)"));
+                        return;
+                    }
+                    Json::Value body;
+                    body["condition"] = args["condition"].asString();
+                    if (args.isMember("condition_dialect"))
+                        body["dialect"] = args["condition_dialect"].asString();
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/" + args["bp_id"].asString() + "/condition"), &body,
+                                caller, "", [done](ToolResult result) {
+                        if (!result.isError)
+                            result.text = result.structured["condition"].isString()
+                                              ? "Condition set: " + result.structured["condition"].asString()
+                                              : std::string("Condition cleared");
                         done(std::move(result));
                     });
                     return;

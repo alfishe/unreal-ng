@@ -66,6 +66,8 @@ public:
 
     // Breakpoints
     // bank: wire format is bank+1 (0 = any bank, 1 = bank 0, etc.)
+    // condition: in the core breakpoint-condition language (breakpointcondition.h), empty for none; the
+    //   breakpoint then stops only when it holds. 0 when it does not compile (the caller may retry without)
     // temporary=true marks breakpoint for auto-removal after next pause
     virtual uint16_t addBreakpoint(uint16_t addr, uint8_t bank = 0,
                                     const std::string& condition = "",

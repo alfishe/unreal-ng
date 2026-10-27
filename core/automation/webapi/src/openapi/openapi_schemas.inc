@@ -248,6 +248,12 @@
     schemas["MemoryBreakpointInfo"]["properties"]["read"]["type"] = "boolean";
     schemas["MemoryBreakpointInfo"]["properties"]["write"]["type"] = "boolean";
     schemas["MemoryBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["MemoryBreakpointInfo"]["properties"]["condition"]["type"] = "string";
+    schemas["MemoryBreakpointInfo"]["properties"]["condition"]["description"] = "The condition in canonical (Unreal) form, when one is set";
+    schemas["MemoryBreakpointInfo"]["properties"]["match_count"]["type"] = "integer";
+    schemas["MemoryBreakpointInfo"]["properties"]["match_count"]["description"] = "With a condition: every match; hit_count counts those whose condition held";
+    schemas["MemoryBreakpointInfo"]["properties"]["condition_error"]["type"] = "string";
+    schemas["MemoryBreakpointInfo"]["properties"]["condition_error"]["description"] = "Set when the condition failed to evaluate: the breakpoint is skipped (never stops) until enabled again or given a new condition";
     schemas["MemoryBreakpointInfo"]["properties"]["note"]["type"] = "string";
     schemas["MemoryBreakpointInfo"]["properties"]["group"]["type"] = "string";
 
@@ -262,6 +268,12 @@
     schemas["PortBreakpointInfo"]["properties"]["in"]["type"] = "boolean";
     schemas["PortBreakpointInfo"]["properties"]["out"]["type"] = "boolean";
     schemas["PortBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["PortBreakpointInfo"]["properties"]["condition"]["type"] = "string";
+    schemas["PortBreakpointInfo"]["properties"]["condition"]["description"] = "The condition in canonical (Unreal) form, when one is set";
+    schemas["PortBreakpointInfo"]["properties"]["match_count"]["type"] = "integer";
+    schemas["PortBreakpointInfo"]["properties"]["match_count"]["description"] = "With a condition: every match; hit_count counts those whose condition held";
+    schemas["PortBreakpointInfo"]["properties"]["condition_error"]["type"] = "string";
+    schemas["PortBreakpointInfo"]["properties"]["condition_error"]["description"] = "Set when the condition failed to evaluate: the breakpoint is skipped (never stops) until enabled again or given a new condition";
     schemas["PortBreakpointInfo"]["properties"]["note"]["type"] = "string";
     schemas["PortBreakpointInfo"]["properties"]["group"]["type"] = "string";
 
@@ -445,6 +457,14 @@
         "Optional for execution / read / write: {kind, page} as in the debugger protocol (the text form 'ram32' is "
         "accepted too). A physical breakpoint: it fires on that page at offset address & #3FFF through whatever slot "
         "shows the page (slot_only: only through the slot of address); 400 for a page the machine does not have";
+    schemas["AddBreakpointRequest"]["properties"]["condition"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["condition"]["description"] =
+        "Memory and port breakpoints: stop only when this expression holds (Unreal language: registers, flags, "
+        "M(addr), W(addr), access operands RD WR VAL PORT, FRAME, PG0-3, labels; numbers hex unless written 123d). "
+        "Compiled and checked against the trigger here: 400 with the reason and its column";
+    schemas["AddBreakpointRequest"]["properties"]["condition_dialect"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["condition_dialect"]["description"] =
+        "unreal (default) or c (C precedence, decimal numbers); the canonical form shown back is always Unreal";
     schemas["AddBreakpointRequest"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["note"]["description"] = "Optional annotation";
     schemas["AddBreakpointRequest"]["properties"]["group"]["type"] = "string";
@@ -467,6 +487,8 @@
     schemas["AddBreakpointResponse"]["properties"]["hit_mode"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["hit_target"]["type"] = "integer";
     schemas["AddBreakpointResponse"]["properties"]["hit_count"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["condition"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["match_count"]["type"] = "integer";
     schemas["AddBreakpointResponse"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["group"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["message"]["type"] = "string";

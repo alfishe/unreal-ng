@@ -1162,6 +1162,9 @@ emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
+id = emu.bp_write(0x5C78, condition="VAL == 0")  # a condition (bp / bp_read / bp_write / bp_port_*; dialect="c");
+                                    # ValueError with the reason when it does not compile
+emu.bp_condition(id, "VAL == 80")   # change it ("" clears): True; False for an unknown id; ValueError for a bad text
 emu.bp_group(id, "game")            # group, created on use; switched on / off together (CLI bpgroup)
 id = emu.bp_key("space")            # keyboard: the first keyboard read that sees SPACE go down; on="release" / "both",
                                     # key="any"; hits=, group=, note=
@@ -1174,7 +1177,8 @@ emu.trace("opcode", "start")        # profilers and traces (tracecontrol): opcod
 emu.trace("audio", "start", seconds=2, source="ay1")  # resume | pause_toggle | clear | status -> {name, state, can_pause}
 emu.bp_count()
 print(emu.bp_list())                # the text table: "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
-emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one
+emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one;
+                                    # with a condition also 'condition', 'match_count', 'condition_error'
 ```
 
 ### DebugManager Class

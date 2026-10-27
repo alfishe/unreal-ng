@@ -2,6 +2,7 @@
 #include "gdbpacket.h"
 #include "gdbtarget_z80.h"
 #include "gdbmonitormemory.h"
+#include "gdbagentexpr.h"
 
 #include <common/uuid.h>
 #include <emulator/emulator.h>
@@ -619,6 +620,8 @@ std::string GDBSession::handleQSupported(const std::string& /*params*/)
     caps += "hwbreak+;";
     caps += "vContSupported+;";
     caps += "multiprocess-;";
+    // Z0 / Z1 carry the condition as agent expressions: the core checks it without stopping (gdbagentexpr.h)
+    caps += "ConditionalBreakpoints+;";
 
     // Advertise reverse debugging support when TTD is available
     if (_context && _context->pTimeTravelHooks)
@@ -1353,9 +1356,13 @@ std::string GDBSession::handleWriteMemory(const std::string& params)
     return GDBTargetZ80::writeMemory(_context, *addr, bytes) ? "OK" : "E01";
 }
 
-std::string GDBSession::handleSetBreakpoint(const std::string& params)
+std::string GDBSession::handleSetBreakpoint(const std::string& packet)
 {
-    // Z type,addr,kind
+    // Z type,addr,kind[;X len,bytes]...: the conditions (ConditionalBreakpoints+) after the first ';'
+    const size_t semicolon = packet.find(';');
+    const std::string params = packet.substr(0, semicolon);
+    const std::string conditions = semicolon != std::string::npos ? packet.substr(semicolon + 1) : "";
+
     auto firstComma = params.find(',');
     auto secondComma = params.find(',', firstComma + 1);
 
@@ -1412,8 +1419,32 @@ std::string GDBSession::handleSetBreakpoint(const std::string& params)
     {
         case 0:  // SW breakpoint
         case 1:  // HW breakpoint (same for emulator)
-            bpManager->AddExecutionBreakpoint(static_cast<uint16_t>(*addr & 0xFFFF), "gdb");
+        {
+            const uint16_t address = static_cast<uint16_t>(*addr & 0xFFFF);
+            // gdb sends Z0 again when the conditions change: the new breakpoint replaces this session's one there
+            forgetExecutionBreakpoint(*bpManager, address);
+
+            BreakpointSpec spec;
+            spec.address = address;
+            spec.owner = "gdb";
+            spec.shared = false;
+            std::string reason;
+            // gdb checks the condition again on every stop: what does not translate is set without one
+            if (!conditions.empty() && !GDBAgentExpression::listToCondition(conditions, spec.condition, reason))
+                std::cerr << "GDBServer: the condition at " << address << " is checked by gdb only (" << reason << ")\n";
+            std::string error;
+            uint16_t id = bpManager->AddBreakpoint(spec, error);
+            if (id == BRK_INVALID && !spec.condition.empty())
+            {
+                std::cerr << "GDBServer: the core refused condition '" << spec.condition << "': " << error << "\n";
+                spec.condition.clear();
+                id = bpManager->AddBreakpoint(spec, error);
+            }
+            if (id == BRK_INVALID)
+                return "E01";
+            _executionBreakpoints[address] = id;
             break;
+        }
 
         case 2:  // Write watchpoint (supports ranges)
             for (uint64_t i = 0; i < len; i++)
@@ -1445,6 +1476,17 @@ std::string GDBSession::handleSetBreakpoint(const std::string& params)
     }
 
     return "OK";
+}
+
+bool GDBSession::forgetExecutionBreakpoint(BreakpointManager& breakpoints, uint16_t address)
+{
+    const auto it = _executionBreakpoints.find(address);
+    if (it == _executionBreakpoints.end())
+        return false;
+    // The breakpoint is gdb's own (unshared): never another surface's
+    breakpoints.RemoveBreakpointByID(it->second);
+    _executionBreakpoints.erase(it);
+    return true;
 }
 
 std::string GDBSession::handleRemoveBreakpoint(const std::string& params)
@@ -1507,8 +1549,12 @@ std::string GDBSession::handleRemoveBreakpoint(const std::string& params)
     {
         case 0:
         case 1:
-            bpManager->RemoveBreakpointByAddress(static_cast<uint16_t>(*addr & 0xFFFF));
+        {
+            const uint16_t address = static_cast<uint16_t>(*addr & 0xFFFF);
+            // Only gdb's own: a breakpoint another surface set at the address stays
+            forgetExecutionBreakpoint(*bpManager, address);
             break;
+        }
 
         case 2:
         case 3:
@@ -1749,6 +1795,7 @@ std::string GDBSession::handleAttach(const std::string& pid)
     }
 
     _emulator = mgr->GetEmulator(ids[index]);
+    _executionBreakpoints.clear();  // the ids were the previous machine's
     if (!_emulator)
     {
         return "E31";

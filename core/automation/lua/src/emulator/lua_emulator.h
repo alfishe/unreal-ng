@@ -447,13 +447,16 @@ protected:
     /// endregion </Fields>
 
     /// bp / bp_read / bp_write / bp_port_in / bp_port_out: `options` is nothing, a page string ("ram32"), or
-    /// a table {page=, to=, slot_only=, mask=, hits=}. The breakpoint id, or -1 when refused
-    int AddScriptBreakpoint(BreakpointTypeEnum type, uint8_t access, uint16_t address, const sol::optional<sol::object>& options)
+    /// a table {page=, to=, slot_only=, mask=, hits=, condition=, dialect=}. The breakpoint id; -1 and the reason when
+    /// refused
+    std::tuple<int, sol::optional<std::string>> AddScriptBreakpoint(BreakpointTypeEnum type, uint8_t access,
+                                                                    uint16_t address,
+                                                                    const sol::optional<sol::object>& options)
     {
         Emulator* emulator = effectiveEmulator();
         BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
         if (!bpm)
-            return -1;
+            return {-1, std::string("no emulator")};
         BreakpointSpec spec;
         spec.type = type;
         spec.access = access;
@@ -474,12 +477,18 @@ protected:
             if (hits.empty())
                 if (auto n = t.get<sol::optional<int64_t>>("hits"))
                     hits = std::to_string(*n);  // hits=5: the 5th hit
+            spec.condition = t.get<sol::optional<std::string>>("condition").value_or("");
+            if (!BreakpointConditionProgram::ParseDialect(t.get<sol::optional<std::string>>("dialect").value_or(""),
+                                                          spec.conditionDialect))
+                return {-1, std::string("dialect must be 'unreal' or 'c'")};
         }
         std::string error;
         if (!BreakpointManager::ApplyScriptOptions(spec, page, to, slotOnly, mask, hits, error))
-            return -1;
+            return {-1, error};
         const uint16_t id = bpm->AddBreakpoint(spec, error);
-        return id == BRK_INVALID ? -1 : static_cast<int>(id);
+        if (id == BRK_INVALID)
+            return {-1, error};
+        return {static_cast<int>(id), sol::nullopt};
     }
 
     /// bp_nextreg_write / bp_nextreg_read / bp_nextreg: `options` is nothing or a table {to=, doors=, value=, vmask=, hits=}
@@ -3438,30 +3447,33 @@ public:
 
         // Breakpoint management
         // Options: a page string ("ram32": physical, through any slot that shows it), or a table
-        // {page=, to=, slot_only=, hits=} (to = range end; hits "5" | ">=5" | "%5"). -1 when refused
-        lua.set_function("bp", [this](uint16_t addr, sol::optional<sol::object> options) -> int {
+        // {page=, to=, slot_only=, hits=, condition=, dialect=} (to = range end; hits "5" | ">=5" | "%5"; condition "A == 7").
+        // -1 and the reason when refused
+        lua.set_function("bp", [this](uint16_t addr, sol::optional<sol::object> options) {
             return AddScriptBreakpoint(BRK_MEMORY, BRK_MEM_EXECUTE, addr, options);
         });
 
         // Options: a page string ("ram32": physical, through any slot that shows it), or a table
-        // {page=, to=, slot_only=, hits=} (to = range end; hits "5" | ">=5" | "%5"). -1 when refused
-        lua.set_function("bp_read", [this](uint16_t addr, sol::optional<sol::object> options) -> int {
+        // {page=, to=, slot_only=, hits=, condition=, dialect=} (to = range end; hits "5" | ">=5" | "%5"; condition "A == 7").
+        // -1 and the reason when refused
+        lua.set_function("bp_read", [this](uint16_t addr, sol::optional<sol::object> options) {
             return AddScriptBreakpoint(BRK_MEMORY, BRK_MEM_READ, addr, options);
         });
 
         // Options: a page string ("ram32": physical, through any slot that shows it), or a table
-        // {page=, to=, slot_only=, hits=} (to = range end; hits "5" | ">=5" | "%5"). -1 when refused
-        lua.set_function("bp_write", [this](uint16_t addr, sol::optional<sol::object> options) -> int {
+        // {page=, to=, slot_only=, hits=, condition=, dialect=} (to = range end; hits "5" | ">=5" | "%5"; condition "A == 7").
+        // -1 and the reason when refused
+        lua.set_function("bp_write", [this](uint16_t addr, sol::optional<sol::object> options) {
             return AddScriptBreakpoint(BRK_MEMORY, BRK_MEM_WRITE, addr, options);
         });
 
-        // Options: a table {mask=, hits=} (mask: (port & mask) == (port & mask) matches)
-        lua.set_function("bp_port_in", [this](uint16_t port, sol::optional<sol::object> options) -> int {
+        // Options: a table {mask=, hits=, condition=, dialect=} (mask: (port & mask) == (port & mask) matches)
+        lua.set_function("bp_port_in", [this](uint16_t port, sol::optional<sol::object> options) {
             return AddScriptBreakpoint(BRK_IO, BRK_IO_IN, port, options);
         });
 
-        // Options: a table {mask=, hits=} (mask: (port & mask) == (port & mask) matches)
-        lua.set_function("bp_port_out", [this](uint16_t port, sol::optional<sol::object> options) -> int {
+        // Options: a table {mask=, hits=, condition=, dialect=} (mask: (port & mask) == (port & mask) matches)
+        lua.set_function("bp_port_out", [this](uint16_t port, sol::optional<sol::object> options) {
             return AddScriptBreakpoint(BRK_IO, BRK_IO_OUT, port, options);
         });
 
@@ -3529,6 +3541,23 @@ public:
             if (!ctx || !ctx->pDebugManager) return false;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? bpm->SetBreakpointNote(id, note) : false;
+        });
+
+        // The condition of a memory or port breakpoint ("" clears it): true; false and the reason when it does not
+        // compile (the old condition stays) or there is no such breakpoint
+        lua.set_function("bp_condition", [this](uint16_t id, const std::string& condition, sol::optional<std::string> dialect)
+                                             -> std::tuple<bool, sol::optional<std::string>> {
+            Emulator* emulator = effectiveEmulator();
+            BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
+            if (!bpm)
+                return {false, std::string("no emulator")};
+            BreakpointConditionDialect d = BreakpointConditionDialect::Unreal;
+            if (!BreakpointConditionProgram::ParseDialect(dialect.value_or(""), d))
+                return {false, std::string("dialect must be 'unreal' or 'c'")};
+            std::string error;
+            if (!bpm->SetBreakpointCondition(id, condition, error, d))
+                return {false, error};
+            return {true, sol::nullopt};
         });
 
         lua.set_function("bp_group", [this](uint16_t id, const std::string& group) -> bool {
@@ -3645,6 +3674,13 @@ public:
                 if (!info.pageKind.empty())
                     result["page"] = lua_view.create_table_with("kind", info.pageKind, "page", info.pageNumber);
                 result["hit_count"] = info.hitCount;
+                if (!info.condition.empty())
+                {
+                    result["condition"] = info.condition;
+                    result["match_count"] = info.matchCount;
+                }
+                if (!info.conditionError.empty())
+                    result["condition_error"] = info.conditionError;
             }
             return result;
         });

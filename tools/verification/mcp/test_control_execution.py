@@ -73,6 +73,35 @@ def test_breakpoint_on_a_label(s):
     s.call('invoke_api', {'method': 'DELETE', 'path': '/api/v1/emulator/{id}/labels/McpCheck.End'}, ok=False)
 
 
+def test_conditional_breakpoint(s):
+    s.call('control_execution', {'action': 'bp_clear'})
+    r = s.call('control_execution', {'action': 'bp_add', 'type': 'write', 'address': '0x9000', 'condition': 'A == 7 &&'},
+               ok=False)
+    expect(r.is_error and 'column' in r.text, 'a condition that does not compile is refused with its column', r.text)
+    r = s.call('control_execution', {'action': 'bp_add', 'type': 'execution', 'address': '0x9000', 'condition': 'VAL == 6'},
+               ok=False)
+    expect(r.is_error and 'trigger' in r.text, 'an execution breakpoint has no written value', r.text)
+    # di; ld a,5; ld (#9000),a; ld a,6; ld (#9000),a; jr back to ld a,5: only the write of 6 stops
+    s.call('memory_access', {'action': 'write', 'address': '0x8000', 'hex': 'F3 3E 05 32 00 90 3E 06 32 00 90 18 F3'})
+    s.call('control_execution', {'action': 'pause'})
+    s.call('invoke_api', {'method': 'PUT', 'path': '/api/v1/emulator/{id}/registers/pc', 'body': {'value': 0x8000}})
+    r = s.call('control_execution', {'action': 'bp_add', 'type': 'write', 'address': '0x9000', 'condition': 'val==6'})
+    expect(re.search(r'#\d+ if VAL == 6', r.text), 'the text shows the condition as understood', r.text)
+    bp_id = re.search(r'#(\d+) if', r.text).group(1)
+    s.call('control_execution', {'action': 'resume'})
+    r = s.call('control_execution', {'action': 'wait', 'timeout_ms': 5000})
+    expect('at breakpoint' in r.text, 'the write of 6 stops', r.text)
+    r = s.call('control_execution', {'action': 'bp_list'})
+    expect(re.search(r'hits 1 matched 2 if VAL == 6', r.text), 'two writes matched, one held', r.text)
+    r = s.call('control_execution', {'action': 'bp_condition', 'bp_id': bp_id, 'condition': 'VAL == 5'})
+    expect(r.text == 'Condition set: VAL == 5', 'bp_condition answers the new condition', r.text)
+    r = s.call('control_execution', {'action': 'bp_condition', 'bp_id': bp_id, 'condition': 'RD == 1'}, ok=False)
+    expect(r.is_error and 'trigger' in r.text, 'checked like at creation', r.text)
+    r = s.call('control_execution', {'action': 'bp_condition', 'bp_id': bp_id, 'condition': ''})
+    expect(r.text == 'Condition cleared', 'an empty condition clears it', r.text)
+    s.call('control_execution', {'action': 'bp_clear'})
+
+
 def test_runs_to_a_place(s):
     s.call('memory_access', {'action': 'write', 'address': '0x8000', 'hex': '00 ' * 32 + '18 DE'})  # 32 nops; jr -34
     s.call('control_execution', {'action': 'pause'})

@@ -145,6 +145,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"bptoggle", &CLIProcessor::HandleBPToggle},      // Toggle a selection of breakpoints
                         {"bkey", &CLIProcessor::HandleKeyBreakpoint},     // Keyboard breakpoint (the program sees a key)
                         {"bpnote", &CLIProcessor::HandleBPNote},          // Set a breakpoint's note
+                        {"bpcond", &CLIProcessor::HandleBPCondition},     // Set a breakpoint's condition
 
                         {"open", &CLIProcessor::HandleOpen},
                         {"exit", &CLIProcessor::HandleExit},
