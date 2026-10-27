@@ -7,8 +7,8 @@
 /// (Estex DSS, NedoOS, any FAT12 / 16 / 32), the ATM CP/M partitions (the configuration record in sector 0, the .CDS
 /// descriptors), iS-DOS / TASiS devices: the whole disk, or runs of cylinders as the ATM-Turbo HDD driver lays them
 /// out (a descriptor at a cylinder boundary), and the virtual disks of an MDOS3 partition (MBR type #49, or the whole
-/// device from its first "SDOS" sector). Reading everywhere; writing, deleting and renaming files on TR-DOS, +3DOS,
-/// iS-DOS, MB-02, MDOS and FAT (a block device that takes writes); ATM CP/M is read only.
+/// device from its first "SDOS" sector). Reading everywhere; writing, deleting and renaming files on every one of them
+/// (a block device that takes writes).
 ///
 /// Standard C++ only: the emulator (its media verbs `volumes`, `files`, `read` on every automation plane, the
 /// debugger's disk files) and the standalone tools (zxasm, symconv) use the same class. The caller owns the disk and
@@ -102,7 +102,8 @@ public:
     /// of its last sector past the length (sources saved by XAS keep text there), empty elsewhere
     bool Read(const std::string& volume, const std::string& path, std::vector<uint8_t>& data, std::string& error,
               std::vector<uint8_t>* slack = nullptr);
-    /// `data` as the file `path` (TR-DOS "NAME.T", +3DOS "NAME.TYP", FAT and iS-DOS "DIR/name.ext", MB-02 "dir/name", MDOS "NAME.T" in a directory
+    /// `data` as the file `path` (TR-DOS "NAME.T", +3DOS "NAME.TYP", ATM CP/M "USERn/NAME.TYP", FAT and iS-DOS "DIR/name.ext", MB-02 "dir/name", MDOS
+    /// "NAME.T" in a directory
     /// that is there): an older file of that name is replaced. The disk is changed in place; saving it is the
     /// caller's. False on a volume that is not writable
     bool Write(const std::string& volume, const std::string& path, const std::vector<uint8_t>& data,

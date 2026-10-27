@@ -40,6 +40,14 @@ std::string Lower(std::string text)
     return text;
 }
 
+std::string Upper(std::string text)
+{
+    for (char& c : text)
+        if (c >= 'a' && c <= 'z')
+            c = static_cast<char>(c - 'a' + 'A');
+    return text;
+}
+
 /// "/A//B/" -> "A/B"; a backslash separates too, unless it starts a \\xNN byte of a name
 std::string CleanPath(const std::string& path)
 {
@@ -890,6 +898,121 @@ struct CpmDriver : DiskFs::Driver
         return false;
     }
 
+    /// "USERn/NAME.TYP" (n 1-15) or "NAME.TYP" of user 0 into its parts, the name upper-cased
+    static bool Parse(const std::string& path, uint8_t& user, std::string& name, std::string& type, std::string& error)
+    {
+        std::string file = path.substr(path.front() == '/');
+        user = 0;
+        const size_t slash = file.find('/');
+        if (slash != std::string::npos)
+        {
+            const std::string dir = Upper(file.substr(0, slash));
+            const bool digits = dir.size() >= 5 && dir.size() <= 6 && dir.compare(0, 4, "USER") == 0 && dir[4] != '0' &&
+                                dir.find_first_not_of("0123456789", 4) == std::string::npos;
+            const int n = digits ? std::stoi(dir.substr(4)) : 0;
+            if (n < 1 || n > 15)
+            {
+                error = "an ATM CP/M directory is a user area USER1..USER15 (" + path + ")";
+                return false;
+            }
+            user = static_cast<uint8_t>(n);
+            file = file.substr(slash + 1);
+        }
+        file = Upper(file);
+        const size_t dot = file.find('.');
+        name = file.substr(0, dot);
+        type = dot == std::string::npos ? std::string() : file.substr(dot + 1);
+        if (!CpmFileSystem::ValidName(name, type) || (dot != std::string::npos && type.empty()))
+        {
+            error =
+                "not a CP/M name NAME.TYP (1-8 and 0-3 characters, no blank, none of < > . , ; : = ? * [ ]): " + path;
+            return false;
+        }
+        return true;
+    }
+
+    bool Find(const std::string& path, CpmFile& out, std::string& error)
+    {
+        std::vector<CpmFile> files;
+        if (!fs.List(files, error))
+            return false;
+        for (int pass = 0; pass < 2; pass++)
+            for (const CpmFile& f : files)
+                if (pass == 0 ? PathOf(f) == path : Lower(PathOf(f)) == Lower(path))
+                {
+                    out = f;
+                    return true;
+                }
+        error = "no " + path + " on the CP/M volume";
+        return false;
+    }
+
+    /// A user area: "USERn"
+    static bool UserArea(const std::string& path, uint8_t& user)
+    {
+        std::string name, type, error;
+        return path.find('/') == std::string::npos && Parse(path + "/X", user, name, type, error);
+    }
+
+    bool Write(const std::string& path, const std::vector<uint8_t>& data, const DiskFsWriteOptions&,
+               std::string& error) override
+    {
+        uint8_t user = 0;
+        std::string name, type;
+        return Parse(path, user, name, type, error) && fs.Write(user, name, type, data, error);
+    }
+
+    bool Delete(const std::string& path, std::string& error) override
+    {
+        // A user area goes with its last file
+        uint8_t user = 0;
+        if (UserArea(path, user))
+        {
+            std::vector<CpmFile> files;
+            if (!fs.List(files, error))
+                return false;
+            for (const CpmFile& f : files)
+                if (f.user == user)
+                {
+                    error = path + " is not empty";
+                    return false;
+                }
+            return true;
+        }
+        CpmFile f;
+        return Find(path, f, error) && fs.Delete(f, error);
+    }
+
+    bool Deletable(const DiskFsEntry& entry, std::string& error) override
+    {
+        if (entry.directory || entry.attributes.find('R') == std::string::npos)
+            return true;
+        error = entry.path + " is read only";
+        return false;
+    }
+
+    bool Rename(const std::string& path, const std::string& to, std::string& error) override
+    {
+        CpmFile f;
+        if (!Find(path, f, error))
+            return false;
+        // A bare name keeps the user area; a path goes from the root
+        const bool fromRoot = to.find('/') != std::string::npos;
+        uint8_t user = 0;
+        std::string name, type;
+        if (!Parse(to, user, name, type, error))
+            return false;
+        return fs.Rename(f, fromRoot ? user : f.user, name, type, error);
+    }
+
+    std::string AttributeLetters() const override { return "RSA"; }
+
+    bool SetAttributes(const DiskFsEntry& entry, const std::string& letters, std::string& error) override
+    {
+        CpmFile f;
+        return Find(entry.path, f, error) && fs.SetAttributes(f, static_cast<uint8_t>(Bits(letters, "RSA")), error);
+    }
+
     CpmFileSystem fs;
 };
 
@@ -904,19 +1027,24 @@ void DescribeCpm(const CpmFileSystem& fs, DiskFsVolume& volume)
 
 /// The bytes of an ATM CP/M hard disk partition from its directory on: the BIOS's cylinder, head and sector of the
 /// channel's geometry, at the disk's own (`heads` x `sectors`)
-CpmFileSystem::ByteReader CpmReaderAt(BlockDevice& device, const AtmCpmChannel& channel, uint64_t heads,
-                                      uint64_t sectors, std::shared_ptr<SectorCache> cache)
+std::function<uint64_t(uint64_t)> CpmLba(const AtmCpmChannel& channel, uint64_t heads, uint64_t sectors)
 {
     const uint64_t directory = static_cast<uint64_t>(channel.reserved) * channel.sectors;
     const uint64_t perTrack = channel.sectors, partHeads = channel.heads, start = channel.startCylinder;
-    return [&device, directory, perTrack, partHeads, start, heads, sectors, cache](uint64_t offset, uint8_t* dst,
-                                                                                   uint32_t size) {
+    return [directory, perTrack, partHeads, start, heads, sectors](uint64_t offset) {
+        const uint64_t logical = directory + offset / kSector;
+        const uint64_t track = logical / perTrack;
+        return ((start + track / partHeads) * heads + track % partHeads) * sectors + logical % perTrack;
+    };
+}
+
+CpmFileSystem::ByteReader CpmReaderAt(BlockDevice& device, const AtmCpmChannel& channel, uint64_t heads,
+                                      uint64_t sectors, std::shared_ptr<SectorCache> cache)
+{
+    return [&device, lbaOf = CpmLba(channel, heads, sectors), cache](uint64_t offset, uint8_t* dst, uint32_t size) {
         while (size > 0)
         {
-            const uint64_t logical = directory + offset / kSector;
-            const uint64_t track = logical / perTrack;
-            const uint64_t lba =
-                ((start + track / partHeads) * heads + track % partHeads) * sectors + logical % perTrack;
+            const uint64_t lba = lbaOf(offset);
             if (lba != cache->lba)
             {
                 if (!device.ReadSector(lba, cache->sector))
@@ -929,6 +1057,31 @@ CpmFileSystem::ByteReader CpmReaderAt(BlockDevice& device, const AtmCpmChannel& 
             const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(kSector - offset % kSector));
             std::memcpy(dst, cache->sector + offset % kSector, n);
             dst += n;
+            offset += n;
+            size -= n;
+        }
+        return true;
+    };
+}
+
+/// The writer of CpmReaderAt: each sector read, patched and written back, the reader's cache kept current
+CpmFileSystem::ByteWriter CpmWriterAt(BlockDevice& device, const AtmCpmChannel& channel, uint64_t heads,
+                                      uint64_t sectors, std::shared_ptr<SectorCache> cache)
+{
+    return [&device, lbaOf = CpmLba(channel, heads, sectors), cache](uint64_t offset, const uint8_t* src,
+                                                                     uint32_t size) {
+        while (size > 0)
+        {
+            const uint64_t lba = lbaOf(offset);
+            const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(kSector - offset % kSector));
+            uint8_t sector[kSector];
+            cache->lba = UINT64_MAX;
+            if (n < kSector && !device.ReadSector(lba, sector))
+                return false;
+            std::memcpy(sector + offset % kSector, src, n);
+            if (!device.WriteSector(lba, sector))
+                return false;
+            src += n;
             offset += n;
             size -= n;
         }
@@ -1393,6 +1546,7 @@ void DiskFs::Probe()
         {
             DiskFsVolume v;
             v.id = "cpm";
+            v.writable = true;
             DescribeCpm(cpm, v);
             v.bytes = static_cast<uint64_t>(_floppy->getCylinders()) * _floppy->getSides() * 16 * 256;
             add(std::move(v), std::make_unique<CpmDriver>(std::move(cpm)));
@@ -1553,7 +1707,8 @@ void DiskFs::Probe()
                 overlaps = overlaps || (first < to && from < end);
             if (g.blocks == 0 || overlaps || end > device.SectorCount())
                 continue;
-            CpmFileSystem fs(CpmReaderAt(device, c, heads, sectors, std::make_shared<SectorCache>()), g);
+            auto cache = std::make_shared<SectorCache>();
+            CpmFileSystem fs(CpmReaderAt(device, c, heads, sectors, cache), g);
             std::string why;
             if (!fs.IsCpm(&why))
             {
@@ -1578,6 +1733,11 @@ void DiskFs::Probe()
             DiskFsVolume v;
             v.id = "cpm-" + std::to_string(c.startCylinder);
             DescribeCpm(fs, v);
+            if (device.IsWritable())
+            {
+                fs.SetWriter(CpmWriterAt(device, c, heads, sectors, cache));
+                v.writable = true;
+            }
             v.label = c.drive ? std::string(1, c.drive) + ":" : c.source;
             v.offset = first * kSector;
             v.bytes = static_cast<uint64_t>(c.records) * 128;

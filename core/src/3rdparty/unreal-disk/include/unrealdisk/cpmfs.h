@@ -1,10 +1,10 @@
 #pragma once
 
-// CP/M 2.2 file systems of the ATM-Turbo (its BIOS CP/M), read only: the directory of 32-byte entries (user 0-15, name
-// 8, type 3 with the attribute bits, extent, records, the block numbers), 2 KB blocks counted from the directory's
-// first one, block numbers of 16 bits when the volume has more than 256 blocks (8 per entry, 16 KB an extent), else of
-// 8 bits (16 per entry, two extents an entry). A file's size is the last extent's: (EX + 32 * S2) * 16 KB + RC records
-// of 128 bytes; only the pointers its records need count (the rest may be garbage).
+// CP/M 2.2 file systems of the ATM-Turbo (its BIOS CP/M), read and written: the directory of 32-byte entries (user
+// 0-15, name 8, type 3 with the attribute bits, extent, records, the block numbers), 2 KB blocks counted from the
+// directory's first one, block numbers of 16 bits when the volume has more than 256 blocks (8 per entry, 16 KB an
+// extent), else of 8 bits (16 per entry, two extents an entry). A file's size is the last extent's: (EX + 32 * S2) *
+// 16 KB + RC records of 128 bytes; only the pointers its records need count (the rest may be garbage).
 //
 // Where the volumes are:
 // - a floppy: the TR-DOS geometry (80 cylinders, 2 sides, 16 sectors of 256 bytes), cylinder 0 reserved, the
@@ -16,6 +16,10 @@
 //   AS.COM. The BIOS addresses the disk by cylinder, head and sector of the descriptor's geometry.
 // Layout and sources (BIOS 1.03 and 1.07.13 disassembled, the BIOS CP/M manual, ATM_HDD.HDD): written down in
 // docs/emulator/design/disk-file-systems.md.
+//
+// Writing goes as the BDOS does: the data in the lowest free blocks (the last record padded with #1A), then the
+// directory entries; an older file of the name goes in the same directory write. A read-only file (t1') is not
+// deleted, written over or renamed.
 //
 // Recognition is strict: every used entry has user 0-15, printable name bytes (not all blank), EX <= 31, S1 = 0, RC <=
 // 128, and the blocks it needs inside the volume, past the directory and used once on the whole volume; at least one
@@ -97,6 +101,8 @@ class CpmFileSystem
 public:
     /// `size` bytes from byte `offset` of the volume (block 0, the directory, at offset 0)
     using ByteReader = std::function<bool(uint64_t offset, uint8_t* dst, uint32_t size)>;
+    /// `size` bytes written from byte `offset` of the volume
+    using ByteWriter = std::function<bool(uint64_t offset, const uint8_t* src, uint32_t size)>;
 
     CpmFileSystem(ByteReader reader, CpmGeometry geometry) : _reader(std::move(reader)), _geometry(geometry) {}
 
@@ -122,6 +128,26 @@ public:
     /// The blocks no entry uses (the directory's taken)
     bool FreeBlocks(uint32_t& out) const;
 
+    /// Writes go through `writer`; without one the volume is read only
+    void SetWriter(ByteWriter writer)
+    {
+        _writer = std::move(writer);
+    }
+
+    /// `bytes` as the file NAME.TYP of `user` (0-15), an older file of that name replaced. `name` and `type` as they
+    /// go into the directory (ValidName)
+    bool Write(uint8_t user, const std::string& name, const std::string& type, const std::vector<uint8_t>& bytes,
+               std::string& error);
+    /// Every entry of the file marked #E5
+    bool Delete(const CpmFile& file, std::string& error);
+    /// The file's entries take `user` and NAME.TYP (the attribute bits stay); false when that file is there
+    bool Rename(const CpmFile& file, uint8_t user, const std::string& name, const std::string& type,
+                std::string& error);
+    /// kReadOnly / kSystem / kArchive on every entry of the file
+    bool SetAttributes(const CpmFile& file, uint8_t attributes, std::string& error);
+    /// 1-8 and 0-3 printable characters, none of < > . , ; : = ? * [ ] | / \ or a blank, no lower case
+    static bool ValidName(const std::string& name, const std::string& type);
+
     const CpmGeometry& Geometry() const
     {
         return _geometry;
@@ -132,8 +158,15 @@ private:
     /// The pointers entry `e` holds valid data in (its records need)
     uint32_t UsedPointers(const uint8_t* e) const;
     uint32_t Pointer(const uint8_t* e, uint32_t k) const;
+    bool Writable(std::string& error) const;
+    /// The entries of `after` that differ from `before`
+    bool WriteDirectory(const std::vector<uint8_t>& before, const std::vector<uint8_t>& after, std::string& error);
+    /// The live entries of `key`; false with `error` when none is
+    bool Entries(const std::vector<uint8_t>& dir, const std::vector<uint8_t>& key, std::vector<uint32_t>& out,
+                 std::string& error) const;
 
     ByteReader _reader;
+    ByteWriter _writer;
     CpmGeometry _geometry;
 };
 }  // namespace unrealdisk

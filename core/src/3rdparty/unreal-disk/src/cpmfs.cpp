@@ -63,6 +63,12 @@ bool Number(const std::string& text, uint32_t& out)
     return true;
 }
 
+std::string BadName(const std::string& name)
+{
+    return "not a CP/M name NAME.TYP (1-8 and 0-3 characters, none of < > . , ; : = ? * [ ] | / \\ or a blank): " +
+           name;
+}
+
 std::string Trim(const std::string& text)
 {
     const size_t first = text.find_first_not_of(" \t");
@@ -93,22 +99,26 @@ CpmFileSystem CpmFileSystem::AtmFloppy(DiskImage& image)
     geometry.blocks = 316;
     geometry.entries = 128;
     DiskImage* disk = &image;
-    return CpmFileSystem(
-        [disk](uint64_t offset, uint8_t* dst, uint32_t size) {
+    // The 256-byte sector holding byte `at` of the image and its track
+    auto locate = [disk](uint64_t at, DiskImage::Track*& t) -> DiskImage::Sector* {
+        const uint64_t track = at / kFloppyTrack;
+        if (track / 2 > 0xFF)
+            return nullptr;
+        t = disk->getTrackForCylinderAndSide(static_cast<uint8_t>(track / 2), static_cast<uint8_t>(track % 2));
+        DiskImage::Sector* s = t ? t->findSector(static_cast<uint8_t>(at % kFloppyTrack / 256 + 1)) : nullptr;
+        return s && s->data && s->dataSize >= 256 ? s : nullptr;
+    };
+    CpmFileSystem fs(
+        [locate](uint64_t offset, uint8_t* dst, uint32_t size) {
             uint64_t at = kFloppyDirectory + offset;
             while (size > 0)
             {
-                const uint64_t track = at / kFloppyTrack;
-                const uint32_t inTrack = static_cast<uint32_t>(at % kFloppyTrack);
-                if (track / 2 > 0xFF)
+                DiskImage::Track* t = nullptr;
+                const DiskImage::Sector* s = locate(at, t);
+                if (!s)
                     return false;
-                DiskImage::Track* t =
-                    disk->getTrackForCylinderAndSide(static_cast<uint8_t>(track / 2), static_cast<uint8_t>(track % 2));
-                const DiskImage::Sector* s = t ? t->findSector(static_cast<uint8_t>(inTrack / 256 + 1)) : nullptr;
-                if (!s || !s->data || s->dataSize < 256)
-                    return false;
-                const uint32_t n = std::min<uint32_t>(size, 256 - inTrack % 256);
-                std::memcpy(dst, s->data + inTrack % 256, n);
+                const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(256 - at % 256));
+                std::memcpy(dst, s->data + at % 256, n);
                 dst += n;
                 at += n;
                 size -= n;
@@ -116,6 +126,27 @@ CpmFileSystem CpmFileSystem::AtmFloppy(DiskImage& image)
             return true;
         },
         geometry);
+    // A write changes the sector in the image (its CRC and the track's dirty flag follow)
+    fs.SetWriter([locate](uint64_t offset, const uint8_t* src, uint32_t size) {
+        uint64_t at = kFloppyDirectory + offset;
+        while (size > 0)
+        {
+            DiskImage::Track* t = nullptr;
+            const DiskImage::Sector* s = locate(at, t);
+            if (!s)
+                return false;
+            uint8_t sector[256];
+            std::memcpy(sector, s->data, 256);
+            const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(256 - at % 256));
+            std::memcpy(sector + at % 256, src, n);
+            t->writeSectorData(static_cast<uint8_t>(at % kFloppyTrack / 256), sector, 256);
+            src += n;
+            at += n;
+            size -= n;
+        }
+        return true;
+    });
+    return fs;
 }
 
 bool CpmFileSystem::ParseAtmConfig(const uint8_t* sector, std::vector<AtmCpmChannel>& out)
@@ -382,5 +413,263 @@ bool CpmFileSystem::FreeBlocks(uint32_t& out) const
     }
     out = static_cast<uint32_t>(std::count(used.begin(), used.end(), false));
     return true;
+}
+
+bool CpmFileSystem::ValidName(const std::string& name, const std::string& type)
+{
+    if (name.empty() || name.size() > 8 || type.size() > 3)
+        return false;
+    for (const char c : name + type)
+        if (c <= ' ' || c >= 0x7F || (c >= 'a' && c <= 'z') || std::strchr("<>.,;:=?*[]|/\\", c))
+            return false;
+    return true;
+}
+
+bool CpmFileSystem::Writable(std::string& error) const
+{
+    if (_writer)
+        return true;
+    error = "the CP/M volume is read only";
+    return false;
+}
+
+bool CpmFileSystem::WriteDirectory(const std::vector<uint8_t>& before, const std::vector<uint8_t>& after,
+                                   std::string& error)
+{
+    for (uint32_t i = 0; i < _geometry.entries; i++)
+    {
+        const uint64_t at = static_cast<uint64_t>(i) * kEntry;
+        if (std::memcmp(before.data() + at, after.data() + at, kEntry) == 0)
+            continue;
+        // Changed entries next to each other go in one write
+        uint32_t n = 1;
+        while (i + n < _geometry.entries &&
+               std::memcmp(before.data() + at + n * kEntry, after.data() + at + n * kEntry, kEntry) != 0)
+            n++;
+        if (!_writer(at, after.data() + at, n * kEntry))
+        {
+            error = "the CP/M directory cannot be written";
+            return false;
+        }
+        i += n - 1;
+    }
+    return true;
+}
+
+bool CpmFileSystem::Entries(const std::vector<uint8_t>& dir, const std::vector<uint8_t>& key,
+                            std::vector<uint32_t>& out, std::string& error) const
+{
+    for (uint32_t i = 0; i < _geometry.entries; i++)
+        if (dir[i * kEntry] <= 15 && Key(dir.data() + i * kEntry) == key)
+            out.push_back(i);
+    if (out.empty())
+        error = "the file is not on the CP/M volume";
+    return !out.empty();
+}
+
+bool CpmFileSystem::Write(uint8_t user, const std::string& name, const std::string& type,
+                          const std::vector<uint8_t>& bytes, std::string& error)
+{
+    if (!Writable(error))
+        return false;
+    if (user > 15 || !ValidName(name, type))
+    {
+        error = BadName(name + (type.empty() ? "" : "." + type));
+        return false;
+    }
+    std::vector<uint8_t> dir;
+    if (!Directory(dir))
+    {
+        error = "the CP/M directory does not read";
+        return false;
+    }
+    std::vector<uint8_t> key(12, ' ');
+    key[0] = user;
+    std::memcpy(key.data() + 1, name.data(), name.size());
+    std::memcpy(key.data() + 9, type.data(), type.size());
+
+    // The older file's entries go free in the same directory write; its blocks are not reused for the new data
+    std::vector<uint8_t> after = dir;
+    std::vector<bool> used(_geometry.blocks, false);
+    for (uint32_t b = 0; b < _geometry.DirectoryBlocks() && b < _geometry.blocks; b++)
+        used[b] = true;
+    std::vector<uint32_t> freeEntries;
+    for (uint32_t i = 0; i < _geometry.entries; i++)
+    {
+        uint8_t* e = after.data() + i * kEntry;
+        if (e[0] > 15)
+        {
+            freeEntries.push_back(i);
+            continue;
+        }
+        if (Key(e) == key)
+        {
+            if (e[9] & 0x80)
+            {
+                error = Trimmed(e + 1, 8) + "." + Trimmed(e + 9, 3) + " is read only";
+                return false;
+            }
+            e[0] = 0xE5;
+            freeEntries.push_back(i);
+        }
+        for (uint32_t k = 0, n = UsedPointers(dir.data() + i * kEntry); k < n; k++)
+            if (Pointer(e, k) < _geometry.blocks)
+                used[Pointer(e, k)] = true;
+    }
+
+    const uint32_t records = static_cast<uint32_t>((bytes.size() + 127) / 128);
+    const uint32_t needed = (records * 128 + CpmGeometry::kBlock - 1) / CpmGeometry::kBlock;
+    const uint32_t perEntry = _geometry.Wide() ? 8 : 16;
+    const uint32_t entriesNeeded = std::max<uint32_t>(1, (needed + perEntry - 1) / perEntry);
+    std::vector<uint32_t> blocks;
+    for (uint32_t b = 0; b < _geometry.blocks && blocks.size() < needed; b++)
+        if (!used[b])
+            blocks.push_back(b);
+    if (blocks.size() < needed)
+    {
+        error =
+            "not enough free blocks: " + std::to_string(needed) + " needed, " + std::to_string(blocks.size()) + " free";
+        return false;
+    }
+    if (freeEntries.size() < entriesNeeded)
+    {
+        error = "the CP/M directory is full";
+        return false;
+    }
+
+    std::vector<uint8_t> block(CpmGeometry::kBlock);
+    for (uint32_t k = 0; k < needed; k++)
+    {
+        const size_t at = static_cast<size_t>(k) * CpmGeometry::kBlock;
+        const size_t n = std::min<size_t>(CpmGeometry::kBlock, bytes.size() - at);
+        std::fill(block.begin(), block.end(), static_cast<uint8_t>(0x1A));
+        std::memcpy(block.data(), bytes.data() + at, n);
+        if (!_writer(static_cast<uint64_t>(blocks[k]) * CpmGeometry::kBlock, block.data(), CpmGeometry::kBlock))
+        {
+            error = "block " + std::to_string(blocks[k]) + " cannot be written";
+            return false;
+        }
+    }
+
+    // An entry holds perEntry blocks: one logical extent of 16 KB (16-bit pointers) or two (8-bit); EX is its last
+    // logical extent, RC the records in that one
+    const uint32_t extentsPerEntry = perEntry * CpmGeometry::kBlock / kExtent;
+    const uint32_t recordsPerEntry = perEntry * CpmGeometry::kBlock / 128;
+    for (uint32_t k = 0; k < entriesNeeded; k++)
+    {
+        uint8_t* e = after.data() + freeEntries[k] * kEntry;
+        std::memset(e, 0, kEntry);
+        std::memcpy(e, key.data(), key.size());
+        const uint32_t inEntry = k + 1 == entriesNeeded ? records - k * recordsPerEntry : recordsPerEntry;
+        const uint32_t extent = k * extentsPerEntry + (inEntry ? (inEntry - 1) / 128 : 0);
+        e[12] = static_cast<uint8_t>(extent & 0x1F);
+        e[14] = static_cast<uint8_t>(extent >> 5);
+        e[15] = static_cast<uint8_t>(inEntry - extent % extentsPerEntry * 128);
+        for (uint32_t n = 0; n < perEntry && k * perEntry + n < blocks.size(); n++)
+        {
+            const uint32_t b = blocks[k * perEntry + n];
+            if (_geometry.Wide())
+            {
+                e[16 + 2 * n] = static_cast<uint8_t>(b);
+                e[17 + 2 * n] = static_cast<uint8_t>(b >> 8);
+            }
+            else
+                e[16 + n] = static_cast<uint8_t>(b);
+        }
+    }
+    return WriteDirectory(dir, after, error);
+}
+
+bool CpmFileSystem::Delete(const CpmFile& file, std::string& error)
+{
+    std::vector<uint8_t> dir;
+    std::vector<uint32_t> entries;
+    if (!Writable(error))
+        return false;
+    if (!Directory(dir))
+    {
+        error = "the CP/M directory does not read";
+        return false;
+    }
+    if (!Entries(dir, file.key, entries, error))
+        return false;
+    if (file.attributes & CpmFile::kReadOnly)
+    {
+        error = file.FullName() + " is read only";
+        return false;
+    }
+    std::vector<uint8_t> after = dir;
+    for (const uint32_t i : entries)
+        after[i * kEntry] = 0xE5;
+    return WriteDirectory(dir, after, error);
+}
+
+bool CpmFileSystem::Rename(const CpmFile& file, uint8_t user, const std::string& name, const std::string& type,
+                           std::string& error)
+{
+    if (!Writable(error))
+        return false;
+    if (user > 15 || !ValidName(name, type))
+    {
+        error = BadName(name + (type.empty() ? "" : "." + type));
+        return false;
+    }
+    std::vector<uint8_t> dir;
+    std::vector<uint32_t> entries;
+    if (!Directory(dir))
+    {
+        error = "the CP/M directory does not read";
+        return false;
+    }
+    if (!Entries(dir, file.key, entries, error))
+        return false;
+    if (file.attributes & CpmFile::kReadOnly)
+    {
+        error = file.FullName() + " is read only";
+        return false;
+    }
+    std::vector<uint8_t> key(12, ' ');
+    key[0] = user;
+    std::memcpy(key.data() + 1, name.data(), name.size());
+    std::memcpy(key.data() + 9, type.data(), type.size());
+    std::vector<uint32_t> taken;
+    std::string ignored;
+    if (key != file.key && Entries(dir, key, taken, ignored))
+    {
+        error = name + (type.empty() ? "" : "." + type) + " is there already";
+        return false;
+    }
+    std::vector<uint8_t> after = dir;
+    for (const uint32_t i : entries)
+    {
+        uint8_t* e = after.data() + i * kEntry;
+        e[0] = user;
+        for (int k = 0; k < 11; k++)
+            e[1 + k] = static_cast<uint8_t>((e[1 + k] & 0x80) | key[1 + k]);
+    }
+    return WriteDirectory(dir, after, error);
+}
+
+bool CpmFileSystem::SetAttributes(const CpmFile& file, uint8_t attributes, std::string& error)
+{
+    if (!Writable(error))
+        return false;
+    std::vector<uint8_t> dir;
+    std::vector<uint32_t> entries;
+    if (!Directory(dir))
+    {
+        error = "the CP/M directory does not read";
+        return false;
+    }
+    if (!Entries(dir, file.key, entries, error))
+        return false;
+    std::vector<uint8_t> after = dir;
+    for (const uint32_t i : entries)
+        for (int k = 0; k < 3; k++)
+        {
+            uint8_t& b = after[i * kEntry + 9 + k];
+            b = static_cast<uint8_t>((b & 0x7F) | ((attributes >> k) & 1 ? 0x80 : 0));
+        }
+    return WriteDirectory(dir, after, error);
 }
 }  // namespace unrealdisk

@@ -66,9 +66,9 @@
         Json::Value& files = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["get"];
         files["summary"] = "The files on a slot's disk: volumes / files / read (read only)";
         files["description"] =
-            "The file systems on the disk in a slot, one way for all of them: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M (read only), MB-02 and MDOS floppies, "
+            "The file systems on the disk in a slot, one way for all of them: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02 and MDOS floppies, "
             "FAT12 floppies (Sprinter DSS, MS-DOS), the FAT partitions of hard disks and SD cards (Estex DSS, NedoOS) and "
-            "the ATM CP/M partitions (read only) and iS-DOS / TASiS devices (a descriptor at a cylinder boundary) of an ATM-Turbo hard disk, the MDOS3 virtual disks of a divIDE one. "
+            "the ATM CP/M partitions and iS-DOS / TASiS devices (a descriptor at a cylinder boundary) of an ATM-Turbo hard disk, the MDOS3 virtual disks of a divIDE one. "
             "volumes: reply field 'volumes' (id, fs, system, label, offset, bytes, freeBytes). "
             "files?path=<dir>[&volume=<id>][&recursive=true]: field 'entries' (path, name, directory, size, start, "
             "attributes, mtime, error, and the file system's own fields), 'notes' (loops cut, stale entries). "
@@ -127,10 +127,10 @@
             "NAME.TYP, iS-DOS, FAT), an older file of that name replaced: the bytes as base64 'data', a host file "
             "'in', or the body itself (application/octet-stream, ?path=NAME.T). delete removes a file or an empty "
             "iS-DOS / FAT directory (recursive: a directory with its contents); rename takes 'to': a bare name stays "
-            "in the directory, a path from the root (/name: the root) moves the file or directory (iS-DOS, FAT); "
+            "in the directory, a path from the root (/name: the root) moves the file or directory (iS-DOS, FAT, MB-02; ATM CP/M to a user area); "
             "mkdir makes a directory (parents: the missing ones on the way too); attrib sets a file's or directory's "
-            "'attributes' (+R-H changes, RA sets exactly: FAT RHSA, iS-DOS RWHD, +3DOS RSA) and / or 'time' (FAT, "
-            "iS-DOS); label names the volume ('label': FAT volume label, TR-DOS disk title, iS-DOS device name). The reply's access says where the change went: writethrough is in the "
+            "'attributes' (+R-H changes, RA sets exactly: FAT RHSA, iS-DOS RWHD, +3DOS and ATM CP/M RSA, MDOS HSPARWED) and / or 'time' (FAT, "
+            "iS-DOS, MB-02); label names the volume ('label': FAT volume label, TR-DOS disk title, iS-DOS device name, MB-02 or MDOS disk name). The reply's access says where the change went: writethrough is in the "
             "disk's file, session is dirty until saved. "
             "Options go in the JSON body or the query string:" + verbs;
         post["tags"].append("Media");
