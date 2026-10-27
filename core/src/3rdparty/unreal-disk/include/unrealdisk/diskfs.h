@@ -2,13 +2,13 @@
 
 /// @file diskfs.h
 /// @brief The files on any disk, one way for every file system: the volumes of a disk, a directory's entries, a
-/// file's bytes. Floppies (DiskImage): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT12 (Sprinter DSS,
-/// MS-DOS 720K / 1.44M). Hard disks, SD and CF cards (BlockDevice): the FAT partitions of the MBR or a superfloppy
-/// (Estex DSS, NedoOS, any FAT12 / 16 / 32), the ATM CP/M partitions (the configuration record in sector 0, the .CDS
-/// descriptors), iS-DOS / TASiS devices: the whole disk, or runs of cylinders as the ATM-Turbo HDD driver lays them
-/// out (a descriptor at a cylinder boundary), and the virtual disks of an MDOS3 partition (MBR type #49, or the whole
-/// device from its first "SDOS" sector). Reading everywhere; writing, deleting and renaming files on TR-DOS, +3DOS,
-/// iS-DOS and FAT (a block device that takes writes); ATM CP/M, MB-02 and MDOS are read only.
+/// file's bytes. Floppies (DiskImage): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MB-01 (read only), MDOS, FAT12
+/// (Sprinter DSS, MS-DOS 720K / 1.44M). Hard disks, SD and CF cards (BlockDevice): the FAT partitions of the MBR or a
+/// superfloppy (Estex DSS, NedoOS, any FAT12 / 16 / 32), the ATM CP/M partitions (the configuration record in sector 0,
+/// the .CDS descriptors), iS-DOS / TASiS devices: the whole disk, or runs of cylinders as the ATM-Turbo HDD driver lays
+/// them out (a descriptor at a cylinder boundary), the BS-DOS 309 floppies of a #47 partition, and the virtual disks of
+/// an MDOS3 partition (MBR type #49, or the whole device from its first "SDOS" sector). Reading everywhere; writing,
+/// deleting and renaming files on every one of them (a block device that takes writes).
 ///
 /// Standard C++ only: the emulator (its media verbs `volumes`, `files`, `read` on every automation plane, the
 /// debugger's disk files) and the standalone tools (zxasm, symconv) use the same class. The caller owns the disk and
@@ -35,7 +35,8 @@ struct DiskFsVolume
     std::string id;  ///< the name to pick it: "trdos", "plus3", "isdos", "fat" (a floppy, a superfloppy), "p1".."p4"
                      ///< (an MBR partition), "cpm" (an ATM CP/M floppy), "mb02", "mdos", "cpm-<cylinder>" (an ATM CP/M
                      ///< hard disk partition), "isdos-<cylinder>" (an iS-DOS device on a hard disk), "mdos-<slot>"
-                     ///< (an MDOS3 virtual disk; "mdos-p<partition>-<slot>" with two #49 partitions or more)
+                     ///< (an MDOS3 virtual disk; "mdos-p<partition>-<slot>" with two #49 partitions or more), "mb02-<n>"
+                     ///< (the BS-DOS 309 floppy @n of a #47 partition)
     std::string fs;        ///< trdos, plus3, isdos, cpm, fat12, fat16, fat32
     std::string system;    ///< what it reads as: "TR-DOS", "+3DOS", "iS-DOS Chic", "iS-DOS Classic", "FAT16"
     std::string label;     ///< the disk title or volume label
@@ -44,8 +45,8 @@ struct DiskFsVolume
     int64_t freeBytes = -1;  ///< -1: not known
     bool writable = false;   ///< Write, Delete, Rename and the Set calls work on it
     std::string attributes;  ///< the attribute letters SetAttributes takes: FAT "RHSA", iS-DOS "RWHD", +3DOS "RSA"
-    bool times = false;      ///< SetTime works (FAT, iS-DOS)
-    bool labels = false;     ///< SetLabel works (FAT, TR-DOS, iS-DOS)
+    bool times = false;      ///< SetTime works (FAT, iS-DOS, MB-02)
+    bool labels = false;     ///< SetLabel works (FAT, TR-DOS, iS-DOS, MB-02, MDOS)
 };
 
 struct DiskFsEntry
@@ -73,8 +74,15 @@ struct DiskFsWriteOptions
     uint16_t start = 0;        ///< TR-DOS: the start field; +3DOS: a CODE file's load address (param 1)
     bool lengthField = true;   ///< TR-DOS: false leaves 0 in the length field (XAS reads whole sectors)
     bool header = true;        ///< +3DOS: a +3DOS header in front, as +3 BASIC's SAVE writes it
-    int64_t mtime = 0;         ///< FAT, iS-DOS: the file's date and time as UTC seconds of the DOS wall clock
+    int64_t mtime = 0;         ///< FAT, iS-DOS, MB-02: the file's date and time as UTC seconds of the DOS wall clock
                                ///< (0: 1980-01-01 00:00)
+};
+
+struct DiskFsDirectoryOptions
+{
+    int64_t mtime = 0;        ///< as in DiskFsWriteOptions
+    bool continuous = false;  ///< iS-DOS: a continuous catalogue (TASiS mkdir.com /c)
+    uint32_t blocks = 0;      ///< iS-DOS: the catalogue's size, 1-16 blocks (mkdir.com /s; 0: the standard size)
 };
 
 class DiskFs
@@ -102,30 +110,40 @@ public:
     /// of its last sector past the length (sources saved by XAS keep text there), empty elsewhere
     bool Read(const std::string& volume, const std::string& path, std::vector<uint8_t>& data, std::string& error,
               std::vector<uint8_t>* slack = nullptr);
-    /// `data` as the file `path` (TR-DOS "NAME.T", +3DOS "NAME.TYP", FAT and iS-DOS "DIR/name.ext" in a directory
+    /// `data` as the file `path` (TR-DOS "NAME.T", +3DOS "NAME.TYP", ATM CP/M "USERn/NAME.TYP", FAT and iS-DOS "DIR/name.ext", MB-02 "dir/name", MDOS
+    /// "NAME.T" in a directory
     /// that is there): an older file of that name is replaced. The disk is changed in place; saving it is the
     /// caller's. False on a volume that is not writable
     bool Write(const std::string& volume, const std::string& path, const std::vector<uint8_t>& data,
                const DiskFsWriteOptions& options, std::string& error);
-    /// Delete the file `path` (FAT, iS-DOS: an empty directory too). TR-DOS marks it deleted as TR-DOS does (its
+    /// Delete the file `path` (FAT, iS-DOS, MB-02: an empty directory too). TR-DOS marks it deleted as TR-DOS does (its
     /// sectors stay used until the disk is compacted). `recursive`: a directory goes with everything in it; every
     /// entry is checked first (a protected iS-DOS file, a read-only FAT entry), so nothing goes when one would stay
     bool Delete(const std::string& volume, const std::string& path, std::string& error, bool recursive = false);
-    /// A new empty directory `path` (FAT, iS-DOS) in a directory that is there; `parents`: the missing directories
-    /// on the way are made too, and one that is there already is no error. `mtime` as in DiskFsWriteOptions
-    bool MakeDirectory(const std::string& volume, const std::string& path, bool parents, int64_t mtime, std::string& error);
-    /// The file `path` takes the name `to`: a bare name keeps it in its directory; FAT and iS-DOS take a path from the
-    /// root too ("/name" the root), moving it to another directory of the volume, a directory with its contents (not
+    /// A new empty directory `path` (FAT, iS-DOS, MB-02) in a directory that is there; `parents`: the missing
+    /// directories on the way are made too (of the standard kind and size), and one that is there already is no error.
+    /// `continuous` and `blocks` are refused on a file system other than iS-DOS
+    bool MakeDirectory(const std::string& volume, const std::string& path, bool parents,
+                       const DiskFsDirectoryOptions& options, std::string& error);
+    bool MakeDirectory(const std::string& volume, const std::string& path, bool parents, int64_t mtime,
+                       std::string& error)
+    {
+        DiskFsDirectoryOptions options;
+        options.mtime = mtime;
+        return MakeDirectory(volume, path, parents, options, error);
+    }
+    /// The file `path` takes the name `to`: a bare name keeps it in its directory; FAT, iS-DOS and MB-02 take a path from
+    /// the root too ("/name" the root), moving it to another directory of the volume, a directory with its contents (not
     /// into itself). False when `to` is there already
     bool Rename(const std::string& volume, const std::string& path, const std::string& to, std::string& error);
     /// The attributes of `path` by the letters of its file system (DiskFsVolume::attributes; FAT R read only, H hidden,
     /// S system, A archive; iS-DOS R / W read / write protected, H hidden, D delete protected; +3DOS R read only,
     /// S system, A archive): "+R-H" sets and clears, "RA" leaves exactly these set. Other letters are refused
     bool SetAttributes(const std::string& volume, const std::string& path, const std::string& attributes, std::string& error);
-    /// The date and time of `path` (FAT, iS-DOS), `mtime` as in DiskFsWriteOptions
+    /// The date and time of `path` (FAT, iS-DOS, MB-02), `mtime` as in DiskFsWriteOptions
     bool SetTime(const std::string& volume, const std::string& path, int64_t mtime, std::string& error);
     /// The volume's name: a FAT volume label ("" removes it; `mtime` its entry's time), the TR-DOS disk title, the
-    /// iS-DOS device name
+    /// iS-DOS device name, the MB-02 or MDOS disk name
     bool SetLabel(const std::string& volume, const std::string& label, int64_t mtime, std::string& error);
 
     /// A file system's reader (diskfs.cpp)

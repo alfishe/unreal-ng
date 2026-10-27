@@ -12,6 +12,7 @@
 #include "unrealdisk/fatvolumereader.h"
 #include "unrealdisk/floppyblockdevice.h"
 #include "unrealdisk/isdosfs.h"
+#include "unrealdisk/mb01fs.h"
 #include "unrealdisk/mb02fs.h"
 #include "unrealdisk/mdosfs.h"
 #include "unrealdisk/plus3fs.h"
@@ -31,12 +32,22 @@ constexpr uint64_t kDefaultSectors = 63;
 constexpr uint64_t kMaxCylinderScan = 4096;
 /// Without a #49 partition the first MDOS3 slot is looked for in this many sectors from LBA 0 (2 MiB)
 constexpr uint64_t kMdos3Search = 4096;
+/// A BS-DOS 309 virtual floppy on its #47 partition: 2 MiB
+constexpr uint64_t kBsdosDisc = 4096;
 
 std::string Lower(std::string text)
 {
     for (char& c : text)
         if (c >= 'A' && c <= 'Z')
             c = static_cast<char>(c - 'A' + 'a');
+    return text;
+}
+
+std::string Upper(std::string text)
+{
+    for (char& c : text)
+        if (c >= 'a' && c <= 'z')
+            c = static_cast<char>(c - 'a' + 'A');
     return text;
 }
 
@@ -167,7 +178,9 @@ struct DiskFs::Driver
         return false;
     }
     /// A new empty directory; false with no reason: the file system has none
-    virtual bool MakeDirectory(const std::string&, int64_t, std::string&) { return false; }
+    virtual bool MakeDirectory(const std::string&, const DiskFsDirectoryOptions&, std::string&) { return false; }
+    /// Whether MakeDirectory takes `continuous` and `blocks`
+    virtual bool SizedDirectories() const { return false; }
     /// Whether the entry may be deleted (a recursive delete checks every entry before it deletes one)
     virtual bool Deletable(const DiskFsEntry&, std::string&) { return true; }
     /// The attribute letters SetAttributes takes ("": none)
@@ -498,12 +511,16 @@ struct IsdosDriver : DiskFs::Driver
         return fs.Rename(path, to, error);
     }
 
-    bool MakeDirectory(const std::string& path, int64_t mtime, std::string& error) override
+    bool MakeDirectory(const std::string& path, const DiskFsDirectoryOptions& options, std::string& error) override
     {
         IsdosFileSystem::WriteOptions write;
-        FatVolumeReader::UnixToDos(mtime, write.date, write.time);
+        FatVolumeReader::UnixToDos(options.mtime, write.date, write.time);
+        write.continuous = options.continuous;
+        write.blocks = options.blocks;
         return fs.MakeCatalogue(path, write, error);
     }
+
+    bool SizedDirectories() const override { return true; }
 
     bool Deletable(const DiskFsEntry& entry, std::string& error) override { return fs.Deletable(entry.path, error); }
 
@@ -644,13 +661,13 @@ struct FatDriver : DiskFs::Driver
         return false;
     }
 
-    bool MakeDirectory(const std::string& path, int64_t mtime, std::string& error) override
+    bool MakeDirectory(const std::string& path, const DiskFsDirectoryOptions& options, std::string& error) override
     {
         std::string dir, name;
         SplitPath(path, dir, name);
         return Edit(path, error, [&](FatFs& fs) {
             uint16_t date = 0, time = 0;
-            FatVolumeReader::UnixToDos(mtime, date, time);
+            FatVolumeReader::UnixToDos(options.mtime, date, time);
             fs.SetClock(date, time);
             FatNode parent, made;
             return fs.Resolve("/" + dir, parent) && fs.Create(parent, name, true, made);
@@ -890,6 +907,121 @@ struct CpmDriver : DiskFs::Driver
         return false;
     }
 
+    /// "USERn/NAME.TYP" (n 1-15) or "NAME.TYP" of user 0 into its parts, the name upper-cased
+    static bool Parse(const std::string& path, uint8_t& user, std::string& name, std::string& type, std::string& error)
+    {
+        std::string file = path.substr(path.front() == '/');
+        user = 0;
+        const size_t slash = file.find('/');
+        if (slash != std::string::npos)
+        {
+            const std::string dir = Upper(file.substr(0, slash));
+            const bool digits = dir.size() >= 5 && dir.size() <= 6 && dir.compare(0, 4, "USER") == 0 && dir[4] != '0' &&
+                                dir.find_first_not_of("0123456789", 4) == std::string::npos;
+            const int n = digits ? std::stoi(dir.substr(4)) : 0;
+            if (n < 1 || n > 15)
+            {
+                error = "an ATM CP/M directory is a user area USER1..USER15 (" + path + ")";
+                return false;
+            }
+            user = static_cast<uint8_t>(n);
+            file = file.substr(slash + 1);
+        }
+        file = Upper(file);
+        const size_t dot = file.find('.');
+        name = file.substr(0, dot);
+        type = dot == std::string::npos ? std::string() : file.substr(dot + 1);
+        if (!CpmFileSystem::ValidName(name, type) || (dot != std::string::npos && type.empty()))
+        {
+            error =
+                "not a CP/M name NAME.TYP (1-8 and 0-3 characters, no blank, none of < > . , ; : = ? * [ ]): " + path;
+            return false;
+        }
+        return true;
+    }
+
+    bool Find(const std::string& path, CpmFile& out, std::string& error)
+    {
+        std::vector<CpmFile> files;
+        if (!fs.List(files, error))
+            return false;
+        for (int pass = 0; pass < 2; pass++)
+            for (const CpmFile& f : files)
+                if (pass == 0 ? PathOf(f) == path : Lower(PathOf(f)) == Lower(path))
+                {
+                    out = f;
+                    return true;
+                }
+        error = "no " + path + " on the CP/M volume";
+        return false;
+    }
+
+    /// A user area: "USERn"
+    static bool UserArea(const std::string& path, uint8_t& user)
+    {
+        std::string name, type, error;
+        return path.find('/') == std::string::npos && Parse(path + "/X", user, name, type, error);
+    }
+
+    bool Write(const std::string& path, const std::vector<uint8_t>& data, const DiskFsWriteOptions&,
+               std::string& error) override
+    {
+        uint8_t user = 0;
+        std::string name, type;
+        return Parse(path, user, name, type, error) && fs.Write(user, name, type, data, error);
+    }
+
+    bool Delete(const std::string& path, std::string& error) override
+    {
+        // A user area goes with its last file
+        uint8_t user = 0;
+        if (UserArea(path, user))
+        {
+            std::vector<CpmFile> files;
+            if (!fs.List(files, error))
+                return false;
+            for (const CpmFile& f : files)
+                if (f.user == user)
+                {
+                    error = path + " is not empty";
+                    return false;
+                }
+            return true;
+        }
+        CpmFile f;
+        return Find(path, f, error) && fs.Delete(f, error);
+    }
+
+    bool Deletable(const DiskFsEntry& entry, std::string& error) override
+    {
+        if (entry.directory || entry.attributes.find('R') == std::string::npos)
+            return true;
+        error = entry.path + " is read only";
+        return false;
+    }
+
+    bool Rename(const std::string& path, const std::string& to, std::string& error) override
+    {
+        CpmFile f;
+        if (!Find(path, f, error))
+            return false;
+        // A bare name keeps the user area; a path goes from the root
+        const bool fromRoot = to.find('/') != std::string::npos;
+        uint8_t user = 0;
+        std::string name, type;
+        if (!Parse(to, user, name, type, error))
+            return false;
+        return fs.Rename(f, fromRoot ? user : f.user, name, type, error);
+    }
+
+    std::string AttributeLetters() const override { return "RSA"; }
+
+    bool SetAttributes(const DiskFsEntry& entry, const std::string& letters, std::string& error) override
+    {
+        CpmFile f;
+        return Find(entry.path, f, error) && fs.SetAttributes(f, static_cast<uint8_t>(Bits(letters, "RSA")), error);
+    }
+
     CpmFileSystem fs;
 };
 
@@ -904,19 +1036,24 @@ void DescribeCpm(const CpmFileSystem& fs, DiskFsVolume& volume)
 
 /// The bytes of an ATM CP/M hard disk partition from its directory on: the BIOS's cylinder, head and sector of the
 /// channel's geometry, at the disk's own (`heads` x `sectors`)
-CpmFileSystem::ByteReader CpmReaderAt(BlockDevice& device, const AtmCpmChannel& channel, uint64_t heads,
-                                      uint64_t sectors, std::shared_ptr<SectorCache> cache)
+std::function<uint64_t(uint64_t)> CpmLba(const AtmCpmChannel& channel, uint64_t heads, uint64_t sectors)
 {
     const uint64_t directory = static_cast<uint64_t>(channel.reserved) * channel.sectors;
     const uint64_t perTrack = channel.sectors, partHeads = channel.heads, start = channel.startCylinder;
-    return [&device, directory, perTrack, partHeads, start, heads, sectors, cache](uint64_t offset, uint8_t* dst,
-                                                                                   uint32_t size) {
+    return [directory, perTrack, partHeads, start, heads, sectors](uint64_t offset) {
+        const uint64_t logical = directory + offset / kSector;
+        const uint64_t track = logical / perTrack;
+        return ((start + track / partHeads) * heads + track % partHeads) * sectors + logical % perTrack;
+    };
+}
+
+CpmFileSystem::ByteReader CpmReaderAt(BlockDevice& device, const AtmCpmChannel& channel, uint64_t heads,
+                                      uint64_t sectors, std::shared_ptr<SectorCache> cache)
+{
+    return [&device, lbaOf = CpmLba(channel, heads, sectors), cache](uint64_t offset, uint8_t* dst, uint32_t size) {
         while (size > 0)
         {
-            const uint64_t logical = directory + offset / kSector;
-            const uint64_t track = logical / perTrack;
-            const uint64_t lba =
-                ((start + track / partHeads) * heads + track % partHeads) * sectors + logical % perTrack;
+            const uint64_t lba = lbaOf(offset);
             if (lba != cache->lba)
             {
                 if (!device.ReadSector(lba, cache->sector))
@@ -936,9 +1073,37 @@ CpmFileSystem::ByteReader CpmReaderAt(BlockDevice& device, const AtmCpmChannel& 
     };
 }
 
-struct Mb02Driver : DiskFs::Driver
+/// The writer of CpmReaderAt: each sector read, patched and written back, the reader's cache kept current
+CpmFileSystem::ByteWriter CpmWriterAt(BlockDevice& device, const AtmCpmChannel& channel, uint64_t heads,
+                                      uint64_t sectors, std::shared_ptr<SectorCache> cache)
 {
-    explicit Mb02Driver(Mb02FileSystem fs) : fs(std::move(fs)) {}
+    return [&device, lbaOf = CpmLba(channel, heads, sectors), cache](uint64_t offset, const uint8_t* src,
+                                                                     uint32_t size) {
+        while (size > 0)
+        {
+            const uint64_t lba = lbaOf(offset);
+            const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(kSector - offset % kSector));
+            uint8_t sector[kSector];
+            cache->lba = UINT64_MAX;
+            if (n < kSector && !device.ReadSector(lba, sector))
+                return false;
+            std::memcpy(sector + offset % kSector, src, n);
+            if (!device.WriteSector(lba, sector))
+                return false;
+            src += n;
+            offset += n;
+            size -= n;
+        }
+        return true;
+    };
+}
+
+/// The tree of a BS-DOS disk, MB-02 (Mb02FileSystem) or MB-01 (Mb01FileSystem): its directories by number with a
+/// parent each, the files of a directory by entry
+template <typename Fs>
+struct BsdosTree : DiskFs::Driver
+{
+    BsdosTree(Fs fs, const char* system) : fs(std::move(fs)), system(system) {}
 
     /// The name bytes as Ascii gives them, the path separators as \xNN too
     static std::string NameOf(const std::string& raw)
@@ -1020,6 +1185,8 @@ struct Mb02Driver : DiskFs::Driver
             e.name = unique(NameOf(d.name), "~D" + std::to_string(d.number));
             e.path = prefix + e.name;
             e.directory = true;
+            if (d.date)
+                e.mtime = FatVolumeReader::DosToUnix(d.date, d.time);
             e.fields = {{"dir", d.number}, {"sector", d.first}};
             const std::string path = e.path;
             out.push_back(std::move(e));
@@ -1027,7 +1194,27 @@ struct Mb02Driver : DiskFs::Driver
         }
     }
 
-    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    /// The DIRS number of directory `dir` ("" the root)
+    bool DirNumber(const std::string& dir, uint8_t& number, std::string& error)
+    {
+        number = 0;
+        if (dir.empty())
+            return true;
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        if (!Stat(dir, entry, notes, error))
+            return false;
+        if (!entry.directory)
+        {
+            error = dir + " is no directory";
+            return false;
+        }
+        number = static_cast<uint8_t>(entry.Field("dir"));
+        return true;
+    }
+
+    /// The file `path` names (as listed: a later file of a name with ~<entry>)
+    bool FileOf(const std::string& path, Mb02File& out, std::string& error)
     {
         std::vector<std::string> notes;
         DiskFsEntry entry;
@@ -1041,24 +1228,124 @@ struct Mb02Driver : DiskFs::Driver
         std::string dir, name;
         SplitPath(entry.path, dir, name);
         uint8_t number = 0;
-        if (!dir.empty())
-        {
-            DiskFsEntry parent;
-            if (!Stat(dir, parent, notes, error))
-                return false;
-            number = static_cast<uint8_t>(parent.Field("dir"));
-        }
         std::vector<Mb02File> files;
-        if (!fs.List(number, files, error))
+        if (!DirNumber(dir, number, error) || !fs.List(number, files, error))
             return false;
         for (const Mb02File& f : files)
             if (f.entry == entry.Field("entry"))
-                return fs.Read(f, data, error);
-        error = "no " + path + " on the MB-02 volume";
+            {
+                out = f;
+                return true;
+            }
+        error = "no " + path + " on the " + std::string(system) + " volume";
         return false;
     }
 
-    Mb02FileSystem fs;
+    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    {
+        Mb02File f;
+        return FileOf(path, f, error) && fs.Read(f, data, error);
+    }
+
+    Fs fs;
+    const char* system;
+};
+
+struct Mb01Driver : BsdosTree<Mb01FileSystem>
+{
+    explicit Mb01Driver(Mb01FileSystem fs) : BsdosTree(std::move(fs), "MB-01") {}
+};
+
+struct Mb02Driver : BsdosTree<Mb02FileSystem>
+{
+    explicit Mb02Driver(Mb02FileSystem fs) : BsdosTree(std::move(fs), "MB-02") {}
+
+    static void Dos(int64_t mtime, uint16_t& date, uint16_t& time)
+    {
+        date = time = 0;
+        if (mtime)
+            FatVolumeReader::UnixToDos(mtime, date, time);
+    }
+
+    bool Write(const std::string& path, const std::vector<uint8_t>& data, const DiskFsWriteOptions& options,
+               std::string& error) override
+    {
+        std::string dir, name;
+        SplitPath(path, dir, name);
+        uint8_t number = 0;
+        if (!DirNumber(dir, number, error))
+            return false;
+        Mb02FileSystem::WriteOptions write;
+        write.start = options.start;
+        Dos(options.mtime, write.date, write.time);
+        return fs.Write(number, Unescape(name), data, write, error);
+    }
+
+    bool Delete(const std::string& path, std::string& error) override
+    {
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        if (!Stat(path, entry, notes, error))
+            return false;
+        if (entry.directory)
+            return fs.DeleteDirectory(static_cast<uint8_t>(entry.Field("dir")), error);
+        Mb02File f;
+        return FileOf(path, f, error) && fs.Delete(f, error);
+    }
+
+    /// A bare name stays in its directory; a path (with '/') is from the root
+    bool Rename(const std::string& path, const std::string& to, std::string& error) override
+    {
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        if (!Stat(path, entry, notes, error))
+            return false;
+        std::string fromDir, fromName, toDir, toName;
+        SplitPath(entry.path, fromDir, fromName);
+        if (to.find('/') == std::string::npos)
+        {
+            toDir = fromDir;
+            toName = to;
+        }
+        else
+            SplitPath(to.substr(to.front() == '/'), toDir, toName);
+        uint8_t number = 0;
+        if (!DirNumber(toDir, number, error))
+            return false;
+        if (entry.directory)
+            return fs.RenameDirectory(static_cast<uint8_t>(entry.Field("dir")), number, Unescape(toName), error);
+        Mb02File f;
+        return FileOf(path, f, error) && fs.Rename(f, number, Unescape(toName), error);
+    }
+
+    bool MakeDirectory(const std::string& path, const DiskFsDirectoryOptions& options, std::string& error) override
+    {
+        std::string dir, name;
+        SplitPath(path, dir, name);
+        uint8_t number = 0;
+        uint16_t date = 0, time = 0;
+        Dos(options.mtime, date, time);
+        return DirNumber(dir, number, error) && fs.MakeDirectory(number, Unescape(name), date, time, error);
+    }
+
+    bool SetTime(const std::string& path, int64_t mtime, std::string& error) override
+    {
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        uint16_t date = 0, time = 0;
+        Dos(mtime, date, time);
+        if (!Stat(path, entry, notes, error))
+            return false;
+        if (entry.directory)
+            return fs.SetDirectoryTime(static_cast<uint8_t>(entry.Field("dir")), date, time, error);
+        Mb02File f;
+        return FileOf(path, f, error) && fs.SetTime(f, date, time, error);
+    }
+
+    bool SetLabel(const std::string& label, int64_t, std::string& error) override { return fs.SetName(label, error); }
+    bool HasTimes() const override { return true; }
+    bool HasLabel() const override { return true; }
+    std::string Label() const override { return Ascii(fs.Boot().name); }
 };
 
 struct MdosDriver : DiskFs::Driver
@@ -1123,7 +1410,105 @@ struct MdosDriver : DiskFs::Driver
         return false;
     }
 
+    /// "name.T" (\\xNN escapes as PathOf writes them) -> the name bytes and the type
+    static bool Parse(const std::string& path, std::string& name, char& type, std::string& error)
+    {
+        const size_t dot = path.rfind('.');
+        const std::string tail = dot == std::string::npos ? std::string() : Unescape(path.substr(dot + 1));
+        if (dot == std::string::npos || dot == 0 || tail.size() != 1 || path.find('/') != std::string::npos)
+        {
+            error = "an MDOS file is name.T: at most 10 characters and the type letter (" + path + ")";
+            return false;
+        }
+        type = tail[0];
+        name = Unescape(path.substr(0, dot));
+        return true;
+    }
+
+    /// The directory entry `path` names (as listed: a later file of a name with ~<slot>)
+    bool Entry(const std::string& path, MdosFile& out, std::string& error)
+    {
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        if (!Stat(path, entry, notes, error))
+            return false;
+        std::vector<MdosFile> files;
+        if (!fs.List(files, error))
+            return false;
+        for (const MdosFile& f : files)
+            if (f.slot == entry.Field("slot"))
+            {
+                out = f;
+                return true;
+            }
+        error = "no " + path + " on the MDOS volume";
+        return false;
+    }
+
+    bool Write(const std::string& path, const std::vector<uint8_t>& data, const DiskFsWriteOptions& options,
+               std::string& error) override
+    {
+        std::string name;
+        char type = 0;
+        if (!Parse(path, name, type, error))
+            return false;
+        MdosFileSystem::WriteOptions write;
+        write.start = options.start;
+        // A program: its length without variables; else as a tape header's CODE
+        write.param2 = type == 'P' ? static_cast<uint16_t>(std::min<size_t>(data.size(), 0xFFFF)) : 0x8000;
+        return fs.Write(name, type, data, write, error);
+    }
+
+    bool Delete(const std::string& path, std::string& error) override
+    {
+        MdosFile f;
+        return Entry(path, f, error) && fs.Delete(f, error);
+    }
+
+    bool Deletable(const DiskFsEntry& entry, std::string& error) override
+    {
+        if (entry.attributes.find('D') != std::string::npos)
+            return true;
+        error = entry.path + " may not be deleted (no D attribute)";
+        return false;
+    }
+
+    bool Rename(const std::string& path, const std::string& to, std::string& error) override
+    {
+        MdosFile f;
+        std::string name;
+        char type = 0;
+        return Entry(path, f, error) && Parse(to.substr(to.front() == '/'), name, type, error) &&
+               fs.Rename(f, name, type, error);
+    }
+
+    std::string AttributeLetters() const override { return "HSPARWED"; }
+
+    bool SetAttributes(const DiskFsEntry& entry, const std::string& letters, std::string& error) override
+    {
+        MdosFile f;
+        if (!Entry(entry.path, f, error))
+            return false;
+        // HSPARWED from bit 7 down: Bits counts from the first letter up
+        return fs.SetAttributes(f, static_cast<uint8_t>(Bits(letters, "DEWRAPSH")), error);
+    }
+
+    bool SetLabel(const std::string& label, int64_t, std::string& error) override
+    {
+        if (!setSlotName)
+            return fs.SetName(label, error);
+        if (!setSlotName(label, error))
+            return false;
+        slotName = label;
+        return true;
+    }
+    bool HasLabel() const override { return true; }
+    std::string Label() const override { return Ascii(setSlotName ? slotName : fs.Boot().name); }
+
     MdosFileSystem fs;
+    /// An MDOS3 slot: its name in the info sector is the volume's
+    std::string slotName;
+    std::function<bool(const std::string&, std::string&)> setSlotName;
 };
 
 void DescribeMdos(const MdosFileSystem& fs, DiskFsVolume& volume)
@@ -1184,6 +1569,7 @@ void DiskFs::Probe()
         {
             DiskFsVolume v;
             v.id = "cpm";
+            v.writable = true;
             DescribeCpm(cpm, v);
             v.bytes = static_cast<uint64_t>(_floppy->getCylinders()) * _floppy->getSides() * 16 * 256;
             add(std::move(v), std::make_unique<CpmDriver>(std::move(cpm)));
@@ -1217,6 +1603,7 @@ void DiskFs::Probe()
             DiskFsVolume v;
             v.id = "mdos";
             DescribeMdos(mdos, v);
+            v.writable = true;
             add(std::move(v), std::make_unique<MdosDriver>(std::move(mdos)));
             return;
         }
@@ -1254,7 +1641,20 @@ void DiskFs::Probe()
             v.label = Ascii(mb02.Boot().name);
             v.bytes = static_cast<uint64_t>(mb02.Boot().Sectors()) * Mb02FileSystem::kSector;
             v.freeBytes = static_cast<int64_t>(mb02.FreeSectors()) * Mb02FileSystem::kSector;
+            v.writable = true;
             add(std::move(v), std::make_unique<Mb02Driver>(std::move(mb02)));
+            return;
+        }
+        Mb01FileSystem mb01 = Mb01FileSystem::OnDisk(*_floppy);
+        if (mb01.Open())
+        {
+            DiskFsVolume v;
+            v.id = v.fs = "mb01";
+            v.system = "MB-01 BS-DOS";
+            v.label = Ascii(mb01.Boot().name);
+            v.bytes = static_cast<uint64_t>(mb01.Boot().Sectors()) * Mb01FileSystem::kSector;
+            v.freeBytes = static_cast<int64_t>(mb01.FreeSectors()) * Mb01FileSystem::kSector;
+            add(std::move(v), std::make_unique<Mb01Driver>(std::move(mb01)));
             return;
         }
         IsdosFileSystem isdos = IsdosFileSystem::OnDisk(*_floppy);
@@ -1342,7 +1742,8 @@ void DiskFs::Probe()
                 overlaps = overlaps || (first < to && from < end);
             if (g.blocks == 0 || overlaps || end > device.SectorCount())
                 continue;
-            CpmFileSystem fs(CpmReaderAt(device, c, heads, sectors, std::make_shared<SectorCache>()), g);
+            auto cache = std::make_shared<SectorCache>();
+            CpmFileSystem fs(CpmReaderAt(device, c, heads, sectors, cache), g);
             std::string why;
             if (!fs.IsCpm(&why))
             {
@@ -1367,6 +1768,11 @@ void DiskFs::Probe()
             DiskFsVolume v;
             v.id = "cpm-" + std::to_string(c.startCylinder);
             DescribeCpm(fs, v);
+            if (device.IsWritable())
+            {
+                fs.SetWriter(CpmWriterAt(device, c, heads, sectors, cache));
+                v.writable = true;
+            }
             v.label = c.drive ? std::string(1, c.drive) + ":" : c.source;
             v.offset = first * kSector;
             v.bytes = static_cast<uint64_t>(c.records) * 128;
@@ -1423,6 +1829,12 @@ void DiskFs::Probe()
                 });
                 if (!fs.Open())
                     continue;
+                // Info byte 36 '1': MDOS3 keeps the slot write protected
+                const bool writable = device.IsWritable() && !slot.writeProtected;
+                if (writable)
+                    fs.SetWriter([&device, first](uint32_t lsn, const uint8_t* src) {
+                        return lsn < MdosFileSystem::kSlotSectors - 1 && device.WriteSector(first + lsn, src);
+                    });
                 DiskFsVolume v;
                 // A second #49 partition: the partition's number before the slot's
                 v.id = partitions.size() > 1 ? "mdos-p" + std::to_string(number) + "-" + std::to_string(slot.index)
@@ -1431,11 +1843,92 @@ void DiskFs::Probe()
                 if (!slot.name.empty())
                     v.label = Ascii(slot.name);
                 v.offset = first * kSector;
+                v.writable = writable;
                 taken.emplace_back(first - 1, first - 1 + MdosFileSystem::kSlotSectors);
-                add(std::move(v), std::make_unique<MdosDriver>(std::move(fs)));
+                auto driver = std::make_unique<MdosDriver>(std::move(fs));
+                // The volume's name is the slot's: 32 characters at 4 of the info sector, blanks after it
+                driver->slotName = slot.name;
+                driver->setSlotName = [&device, info = first - 1](const std::string& name, std::string& error) {
+                    uint8_t s[kSector];
+                    if (name.size() > 32)
+                    {
+                        error = "an MDOS3 slot name has at most 32 characters";
+                        return false;
+                    }
+                    if (!device.ReadSector(info, s))
+                    {
+                        error = "the slot's info sector does not read";
+                        return false;
+                    }
+                    std::memset(s + 4, ' ', 32);
+                    std::memcpy(s + 4, name.data(), name.size());
+                    if (!device.WriteSector(info, s))
+                    {
+                        error = "the slot's info sector does not write";
+                        return false;
+                    }
+                    return true;
+                };
+                add(std::move(v), std::move(driver));
             }
         }
     }
+
+    // BS-DOS 309 (the divIDE HDD BIOS, bsdos309-hdd_bios.a80): the first primary MBR partition of type #47 holds the
+    // virtual floppies @1..@255 back to back, 2 MiB each. The BIOS places a floppy's track, side and sector (as
+    // BS-DOS computes them from the LSN with the boot sector's SPT) at ((track * 2 + side) * 11 + sector - 1) * 2:
+    // 11 sectors a track whatever the boot says, a 1024-byte sector two disk sectors
+    if (s0[510] == 0x55 && s0[511] == 0xAA)
+        for (uint32_t number = 0; number < 4; number++)
+        {
+            const uint8_t* entry = s0 + 446 + number * 16;
+            const uint64_t first = entry[8] | entry[9] << 8 | entry[10] << 16 | static_cast<uint64_t>(entry[11]) << 24;
+            uint64_t count = entry[12] | entry[13] << 8 | entry[14] << 16 | static_cast<uint64_t>(entry[15]) << 24;
+            if (entry[4] != 0x47 || count == 0 || first >= device.SectorCount())
+                continue;
+            count = std::min(count, device.SectorCount() - first);
+            const uint64_t discs = std::min<uint64_t>(255, count / kBsdosDisc);
+            for (uint64_t n = 1; n <= discs; n++)
+            {
+                const uint64_t base = first + (n - 1) * kBsdosDisc;
+                uint8_t boot[kSector];
+                if (!device.ReadSector(base, boot))
+                    continue;
+                const uint32_t spt = boot[6] | boot[7] << 8;
+                if (spt == 0)
+                    continue;
+                auto lbaOf = [base, spt](uint32_t lsn, uint64_t& lba) {
+                    const uint64_t track = lsn / (2 * spt), side = lsn / spt % 2, sector = lsn % spt;
+                    const uint64_t physical = (track * 2 + side) * 11 + sector;
+                    lba = base + physical * 2;
+                    return physical * 2 + 1 < kBsdosDisc;
+                };
+                Mb02FileSystem fs([&device, lbaOf](uint32_t lsn, uint8_t* dst) {
+                    uint64_t lba = 0;
+                    return lbaOf(lsn, lba) && device.ReadSector(lba, dst) && device.ReadSector(lba + 1, dst + kSector);
+                });
+                if (!fs.Open())
+                    continue;
+                if (device.IsWritable())
+                    fs.SetWriter([&device, lbaOf](uint32_t lsn, const uint8_t* src) {
+                        uint64_t lba = 0;
+                        return lbaOf(lsn, lba) && device.WriteSector(lba, src) &&
+                               device.WriteSector(lba + 1, src + kSector);
+                    });
+                DiskFsVolume v;
+                v.id = "mb02-" + std::to_string(n);
+                v.fs = "mb02";
+                v.system = "MB-02 BS-DOS";
+                v.label = Ascii(fs.Boot().name);
+                v.offset = base * kSector;
+                v.bytes = static_cast<uint64_t>(fs.Boot().Sectors()) * Mb02FileSystem::kSector;
+                v.freeBytes = static_cast<int64_t>(fs.FreeSectors()) * Mb02FileSystem::kSector;
+                v.writable = device.IsWritable();
+                add(std::move(v), std::make_unique<Mb02Driver>(std::move(fs)));
+            }
+            taken.emplace_back(first, first + count);
+            break;
+        }
 
     // iS-DOS: the whole disk is one device, or devices start at cylinder boundaries (the ATM-Turbo HDD driver)
     auto isdosAt = [&](uint64_t lba, const std::string& id) {
@@ -1583,7 +2076,8 @@ bool DiskFs::Delete(const std::string& volume, const std::string& path, std::str
     return true;
 }
 
-bool DiskFs::MakeDirectory(const std::string& volume, const std::string& path, bool parents, int64_t mtime, std::string& error)
+bool DiskFs::MakeDirectory(const std::string& volume, const std::string& path, bool parents,
+                           const DiskFsDirectoryOptions& options, std::string& error)
 {
     size_t index = 0;
     if (!Find(volume, error, &index))
@@ -1597,9 +2091,17 @@ bool DiskFs::MakeDirectory(const std::string& volume, const std::string& path, b
     }
     if (!driver)
         return false;
+    if ((options.continuous || options.blocks) && !driver->SizedDirectories())
+    {
+        error = "continuous and blocks are for iS-DOS catalogues, not " + _volumes[index].system;
+        return false;
+    }
+    // The directories on the way are of the standard kind, `options` makes the last one
+    DiskFsDirectoryOptions plain;
+    plain.mtime = options.mtime;
     auto make = [&](const std::string& dir) {
         error.clear();
-        if (driver->MakeDirectory(dir, mtime, error))
+        if (driver->MakeDirectory(dir, dir.size() == clean.size() ? options : plain, error))
             return true;
         if (error.empty())
             error = "the " + _volumes[index].system + " volume '" + _volumes[index].id + "' has no directories";

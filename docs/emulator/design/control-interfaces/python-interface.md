@@ -657,6 +657,7 @@ emu.media_write("A", "PROG.C", b"\xf3\xc9", start=0x8000)  # onto any file syste
 emu.media_rename("A", "PROG.C", "GAME.C")                 # a bare name stays in its directory; "/x" moves a file or a directory (iS-DOS, FAT)
 emu.media_delete("hd", "OLD.TXT", volume="p1")
 emu.media_mkdir("hd", "GAMES/NEW", parents=True)          # a FAT directory, an iS-DOS catalogue
+emu.media_mkdir("A", "WORK", continuous=True, blocks=4)   # an iS-DOS continuous catalogue of 4 blocks
 emu.media_delete("hd", "GAMES", recursive=True)           # a directory with its contents
 emu.media_attrib("hd", "GAME.COM", attributes="+R-H", time="2026-10-26 14:30")  # FAT RHSA, iS-DOS RWHD, +3DOS RSA
 emu.media_label("hd", "WORK DISK")                         # FAT label, TR-DOS title, iS-DOS device name
