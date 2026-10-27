@@ -737,7 +737,7 @@ While a time-travel (TTD) recording runs, a memory write (`PUT /memory/{addr}`) 
 
 ### Settings Management
 ```
-GET  /api/v1/emulator/{id}/settings            All settings, grouped (io_acceleration, disk_interface, audio) plus turbo_mode, speed, turbo_active, turbo_audio
+GET  /api/v1/emulator/{id}/settings            All settings, grouped (io_acceleration, disk_interface, audio) plus turbo_mode, speed, effective_speed, turbo_active, turbo_audio
 GET  /api/v1/emulator/{id}/settings/{name}     One setting value (fast_tape, turbo_tape, fast_disk, turbo_mode, speed, turbo_audio, turbo_active, trdos_traps, audio_rate, ...)
 PUT  /api/v1/emulator/{id}/settings/{name}     Update a setting (body: {"value": ...})
 ```
@@ -751,6 +751,7 @@ Settings are per-instance and runtime-only — nothing is written to the ini.
 | `speed` | Host speed multiplier `1`, `2`, `4`, `8` or `16` (a JSON number, or a decimal or `"0x.."` string). The emulated machine runs N times faster; applied at the next frame. `GET /settings/speed` also lists `allowed`. | 400 for any other value. 409 for anything but `1` while a TTD recording runs. A change on a stopped or loaded TTD session drops that session's history (frame timing is part of the recording); re-selecting the current speed changes nothing. |
 | `turbo_mode` | Bool: run as fast as the host allows (the `turbomode` feature). | 409 for `true` while a TTD recording runs. |
 | `turbo_audio` | Bool: keep generating audio (at a raised pitch) in turbo mode. Off by default. Applied at once if turbo is running. | — |
+| `effective_speed` | Read-only number: host `speed` x the machine's own hardware turbo (TS-Conf 3.5/7/14 MHz, Scorpion, ATM). Only `speed` is locked to 1 while TTD records; a guest switching its hardware turbo (Wild Commander does, around SD I/O) moves this one, and wall-clock speed stays 1x. | 400 (read-only). |
 | `turbo_active` | Read-only bool: the engine runs unthrottled right now, because of `turbo_mode` or because turbo tape is warping a load. | 400 (read-only; switch turbo with `turbo_mode`). |
 
 ```json

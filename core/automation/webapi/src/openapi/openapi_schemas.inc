@@ -112,7 +112,8 @@
     schemas["SettingsResponse"]["properties"]["settings"]["description"] =
         "Grouped settings: io_acceleration (fast_tape, turbo_tape, fast_disk - the state in effect, so off "
         "while time-travel debugging holds them), turbo_mode (bool, the turbomode feature), speed (host speed "
-        "multiplier 1, 2, 4, 8 or 16), turbo_active (read-only: the engine runs unthrottled now - turbo_mode, or "
+        "multiplier 1, 2, 4, 8 or 16), effective_speed (read-only: host speed x the machine's hardware turbo, the CPU clock "
+        "multiplier in effect), turbo_active (read-only: the engine runs unthrottled now - turbo_mode, or "
         "turbo tape warping a load), turbo_audio (bool, audio kept on in turbo mode), "
         "disk_interface (trdos_present, trdos_traps), audio (audio_rate - pinned rate "
         "or \"auto\" - core_rate_hz, the live core rate, and the sound character: ay_voicing "

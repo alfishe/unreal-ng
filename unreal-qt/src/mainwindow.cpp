@@ -1022,6 +1022,8 @@ MainWindow::~MainWindow()
     _streamDeckSupervision = nullptr;
     delete _controllersDialog;
     _controllersDialog = nullptr;
+    if (_statusBarManager)
+        _statusBarManager->setControllers(nullptr);  // its 200 ms refresh still runs until the event loop ends
     delete _hostControllers;
     _hostControllers = nullptr;
 
@@ -1399,6 +1401,8 @@ void MainWindow::closeEvent(QCloseEvent* event)
     _streamDeckSupervision = nullptr;
     delete _controllersDialog;
     _controllersDialog = nullptr;
+    if (_statusBarManager)
+        _statusBarManager->setControllers(nullptr);  // its 200 ms refresh still runs until the event loop ends
     delete _hostControllers;
     _hostControllers = nullptr;
     if (networkWindow)
