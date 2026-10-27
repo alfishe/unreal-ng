@@ -11,6 +11,10 @@ ProMotion on macOS 12: the 120 Hz grid only (section 9).
 - Smooth motion without judder (blending and motion-compensated interpolation) is built right after the VRR path is
   stable, not deferred. It is the presenter's own stage: ZX DLSS is for gigascreen and stays separate.
 - The work stays on the `frame-presenter` branch until all phases are done; master gets it in one piece.
+- Smoothing never adds latency. A game's own picture cadence (a picture every 2nd-5th frame) comes from its game
+  profile, with the profile tools of the controller manager (section 4.5), not from guessing at run time.
+- Every effect (blend, interpolation, the cadence modes) runs on the GPU and on the CPU, chosen by the mode, on every
+  platform, with the same result (section 6.5).
 
 **Related:** [audio sync](../2026-08-17-audio-sync/audio-sync-design.md) (the DRC; "the audio device is the only master
 clock"), [A/V sync and presentation](../2026-08-14-av-sync-and-presentation/README.md) (the frame-end latch),
@@ -250,21 +254,49 @@ Blending shows two positions of a moving object at once. Interpolation instead d
 has at the refresh's time: the scroller moves 4 x w pixels, not two half-bright copies.
 
 - **Motion from the frames.** ZX graphics move in whole pixels or attribute cells, on a black or flat background,
-  often whole-screen (scrollers) or in a few sprites. A block search between A and B on the 1-bit-per-pixel bitmap
-  (before the palette) finds them cheaply: per 8x8 cell, the offset within ±16 px that matches best, plus a global
-  offset for whole-screen scrolls. Cells with no clean match (new content, colour changes, FLASH) fall back to the
-  blend of section 4.3, so the worst case is the blend, never a wrong picture.
-- **Where it runs.** On the presenter's side, once per emulated frame pair, not per refresh: the vectors of A -> B are
-  computed when B arrives, and each refresh only warps by `w`. The audio delay (section 3) leaves 30+ ms for it.
+  often whole-screen (scrollers) or in a few sprites. The search runs on the presented framebuffer (RGBA, exact
+  colours), so it serves every machine, not only the ZX bitmap. Per 8 x 8 block of the output: the vector within
+  ±8 px (consecutive frames) on which A warped back by `w` and B warped forward by `1 - w` agree, all but at most 4
+  of 64 pixels. Candidates first (the zero vector, the neighbours', the most common of this pair), then the full
+  search, at most 96 full searches per pair (full-screen effects fall back instead of costing 100+ ms).
+- **Per pixel.** Of the candidates on which the two warped sources agree at the pixel, the one agreeing on most of
+  its 3 x 3 neighbourhood wins: a coincidental single-pixel match (a static letter under a neighbour's vector) loses.
+  Where none agrees: the blend of section 4.3. The worst case is the blend, never a made-up picture.
+- **Where it runs.** On the presenter's side, per refresh with that refresh's `w` (at 60 Hz about 1.2 refreshes per
+  frame, so about once per frame pair). The audio delay (section 3) leaves 30+ ms for it.
 - **Not ZX DLSS.** ZX DLSS (`TemporalEffects`) reconstructs gigascreen pictures inside the core's present slots. This
   stage works on whatever the slots hold, after it, and never writes back.
 - **Measured in [POC 038](../../../tools/poc/038-motion-interpolation/conclusions.md):** on scrollers and moving
   pictures 1/2 to 1/6 of the blend's error, 52-90 % of the changed pixels exact; full-screen effects fall back to the
   blend; 1.3-2.3 ms p50 per frame pair on one core without SIMD. Most games draw every 2nd-5th frame and gain
-  nothing: the stage interpolates only between consecutive emulated frames and never smooths a game's own cadence.
-  A per-pixel choice by 3x3 agreement keeps a coincidental match from drawing a wrong pixel.
+  nothing between consecutive frames: section 4.5.
 
-### 4.5 Rejected: the display drives the emulation
+### 4.5 Games: their own picture cadence, from the game profile
+
+Most games draw a picture every 2nd-5th frame (Dizzy X every 4th, Green Beret every 3rd, Darkwing Duck scrolls the
+play area every 5th and redraws the status row a frame later). Between two repeated frames there is nothing to
+interpolate, so section 4.4 leaves a game's judder as it is. Between the game's own pictures the same search works
+(POC 038 stage 2): Darkwing Duck's scroll 78 -> 22.5 MAE, 81 % of the changed pixels exact.
+
+- **No added latency** (owner). Two modes:
+  - `cadence`: once the next picture is in the lookahead (the audio delay holds about two frames), the step to it is
+    interpolated. A 25 Hz game gets the whole step smoothed; a slower one the last two frames of its period.
+  - `carry`: the motion of the last two pictures is carried on through the period (the warp at `w` = 1..2), and the
+    real picture replaces it when it arrives. Even motion, a small correction where the motion changes. Content that
+    enters the window is not known yet: a moving vector draws only pixels whose source changed, so a static border is
+    not pulled into the window.
+- **From the game profile, not guessed** (owner). Guessing at run time needs half a second, errs when a busy scene
+  slows the game down, and does not know the play area. The game profile
+  ([mapping-and-profiles.md section 7.7](../2026-10-17-controller-manager/mapping-and-profiles.md#77-video-the-games-picture-cadence))
+  gets a `video:` section: the picture period, the mode, the play window (the stage works only inside it, which
+  removes the edge artefacts of `carry`), regions to leave alone (score, status row), and optionally the event that
+  says "picture complete" (a probe on the game's draw-done address, as the haptic events): then the presenter knows
+  each picture's frame exactly, even when the period varies.
+- **Tools.** POC 038's capture and cadence detection become the profile tool that drafts the `video:` section (period,
+  window from the changing area), as the haptics recipe drafts the events; the mode is chosen by eye per game.
+- Without a profile the game gets section 4.4 only (consecutive frames: scrollers, demos).
+
+### 4.6 Rejected: the display drives the emulation
 
 
 
@@ -320,6 +352,9 @@ run that was not:
 - `Screen::CopyFrameAt(t, dst, &info)` and `Screen::CopyNextFrame(dst, &info)` next to `CopyPresentedFramebuffer`.
   `info` holds the serial, the target and the geometry. `CopyFrameAt` can also return the following frame and the blend
   weight. Both respect the temporal effects' slots (ZX DLSS) exactly as `PresentedSlotLocked` does today.
+- `SmoothMotion` (new, `core/src/emulator/video/`): the CPU reference of the blend, the interpolation and the cadence
+  modes (sections 4.3-4.5, 6.5), pure functions on two or three frames, `w` and the game's `video:` settings; no
+  thread, no OS calls. The presenters' GPU passes match it bit for bit.
 - Not changed: `MainLoop`'s pacing and the DRC. The emulation and the sound do not know the presenter exists.
 
 ### 6.2 unreal-qt: the presenter
@@ -386,7 +421,9 @@ directly: the screen time minus the frame's target.
 
 - `[VIDEO] PresentPolicy = auto | vrr | vsync`. `auto` is the flowchart of section 4.
 - `[VIDEO] SmoothMotion = off | blend | interpolate` (sections 4.3, 4.4), default off. A VRR display ignores it:
-  there every frame is shown for its own period.
+  there every frame is shown for its own period. With `interpolate`, a game whose profile has a `video:` section gets
+  its cadence mode (section 4.5).
+- `[VIDEO] EffectsDevice = auto | gpu | cpu` (section 6.5), default `auto`.
 - `[VIDEO] LipSyncOffsetMs = 0`. It replaces `AVSyncDelayFrames`, whose job the audio clock now does; the old key is
   read once and dropped.
 - Per the automation-planes guidelines, every plane gets the same:
@@ -395,6 +432,22 @@ directly: the screen time minus the frame's target.
     emulated), frames shown outside the beat pattern, late, dropped, the screen-to-sound offset p50 / p99;
   - WebSocket: a topic for policy changes (VRR fell back, the clock switched).
   - Reads never touch the emulation thread: the presenter publishes `PresentStats` once a second.
+
+### 6.5 Every effect on the GPU and on the CPU
+
+Owner: blend, interpolation and the cadence modes run on the GPU and on the CPU, by the mode, on every platform.
+
+- **One definition, two implementations.** The CPU path is the reference: plain C++ in `core/` (no platform API),
+  integer arithmetic only (the blend's weight in 1/256 steps, the warp in whole pixels), so it is bit-exact on
+  clang, gcc, MSVC and MinGW. The GPU path implements the same steps per presenter: Metal compute (macOS, iOS), D3D11
+  compute (Windows), GL fragment passes (the GL fallback, Linux), later Vulkan. A test renders the POC 038 sequences
+  on both and requires identical output.
+- **Modes.** `EffectsDevice = auto` takes the GPU where the presenter has one and the CPU otherwise (a software
+  GL, a headless or offscreen instance, the video recording); `gpu` / `cpu` force it. The CPU path runs on the
+  presenter's thread for the screen, and serves the readers that have no GPU (screenshots, recording, the video
+  wall, WebAPI captures) with the same picture the screen shows.
+- **Cost budget.** CPU: 1.3-2.3 ms p50 per frame pair scalar (POC 038); SIMD (NEON / SSE2, with a scalar fallback)
+  brings it under 1 ms. GPU: the search is per block and independent, one dispatch per refresh.
 
 ## 7. Cost
 
@@ -435,9 +488,12 @@ Each phase lands on its own with tests and docs.
 4. **DXGI presenter** (Windows): `b-vsync` and `c-vrr`, the waitable object, the vblank watch, VRR verification and
    fallback, `ES_DISPLAY_REQUIRED`.
 5. **Smooth motion**, at once after phases 3-4 are stable on the VRR hosts (owner decision):
-   - the blend (section 4.3) in all three presenters;
-   - a POC for motion-compensated interpolation (section 4.4): the block search, the fallback, its cost; then the
-     presenters' `interpolate` mode.
+   - the CPU reference in `core/` (blend, interpolation, the cadence modes; integer, bit-exact), its tests on the
+     POC 038 sequences;
+   - the GPU implementations in the Metal, DXGI and GL presenters, tested against the CPU output; `EffectsDevice`;
+   - the game profile's `video:` section (section 4.5): parser, validation, the drafting tool, profiles for the
+     test games (Darkwing Duck, Thundercats, Garfield).
+   POC 038 measured the interpolation and the cadence modes (done).
 6. **Automation planes.** Settings and `PresentStats` on CLI, Python, Lua, MCP, REST and WebSocket; docs chain per the
    guidelines.
 7. Later:

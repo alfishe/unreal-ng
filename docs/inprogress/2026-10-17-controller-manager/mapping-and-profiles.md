@@ -450,6 +450,38 @@ The merge is the field-by-field merge of §6.2, so a scheme behaves as a profile
 entry is mostly `id`, `label`, `match` and `extends`: a few hundred bytes. A scheme is not chosen by itself; a scheme
 that names another scheme is allowed, a cycle is an error.
 
+### 7.7 Video: the game's picture cadence
+
+A game profile may carry the presenter's smoothing settings for the game (frame presenter design,
+[section 4.5](../2026-10-26-frame-presenter/README.md#45-games-their-own-picture-cadence-from-the-game-profile)).
+Most games draw a picture every 2nd-5th frame; the presenter can smooth the step between the game's own pictures
+without added latency, and the profile says how, instead of the presenter guessing at run time:
+
+```yaml
+events:
+  picture_done: { probe: exec, address: "0x8A3C" }   # optional: the game's "frame drawn" point
+video:
+  picture_period: 5                 # frames per picture (the usual one; picture_ready refines it)
+  smooth: cadence                   # off | cadence | carry
+  window: [32, 24, 256, 160]        # play area on the framebuffer: x, y, width, height
+  exclude: [[32, 168, 256, 16]]     # regions inside the window left alone (score, status row)
+  picture_ready: { on: picture_done }   # optional: each picture's frame exactly, even when the period varies
+```
+
+- `smooth`: `cadence` interpolates to the next picture once it is in the presenter's lookahead; `carry` carries the
+  last motion on through the period. `off` keeps the frame repeat for this game even when `SmoothMotion =
+  interpolate`.
+- `window` / `exclude` in framebuffer pixels of the machine's video mode, border included (the coordinates
+  `capture/framebuffer` returns). Outside the window the presenter shows the frame as it is.
+- `picture_ready` names an event of the same profile (`events:`), the probe the haptic rules use; without it the
+  presenter takes a burst of changed frames as one picture and `picture_period` as the expected distance.
+- The section applies only with `[VIDEO] SmoothMotion = interpolate`; the owner's switch stays the global one.
+- Validation: `picture_period` 1..16, `window` inside the largest framebuffer of the profile's machines, `exclude`
+  inside `window`, `picture_ready.on` an existing event. A profile without `video:` is unchanged.
+- Drafting: the profile tool captures frames through the WebAPI (`run_frame` + `capture/framebuffer`), measures the
+  period and the changing area (POC 038 `capture.py`, `interp cadence-eval`) and writes the section; the mode is
+  chosen by watching the 60 Hz comparison.
+
 ## 8. Defaults out of the box
 
 The global default play bindings per family, used when no game or user profile applies. The retro target is the

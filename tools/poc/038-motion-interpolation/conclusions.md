@@ -23,6 +23,12 @@
 4. **The fallback holds visually:** where nothing matches (full-screen effects, colour cycling) the output is the
    blend; raster tears of the source stay as they are.
 
-Proposal: adopt `interpolate` as the third `SmoothMotion` mode after `blend` (design section 4.4), behind the same
-off-by-default setting; implement the search on the GPU (Metal compute / D3D11 compute / GL fragment passes) or with
-SIMD on the presenter thread; owner review of the 60 Hz videos first.
+Proposal (owner decisions 2026-10-26 applied):
+
+- `interpolate` becomes the third `SmoothMotion` mode after `blend` (design section 4.4), off by default.
+- Games' cadence modes come from the game profile's `video:` section (period, mode, play window, excluded regions,
+  optionally the "picture done" probe), not from run-time guessing (design section 4.5, profile format
+  `mapping-and-profiles.md` section 7.7). `capture.py` and `cadence-eval` become the drafting tool.
+- Every effect runs on the GPU and on the CPU, on every platform: an integer, bit-exact CPU reference in `core/`
+  and GPU passes per presenter tested against it (design section 6.5).
+- Owner review of the 60 Hz videos picks the default game mode (`cadence` or `carry`).
