@@ -8,7 +8,7 @@
 /// descriptors), iS-DOS / TASiS devices: the whole disk, or runs of cylinders as the ATM-Turbo HDD driver lays them
 /// out (a descriptor at a cylinder boundary), and the virtual disks of an MDOS3 partition (MBR type #49, or the whole
 /// device from its first "SDOS" sector). Reading everywhere; writing, deleting and renaming files on TR-DOS, +3DOS,
-/// iS-DOS and FAT (a block device that takes writes); ATM CP/M, MB-02 and MDOS are read only.
+/// iS-DOS, MDOS and FAT (a block device that takes writes); ATM CP/M and MB-02 are read only.
 ///
 /// Standard C++ only: the emulator (its media verbs `volumes`, `files`, `read` on every automation plane, the
 /// debugger's disk files) and the standalone tools (zxasm, symconv) use the same class. The caller owns the disk and

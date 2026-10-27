@@ -25,8 +25,8 @@
 // TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS or FAT12 (Sprinter DSS); else a raw hard disk or card image
 // (512-byte sectors): MBR or superfloppy FAT partitions (Estex DSS, NedoOS), ATM CP/M partitions (the configuration
 // record in sector 0 and the .CDS descriptors), iS-DOS devices (the whole disk or at cylinder boundaries), MDOS3
-// virtual disks (an .md3 container, an MBR partition of type #49, slot files on a FAT16 card). ATM CP/M, MB-02 and MDOS
-// are read only.
+// virtual disks (an .md3 container, an MBR partition of type #49, slot files on a FAT16 card). ATM CP/M and MB-02 are
+// read only.
 // `--offset n` skips n bytes of a hard disk image's header (HDF: 22 + the identify block).
 //
 // Exit code 0 on success, 1 on errors, 2 on bad usage.

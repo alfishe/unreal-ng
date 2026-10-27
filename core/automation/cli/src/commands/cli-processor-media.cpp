@@ -429,9 +429,9 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "  files <slot> [dir] [--volume id] [--recursive] - a directory's entries (the first volume by default)" << NEWLINE;
     out << "  read <slot> <file> [--volume id] [--out host-file] - a file's bytes (a hex dump without --out)" << NEWLINE;
     out << "  write <slot> <file> --in host-file | --data base64 [--start n] [--header=false] [--volume id]" << NEWLINE
-        << "                               - a file onto the disk (TR-DOS NAME.T, +3DOS NAME.TYP, FAT and iS-DOS" << NEWLINE
-        << "                                 dir/name.ext), an older file of that name replaced; --start: the TR-DOS" << NEWLINE
-        << "                                 start / +3DOS CODE / iS-DOS load address (#8000, 0x8000, 32768);" << NEWLINE
+        << "                               - a file onto the disk (TR-DOS NAME.T, +3DOS NAME.TYP, MDOS name.T, FAT and" << NEWLINE
+        << "                                 iS-DOS dir/name.ext), an older file of that name replaced; --start: the" << NEWLINE
+        << "                                 TR-DOS / MDOS start, +3DOS CODE, iS-DOS load address (#8000, 0x8000, 32768);" << NEWLINE
         << "                                 --header=false: +3DOS without its header" << NEWLINE;
     out << "  delete <slot> <file> [--volume id] [--recursive] - delete a file or an empty directory (FAT, iS-DOS);" << NEWLINE
         << "                                 --recursive: a directory with everything in it" << NEWLINE;

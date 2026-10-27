@@ -386,7 +386,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "operations - create, modify, delete, rename, mkdir, rmdir - with the layer each touched), flatten (a composite by a "
         "named strategy: flat <path>, delta, commit - the graft base image takes everything, journaled - or write-back - "
         "the guest's file changes into the writable folder layers), volumes / files / read (the files on a disk in "
-        "a slot: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02 and MDOS (read only) floppies, ATM hard disk devices, MDOS3 virtual disks, FAT of Sprinter DSS and "
+        "a slot: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M and MB-02 (read only) and MDOS floppies, ATM hard disk devices, MDOS3 virtual disks, FAT of Sprinter DSS and "
         "NedoOS floppies, hard disks and SD cards), write / delete / rename / mkdir (a file on that disk: write takes path "
         "the name, data base64 or in a host file, start, header, and replaces an older file of that name; rename "
         "takes to and moves directories too; delete with recursive:true takes a directory with its contents; mkdir makes "

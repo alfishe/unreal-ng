@@ -1123,7 +1123,105 @@ struct MdosDriver : DiskFs::Driver
         return false;
     }
 
+    /// "name.T" (\\xNN escapes as PathOf writes them) -> the name bytes and the type
+    static bool Parse(const std::string& path, std::string& name, char& type, std::string& error)
+    {
+        const size_t dot = path.rfind('.');
+        const std::string tail = dot == std::string::npos ? std::string() : Unescape(path.substr(dot + 1));
+        if (dot == std::string::npos || dot == 0 || tail.size() != 1 || path.find('/') != std::string::npos)
+        {
+            error = "an MDOS file is name.T: at most 10 characters and the type letter (" + path + ")";
+            return false;
+        }
+        type = tail[0];
+        name = Unescape(path.substr(0, dot));
+        return true;
+    }
+
+    /// The directory entry `path` names (as listed: a later file of a name with ~<slot>)
+    bool Entry(const std::string& path, MdosFile& out, std::string& error)
+    {
+        std::vector<std::string> notes;
+        DiskFsEntry entry;
+        if (!Stat(path, entry, notes, error))
+            return false;
+        std::vector<MdosFile> files;
+        if (!fs.List(files, error))
+            return false;
+        for (const MdosFile& f : files)
+            if (f.slot == entry.Field("slot"))
+            {
+                out = f;
+                return true;
+            }
+        error = "no " + path + " on the MDOS volume";
+        return false;
+    }
+
+    bool Write(const std::string& path, const std::vector<uint8_t>& data, const DiskFsWriteOptions& options,
+               std::string& error) override
+    {
+        std::string name;
+        char type = 0;
+        if (!Parse(path, name, type, error))
+            return false;
+        MdosFileSystem::WriteOptions write;
+        write.start = options.start;
+        // A program: its length without variables; else as a tape header's CODE
+        write.param2 = type == 'P' ? static_cast<uint16_t>(std::min<size_t>(data.size(), 0xFFFF)) : 0x8000;
+        return fs.Write(name, type, data, write, error);
+    }
+
+    bool Delete(const std::string& path, std::string& error) override
+    {
+        MdosFile f;
+        return Entry(path, f, error) && fs.Delete(f, error);
+    }
+
+    bool Deletable(const DiskFsEntry& entry, std::string& error) override
+    {
+        if (entry.attributes.find('D') != std::string::npos)
+            return true;
+        error = entry.path + " may not be deleted (no D attribute)";
+        return false;
+    }
+
+    bool Rename(const std::string& path, const std::string& to, std::string& error) override
+    {
+        MdosFile f;
+        std::string name;
+        char type = 0;
+        return Entry(path, f, error) && Parse(to.substr(to.front() == '/'), name, type, error) &&
+               fs.Rename(f, name, type, error);
+    }
+
+    std::string AttributeLetters() const override { return "HSPARWED"; }
+
+    bool SetAttributes(const DiskFsEntry& entry, const std::string& letters, std::string& error) override
+    {
+        MdosFile f;
+        if (!Entry(entry.path, f, error))
+            return false;
+        // HSPARWED from bit 7 down: Bits counts from the first letter up
+        return fs.SetAttributes(f, static_cast<uint8_t>(Bits(letters, "DEWRAPSH")), error);
+    }
+
+    bool SetLabel(const std::string& label, int64_t, std::string& error) override
+    {
+        if (!setSlotName)
+            return fs.SetName(label, error);
+        if (!setSlotName(label, error))
+            return false;
+        slotName = label;
+        return true;
+    }
+    bool HasLabel() const override { return true; }
+    std::string Label() const override { return Ascii(setSlotName ? slotName : fs.Boot().name); }
+
     MdosFileSystem fs;
+    /// An MDOS3 slot: its name in the info sector is the volume's
+    std::string slotName;
+    std::function<bool(const std::string&, std::string&)> setSlotName;
 };
 
 void DescribeMdos(const MdosFileSystem& fs, DiskFsVolume& volume)
@@ -1217,6 +1315,7 @@ void DiskFs::Probe()
             DiskFsVolume v;
             v.id = "mdos";
             DescribeMdos(mdos, v);
+            v.writable = true;
             add(std::move(v), std::make_unique<MdosDriver>(std::move(mdos)));
             return;
         }
@@ -1423,6 +1522,12 @@ void DiskFs::Probe()
                 });
                 if (!fs.Open())
                     continue;
+                // Info byte 36 '1': MDOS3 keeps the slot write protected
+                const bool writable = device.IsWritable() && !slot.writeProtected;
+                if (writable)
+                    fs.SetWriter([&device, first](uint32_t lsn, const uint8_t* src) {
+                        return lsn < MdosFileSystem::kSlotSectors - 1 && device.WriteSector(first + lsn, src);
+                    });
                 DiskFsVolume v;
                 // A second #49 partition: the partition's number before the slot's
                 v.id = partitions.size() > 1 ? "mdos-p" + std::to_string(number) + "-" + std::to_string(slot.index)
@@ -1431,8 +1536,33 @@ void DiskFs::Probe()
                 if (!slot.name.empty())
                     v.label = Ascii(slot.name);
                 v.offset = first * kSector;
+                v.writable = writable;
                 taken.emplace_back(first - 1, first - 1 + MdosFileSystem::kSlotSectors);
-                add(std::move(v), std::make_unique<MdosDriver>(std::move(fs)));
+                auto driver = std::make_unique<MdosDriver>(std::move(fs));
+                // The volume's name is the slot's: 32 characters at 4 of the info sector, blanks after it
+                driver->slotName = slot.name;
+                driver->setSlotName = [&device, info = first - 1](const std::string& name, std::string& error) {
+                    uint8_t s[kSector];
+                    if (name.size() > 32)
+                    {
+                        error = "an MDOS3 slot name has at most 32 characters";
+                        return false;
+                    }
+                    if (!device.ReadSector(info, s))
+                    {
+                        error = "the slot's info sector does not read";
+                        return false;
+                    }
+                    std::memset(s + 4, ' ', 32);
+                    std::memcpy(s + 4, name.data(), name.size());
+                    if (!device.WriteSector(info, s))
+                    {
+                        error = "the slot's info sector does not write";
+                        return false;
+                    }
+                    return true;
+                };
+                add(std::move(v), std::move(driver));
             }
         }
     }

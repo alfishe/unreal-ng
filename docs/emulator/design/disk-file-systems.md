@@ -2,7 +2,7 @@
 
 The files on any disk, read the same way for every file system and from every surface: the volumes of a disk, a
 directory's entries, a file's bytes. Floppies and hard disks, SD and CF cards. Reading, writing, deleting and renaming
-files on every file system the probe finds (ATM CP/M, MB-02 and MDOS are read only); making, moving and deleting directories on FAT and
+files on every file system the probe finds (ATM CP/M and MB-02 are read only); making, moving and deleting directories on FAT and
 iS-DOS.
 
 It all lives in **unreal-disk** (`core/src/3rdparty/unreal-disk`), the standard C++ library of disks: the emulator,
@@ -10,7 +10,7 @@ the unreal-asm tools and `zxdisk` link it, none of them needs the emulator's cor
 
 | Layer | Where (`unrealdisk/`) | What |
 |---|---|---|
-| File systems | `trdosfs.h`, `plus3fs.h`, `isdosfs.h`, `cpmfs.h`, `mb02fs.h`, `mdosfs.h`, `fatvolumereader.h`, `fatfs.h` | TR-DOS and +3DOS, iS-DOS / TASiS over a 256-byte block reader and writer, ATM CP/M over a byte reader, MB-02 over a 1024-byte and MDOS over a 512-byte sector reader (all three read only), FAT12 / 16 / 32 on a block device (read by `FatVolumeReader`, changed by `FatFs`) |
+| File systems | `trdosfs.h`, `plus3fs.h`, `isdosfs.h`, `cpmfs.h`, `mb02fs.h`, `mdosfs.h`, `fatvolumereader.h`, `fatfs.h` | TR-DOS and +3DOS, iS-DOS / TASiS over a 256-byte block reader and writer, ATM CP/M over a byte reader, MB-02 over a 1024-byte sector reader (both read only), MDOS over a 512-byte sector reader and writer, FAT12 / 16 / 32 on a block device (read by `FatVolumeReader`, changed by `FatFs`) |
 | Block devices | `blockdevice.h`, `subrangedevice.h`, `floppyblockdevice.h` | a disk as 512-byte sectors (core: `IBlockDevice`), a partition window, a floppy of uniform 512-byte sectors (FAT on a Sprinter DSS or MS-DOS floppy; writable when asked) |
 | Code pages | `unicode.h` | CP866 / CP1251 names to UTF-8 (FAT short names, iS-DOS) |
 | One interface | `diskfs.h` | `DiskFs`: probes the volumes, then `List` / `Stat` / `Read` / `Write` / `Delete` / `Rename` / `MakeDirectory` / `SetAttributes` / `SetTime` / `SetLabel` by volume and path |
@@ -159,6 +159,13 @@ the FAT reserves LSN 0-13. A chain that loops, leaves the disk or holds fewer by
 chains in the image itself (`TOOLS_3_27.P`, `zdrojak.B`). `testdata/loaders/mdos/` keeps its boot disk as a D80 and
 its first 3 slots, and a FAT16 card built per the how-to from its `my_CF_16M` files (`MdosFs.Mdos3CardOfFat16Files`).
 
+Writing: a file goes into the first free entry (type byte #00 or #E5) and the free sectors from LSN 14 up, the
+data first, then the FAT, then the entry (#E5 at 22-31, 0 at 19, `RWED` as MDOS saves a file); an older file of the
+name and type is deleted first. An empty file takes no sector: #C00 as its first LSN. A program's second parameter is
+its length (no variables), any other type's #8000 as a tape header's CODE. Deleting writes #E5 over the type byte
+and frees the chain. The 4-bit filler at the end of each FAT sector stays. A slot is written when the device takes
+writes and its info byte 36 is not `1` (MDOS3's write protection).
+
 ## Surfaces
 
 | Surface | Volumes | Directory | File | Write | Delete, rename, mkdir | Attributes, time, label |
@@ -243,7 +250,7 @@ UTC seconds of the DOS wall clock (the media verbs' `time` takes `YYYY-MM-DD HH:
 | iS-DOS / TASiS | `RWHD`: read-protect (status bit 2), write-protect (3), hidden (4), delete-protect (7) | `SRWHD` (`S` segmented) | +28 time, +30 date; a catalogue gets both in its parent's entry and its own entry 0 | the device name in block 0 at +2: 8 characters, 11 on a Chic disk with no `DSK` at +10 |
 | ATM CP/M (read only) | none | `RSA` (bit 7 of t1', t2', t3') | none | none (`label`: the drive `D:` or the `.CDS` file) |
 | MB-02 (read only) | none | none (the byte is the `attributes` field) | none (`mtime`: the entry's date) | none (`label`: the disk name) |
-| MDOS (read only) | none | `HSPARWED`: hidden, system, protected, archive, read, write, execute, delete | none | none (`label`: the disk name, an MDOS3 slot's name) |
+| MDOS | `HSPARWED`: hidden, system, protected, archive, read, write, execute, delete (entry +20, bit 7 to bit 0; a file without `D` is not deleted or written over) | `HSPARWED` | none | the disk name at 192 (10 bytes, zeroes after it); an MDOS3 slot's name in its info sector (32 characters, blanks after it) |
 | +3DOS | `RSA`: bit 7 of the type bytes t1', t2', t3' (read only, system, archive) | `RSA` | none | none |
 | TR-DOS | none | | none | the disk title, 8 printable ASCII characters at +#F5 of the info sector |
 
@@ -272,8 +279,7 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
   partition found names it.
 - MB-02 is read only; floppies only. The BS-DOS 309 hard disk (a #47 partition of virtual discs) is not read: no
   image to check its layout. MB-01 (BS-DOS 52-105, #01 at #03) is not read.
-- MDOS is read only. An MDOS3 partition is found by its MBR type #49 (`nmi.a80`); without one the first `SDOS` sector
-  is looked for in the first 4096 sectors (2 MiB) only, the firmware searches the whole disk. The info sector's write
-  protection byte is not read.
+- MDOS: no file times (MDOS keeps none). An MDOS3 partition is found by its MBR type #49 (`nmi.a80`); without one the first `SDOS` sector
+  is looked for in the first 4096 sectors (2 MiB) only, the firmware searches the whole disk.
 - Not read: other file systems of a hard disk.
 - An iS-DOS device on a hard disk is found at a cylinder boundary only.
