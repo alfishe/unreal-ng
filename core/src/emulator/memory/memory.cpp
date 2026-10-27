@@ -2330,6 +2330,10 @@ void Memory::handleFrameStart()
 
 void Memory::handleFrameEnd()
 {
+    // The memory watches' totals for the debug.watches topic (nothing while no watch exists)
+    if (_memoryAccessTracker)
+        _memoryAccessTracker->PublishWatches();
+
     // Zero overhead when HUD is disabled
     if (!_feature_hud_enabled || !_context)
         return;

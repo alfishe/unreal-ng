@@ -14,7 +14,9 @@
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/memory/memorycounters.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/memory/memorywatch.h"
 #include "debugger/media/sectorwrite.h"
 #include "debugger/pchistory/pchistory.h"
 #include "debugger/ports/portwrite.h"
@@ -1215,6 +1217,155 @@ public:
             if (!read.error.empty())
                 return {sol::make_object(s, sol::lua_nil), sol::make_object(s, read.error)};
             return {sol::make_object(s, std::string(read.bytes.begin(), read.bytes.end())), sol::make_object(s, sol::lua_nil)};
+        });
+
+        // memory_counters{space=, start=, length=, addresses=, view=, kinds=, min=, limit=} -> {space, session,
+        // allocated, reads, writes, executes, matched, truncated, cells = {{address, r, w, x}, ...}} | nil, error
+        // (MemoryCounters: space cpu / phys / ram / ram5; view top (default) / sparse / dense; addresses a table or
+        // "0x5C00,0x8000-0x80FF")
+        lua.set_function("memory_counters", [this](sol::this_state s, sol::optional<sol::table> options)
+                                                -> std::tuple<sol::object, sol::object> {
+            sol::state_view view(s);
+            auto fail = [&s](const std::string& error) -> std::tuple<sol::object, sol::object> {
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, error)};
+            };
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return fail("no emulator");
+            MemoryCounters::Request request;
+            request.mode = MemoryCounters::Mode::Top;
+            std::string error;
+            if (options)
+            {
+                const sol::table& o = *options;
+                request.space = o.get_or<std::string>("space", "");
+                request.start = o.get_or<uint32_t>("start", 0);
+                request.length = o.get_or<uint32_t>("length", 0);
+                request.min = o.get_or<uint32_t>("min", 1);
+                request.limit = o.get_or<uint32_t>("limit", 4096);
+                if (!MemoryCounters::ParseMode(o.get_or<std::string>("view", "top"), request.mode, error) ||
+                    !MemoryCounters::ParseKinds(o.get_or<std::string>("kinds", "rwx"), request.kinds, error))
+                    return fail(error);
+                const sol::object addresses = o["addresses"];
+                if (addresses.is<std::string>())
+                {
+                    if (!MemoryCounters::ParseAddresses(addresses.as<std::string>(), request.addresses, error))
+                        return fail(error);
+                }
+                else if (addresses.is<sol::table>())
+                {
+                    for (const auto& [key, value] : addresses.as<sol::table>())
+                        request.addresses.push_back(value.as<uint32_t>());
+                }
+            }
+            else
+                request.limit = 4096;
+            const MemoryCounters::Result result = MemoryCounters::Read(emulator->GetContext(), request);
+            if (!result.error.empty())
+                return fail(result.error);
+            sol::table table = view.create_table();
+            table["space"] = result.space;
+            table["space_size"] = result.spaceSize;
+            table["session"] = result.session;
+            table["allocated"] = result.allocated;
+            table["start"] = result.start;
+            table["length"] = result.length;
+            table["reads"] = result.reads;
+            table["writes"] = result.writes;
+            table["executes"] = result.executes;
+            table["matched"] = result.matched;
+            table["truncated"] = result.truncated;
+            sol::table cells = view.create_table(static_cast<int>(result.cells.size()), 0);
+            for (size_t i = 0; i < result.cells.size(); i++)
+            {
+                const MemoryCounters::Cell& cell = result.cells[i];
+                cells[i + 1] = view.create_table_with(1, cell.address, 2, cell.reads, 3, cell.writes, 4, cell.executes);
+            }
+            table["cells"] = cells;
+            return {sol::make_object(s, table), sol::make_object(s, sol::lua_nil)};
+        });
+
+        // memory_counter(address [, space]) -> reads, writes, executes | nil, error
+        lua.set_function("memory_counter", [this](sol::this_state s, uint32_t address, sol::optional<std::string> space)
+                                               -> std::tuple<sol::object, sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator")), sol::make_object(s, sol::lua_nil)};
+            const MemoryCounters::Result result = MemoryCounters::ReadCell(emulator->GetContext(), space.value_or(""), address);
+            if (!result.error.empty())
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error), sol::make_object(s, sol::lua_nil)};
+            const MemoryCounters::Cell& cell = result.cells[0];
+            return {sol::make_object(s, cell.reads), sol::make_object(s, cell.writes), sol::make_object(s, cell.executes)};
+        });
+
+        // Memory watches (MemoryWatch): memory_watch_add(name, start, length [, {callers=, values=}]),
+        // memory_watch_port(name, port [, mask [, {callers=, values=}]]), memory_watch_remove(name), memory_watch_clear()
+        // -> true | nil, error; memory_watches() -> {{name, kind, start, length, port, mask, reads, writes, executes,
+        // callers = {[pc] = count}, values = {[value] = count}}, ...} | nil, error
+        auto watchOptions = [](const sol::optional<sol::table>& table) {
+            MemoryWatch::Options options;
+            if (table)
+            {
+                options.callers = table->get_or("callers", false);
+                options.values = table->get_or("values", false);
+            }
+            return options;
+        };
+        auto watchReply = [](sol::this_state s, const MemoryWatch::Result& result) -> std::tuple<sol::object, sol::object> {
+            if (!result.ok)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error)};
+            return {sol::make_object(s, true), sol::make_object(s, sol::lua_nil)};
+        };
+        lua.set_function("memory_watch_add", [this, watchOptions, watchReply](sol::this_state s, const std::string& name, uint32_t start,
+                                                                             uint32_t length, sol::optional<sol::table> options) {
+            return watchReply(s, MemoryWatch::AddRegion(effectiveEmulator(), name, start, length, watchOptions(options)));
+        });
+        lua.set_function("memory_watch_port", [this, watchOptions, watchReply](sol::this_state s, const std::string& name, uint32_t port,
+                                                                              sol::optional<uint32_t> mask, sol::optional<sol::table> options) {
+            return watchReply(s, MemoryWatch::AddPort(effectiveEmulator(), name, port, mask.value_or(0xFFFF), watchOptions(options)));
+        });
+        lua.set_function("memory_watch_remove", [this, watchReply](sol::this_state s, const std::string& name) {
+            return watchReply(s, MemoryWatch::Remove(effectiveEmulator(), name));
+        });
+        lua.set_function("memory_watch_clear", [this, watchReply](sol::this_state s) {
+            return watchReply(s, MemoryWatch::Clear(effectiveEmulator()));
+        });
+        lua.set_function("memory_watches", [this](sol::this_state s) -> std::tuple<sol::object, sol::object> {
+            const MemoryWatch::Result result = MemoryWatch::List(effectiveEmulator());
+            if (!result.ok)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error)};
+            sol::state_view view(s);
+            sol::table list = view.create_table();
+            int index = 1;
+            for (const MemoryWatch::Watch& watch : result.watches)
+            {
+                sol::table entry = view.create_table();
+                entry["name"] = watch.name;
+                entry["kind"] = watch.port ? "port" : "region";
+                if (watch.port)
+                {
+                    entry["port"] = watch.start;
+                    entry["mask"] = watch.mask;
+                }
+                else
+                {
+                    entry["start"] = watch.start;
+                    entry["length"] = watch.length;
+                    entry["executes"] = watch.executes;
+                }
+                entry["reads"] = watch.reads;
+                entry["writes"] = watch.writes;
+                sol::table callers = view.create_table();
+                for (const auto& [pc, count] : watch.callers)
+                    callers[pc] = count;
+                sol::table values = view.create_table();
+                for (const auto& [value, count] : watch.values)
+                    values[static_cast<int>(value)] = count;
+                entry["callers"] = callers;
+                entry["values"] = values;
+                list[index++] = entry;
+            }
+            return {sol::make_object(s, list), sol::make_object(s, sol::lua_nil)};
         });
 
         // A debugger's port write through the decoder (PortWrite): port_out(0x13AF, 0x20) -> true | nil, error

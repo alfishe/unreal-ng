@@ -1038,8 +1038,15 @@ POST /api/v1/emulator/{id}/profiler/memory/resume     Resume paused session
 POST /api/v1/emulator/{id}/profiler/memory/clear      Clear all profiler data
 GET  /api/v1/emulator/{id}/profiler/memory/status     Get profiler status
 GET  /api/v1/emulator/{id}/profiler/memory/pages      Get per-page access summaries (?limit=N)
-GET  /api/v1/emulator/{id}/profiler/memory/counters   Get address-level counters (?page=N, ?mode=z80|physical)
-GET  /api/v1/emulator/{id}/profiler/memory/regions    Get monitored region statistics
+GET  /api/v1/emulator/{id}/profiler/memory/counters   Get address-level counters (MemoryCounters):
+     ?space=cpu|phys|ram|ram5  &start=&length= (or &end=)  &addresses=0x5C00,0x8000-0x80FF
+     &format=top|sparse|dense|binary  &kinds=r|w|x mix  &min=  &limit=
+     (older form without space / addresses: ?mode=z80|physical&page=N&start=&end=&format=dense|sparse)
+GET    /api/v1/emulator/{id}/profiler/memory/watches        Every watch with reads, writes, executes, callers, values
+POST   /api/v1/emulator/{id}/profiler/memory/watches        Add a watch: {"name","start","length"} or {"name","port","mask"},
+                                                            + "callers", "values", "max_callers", "max_values"
+DELETE /api/v1/emulator/{id}/profiler/memory/watches        Remove every watch
+DELETE /api/v1/emulator/{id}/profiler/memory/watches/{name} Remove one watch (404 when there is none)
 POST /api/v1/emulator/{id}/profiler/memory/save       Save access data to file (body: {"path": "...", "format": "yaml"})
 ```
 
@@ -1077,6 +1084,41 @@ POST /api/v1/emulator/{id}/profiler/memory/save       Save access data to file (
   }
 }
 ```
+
+**Counters Response** (`?space=phys&format=top&kinds=w&limit=2`): `cells` are `[address, reads, writes, executes]`;
+in `phys` a fifth element names the cell's page (`address % 0x4000` is the offset in it). `format=dense` answers
+`counters {reads, writes, executes}` instead. `format=binary` answers `application/octet-stream`: the dense window as
+three little-endian `uint32` arrays (reads, writes, executes), with the headers `X-Space`, `X-Start`, `X-Length`,
+`X-Layout` and `X-Session-State`.
+
+```json
+{
+  "emulator_id": "550e8400-...",
+  "space": "phys", "space_size": 6373376, "format": "top", "kinds": "w",
+  "session_state": "capturing", "allocated": true,
+  "start": 0, "length": 6373376,
+  "totals": {"reads": 1203344, "writes": 91822, "executes": 2210334},
+  "cells": [[89088, 0, 4410, 0, "ram5"], [89089, 0, 4410, 0, "ram5"]],
+  "count": 2, "min": 1, "limit": 2, "matched": 7012, "truncated": true
+}
+```
+
+**Watches Response** (`GET .../profiler/memory/watches`; a POST answers the same with the added watch):
+
+```json
+{
+  "moment": "frame",
+  "count": 1,
+  "watches": [
+    {"name": "kempston", "kind": "port", "port": 31, "mask": 255, "reads": 1250, "writes": 0,
+     "callers_tracked": true, "values_tracked": true, "max_callers": 100, "max_values": 256,
+     "callers": [[34816, 1250]], "values": [[0, 1240], [16, 10]]}
+  ]
+}
+```
+
+`callers` and `values` are `[key, count]`, most frequent first. A machine busy past 500 ms answers 503. A bad
+watch answers 400, and a missing name 404. The `debug.watches` topic of `/api/v1/ws` pushes the totals.
 
 ### Call Trace Profiler
 

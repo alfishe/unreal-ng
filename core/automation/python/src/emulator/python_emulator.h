@@ -6,7 +6,9 @@
 #include "emulator/execution/runpacer.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/memory/memorycounters.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/memory/memorywatch.h"
 #include "debugger/media/sectorwrite.h"
 #include "debugger/pchistory/pchistory.h"
 #include "debugger/ports/portwrite.h"
@@ -1743,6 +1745,133 @@ namespace PythonBindings
             }, "Read raw bytes (MemoryRead): the CPU view (wraps at 0xFFFF, up to 65536), a page 'ram5' / 'rom2' / "
                "'cache0' (stops at the page's end) or 'ram' (every RAM page back to back); ValueError with the reason",
                py::arg("addr"), py::arg("len"), py::arg("space") = "cpu")
+            .def("memory_counters", [](Emulator& self, const std::string& space, uint32_t start, uint32_t length,
+                                       const py::object& addresses, const std::string& view, const std::string& kinds,
+                                       uint32_t min, uint32_t limit) -> py::dict {
+                MemoryCounters::Request request;
+                request.space = space;
+                request.start = start;
+                request.length = length;
+                request.min = min;
+                request.limit = limit;
+                std::string error;
+                if (!MemoryCounters::ParseMode(view, request.mode, error) || !MemoryCounters::ParseKinds(kinds, request.kinds, error))
+                    throw py::value_error(error);
+                if (py::isinstance<py::str>(addresses))
+                {
+                    if (!MemoryCounters::ParseAddresses(addresses.cast<std::string>(), request.addresses, error))
+                        throw py::value_error(error);
+                }
+                else if (!addresses.is_none())
+                {
+                    for (auto item : addresses)
+                        request.addresses.push_back(item.cast<uint32_t>());
+                }
+                const MemoryCounters::Result result = MemoryCounters::Read(self.GetContext(), request);
+                if (!result.error.empty())
+                    throw py::value_error(result.error);
+                py::dict dict;
+                dict["space"] = result.space;
+                dict["space_size"] = result.spaceSize;
+                dict["session"] = result.session;
+                dict["allocated"] = result.allocated;
+                dict["start"] = result.start;
+                dict["length"] = result.length;
+                dict["reads"] = result.reads;
+                dict["writes"] = result.writes;
+                dict["executes"] = result.executes;
+                dict["matched"] = result.matched;
+                dict["truncated"] = result.truncated;
+                py::list cells;
+                for (const MemoryCounters::Cell& cell : result.cells)
+                    cells.append(py::make_tuple(cell.address, cell.reads, cell.writes, cell.executes));
+                dict["cells"] = cells;
+                return dict;
+            }, "Per-address memory access counters (MemoryCounters; start the session with trace('memory', 'start')): "
+               "space 'cpu' (the CPU's 64K), 'phys' (every physical page: cell // 0x4000 is the page, ram 0..255, cache, "
+               "misc, rom), 'ram' or a page 'ram5' / 'rom2' / 'cache0'; a window start + length (0: to the end) or "
+               "addresses (a list, or '0x5C00,0x8000-0x80FF'); view 'top' (heaviest first), 'sparse' or 'dense'; kinds "
+               "'r' / 'w' / 'x' mixed for the weight; min, limit. Returns {space, session, allocated, reads, writes, "
+               "executes (window totals), matched, truncated, cells [(address, reads, writes, executes)]}; ValueError "
+               "with the reason",
+               py::arg("space") = "cpu", py::arg("start") = 0, py::arg("length") = 0, py::arg("addresses") = py::none(),
+               py::arg("view") = "top", py::arg("kinds") = "rwx", py::arg("min") = 1, py::arg("limit") = 4096)
+            .def("memory_counter", [](Emulator& self, uint32_t address, const std::string& space) -> py::tuple {
+                const MemoryCounters::Result result = MemoryCounters::ReadCell(self.GetContext(), space, address);
+                if (!result.error.empty())
+                    throw py::value_error(result.error);
+                const MemoryCounters::Cell& cell = result.cells[0];
+                return py::make_tuple(cell.reads, cell.writes, cell.executes);
+            }, "One cell's (reads, writes, executes) in space ('cpu', 'phys', 'ram', 'ram5'); ValueError with the reason",
+               py::arg("address"), py::arg("space") = "cpu")
+            .def("memory_watch_add", [](Emulator& self, const std::string& name, uint32_t start, uint32_t length, bool callers,
+                                        bool values) {
+                MemoryWatch::Options options;
+                options.callers = callers;
+                options.values = values;
+                const MemoryWatch::Result result = MemoryWatch::AddRegion(&self, name, start, length, options);
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+            }, "Watch CPU addresses start..start+length-1 (MemoryWatch): reads, writes, executes, and with callers / values "
+               "the PCs and the values; counts while the memory session captures. RuntimeError with the reason",
+               py::arg("name"), py::arg("start"), py::arg("length"), py::arg("callers") = false, py::arg("values") = false)
+            .def("memory_watch_port", [](Emulator& self, const std::string& name, uint32_t port, uint32_t mask, bool callers,
+                                         bool values) {
+                MemoryWatch::Options options;
+                options.callers = callers;
+                options.values = values;
+                const MemoryWatch::Result result = MemoryWatch::AddPort(&self, name, port, mask, options);
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+            }, "Watch the ports whose address lines in mask equal port's (mask 0x00FF with port 0x1F: every Kempston read): "
+               "reads, writes, callers, values. RuntimeError with the reason",
+               py::arg("name"), py::arg("port"), py::arg("mask") = 0xFFFF, py::arg("callers") = false, py::arg("values") = false)
+            .def("memory_watch_remove", [](Emulator& self, const std::string& name) {
+                const MemoryWatch::Result result = MemoryWatch::Remove(&self, name);
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+            }, "Remove the memory watch of that name", py::arg("name"))
+            .def("memory_watch_clear", [](Emulator& self) {
+                const MemoryWatch::Result result = MemoryWatch::Clear(&self);
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+            }, "Remove every memory watch")
+            .def("memory_watches", [](Emulator& self) -> py::list {
+                const MemoryWatch::Result result = MemoryWatch::List(&self);
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+                py::list list;
+                for (const MemoryWatch::Watch& watch : result.watches)
+                {
+                    py::dict entry;
+                    entry["name"] = watch.name;
+                    entry["kind"] = watch.port ? "port" : "region";
+                    if (watch.port)
+                    {
+                        entry["port"] = watch.start;
+                        entry["mask"] = watch.mask;
+                    }
+                    else
+                    {
+                        entry["start"] = watch.start;
+                        entry["length"] = watch.length;
+                        entry["executes"] = watch.executes;
+                    }
+                    entry["reads"] = watch.reads;
+                    entry["writes"] = watch.writes;
+                    py::dict callers;
+                    for (const auto& [pc, count] : watch.callers)
+                        callers[py::int_(pc)] = count;
+                    py::dict values;
+                    for (const auto& [value, count] : watch.values)
+                        values[py::int_(value)] = count;
+                    entry["callers"] = callers;
+                    entry["values"] = values;
+                    list.append(entry);
+                }
+                return list;
+            }, "Every memory watch: [{name, kind, start + length + executes or port + mask, reads, writes, callers "
+               "{pc: count}, values {value: count}}]")
             .def("port_out", [](Emulator& self, int64_t port, int64_t value) {
                 uint16_t p = 0;
                 uint8_t v = 0;

@@ -994,7 +994,7 @@ TEST(SyncInject_Test, PrometheusTakesASaveInItsEditor)
     for (size_t k = 0; k < tableLength; ++k)
         EXPECT_EQ(pokes[static_cast<uint16_t>(table + k)], written.bytes[length + 2 + k]) << k;
     EXPECT_EQ(pokes[0x87D7] | (pokes[0x87D8] << 8), table);
-    EXPECT_EQ(pokes[0x881A] | (pokes[0x881B] << 8), table + tableLength);
+    EXPECT_EQ(static_cast<size_t>(pokes[0x881A] | (pokes[0x881B] << 8)), table + tableLength);
     // the active line and the block margins at the start, as CLEAR leaves them
     for (const uint16_t at : std::initializer_list<uint16_t>{0x826D, 0x80E8, 0x80EB})
         EXPECT_EQ(pokes[at] | (pokes[static_cast<uint16_t>(at + 1)] << 8), 0x9C28) << at;

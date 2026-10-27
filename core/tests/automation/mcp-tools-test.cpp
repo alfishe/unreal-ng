@@ -2142,6 +2142,70 @@ TEST_F(McpTools_Test, AnalyzePerformance_Vdac2LineBudgetSet_PutsAndValidates)
     EXPECT_TRUE(RunTool(*_registry, "analyze_performance", empty, *_caller).isError);
 }
 
+TEST_F(McpTools_Test, AnalyzePerformance_MemoryCounters_ListsCellsInText)
+{
+    Json::Value reply;
+    reply["space"] = "phys";
+    reply["session_state"] = "capturing";
+    reply["allocated"] = true;
+    reply["totals"]["reads"] = 7;
+    reply["totals"]["writes"] = 0;
+    reply["totals"]["executes"] = 40;
+    reply["matched"] = 2;
+    reply["min"] = 1;
+    reply["kinds"] = "x";
+    Json::Value cell(Json::arrayValue);
+    cell.append(0x15C08);
+    cell.append(7);
+    cell.append(0);
+    cell.append(40);
+    cell.append("ram5");
+    reply["cells"].append(cell);
+    _caller->routes["GET /api/v1/emulator/emu-1/profiler/memory/counters?space=phys&format=top&kinds=x&limit=4"] = {200,
+                                                                                                                   reply};
+
+    Json::Value args;
+    args["action"] = "memory_counters";
+    args["space"] = "phys";
+    args["kinds"] = "x";
+    args["limit"] = 4;
+    mcp::ToolResult result = RunTool(*_registry, "analyze_performance", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("1 cell(s) of 2 at or above min 1 (x)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("0x15C08 (ram5 0x1C08) r=7 w=0 x=40"), std::string::npos) << result.text;
+
+    args["view"] = "heaviest";
+    EXPECT_TRUE(RunTool(*_registry, "analyze_performance", args, *_caller).isError);
+}
+
+TEST_F(McpTools_Test, AnalyzePerformance_MemoryWatch_AddsPortAndRefusesWithoutName)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/profiler/memory/watches"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "memory_watch";
+    args["op"] = "add";
+    args["name"] = "kempston";
+    args["port"] = "0x1F";
+    args["mask"] = 255;
+    args["values"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "analyze_performance", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/profiler/memory/watches");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["name"].asString(), "kempston");
+    EXPECT_EQ(call->body["port"].asString(), "0x1F");
+    EXPECT_EQ(call->body["mask"].asString(), "255");
+    EXPECT_TRUE(call->body["values"].asBool());
+
+    Json::Value nameless;
+    nameless["action"] = "memory_watch";
+    nameless["op"] = "remove";
+    EXPECT_TRUE(RunTool(*_registry, "analyze_performance", nameless, *_caller).isError);
+}
+
 TEST_F(McpTools_Test, ManageSymbols_List_GetsLabels)
 {
     _caller->routes["GET /api/v1/emulator/emu-1/labels"] = {200, Json::Value(Json::objectValue)};
