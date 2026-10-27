@@ -113,9 +113,8 @@ class Verifier:
         return self.wait_stop(timeout)
 
     def recover(self, client=None):
-        """Stops a run the server does not stop itself (WebAPI pause), then flushes the line. The pending 'c' reply
-        comes when the core pauses; a 0x03 the session could not read while it waited is answered after the next
-        byte (gdbserver.cpp receivePacket): a '+' wakes it"""
+        """Stops a run that a failed check left going (WebAPI pause), then flushes the line: the pending 'c' reply
+        comes when the core pauses"""
         c = client or self.c
         if self.api:
             self.api.pause()
@@ -363,38 +362,38 @@ class Verifier:
             time.sleep(0.1)
 
     def g_debug_mode(self):
-        """A host as it starts (debug mode off): gdb's breakpoints have to stop it"""
+        """A host as it starts (debug mode and the breakpoints feature off): gdb's breakpoints have to stop it - the
+        server turns both on when gdb sets one (no WebAPI help)"""
         if not self.api:
             self.check("debug mode (skipped: no WebAPI)", True)
             return
         status, body = self.api.call("GET", "/api/v1/emulator/{id}/debugmode")
-        enabled = isinstance(body, dict) and body.get("enabled")
-        if not enabled:
-            self.restart()
-            self.c.request(f"Z0,{LOOP:x},1")
-            r = self.run_to_stop("c", 2.0)
-            ok = r is not None and self.c.reg(REG_PC) == LOOP
-            self.check("Z0 stops the core with debug mode off (as unreal-qt starts)", ok,
-                       "no stop: the server does not turn the debug mode / breakpoints feature on "
-                       "(DezogDebugAdapter::ensureDebugEnabled does)")
-            if r is None:
-                self.recover()
-            self.c.request(f"z0,{LOOP:x},1")
-        # Execution breakpoints need the debug mode; memory watchpoints the 'breakpoints' feature as well
-        self.api.changing("PUT", "/api/v1/emulator/{id}/debugmode", {"enabled": True})
+        debug_off = isinstance(body, dict) and not body.get("enabled")
         status, body = self.api.call("GET", "/api/v1/emulator/{id}/feature/breakpoints")
-        if isinstance(body, dict) and not body.get("enabled"):
-            self.restart()
-            self.c.request(f"Z2,{WRITE_TARGET:x},1")
-            r = self.run_to_stop("c", 2.0)
-            self.check("Z2 stops the core with the 'breakpoints' feature off (as unreal-qt starts)",
-                       r is not None and self.c.reg(REG_PC) in (STORE, 0x800A),
-                       "no stop: the server does not turn the 'breakpoints' feature on")
-            if r is None:
-                self.recover()
-            self.c.request(f"z2,{WRITE_TARGET:x},1")
-        self.api.changing("PUT", "/api/v1/emulator/{id}/feature/breakpoints", {"enabled": True})
-        self.check("debug mode and the breakpoints feature on for the following groups", True)
+        feature_off = isinstance(body, dict) and not body.get("enabled")
+        self.check("the host starts with the debug mode and the breakpoints feature off (as unreal-qt)",
+                   (debug_off and feature_off) or not self.args.launch,
+                   f"debug off {debug_off}, feature off {feature_off}")
+        self.restart()
+        self.c.request(f"Z2,{WRITE_TARGET:x},1")
+        r = self.run_to_stop("c", 2.0)
+        self.check("Z2 stops a fresh host (the server turns the breakpoints feature on)",
+                   r is not None and self.c.reg(REG_PC) in (STORE, 0x800A), "no stop")
+        if r is None:
+            self.recover()
+        self.c.request(f"z2,{WRITE_TARGET:x},1")
+        self.restart()
+        self.c.request(f"Z0,{LOOP:x},1")
+        r = self.run_to_stop("c", 2.0)
+        self.check("Z0 stops a fresh host (the server turns the debug mode on)",
+                   r is not None and self.c.reg(REG_PC) == LOOP, "no stop")
+        if r is None:
+            self.recover()
+        self.c.request(f"z0,{LOOP:x},1")
+        status, body = self.api.call("GET", "/api/v1/emulator/{id}/debugmode")
+        self.check("  debug mode on afterwards", isinstance(body, dict) and body.get("enabled"), repr(body))
+        status, body = self.api.call("GET", "/api/v1/emulator/{id}/feature/breakpoints")
+        self.check("  breakpoints feature on afterwards", isinstance(body, dict) and body.get("enabled"), repr(body))
 
     def g_breakpoints(self):
         c = self.c
@@ -768,8 +767,6 @@ class Verifier:
             # the groups before may leave the machine running or a WebAPI session claimed
             self.api.pause()
             c.drain(quiet=True)
-            self.api.changing("PUT", "/api/v1/emulator/{id}/debugmode", {"enabled": True})
-            self.api.changing("PUT", "/api/v1/emulator/{id}/feature/breakpoints", {"enabled": True})
         _, text = c.monitor("ttd status")
         self.check("monitor ttd status", "TTD state:" in text, text)
         if "idle" in text.lower():
@@ -908,6 +905,10 @@ class Verifier:
             self.check("  instance paused after vAttach", self.paused() in (True, None), "")
             _, text = c2.monitor("status")
             self.check("  monitor status: run control claimed by gdb", "Run-control: claimed" in text, text)
+            # a machine gdb stopped runs again after D (as a detached process does)
+            c2.request(f"Z0,{LOOP:x},1")
+            r = c2.request("c", timeout=STOP_TIMEOUT)
+            self.check("  c on the attached session -> breakpoint", parse_stop(r)[0] == 5, repr(r))
             self.equal("D -> OK", c2.request("D"), "OK")
             closed = False
             try:
@@ -915,6 +916,13 @@ class Verifier:
             except (OSError, RSPError):
                 closed = True
             self.check("  server closes the connection after D", closed, "")
+            if self.api:
+                deadline = time.time() + 2.0
+                while self.paused() is not False and time.time() < deadline:
+                    time.sleep(0.05)
+                self.equal("  D lets the machine gdb stopped run again", self.paused(), False)
+                self.api.pause()
+                time.sleep(0.1)
         finally:
             c2.close()
         if self.api:
@@ -1001,10 +1009,6 @@ class Verifier:
         self.group = "setup"
         self.save_state()
         self.install()
-        if self.api and self.args.only and self.args.only not in "debug mode":
-            # the groups need the breakpoints working (the debug mode group checks and does this otherwise)
-            self.api.changing("PUT", "/api/v1/emulator/{id}/debugmode", {"enabled": True})
-            self.api.changing("PUT", "/api/v1/emulator/{id}/feature/breakpoints", {"enabled": True})
         for title, method, needs_program in self.GROUPS:
             if self.args.only and self.args.only not in title:
                 continue

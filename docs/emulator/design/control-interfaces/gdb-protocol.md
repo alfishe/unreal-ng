@@ -153,19 +153,24 @@ All values in hex, little-endian where applicable.
 | Packet | Command | Description |
 | :--- | :--- | :--- |
 | `Z0,<addr>,<kind>` | Set SW breakpoint | Execution breakpoint. Optional `;X<len>,<hex>[;X…]`: the agent-expression conditions gdb evaluates on the target (`ConditionalBreakpoints+`), written as a core breakpoint condition; the core stops only when one holds. An expression the core can not say the same way (a loop, `trace`, a division by a register; [the subset](../../../features/conditional-breakpoints.md#debugger-protocols)) leaves the breakpoint unconditional and gdb decides. Setting the address again replaces the condition |
-| `Z1,<addr>,<kind>` | Set HW breakpoint | The same as `Z0` |
+| `Z1,<addr>,<kind>` | Set HW breakpoint | The same as `Z0`; its stop reply says `hwbreak:` |
 | `z0,<addr>,<kind>` | Remove SW breakpoint | Remove execution BP |
-| `Z2,<addr>,<kind>` | Set write watchpoint | Memory write |
-| `z2,<addr>,<kind>` | Remove write WP | Remove write WP |
-| `Z3,<addr>,<kind>` | Set read watchpoint | Memory read |
-| `z3,<addr>,<kind>` | Remove read WP | Remove read WP |
-| `Z4,<addr>,<kind>` | Set access watchpoint | Read or write |
-| `z4,<addr>,<kind>` | Remove access WP | Remove access WP |
+| `Z2,<addr>,<len>` | Set write watchpoint | Memory write over `addr .. addr+len-1` (one range breakpoint); `E22` past FFFF |
+| `z2,<addr>,<len>` | Remove write WP | Remove write WP |
+| `Z3,<addr>,<len>` | Set read watchpoint | Memory read |
+| `z3,<addr>,<len>` | Remove read WP | Remove read WP |
+| `Z4,<addr>,<len>` | Set access watchpoint | Read or write (one breakpoint watching both) |
+| `z4,<addr>,<len>` | Remove access WP | Remove access WP |
+
+Every breakpoint and watchpoint gdb sets is a core breakpoint of its own (owner `gdb`, unshared: never merged with
+an equal one of another surface), tracked by its id: `z` removes only gdb's own, a watchpoint fires where another
+surface has a breakpoint at the same address, and `D` (or the end of the connection) removes them all. Setting one
+turns the debug mode and the `breakpoints` feature on, which unreal-qt starts with off.
 
 #### Stop Reply Commands
 | Packet | Command | Description |
 | :--- | :--- | :--- |
-| `T<sig><key:val>` | Stop Reply | Formatted stop reason (e.g., `T05hwbreak:;thread:1;`) |
+| `T<sig><key:val>` | Stop Reply | Formatted stop reason: `T05swbreak:;thread:01;` (`Z0`), `T05hwbreak:;thread:01;` (`Z1`), `T05watch:9000;thread:01;` / `rwatch:` / `awatch:` (`Z2` / `Z3` / `Z4`, the accessed address), `T02thread:01;` (gdb's 0x03), `T05thread:01;` (a step, an attach, a pause by another surface or another surface's breakpoint), `T05replaylog:begin;thread:01;` (`bs` / `bc` at the start of history), `W00` (the instance is gone) |
 
 #### Query Commands
 | Packet | Command | Description |
@@ -468,69 +473,35 @@ PCMonitor()
 
 ### Server Architecture
 
-```cpp
-class AutomationGDB {
-    // TCP server
-    SOCKET _serverSocket;
-    SOCKET _clientSocket;
-    
-    // Packet handling
-    std::string receivePacket();
-    void sendPacket(const std::string& data);
-    bool verifyChecksum(const std::string& packet);
-    
-    // Command handlers
-    void handleReadRegisters();
-    void handleWriteRegisters(const std::string& data);
-    void handleReadMemory(uint16_t addr, uint16_t len);
-    void handleWriteMemory(uint16_t addr, const std::vector<uint8_t>& data);
-    void handleContinue();
-    void handleStep();
-    void handleSetBreakpoint(uint16_t addr);
-    void handleRemoveBreakpoint(uint16_t addr);
-    
-    // State management
-    EmulatorState _lastState;
-    bool _isAttached;
-    
-    // Emulator reference
-    std::shared_ptr<Emulator> _emulator;
-};
-```
+`core/automation/gdb/src/gdbserver.cpp`: `GDBServer` accepts connections (port 2000 in unreal-qt by default); each
+client gets a `GDBSession` on its own thread.
 
-### Packet Parser
-
-```cpp
-std::string AutomationGDB::receivePacket() {
-    std::string packet;
-    char ch;
-    
-    // Wait for '$'
-    do {
-        recv(_clientSocket, &ch, 1, 0);
-    } while (ch != '$');
-    
-    // Read until '#'
-    while (true) {
-        recv(_clientSocket, &ch, 1, 0);
-        if (ch == '#') break;
-        packet += ch;
-    }
-    
-    // Read checksum
-    char checksum[3] = {0};
-    recv(_clientSocket, checksum, 2, 0);
-    
-    // Verify checksum
-    if (verifyChecksum(packet + checksum)) {
-        send(_clientSocket, "+", 1, 0);  // ACK
-        return packet;
-    } else {
-        send(_clientSocket, "-", 1, 0);  // NACK
-        return "";
-    }
-}
-```
+- **One thread reads and answers.** The session polls the socket and feeds every byte it gets to the packet reader
+  (`gdbpacket.cpp`): complete packets and interrupts queue in arrival order, so a 0x03 followed by a packet in one
+  write answers both. 0x03 is an interrupt only between packets; inside one it is data (an `X` packet escapes `#` as
+  `}` 0x03).
+- **A running `c` does not block it.** `c` / `C` / `vCont;c` / `vCont;C` resume the machine and return; while it
+  runs the session keeps reading (0x03 pauses it: `T02`) and sends the stop reply when the machine stops. The reply
+  comes from the machine's last stop (`Emulator::LastStop`): gdb's own breakpoint or watchpoint by its id, else a
+  plain `T05`. In all-stop mode gdb sends nothing else while the target runs; other packets wait for the stop.
+- **Unsupported packets** get the empty packet `$#00` (`!`, unknown `q` / `Q` / `v` / `b` packets, `Z5`, `vCont;t`,
+  unknown `qXfer` objects and annexes); `m addr,0` is an empty read.
+- **qXfer** reads honour offset and length: `m` + a chunk while more follows, `l` + the last chunk, `l` at or past the
+  end.
+- **`X`** writes binary data (`}` escapes); `M` hex. The physical view `0x01PPAAAA` of a page the machine does not
+  have answers `E03`.
+- **Run control.** `c` that the machine refuses (another client holds run control, the machine does not run)
+  answers `E0D`, with the reason on the client's console (an `O` packet); nothing ran.
+- **Attach and detach.** A connection to a host with one instance attaches to it at once (auto-attach); `vAttach`
+  attaches to another one and takes run control. Both stop a running machine. `D` (and `k`, which never terminates
+  the emulator) removes gdb's breakpoints and lets the machine run again when gdb stopped it (not after a pause by
+  another surface).
+- **Time travel.** `bs` / `bc` browse the recording (the engine pauses it for browsing, D8). In the recorded past the
+  machine is read-only (`M` / `X` / `P` / `G`: `E0D`); `s` replays the next instruction; `c` (and `s` at the end of
+  the history) goes on live from the position: the history after it is cut and the recording continues (time-travel
+  TDD §8.3), told once on the console. `monitor ttd stop` in the past comes back to live the same way first.
+- **`monitor bport`** prints the id in decimal, and `bport clear <id>` takes it the same way; it removes only a port
+  breakpoint gdb set. `monitor model` names the machine (`Model: Pentagon 128 (PENTAGON), RAM 128 KB`).
 
 ### Register Serialization
 

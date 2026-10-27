@@ -229,10 +229,8 @@ def main():
         api.emulator_id = api.first_emulator()
         api.mute()
     try:
-        if api:
-            # gdb's breakpoints need the debug mode and the breakpoints feature (the server does not turn them on)
-            api.changing("PUT", "/api/v1/emulator/{id}/debugmode", {"enabled": True})
-            api.changing("PUT", "/api/v1/emulator/{id}/feature/breakpoints", {"enabled": True})
+        # No WebAPI help: the server turns the debug mode and the breakpoints feature on when gdb sets a breakpoint
+        # (a launched host starts with both off, as unreal-qt does; the first scenario's breakpoints prove it)
         ok = Session(args, api).run()
     finally:
         if host:

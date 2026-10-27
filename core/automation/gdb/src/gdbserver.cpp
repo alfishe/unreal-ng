@@ -8,9 +8,12 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
+#include <emulator/config.h>
+#include <emulator/machinenames.h>
 #include <emulator/memory/memory.h>
 #include <emulator/platform.h>
 #include <emulator/notifications.h>
+#include <base/featuremanager.h>
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
@@ -21,7 +24,9 @@
 #include <debugger/ttd/ttdprobe.h>
 #include <3rdparty/message-center/messagecenter.h>
 
+#include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <map>
 #include <iomanip>
 #include <iostream>
@@ -181,7 +186,8 @@ void GDBServer::stop()
         _serverSocket = -1;
     }
 
-    // Close all sessions - shutdown first to unblock recv()
+    // End all sessions: the shutdown wakes each session's poll, its own thread (handleClient) ends it and closes the
+    // socket, holding the session alive meanwhile
     {
         std::lock_guard<std::mutex> lock(_sessionsMutex);
         for (auto& [socket, session] : _sessions)
@@ -189,10 +195,8 @@ void GDBServer::stop()
             session->stop();
 #ifdef _WIN32
             shutdown(socket, SD_BOTH);
-            closesocket(socket);
 #else
             shutdown(socket, SHUT_RDWR);
-            close(socket);
 #endif
         }
         _sessions.clear();
@@ -253,24 +257,25 @@ void GDBServer::acceptLoop()
 void GDBServer::handleClient(int clientSocket)
 {
     coordinator::SetThreadSource(coordinator::OpSource::Gdb);   // the operation log names this session's operations
-    auto session = std::make_unique<GDBSession>(clientSocket);
+    auto session = std::make_shared<GDBSession>(clientSocket);
     session->setAutoAttach(_autoAttach);
-
-    GDBSession* sessionPtr = session.get();
 
     {
         std::lock_guard<std::mutex> lock(_sessionsMutex);
-        _sessions[clientSocket] = std::move(session);
+        _sessions[clientSocket] = session;
     }
 
     // Run session WITHOUT holding mutex (allows stop() to work)
-    sessionPtr->run();
+    session->run();
 
-    // Cleanup
+    // Cleanup (stop() may have cleared the map already: then the entry under this socket is not this session's)
     {
         std::lock_guard<std::mutex> lock(_sessionsMutex);
-        _sessions.erase(clientSocket);
+        auto it = _sessions.find(clientSocket);
+        if (it != _sessions.end() && it->second == session)
+            _sessions.erase(it);
     }
+    session.reset();
 
 #ifdef _WIN32
     shutdown(clientSocket, SD_BOTH);
@@ -295,12 +300,14 @@ GDBSession::GDBSession(int socket, bool noAckMode)
 
 GDBSession::~GDBSession()
 {
-    stop();
+    _active = false;
+    endSession();   // a session whose run() never started (or already ended: then nothing is left)
 }
 
 void GDBSession::run()
 {
-    // Auto-attach if enabled and single instance exists
+    // Auto-attach if enabled and single instance exists: an attach as vAttach makes it (the machine stops, as gdb
+    // expects of a target it connects to), without taking run control from the surfaces
     if (_autoAttach && !_emulator)
     {
         auto* mgr = EmulatorManager::GetInstance();
@@ -309,56 +316,66 @@ void GDBSession::run()
             auto ids = mgr->GetEmulatorIds();
             if (ids.size() == 1)
             {
-                _emulator = mgr->GetEmulator(ids[0]);
-                if (_emulator)
-                {
-                    _context = _emulator->GetContext();
-                    _attachedInstanceId = ids[0];
-                    _lastStopReason = StopReason::Attached;
-                }
+                if (std::shared_ptr<Emulator> emulator = mgr->GetEmulator(ids[0]))
+                    attachTo(emulator, ids[0], /*claim=*/false);
             }
         }
     }
 
     while (_active)
     {
-        std::string packet = receivePacket();
-        if (packet.empty())
+        if (_incoming.empty() && !pumpInput(_running ? 5 : 50))
+            break;   // the socket closed
+
+        if (_running)
         {
-            if (!_active)
-                break;
+            // All-stop mode: while the target runs only an interrupt is expected; packets wait for the stop
+            for (auto it = _incoming.begin(); it != _incoming.end();)
+            {
+                if (*it == "\x03")
+                {
+                    it = _incoming.erase(it);
+                    _interruptRequested = true;
+                    if (_emulator && !_emulator->IsPaused())
+                        _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
+                }
+                else
+                    ++it;
+            }
+            const std::string stop = pollRunningStop();
+            if (!stop.empty())
+                sendPacket(stop);
+            else if (!_incoming.empty() && !pumpInput(5))
+                break;   // packets wait: keep reading for an interrupt
             continue;
         }
 
-        std::string response = handlePacket(packet);
-        // Empty response = unsupported (no reply). Special marker = send empty packet.
-        if (!response.empty())
-        {
-            if (response == "\x7f_EMPTY_")
-            {
-                sendPacket("");  // Send empty packet $#00
-            }
-            else
-            {
-                sendPacket(response);
-            }
-        }
+        if (_incoming.empty())
+            continue;
+        const std::string packet = std::move(_incoming.front());
+        _incoming.pop_front();
+
+        const std::string response = handlePacket(packet);
+        // An empty response is the empty packet $#00: "not supported" (RSP); a deferred one comes with the stop
+        if (response != kDeferredReply)
+            sendPacket(response);
     }
+
+    endSession();
 }
 
 void GDBSession::stop()
 {
-    _active = false;
+    _active = false;   // run() sees it within one poll quantum and ends the session on its own thread
+}
 
-    // Unsubscribe from state changes (1A.7.3)
-    unsubscribeFromStateChanges();
-
-    // Release run-control claim
+void GDBSession::endSession()
+{
     if (_context)
     {
+        forgetAllBreakpoints();
         _context->ReleaseRunControl(_sessionUuid);
     }
-
     _emulator.reset();
     _context = nullptr;
 }
@@ -397,53 +414,74 @@ bool GDBSession::sendRaw(const std::string& data)
 #endif
 }
 
-std::string GDBSession::receivePacket()
+bool GDBSession::pumpInput(int timeoutMs)
 {
-    _reader->reset();
-
-    char buf[1];
-    while (_active)
-    {
 #ifdef _WIN32
-        int n = recv(_socket, buf, 1, 0);
+    WSAPOLLFD pfd{static_cast<SOCKET>(_socket), POLLIN, 0};
+    const int ready = WSAPoll(&pfd, 1, timeoutMs);
 #else
-        auto n = recv(_socket, buf, 1, 0);
+    struct pollfd pfd{_socket, POLLIN, 0};
+    const int ready = poll(&pfd, 1, timeoutMs);
 #endif
-        if (n <= 0)
-        {
-            _active = false;
-            return "";
-        }
-
-        // Check for interrupt
-        if (_reader->hasInterrupt())
-        {
-            _reader->clearInterrupt();
-            return "\x03";
-        }
-
-        if (_reader->feed(buf[0]))
-        {
-            if (_reader->isChecksumValid())
-            {
-                if (!_noAckMode)
-                {
-                    sendRaw("+");
-                }
-                return _reader->extractData();
-            }
-            else
-            {
-                if (!_noAckMode)
-                {
-                    sendRaw("-");
-                }
-                _reader->reset();
-            }
-        }
+    if (ready == 0)
+        return true;
+    if (ready < 0)
+    {
+#ifndef _WIN32
+        if (errno == EINTR)
+            return true;
+#endif
+        _active = false;
+        return false;
     }
 
-    return "";
+    char buf[4096];
+#ifdef _WIN32
+    const int n = recv(_socket, buf, static_cast<int>(sizeof(buf)), 0);
+#else
+    const auto n = recv(_socket, buf, sizeof(buf), 0);
+#endif
+    if (n <= 0)
+    {
+        _active = false;
+        return false;
+    }
+    for (size_t i = 0; i < static_cast<size_t>(n); ++i)
+        feedByte(buf[i]);
+    return true;
+}
+
+void GDBSession::feedByte(char c)
+{
+    if (_reader->feed(c))
+    {
+        if (_reader->isChecksumValid())
+        {
+            if (!_noAckMode)
+                sendRaw("+");
+            _incoming.push_back(_reader->extractData());
+        }
+        else
+        {
+            if (!_noAckMode)
+                sendRaw("-");
+            _reader->reset();
+        }
+        return;
+    }
+    if (_reader->hasInterrupt())
+    {
+        _reader->clearInterrupt();
+        _incoming.emplace_back("\x03");
+        return;
+    }
+    if (_reader->hasError())
+    {
+        // A malformed checksum: ask for the packet again
+        if (!_noAckMode)
+            sendRaw("-");
+        _reader->reset();
+    }
 }
 
 std::string GDBSession::handlePacket(const std::string& packet)
@@ -466,7 +504,7 @@ std::string GDBSession::handlePacket(const std::string& packet)
     switch (cmd)
     {
         case '?':
-            return formatStopReply();
+            return _lastStopReply;
 
         case 'g':
             return handleReadRegisters();
@@ -484,8 +522,10 @@ std::string GDBSession::handlePacket(const std::string& packet)
             return handleReadMemory(args);
 
         case 'M':
+            return handleWriteMemory(args, /*binary=*/false);
+
         case 'X':
-            return handleWriteMemory(args);
+            return handleWriteMemory(args, /*binary=*/true);
 
         case 'c':
         case 'C':
@@ -501,7 +541,7 @@ std::string GDBSession::handlePacket(const std::string& packet)
                 return handleBackwardStep();
             if (args == "c")
                 return handleBackwardContinue();
-            return "";  // Unknown 'b' command
+            return "";  // Unknown 'b' command: not supported
 
         case 'Z':
             return handleSetBreakpoint(args);
@@ -580,33 +620,15 @@ std::string GDBSession::handleQuery(const std::string& packet)
         return handleMonitor(cmd);
     }
 
-    // Trace packets - empty response means "not supported"
-    if (packet == "qTStatus" || packet.starts_with("qTfV") || packet.starts_with("qTsV") ||
-        packet.starts_with("qTfP") || packet.starts_with("qTsP") || packet.starts_with("qTV:") ||
-        packet.starts_with("qTBuffer"))
-    {
-        return "\x7f_EMPTY_";
-    }
-
     // Symbol lookup
     if (packet.starts_with("qSymbol"))
     {
         return "OK";  // No symbol lookup needed
     }
 
-    // Section offsets - not applicable for bare metal
-    if (packet == "qOffsets")
-    {
-        return "\x7f_EMPTY_";
-    }
-
-    // Old-style thread queries (qL, qP)
-    if (packet.starts_with("qL") || packet.starts_with("qP"))
-    {
-        return "\x7f_EMPTY_";
-    }
-
-    return "";  // Unsupported query
+    // Everything else (trace packets, qOffsets, the old qL / qP thread queries, unknown queries): the empty packet,
+    // "not supported"
+    return "";
 }
 
 std::string GDBSession::handleQSupported(const std::string& /*params*/)
@@ -633,15 +655,46 @@ std::string GDBSession::handleQSupported(const std::string& /*params*/)
     return caps;
 }
 
+namespace
+{
+/// One chunk of a qXfer object for "offset,length" (hex): 'm' + the bytes when more follow, 'l' + the bytes for the
+/// last chunk, "l" alone at or past the end; binary-escaped. E01 for a malformed range
+std::string XferChunk(const std::string& document, const std::string& range)
+{
+    const size_t comma = range.find(',');
+    if (comma == std::string::npos)
+        return "E01";
+    const auto offset = GDBPacket::parseHex(range.substr(0, comma));
+    const auto length = GDBPacket::parseHex(range.substr(comma + 1));
+    if (!offset || !length)
+        return "E01";
+    if (*offset >= document.size())
+        return "l";
+    const size_t count = static_cast<size_t>(std::min<uint64_t>(*length, document.size() - *offset));
+    const bool last = *offset + count >= document.size();
+    const std::vector<uint8_t> bytes(document.begin() + static_cast<std::ptrdiff_t>(*offset),
+                                     document.begin() + static_cast<std::ptrdiff_t>(*offset + count));
+    return (last ? "l" : "m") + GDBPacket::escapeBinary(bytes);
+}
+}  // namespace
+
 std::string GDBSession::handleQXfer(const std::string& params)
 {
-    if (params.starts_with(":features:read:target.xml:"))
+    // :<object>:read:<annex>:<offset>,<length>
+    auto readOf = [&params](const std::string& prefix, std::string& range) {
+        if (!params.starts_with(prefix))
+            return false;
+        range = params.substr(prefix.size());
+        return true;
+    };
+    std::string range;
+
+    if (readOf(":features:read:target.xml:", range))
     {
-        std::string xml = GDBTargetZ80::generateFlatTargetXML(_context);
-        return "l" + xml;
+        return XferChunk(GDBTargetZ80::generateFlatTargetXML(_context), range);
     }
 
-    if (params.starts_with(":osdata:read:processes:"))
+    if (readOf(":osdata:read:processes:", range))
     {
         std::ostringstream xml;
         xml << "<osdata type=\"processes\">\n";
@@ -665,31 +718,21 @@ std::string GDBSession::handleQXfer(const std::string& params)
         }
 
         xml << "</osdata>";
-        return "l" + xml.str();
+        return XferChunk(xml.str(), range);
     }
 
     // Provide minimal threads XML to help GDB
-    if (params.starts_with(":threads:read:"))
+    if (readOf(":threads:read::", range))
     {
         std::ostringstream xml;
         xml << "<?xml version=\"1.0\"?>\n";
         xml << "<threads>\n";
         xml << "  <thread id=\"01\" core=\"0\" name=\"Z80\"/>\n";
         xml << "</threads>\n";
-        return "l" + xml.str();
+        return XferChunk(xml.str(), range);
     }
 
-    // These qXfer types need empty response (not silence) to avoid timeouts
-    if (params.starts_with(":exec-file:read:") ||
-        params.starts_with(":auxv:read:") ||
-        params.starts_with(":libraries:read:") ||
-        params.starts_with(":memory-map:read:") ||
-        params.starts_with(":spu:read:") ||
-        params.starts_with(":siginfo:read:"))
-    {
-        return "\x7f_EMPTY_";  // Not supported, but respond
-    }
-
+    // Other objects (exec-file, auxv, libraries, memory-map, spu, siginfo, ...) and other annexes: not supported
     return "";
 }
 
@@ -698,7 +741,7 @@ std::string GDBSession::handleVCommand(const std::string& packet)
     if (packet == "vMustReplyEmpty")
     {
         // GDB spec: must reply with empty packet $#00, not silence
-        return "\x7f_EMPTY_";  // Marker to send empty packet
+        return "";
     }
 
     if (packet.starts_with("vCont?"))
@@ -706,15 +749,19 @@ std::string GDBSession::handleVCommand(const std::string& packet)
         return "vCont;c;C;s;S";
     }
 
-    if (packet.starts_with("vCont;"))
+    if (packet.starts_with("vCont;") && packet.size() > 6)
     {
-        if (packet.find('c') != std::string::npos)
+        // One thread: the first action decides (vCont;c, vCont;C05, vCont;s:1, vCont;S05:01); the signal is ignored
+        switch (packet[6])
         {
-            return handleContinue();
-        }
-        if (packet.find('s') != std::string::npos)
-        {
-            return handleStep();
+            case 'c':
+            case 'C':
+                return handleContinue();
+            case 's':
+            case 'S':
+                return handleStep();
+            default:
+                return "";   // t, r, ...: not advertised, not supported
         }
     }
 
@@ -749,13 +796,21 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
         response += "  monitor ttd seek <frame> - seek to frame\n";
         response += "  monitor ttd findlast <w|r|x> <addr|vram:offset|cache:offset> - find last access\n";
         response += "  monitor bport <in|out> <port> - set port breakpoint\n";
-        response += "  monitor bport clear <id> - remove port breakpoint\n";
+        response += "  monitor bport clear <id> - remove port breakpoint (the decimal id 'set' printed)\n";
     }
     else if (cmd == "model")
     {
-        if (_emulator)
+        if (_emulator && _context)
         {
-            response = "Model: ZX Spectrum\n";  // TODO: get actual model name from config
+            // The name the machine was created as (a variant's or the model's short name) and the model's full name
+            const std::string name = machines::NameOf(_context->config);
+            const TMemModel* model = Config::FindModelByEnum(_context->config.mem_model);
+            std::ostringstream ss;
+            ss << "Model: " << (model && model->FullName ? model->FullName : "unknown");
+            if (!name.empty())
+                ss << " (" << name << ")";
+            ss << ", RAM " << _context->config.ramsize << " KB\n";
+            response = ss.str();
         }
         else
         {
@@ -985,8 +1040,20 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
             }
             else if (subcmd == "stop")
             {
+                // In the recorded past the machine first comes back to live where it stands (the history after it is
+                // cut): a stopped recording leaves no history to browse, and the machine must be writable again
+                std::string note;
+                if (inHistory())
+                {
+                    const ttd::TTDReply resumed = ttd::TTDControl(_context).Execute({"resume", {}});
+                    const StateNode* ok = resumed.Ok() ? resumed.body.find("resumed") : nullptr;
+                    note = ok && ok->b ? "live again at the position in the history (the history after it is cut)\n"
+                                       : "Warning: could not leave the recorded past" +
+                                             (resumed.message.empty() ? std::string() : ": " + resumed.message) +
+                                             "\n";
+                }
                 (void)ttd::TTDControl(_context).Execute({"stop", {}});
-                response = "TTD recording stopped\n";
+                response = "TTD recording stopped\n" + note;
             }
             else if (subcmd.starts_with("seek "))
             {
@@ -1091,21 +1158,29 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
         }
         else if (args.starts_with("clear "))
         {
-            auto idOpt = GDBPacket::parseHex(args.substr(6));
-            if (idOpt)
+            // The id as 'set' prints it: decimal, as every other surface shows breakpoint ids
+            const std::string text = args.substr(6);
+            uint64_t id = 0;
+            bool valid = !text.empty() && text.size() <= 5;
+            for (char c : text)
             {
-                if (bpMgr->RemoveBreakpointByID(static_cast<uint16_t>(*idOpt)))
-                {
-                    response = "Port breakpoint removed\n";
-                }
-                else
-                {
-                    response = "Error: breakpoint not found\n";
-                }
+                valid = valid && std::isdigit(static_cast<unsigned char>(c));
+                id = id * 10 + static_cast<uint64_t>(c - '0');
+            }
+            if (!valid || id > 0xFFFF)
+            {
+                response = "Error: invalid breakpoint ID\n";
             }
             else
             {
-                response = "Error: invalid breakpoint ID\n";
+                // Only a port breakpoint gdb set: never another surface's
+                const BreakpointSnapshot bp = bpMgr->GetBreakpointById(static_cast<uint16_t>(id));
+                if (!bp || bp->type != BRK_IO || bp->owner != "gdb")
+                    response = "Error: breakpoint not found (not a gdb port breakpoint)\n";
+                else if (bpMgr->RemoveBreakpointByID(static_cast<uint16_t>(id)))
+                    response = "Port breakpoint removed\n";
+                else
+                    response = "Error: breakpoint not found\n";
             }
         }
         else if (args.starts_with("in ") || args.starts_with("out "))
@@ -1114,18 +1189,22 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
             std::string portStr = args.substr(isIn ? 3 : 4);
             auto portOpt = GDBPacket::parseHex(portStr);
 
-            if (portOpt)
+            if (portOpt && *portOpt <= 0xFFFF)
             {
-                uint16_t port = static_cast<uint16_t>(*portOpt);
-                BreakpointDescriptor* bp = new BreakpointDescriptor();
-                bp->type = BRK_IO;
-                bp->ioType = isIn ? BRK_IO_IN : BRK_IO_OUT;
-                bp->z80address = port;
-                bp->owner = "gdb";
-
-                uint16_t id = bpMgr->AddBreakpoint(bp);
+                const uint16_t port = static_cast<uint16_t>(*portOpt);
+                // A breakpoint of gdb's own, never merged with an equal one of another surface (its clear would
+                // remove that one)
+                BreakpointSpec spec;
+                spec.type = BRK_IO;
+                spec.access = isIn ? BRK_IO_IN : BRK_IO_OUT;
+                spec.address = port;
+                spec.owner = "gdb";
+                spec.shared = false;
+                std::string error;
+                const uint16_t id = bpMgr->AddBreakpoint(spec, error);
                 if (id != BRK_INVALID)
                 {
+                    ensureDebugEnabled();
                     std::ostringstream ss;
                     ss << "Port breakpoint set: ID " << id << " on port 0x"
                        << std::hex << port << " (" << (isIn ? "IN" : "OUT") << ")\n";
@@ -1133,8 +1212,7 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                 }
                 else
                 {
-                    delete bp;
-                    response = "Error: failed to add breakpoint\n";
+                    response = "Error: failed to add breakpoint" + (error.empty() ? "" : ": " + error) + "\n";
                 }
             }
             else
@@ -1269,9 +1347,12 @@ std::string GDBSession::handleReadMemory(const std::string& params)
         return "E31";
     }
 
+    // At most what fits a reply (PacketSize=4000 hex: two digits a byte); gdb reads the rest with the next m
+    const size_t length = static_cast<size_t>(std::min<uint64_t>(*len, (0x4000 - 4) / 2));
+
     Memory* memory = _context->pMemory;
     std::string result;
-    result.reserve(*len * 2);
+    result.reserve(length * 2);
 
     // Check for physical memory access (0x01PPAAAA format)
     // High byte 0x01 = RAM page access, PP = page number, AAAA = 16KB offset
@@ -1280,13 +1361,13 @@ std::string GDBSession::handleReadMemory(const std::string& params)
         uint8_t page = static_cast<uint8_t>((*addr >> 16) & 0xFF);
         uint16_t offset = static_cast<uint16_t>(*addr & 0x3FFF);
 
-        uint8_t* pageAddr = memory->RAMPageAddress(page);
+        uint8_t* pageAddr = hasRamPage(*addr) ? memory->RAMPageAddress(page) : nullptr;
         if (!pageAddr)
         {
-            return "E01";  // Invalid page
+            return "E03";  // a page the machine does not have
         }
 
-        for (size_t i = 0; i < *len; i++)
+        for (size_t i = 0; i < length; i++)
         {
             uint16_t pageOffset = static_cast<uint16_t>((offset + i) & 0x3FFF);
             uint8_t byte = pageAddr[pageOffset];
@@ -1296,7 +1377,7 @@ std::string GDBSession::handleReadMemory(const std::string& params)
     else
     {
         // Standard Z80 address space
-        for (size_t i = 0; i < *len; i++)
+        for (size_t i = 0; i < length; i++)
         {
             uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
             uint8_t byte = memory->DirectReadFromZ80Memory(address);
@@ -1307,13 +1388,20 @@ std::string GDBSession::handleReadMemory(const std::string& params)
     return result;
 }
 
-std::string GDBSession::handleWriteMemory(const std::string& params)
+bool GDBSession::hasRamPage(uint64_t address) const
 {
-    // M addr,length:data or X addr,length:binary
+    const uint32_t ramKb = _context ? _context->config.ramsize : 0;
+    const uint32_t pages = ramKb ? ramKb / 16 : MAX_RAM_PAGES;
+    return ((address >> 16) & 0xFF) < pages;
+}
+
+std::string GDBSession::handleWriteMemory(const std::string& params, bool binary)
+{
+    // M addr,length:hex or X addr,length:binary (escaped)
     auto commaPos = params.find(',');
     auto colonPos = params.find(':');
 
-    if (commaPos == std::string::npos || colonPos == std::string::npos)
+    if (commaPos == std::string::npos || colonPos == std::string::npos || colonPos < commaPos)
     {
         return "E01";
     }
@@ -1337,20 +1425,34 @@ std::string GDBSession::handleWriteMemory(const std::string& params)
     }
 
     // Refuse writes in TTD detached state
-    if (_context->pTimeTravelHooks)
+    if (inHistory())
     {
-        auto state = _context->pTimeTravelHooks->ReadSessionInfo().state;
-        if (state == ttd::TTDSessionState::Detached)
-        {
-            return "E0D";
-        }
+        return "E0D";
     }
 
-    // Decode hex data
-    auto bytes = GDBPacket::hexToBytes(params.substr(colonPos + 1));
+    const std::string data = params.substr(colonPos + 1);
+    std::vector<uint8_t> bytes;
+    if (binary)
+    {
+        bytes = GDBPacket::unescapeBinary(data);
+    }
+    else
+    {
+        if (data.size() != *len * 2)
+            return "E01";
+        bytes = GDBPacket::hexToBytes(data);
+    }
     if (bytes.size() != *len)
     {
         return "E01";
+    }
+    if (bytes.empty())
+    {
+        return "OK";   // gdb's "X addr,0:" probe
+    }
+    if ((*addr & 0xFF000000) == 0x01000000 && !hasRamPage(*addr))
+    {
+        return "E03";
     }
 
     return GDBTargetZ80::writeMemory(_context, *addr, bytes) ? "OK" : "E01";
@@ -1408,17 +1510,10 @@ std::string GDBSession::handleSetBreakpoint(const std::string& packet)
         return "E01";
     }
 
-    // Limit range size to prevent excessive breakpoints
-    constexpr uint64_t MAX_RANGE = 256;
-    if (len > MAX_RANGE)
-    {
-        len = MAX_RANGE;
-    }
-
     switch (*type)
     {
         case 0:  // SW breakpoint
-        case 1:  // HW breakpoint (same for emulator)
+        case 1:  // HW breakpoint (the same for an emulator; its stop says hwbreak)
         {
             const uint16_t address = static_cast<uint16_t>(*addr & 0xFFFF);
             // gdb sends Z0 again when the conditions change: the new breakpoint replaces this session's one there
@@ -1442,39 +1537,52 @@ std::string GDBSession::handleSetBreakpoint(const std::string& packet)
             }
             if (id == BRK_INVALID)
                 return "E01";
-            _executionBreakpoints[address] = id;
+            _executionBreakpoints[address] = OwnBreakpoint{id, *type == 1};
             break;
         }
 
-        case 2:  // Write watchpoint (supports ranges)
-            for (uint64_t i = 0; i < len; i++)
+        case 2:  // Write watchpoint
+        case 3:  // Read watchpoint
+        case 4:  // Access watchpoint
+        {
+            // One core breakpoint over the whole range, gdb's own (unshared: never merged with another surface's
+            // breakpoint at the address, whose id would come back and whose access would decide)
+            if (*addr > 0xFFFF || *addr + len > 0x10000)
+                return "E22";   // past the 64K view
+            const uint16_t address = static_cast<uint16_t>(*addr);
+            const auto key = std::make_tuple(static_cast<uint8_t>(*type), address, static_cast<uint32_t>(len));
+            if (auto it = _watchpoints.find(key); it != _watchpoints.end())
             {
-                uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
-                bpManager->AddMemWriteBreakpoint(address, "gdb");
+                bpManager->RemoveBreakpointByID(it->second);   // set again: replaced
+                _watchpoints.erase(it);
             }
-            break;
-
-        case 3:  // Read watchpoint (supports ranges)
-            for (uint64_t i = 0; i < len; i++)
+            BreakpointSpec spec;
+            spec.type = BRK_MEMORY;
+            spec.access = *type == 2 ? BRK_MEM_WRITE : *type == 3 ? BRK_MEM_READ : (BRK_MEM_READ | BRK_MEM_WRITE);
+            spec.address = address;
+            if (len > 1)
             {
-                uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
-                bpManager->AddMemReadBreakpoint(address, "gdb");
+                spec.hasEnd = true;
+                spec.addressEnd = static_cast<uint16_t>(address + len - 1);
             }
-            break;
-
-        case 4:  // Access watchpoint (supports ranges)
-            for (uint64_t i = 0; i < len; i++)
+            spec.owner = "gdb";
+            spec.shared = false;
+            std::string error;
+            const uint16_t id = bpManager->AddBreakpoint(spec, error);
+            if (id == BRK_INVALID)
             {
-                uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
-                bpManager->AddMemReadBreakpoint(address, "gdb");
-                bpManager->AddMemWriteBreakpoint(address, "gdb");
+                std::cerr << "GDBServer: watchpoint at " << address << " refused: " << error << "\n";
+                return "E01";
             }
+            _watchpoints[key] = id;
             break;
+        }
 
         default:
             return "";  // Unsupported
     }
 
+    ensureDebugEnabled();
     return "OK";
 }
 
@@ -1484,7 +1592,7 @@ bool GDBSession::forgetExecutionBreakpoint(BreakpointManager& breakpoints, uint1
     if (it == _executionBreakpoints.end())
         return false;
     // The breakpoint is gdb's own (unshared): never another surface's
-    breakpoints.RemoveBreakpointByID(it->second);
+    breakpoints.RemoveBreakpointByID(it->second.id);
     _executionBreakpoints.erase(it);
     return true;
 }
@@ -1537,41 +1645,62 @@ std::string GDBSession::handleRemoveBreakpoint(const std::string& params)
         return "E01";
     }
 
-    // Limit range size to match set
-    constexpr uint64_t MAX_RANGE = 256;
-    if (len > MAX_RANGE)
-    {
-        len = MAX_RANGE;
-    }
-
-    // RemoveBreakpointByAddress removes all breakpoints at that address
+    // Only gdb's own: a breakpoint another surface set at the address stays
     switch (*type)
     {
         case 0:
         case 1:
-        {
-            const uint16_t address = static_cast<uint16_t>(*addr & 0xFFFF);
-            // Only gdb's own: a breakpoint another surface set at the address stays
-            forgetExecutionBreakpoint(*bpManager, address);
+            forgetExecutionBreakpoint(*bpManager, static_cast<uint16_t>(*addr & 0xFFFF));
             break;
-        }
 
         case 2:
         case 3:
         case 4:
-            // Remove watchpoints for the entire range
-            for (uint64_t i = 0; i < len; i++)
+        {
+            const auto key =
+                std::make_tuple(static_cast<uint8_t>(*type), static_cast<uint16_t>(*addr & 0xFFFF), static_cast<uint32_t>(len));
+            if (auto it = _watchpoints.find(key); it != _watchpoints.end())
             {
-                uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
-                bpManager->RemoveBreakpointByAddress(address);
+                bpManager->RemoveBreakpointByID(it->second);
+                _watchpoints.erase(it);
             }
             break;
+        }
 
         default:
             return "";
     }
 
     return "OK";
+}
+
+void GDBSession::forgetAllBreakpoints()
+{
+    DebugManager* debugManager = _context ? _context->pDebugManager : nullptr;
+    BreakpointManager* bpManager = debugManager ? debugManager->GetBreakpointsManager() : nullptr;
+    if (bpManager)
+    {
+        BreakpointManager::Batch batch(*bpManager);
+        for (const auto& [address, own] : _executionBreakpoints)
+            bpManager->RemoveBreakpointByID(own.id);
+        for (const auto& [key, id] : _watchpoints)
+            bpManager->RemoveBreakpointByID(id);
+    }
+    _executionBreakpoints.clear();
+    _watchpoints.clear();
+}
+
+void GDBSession::ensureDebugEnabled()
+{
+    if (!_emulator)
+        return;
+    if (!_emulator->IsDebug())
+        _emulator->DebugOn();
+    if (_context && _context->pFeatureManager)
+    {
+        _context->pFeatureManager->setFeature(Features::kDebugMode, true);
+        _context->pFeatureManager->setFeature(Features::kBreakpoints, true);
+    }
 }
 
 std::string GDBSession::handleContinue()
@@ -1581,36 +1710,99 @@ std::string GDBSession::handleContinue()
         return "E31";
     }
 
+    // Already running (another surface resumed it): the stop reply comes when it stops
+    if (_emulator->IsPaused())
+    {
+        // In the recorded past: the run goes on live from here (the history after it is cut)
+        if (inHistory() && !leaveHistory())
+            return "E0D";
+
+        const execution::Result resumed =
+            _emulator->Resume(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()});
+        if (resumed.outcome != execution::Outcome::Applied)
+        {
+            // Refused (another client holds run control, the machine does not run) or not served in time: nothing
+            // ran, so no stop reply - an error, with the reason on the client's console
+            sendPacket("O" + GDBPacket::hexEncode("run_refused: the machine was not resumed (" +
+                                                  std::string(execution::OutcomeName(resumed.outcome)) +
+                                                  (resumed.detail.empty() ? "" : ": " + resumed.detail) + ")\n"));
+            return "E0D";
+        }
+    }
+
+    _running = true;
+    _interruptRequested = false;
+    return kDeferredReply;
+}
+
+std::string GDBSession::pollRunningStop()
+{
+    if (!_emulator)
+    {
+        _running = false;
+        return "W00";
+    }
+    const EmulatorStateEnum state = _emulator->GetState();
+    if (state == StateStopped || state == StateDestroying || state == StateRetired)
+    {
+        _running = false;   // the instance is gone
+        _lastStopReply = "W00";
+        return _lastStopReply;
+    }
+    if (_context && _context->IsRunControlRevoked(_sessionUuid))
+    {
+        // The user took control back: the run is no longer gdb's
+        _running = false;
+        _resumeOnDetach = false;
+        sendPacket("O" + GDBPacket::hexEncode("revoked_by_user: the user took control back; this session no longer "
+                                              "controls the machine.\n"));
+        _lastStopReply = "T02thread:01;";
+        return _lastStopReply;
+    }
     if (!_emulator->IsPaused())
+        return {};
+
+    _running = false;
+    _lastStopReply = classifyStop();
+    _interruptRequested = false;
+    return _lastStopReply;
+}
+
+std::string GDBSession::classifyStop()
+{
+    const Emulator::DebugStop stop = _emulator->LastStop();
+    if (stop.reason == Emulator::DebugStop::Reason::Breakpoint && stop.breakpoint.hit)
     {
-        return formatStopReply();  // Already running
+        const uint16_t id = stop.breakpoint.breakpointId;
+        for (const auto& [address, own] : _executionBreakpoints)
+        {
+            if (own.id == id)
+            {
+                _resumeOnDetach = true;
+                return own.hardware ? "T05hwbreak:;thread:01;" : "T05swbreak:;thread:01;";
+            }
+        }
+        for (const auto& [key, ownId] : _watchpoints)
+        {
+            if (ownId != id)
+                continue;
+            _resumeOnDetach = true;
+            const uint8_t type = std::get<0>(key);
+            const char* name = type == 2 ? "watch" : type == 3 ? "rwatch" : "awatch";
+            return std::string("T05") + name + ":" + GDBPacket::toHex(stop.breakpoint.address, 4) + ";thread:01;";
+        }
+        // Another surface's breakpoint: a stop, not one of gdb's breakpoints
+        _resumeOnDetach = false;
+        return "T05thread:01;";
     }
-
-    _waitingForStop = true;
-    _externalStopPending = false;
-    _emulator->Resume(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()});
-
-    // Wait for stop (breakpoint, external pause, interrupt, or the user taking control back at the GUI)
-    while (_active && !_emulator->IsPaused() && !_externalStopPending &&
-           !(_context && _context->IsRunControlRevoked(_sessionUuid)))
+    if (_interruptRequested)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        _resumeOnDetach = true;
+        return "T02thread:01;";
     }
-
-    _waitingForStop = false;
-
-    // Determine stop reason
-    if (_externalStopPending)
-    {
-        _externalStopPending = false;
-        _lastStopReason = StopReason::Interrupt;
-    }
-    else
-    {
-        _lastStopReason = StopReason::Breakpoint;
-    }
-
-    return formatStopReply();
+    // Paused by somebody else (the GUI, the WebAPI): a plain stop (gdb-reverse-debugging TDD §4.7.1)
+    _resumeOnDetach = false;
+    return "T05thread:01;";
 }
 
 std::string GDBSession::handleStep()
@@ -1620,16 +1812,31 @@ std::string GDBSession::handleStep()
         return "E31";
     }
 
+    // In the recorded past a step replays the next instruction; at the end of the history it goes on live
+    if (inHistory())
+    {
+        const ttd::TTDReply stepped = ttd::TTDControl(_context).Execute({"step-instruction", {{"dir", "forward"}}});
+        const StateNode* ok = stepped.Ok() ? stepped.body.find("stepped") : nullptr;
+        if (ok && ok->b)
+        {
+            _lastStopReply = "T05thread:01;";
+            return _lastStopReply;
+        }
+        if (!leaveHistory())
+            return "E0D";
+    }
+
     if (!_emulator->IsPaused())
     {
         _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
+        _resumeOnDetach = true;
     }
 
     // Execute single instruction
     _emulator->RunSingleCPUCycle(true);
 
-    _lastStopReason = StopReason::Step;
-    return formatStopReply();
+    _lastStopReply = "T05thread:01;";
+    return _lastStopReply;
 }
 
 std::string GDBSession::handleInterrupt()
@@ -1637,11 +1844,51 @@ std::string GDBSession::handleInterrupt()
     if (_emulator && !_emulator->IsPaused())
     {
         _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
+        _resumeOnDetach = true;
     }
 
-    _lastStopReason = StopReason::Interrupt;
-    return "T02thread:01;";  // SIGINT
+    _lastStopReply = "T02thread:01;";  // SIGINT
+    return _lastStopReply;
 }
+
+bool GDBSession::inHistory() const
+{
+    return _context && _context->pTimeTravelHooks &&
+           _context->pTimeTravelHooks->ReadSessionInfo().state == ttd::TTDSessionState::Detached;
+}
+
+bool GDBSession::leaveHistory()
+{
+    // The TTD resume verb: the recording goes on from the machine's position, the history after it is dropped
+    const ttd::TTDReply resumed = ttd::TTDControl(_context).Execute({"resume", {}});
+    const StateNode* ok = resumed.Ok() ? resumed.body.find("resumed") : nullptr;
+    if (!ok || !ok->b)
+    {
+        sendPacket("O" + GDBPacket::hexEncode("ttd: the machine can not go on from the recorded past" +
+                                              (resumed.message.empty() ? std::string() : ": " + resumed.message) +
+                                              " (monitor ttd status)\n"));
+        return false;
+    }
+    if (!_cutWarned)
+    {
+        _cutWarned = true;
+        sendPacket("O" + GDBPacket::hexEncode("ttd: running on from the recorded past - the history after this point "
+                                              "is discarded, the recording goes on from here\n"));
+    }
+    return true;
+}
+
+namespace
+{
+/// The engine's controller browses a recording by pausing it (D8); TTD v1 refuses to browse while it records, so
+/// the recording stops first (it keeps the history)
+void PrepareReverse(EmulatorContext* context, ttd::TTDControl& control)
+{
+    if (!context->pTimeTravelController &&
+        context->pTimeTravelHooks->ReadSessionInfo().state == ttd::TTDSessionState::Recording)
+        (void)control.Execute({"stop", {}});
+}
+}  // namespace
 
 std::string GDBSession::handleBackwardStep()
 {
@@ -1658,21 +1905,13 @@ std::string GDBSession::handleBackwardStep()
         return "E01";  // No TTD session active
     }
 
-    // GDB reverse execution while recording: stop the recording first (it keeps the history)
     ttd::TTDControl control(_context);
-    if (state == ttd::TTDSessionState::Recording)
-        (void)control.Execute({"stop", {}});
+    PrepareReverse(_context, control);
 
     const ttd::TTDReply stepped = control.Execute({"step-instruction", {{"dir", "back"}}});
-    if (!stepped.Ok() || !stepped.body.find("stepped")->b)
-    {
-        // At beginning of history
-        _lastStopReason = StopReason::Step;
-        return "T05replaylog:begin;thread:01;";
-    }
-
-    _lastStopReason = StopReason::Step;
-    return formatStopReply();
+    const StateNode* ok = stepped.Ok() ? stepped.body.find("stepped") : nullptr;
+    _lastStopReply = ok && ok->b ? "T05thread:01;" : "T05replaylog:begin;thread:01;";   // else: the start of history
+    return _lastStopReply;
 }
 
 std::string GDBSession::handleBackwardContinue()
@@ -1690,86 +1929,72 @@ std::string GDBSession::handleBackwardContinue()
         return "E01";  // No TTD session active
     }
 
-    // GDB reverse execution while recording: stop the recording first (it keeps the history)
     ttd::TTDControl control(_context);
-    if (state == ttd::TTDSessionState::Recording)
-        (void)control.Execute({"stop", {}});
+    PrepareReverse(_context, control);
 
-    // Gather active execution breakpoints
-    std::vector<uint16_t> breakpoints;
-    auto* debugMgr = _context->pDebugManager;
-    if (debugMgr)
-    {
-        auto* bpMgr = debugMgr->GetBreakpointsManager();
-        if (bpMgr)
-        {
-            const auto& bpMap = bpMgr->GetAllBreakpoints();
-            for (const auto& [id, bp] : bpMap)
-            {
-                if (bp && bp->active && (bp->memoryType & BRK_MEM_EXECUTE))
-                {
-                    breakpoints.push_back(bp->z80address);
-                }
-            }
-        }
-    }
+    // gdb's own execution breakpoints are the targets
+    std::string pcs;
+    for (const auto& [address, own] : _executionBreakpoints)
+        pcs += (pcs.empty() ? "" : ",") + std::to_string(address);
 
-    if (breakpoints.empty())
+    if (pcs.empty())
     {
         // No breakpoints to search for - step back one instruction instead
         const ttd::TTDReply stepped = control.Execute({"step-instruction", {{"dir", "back"}}});
-        if (!stepped.Ok() || !stepped.body.find("stepped")->b)
-        {
-            return "T05replaylog:begin;thread:01;";
-        }
-        _lastStopReason = StopReason::Step;
-        return formatStopReply();
+        const StateNode* ok = stepped.Ok() ? stepped.body.find("stepped") : nullptr;
+        _lastStopReply = ok && ok->b ? "T05thread:01;" : "T05replaylog:begin;thread:01;";
+        return _lastStopReply;
     }
 
-    std::string pcs;
-    for (uint16_t pc : breakpoints)
-        pcs += (pcs.empty() ? "" : ",") + std::to_string(pc);
     const ttd::TTDReply result = control.Execute({"reverse-continue", {{"pcs", pcs}}});
-
-    if (result.Ok() && result.body.find("matched")->b)
+    const StateNode* matched = result.Ok() ? result.body.find("matched") : nullptr;
+    if (matched && matched->b)
     {
-        _lastStopReason = StopReason::Breakpoint;
-        return "T05swbreak:;thread:01;";
+        const StateNode* pc = result.body.find("pc");
+        const auto it = pc ? _executionBreakpoints.find(static_cast<uint16_t>(pc->i)) : _executionBreakpoints.end();
+        _lastStopReply = it != _executionBreakpoints.end() && it->second.hardware ? "T05hwbreak:;thread:01;"
+                                                                                  : "T05swbreak:;thread:01;";
+        return _lastStopReply;
     }
-    else if (result.Ok() && result.body.find("blocked_by_marker"))
-    {
-        // Hit a barrier (tape, disk, etc)
-        _lastStopReason = StopReason::Step;
-        return "T05replaylog:begin;thread:01;";
-    }
-    else
-    {
-        // At beginning of history
-        _lastStopReason = StopReason::Step;
-        return "T05replaylog:begin;thread:01;";
-    }
+    // The start of history, or a barrier (tape, disk, ...: blocked_by_marker)
+    _lastStopReply = "T05replaylog:begin;thread:01;";
+    return _lastStopReply;
 }
 
-std::string GDBSession::formatStopReply()
+void GDBSession::attachTo(const std::shared_ptr<Emulator>& emulator, const std::string& instanceId, bool claim)
 {
-    // Thread ID must be hex. Use "01" for thread 1.
-    switch (_lastStopReason)
+    // A previous attach: its breakpoints and run control go first (the ids were that machine's)
+    if (_context)
     {
-        case StopReason::Breakpoint:
-            return "T05swbreak:;thread:01;";
-
-        case StopReason::Watchpoint:
-            return "T05watch:" + GDBPacket::toHex(_lastWatchAddress, 4) + ";thread:01;";
-
-        case StopReason::Interrupt:
-            return "T02thread:01;";
-
-        case StopReason::Step:
-        case StopReason::Attached:
-        case StopReason::None:
-        default:
-            return "T05thread:01;";
+        forgetAllBreakpoints();
+        _context->ReleaseRunControl(_sessionUuid);
     }
+
+    _emulator = emulator;
+    _context = _emulator->GetContext();
+    _attachedInstanceId = instanceId;
+
+    // A target gdb attaches to is stopped; a detach lets it run again
+    _resumeOnDetach = false;
+    if (!_emulator->IsPaused())
+    {
+        _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
+        _resumeOnDetach = _emulator->IsPaused();
+    }
+
+    // Take run-control claim (TDD §3.3)
+    if (claim && _context)
+    {
+        std::string errorReason;
+        if (!_context->TakeRunControl(_sessionUuid, "gdb", &errorReason, "GDB", std::chrono::milliseconds(0),
+                                      PeerAddressOf(_socket)))
+        {
+            // Another surface holds the claim - report but don't fail attach
+            // (read-only operations still allowed)
+        }
+    }
+
+    _lastStopReply = "T05thread:01;";
 }
 
 std::string GDBSession::handleAttach(const std::string& pid)
@@ -1789,51 +2014,28 @@ std::string GDBSession::handleAttach(const std::string& pid)
     auto ids = mgr->GetEmulatorIds();
     size_t index = static_cast<size_t>(*pidNum - 1);  // pid is 1-based
 
-    if (index >= ids.size())
+    if (*pidNum == 0 || index >= ids.size())
     {
         return "E31";
     }
 
-    _emulator = mgr->GetEmulator(ids[index]);
-    _executionBreakpoints.clear();  // the ids were the previous machine's
-    if (!_emulator)
+    std::shared_ptr<Emulator> emulator = mgr->GetEmulator(ids[index]);
+    if (!emulator)
     {
         return "E31";
     }
 
-    _context = _emulator->GetContext();
-    _attachedInstanceId = ids[index];
-    _attachedEmulatorUuid = _emulator->GetId();
-
-    // Pause if running
-    if (!_emulator->IsPaused())
-    {
-        _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
-    }
-
-    // Take run-control claim (TDD §3.3)
-    if (_context)
-    {
-        std::string errorReason;
-        if (!_context->TakeRunControl(_sessionUuid, "gdb", &errorReason, "GDB", std::chrono::milliseconds(0),
-                                      PeerAddressOf(_socket)))
-        {
-            // Another surface holds the claim - report but don't fail attach
-            // (read-only operations still allowed)
-        }
-    }
-
-    // Subscribe to state change notifications (1A.7.3)
-    subscribeToStateChanges();
-
-    _lastStopReason = StopReason::Attached;
-    return "T05thread:01;";
+    attachTo(emulator, ids[index], /*claim=*/true);
+    return _lastStopReply;
 }
 
 std::string GDBSession::handleDetach()
 {
-    // Unsubscribe from state changes (1A.7.3)
-    unsubscribeFromStateChanges();
+    // gdb's breakpoints go; a machine gdb stopped runs again (as a detached process does)
+    if (_context)
+        forgetAllBreakpoints();
+    if (_emulator && _resumeOnDetach && _emulator->IsPaused() && !inHistory())
+        (void)_emulator->Resume(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()});
 
     // Release run-control claim (TDD §3.3)
     if (_context)
@@ -1844,50 +2046,6 @@ std::string GDBSession::handleDetach()
     _emulator.reset();
     _context = nullptr;
     _attachedInstanceId.clear();
-    _attachedEmulatorUuid.clear();
     _active = false;
     return "OK";
-}
-
-void GDBSession::subscribeToStateChanges()
-{
-    if (_subscribedToStateChanges)
-        return;
-
-    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
-    mc.AddObserver(NC_EMULATOR_STATE_CHANGE, this,
-        static_cast<ObserverCallbackMethod>(&GDBSession::onEmulatorStateChange));
-    _subscribedToStateChanges = true;
-}
-
-void GDBSession::unsubscribeFromStateChanges()
-{
-    if (!_subscribedToStateChanges)
-        return;
-
-    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
-    mc.RemoveObserver(NC_EMULATOR_STATE_CHANGE, this,
-        static_cast<ObserverCallbackMethod>(&GDBSession::onEmulatorStateChange));
-    _subscribedToStateChanges = false;
-}
-
-void GDBSession::onEmulatorStateChange(int /*id*/, Message* message)
-{
-    if (!message || !message->obj)
-        return;
-
-    auto* payload = dynamic_cast<EmulatorStateChangePayload*>(message->obj);
-    if (!payload)
-        return;
-
-    // Filter by our attached emulator
-    if (payload->emulatorId.toString() != _attachedEmulatorUuid)
-        return;
-
-    // Only interested in pause events while we're waiting for stop
-    if (payload->_payloadNumber == StatePaused && _waitingForStop)
-    {
-        _externalStopPending = true;
-        _lastStopReason = StopReason::Interrupt;
-    }
 }

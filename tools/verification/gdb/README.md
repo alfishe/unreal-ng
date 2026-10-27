@@ -41,10 +41,11 @@ The scripts install a Z80 loop at 0x8000 (arrival k at 0x8005 has `A = HL = k`, 
 reads 9001h each round), so every hit is deterministic. The protocol suite saves the registers, the program and data
 memory and the paging latch first and restores them at the end.
 
-The launched host starts with the debug mode and the `breakpoints` feature off, as unreal-qt does. The protocol suite
-first checks that gdb's breakpoints work that way, then turns both on through the WebAPI for the rest (the session
-script turns them on at once). A WebAPI call that changes the machine opens an implicit run-control session that
-refuses gdb's resume; the scripts release it after each call (`DELETE /control/session`).
+The launched host starts with the debug mode and the `breakpoints` feature off, as unreal-qt does: the server turns
+both on when gdb sets a breakpoint, and neither script helps through the WebAPI (the protocol suite checks that a
+fresh host stops on `Z2` and `Z0` and that both are on afterwards). A WebAPI call that changes the machine opens an
+implicit run-control session that refuses gdb's resume; the scripts release it after each call
+(`DELETE /control/session`).
 
 ## What the protocol suite covers
 
@@ -57,7 +58,7 @@ refuses gdb's resume; the scripts release it after each call (`DELETE /control/s
 | qXfer target.xml / osdata | the XML (architecture, 18 registers in order with sizes and types), reads at an offset and past the end, `osdata:processes` (pid, instance id, state) |
 | registers | `g` (15 registers) against `p` for each, `p` of the paging registers, `P`/`p` round trip af..hl', `iff`, `im`, `ir` with R's bit 7 kept apart across an M1 cycle, `G` round trip, malformed `p`/`P`/`G` (`E01`/`E02`), `pfe` and `p7ffd` writes (bankinfo follows), the WebAPI register view |
 | memory | `M`/`m` round trip, length 0, 0xFFFF wrap, malformed `m`/`M` (`E01`), the physical view `0x01PPAAAA` (read and write), a missing page, `X` with escaped binary bytes, `M`/`P`/`G` while running (`E0D`) |
-| debug mode | `Z0` / `Z2` stop a host as it starts (debug mode and the breakpoints feature off) |
+| debug mode | `Z2` / `Z0` stop a host as it starts (debug mode and the breakpoints feature off), both on afterwards |
 | breakpoints | `Z0`/`z0` with the core list (owner gdb), `c` to three hits (`T05swbreak:`, PC, HL, A), `s`, `S05`, `vCont;s:1`, `vCont?`, `vCont;c`, `vCont;c:01`, `C05`, `vCont;S05`, `vCont;C05`, `Z1` (`hwbreak:`), malformed `Z`/`z` |
 | watchpoints | `Z2` write (`watch:9000`), `Z3` read (`rwatch:9001`), `Z4` access on a read and on a written byte (`awatch:`), a 2-byte range; the PC at the stop |
 | other clients' breakpoints | `z0` / `z2` at an address holding a WebAPI user breakpoint keep it; `Z2` at an address holding a user's execute breakpoint still fires |
@@ -65,8 +66,8 @@ refuses gdb's resume; the scripts release it after each call (`DELETE /control/s
 | conditional breakpoints | `Z0,addr,1;X len,bytes`: HL == 3 (stop value, core condition text), re-`Z0` replaces the condition, `$a == 9` as gdb compiles it, a memory byte (`ref8`), two expressions (OR), `if_goto` paths (`||`), `less_signed`/`log_not`/`bit_and`, a false-forever condition (no stop, core running), untranslatable ones (backward jump, `trace_quick`, `p1ffd`, division by a register) and a malformed list fall back to unconditional, a plain `Z0` replaces a conditional one, `z0` removes it |
 | monitor (`qRcmd`) | `help`, `model`, `status`, `instances`, `frame`, `bankinfo`, `regions`, `mem`, `load` (errors), unknown command, `bport in/out/clear` (with the core list; ids of 10 and more), `ttd findlast/seek` errors, `reset`/`load`/`ttd start` refused while running |
 | reverse (TTD) | `bs`/`bc` without a session (`E01`), `monitor ttd start/status/stop`, `bs` (one instruction back), `bc` (the previous breakpoint hit), `P`/`M`/`G` in the past (`E0D`), `monitor ttd findlast`, `bc` to the start (`replaylog:begin`), `c` forward from the past, back to live |
-| run control | `c` while a WebAPI client holds an explicit control session |
-| attach / detach / kill | `vAttach` (`E01`, `E31`, the stop reply, run control claimed), `D` (`OK`, the connection closes, claim released), `k` (the emulator survives) |
+| run control | `c` while a WebAPI client holds an explicit control session: an error (`E0D`), not a breakpoint stop |
+| attach / detach / kill | `vAttach` (`E01`, `E31`, the stop reply, run control claimed), `c` to a breakpoint, `D` (`OK`, the connection closes, the machine runs again, claim released), `k` (the emulator survives) |
 
 ## What the session script covers
 
@@ -76,6 +77,13 @@ $hl == 3` (the `Z0` carries `;X`, one stop reaches gdb, `$hl == 3`), `info break
 `monitor ttd start` + `reverse-continue` + `continue`. gdb's Z80 target has no `$a`: use `($af >> 8)`.
 
 ## Known Issues
+
+### `bc` between two hits inside one frame (TTD core)
+
+The check "bc between hits inside one frame" fails: TTD reverse-continue reports no match (`'matched': false`) when
+the previous hit lies in the same frame as the current position, so the server answers `T05replaylog:begin;`. The
+server passes the right breakpoint set; the fix belongs in the TTD reverse-continue scan, not in the server. The
+check stays a failure until the core finds the hit.
 
 ### GDB 17.2 Z80 Frame Unwinding Bug
 
