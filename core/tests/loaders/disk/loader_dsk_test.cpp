@@ -126,8 +126,10 @@ protected:
         std::vector<uint8_t> data;  // Stored bytes (the EDSK "actual length")
     };
 
-    /// A one-track, one-side Extended DSK image written to scratch; returns its path
-    static std::string writeEdsk(const char* name, const std::vector<EdskSector>& sectors)
+    /// A one-track, one-side Extended DSK image written to scratch; returns its path. With cpdread set it is written
+    /// as CPDRead v3.24 does: creator "CPDRead v3.24", a 128-byte sector in a 256-byte slot (data, zero padding), the
+    /// track block sized for the data back to back, so slots past it are dropped
+    static std::string writeEdsk(const char* name, const std::vector<EdskSector>& sectors, bool cpdread = false)
     {
         std::vector<uint8_t> track(256, 0);
         std::memcpy(track.data(), "Track-Info\r\n", 12);
@@ -143,11 +145,18 @@ protected:
             e[6] = static_cast<uint8_t>(s.data.size() & 0xFF);
             e[7] = static_cast<uint8_t>(s.data.size() >> 8);
         }
-        for (const EdskSector& s : sectors) track.insert(track.end(), s.data.begin(), s.data.end());
-        track.resize((track.size() + 255) & ~size_t(255), 0);
+        size_t packed = track.size();
+        for (const EdskSector& s : sectors)
+        {
+            packed += s.data.size();
+            track.insert(track.end(), s.data.begin(), s.data.end());
+            if (cpdread && s.data.size() == 128) track.insert(track.end(), 128, 0x00);
+        }
+        track.resize((packed + 255) & ~size_t(255), 0);
 
         std::vector<uint8_t> disk(256, 0);
         std::memcpy(disk.data(), "EXTENDED CPC DSK File\r\nDisk-Info\r\n", 34);
+        if (cpdread) std::memcpy(disk.data() + 0x22, "CPDRead v3.24", 13);
         disk[0x30] = 1;  // tracks
         disk[0x31] = 1;  // sides
         disk[0x34] = static_cast<uint8_t>(track.size() / 256);
@@ -169,6 +178,8 @@ protected:
         if (warnings) *warnings = loader.lastWarnings();
         return ok ? loader.getImage() : nullptr;
     }
+
+    void checkLaidOutAsDumped(const char* name, bool cpdread);
 
     static std::vector<uint8_t> sectorData(const DiskImage::Sector* sector)
     {
@@ -546,6 +557,48 @@ TEST_F(LoaderDSK_Test, Load_OverlappingLongFields_CutToFit)
 /// on the disk: one revolution, the stream equals the disk's, and every long field reads back as dumped
 TEST_F(LoaderDSK_Test, Load_OverlappingLongFields_LaidOutAsDumped)
 {
+    checkLaidOutAsDumped("dsk-cpdread-as-dumped.dsk", false);
+}
+
+/// The same track as CPDRead v3.24 writes it: sector 0 (128 bytes) in a 256-byte slot, every dump after it 128
+/// bytes further into the file. Read back to back, each long dump would seem to start 128 bytes before its field
+TEST_F(LoaderDSK_Test, Load_CpdreadSlots_LaidOutAsDumped)
+{
+    checkLaidOutAsDumped("dsk-cpdread-slots.dsk", true);
+}
+
+/// CPDRead sizes the track block for the data back to back, so the slots of the last 128-byte sectors can fall
+/// past it; they are the dumps of sectors without a data field (ST1 / ST2 missing mark), loaded ID only
+TEST_F(LoaderDSK_Test, Load_CpdreadSlots_PastBlock_IdOnly)
+{
+    std::vector<EdskSector> sectors;
+    for (uint8_t i = 0; i < 4; i++) sectors.push_back({ 21, 0, static_cast<uint8_t>(i + 1), 0, 0x01, 0x01, patternBlock(21, i, 128) });
+    sectors[0].st1 = sectors[0].st2 = 0;
+    const std::string path = writeEdsk("dsk-cpdread-past-block.dsk", sectors, true);
+
+    LoaderDSK loader(_context, path);
+    ASSERT_TRUE(loader.loadImage()) << (loader.lastWarnings().empty() ? "" : loader.lastWarnings()[0]);
+    DiskImage* image = loader.getImage();
+    DiskImage::Track* track = image->getTrackForCylinderAndSide(0, 0);
+    ASSERT_EQ(track->sectorCount(), 4u);
+    const DiskImage::Sector* first = track->findSector(1);
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(sectorData(first), patternBlock(21, 0, 128));
+    for (uint8_t r = 2; r <= 4; r++)
+    {
+        const DiskImage::Sector* s = track->findSector(r);
+        ASSERT_NE(s, nullptr) << "sector " << int(r);
+        EXPECT_FALSE(s->hasData) << "sector " << int(r);
+    }
+
+    delete image;
+    removeFile(path);
+}
+
+/// Load the CPDRead track of Licence To Kill (see Load_OverlappingLongFields_LaidOutAsDumped) written as name, and
+/// check it is laid out as on the disk
+void LoaderDSK_Test::checkLaidOutAsDumped(const char* name, bool cpdread)
+{
     // The disk's stream: per sector sync, ID, GAP#2, sync, DAM, 128 bytes, CRC, GAP#3 200; 4E to the index
     std::vector<uint8_t> disk;
     std::vector<size_t> dataStart;
@@ -586,7 +639,7 @@ TEST_F(LoaderDSK_Test, Load_OverlappingLongFields_LaidOutAsDumped)
         dumps.push_back(dump);
         sectors.push_back({ i, i, i, i, 0x20, 0x20, dump });
     }
-    const std::string path = writeEdsk("dsk-cpdread-as-dumped.dsk", sectors);
+    const std::string path = writeEdsk(name, sectors, cpdread);
 
     LoaderDSK loader(_context, path);
     ASSERT_TRUE(loader.loadImage()) << (loader.lastWarnings().empty() ? "" : loader.lastWarnings()[0]);

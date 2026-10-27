@@ -1,13 +1,6 @@
 {
  "derived": {
-  "aay": {
-   "glyph": "cap.audio_capture",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Capture audio"
-  },
-  "amusic": {
+  "arec": {
    "glyph": "cap.record",
    "glyph_on": "cap.record.on",
    "hold": false,
@@ -20,13 +13,6 @@
    "hold": null,
    "state": null,
    "title": "audio"
-  },
-  "awav": {
-   "glyph": "cap.record",
-   "glyph_on": "cap.record.on",
-   "hold": false,
-   "state": "toggle.cap.record_toggle",
-   "title": "Record video"
   },
   "ay": {
    "glyph": "audio.sound",
@@ -126,13 +112,6 @@
    "state": null,
    "title": "New blank disk"
   },
-  "blend": {
-   "glyph": "video.blending",
-   "glyph_on": "video.blending.on",
-   "hold": false,
-   "state": "toggle.video.blending",
-   "title": "Frame blending"
-  },
   "bline": {
    "glyph": "ttd.step_back_scanline",
    "glyph_on": null,
@@ -203,13 +182,6 @@
    "state": null,
    "title": "bpchist"
   },
-  "bpclr": {
-   "glyph": "dbg.breakpoints_clear",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Clear breakpoints"
-  },
   "bpcur": {
    "glyph": "dbg.breakpoint_toggle_cursor",
    "glyph_on": null,
@@ -230,13 +202,6 @@
    "hold": null,
    "state": null,
    "title": "bports"
-  },
-  "bppc": {
-   "glyph": "dbg.breakpoint_toggle_pc",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Toggle a breakpoint at PC"
   },
   "bps": {
    "glyph": null,
@@ -329,20 +294,6 @@
    "state": null,
    "title": "clients"
   },
-  "clip": {
-   "glyph": "cap.clip_last",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Clip the last seconds"
-  },
-  "clipgif": {
-   "glyph": "cap.clip_last",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Clip the last seconds"
-  },
   "cold": {
    "glyph": "mach.cold_reset",
    "glyph_on": null,
@@ -385,26 +336,19 @@
    "state": "toggle.video.crt_toggle",
    "title": "CRT effects"
   },
+  "crtbasic": {
+   "glyph": "video.crt_profile",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "CRT profile"
+  },
   "crtnext": {
    "glyph": "video.crt_profile",
    "glyph_on": null,
    "hold": false,
    "state": null,
    "title": "CRT profile"
-  },
-  "crtprev": {
-   "glyph": "video.crt_profile",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "CRT profile"
-  },
-  "crtrst": {
-   "glyph": "video.crt_reset",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Reset CRT parameters"
   },
   "cup": {
    "glyph": "dbg.cursor_up",
@@ -419,13 +363,6 @@
    "hold": false,
    "state": null,
    "title": "Joystick type"
-  },
-  "dbgopen": {
-   "glyph": "debug.menu",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Open the debugger"
   },
   "dc": {
    "glyph": "settings.toggle",
@@ -475,6 +412,13 @@
    "hold": false,
    "state": null,
    "title": "Frame step"
+  },
+  "debpause": {
+   "glyph": "run.pause",
+   "glyph_on": "run.play",
+   "hold": false,
+   "state": "run.state.paused",
+   "title": "Pause / continue"
   },
   "debstepin": {
    "glyph": "run.step_in",
@@ -538,13 +482,6 @@
    "hold": false,
    "state": null,
    "title": "Save the medium"
-  },
-  "dlss": {
-   "glyph": "video.temporal",
-   "glyph_on": "video.temporal.on",
-   "hold": false,
-   "state": "toggle.video.temporal",
-   "title": "De-flicker (ZX DLSS)"
   },
   "down": {
    "glyph": "input.joy.down",
@@ -678,13 +615,6 @@
    "hold": null,
    "state": null,
    "title": "fps"
-  },
-  "frame": {
-   "glyph": "run.frame_step",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Frame step"
   },
   "ftape": {
    "glyph": "settings.toggle",
@@ -1708,20 +1638,6 @@
    "state": null,
    "title": "Open a recent file"
   },
-  "record": {
-   "glyph": "cap.record",
-   "glyph_on": null,
-   "hold": null,
-   "state": null,
-   "title": "Record"
-  },
-  "recshot": {
-   "glyph": "cap.screenshot",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Screenshot"
-  },
   "recsize": {
    "glyph": null,
    "glyph_on": null,
@@ -1729,33 +1645,12 @@
    "state": null,
    "title": "recsize"
   },
-  "rectdump": {
-   "glyph": "ttd.dump",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Save the session"
-  },
   "rectime": {
    "glyph": null,
    "glyph_on": null,
    "hold": null,
    "state": null,
    "title": "rectime"
-  },
-  "rectload": {
-   "glyph": "ttd.load",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Open a session"
-  },
-  "rectstop": {
-   "glyph": "ttd.stop",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Stop recording"
   },
   "release": {
    "glyph": "input.release_all",
@@ -2037,13 +1932,6 @@
    "state": null,
    "title": "Screenshot"
   },
-  "shotpng": {
-   "glyph": "cap.screenshot_save",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Save a screenshot"
-  },
   "sinc1": {
    "glyph": "input.joystick_type",
    "glyph_on": null,
@@ -2135,27 +2023,6 @@
    "state": "toggle.view.status_bar",
    "title": "Status bar"
   },
-  "stepin": {
-   "glyph": "run.step_in",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Step in"
-  },
-  "stepout": {
-   "glyph": "run.step_out",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Step out"
-  },
-  "stepovr": {
-   "glyph": "run.step_over",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Step over"
-  },
   "stereo": {
    "glyph": "settings.value",
    "glyph_on": null,
@@ -2198,20 +2065,6 @@
    "state": null,
    "title": "Tape"
   },
-  "tclip": {
-   "glyph": "ttd.export_clip",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Export a range as a clip"
-  },
-  "tdrop": {
-   "glyph": "ttd.invalidate",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Drop the history"
-  },
   "tdump": {
    "glyph": "ttd.dump",
    "glyph_on": null,
@@ -2219,12 +2072,26 @@
    "state": null,
    "title": "Save the session"
   },
+  "teffect": {
+   "glyph": "video.blending",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Temporal effect"
+  },
   "teject": {
    "glyph": "media.tape.eject",
    "glyph_on": null,
    "hold": false,
    "state": null,
    "title": "Tape"
+  },
+  "temporal": {
+   "glyph": "video.temporal",
+   "glyph_on": "video.temporal.on",
+   "hold": false,
+   "state": "toggle.video.temporal_toggle",
+   "title": "Temporal effects"
   },
   "tframe": {
    "glyph": null,
@@ -2317,13 +2184,6 @@
    "state": null,
    "title": "Tape"
   },
-  "tstart": {
-   "glyph": "ttd.record.on",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Start recording"
-  },
   "tstop": {
    "glyph": "media.tape.stop",
    "glyph_on": null,
@@ -2394,54 +2254,12 @@
    "state": null,
    "title": "Joystick"
   },
-  "vgame": {
-   "glyph": "cap.record",
-   "glyph_on": "cap.record.on",
-   "hold": false,
-   "state": "toggle.cap.record_toggle",
-   "title": "Record video"
-  },
-  "vgif": {
-   "glyph": "cap.record",
-   "glyph_on": "cap.record.on",
-   "hold": false,
-   "state": "toggle.cap.record_toggle",
-   "title": "Record video"
-  },
-  "vhq": {
-   "glyph": "cap.record",
-   "glyph_on": "cap.record.on",
-   "hold": false,
-   "state": "toggle.cap.record_toggle",
-   "title": "Record video"
-  },
   "video": {
    "glyph": null,
    "glyph_on": null,
    "hold": null,
    "state": null,
    "title": "video"
-  },
-  "vlen": {
-   "glyph": null,
-   "glyph_on": null,
-   "hold": null,
-   "state": null,
-   "title": "vlen"
-  },
-  "vmulti": {
-   "glyph": "cap.record",
-   "glyph_on": "cap.record.on",
-   "hold": false,
-   "state": "toggle.cap.record_toggle",
-   "title": "Record video"
-  },
-  "vpause": {
-   "glyph": "cap.record_pause",
-   "glyph_on": null,
-   "hold": false,
-   "state": null,
-   "title": "Pause recording"
   },
   "vport": {
    "glyph": "video.viewport",
@@ -2450,12 +2268,12 @@
    "state": null,
    "title": "Overscan viewport"
   },
-  "vsize": {
-   "glyph": null,
-   "glyph_on": null,
-   "hold": null,
-   "state": null,
-   "title": "vsize"
+  "vrec": {
+   "glyph": "cap.record",
+   "glyph_on": "cap.record.on",
+   "hold": false,
+   "state": "toggle.cap.record_toggle",
+   "title": "Record video"
   },
   "wpa": {
    "glyph": "media.protect",
@@ -2512,32 +2330,15 @@
   }
  },
  "nodes": {
-  "aay": {
-   "action": "cap.audio_capture",
-   "at": [
-    1,
-    2
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "AY 10S",
-   "uc": [
-    "C7.4"
-   ],
-   "value": {
-    "seconds": 10,
-    "source": "ay1"
-   }
-  },
-  "amusic": {
+  "arec": {
    "action": "cap.record_toggle",
    "at": [
-    1,
-    0
+    2,
+    8
    ],
-   "in": "record",
+   "in": "home",
    "kind": "key",
-   "label": "FLAC",
+   "label": "AUDIO REC",
    "uc": [
     "C7.2a"
    ],
@@ -2560,22 +2361,6 @@
    "uc": [
     "C10.4"
    ]
-  },
-  "awav": {
-   "action": "cap.record_toggle",
-   "at": [
-    1,
-    1
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "WAV",
-   "uc": [
-    "C7.2a"
-   ],
-   "value": {
-    "preset": "audio"
-   }
   },
   "ay": {
    "at": [
@@ -2758,8 +2543,8 @@
   "back5": {
    "action": "ttd.unit_back",
    "at": [
-    2,
-    0
+    3,
+    3
    ],
    "in": "home",
    "kind": "key",
@@ -2790,8 +2575,8 @@
   },
   "basic": {
    "at": [
-    2,
-    5
+    1,
+    8
    ],
    "glyph": "basic.menu",
    "in": "home",
@@ -2911,19 +2696,6 @@
     "drive": "A",
     "format": "trdos"
    }
-  },
-  "blend": {
-   "action": "video.blending",
-   "at": [
-    2,
-    1
-   ],
-   "in": "picture",
-   "kind": "key",
-   "label": "BLEND",
-   "uc": [
-    "C9.5"
-   ]
   },
   "bline": {
    "action": "ttd.step_back_scanline",
@@ -3065,19 +2837,6 @@
     "C10.8"
    ]
   },
-  "bpclr": {
-   "action": "dbg.breakpoints_clear",
-   "at": [
-    3,
-    5
-   ],
-   "in": "home",
-   "kind": "key",
-   "label": "CLEAR BP",
-   "uc": [
-    "D4.3"
-   ]
-  },
   "bpcur": {
    "action": "dbg.breakpoint_toggle_cursor",
    "at": [
@@ -3122,19 +2881,6 @@
    },
    "uc": [
     "C10.8"
-   ]
-  },
-  "bppc": {
-   "action": "dbg.breakpoint_toggle_pc",
-   "at": [
-    3,
-    4
-   ],
-   "in": "home",
-   "kind": "key",
-   "label": "BP PC",
-   "uc": [
-    "D4.1"
    ]
   },
   "bps": {
@@ -3338,40 +3084,6 @@
     "C10.10"
    ]
   },
-  "clip": {
-   "action": "cap.clip_last",
-   "at": [
-    1,
-    4
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "10S",
-   "uc": [
-    "C7.3"
-   ],
-   "value": {
-    "format": "mp4",
-    "seconds": 10
-   }
-  },
-  "clipgif": {
-   "action": "cap.clip_last",
-   "at": [
-    1,
-    5
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "GIF 10S",
-   "uc": [
-    "C7.3"
-   ],
-   "value": {
-    "format": "gif",
-    "seconds": 10
-   }
-  },
   "cold": {
    "action": "mach.cold_reset",
    "at": [
@@ -3460,7 +3172,7 @@
     "C9.4"
    ]
   },
-  "crtnext": {
+  "crtbasic": {
    "action": "video.crt_profile",
    "at": [
     1,
@@ -3468,7 +3180,23 @@
    ],
    "in": "picture",
    "kind": "key",
-   "label": "CRT",
+   "label": "CRT BASIC",
+   "uc": [
+    "C9.4"
+   ],
+   "value": {
+    "profile": "basic"
+   }
+  },
+  "crtnext": {
+   "action": "video.crt_profile",
+   "at": [
+    1,
+    1
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "PROFILE",
    "show": {
     "format": "{}",
     "readout": "video.window.crt_profile"
@@ -3479,35 +3207,6 @@
    "value": {
     "profile": "next"
    }
-  },
-  "crtprev": {
-   "action": "video.crt_profile",
-   "at": [
-    1,
-    1
-   ],
-   "in": "picture",
-   "kind": "key",
-   "label": "CRT PREV",
-   "uc": [
-    "C9.4"
-   ],
-   "value": {
-    "profile": "prev"
-   }
-  },
-  "crtrst": {
-   "action": "video.crt_params_reset",
-   "at": [
-    1,
-    3
-   ],
-   "in": "picture",
-   "kind": "key",
-   "label": "CRT RST",
-   "uc": [
-    "C9.4"
-   ]
   },
   "cup": {
    "action": "dbg.cursor_up",
@@ -3536,19 +3235,6 @@
    "value": {
     "kind": "cursor"
    }
-  },
-  "dbgopen": {
-   "action": "dbg.open",
-   "at": [
-    3,
-    6
-   ],
-   "in": "home",
-   "kind": "key",
-   "label": "DEBUGGER",
-   "uc": [
-    "D6.1"
-   ]
   },
   "dc": {
    "action": "set.toggle",
@@ -3609,7 +3295,7 @@
    "action": "run.to_cursor",
    "at": [
     0,
-    4
+    5
    ],
    "in": "debug",
    "kind": "key",
@@ -3635,7 +3321,7 @@
    "action": "run.frame_step",
    "at": [
     0,
-    6
+    7
    ],
    "in": "debug",
    "kind": "key",
@@ -3644,11 +3330,23 @@
     "D2.3"
    ]
   },
+  "debpause": {
+   "action": "run.pause_toggle",
+   "at": [
+    0,
+    1
+   ],
+   "in": "debug",
+   "kind": "key",
+   "uc": [
+    "C1.1"
+   ]
+  },
   "debstepin": {
    "action": "run.step_in",
    "at": [
     0,
-    1
+    2
    ],
    "in": "debug",
    "kind": "key",
@@ -3661,7 +3359,7 @@
    "action": "run.step_out",
    "at": [
     0,
-    3
+    4
    ],
    "in": "debug",
    "kind": "key",
@@ -3674,7 +3372,7 @@
    "action": "run.step_over",
    "at": [
     0,
-    2
+    3
    ],
    "in": "debug",
    "kind": "key",
@@ -3686,7 +3384,7 @@
   "debug": {
    "at": [
     3,
-    8
+    0
    ],
    "context": "debug",
    "dials": {
@@ -3815,19 +3513,6 @@
    "value": {
     "drive": "D"
    }
-  },
-  "dlss": {
-   "action": "video.temporal",
-   "at": [
-    2,
-    0
-   ],
-   "in": "picture",
-   "kind": "key",
-   "label": "TEMPORAL",
-   "uc": [
-    "C9.5"
-   ]
   },
   "down": {
    "action": "input.joystick",
@@ -4139,19 +3824,6 @@
     "C10.3"
    ]
   },
-  "frame": {
-   "action": "run.frame_step",
-   "at": [
-    3,
-    3
-   ],
-   "in": "home",
-   "kind": "key",
-   "label": "FRAME",
-   "uc": [
-    "D2.3"
-   ]
-  },
   "ftape": {
    "action": "set.toggle",
    "at": [
@@ -4187,7 +3859,7 @@
   "full": {
    "action": "view.fullscreen",
    "at": [
-    2,
+    0,
     8
    ],
    "in": "home",
@@ -4215,8 +3887,8 @@
   },
   "game": {
    "at": [
-    2,
-    4
+    1,
+    7
    ],
    "context": "play",
    "glyph": "input.joystick",
@@ -4355,22 +4027,6 @@
       "D1.1"
      ]
     },
-    "4": {
-     "label": "STEP",
-     "press": {
-      "action": "run.step_in"
-     },
-     "turn": {
-      "action": "run.step_by",
-      "value": {
-       "d": "$ticks",
-       "unit": "instructions"
-      }
-     },
-     "uc": [
-      "D2.2"
-     ]
-    },
     "5": {
      "label": "VOLUME",
      "press": {
@@ -4443,7 +4099,7 @@
    "action": "run.wait_int",
    "at": [
     0,
-    5
+    6
    ],
    "in": "debug",
    "kind": "key",
@@ -4873,7 +4529,7 @@
    "action": "run.step_line",
    "at": [
     0,
-    7
+    8
    ],
    "in": "debug",
    "kind": "key",
@@ -4885,8 +4541,8 @@
   "live": {
    "action": "ttd.resume_live",
    "at": [
-    2,
-    1
+    3,
+    4
    ],
    "in": "home",
    "kind": "key",
@@ -5092,8 +4748,8 @@
   },
   "machine": {
    "at": [
-    1,
-    4
+    2,
+    0
    ],
    "glyph": "mach.start",
    "in": "home",
@@ -5107,8 +4763,8 @@
   "mark": {
    "action": "ttd.bookmark_add",
    "at": [
-    2,
-    3
+    3,
+    6
    ],
    "in": "home",
    "kind": "key",
@@ -5549,7 +5205,7 @@
   },
   "monitor": {
    "at": [
-    1,
+    3,
     8
    ],
    "glyph": "analyzer.toggle.on",
@@ -6228,14 +5884,14 @@
   },
   "picture": {
    "at": [
-    1,
-    7
+    2,
+    2
    ],
    "dials": {
     "0": {
      "label": "DECAY",
      "press": {
-      "action": "video.blending"
+      "action": "video.temporal_toggle"
      },
      "turn": {
       "action": "video.blending_decay_by",
@@ -6251,7 +5907,7 @@
    "glyph": "video.menu",
    "in": "home",
    "kind": "menu",
-   "label": "VIDEO",
+   "label": "PICTURE",
    "title": "Picture",
    "uc": [
     "C9"
@@ -6260,8 +5916,8 @@
   "pixel": {
    "action": "run.to_pixel",
    "at": [
-    0,
-    8
+    1,
+    7
    ],
    "in": "debug",
    "kind": "key",
@@ -6554,8 +6210,8 @@
   "recent": {
    "action": "media.open_recent",
    "at": [
-    2,
-    7
+    1,
+    5
    ],
    "in": "home",
    "kind": "key",
@@ -6566,32 +6222,6 @@
    "value": {
     "index": 0
    }
-  },
-  "record": {
-   "at": [
-    1,
-    5
-   ],
-   "glyph": "cap.record",
-   "in": "home",
-   "kind": "menu",
-   "label": "REC",
-   "title": "Record",
-   "uc": [
-    "C7"
-   ]
-  },
-  "recshot": {
-   "action": "cap.screenshot",
-   "at": [
-    1,
-    7
-   ],
-   "in": "record",
-   "kind": "key",
-   "uc": [
-    "C7.5"
-   ]
   },
   "recsize": {
    "at": [
@@ -6609,22 +6239,6 @@
     "C10.9"
    ]
   },
-  "rectdump": {
-   "action": "ttd.dump",
-   "at": [
-    2,
-    6
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "SAVE TTD",
-   "uc": [
-    "C7.1"
-   ],
-   "value": {
-    "path": "$user/sessions/deck.ttd"
-   }
-  },
   "rectime": {
    "at": [
     3,
@@ -6639,35 +6253,6 @@
    },
    "uc": [
     "C10.9"
-   ]
-  },
-  "rectload": {
-   "action": "ttd.load",
-   "at": [
-    2,
-    7
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "LOAD TTD",
-   "uc": [
-    "C7.1"
-   ],
-   "value": {
-    "path": "$user/sessions/deck.ttd"
-   }
-  },
-  "rectstop": {
-   "action": "ttd.stop",
-   "at": [
-    2,
-    1
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "STOP",
-   "uc": [
-    "C7.1"
    ]
   },
   "release": {
@@ -7309,30 +6894,14 @@
   "shot": {
    "action": "cap.screenshot",
    "at": [
-    0,
-    8
+    2,
+    6
    ],
    "in": "home",
    "kind": "key",
    "uc": [
     "C7.5"
    ]
-  },
-  "shotpng": {
-   "action": "cap.screenshot_save",
-   "at": [
-    1,
-    8
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "PNG",
-   "uc": [
-    "C7.5"
-   ],
-   "value": {
-    "path": "$user/screenshots/deck.png"
-   }
   },
   "sinc1": {
    "action": "input.joystick_type",
@@ -7428,8 +6997,8 @@
   },
   "sound": {
    "at": [
-    1,
-    6
+    2,
+    1
    ],
    "dials": {
     "0": {
@@ -7636,45 +7205,6 @@
     "C9.8"
    ]
   },
-  "stepin": {
-   "action": "run.step_in",
-   "at": [
-    3,
-    0
-   ],
-   "in": "home",
-   "kind": "key",
-   "label": "STEP IN",
-   "uc": [
-    "D2.1"
-   ]
-  },
-  "stepout": {
-   "action": "run.step_out",
-   "at": [
-    3,
-    2
-   ],
-   "in": "home",
-   "kind": "key",
-   "label": "STEP OUT",
-   "uc": [
-    "D2.1"
-   ]
-  },
-  "stepovr": {
-   "action": "run.step_over",
-   "at": [
-    3,
-    1
-   ],
-   "in": "home",
-   "kind": "key",
-   "label": "STEP OVER",
-   "uc": [
-    "D2.1"
-   ]
-  },
   "stereo": {
    "action": "set.value",
    "at": [
@@ -7757,8 +7287,8 @@
   "tape": {
    "action": "media.tape",
    "at": [
-    2,
-    6
+    1,
+    4
    ],
    "in": "home",
    "kind": "key",
@@ -7773,35 +7303,6 @@
    "value": {
     "op": "toggle"
    }
-  },
-  "tclip": {
-   "action": "ttd.export_clip",
-   "at": [
-    2,
-    4
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "EXPORT",
-   "uc": [
-    "C7.3"
-   ],
-   "value": {
-    "path": "$user/clips/history.mp4"
-   }
-  },
-  "tdrop": {
-   "action": "ttd.invalidate",
-   "at": [
-    2,
-    2
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "DROP",
-   "uc": [
-    "C7.1"
-   ]
   },
   "tdump": {
    "action": "ttd.dump",
@@ -7820,6 +7321,26 @@
     "path": "$user/sessions/deck.ttd"
    }
   },
+  "teffect": {
+   "action": "video.temporal_effect",
+   "at": [
+    2,
+    1
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "EFFECT",
+   "show": {
+    "format": "{?ZX DLSS|BLEND}",
+    "readout": "video.temporal.dlss"
+   },
+   "uc": [
+    "C9.5"
+   ],
+   "value": {
+    "effect": "next"
+   }
+  },
   "teject": {
    "action": "media.tape",
    "at": [
@@ -7834,6 +7355,19 @@
    "value": {
     "op": "eject"
    }
+  },
+  "temporal": {
+   "action": "video.temporal_toggle",
+   "at": [
+    2,
+    0
+   ],
+   "in": "picture",
+   "kind": "key",
+   "label": "TEMPORAL",
+   "uc": [
+    "C9.5"
+   ]
   },
   "tframe": {
    "at": [
@@ -7869,7 +7403,7 @@
   "time": {
    "at": [
     3,
-    7
+    1
    ],
    "dials": {
     "0": {
@@ -8119,19 +7653,6 @@
     "op": "rewind"
    }
   },
-  "tstart": {
-   "action": "ttd.start",
-   "at": [
-    2,
-    0
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "START",
-   "uc": [
-    "C7.1"
-   ]
-  },
   "tstop": {
    "action": "media.tape",
    "at": [
@@ -8198,8 +7719,8 @@
   "ttdrec": {
    "action": "ttd.record_toggle",
    "at": [
-    2,
-    2
+    3,
+    5
    ],
    "in": "home",
    "kind": "key",
@@ -8282,54 +7803,6 @@
     "hold": true
    }
   },
-  "vgame": {
-   "action": "cap.record_toggle",
-   "at": [
-    0,
-    1
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "GAME",
-   "uc": [
-    "C7.2"
-   ],
-   "value": {
-    "preset": "gameplay"
-   }
-  },
-  "vgif": {
-   "action": "cap.record_toggle",
-   "at": [
-    0,
-    3
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "GIF",
-   "uc": [
-    "C7.2"
-   ],
-   "value": {
-    "preset": "gif"
-   }
-  },
-  "vhq": {
-   "action": "cap.record_toggle",
-   "at": [
-    0,
-    2
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "HQ",
-   "uc": [
-    "C7.2"
-   ],
-   "value": {
-    "preset": "hq"
-   }
-  },
   "video": {
    "at": [
     3,
@@ -8345,50 +7818,6 @@
    },
    "uc": [
     "C10.9"
-   ]
-  },
-  "vlen": {
-   "at": [
-    0,
-    7
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "LENGTH",
-   "show": {
-    "format": "{:.0f}S",
-    "readout": "cap.record.seconds"
-   },
-   "uc": [
-    "C10.9"
-   ]
-  },
-  "vmulti": {
-   "action": "cap.record_toggle",
-   "at": [
-    0,
-    4
-   ],
-   "in": "record",
-   "kind": "key",
-   "label": "MULTI",
-   "uc": [
-    "C7.2"
-   ],
-   "value": {
-    "preset": "multitrack"
-   }
-  },
-  "vpause": {
-   "action": "cap.record_pause",
-   "at": [
-    0,
-    5
-   ],
-   "in": "record",
-   "kind": "key",
-   "uc": [
-    "C7.2"
    ]
   },
   "vport": {
@@ -8411,21 +7840,21 @@
     "viewport": "next"
    }
   },
-  "vsize": {
+  "vrec": {
+   "action": "cap.record_toggle",
    "at": [
-    0,
-    8
+    2,
+    7
    ],
-   "in": "record",
+   "in": "home",
    "kind": "key",
-   "label": "SIZE",
-   "show": {
-    "format": "{:b}",
-    "readout": "cap.record.bytes"
-   },
+   "label": "VIDEO REC",
    "uc": [
-    "C10.9"
-   ]
+    "C7.2"
+   ],
+   "value": {
+    "preset": "gameplay"
+   }
   },
   "wpa": {
    "action": "media.protect",

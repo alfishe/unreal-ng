@@ -9,7 +9,7 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 
 | Command | What |
 |:--|:--|
-| `unreal-streamdeck run [scenario] [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck; without one, the built-in [idle scenario](#the-idle-scenario) (the UnrealNG look) until a scenario is loaded for a deck |
+| `unreal-streamdeck run [scenario] [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck; without one, the data directory's product scenario (`streamdeck/scenarios/unreal.deck.yaml`) on decks of the model it is made for and the built-in [idle scenario](#the-idle-scenario) (the UnrealNG look) on the others, until a scenario is loaded for a deck |
 | `unreal-streamdeck pair [--webapi URL] [--name NAME] [--file F]` | Pair with unreal-ng as a companion (approved at the emulator's GUI); the token goes to `~/.config/unreal-streamdeck/companion.json` (mode 0600). With a daemon running (and no `--file`) it pairs through it (`POST /api/v1/pair`) and prints its state |
 | `unreal-streamdeck scenario check \| convert \| upgrade \| extract \| resolve ...` | Check scenario files (`check` also warns about action ids the catalogue lacks: `$data/streamdeck/catalogue.json` or `--catalogue F`), convert them to another file format, upgrade format v1 to v2 |
 | `unreal-streamdeck --help` | The usage on stdout, exit 0 (without a command: the same, exit 2) |
@@ -33,6 +33,7 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 | `--parent PID[,PID]` | Live for these processes: stop when the last is gone or releases it ([below](#one-daemon-and-its-starters)) |
 | `--with-parent` | The same for the process that started it (all platforms) |
 | `--activity LOOK` | How every deck shows what other surfaces do, over the scenarios' own `settings.activity`: `scenario`, `off`, `flash`, `line` (unreal-qt passes its setting) |
+| `--idle` | No product scenario: the idle one on every deck until a scenario is loaded |
 | `--lock FILE` / `--no-lock` | Another single-instance lock file (default: [below](#one-daemon-and-its-starters)), or none (tests, a second daemon on purpose) |
 
 ## The surface client
@@ -140,7 +141,8 @@ restarts, adoption) is in [the design](../../inprogress/2026-10-19-streamdeck-in
 
 ## The idle scenario
 
-Without a scenario every deck plays the idle one: the UnrealNG theme of the data directory
+Without a scenario (and with `--idle`, or on a deck of another model than the product scenario's, or without that
+file) a deck plays the idle one: the UnrealNG theme of the data directory
 (`$data/streamdeck/themes/unrealng`, [below](#data-directory)), laid out for the deck's model when the deck appears
 (`sdb/idlescenario.h`). Its keys are pictures only: pressing one does nothing (an empty `multi`).
 
@@ -157,7 +159,11 @@ Never the time-travel timeline: it is a strip readout, never keys (and idle has 
 theme's `ttd_strip.png` (`lcd_ttd` in `theme.json`) is a picture of that readout for the strip; the live one is the
 runtime's strip status (SD5). The brightness is the theme's (60). `GET /api/v1/decks/{serial}/scenario?document=true` shows the document made for
 that deck; a picture spread over several keys is one file with a region per key (`file.png#xywh=x,y,w,h`, below).
-`DELETE .../scenario` and `POST /api/v1/reload` make it again (an edited theme shows).
+`DELETE .../scenario` and `POST /api/v1/reload` make it again (an edited theme shows); for a deck on the product
+scenario `POST /api/v1/reload` reads that file again (`DaemonDecks::StartFileFor`).
+
+`UNREAL_STREAMDECK_USB=off` opens no USB deck: a test rig runs its own decks beside the user's daemon and deck
+([environment variables](../../emulator/environment-variables.md)).
 
 ## Data directory
 
@@ -377,7 +383,7 @@ Default scenarios and themes (`data/streamdeck/`) are not packaged yet (SD5).
 | `emu-snapshot` (no `--api`), `emu-model`, `emu-record` | v1, against `unreal-streamdeck-studio --listen` | In v2 a viewer's model is the viewer's own choice (a mirror follows the deck, an own deck is picked in the studio or with its `PUT /api/v1/connection`) and recording is the studio's (`POST /api/v1/recording` on its port): there is nothing for the daemon to forward. They stay as the protocol tests of the v1 server, with `sdctl --device emu:...` |
 
 ```
-unreal-streamdeck run my-scenario.yaml &    # the default scenario ships with SD5; no file: the idle screen
+unreal-streamdeck run my-scenario.yaml &    # no file: the product scenario on its model, the idle screen elsewhere
 sdctl viewer --seconds 3                  # mirror of the first deck: replay, then live frames
 sdctl viewer --own neo --seconds 3        # a Neo of its own, with its own runtime
 ```

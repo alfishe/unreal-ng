@@ -11,7 +11,7 @@
 //
 // Writing (a BlockWriter given: OnDisk has one) follows the kernel (inst_dos.sys of ISDOS50, disassembled): a new file
 // takes the first deleted slot of its catalogue, else slot NFILE (a segmented catalogue grows by a block when it is
-// full); its blocks are the first free run (continuous up to 255 blocks, else segmented); the checksum FSUM is
+// full; a continuous one, which the kernel leaves full, takes the block after it, else becomes segmented); its blocks are the first free run (continuous up to 255 blocks, else segmented); the checksum FSUM is
 // 0 - the sum of its bytes, as TASiS keeps it. A deleted entry only loses its status bit 0 (NFILE stays, NEFIL counts
 // down), its blocks are freed. device.sys, boot.sys and the kernel file the descriptor keeps a copy of never change.
 //
@@ -137,6 +137,16 @@ public:
     /// Classic, +23 Chic), NFILE 1; at most kMaxLevel levels under the root
     bool MakeCatalogue(const std::string& path, const WriteOptions& options, std::string& error);
     static constexpr uint32_t kMaxLevel = 6;   ///< mkdir.com refuses a parent of level 6
+    /// The status bits SetAttributes changes: read, write and delete protection, hidden
+    static constexpr uint8_t kReadProtect = 0x04, kWriteProtect = 0x08, kHide = 0x10, kDeleteProtect = 0x80;
+    /// The status bits of `path` in `attributes` (kReadProtect | kWriteProtect | kHide | kDeleteProtect), the other
+    /// bits kept; a catalogue's entry 0 takes them too. System files and the kernel file are refused
+    bool SetAttributes(const std::string& path, uint8_t attributes, std::string& error);
+    /// The date (+30) and time (+28) of `path`; a catalogue's entry 0 takes them too
+    bool SetTime(const std::string& path, uint16_t date, uint16_t time, std::string& error);
+    /// The device name in the descriptor (+2: 8 characters, 11 on a Chic disk that has room for them), padded with
+    /// blanks; CP866 letters as in names
+    bool SetTitle(const std::string& title, std::string& error);
     /// `name` (UTF-8, Cyrillic as CP866) as the 8 + 3 bytes of a descriptor: 1-8 characters, a type of up to 3, the
     /// characters iS-DOS takes (letters, digits, # $ & + - = _ ` ! @ % ' ( ) { | } ~); a catalogue's in upper case
     static bool EncodeName(const std::string& name, bool catalogue, uint8_t out[11]);
@@ -181,16 +191,25 @@ private:
     /// The catalogue that holds `parts` but the last ("" the root)
     bool ParentOf(const std::vector<std::string>& parts, uint16_t& first, std::string& error) const;
     bool Locate(const std::string& path, Slot& out, std::string& error) const;
+    /// A live entry changed by `change` (its catalogue's entry 0 too when it is one) and stored
+    template <typename Change>
+    bool EditEntry(const std::string& path, std::string& error, Change change);
+    /// The descriptor's name width: 11 on a Chic disk without "DSK" at +10, else 8
+    static size_t TitleWidth(const uint8_t* descriptor);
     /// Refuses the entries that never change (system files, the kernel file)
     bool Fixed(const uint8_t* entry) const;
     bool LoadBitmap(std::vector<uint8_t>& bits, std::string& error) const;
     bool StoreBitmap(const std::vector<uint8_t>& before, const std::vector<uint8_t>& after);
     /// The blocks a file or catalogue entry holds (its segment table included)
     bool Held(const uint8_t* entry, std::vector<uint32_t>& blocks, std::string& error) const;
-    /// A free slot of `c` (the first deleted one, else NFILE, growing a segmented catalogue by a block from `bits`)
+    /// A free slot of `c` (the first deleted one, else NFILE, growing the catalogue by a block from `bits`: a
+    /// segmented one adds it to its table, a continuous one takes the block after it, else becomes segmented)
     bool TakeSlot(CatalogueImage& c, std::vector<uint8_t>& bits, uint32_t& index, std::string& error);
-    /// The block TakeSlot would add to `c` (UINT32_MAX: none needed), without changing anything
-    uint32_t GrowthBlock(const CatalogueImage& c, const std::vector<uint8_t>& bits) const;
+    /// The blocks TakeSlot would take for `c`, without changing anything: none (a free slot, room in its last block,
+    /// or no room at all), the new block, or a continuous catalogue's new segment table and then the new block
+    std::vector<uint32_t> GrowthBlocks(const CatalogueImage& c, const std::vector<uint8_t>& bits) const;
+    /// `parent`'s entry of the catalogue `c` follows its head (continuous bit, +17): false when `parent` has none
+    static bool FollowHead(CatalogueImage& parent, const CatalogueImage& c, uint32_t& index);
     /// A catalogue's level from its entry 0 (Classic +16, Chic +23), and where it goes
     static uint32_t LevelOf(const uint8_t* entry0) { return static_cast<uint32_t>(entry0[16] | entry0[23]); }
     void SetLevel(uint8_t* entry0, uint32_t level) const;
