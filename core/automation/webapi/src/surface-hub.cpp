@@ -8,6 +8,8 @@
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/contextstate.h"
 #include "emulator/actions/readouts.h"
+#include "emulator/actions/surfacesapi.h"
+#include "emulator/actions/targetstate.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/execution/automationgate.h"
@@ -17,20 +19,22 @@ namespace
 {
 constexpr const char* kTopic = "surface";
 
-bool AllDigits(const std::string& text)
+/// `join.target` / `pin.target` (absent: follow); an instance named by index becomes its id, a view by number (a
+/// scenario's {"view": 1}, the strip's W1) its id "v1"
+bool ParsePin(const Json::Value& target, actions::Pin& pin, std::string& error)
 {
-    auto digit = [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; };
-    return !text.empty() && std::all_of(text.begin(), text.end(), digit);
+    if (target.isObject() && target["view"].isIntegral())
+    {
+        pin = actions::Pin::OnView("v" + std::to_string(target["view"].asInt64()));
+        return true;
+    }
+    return actions::surfaces::ParseTarget(JsonToStateNode(target), pin, error);
 }
 
-/// An instance by id or index ("" when none)
-std::string InstanceNamed(const std::string& named)
+/// The instance when it still exists ("" otherwise: a target resolved while the instance went)
+std::string LiveInstance(const std::string& instance)
 {
-    EmulatorManager* manager = EmulatorManager::GetInstance();
-    std::shared_ptr<Emulator> emulator = manager->GetEmulator(named);
-    if (!emulator && AllDigits(named) && named.size() < 6)
-        emulator = manager->GetEmulatorByIndex(std::stoi(named));
-    return emulator ? emulator->GetId() : std::string();
+    return !instance.empty() && EmulatorManager::GetInstance()->GetEmulator(instance) ? instance : std::string();
 }
 
 bool Finite(const Json::Value& value, double& out)
@@ -217,37 +221,39 @@ void SurfaceHub::Join(WsConnection& connection, const Json::Value& message, WsOu
         return;
     }
 
-    auto session = std::make_unique<SurfaceSession>();
-    const Json::Value& target = message["target"];
-    if (target.isObject() && target.isMember("view"))
+    actions::Pin pin;
+    std::string error;
+    if (!ParsePin(message["target"], pin, error))
     {
-        out.Error(connection, kTopic, "not_now",
-                  "views come with the Stream Deck targeting (TargetState, SD4): join with \"follow\" or "
-                  "{\"instance\": id}",
-                  rid);
+        out.Error(connection, kTopic, error.rfind("no ", 0) == 0 ? "Not Found" : "bad_request", error, rid);
         return;
     }
-    if (target.isObject() && (target["instance"].isString() || target["instance"].isIntegral()))
+    actions::TargetState& state = actions::TargetState::Instance();
+    if (pin.kind == actions::Pin::Kind::View && !state.View(pin.id))
     {
-        const Json::Value& pin = target["instance"];
-        const std::string named = pin.isString() ? pin.asString() : std::to_string(pin.asInt64());
-        session->instance = InstanceNamed(named);
-        session->pinned = true;
-        if (session->instance.empty())
-        {
-            out.Error(connection, kTopic, "Not Found", "no instance '" + named + "'", rid);
-            return;
-        }
-    }
-    else if (!target.isNull() && !(target.isString() && target.asString() == "follow"))
-    {
-        out.Error(connection, kTopic, "bad_request", "target: \"follow\" or {\"instance\": id or index}", rid);
+        // As SetPin: a view pin while the host has no views is for later
+        if (state.HasViews())
+            out.Error(connection, kTopic, "Not Found", "no view '" + pin.id + "'", rid);
+        else
+            out.Error(connection, kTopic, "not_now", "the host has no views: join with \"follow\" or {\"instance\": id}",
+                      rid);
         return;
     }
-    else
-        session->instance = WsHub::FollowedInstance();
 
-    session->session = "s" + std::to_string(_nextSession++);
+    auto session = std::make_unique<SurfaceSession>();
+    actions::SurfaceSessionSpec spec;
+    spec.name = name.asString();
+    spec.kind = "companion";
+    spec.serial = serial;
+    spec.owner = connection.companion ? connection.companion->id : std::string();
+    session->target = state.OpenSession(std::move(spec), pin);
+    session->session = session->target.Id();
+    if (const std::optional<actions::TargetInfo> bound = state.TargetFor(session->session))
+    {
+        session->instance = LiveInstance(bound->instance);
+        session->mode = bound->pin.ModeName();
+        session->view = bound->view;
+    }
     session->v = static_cast<int>(std::min<int64_t>(v.asInt64(), kVersion));
     session->name = name.asString();
     session->model = model.asString();
@@ -465,6 +471,38 @@ void SurfaceHub::Unsubscribe(WsConnection& connection, const Json::Value& messag
     }
 }
 
+void SurfaceHub::Pin(WsConnection& connection, const Json::Value& message, WsOutbox& out)
+{
+    const Json::Value rid = message.get("rid", Json::Value());
+    SurfaceSession* session = SessionOf(connection, message, out, rid);
+    if (session == nullptr)
+        return;
+    actions::Pin pin;
+    std::string error;
+    std::string text;
+    if (!ParsePin(message["target"], pin, error))
+    {
+        out.Error(connection, kTopic, error.rfind("no ", 0) == 0 ? "Not Found" : "bad_request", error, rid);
+        return;
+    }
+    if (!actions::TargetState::Instance().SetPin(session->session, pin, error, text))
+    {
+        out.Error(connection, kTopic, error, text, rid);
+        return;
+    }
+    if (!Rebind(connection, *session, out, rid))
+    {
+        // The same target as before: answered all the same
+        Json::Value target = TargetOf(*session);
+        target["op"] = "target";
+        target["t"] = kTopic;
+        target["session"] = session->session;
+        if (!rid.isNull())
+            target["rid"] = rid;
+        out.Message(connection, target);
+    }
+}
+
 void SurfaceHub::Bye(WsConnection& connection, const Json::Value& message, WsOutbox& out)
 {
     if (message["session"].isString())
@@ -495,29 +533,40 @@ void SurfaceHub::Context(WsConnection& connection, SurfaceSession& session, cons
     out.Message(connection, ctx);
 }
 
-void SurfaceHub::Rebind(WsConnection& connection, SurfaceSession& session, const std::string& followed,
-                        WsOutbox& out)
+bool SurfaceHub::Rebind(WsConnection& connection, SurfaceSession& session, WsOutbox& out, const Json::Value& rid)
 {
-    std::string instance = followed;
-    if (session.pinned)
-        instance = !session.instance.empty() && EmulatorManager::GetInstance()->GetEmulator(session.instance)
-                       ? session.instance
-                       : std::string();
-    if (instance != session.instance)
-        Bind(session, instance, connection, out);
+    const std::optional<actions::TargetInfo> bound = actions::TargetState::Instance().TargetFor(session.session);
+    const std::string instance = bound ? LiveInstance(bound->instance) : std::string();
+    const std::string mode = bound ? bound->pin.ModeName() : "follow";
+    const std::string view = bound ? bound->view : std::string();
+    if (instance == session.instance && mode == session.mode && view == session.view)
+        return false;
+    session.mode = mode;
+    session.view = view;
+    Bind(session, instance, connection, out, rid);
+    return true;
 }
 
-void SurfaceHub::Bind(SurfaceSession& session, const std::string& instance, WsConnection& connection, WsOutbox& out)
+void SurfaceHub::Bind(SurfaceSession& session, const std::string& instance, WsConnection& connection, WsOutbox& out,
+                      const Json::Value& rid)
 {
+    const bool moved = instance != session.instance;
     session.instance = instance;
-    session.sent.clear();
-    session.full = true;
-    (void)Expand(session);  // the new instance's toggles (its features)
+    if (moved)
+    {
+        session.sent.clear();
+        session.full = true;
+        (void)Expand(session);  // the new instance's toggles (its features)
+    }
     Json::Value target = TargetOf(session);
     target["op"] = "target";
     target["t"] = kTopic;
     target["session"] = session.session;
+    if (!rid.isNull())
+        target["rid"] = rid;
     out.Message(connection, target);
+    if (!moved)
+        return;
     session.context.clear();
     if (instance.empty())
         return;
@@ -641,30 +690,12 @@ void SurfaceHub::DeliverResult(uint64_t connectionId, const std::string& session
 
 Json::Value SurfaceHub::TargetOf(const SurfaceSession& session)
 {
-    Json::Value target;
-    target["instance"] = Nullable(session.instance);
-    target["index"] = Json::Value(Json::nullValue);
-    target["model"] = Json::Value(Json::nullValue);
-    target["ram_kb"] = Json::Value(Json::nullValue);
-    target["view"] = Json::Value(Json::nullValue);  // views: SD4 (TargetState)
-    target["mode"] = session.pinned ? "instance" : "follow";
-    if (session.instance.empty())
-        return target;
-    EmulatorManager* manager = EmulatorManager::GetInstance();
-    const std::vector<std::string> ids = manager->GetEmulatorIds();
-    const auto at = std::find(ids.begin(), ids.end(), session.instance);
-    if (at != ids.end())
-        target["index"] = static_cast<Json::Int>(at - ids.begin());
-    if (std::shared_ptr<Emulator> emulator = manager->GetEmulator(session.instance))
-    {
-        const MachineIdentity identity = EmulatorManager::GetMachineIdentity(*emulator);
-        if (identity.Valid)
-        {
-            target["model"] = identity.Model;
-            target["ram_kb"] = static_cast<Json::UInt>(identity.RamKb);
-        }
-    }
-    return target;
+    // The protocol's §2 object (instance, index, model, ram_kb, view, mode; plus pin, source) of the session's target
+    actions::TargetInfo info;
+    if (const std::optional<actions::TargetInfo> bound = actions::TargetState::Instance().TargetFor(session.session))
+        info = *bound;
+    info.instance = session.instance;  // as bound (and its ctx and readouts sent)
+    return StateNodeToJson(actions::surfaces::TargetNode(info));
 }
 
 /// endregion </Pushes>
