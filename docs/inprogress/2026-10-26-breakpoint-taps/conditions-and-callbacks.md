@@ -253,6 +253,11 @@ what it built.
    - The tokenizer, the compiler, fast shapes plus the VM, the `ERROR` state, and differential tests.
    - Planes: `condition` / `if` (design.md phase 1). Hit counting after the condition.
    - An A/B on the hit path and the miss path.
+   Measured 2026-10-27 (core-benchmarks, 12 interleaved rounds against master, cpu time medians, load 50-70):
+   `BM_BreakpointResolve_Hit` +1.9 %, `_Miss` +1.0 %, `BM_BreakpointFrame_*` within -1.0..+2.2 % (the A/A bias is
+   1.8 %). A first build had the hit path at +15.1 %: the condition check inlined into the candidate walk grew it.
+   `ConditionHolds` is now out of line (`UNREAL_NOINLINE`, behind an `[[unlikely]]` test of the program pointer), and
+   the 120-byte error text moved to the end of the descriptor.
 2. **Conditions on taps:** the profile key `if:`, and `@prev` with the `before` byte for `decreased` / `increased`.
    Built 2026-10-26: `if:` on every source (a breakpoint probe's tap condition, else a frame-end condition), checked
    at profile parse and at arm, the reason in `game.events` `condition_error`; `x@prev` in the language (any operand,
