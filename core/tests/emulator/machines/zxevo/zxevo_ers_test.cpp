@@ -996,8 +996,9 @@ namespace
     }
 
     /// A minimal ISO 9660 image: the primary volume descriptor at block 16,
-    /// the terminator at 17, the root directory at 18 and AUTORUN.ZX at 20
-    std::string MakeIso(const std::vector<uint8_t>& autorun)
+    /// the terminator at 17, the root directory at 18 and AUTORUN.ZX (or the
+    /// file `name`) at 20
+    std::string MakeIso(const std::vector<uint8_t>& autorun, const std::string& name = "AUTORUN.ZX;1")
     {
         const uint32_t blocks = 24;
         std::string iso(blocks * 2048, '\0');
@@ -1017,7 +1018,7 @@ namespace
 
         std::string directory = DirectoryRecord(std::string(1, '\0'), 18, 2048, true) +
                                 DirectoryRecord(std::string(1, '\1'), 18, 2048, true) +
-                                DirectoryRecord("AUTORUN.ZX;1", 20, static_cast<uint32_t>(autorun.size()), false);
+                                DirectoryRecord(name, 20, static_cast<uint32_t>(autorun.size()), false);
         std::memcpy(iso.data() + 18 * 2048, directory.data(), directory.size());
         std::memcpy(iso.data() + 20 * 2048, autorun.data(), autorun.size());
         return iso;
@@ -1175,6 +1176,106 @@ TEST_F(ZXEvoErs_Test, CdBootSeesTheDiscEjectedAndInsertedAgain)
     EXPECT_TRUE(drive.find("disc")->b);
     EXPECT_FALSE(drive.find("unit_attention")->b) << "the swap was reported (UNIT ATTENTION) and the ERS took it";
     EXPECT_EQ(drive.find("sense_key")->i, 0) << "the reads after it succeeded: no sense left (SPC: the next command discards it)";
+}
+
+/// ERS-CD-3: the state AUTORUN.ZX starts in (hdd_cd_boot.a80 CDBOOTGO's
+/// header): A = #B0 (slave), B = 0 (Pentagon), C = 0 (Nemo IDE), D = 1
+/// (Russian), E = #FB (Covox port), HL = 4 (256 x 192 15 colors), interrupts
+/// off. The rest (SP, IM, IY, the paging) is what the ERS leaves; measured
+/// here and listed in the research note's table.
+/// Real-ROM boot plus a CD load: slower than 50 ms by nature
+TEST_F(ZXEvoErs_Test, CdBootEntersAutorunWithTheDocumentedRegisters)
+{
+    const std::vector<uint8_t> code = {0xF3, 0x18, 0xFE};  // #6000: DI : JR $ (registers untouched)
+    ScratchFolder folder("zxevo-cdentry");
+    MediaSource source;
+    source.path = Utf8(folder.File("boot.iso", MakeIso(code)));
+
+    Create();
+    InsertOptions now;
+    now.immediate = true;
+    ASSERT_TRUE(_context->pMediaManager->Insert("ide0.slave", source, now).Ok());
+    ASSERT_TRUE(RunToMainMenu());
+    Tap(ZXKEY_D);
+
+    Z80* z80 = _context->pCore->GetZ80();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return z80->pc == 0x6001; }, 600);
+    ASSERT_EQ(z80->pc, 0x6001) << "AUTORUN.ZX did not run";
+    EXPECT_EQ(z80->a, 0xB0) << "A: the drive (slave)";
+    EXPECT_EQ(z80->b, 0x00) << "B: the computer (Pentagon)";
+    EXPECT_EQ(z80->c, 0x00) << "C: the IDE controller (Nemo)";
+    EXPECT_EQ(z80->d, 0x01) << "D: the language (Russian)";
+    EXPECT_EQ(z80->e, 0xFB) << "E: the Covox port";
+    EXPECT_EQ(z80->hl, 0x0004) << "HL: the video modes (256 x 192, 15 colors)";
+    EXPECT_EQ(z80->iff1, 0) << "interrupts off";
+    // Left by the ERS (measured 2026-10-02; README "Entry state")
+    EXPECT_EQ(z80->sp, 0x5FFC) << "SP: just below the load address (the source comment says #6000)";
+    EXPECT_EQ(z80->iy, 0x5C3A) << "IY = 23610, as for BASIC";
+    EXPECT_EQ(z80->im, 1);
+    EXPECT_EQ(_context->emulatorState.p7FFD, 0x10) << "the 48K BASIC ROM, RAM page 0 at #C000";
+    EXPECT_TRUE(_context->pMemory->IsBank0ROM());
+    EXPECT_EQ(_context->pMemory->GetROMPage(), 28u) << "the 48K BASIC ROM at #0000";
+}
+
+/// ERS-CD-4: a disc without AUTORUN.ZX. The ERS walks the root directory, then
+/// on through memory until the address wraps, and ends with RST 0
+/// (hdd_cd_boot.a80 FNDIDN). The ERS runs from RAM with the 48K BASIC ROM
+/// (page 28) at #0000, so RST 0 is a 48K BASIC cold start: the RAM check,
+/// then the (c) 1982 screen - not the ERS menu, as the source suggested.
+/// Real-ROM boot plus a CD load: slower than 50 ms by nature
+TEST_F(ZXEvoErs_Test, CdBootWithoutAutorunColdStarts48KBasic)
+{
+    const std::vector<uint8_t> code = {0xF3, 0x18, 0xFE};
+    ScratchFolder folder("zxevo-cdnoautorun");
+    MediaSource source;
+    source.path = Utf8(folder.File("other.iso", MakeIso(code, "README.TXT;1")));
+
+    Create();
+    InsertOptions now;
+    now.immediate = true;
+    ASSERT_TRUE(_context->pMediaManager->Insert("ide0.slave", source, now).Ok());
+    ASSERT_TRUE(RunToMainMenu());
+    Tap(ZXKEY_D);
+
+    Z80* z80 = _context->pCore->GetZ80();
+    auto lastPacket = [&] {
+        const StateNode report = DeviceState::Ide(_context);
+        return report.find("units")->items[1].find("atapi")->find("last_packet")->s;
+    };
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return lastPacket().substr(0, 2) == "28"; }, 600);
+    ASSERT_EQ(lastPacket().substr(0, 2), "28") << "the ERS read the disc";
+
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return Screen().find("1982") != std::string::npos; }, 600, 25);
+    const std::string screen = Screen();
+    EXPECT_NE(screen.find("1982 Sinclair Research Ltd"), std::string::npos) << screen;
+    EXPECT_EQ(_context->pMemory->GetROMPage(), 28u) << "the 48K BASIC ROM";
+    EXPECT_NE(z80->pc, 0x6001) << "nothing from the disc ran";
+}
+
+/// ERS-CD-5: a hard disk on the slave. "D. CD boot" asks the unit for its
+/// IDENTIFY signature and, without the ATAPI #EB14, starts over (iniini loop,
+/// hdd_cd_boot.a80): the guest waits for a CD drive for ever, the emulator
+/// keeps running frames.
+/// Real-ROM boot: slower than 50 ms by nature
+TEST_F(ZXEvoErs_Test, CdBootWithAHardDiskOnTheSlaveKeepsAsking)
+{
+    Create();
+    ASSERT_TRUE(_context->pIdeController->SetUnitKind(1, false)) << "the slave becomes a hard disk";
+    ScratchFolder folder("zxevo-cdhdd");
+    MediaSource source;
+    source.path = Utf8(folder.File("disk.img", std::string(64 * 512, '\0')));
+    InsertOptions now;
+    now.immediate = true;
+    ASSERT_TRUE(_context->pMediaManager->Insert("ide0.slave", source, now).Ok());
+    ASSERT_TRUE(RunToMainMenu());
+    Tap(ZXKEY_D);
+
+    Z80* z80 = _context->pCore->GetZ80();
+    const uint64_t before = _emulator->GetContext()->emulatorState.frame_counter;
+    _emulator->RunNFrames(200, true);
+    EXPECT_GE(_emulator->GetContext()->emulatorState.frame_counter, before + 200) << "the emulator keeps running";
+    EXPECT_NE(z80->pc, 0x6117) << "not back in the menu";
+    EXPECT_NE(z80->pc, 0x6001) << "nothing booted";
 }
 
 /// NOS-KBD-1: NedoOS on ZX-Evo reads its keyboard only from the AVR's PS/2 log
