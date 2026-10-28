@@ -204,13 +204,14 @@ whatever port pair, latch order or board the program reaches it through.
 | `opl4` | #000-#1FF | MoonSound OPL4 FM: bank 1 as #100-#1FF |
 | `opl4wave` | 0-#FF | MoonSound OPL4 wave part (while NEW2 is set) |
 | `dac` | 0-3 (the channel) | Covox / SounDrive, the MultiSound's SounDrive; the value is the sample |
+| `cbl` | 0-1 | the Sprinter's Covox Blaster: 0 the data (code #88, ports #FB / #4F: the DAC with the ring off, the ring's next entry with it on; the accelerator's copies into page #FD), 1 the control (code #89, port #4E: bit 7 the ring, 6 stereo, 5 16-bit, 4 the INT, 3-0 the rate) |
 
 - **Cost.** A chip reports only while `EmulatorContext::chipRegisterWatch` is set: the main CPU's breakpoint manager
   sets it while an active chip register breakpoint exists. Otherwise one predictable branch per OUT to a chip.
 - **What is not a program's write.** A snapshot load, a reset or a tool's access (`toolAccessActive`) writes the
   registers without the port path and is not reported; nor is a write during a time travel replay.
 - **The stop.** The access is `chip_register`, the address the register (`BreakpointHitKind::ChipRegister`).
-- **Not yet.** The Sprinter's Covox Blaster ring (P7) and taps (script callbacks) on chip registers.
+- **Not yet.** Taps (script callbacks) on chip registers.
 
 | Plane | Chip register breakpoint |
 | :--- | :--- |
@@ -237,7 +238,15 @@ whatever port pair, latch order or board the program reaches it through.
   (1 the end of the block, 0 disabled or reset).
 - **Cost.** The machine tells its events only while `EmulatorContext::machineEventWatch` is set (an active event
   breakpoint on the main CPU); the DMA checks the CPU's debug mode once per byte.
-- **Not yet.** DivMMC and Multiface RAM as pages a breakpoint can name; taps (script callbacks) on machine events.
+- **DivMMC and Multiface pages.** Their memory sits in the system area of the Next's SRAM (ROM pages 0-15), and a
+  page breakpoint names it by its device: `divmmcrom` (the DivMMC's 8K ROM, ROM page 4), `divmmc0`..`divmmc15` (its
+  8K RAM banks, the halves of ROM pages 8-15), `mfrom` and `mfram` (the Multiface's 8K ROM and RAM, the halves of
+  ROM page 5). The address gives the offset in the 8K bank (`& #1FFF`): `wp 0x2000-0x3FFF w --page divmmc3` stops
+  on writes to bank 3 in slot 1, or in slot 0 with MAPRAM. The listing shows the same names; REST carries them as
+  `{kind: divmmc, page: 3}` or `{kind: divmmcrom}`. Other machines refuse them. A write to a read-only view (the
+  DivMMC ROM, bank 3 under MAPRAM, the Multiface ROM) still hits a write watchpoint on that page: the CPU wrote
+  there, the memory kept its byte.
+- **Not yet.** Taps (script callbacks) on machine events.
 
 ### TS-Conf (platform-debugging P6)
 

@@ -3474,7 +3474,8 @@ public:
         });
 
         // Breakpoint management
-        // Options: a page string ("ram32": physical, through any slot that shows it), or a table
+        // Options: a page string ("ram32": physical, through any slot that shows it; the Next's "bank8k33", "divmmc3",
+        // "divmmcrom", "mfrom", "mfram"), or a table
         // {page=, to=, slot_only=, hits=, condition=, dialect=} (to = range end; hits "5" | ">=5" | "%5"; condition "A == 7").
         // -1 and the reason when refused
         lua.set_function("bp", [this](uint16_t addr, sol::optional<sol::object> options) {
@@ -3570,13 +3571,13 @@ public:
             return {static_cast<int>(id), sol::nullopt};
         });
         // bp_chipreg(chip, reg, {to=, unit=, value=, vmask=, hits=}) stops the main CPU after its OUT wrote a sound chip's
-        // register: chip ay, fm, saa, opl4, opl4wave or dac (chipregister.h), to= the last register of a range, unit= one
+        // register: chip ay, fm, saa, opl4, opl4wave, dac or cbl (chipregister.h), to= the last register of a range, unit= one
         // chip of the kind. The id; -1 and the reason when refused
         lua.set_function("bp_chipreg", [this](const std::string& chipName, int32_t reg, sol::optional<sol::table> options)
                                            -> std::tuple<int, sol::optional<std::string>> {
             SoundChipKind chip = SoundChipKind::Count;
             if (!ParseSoundChipKind(chipName.c_str(), chip))
-                return {-1, std::string("unknown chip '") + chipName + "': ay, fm, saa, opl4, opl4wave or dac"};
+                return {-1, std::string("unknown chip '") + chipName + "': ay, fm, saa, opl4, opl4wave, dac or cbl"};
             if (reg < 0 || reg > 0xFFFF)
                 return {-1, std::string("a register is 0..") + std::to_string(SoundChipLastRegister(chip))};
             BreakpointSpec spec;

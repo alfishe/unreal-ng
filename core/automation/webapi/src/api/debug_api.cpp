@@ -153,6 +153,16 @@ Json::Value BreakpointPageJson(const BreakpointDescriptor& bp)
     if (bp.matchType != BRK_MATCH_BANK_ADDR)
         return Json::Value(Json::nullValue);
     Json::Value page;
+    if (bp.nextSystemPage)
+    {
+        // The ZX Next's DivMMC / Multiface memory: {kind: divmmc, page: bank}, or divmmcrom / mfrom / mfram alone
+        const std::string name = BreakpointManager::PageSpecName(bp);
+        const size_t digits = name.find_first_of("0123456789");
+        page["kind"] = name.substr(0, digits);
+        if (digits != std::string::npos)
+            page["page"] = std::stoi(name.substr(digits));
+        return page;
+    }
     page["kind"] = BreakpointManager::PageKindName(bp.pageType);
     page["page"] = bp.page;
     return page;
@@ -1082,12 +1092,12 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         spec.type = BRK_EVENT, spec.access = 0;
     else if (type == "chipreg")
     {
-        // A sound chip's register write ("chip": ay, fm, saa, opl4, opl4wave, dac; "address" the register,
+        // A sound chip's register write ("chip": ay, fm, saa, opl4, opl4wave, dac, cbl; "address" the register,
         // "address_end" a range, "unit" one chip of the kind; chipregister.h)
         SoundChipKind chip = SoundChipKind::Count;
         if (!body["chip"].isString() || !ParseSoundChipKind(body["chip"].asString().c_str(), chip))
         {
-            badRequest("'chip': ay, fm, saa, opl4, opl4wave or dac");
+            badRequest("'chip': ay, fm, saa, opl4, opl4wave, dac or cbl");
             return;
         }
         spec.type = BRK_CHIPREG, spec.access = 0;

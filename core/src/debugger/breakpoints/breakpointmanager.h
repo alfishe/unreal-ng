@@ -169,6 +169,8 @@ struct BreakpointDescriptor
     // pages): offsets (z80address & #3FFF)..(end & #3FFF) of that page, matched only by that memory's hooks
     // (HandleSpaceAccess), never by CPU addresses. 0xFFFF: none
     uint16_t spacePage = 0xFFFF;
+    // The ZX Next's system area by its device's name (divmmcrom, divmmcN, mfrom, mfram): a ROM page and its half
+    bool nextSystemPage = false;
 
     bool active = true;   // Breakpoint can be temporarily disabled
     bool hidden = false;  // Internal/temporary breakpoint (e.g. step-over, step-out, traps)
@@ -334,6 +336,9 @@ struct BreakpointSpec
     // Physical only: an 8K RAM bank (--page bank8kN, the Next's MMU unit); AddBreakpoint makes it page N / 2 and the
     // offset its half plus address & #1FFF. 0xFFFF: none
     uint16_t bank8k = 0xFFFF;
+    // Physical only: the page is the ZX Next's DivMMC or Multiface memory (--page divmmcrom / divmmcN / mfrom /
+    // mfram): a ROM page of the system area, `bank8k` its half. Only the Next takes it
+    bool nextSystemPage = false;
 };
 
 /// endregion </Types>
@@ -535,7 +540,9 @@ public:
     static bool ParsePageSpec(const std::string& text, uint8_t& page, MemoryBankModeEnum& pageType, std::string& error);
     /// A breakpoint's page as the surfaces write it, into the spec: a machine page (ParsePageSpec) or a page of
     /// another memory space, "vram0".."vram15" (the Sprinter's video RAM: offsets of that 16 KB page, read and
-    /// write watchpoints, matched through the graphics windows and the accelerator)
+    /// write watchpoints, matched through the graphics windows and the accelerator), an 8K RAM bank "bank8kN", or the
+    /// ZX Next's DivMMC and Multiface memory: "divmmcrom" (8K), "divmmc0".."divmmc15" (its 8K RAM banks), "mfrom",
+    /// "mfram" (8K each)
     static bool ParsePageInto(const std::string& text, BreakpointSpec& spec, std::string& error);
     /// "ram32" for a breakpoint bound to a page, "" for one that matches the address in any page
     static std::string PageSpecName(const BreakpointDescriptor& breakpoint);

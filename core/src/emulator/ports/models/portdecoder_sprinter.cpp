@@ -5,6 +5,7 @@
 
 #include "portdecoder_sprinter.h"
 #include "sprinter/sprinterzxsnapshot.h"
+#include "debugger/breakpoints/chipregister.h"
 #include "debugger/targets/gscardtarget.h"
 #include "emulator/emulator.h"
 #include "emulator/io/sprinter/isa/cards/isabusdevicecard.h"
@@ -1330,6 +1331,8 @@ void PortDecoder_Sprinter::OnCblPageWrite(uint16_t addr, uint8_t value)
     if (!(_activeAccelerator->State().dir & SprinterAccelerator::kDirBuffer))
         return;
     _cbl.WriteData(BaseTstate(), value, static_cast<uint8_t>(addr >> 8));
+    if (_context->chipRegisterWatch) [[unlikely]]
+        ReportChipRegisterWrite(_context, SoundChipKind::Cbl, 0, 0, value);
 }
 
 /// The standard configuration's reads (hardware-reference §4.3; MAME dcp_r)
@@ -1445,9 +1448,13 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
         case SprinterCode::Covox:
             // Port #FB / #4F: the Covox DAC, or the next ring entry (INT off: entry ~A15..A8, so OTIR fills in order)
             _cbl.WriteData(BaseTstate(), value, static_cast<uint8_t>(port >> 8));
+            if (_context->chipRegisterWatch) [[unlikely]]
+                ReportChipRegisterWrite(_context, SoundChipKind::Cbl, 0, 0, value);
             return;
         case SprinterCode::CovoxBlaster:
             _cbl.WriteControl(BaseTstate(), value);
+            if (_context->chipRegisterWatch) [[unlikely]]
+                ReportChipRegisterWrite(_context, SoundChipKind::Cbl, 0, 1, value);
             return;
 
         case SprinterCode::RomPage:

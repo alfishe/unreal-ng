@@ -222,6 +222,11 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         error = "the range ends before it starts";
         return BRK_INVALID;
     }
+    if (spec.nextSystemPage && (_target || !_context || _context->config.mem_model != MM_NEXT))
+    {
+        error = "the DivMMC and Multiface pages (divmmcrom, divmmcN, mfrom, mfram) are the ZX Next's";
+        return BRK_INVALID;
+    }
     if (spec.bank8k != 0xFFFF && spec.pageOffset == 0xFFFF) [[unlikely]]
     {
         // An 8K bank: its 16K page, the offset its half plus the address's place in its 8K slot
@@ -503,6 +508,7 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         d->bankOffset = spec.pageOffset;
     }
     d->spacePage = spec.spacePage;
+    d->nextSystemPage = spec.nextSystemPage;
     d->portMask = spec.portMask;
     d->nrDoors = spec.nrDoors;
     d->nrValue = spec.nrValue;
@@ -1400,6 +1406,32 @@ bool BreakpointManager::ParsePageInto(const std::string& text, BreakpointSpec& s
         spec.hasPage = true;
         return true;
     }
+    // The ZX Next's system area (nextmemory.h): the DivMMC ROM the first 8K of ROM page 4, its RAM bank b half
+    // b & 1 of ROM page 8 + b / 2, the Multiface's ROM and RAM the two halves of ROM page 5
+    auto system = [&](uint8_t page, uint16_t half) {
+        spec.page = page;
+        spec.pageType = BANK_ROM;
+        spec.bank8k = half;
+        spec.hasPage = true;
+        spec.nextSystemPage = true;
+        return true;
+    };
+    if (lower == "divmmcrom")
+        return system(4, 0);
+    if (lower == "mfrom" || lower == "mfram")
+        return system(5, lower == "mfram" ? 1 : 0);
+    if (lower.rfind("divmmc", 0) == 0)
+    {
+        const std::string number = lower.substr(6);
+        char* end = nullptr;
+        const unsigned long value = number.empty() ? 99 : std::strtoul(number.c_str(), &end, 10);
+        if (number.empty() || *end != '\0' || value > 15)
+        {
+            error = "a DivMMC page is divmmcrom or its RAM banks divmmc0..divmmc15 (8 KB each), got '" + text + "'";
+            return false;
+        }
+        return system(static_cast<uint8_t>(8 + value / 2), static_cast<uint16_t>(value & 1));
+    }
     if (lower.rfind("vram", 0) == 0)
     {
         const std::string number = lower.substr(4);
@@ -1415,7 +1447,8 @@ bool BreakpointManager::ParsePageInto(const std::string& text, BreakpointSpec& s
     }
     if (!ParsePageSpec(text, spec.page, spec.pageType, error))
     {
-        error += " (or bank8kN, an 8K RAM bank; or vram0..vram15, the Sprinter's video RAM)";
+        error += " (or bank8kN, an 8K RAM bank; vram0..vram15, the Sprinter's video RAM; divmmcrom, divmmc0..15, mfrom, "
+                 "mfram, the ZX Next's DivMMC and Multiface)";
         return false;
     }
     spec.hasPage = true;
@@ -1491,6 +1524,15 @@ std::string BreakpointManager::PageSpecName(const BreakpointDescriptor& breakpoi
         return "vram" + std::to_string(breakpoint.spacePage - ttd::kVramPageBase);
     if (breakpoint.matchType != BRK_MATCH_BANK_ADDR)
         return {};
+    if (breakpoint.nextSystemPage)
+    {
+        const unsigned half = breakpoint.PageOffset() >> 13;
+        if (breakpoint.page == 4)
+            return "divmmcrom";
+        if (breakpoint.page == 5)
+            return half ? "mfram" : "mfrom";
+        return "divmmc" + std::to_string((breakpoint.page - 8) * 2 + half);
+    }
     return std::string(PageKindName(breakpoint.pageType)) + std::to_string(breakpoint.page);
 }
 

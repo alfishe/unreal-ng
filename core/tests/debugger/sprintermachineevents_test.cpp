@@ -11,6 +11,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/breakpoints/chipregister.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -27,6 +28,8 @@ constexpr uint16_t kCode = 0x8000;
 constexpr uint16_t kData = 0x9000;
 constexpr uint8_t kLength = 8;
 constexpr uint16_t kAllModePort = 0x00C3;  // any port the Z84C15 does not own: the test's table entry
+constexpr uint16_t kCblControlPort = 0x00C5;
+constexpr uint16_t kCblDataPort = 0x00C7;
 }  // namespace
 
 class SprinterMachineEvents_Test : public ::testing::Test
@@ -170,6 +173,40 @@ TEST_F(SprinterMachineEvents_Test, ThePldsCodeAndItsJournalEventAreEvents)
     EXPECT_EQ(Hits(other), 0u);
     EXPECT_EQ(Hits(allMode), 1u) << "ALL_MODE #05 -> #01 is in the journal's terms an all_mode event";
     EXPECT_EQ(_ports->GetPldState().allMode, 0x01);
+}
+
+// The Covox Blaster as a sound chip (bchip cbl): register 1 the control, 0 the data; each stops after its OUT
+TEST_F(SprinterMachineEvents_Test, TheCovoxBlastersControlAndDataAreChipRegisters)
+{
+    uint8_t* table = _context->pMemory->RAMPageAddress(SprinterMemory::kPortTablePage);
+    table[_ports->LookupIndex(kCblControlPort, false)] = SprinterCode::CovoxBlaster;
+    table[_ports->LookupIndex(kCblDataPort, false)] = SprinterCode::Covox;
+    // LD BC,kCblControlPort : LD A,#80 : OUT (C),A (the ring on) : LD C,kCblDataPort : LD A,#55 : OUT (C),A
+    Load({0x01, kCblControlPort & 0xFF, kCblControlPort >> 8, 0x3E, 0x80, 0xED, 0x79, 0x0E, kCblDataPort & 0xFF,
+          0x3E, 0x55, 0xED, 0x79});
+    auto chip = [&](uint16_t reg, int value, uint8_t mask) {
+        BreakpointSpec spec;
+        spec.type = BRK_CHIPREG;
+        spec.access = 0;
+        spec.chip = static_cast<uint8_t>(SoundChipKind::Cbl);
+        spec.address = reg;
+        spec.nrValue = static_cast<uint8_t>(value);
+        spec.nrMask = mask;
+        return Add(spec);
+    };
+    const uint16_t ringOn = chip(1, 0x80, 0x80);
+    const uint16_t data = chip(0, 0x55, 0xFF);
+    _emulator->RunNFrames(1, false);
+    Emulator::DebugStop stop = _emulator->LastStop();
+    EXPECT_EQ(stop.breakpoint.breakpointId, ringOn);
+    EXPECT_EQ(stop.breakpoint.kind, BreakpointHitKind::ChipRegister);
+    EXPECT_EQ(stop.breakpoint.address, 1);
+    EXPECT_EQ(Hits(data), 0u) << "the stop comes after the control's OUT, before the data's";
+    _emulator->RunNFrames(1, false);
+    stop = _emulator->LastStop();
+    EXPECT_EQ(stop.breakpoint.breakpointId, data);
+    EXPECT_EQ(stop.breakpoint.address, 0);
+    EXPECT_STREQ(SoundChipKindName(SoundChipKind::Cbl), "cbl");
 }
 
 TEST(SprinterMachineEventNames_Test, ThePldsEventsAreTheMainCpus)

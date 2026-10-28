@@ -3153,8 +3153,8 @@ namespace PythonBindings
                              const std::string& cpu) -> int {
                 return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_EXECUTE, addr, page, to, slot_only, -1, hits, condition,
                                               dialect, cpu);
-            }, "Add a breakpoint (bp); page 'ram32' / 'rom3' / 'cache0': physical, through any slot that shows "
-               "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
+            }, "Add a breakpoint (bp); page 'ram32' / 'rom3' / 'cache0' (the Next: also 'bank8k33', 'divmmc3', "
+               "'divmmcrom', 'mfrom', 'mfram'): physical, through any slot that shows it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
                "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
                "reason when it does not compile); cpu 'gs': the sound card CPU's. -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
@@ -3164,8 +3164,8 @@ namespace PythonBindings
                              const std::string& cpu) -> int {
                 return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_READ, addr, page, to, slot_only, -1, hits, condition,
                                               dialect, cpu);
-            }, "Add a breakpoint (bp_read); page 'ram32' / 'rom3' / 'cache0': physical, through any slot that shows "
-               "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
+            }, "Add a breakpoint (bp_read); page 'ram32' / 'rom3' / 'cache0' (the Next: also 'bank8k33', 'divmmc3', "
+               "'divmmcrom', 'mfrom', 'mfram'): physical, through any slot that shows it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
                "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
                "reason when it does not compile); cpu 'gs': the sound card CPU's. -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
@@ -3175,8 +3175,8 @@ namespace PythonBindings
                              const std::string& cpu) -> int {
                 return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_WRITE, addr, page, to, slot_only, -1, hits, condition,
                                               dialect, cpu);
-            }, "Add a breakpoint (bp_write); page 'ram32' / 'rom3' / 'cache0': physical, through any slot that shows "
-               "it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
+            }, "Add a breakpoint (bp_write); page 'ram32' / 'rom3' / 'cache0' (the Next: also 'bank8k33', 'divmmc3', "
+               "'divmmcrom', 'mfrom', 'mfram'): physical, through any slot that shows it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
                "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
                "reason when it does not compile); cpu 'gs': the sound card CPU's. -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
@@ -3271,7 +3271,7 @@ namespace PythonBindings
                                   int32_t value, int32_t vmask, const std::string& hits) -> int {
                 SoundChipKind chip = SoundChipKind::Count;
                 if (!ParseSoundChipKind(chipName.c_str(), chip))
-                    throw py::value_error("unknown chip '" + chipName + "': ay, fm, saa, opl4, opl4wave or dac");
+                    throw py::value_error("unknown chip '" + chipName + "': ay, fm, saa, opl4, opl4wave, dac or cbl");
                 if (reg < 0 || reg > 0xFFFF || end > 0xFFFF)
                     throw py::value_error("a register is 0.." + std::to_string(SoundChipLastRegister(chip)));
                 BreakpointManager* bpm = PythonBreakpoints(self, "main");
@@ -3304,7 +3304,7 @@ namespace PythonBindings
                     throw py::value_error(error);
                 return id;
             }, "Add a sound chip register breakpoint: stops the main CPU after its OUT wrote the register of chip ay, fm, "
-               "saa, opl4, opl4wave or dac (end: the last register of a range; unit: one chip of the kind; value / vmask "
+               "saa, opl4, opl4wave, dac or cbl (end: the last register of a range; unit: one chip of the kind; value / vmask "
                "filter the byte). Returns the id; ValueError with the reason when refused",
                py::arg("chip"), py::arg("reg"), py::arg("end") = -1, py::arg("unit") = -1, py::arg("value") = -1,
                py::arg("vmask") = -1, py::arg("hits") = "")

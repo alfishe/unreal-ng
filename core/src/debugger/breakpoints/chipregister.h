@@ -22,13 +22,15 @@ enum class SoundChipKind : uint8_t
     Saa,       ///< SAA1099 (MultiSound): registers 0-#1F
     Opl4,      ///< MoonSound OPL4 FM: bank 0 #000-#0FF, bank 1 #100-#1FF
     Opl4Wave,  ///< MoonSound OPL4 wave part: registers 0-#FF
-    Dac,       ///< Covox / SounDrive / the Sprinter's DAC: the register is the channel (0-3), the value the sample
+    Dac,       ///< Covox / SounDrive: the register is the channel (0-3), the value the sample
+    Cbl,       ///< the Sprinter's Covox Blaster: register 0 the data (code #88: the DAC, or the ring's next entry;
+               ///< the accelerator's copies into page #FD too), 1 the control (code #89)
     Count
 };
 
 constexpr uint8_t kSoundChipAnyUnit = 0xFF;
 
-/// The surfaces' names ("ay", "fm", "saa", "opl4", "opl4wave", "dac")
+/// The surfaces' names ("ay", "fm", "saa", "opl4", "opl4wave", "dac", "cbl")
 inline const char* SoundChipKindName(SoundChipKind kind)
 {
     switch (kind)
@@ -39,6 +41,7 @@ inline const char* SoundChipKindName(SoundChipKind kind)
         case SoundChipKind::Opl4: return "opl4";
         case SoundChipKind::Opl4Wave: return "opl4wave";
         case SoundChipKind::Dac: return "dac";
+        case SoundChipKind::Cbl: return "cbl";
         case SoundChipKind::Count: break;
     }
     return "unknown";
@@ -69,6 +72,7 @@ constexpr uint16_t SoundChipLastRegister(SoundChipKind kind)
         case SoundChipKind::Opl4: return 0x1FF;
         case SoundChipKind::Opl4Wave: return 0xFF;
         case SoundChipKind::Dac: return 0x03;
+        case SoundChipKind::Cbl: return 0x01;
         case SoundChipKind::Count: break;
     }
     return 0;

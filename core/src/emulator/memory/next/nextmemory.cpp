@@ -146,7 +146,7 @@ MemoryPageDescriptor NextMemory::MapZ80AddressToPhysicalPage(uint16_t address)
         result.addressInPage = static_cast<uint16_t>(offset % PAGE_SIZE);
     }
     else
-        result.addressInPage = static_cast<uint16_t>(address & 0x3FFF);  // the trash page, DivMMC RAM: no page
+        result.addressInPage = static_cast<uint16_t>(address & 0x3FFF);  // the trash page: no page (DivMMC and Multiface memory is in the ROM pages)
     return result;
 }
 

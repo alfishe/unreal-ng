@@ -97,7 +97,7 @@ bool CLIProcessor::ParseBreakpointArgs(const std::vector<std::string>& args, siz
             if (!hasValue || !BreakpointManager::ParsePageInto(args[++i], spec, error))
             {
                 if (error.empty())
-                    error = "--page needs a page: ramN, romN, cacheN or vramN (e.g. --page ram5)";
+                    error = "--page needs a page: ramN, romN, cacheN, bank8kN, vramN, divmmcN, divmmcrom, mfrom or mfram (e.g. --page ram5)";
                 return false;
             }
         }
@@ -214,7 +214,7 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
     if (args.empty())
     {
         stringstream ss;
-        ss << "Usage: bp <address>[-<end>] [--page ramN|romN|cacheN [--slot-only]] [--hits N|>=N|%N] [note]"
+        ss << "Usage: bp <address>[-<end>] [--page ramN|romN|cacheN|bank8kN|divmmcN|divmmcrom|mfrom|mfram [--slot-only]] [--hits N|>=N|%N] [note]"
            << " [if <condition>]" << NEWLINE
            << "Sets an execution breakpoint: one address or a range. With a page it fires on that page through any"
            << NEWLINE << "slot that shows it (--slot-only: only through the slot of the address). --hits stops on the"
@@ -301,13 +301,14 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
     if (args.size() < 2)
     {
         std::stringstream ss;
-        ss << "Usage: wp <address>[-<end>] <r|w|rw> [--page ramN|romN|cacheN [--slot-only]] [--hits N|>=N|%N] [note]"
+        ss << "Usage: wp <address>[-<end>] <r|w|rw> [--page ramN|romN|cacheN|bank8kN|divmmcN|divmmcrom|mfrom|mfram [--slot-only]] [--hits N|>=N|%N] [note]"
            << NEWLINE << "Sets a memory watchpoint on one address or a range (with a page: on that page through any slot"
            << NEWLINE << "that shows it)." << NEWLINE << "Types:" << NEWLINE << "  r    - Watch for memory reads" << NEWLINE
            << "  w    - Watch for memory writes" << NEWLINE << "  rw   - Watch for both reads and writes" << NEWLINE
            << "Examples:" << NEWLINE << "  wp 0x1234 r          - Reads at 0x1234" << NEWLINE
            << "  wp 0x4000-0x57FF w   - Writes to the screen bitmap" << NEWLINE
            << "  wp 0x0100 w --page ram7 - Writes to RAM page 7 offset #0100, in whatever slot" << NEWLINE
+           << "  wp 0x2000-0x3FFF w --page divmmc3 - Writes to the Next's DivMMC RAM bank 3 (slot 1 address)" << NEWLINE
            << "  wp #5C3A rw --hits >=10 IY area - From the 10th access on, with a note" << NEWLINE
            << "  wp 0x4000-0x57FF w if VAL != 0 - Writes of a non-zero byte (if <condition>, as for bp)";
         session.SendResponse(ss.str());
@@ -647,12 +648,13 @@ void CLIProcessor::HandleChipRegisterBreakpoint(const ClientSession& session, co
            << NEWLINE << "Stops the main CPU after its OUT wrote a sound chip's register (platform-debugging P3)." << NEWLINE
            << "Chips: ay (AY / YM2149, the SSG of a YM2203: 0-15), fm (YM2203 FM: #10-#FF), saa (SAA1099: 0-#1F)," << NEWLINE
            << "  opl4 (MoonSound FM: bank 0 #000-#0FF, bank 1 #100-#1FF), opl4wave (0-#FF), dac (Covox / SounDrive:"
-           << NEWLINE << "  the channel 0-3)" << NEWLINE
+           << NEWLINE << "  the channel 0-3), cbl (the Sprinter's Covox Blaster: 0 the data, 1 the control)" << NEWLINE
            << "--unit picks one chip of the kind (TurboSound / TS-FM 0-1, the Next's AYs 0-2); default any." << NEWLINE
            << "--value / --vmask filter the byte written." << NEWLINE << "Examples:" << NEWLINE
            << "  bchip ay 7 --vmask 0x3F --value 0x3F  - the mixer silences all channels" << NEWLINE
            << "  bchip ay 0-5 --unit 1                 - a tone period of the second AY" << NEWLINE
-           << "  bchip opl4 0x105                      - the MoonSound NEW2 register";
+           << "  bchip opl4 0x105                      - the MoonSound NEW2 register" << NEWLINE
+           << "  bchip cbl 1 --vmask 0x80 --value 0x80 - the Sprinter turns its Covox Blaster's ring on";
         session.SendResponse(ss.str());
         return;
     }

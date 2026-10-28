@@ -503,13 +503,12 @@
         "The N of the hit policy (1 or more); alone it means hit_mode 'equal'";
     schemas["AddBreakpointRequest"]["properties"]["page"]["type"] = "object";
     schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["type"] = "string";
-    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("ram");
-    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("rom");
-    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("cache");
+    for (const char* kind : {"ram", "rom", "cache", "vram", "divmmc", "divmmcrom", "mfrom", "mfram"})
+        schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append(kind);
     schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["page"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["page"]["description"] =
         "Optional for execution / read / write: {kind, page} as in the debugger protocol (the text form 'ram32' is "
-        "accepted too). A physical breakpoint: it fires on that page at offset address & #3FFF through whatever slot "
+        "accepted too; the ZX Next's DivMMC and Multiface: {kind: divmmc, page: 0-15}, divmmcrom, mfrom, mfram). A physical breakpoint: it fires on that page at offset address & #3FFF through whatever slot "
         "shows the page (slot_only: only through the slot of address); 400 for a page the machine does not have";
     schemas["AddBreakpointRequest"]["properties"]["condition"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["condition"]["description"] =

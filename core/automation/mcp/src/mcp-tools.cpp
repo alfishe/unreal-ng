@@ -1288,12 +1288,12 @@ void RegisterControlExecution(ToolRegistry& registry)
         "register, address_end a range, unit, value / value_mask the byte)";
     schema["properties"]["chip"]["type"] = "string";
     schema["properties"]["chip"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* chip : {"ay", "fm", "saa", "opl4", "opl4wave", "dac"})
+    for (const char* chip : {"ay", "fm", "saa", "opl4", "opl4wave", "dac", "cbl"})
         schema["properties"]["chip"]["enum"].append(chip);
     schema["properties"]["chip"]["description"] =
         "For bp_add of chipreg: ay (AY / YM2149 and a YM2203's SSG, registers 0-15), fm (YM2203 FM, #10-#FF), saa "
         "(SAA1099, 0-#1F), opl4 (MoonSound FM, bank 1 as #100-#1FF), opl4wave (0-#FF), dac (Covox / SounDrive: the "
-        "channel 0-3)";
+        "channel 0-3), cbl (the Sprinter's Covox Blaster: 0 the data, 1 the control)";
     schema["properties"]["unit"]["type"] = "integer";
     schema["properties"]["unit"]["description"] =
         "For bp_add of chipreg: one chip of the kind (TurboSound / TS-FM 0-1, the Next's AYs 0-2); absent: any";
@@ -1334,8 +1334,9 @@ void RegisterControlExecution(ToolRegistry& registry)
         "counted (bp_list shows hit_count)";
     schema["properties"]["page"]["type"] = "string";
     schema["properties"]["page"]["description"] =
-        "Optional for bp_add of execution / read / write: 'ram32', 'rom3', 'cache0' or (read / write) 'vram1' (the "
-        "Sprinter's video RAM page, the address its offset) - a physical breakpoint on that "
+        "Optional for bp_add of execution / read / write: 'ram32', 'rom3', 'cache0', 'bank8k33' (an 8K RAM bank), the ZX "
+        "Next's 'divmmcrom', 'divmmc0'..'divmmc15' (its 8K RAM banks), 'mfrom', 'mfram' (the Multiface), or (read / "
+        "write) 'vram1' (the Sprinter's video RAM page, the address its offset) - a physical breakpoint on that "
         "page at offset address & #3FFF, through whatever slot shows the page (slot_only: only through the slot of "
         "address)";
     schema["properties"]["condition"]["type"] = "string";

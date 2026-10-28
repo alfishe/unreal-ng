@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include "_helpers/emulatortesthelper.h"
+#include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -193,6 +194,70 @@ TEST_F(NextMachineEvents_Test, AnNmiRequestIsACpuNmiOfItsSource)
     EXPECT_EQ(Hits(m1), 1u);
     EXPECT_EQ(Hits(drive), 0u);
     EXPECT_EQ(_manager->GetLastTriggeredBreakpointID(), m1);
+}
+
+// The DivMMC's RAM bank by its name: a write through slot 1 with CONMEM and bank 3 stops a watchpoint on divmmc3,
+// not on another bank that shares the address
+TEST_F(NextMachineEvents_Test, TheDivMmcsRamBankIsAPageByItsName)
+{
+    _emulator->GetFeatureManager()->setFeature(Features::kBreakpoints, true);
+    _emulator->DebugOn();
+    // LD A,#83 : OUT (#E3),A (CONMEM, bank 3) : LD A,#5A : LD (#2005),A : JR $
+    const uint8_t program[] = {0xF3, 0x3E, 0x83, 0xD3, 0xE3, 0x3E, 0x5A, 0x32, 0x05, 0x20, 0x18, 0xFE};
+    for (size_t i = 0; i < sizeof(program); i++)
+        _z80->DirectWrite(static_cast<uint16_t>(kCode + i), program[i]);
+    _z80->pc = kCode;
+    auto watch = [&](const char* page) {
+        BreakpointSpec spec;
+        spec.access = BRK_MEM_WRITE;
+        spec.address = 0x2005;
+        std::string error;
+        EXPECT_TRUE(BreakpointManager::ParsePageInto(page, spec, error)) << error;
+        return Add(spec);
+    };
+    const uint16_t bank3 = watch("divmmc3");
+    const uint16_t bank2 = watch("divmmc2");
+    EXPECT_EQ(BreakpointManager::PageSpecName(*_manager->GetBreakpointById(bank3)), "divmmc3");
+    EXPECT_EQ(_manager->GetBreakpointById(bank3)->page, 9) << "bank 3: the upper half of system page 9";
+    _emulator->RunNFrames(1, false);
+    const Emulator::DebugStop stop = _emulator->LastStop();
+    EXPECT_EQ(stop.breakpoint.breakpointId, bank3);
+    EXPECT_EQ(stop.breakpoint.kind, BreakpointHitKind::MemoryWrite);
+    EXPECT_EQ(Hits(bank2), 0u);
+}
+
+// The names: divmmcrom, divmmc0..15, mfrom, mfram; a bank past 15 is refused, and so is any of them off the Next
+TEST(NextSystemPages_Test, TheNamesAndWhereTheyAreRefused)
+{
+    struct Case
+    {
+        const char* name;
+        uint8_t page;
+        uint16_t half;
+    };
+    for (const Case c : {Case{"divmmcrom", 4, 0}, Case{"divmmc0", 8, 0}, Case{"DIVMMC15", 15, 1}, Case{"mfrom", 5, 0},
+                         Case{"mfram", 5, 1}})
+    {
+        BreakpointSpec spec;
+        std::string error;
+        ASSERT_TRUE(BreakpointManager::ParsePageInto(c.name, spec, error)) << c.name << ": " << error;
+        EXPECT_EQ(spec.page, c.page) << c.name;
+        EXPECT_EQ(spec.pageType, BANK_ROM) << c.name;
+        EXPECT_EQ(spec.bank8k, c.half) << c.name;
+        EXPECT_TRUE(spec.nextSystemPage) << c.name;
+    }
+    BreakpointSpec spec;
+    std::string error;
+    EXPECT_FALSE(BreakpointManager::ParsePageInto("divmmc16", spec, error));
+
+    EmulatorContext pentagon(LoggerLevel::LogError);
+    pentagon.config.mem_model = MM_PENTAGON;
+    BreakpointManager manager(&pentagon);
+    BreakpointSpec other;
+    other.access = BRK_MEM_READ;
+    ASSERT_TRUE(BreakpointManager::ParsePageInto("divmmcrom", other, error));
+    EXPECT_EQ(manager.AddBreakpoint(other, error), BRK_INVALID);
+    EXPECT_NE(error.find("ZX Next"), std::string::npos) << error;
 }
 
 // The event names on the surfaces: the machine's are the main CPU's
