@@ -1281,7 +1281,7 @@ namespace PythonBindings
             d["report"] = result.report.format.empty() ? py::none() : StateNodeToPy(result.report.ToStateNode());
             return d;
         }, "Load a snapshot; a file for another model: .spg (TSL) switches the model unless switch_model is False, an .szx saved on "
-           "another model is refused unless switch_model is True (or the configuration says [SNAPSHOT] SwitchModel=1). "
+           "another model, or a .z80 / .sna the machine cannot hold (a 128K file on a 48K), is refused unless switch_model is True (or the configuration says [SNAPSHOT] SwitchModel=1). "
            "commit chooses who writes the machine: '' = the plan decides (the machine's own policy, else the legacy "
            "commit), 'legacy', or a registered policy name; the answer's report says what was done or why not",
            py::arg("path"), py::arg("emulator_id") = "", py::arg("switch_model") = py::none(), py::arg("commit") = "");
