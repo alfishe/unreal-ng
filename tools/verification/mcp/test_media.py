@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """media / load_software / rzx_playback: the slots, loading a tape from testdata, errors name the file, the files of
-a disk, writing a file onto a TR-DOS disk, an ATM CP/M floppy read"""
+a disk, writing a file onto a TR-DOS disk, an ATM CP/M floppy read, a snapshot
+for another machine switches only when asked"""
 
 import base64
 import os
@@ -15,6 +16,7 @@ ISDOS = os.path.join(ROOT, 'testdata', 'loaders', 'isdos', 'ISDOS50.FDI')
 ATM_CPM = os.path.join(ROOT, 'testdata', 'machines', 'atm', 'cpm', 'prince.trd')
 MB02 = os.path.join(ROOT, 'testdata', 'loaders', 'mb02', 'SYS308.MB2')
 MDOS = os.path.join(ROOT, 'testdata', 'loaders', 'mdos', 'bootdisk.d80')
+Z80_128 = os.path.join(ROOT, 'testdata', 'loaders', 'z80', 'libspectrum', 'synth-128.z80')
 
 
 def test_slots_listed(s):
@@ -264,6 +266,21 @@ def test_disk_mdos(s):
                ok=False)
     expect(r.is_error and 'type' in r.text, 'MDOS takes the type from the name, a type option is refused', r.text)
     s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
+
+
+
+def test_zz_snapshot_for_another_machine_switches_only_when_asked(s):
+    """A 128K .z80 on a 48K: refused with the machine it needs, switched with switch_model (the WebAPI rule)"""
+    s.fresh_machine('48K')
+    try:
+        r = s.call('load_software', {'path': Z80_128, 'switch_model': False}, ok=False)
+        expect(r.is_error and '128' in r.text, 'refused, the machine it needs named', r.text[:400])
+        r = s.call('load_software', {'path': Z80_128, 'switch_model': True})
+        expect(not r.is_error, 'loaded after the switch', r.text[:400])
+        status = s.call('emulator_manage', {'action': 'status', 'response_format': 'json'})
+        expect('128' in status.text, 'the machine is a 128K now', status.text[:400])
+    finally:
+        s.fresh_machine()
 
 
 if __name__ == '__main__':

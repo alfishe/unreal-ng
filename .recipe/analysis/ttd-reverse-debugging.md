@@ -64,9 +64,13 @@ Query fields (combine freely; at least one criterion required):
 | `access` | `"write"` (default) / `"read"` / `"execute"` / `"io"` |
 | `value` | the byte written/read, 0..255 |
 | `pc_from` / `pc_to` | restrict by the PC that performed the access |
-| `phys_page` | 0..255 (JSON number): only accesses to this physical RAM page |
+| `phys_page` | 0..255 or `"rom"`: only accesses to this physical RAM page (or the ROM) |
 | `space` | `ram` (default) / `vram` / `cache`: the Sprinter's video RAM or fast RAM, the address fields then offsets in it (inside one 16 KB page) |
-| `before_frame` / `before_tin` | search at or before this point instead of the current position (`before_tin` only counts together with `before_frame`) |
+| `before_frame` / `before_tin` | search at or before this point instead of the current position (`before_tin` without `before_frame` is a 400) |
+| `before` | the same bound as a machine time (`t` of a hit, `next_before` of a cut list) |
+| `from_frame` | do not look older than this frame |
+| `all` | `true`: every match newest first (up to `limit`, default 100, at most 10000), the machine does not move |
+| `changes_only` | `true` (writes only): skip writes that stored the byte already there; each hit has `old_value` |
 
 At least one of `addr`, `addr_from`, `addr_to`, `pc_from`, `pc_to`, `value`
 is required. Address, value and PC fields may be JSON numbers or strings
@@ -103,6 +107,17 @@ barrier blocked the search — then the response also carries
 `"blocked": true` and `marker_frame`, `marker_tinframe`, `marker_kind`,
 `marker_reason`.
 
+**Every change of a variable** (a speed byte, a lives counter), with the
+value before and after, in one call - no dedupe loop:
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/find-last" -H 'Content-Type: application/json' \
+     -d '{"addr":"0x5B00","access":"write","changes_only":true,"all":true,"limit":1000}' \
+  | jq -c '.hits[] | {frame, tinframe, pc, old_value, value}'
+```
+
+A cut list (`truncated: true`) goes on with `"before": <next_before>`.
+
 Classic triage chain: value went bad at address X →
 `find-last {addr:X, access:"write"}` gives the writing `pc` →
 `GET /disasm?address=<pc-16>` shows the code →
@@ -137,19 +152,21 @@ Non-empty `pcs` array required; execution rewinds until any PC matches.
 Blocked by replay barriers like any backward travel
 (`blocked_by_marker: {kind, reason, frame, tinframe}` in the response).
 
-Loop it from bash for "previous N hits":
+Every hit at once, newest first, without moving the machine (`all`), and only
+the runs from one page (`phys_page`, 0..255 or `"rom"`) - one Z80 address on
+two banks is two different routines:
 
 ```bash
-PCS='[33156]'
-for i in 1 2 3 4 5; do
-  R=$(curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-continue" \
-       -H 'Content-Type: application/json' -d "{\"pcs\": $PCS}")
-  echo "$R" | jq -c '{pc, frame, tinframe}'
-  # optionally reverse-step once more so the next continue finds an earlier hit
-  curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-step" \
-       -H 'Content-Type: application/json' -d '{"count": 1}' >/dev/null
-done
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-continue" \
+     -H 'Content-Type: application/json' \
+     -d '{"pcs": [49152], "phys_page": 3, "all": true, "limit": 1000}' \
+  | jq -c '{count, truncated, next_before, hits: [.hits[] | {frame, tinframe, phys_page}]}'
 ```
+
+A cut list (`truncated: true`) goes on with `"before": <next_before>`.
+Bounds in both modes: `before_frame` [+ `before_tin`] or `before` (machine T,
+at or before), `from_frame` (not older). Without `all` it seeks to the newest
+hit, as before.
 
 For "when did the program read a key / write the AY / touch a port" without
 replaying, see `POST /ttd/port-events` (MCP `time_travel` `port_events`) in
@@ -168,13 +185,22 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/probe?frame=11782&kind=executed&add
 curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/scan?from_frame=11000&to_frame=12000&kind=written&addr_from=32768&addr_to=49151&phys_page=5&limit=200" \
   | jq '{matching_frames, first_match, last_match, truncated}'
 
+# The newest 50 frames that ran a routine on page 3, as runs; follow next_to_frame for more
+curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/scan?kind=executed&addr_from=49152&addr_to=49200&phys_page=3&order=newest&ranges=true&limit=50" \
+  | jq -c '{ranges, truncated, next_to_frame, exact}'
+
 # Activity heatmap over the whole session (auto bucketing)
 curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/summary?kind=executed" \
   | jq '.buckets[:5]'
 ```
 
 - `kind`: `executed` / `written` / `read`
-- `phys_page` optional (0–255) for physical addressing
+- `phys_page` optional (0–255, or `rom` for the bucket all ROM shares). Without
+  it on RAM the offset matches on every page and 16 KB window: `exact: false`,
+  a listed frame may hold another page's access
+- `limit` up to 10000; `first_match` / `last_match` are the true ends of the
+  window even when the list is cut; the cursor `next_from_frame` (oldest
+  order) / `next_to_frame` (newest) continues it
 - frames outside the indexed window answer `index_available: false` — not
   "no", just "unknown"
 - Use scan to shortlist frames, then `seek` to them and inspect
@@ -185,6 +211,7 @@ The engine stores every recorded memory at every checkpoint. These two read that
 
 - `space` is `ram`, `ramN` (machine RAM page N), or any memory the session records, by name or alias: `vram` / `sprinter.vram`, `cache` / `sprinter.fastram`, `neogs.ram`, `neogs.flash`, `gs.ram`, `moonsound.wave`, `evo.flash`, and so on. `GET /memory/regions` lists them.
 - Both read checkpoint boundaries (frame starts) by default. `at_frame` names the checkpoint read, the newest at or before the frame asked.
+- `ram` / `ramN` offsets are physical: on a Pentagon in 48K mode Z80 `0xC000` is page 0, not `ram` offset `0xC000` (page 3). For what the CPU saw, use `space: "cpu"`: `offset` is a Z80 address (offset + length at most 65536), the bytes are those at `frame` / `tinframe` through the paging then, and `banks` names the page in each 16 KB window. It replays to the point silently and restores the machine.
 - memory-at takes `tinframe` for a point inside the frame, on `ram`, `ramN`, `vram` and `cache`. It applies the frame's writes up to that point from the write journal; without the journal it builds the journal for that one frame by replay. The bytes are what a seek to frame:tinframe shows, and the machine does not move. Other memories refuse `tinframe` (their writes are not journaled): seek there.
 
 ```bash

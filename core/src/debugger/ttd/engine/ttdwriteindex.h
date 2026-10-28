@@ -49,6 +49,8 @@ public:
                                                   const std::function<bool(const TTDWriteRecord&)>& pred) const;
     /// Every record in time order
     void ForEach(const std::function<void(const TTDWriteRecord&)>& visit) const;
+    /// The records with afterT < globalT <= upToT, newest first, until @p visit returns false
+    void ForEachBackward(uint64_t afterT, uint64_t upToT, const std::function<bool(const TTDWriteRecord&)>& visit) const;
 
     void Clear();
     /// Replace the records by @p records (in time order); what DropBefore

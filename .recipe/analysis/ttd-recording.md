@@ -290,8 +290,9 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: appli
 - `file-info` reports `path`, `file_bytes`, `schema_version`, the frame range, `checkpoint_count`, which
   `sections` are present (`write_journal`, `coverage_index`, `bookmarks`, `input_journal`, `port_journals`, ...)
   and the recorded `machine` (model, ROM signature, devices): provision a matching instance before `load`.
-- `port-events` needs a stopped or paused recording (it also works on a loaded file, or on a file on disk with
-  `"file": "<path>"`). `event` is one of `key`, `ear`, `ay-read`, `ay-write`, `ay-select`, `border`, `beeper`,
+- `port-events` answers on a running recording too (the engine holds the CPU for the read; a long run that keeps
+  it busy gets an error saying to pause), on a stopped or paused one, on a loaded file, or on a file on disk with
+  `"file": "<path>"`. `event` is one of `key`, `ear`, `ay-read`, `ay-write`, `ay-select`, `border`, `beeper`,
   `in`, `out`; `arg` (MCP: `event_arg`) is the key name or AY register. `in`/`out` narrow with `port` /
   `port_mask` / `value` / `value_mask`; `newest` returns the last hits first. The reply has `event`,
   `direction`, `count`, `truncated`, `scanned` and `hits[]` (`index`, `frame`, `tinframe`, `port`, `value`,

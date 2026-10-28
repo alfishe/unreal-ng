@@ -437,9 +437,10 @@ void EmulatorAPI::portEventsTTD(const HttpRequestPtr& req,
 ///
 /// A memory at a past checkpoint from the engine's store, without seeking (memory-spaces design, step 3).
 /// Body: { "space": "ram" | "ramN" | a region name or alias ("sprinter.vram", "vram", "neogs.ram", ...), "frame",
-///         "offset" (default 0), "length" (default 256, at most 65536) }
+///         "offset" (default 0), "length" (default 256, at most 65536) }; space "cpu": Z80 addresses as the CPU saw
+///         them at frame / tinframe
 /// Response: { "space" (the engine's region), "offset", "length", "frame", "at_frame" (the checkpoint read, the
-///             newest at or before frame), "exact", "hex" }
+///             newest at or before frame), "exact", "hex" }; space "cpu" adds "banks"
 void EmulatorAPI::memoryAtTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const
 {
@@ -499,10 +500,11 @@ void EmulatorAPI::reverseStepTTD(const HttpRequestPtr& req,
 
 /// @brief POST /api/v1/emulator/{id}/ttd/reverse-continue
 ///
-/// Body: { "pcs": [int, ...] }  — non-empty list of reverse breakpoints.
+/// Body: { "pcs": [int, ...], "phys_page"?, "all"?, "limit"?, "before_frame"?, "before_tin"?, "before"?,
+///         "from_frame"? }  — non-empty list of reverse breakpoints; the rest narrow the walk.
 ///
-/// Response: { "matched": bool, "pc": int, "frame": int, "tinframe": int,
-///             "blocked_by_marker"?: { ... } }
+/// Response: { "matched": bool, "pc": int, "frame": int, "tinframe": int, "t": int, "phys_page": int|"rom",
+///             "blocked_by_marker"?: { ... } }; with all: { "hits": [...], "count", "truncated", "next_before"? }
 void EmulatorAPI::reverseContinueTTD(const HttpRequestPtr& req,
                                        std::function<void(const HttpResponsePtr&)>&& callback,
                                        const std::string& id) const
@@ -523,7 +525,27 @@ void EmulatorAPI::reverseContinueTTD(const HttpRequestPtr& req,
     std::string pcs;
     for (const Json::Value& pc : (*json)["pcs"])
         pcs += (pcs.empty() ? "" : ",") + (pc.isString() ? pc.asString() : pc.isIntegral() ? pc.asString() : std::string("?"));
-    RespondTTD(id, "reverse-continue", {{"pcs", pcs}}, callback);
+    // The other members (phys_page, all, limit, before_frame, before_tin, before, from_frame) are scalars
+    std::map<std::string, std::string> options{{"pcs", pcs}};
+    for (const std::string& name : json->getMemberNames())
+    {
+        const Json::Value& v = (*json)[name];
+        if (name == "pcs" || v.isNull())
+            continue;
+        if (v.isObject() || v.isArray())
+        {
+            Json::Value error;
+            error["error"]   = "Bad Request";
+            error["message"] = "'" + name + "' must be a number, a string or true / false";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        options[name] = v.isBool() ? (v.asBool() ? "true" : "false") : v.asString();
+    }
+    RespondTTD(id, "reverse-continue", std::move(options), callback);
 }
 
 void EmulatorAPI::getTTDCoverageProbe(const HttpRequestPtr& req,
