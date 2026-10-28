@@ -332,7 +332,7 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"volumes", {}},
         {"files", {"volume", "recursive"}},
         {"read", {"volume", "out"}},
-        {"write", {"volume", "in", "data", "start", "header"}},
+        {"write", {"volume", "in", "data", "start", "header", "type", "param2", "attributes"}},
         {"delete", {"volume", "recursive"}},
         {"mkdir", {"volume", "parents", "continuous", "blocks"}},
         {"rename", {"volume", "to"}},
@@ -761,10 +761,9 @@ MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::strin
                 return Fail(MediaError::UnreadableSource, "cannot read '" + Trim(o.at("in")) + "'");
             data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         }
-        if (auto it = o.find("start"); it != o.end())
-        {
-            // Decimal, or hex as #8000 / $8000 / 0x8000
-            std::string text = Trim(it->second);
+        // Decimal, or hex as #8000 / $8000 / 0x8000
+        auto word = [](const std::string& raw, unsigned long& value) {
+            std::string text = Trim(raw);
             int base = 10;
             const size_t prefix = !text.empty() && (text[0] == '#' || text[0] == '$')                             ? 1
                                   : text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X') ? 2
@@ -775,11 +774,34 @@ MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::strin
                 base = 16;
             }
             char* end = nullptr;
-            const unsigned long value = text.empty() ? 0x10000 : std::strtoul(text.c_str(), &end, base);
-            if (text.empty() || *end != 0 || value > 0xFFFF)
+            value = text.empty() ? 0x10000 : std::strtoul(text.c_str(), &end, base);
+            return !text.empty() && *end == 0 && value <= 0xFFFF;
+        };
+        unsigned long value = 0;
+        if (auto it = o.find("start"); it != o.end())
+        {
+            if (!word(it->second, value))
                 return Fail(MediaError::BadRequest, "option 'start': expected 0-65535 (#8000, 0x8000 or 32768), got '" + it->second + "'");
             options.start = static_cast<uint16_t>(value);
         }
+        if (auto it = o.find("param2"); it != o.end())
+        {
+            if (!word(it->second, value))
+                return Fail(MediaError::BadRequest, "option 'param2': expected 0-65535 (#8000, 0x8000 or 32768), got '" + it->second + "'");
+            options.param2 = static_cast<int32_t>(value);
+        }
+        if (auto it = o.find("type"); it != o.end())
+        {
+            static const std::vector<std::string> kTypes = {"program", "numbers", "chars", "code"};
+            const std::string text = Lower(Trim(it->second));
+            for (size_t t = 0; t < kTypes.size(); t++)
+                if (text == kTypes[t] || text == std::to_string(t))
+                    options.basicType = static_cast<int>(t);
+            if (options.basicType < 0)
+                return Fail(MediaError::BadRequest, "option 'type': expected program, numbers, chars or code (0-3), got '" + it->second + "'");
+        }
+        if (auto it = o.find("attributes"); it != o.end())
+            options.attributes = Trim(it->second);
         if (auto it = o.find("header"); it != o.end() && !ParseBool(it->second, options.header))
             return Fail(MediaError::BadRequest, "option 'header': expected true or false, got '" + it->second + "'");
     }

@@ -201,6 +201,8 @@ set(COMMON_SOURCES
     src/api/snapshot_api.cpp
     src/common/upload_helper.h
     src/common/upload_helper.cpp
+    src/common/upload_sweep.h
+    src/common/upload_sweep.cpp
     src/api/interpreter_api.cpp
     src/api/interpreter_api.h
     src/api/basic_api.cpp

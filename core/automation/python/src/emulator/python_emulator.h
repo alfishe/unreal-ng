@@ -1290,7 +1290,7 @@ namespace PythonBindings
             d["report"] = result.report.format.empty() ? py::none() : StateNodeToPy(result.report.ToStateNode());
             return d;
         }, "Load a snapshot; a file for another model: .spg (TSL) switches the model unless switch_model is False, an .szx saved on "
-           "another model is refused unless switch_model is True (or the configuration says [SNAPSHOT] SwitchModel=1). "
+           "another model, or a .z80 / .sna the machine cannot hold (a 128K file on a 48K), is refused unless switch_model is True (or the configuration says [SNAPSHOT] SwitchModel=1). "
            "commit chooses who writes the machine: '' = the plan decides (the machine's own policy, else the legacy "
            "commit), 'legacy', or a registered policy name; the answer's report says what was done or why not",
            py::arg("path"), py::arg("emulator_id") = "", py::arg("switch_model") = py::none(), py::arg("commit") = "");
@@ -2170,7 +2170,8 @@ namespace PythonBindings
                      return MediaCallPy(self, "write", slot, path, all);
                  }, py::arg("slot"), py::arg("path"), py::arg("data") = py::none(),
                  "A file onto the disk in a slot (TR-DOS NAME.T, +3DOS NAME.TYP, iS-DOS, FAT): data=bytes or "
-                 "in_='host file' (start=0x8000, header=False, volume=)")
+                 "in_='host file' (start=0x8000, header=False, type='program' | 'numbers' | 'chars' | 'code', param2=, "
+                 "attributes='RA' | '+R-H', volume=)")
             .def("media_delete", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "delete", slot, path, options);
                  }, py::arg("slot"), py::arg("path"),

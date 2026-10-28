@@ -481,3 +481,76 @@ TEST(DiskFs_Test, AttributesTimesLabels)
     EXPECT_FALSE(is.SetLabel("", "NINECHARS", 0, error));  // a Classic name has 8
     ASSERT_TRUE(is.Delete("", "read_me.txt", error)) << error;
 }
+
+/// A write sets the header's type and param 2 where the file system keeps a tape header, and the attributes on every
+/// file system with them; what a volume does not take is refused before the disk changes
+TEST(DiskFs_Test, WriteSetsTypeParam2AndAttributes)
+{
+    std::string error;
+    DiskFsEntry entry;
+
+    // +3DOS: a program with its autostart line and its length as param 2; R at once
+    std::unique_ptr<DiskImage> plus3 = Load("loaders/dsk/plus3-blank.dsk");
+    ASSERT_NE(plus3, nullptr);
+    DiskFs p3(*plus3);
+    DiskFsWriteOptions program;
+    program.basicType = 0;
+    program.start = 10;
+    program.attributes = "R";
+    ASSERT_TRUE(p3.Write("", "RUN", std::vector<uint8_t>(120, 0x0D), program, error)) << error;
+    ASSERT_TRUE(p3.Stat("", "RUN", entry, error)) << error;
+    EXPECT_EQ(entry.Field("basicType"), 0);
+    EXPECT_EQ(entry.Field("param2"), 120);
+    EXPECT_EQ(entry.start, 10u);
+    EXPECT_NE(entry.attributes.find('R'), std::string::npos) << entry.attributes;
+    DiskFsWriteOptions array;
+    array.basicType = 2;
+    array.param2 = 0x1234;
+    ASSERT_TRUE(p3.Write("", "NAMES", {1, 2, 3}, array, error)) << error;
+    ASSERT_TRUE(p3.Stat("", "NAMES", entry, error)) << error;
+    EXPECT_EQ(entry.Field("basicType"), 2);
+    EXPECT_EQ(entry.Field("param2"), 0x1234);
+    DiskFsWriteOptions headerless = program;
+    headerless.header = false;
+    EXPECT_FALSE(p3.Write("", "BARE", {1}, headerless, error));
+    EXPECT_NE(error.find("header"), std::string::npos) << error;
+    DiskFsWriteOptions bad;
+    bad.basicType = 4;
+    EXPECT_FALSE(p3.Write("", "BAD", {1}, bad, error));
+    EXPECT_NE(error.find("CODE (3)"), std::string::npos) << error;
+    EXPECT_FALSE(p3.Stat("", "BAD", entry, error));
+
+    // FAT: the attributes exactly as given; a letter FAT does not take writes nothing
+    MemoryDevice hdd(Bytes("machines/sprinter/dss_1_62_92.img"), true);
+    DiskFs fat(hdd);
+    DiskFsWriteOptions hidden;
+    hidden.attributes = "rh";
+    ASSERT_TRUE(fat.Write("", "h.txt", {1}, hidden, error)) << error;
+    ASSERT_TRUE(fat.Stat("", "h.txt", entry, error)) << error;
+    EXPECT_EQ(entry.attributes, "RH....");
+    hidden.attributes = "+S";  // added to the archive bit FAT writes
+    ASSERT_TRUE(fat.Write("", "s.txt", {1}, hidden, error)) << error;
+    ASSERT_TRUE(fat.Stat("", "s.txt", entry, error)) << error;
+    EXPECT_EQ(entry.attributes, "..S..A");
+    hidden.attributes = "D";
+    EXPECT_FALSE(fat.Write("", "d.txt", {1}, hidden, error));
+    EXPECT_NE(error.find("RHSA"), std::string::npos) << error;
+    EXPECT_FALSE(Exists(fat, "d.txt"));
+    EXPECT_FALSE(fat.Write("", "t.txt", {1}, program, error));
+    EXPECT_NE(error.find("no header type"), std::string::npos) << error;
+
+    // TR-DOS: the type is the name's letter; no param 2, no attributes
+    auto trd = std::make_unique<DiskImage>(uint8_t{80}, uint8_t{2});
+    LoaderTRD loader({}, "");
+    ASSERT_TRUE(loader.format(trd.get()));
+    DiskFs trdos(*trd);
+    DiskFsWriteOptions param2;
+    param2.param2 = 5;
+    EXPECT_FALSE(trdos.Write("", "A.C", {1}, param2, error));
+    EXPECT_NE(error.find("param 2"), std::string::npos) << error;
+    DiskFsWriteOptions attributes;
+    attributes.attributes = "R";
+    EXPECT_FALSE(trdos.Write("", "A.C", {1}, attributes, error));
+    EXPECT_NE(error.find("no file attributes"), std::string::npos) << error;
+    EXPECT_FALSE(trdos.Stat("", "A.C", entry, error));
+}

@@ -41,6 +41,7 @@
 #include "emulator/io/controllers/controllerconfig.h"
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "loaders/nex/loadernex.h"
@@ -2380,8 +2381,8 @@ bool Emulator::IsRzxExtension(const std::string& ext)
     return StringHelper::ToLower(ext) == "rzx";
 }
 
-bool Emulator::InspectSnapshot(const std::string& path, const snapshot::Options& options, StateNode& result,
-                               std::string& error)
+bool Emulator::PlanSnapshot(const std::string& path, const snapshot::Options& options, snapshot::Image& image,
+                            snapshot::Report& plan, bool& proceeds, std::string& error)
 {
     if (_state == StateDestroying || _isReleased || !_context)
     {
@@ -2396,7 +2397,6 @@ bool Emulator::InspectSnapshot(const std::string& path, const snapshot::Options&
     }
     const std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
 
-    snapshot::Image image;
     if (ext == "sna" || ext == "snx")
     {
         LoaderSNA loader(_context, absolutePath);
@@ -2434,15 +2434,25 @@ bool Emulator::InspectSnapshot(const std::string& path, const snapshot::Options&
     }
 
     // The plan asks its questions and writes nothing
-    snapshot::Report plan;
     snapshot::Options dryRun = options;
     dryRun.beforeCommit = nullptr;   // a dry plan commits nothing: it announces nothing
-    const snapshot::Decision decision = snapshot::Pipeline::Plan(image, _context, dryRun, plan);
+    proceeds = snapshot::Pipeline::Plan(image, _context, dryRun, plan).Proceeds();
+    return true;
+}
+
+bool Emulator::InspectSnapshot(const std::string& path, const snapshot::Options& options, StateNode& result,
+                               std::string& error)
+{
+    snapshot::Image image;
+    snapshot::Report plan;
+    bool proceeds = false;
+    if (!PlanSnapshot(path, options, image, plan, proceeds, error))
+        return false;
     result = StateNode::Object();
-    result["path"] = absolutePath;
+    result["path"] = FileHelper::AbsolutePath(path);
     result["image"] = snapshot::ToStateNode(image);
     result["plan"] = plan.ToStateNode();
-    result["would_load"] = decision.Proceeds();
+    result["would_load"] = proceeds;
     result["would_commit"] = plan.commit;
     return true;
 }
@@ -3881,8 +3891,14 @@ void Emulator::DebugOn()
 
 void Emulator::DebugOff()
 {
-    // Switch to fast memory interface (a replay keeps the instrumented one until it ends)
+    // Switch to fast memory interface (a replay keeps the instrumented one until it ends). A memory or call trace
+    // session an automation client started keeps it: the UI's need ended, not the session's
     _isDebug = false;
+    if (_memory && _memory->GetAccessTracker().HasCapturingSession())
+    {
+        MLOGINFO("Emulator::DebugOff - debug mode stays on: a memory or call trace session is capturing");
+        return;
+    }
     if (_featureManager)
         _featureManager->setFeature(Features::kDebugMode, false);
 }

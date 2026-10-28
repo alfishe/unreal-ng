@@ -76,6 +76,9 @@ public:
     // Clean up all staged files (called on shutdown)
     void cleanup();
 
+    // Remove the folders of sessions whose process is gone (called when the WebAPI starts)
+    void sweepLeftovers();
+
     // Get session upload directory
     const std::string& getUploadDir() const { return _uploadDir; }
 
@@ -83,10 +86,11 @@ private:
     UploadHelper();
     ~UploadHelper();
 
+    void resolveWritableRoot();
     void ensureUploadDir();
 
     std::string _writableRoot;
-    std::string _uploadDir;      // <writable_root>/uploads/<session_uuid>/
+    std::string _uploadDir;      // <writable_root>/uploads/<pid>-<random>/
     std::string _sessionId;
     uint32_t _uploadSeq = 0;
     std::mutex _mutex;

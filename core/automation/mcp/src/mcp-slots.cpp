@@ -45,7 +45,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"volumes", {}},
         {"files", {"volume", "recursive"}},
         {"read", {"volume", "out"}},
-        {"write", {"volume", "in", "data", "start", "header"}},
+        {"write", {"volume", "in", "data", "start", "header", "type", "param2", "attributes"}},
         {"delete", {"volume", "recursive"}},
         {"rename", {"volume", "to"}},
         {"mkdir", {"volume", "parents", "continuous", "blocks"}},
@@ -353,7 +353,13 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["in"]["description"] = "write: the bytes from this host file";
     schema["properties"]["data"]["description"] = "write: the bytes in base64 (instead of 'in')";
     schema["properties"]["start"]["description"] =
-        "write: the TR-DOS start field / the +3DOS CODE / the iS-DOS load address: 32768, 0x8000 or #8000";
+        "write: the TR-DOS / MDOS start field, the +3DOS / MB-02 CODE address or program autostart line, the iS-DOS load "
+        "address: 32768, 0x8000 or #8000";
+    schema["properties"]["type"]["description"] =
+        "write: the header's type, program, numbers, chars or code (+3DOS; MB-02 program or code; left out: code; MDOS "
+        "takes it from the name, TR-DOS from the name's letter)";
+    schema["properties"]["param2"]["description"] =
+        "write: +3DOS, MB-02, MDOS: the header's param 2 (left out: a program's length, i.e. no variables; else 32768)";
     schema["properties"]["to"]["description"] =
         "rename: the new name; a bare name keeps the file in its directory, FAT, iS-DOS and MB-02 take a path from the root "
         "(/name: the root), moving the file or the directory";
@@ -365,7 +371,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["attributes"]["description"] =
         "attrib: the letters of the volume's file system (volumes lists them: FAT RHSA read only / hidden / system / "
         "archive, iS-DOS RWHD read / write protected, hidden, delete protected, +3DOS and ATM CP/M RSA, MDOS HSPARWED): '+R-H' sets and clears, 'RA' "
-        "leaves exactly these set";
+        "leaves exactly these set; write: the same, set once the file is written";
     schema["properties"]["time"]["description"] =
         "attrib: the date and time of the file or directory (FAT, iS-DOS, MB-02): '2026-10-26 14:30[:05]', 'now' or UTC seconds";
     schema["properties"]["label"]["description"] =

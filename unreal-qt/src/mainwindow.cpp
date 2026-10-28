@@ -4042,9 +4042,15 @@ void MainWindow::applyDebugInstrumentation(bool enabled)
     if (_emulator)
     {
         if (enabled)
+        {
             _emulator->DebugOn();
-        else
+            _debugInstrumentationByUi = true;
+        }
+        else if (_debugInstrumentationByUi)
+        {
             _emulator->DebugOff();
+            _debugInstrumentationByUi = false;
+        }
     }
 }
 
@@ -5662,7 +5668,9 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
     // 7. UI state
     updateMenuStates();
 
-    // Debug instrumentation follows the debugger window: on only while it is visible
+    // Debug instrumentation follows the debugger window: on only while it is visible. The adopted instance's own
+    // debug mode (an automation client switched it on) is not the window's to switch off
+    _debugInstrumentationByUi = false;
     applyDebugInstrumentation(debuggerWindow && debuggerWindow->isVisible());
 
     // Turbo render cap for this emulator: the display refresh rate we are on

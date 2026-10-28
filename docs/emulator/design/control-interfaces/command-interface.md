@@ -3621,7 +3621,7 @@ Play RZX input recordings (game completions from the RZX Archive and the like): 
 
 `snapshot load <file.rzx>` and `open <file.rzx>` also play a recording, on the selected machine without switching the model.
 
-`snapshot load <file.spg>` (a TS-Conf program) switches the selected machine to TS-Conf (`TSL`) first unless `--no-switch` is given, and prints the new instance id; the WebAPI, MCP, Lua, Python and the Qt window do the same ([webapi-interface.md → Snapshots](./webapi-interface.md#snapshots-implemented-separately)).
+`snapshot load <file.spg>` (a TS-Conf program) switches the selected machine to TS-Conf (`TSL`) first unless `--no-switch` is given, and prints the new instance id. An `.szx` saved on another model, or a `.z80` / `.sna` the machine cannot hold (a 128K file on a 48K: the machine its header names; a Pentagon 512 file on a Pentagon 128), switches only with `--switch` (or `[SNAPSHOT] SwitchModel=1` in the configuration) and is refused otherwise with the machine it needs. Every plane takes the same choice: WebAPI `snapshot/load` `switch_model` (body or query), MCP `load_software` `switch_model`, Lua `snapshot_load(path, {switch_model = true})`, Python `unreal.snapshot_load(path, switch_model=True)`; not given, an SPG switches and the others are refused. A script bound to one machine (a Lua script bound to an instance, Python `Emulator`) never switches. The Qt window does the same ([webapi-interface.md → Snapshots](./webapi-interface.md#snapshots-implemented-separately)).
 
 **Terms**:
 - *Frame* (RZX): the stretch between two interrupts, measured in opcode fetches (R-register increments); not the 50 Hz video frame.
@@ -4381,7 +4381,7 @@ Commands for saving, loading, and manipulating complete emulator state.
 | Command | Arguments | Description | Status |
 | :--- | :--- | :--- | :--- |
 | `snapshot save <file>` | `<filename>` | Save complete emulator state to file. Includes CPU registers, memory contents, peripheral states, and execution history. Supports standard formats (.z80, .sna, .szx) plus native extended format. | 🔮 Planned |
-| `snapshot load <file>` | `<filename>` | Load previously saved snapshot. Restores all state including breakpoints (if saved in native format). Auto-detects format from file header. | 🔮 Planned |
+| `snapshot load <file>` | `<filename> [--switch\|--no-switch] [--commit <name>]` | Load a snapshot (.sna, .z80, .szx, .spg, .nex, .rzx; format from the extension and the header). A file for another machine: an SPG switches the model unless `--no-switch`; an SZX of another model or a Z80 / SNA the machine cannot hold (a 128K file on a 48K) only with `--switch`, refused otherwise with the machine it needs ([rule](#12-rzx-playback) below the RZX table). Restoring breakpoints from a native format stays planned. | ✅ Implemented |
 | `snapshot slot save <N>` | `<slot-number>` | Quick-save to numbered slot (1-10). Slots stored in emulator session directory. | 🔮 Planned |
 | `snapshot slot load <N>` | `<slot-number>` | Quick-load from numbered slot. | 🔮 Planned |
 | `snapshot slot list` | | List all saved slots with timestamps and annotations. | 🔮 Planned |

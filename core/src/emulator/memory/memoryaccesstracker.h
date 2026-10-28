@@ -295,6 +295,10 @@ public:
 
     /// @brief Check if call trace is actively capturing
     bool IsCalltraceCapturing() const;
+
+    /// @brief A memory or call trace session is capturing: it needs the debug memory interface, so whoever
+    /// switched debug mode on for its own needs leaves it on
+    bool HasCapturingSession() const;
     /// endregion </Session Control - Call Trace>
     /// endregion </Initialization>
 

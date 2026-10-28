@@ -71,11 +71,17 @@ struct DiskFsEntry
 
 struct DiskFsWriteOptions
 {
-    uint16_t start = 0;        ///< TR-DOS: the start field; +3DOS: a CODE file's load address (param 1)
+    uint16_t start = 0;        ///< TR-DOS: the start field; +3DOS, MB-02, MDOS: param 1, CODE's load address or a
+                               ///< program's autostart line; iS-DOS: the load address
     bool lengthField = true;   ///< TR-DOS: false leaves 0 in the length field (XAS reads whole sectors)
     bool header = true;        ///< +3DOS: a +3DOS header in front, as +3 BASIC's SAVE writes it
     int64_t mtime = 0;         ///< FAT, iS-DOS, MB-02: the file's date and time as UTC seconds of the DOS wall clock
                                ///< (0: 1980-01-01 00:00)
+    int basicType = -1;        ///< +3DOS, MB-02: the header's type, 0 a program, 1 a number array, 2 a character array,
+                               ///< 3 CODE (-1: CODE); MB-02 takes 0 and 3, MDOS takes the type from the name
+    int32_t param2 = -1;       ///< +3DOS, MB-02, MDOS: the header's param 2 (-1: a program's length, else 32768)
+    std::string attributes;    ///< the letters SetAttributes takes, set once the file is written: "RA" exactly these,
+                               ///< "+R-H" changes to what the file system writes ("": as written)
 };
 
 struct DiskFsDirectoryOptions

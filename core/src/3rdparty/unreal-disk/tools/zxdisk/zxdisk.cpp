@@ -6,9 +6,12 @@
 //       a directory's entries (-r: the whole tree under it)
 //   zxdisk cat <image> <file> [-o out] [--volume id]
 //       a file's bytes (to stdout without -o)
-//   zxdisk put <image> <host-file> [name] [--start n] [-o out-image] [--volume id]
+//   zxdisk put <image> <host-file> [name] [--start n] [--type t] [--param2 n] [--attributes RA] [-o out-image]
+//              [--volume id]
 //       a host file onto the disk (TR-DOS NAME.T, +3DOS NAME.TYP, ATM CP/M USERn/NAME.TYP, FAT and iS-DOS
-//       dir/name.ext, MB-02 dir/name, MDOS NAME.T), an older file of that name replaced
+//       dir/name.ext, MB-02 dir/name, MDOS NAME.T), an older file of that name replaced; --type program, numbers,
+//       chars or code (+3DOS; MB-02 program or code), --param2 (+3DOS, MB-02, MDOS: a program's length by default),
+//       --attributes the letters attrib takes, set once the file is written
 //   zxdisk rm <image> <file> [-r] [-o out-image] [--volume id]
 //       delete a file or an empty directory (FAT, iS-DOS, MB-02; -r: a directory with everything in it)
 //   zxdisk mv <image> <file> <new-name> [-o out-image] [--volume id]
@@ -62,7 +65,8 @@ int Usage()
     std::cerr << "usage: zxdisk volumes <image>\n"
                  "       zxdisk ls <image> [dir] [-r] [--volume id]\n"
                  "       zxdisk cat <image> <file> [-o out] [--volume id]\n"
-                 "       zxdisk put <image> <host-file> [name] [--start n] [-o out-image] [--volume id]\n"
+                 "       zxdisk put <image> <host-file> [name] [--start n] [--type program|numbers|chars|code]\n"
+                 "                  [--param2 n] [--attributes RA] [-o out-image] [--volume id]\n"
                  "       zxdisk rm <image> <file> [-r] [-o out-image] [--volume id]\n"
                  "       zxdisk mv <image> <file> <new-name> [-o out-image] [--volume id]\n"
                  "       zxdisk mkdir <image> <dir> [-p] [--continuous] [--blocks n] [-o out-image] [--volume id]\n"
@@ -273,6 +277,7 @@ int main(int argc, char** argv)
     bool recursive = false;
     bool parents = false;
     DiskFsDirectoryOptions directory;
+    DiskFsWriteOptions write;
     std::string time;
     for (int i = 1; i < argc; i++)
     {
@@ -307,7 +312,24 @@ int main(int argc, char** argv)
             if (!value(time))
                 return Usage();
         }
-        else if (a == "--offset" || a == "--start" || a == "--blocks")
+        else if (a == "--attributes")
+        {
+            if (!value(write.attributes))
+                return Usage();
+        }
+        else if (a == "--type")
+        {
+            std::string type;
+            if (!value(type))
+                return Usage();
+            const char* const kTypes[] = {"program", "numbers", "chars", "code"};
+            for (int t = 0; t < 4; t++)
+                if (type == kTypes[t] || type == std::to_string(t))
+                    write.basicType = t;
+            if (write.basicType < 0)
+                return Fail("--type: program, numbers, chars or code, not " + type);
+        }
+        else if (a == "--offset" || a == "--start" || a == "--blocks" || a == "--param2")
         {
             if (!value(number))
                 return Usage();
@@ -316,6 +338,8 @@ int main(int argc, char** argv)
                 offset = n;
             else if (a == "--blocks")
                 directory.blocks = static_cast<uint32_t>(std::min<unsigned long long>(n, 0xFFFF));
+            else if (a == "--param2")
+                write.param2 = static_cast<int32_t>(std::min<unsigned long long>(n, 0x10000));
             else
                 start = static_cast<uint32_t>(n);
         }
@@ -419,11 +443,10 @@ int main(int argc, char** argv)
             std::vector<uint8_t> data;
             if (!ReadHostFile(args[2], data))
                 return Fail("cannot read " + args[2]);
-            DiskFsWriteOptions options;
-            options.start = static_cast<uint16_t>(start);
-            options.mtime = Now();
+            write.start = static_cast<uint16_t>(start);
+            write.mtime = Now();
             const std::string name = args.size() > 3 ? args[3] : BaseName(args[2]);
-            if (!fs.Write(volume, name, data, options, error))
+            if (!fs.Write(volume, name, data, write, error))
                 return Fail(error);
         }
         else if (verb == "rm"      ? !fs.Delete(volume, args[2], error, recursive)

@@ -48,6 +48,7 @@ zxdisk volumes ATM_HDD.HDD                       # cpm-1 ATM CP/M "D:", cpm-6 ..
 zxdisk ls ISDOS50.FDI SHELL -r                   # the tree under SHELL
 zxdisk cat dss_1_62_92.img pics/sample.bmp -o sample.bmp
 zxdisk put game.trd loader.bin LOADER.C --start 0x6000   # onto a TR-DOS or +3DOS floppy, saved back
+zxdisk put plus3.dsk prog.bas RUN.BAS --type program --start 10 --attributes R   # a +3DOS program, autostart 10
 ```
 
 A floppy in any format the library reads; any other file is a raw hard disk image (`--offset n` skips a header).
