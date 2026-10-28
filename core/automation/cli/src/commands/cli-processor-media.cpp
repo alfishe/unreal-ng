@@ -26,7 +26,7 @@ namespace
     const std::set<std::string> kValueOptions = {"access", "fs",       "codepage", "free", "format", "kind",
                                                  "export", "cylinders", "sides",   "size", "on",     "retarget",
                                                  "compression", "parent", "volume", "out", "in", "data", "start", "to",
-                                                 "attributes", "time", "label", "blocks"};
+                                                 "attributes", "time", "label", "blocks", "type", "param2"};
 
     /// Verbs that take a path after the slot
     bool TakesPath(const std::string& verb)
@@ -428,11 +428,15 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
         << "                                 iS-DOS devices of an ATM hard disk" << NEWLINE;
     out << "  files <slot> [dir] [--volume id] [--recursive] - a directory's entries (the first volume by default)" << NEWLINE;
     out << "  read <slot> <file> [--volume id] [--out host-file] - a file's bytes (a hex dump without --out)" << NEWLINE;
-    out << "  write <slot> <file> --in host-file | --data base64 [--start n] [--header=false] [--volume id]" << NEWLINE
+    out << "  write <slot> <file> --in host-file | --data base64 [--start n] [--header=false] [--type t] [--param2 n]" << NEWLINE
+        << "                               [--attributes RA] [--volume id]" << NEWLINE
         << "                               - a file onto the disk (TR-DOS NAME.T, +3DOS NAME.TYP, MDOS name.T, FAT and" << NEWLINE
         << "                                 iS-DOS dir/name.ext, MB-02 dir/name, ATM CP/M USERn/NAME.TYP), an older file of that name replaced; --start: the" << NEWLINE
-        << "                                 TR-DOS / MDOS start, +3DOS CODE, iS-DOS load address (#8000, 0x8000, 32768);" << NEWLINE
-        << "                                 --header=false: +3DOS without its header" << NEWLINE;
+        << "                                 TR-DOS / MDOS start, +3DOS / MB-02 CODE address or program autostart line, iS-DOS" << NEWLINE
+        << "                                 load address (#8000, 0x8000, 32768); --header=false: +3DOS without its header;" << NEWLINE
+        << "                                 --type program|numbers|chars|code (+3DOS; MB-02 program or code), --param2 (+3DOS," << NEWLINE
+        << "                                 MB-02, MDOS: a program's length without variables by default); --attributes as" << NEWLINE
+        << "                                 attrib takes them, set once the file is written" << NEWLINE;
     out << "  delete <slot> <file> [--volume id] [--recursive] - delete a file or an empty directory (FAT, iS-DOS, MB-02);" << NEWLINE
         << "                                 --recursive: a directory with everything in it" << NEWLINE;
     out << "  rename <slot> <file> <new-name> [--volume id] - a bare new name keeps it in its directory; FAT," << NEWLINE

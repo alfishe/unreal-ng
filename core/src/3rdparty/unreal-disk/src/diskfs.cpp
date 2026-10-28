@@ -183,6 +183,10 @@ struct DiskFs::Driver
     virtual bool SizedDirectories() const { return false; }
     /// Whether the entry may be deleted (a recursive delete checks every entry before it deletes one)
     virtual bool Deletable(const DiskFsEntry&, std::string&) { return true; }
+    /// The header types Write takes as DiskFsWriteOptions::basicType, as digits ("": none)
+    virtual std::string BasicTypes() const { return {}; }
+    /// Whether Write takes DiskFsWriteOptions::param2
+    virtual bool TakesParam2() const { return false; }
     /// The attribute letters SetAttributes takes ("": none)
     virtual std::string AttributeLetters() const { return {}; }
     /// The entry's attributes set to exactly `letters` (of AttributeLetters, upper case)
@@ -418,8 +422,20 @@ struct Plus3Driver : DiskFs::Driver
         Plus3FileSystem::WriteOptions write;
         write.header = options.header;
         write.param1 = options.start;
+        if (!options.header && (options.basicType >= 0 || options.param2 >= 0))
+        {
+            error = "a type and param 2 go in the +3DOS header: leave header on";
+            return false;
+        }
+        write.basicType = static_cast<uint8_t>(options.basicType >= 0 ? options.basicType : 3);
+        write.param2 = static_cast<uint16_t>(options.param2 >= 0           ? options.param2
+                                             : write.basicType == 0 ? std::min<size_t>(data.size(), 0xFFFF)
+                                                                    : 0x8000);
         return fs.Write(path, data, write, error);
     }
+
+    std::string BasicTypes() const override { return "0123"; }
+    bool TakesParam2() const override { return true; }
 
     bool Delete(const std::string& path, std::string& error) override { return fs.Delete(path, error); }
 
@@ -1277,9 +1293,16 @@ struct Mb02Driver : BsdosTree<Mb02FileSystem>
             return false;
         Mb02FileSystem::WriteOptions write;
         write.start = options.start;
+        write.type = static_cast<uint8_t>(options.basicType >= 0 ? options.basicType : 3);
+        write.param2 = static_cast<uint16_t>(options.param2 >= 0  ? options.param2
+                                             : write.type == 0 ? std::min<size_t>(data.size(), 0xFFFF)
+                                                               : 0x8000);
         Dos(options.mtime, write.date, write.time);
         return fs.Write(number, Unescape(name), data, write, error);
     }
+
+    std::string BasicTypes() const override { return "03"; }
+    bool TakesParam2() const override { return true; }
 
     bool Delete(const std::string& path, std::string& error) override
     {
@@ -1455,9 +1478,13 @@ struct MdosDriver : DiskFs::Driver
         MdosFileSystem::WriteOptions write;
         write.start = options.start;
         // A program: its length without variables; else as a tape header's CODE
-        write.param2 = type == 'P' ? static_cast<uint16_t>(std::min<size_t>(data.size(), 0xFFFF)) : 0x8000;
+        write.param2 = static_cast<uint16_t>(options.param2 >= 0 ? options.param2
+                                             : type == 'P'        ? std::min<size_t>(data.size(), 0xFFFF)
+                                                                  : 0x8000);
         return fs.Write(name, type, data, write, error);
     }
+
+    bool TakesParam2() const override { return true; }
 
     bool Delete(const std::string& path, std::string& error) override
     {
@@ -2034,9 +2061,59 @@ DiskFs::Driver* DiskFs::FindWritable(const std::string& volume, std::string& err
     return driver;
 }
 
+namespace
+{
+/// `attributes` applied to the letters `current`: "+R-H" changes them, "RA" replaces them. False with the reason on a
+/// letter the volume does not take
+bool AttributeSet(const DiskFsVolume& v, const std::string& current, const std::string& attributes, std::string& set,
+                  std::string& error)
+{
+    if (v.attributes.empty())
+    {
+        error = "the " + v.system + " volume '" + v.id + "' has no file attributes";
+        return false;
+    }
+    set.clear();
+    const bool relative = !attributes.empty() && (attributes[0] == '+' || attributes[0] == '-');
+    if (relative)
+        for (const char c : current)
+            if (v.attributes.find(c) != std::string::npos)
+                set += c;
+    char sign = '+';
+    for (const char raw : attributes)
+    {
+        const char c = static_cast<char>(std::toupper(static_cast<unsigned char>(raw)));
+        if (relative && (c == '+' || c == '-'))
+        {
+            sign = c;
+            continue;
+        }
+        if (v.attributes.find(c) == std::string::npos)
+        {
+            error = "attributes '" + attributes + "': the " + v.system + " volume takes " + v.attributes + " (+R-H changes, RA sets exactly)";
+            return false;
+        }
+        const size_t at = set.find(c);
+        if (sign == '+' && at == std::string::npos)
+            set += c;
+        else if (sign == '-' && at != std::string::npos)
+            set.erase(at, 1);
+    }
+    if (attributes.empty() || (relative && attributes.find_first_not_of("+-") == std::string::npos))
+    {
+        error = "name the attributes: the " + v.system + " volume takes " + v.attributes + " (+R-H changes, RA sets exactly)";
+        return false;
+    }
+    return true;
+}
+}  // namespace
+
 bool DiskFs::Write(const std::string& volume, const std::string& path, const std::vector<uint8_t>& data,
                    const DiskFsWriteOptions& options, std::string& error)
 {
+    size_t index = 0;
+    if (!Find(volume, error, &index))
+        return false;
     Driver* driver = FindWritable(volume, error);
     const std::string clean = CleanPath(path);
     if (driver && clean.empty())
@@ -2044,7 +2121,35 @@ bool DiskFs::Write(const std::string& volume, const std::string& path, const std
         error = "name a file";
         return false;
     }
-    return driver && driver->Write(clean, data, options, error);
+    if (!driver)
+        return false;
+    // Everything asked for is checked before the disk changes
+    const DiskFsVolume& v = _volumes[index];
+    if (options.basicType >= 0)
+    {
+        static const char* const kTypes[] = {"a program (0)", "a number array (1)", "a character array (2)", "CODE (3)"};
+        const std::string types = driver->BasicTypes();
+        if (options.basicType > 3 || types.find(static_cast<char>('0' + options.basicType)) == std::string::npos)
+        {
+            std::string takes;
+            for (const char t : types)
+                takes += (takes.empty() ? "" : ", ") + std::string(kTypes[t - '0']);
+            error = "type " + std::to_string(options.basicType) + ": the " + v.system + " volume takes " +
+                    (takes.empty() ? "no header type" : takes);
+            return false;
+        }
+    }
+    if (options.param2 >= 0 && (!driver->TakesParam2() || options.param2 > 0xFFFF))
+    {
+        error = driver->TakesParam2() ? "param2 is 0-65535" : "the " + v.system + " volume keeps no header param 2";
+        return false;
+    }
+    std::string set;
+    if (!options.attributes.empty() && !AttributeSet(v, {}, options.attributes, set, error))
+        return false;
+    if (!driver->Write(clean, data, options, error))
+        return false;
+    return options.attributes.empty() || SetAttributes(volume, clean, options.attributes, error);
 }
 
 bool DiskFs::Delete(const std::string& volume, const std::string& path, std::string& error, bool recursive)
@@ -2146,11 +2251,9 @@ bool DiskFs::SetAttributes(const std::string& volume, const std::string& path, c
     if (!driver)
         return false;
     const DiskFsVolume& v = _volumes[index];
-    if (v.attributes.empty())
-    {
-        error = "the " + v.system + " volume '" + v.id + "' has no file attributes";
+    std::string set;
+    if (!AttributeSet(v, {}, attributes, set, error))
         return false;
-    }
     const std::string clean = CleanPath(path);
     DiskFsEntry entry;
     if (clean.empty())
@@ -2158,41 +2261,9 @@ bool DiskFs::SetAttributes(const std::string& volume, const std::string& path, c
         error = "name the file";
         return false;
     }
-    if (!Stat(volume, clean, entry, error))
-        return false;
     // The letters set now, then the change: "+R-H" or exactly "RA"
-    std::string set;
-    for (const char c : entry.attributes)
-        if (v.attributes.find(c) != std::string::npos)
-            set += c;
-    const bool relative = !attributes.empty() && (attributes[0] == '+' || attributes[0] == '-');
-    if (!relative)
-        set.clear();
-    char sign = '+';
-    for (const char raw : attributes)
-    {
-        const char c = static_cast<char>(std::toupper(static_cast<unsigned char>(raw)));
-        if (relative && (c == '+' || c == '-'))
-        {
-            sign = c;
-            continue;
-        }
-        if (v.attributes.find(c) == std::string::npos)
-        {
-            error = "attributes '" + attributes + "': the " + v.system + " volume takes " + v.attributes + " (+R-H changes, RA sets exactly)";
-            return false;
-        }
-        const size_t at = set.find(c);
-        if (sign == '+' && at == std::string::npos)
-            set += c;
-        else if (sign == '-' && at != std::string::npos)
-            set.erase(at, 1);
-    }
-    if (attributes.empty() || (relative && attributes.find_first_not_of("+-") == std::string::npos))
-    {
-        error = "name the attributes: the " + v.system + " volume takes " + v.attributes + " (+R-H changes, RA sets exactly)";
+    if (!Stat(volume, clean, entry, error) || !AttributeSet(v, entry.attributes, attributes, set, error))
         return false;
-    }
     error.clear();
     return driver->SetAttributes(entry, set, error);
 }
