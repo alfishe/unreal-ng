@@ -112,6 +112,9 @@ public:
     /// clicks 60 ms apart, `buzz` one buzz (its length is the device's Waveform Cutoff). Repeat Count is the number of
     /// plays (01 03 03 00 00 gave three clicks)
     static std::vector<uint8_t> PatternReport(HapticPattern pattern);
+    /// Output report 1 with Manual Trigger 2 (stop): the Dial ends the play in progress and drops the plays queued
+    /// behind it (measured 2026-10-28)
+    static std::vector<uint8_t> StopReport();
     /// Feature report 1 for the steps and clicks (devices.md §1.2): the Resolution Multiplier, Repeat Count 0, Auto
     /// Trigger 3 (a click at each step) or 1 (none: a free wheel, the steps kept), and @p base's cutoff and retrigger
     /// (the device's own: a write keeps them)
@@ -144,10 +147,72 @@ private:
     SurfaceDialFeature _feature;
 };
 
+/// How long the Dial plays an output report: a click waveform takes about the retrigger period, the buzz (continuous,
+/// cut off by the device) longer. SurfaceDialPlays waits that long before the next play
+struct SurfaceDialPlayTiming
+{
+    uint32_t clickMs = 80;
+    uint32_t buzzMs = 250;
+};
+
+/// The Dial's output reports, one play at a time. The Dial takes every output report at once (a write is a ~30 ms
+/// Bluetooth LE round trip) and plays them one after another: ten buzzes written in 300 ms buzz ten times as long as
+/// one, and a fast turn at the end of the history kept it buzzing for seconds (measured 2026-10-28). So the next report
+/// goes when the previous one has played; until then one waits, the strongest asked for (a buzz over more clicks over
+/// fewer). An overflow (a request while one already waits: the hand outruns the Dial) drops the weaker, and the next
+/// play goes after a stop (StopReport), which also ends whatever the Dial still holds when the timing is short
+class SurfaceDialPlays
+{
+public:
+    explicit SurfaceDialPlays(SurfaceDialPlayTiming timing = {}) : _timing(timing)
+    {
+    }
+
+    /// A play asked for at @p nowMs (an output report 1)
+    void Offer(std::vector<uint8_t> report, uint64_t nowMs);
+    /// The reports to write at @p nowMs, in order: none while the last play goes on or nothing waits; a stop before
+    /// the play after an overflow. The play counts from @p nowMs
+    std::vector<std::vector<uint8_t>> Take(uint64_t nowMs);
+    bool Waiting() const
+    {
+        return _pending.has_value();
+    }
+    /// When the waiting report may go
+    uint64_t DueMs() const
+    {
+        return _busyUntilMs;
+    }
+    /// Nothing waits any more (the writer ends)
+    void Clear()
+    {
+        _pending.reset();
+        _overflow = false;
+    }
+    /// Plays dropped by overflows so far
+    uint64_t Dropped() const
+    {
+        return _dropped;
+    }
+
+    /// How long the Dial plays @p report (output report 1): its Repeat Count times the waveform's length (a click at
+    /// least the retrigger period)
+    uint32_t PlayMs(const std::vector<uint8_t>& report) const;
+    /// The order an overflow keeps: a buzz, then more plays
+    static uint32_t Strength(const std::vector<uint8_t>& report);
+
+private:
+    SurfaceDialPlayTiming _timing;
+    std::optional<std::vector<uint8_t>> _pending;
+    uint64_t _busyUntilMs = 0;
+    bool _overflow = false;
+    uint64_t _dropped = 0;
+};
+
 /// The Dial's writer thread (control surfaces architecture.md §9, §11): a report write blocks for a Bluetooth LE
 /// round trip, so feature and output reports never leave from the IOHID run loop or the actions worker. Requests only
-/// queue, the latest of each kind wins (a pattern not written yet is replaced: a fast turn never builds a backlog of
-/// clicks), and the steps go before a pattern. Shared by every backend that writes raw reports.
+/// queue: the latest steps win, the plays go one at a time through SurfaceDialPlays (a fast turn never builds a
+/// backlog of clicks or buzzes in the Dial), and the steps go before a pattern. Shared by every backend that writes
+/// raw reports.
 /// With a Read (a backend that can get feature reports): before its first write the writer reads feature report 1, the
 /// settings as found; the steps keep the found cutoff and retrigger; each feature write is read back, and one the
 /// device did not take counts as failed; when it ends, a writer that changed the steps writes the found settings back
@@ -165,7 +230,7 @@ public:
     /// Reads feature report 1 into @p report (8 bytes, the id first); false when the device did not answer
     using Read = std::function<bool(std::vector<uint8_t>& report)>;
 
-    explicit SurfaceDialWriter(Write write, Read read = {});
+    explicit SurfaceDialWriter(Write write, Read read = {}, SurfaceDialPlayTiming timing = {});
     /// What is queued is dropped; a write in flight finishes first. Then the found settings are written back (Read)
     ~SurfaceDialWriter();
     SurfaceDialWriter(const SurfaceDialWriter&) = delete;
@@ -179,6 +244,8 @@ public:
     /// Reports written / refused so far (the tests, the live check); a feature write whose read-back differs is refused
     uint64_t Written() const;
     uint64_t Failed() const;
+    /// Plays dropped because the hand outran the Dial (SurfaceDialPlays::Dropped)
+    uint64_t Dropped() const;
     /// Feature report 1 as the writer found it (Read); empty until it is read or without a Read
     std::optional<SurfaceDialFeature> Found() const;
 
@@ -191,7 +258,7 @@ private:
     mutable std::mutex _mutex;
     std::condition_variable _wake;
     std::optional<StepsOut> _steps;
-    std::optional<std::vector<uint8_t>> _output;
+    SurfaceDialPlays _plays;  ///< under _mutex
     std::optional<SurfaceDialFeature> _found;  ///< under _mutex
     SurfaceDialFeature _base;                  ///< the writer thread's: the device's cutoff and retrigger
     bool _changed = false;                     ///< under _mutex: a feature was written (the destructor restores)

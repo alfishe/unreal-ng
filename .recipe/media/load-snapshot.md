@@ -3,8 +3,22 @@
 Goal: restore a machine state from a `.sna`/`.z80`/`.szx` file (or run a TS-Conf `.spg` program), save states back out,
 and verify a snapshot actually took effect.
 
-An `.rzx` input recording loads the same way and then plays: see
-[play-rzx.md](play-rzx.md).
+An `.rzx` input recording is **not** a snapshot to load: play it with `rzx/play` (MCP `rzx_playback play`, or
+`load_software`), see [play-rzx.md](play-rzx.md). `snapshot/load` with an `.rzx` path plays it on the running machine
+only and ignores `switch_model`: a recording made on another model (most of the RZX Archive is 48K / 128K, the default
+instance is a Pentagon) fails with HTTP 400 "failed to load '...' (the log has the loader's reason)" (verified
+2026-10-28).
+
+Which call for which file:
+
+| File | WebAPI | MCP | Another model |
+|:--|:--|:--|:--|
+| `.sna` `.z80` `.szx` | `POST /snapshot/load` | `load_software` | a 48K one loads anywhere; one needing banks the machine lacks is refused (`report.needs`): create the model first; an `.szx` from another model: `switch_model: true` |
+| `.spg` | `POST /snapshot/load` with a JSON `path` | `invoke_api` `POST /snapshot/load` | switches to `TSL` by default: new `emulator_id` |
+| `.rzx` | `POST /rzx/play` | `rzx_playback {"action":"play"}` or `load_software` | switches by default: new `emulator_id` |
+
+After a switch use the answer's `emulator_id` from then on (the old instance is released): take the control session
+and set the mixer on the new one again.
 
 The formats themselves (SNA, Z80, SZX, SPG, ZXP) are described in
 [docs/file-formats/snapshots/](../../docs/file-formats/snapshots/README.md).
@@ -279,6 +293,8 @@ HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);
 
 ## Pitfalls
 
+- **`.rzx` through `snapshot/load`**: fails for a recording made on another model (HTTP 400, no switch even with
+  `switch_model: true`). Use `rzx/play` and follow the `emulator_id` it returns.
 - **Emulator-side paths**: as with all media, the emulator process must be
   able to read/write the path. Absolute `scratch/` paths save headaches.
 - **Snapshot mid-frame**: saving while free-running produces a valid state,

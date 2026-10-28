@@ -51,6 +51,20 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/rzx/stop" | jq .message
 
 Turbo mode runs the playback faster; it never changes the path the program takes.
 
+**Not `snapshot/load`.** `POST /snapshot/load {"path":"game.rzx"}` plays the file on the running machine only and
+ignores `switch_model`: a recording made on another model fails with HTTP 400 "failed to load '...' (the log has the
+loader's reason)". Most RZX Archive files are 48K / 128K recordings (the embedded snapshot's model) and the default
+instance is a Pentagon, so a script that loads them with `snapshot/load` loses nearly all of them (verified
+2026-10-28). `rzx/play` switches the model, and the answer's `emulator_id` is the new instance: take the control
+session and set its mixer there, then `run_frames` / `run_frame` on that id.
+
+```python
+answer = post(f"/emulator/{emu}/rzx/play", {"path": os.path.abspath(path)})
+if answer["status"] != "success":
+    raise RuntimeError(answer.get("message"))
+emu = answer.get("emulator_id", emu)        # a new instance when model_switched
+```
+
 ## Reading the status
 
 | `state` | Meaning |
