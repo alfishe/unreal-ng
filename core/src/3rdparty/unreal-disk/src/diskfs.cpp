@@ -1120,10 +1120,10 @@ struct CpmDriver : DiskFs::Driver
     CpmFileSystem fs;
 };
 
-void DescribeCpm(const CpmFileSystem& fs, DiskFsVolume& volume)
+void DescribeCpm(const CpmFileSystem& fs, DiskFsVolume& volume, const char* system = "ATM CP/M")
 {
     volume.fs = "cpm";
-    volume.system = "ATM CP/M";
+    volume.system = system;
     uint32_t free = 0;
     if (fs.FreeBlocks(free))
         volume.freeBytes = static_cast<int64_t>(free) * CpmGeometry::kBlock;
@@ -1191,6 +1191,119 @@ CpmFileSystem::ByteWriter CpmWriterAt(BlockDevice& device, const AtmCpmChannel& 
         }
         return true;
     };
+}
+
+/// The bytes of a Profi CP/M hard disk partition from sector `base` on. The Profi's IDE port reads the high byte of
+/// each word first, so a dump of its disk has the two bytes of every word swapped
+CpmFileSystem::ByteReader ProfiReaderAt(BlockDevice& device, uint64_t base, std::shared_ptr<SectorCache> cache)
+{
+    return [&device, base, cache](uint64_t offset, uint8_t* dst, uint32_t size) {
+        while (size > 0)
+        {
+            const uint64_t lba = base + offset / kSector;
+            if (lba != cache->lba)
+            {
+                uint8_t raw[kSector];
+                if (!device.ReadSector(lba, raw))
+                {
+                    cache->lba = UINT64_MAX;
+                    return false;
+                }
+                for (uint32_t i = 0; i < kSector; i++)
+                    cache->sector[i] = raw[i ^ 1];
+                cache->lba = lba;
+            }
+            const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(kSector - offset % kSector));
+            std::memcpy(dst, cache->sector + offset % kSector, n);
+            dst += n;
+            offset += n;
+            size -= n;
+        }
+        return true;
+    };
+}
+
+/// The writer of ProfiReaderAt: each sector read, patched and written back swapped, the reader's cache dropped
+CpmFileSystem::ByteWriter ProfiWriterAt(BlockDevice& device, uint64_t base, std::shared_ptr<SectorCache> cache)
+{
+    return [&device, base, cache](uint64_t offset, const uint8_t* src, uint32_t size) {
+        while (size > 0)
+        {
+            const uint64_t lba = base + offset / kSector;
+            const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(kSector - offset % kSector));
+            uint8_t raw[kSector], sector[kSector];
+            cache->lba = UINT64_MAX;
+            if (n < kSector && !device.ReadSector(lba, raw))
+                return false;
+            for (uint32_t i = 0; i < kSector && n < kSector; i++)
+                sector[i] = raw[i ^ 1];
+            std::memcpy(sector + offset % kSector, src, n);
+            for (uint32_t i = 0; i < kSector; i++)
+                raw[i] = sector[i ^ 1];
+            if (!device.WriteSector(lba, raw))
+                return false;
+            src += n;
+            offset += n;
+            size -= n;
+        }
+        return true;
+    };
+}
+
+/// A partition of the Profi hard disk table (FORMATHD.COM, HDD22.DRV): cylinders of the header's geometry
+struct ProfiPartition
+{
+    std::string name;
+    uint32_t startCylinder = 0, cylinders = 0, entries = 0;
+};
+
+/// The Profi hard disk header at cylinder 1, head 0, sector 1 (LBA heads x sectors) and its partition table in the
+/// next four sectors, read swapped: words H, S, C - 2, 0, 0, H x S, then the partition count, the active partition,
+/// the free cylinders and "ProfiHDD"; a partition entry of 32 bytes is the name (16 bytes, zero padded), 0, #AA, the
+/// start cylinder, the cylinders, the size in KB and the directory entries
+bool FindProfiDisk(BlockDevice& device, uint64_t& heads, uint64_t& sectors, std::vector<ProfiPartition>& partitions)
+{
+    const auto word = [](const uint8_t* p) { return static_cast<uint32_t>(p[0] | p[1] << 8); };
+    std::set<uint64_t> tried;
+    for (uint64_t h = 1; h <= 16; h++)
+        for (uint64_t s = 1; s <= 63; s++)
+        {
+            const uint64_t lba = h * s;
+            uint8_t raw[kSector], header[kSector];
+            if (!tried.insert(lba).second || lba + 5 > device.SectorCount() || !device.ReadSector(lba, raw))
+                continue;
+            for (uint32_t i = 0; i < kSector; i++)
+                header[i] = raw[i ^ 1];
+            if (std::memcmp(header + 16, "ProfiHDD", 8) != 0 || word(header) * word(header + 2) != lba ||
+                word(header + 10) != lba)
+                continue;
+            heads = word(header);
+            sectors = word(header + 2);
+            const uint32_t count = std::min<uint32_t>(header[12], 64);
+            partitions.clear();
+            uint8_t table[4 * kSector];
+            for (uint32_t k = 0; k < 4; k++)
+            {
+                if (!device.ReadSector(lba + 1 + k, raw))
+                    return false;
+                for (uint32_t i = 0; i < kSector; i++)
+                    table[k * kSector + i] = raw[i ^ 1];
+            }
+            for (uint32_t n = 0; n < count; n++)
+            {
+                const uint8_t* e = table + n * 32;
+                if (e[16] != 0 || e[17] != 0xAA)
+                    continue;
+                ProfiPartition p;
+                p.name.assign(reinterpret_cast<const char*>(e), strnlen(reinterpret_cast<const char*>(e), 16));
+                p.startCylinder = word(e + 18);
+                p.cylinders = word(e + 20);
+                p.entries = word(e + 24);
+                partitions.push_back(p);
+            }
+            return true;
+        }
+    return false;
 }
 
 /// The tree of a BS-DOS disk, MB-02 (Mb02FileSystem) or MB-01 (Mb01FileSystem): its directories by number with a
@@ -1887,6 +2000,55 @@ void DiskFs::Probe()
             v.bytes = static_cast<uint64_t>(c.records) * 128;
             taken.emplace_back(first, end);
             add(std::move(v), std::make_unique<CpmDriver>(std::move(fs)));
+        }
+    }
+
+    // Profi CP/M: the partitions of the table after the ProfiHDD header, each a CP/M volume of 2 KB blocks from its
+    // first cylinder on with the directory first (HDD22.DRV: DSM = cylinders x H x S / 4 - 1, DRM the entry's). The
+    // Profi BIOS does not read the MBR: a card may carry a FAT volume over the same sectors (a 3.2 GB SPM disk has
+    // FAT32 from sector 63 and CP/M written over its FATs), both are shown
+    {
+        uint64_t profiHeads = 0, profiSectors = 0;
+        std::vector<ProfiPartition> partitions;
+        if (FindProfiDisk(device, profiHeads, profiSectors, partitions))
+        {
+            taken.emplace_back(0, 2 * profiHeads * profiSectors);  // the header and the system on cylinder 1
+            for (const ProfiPartition& p : partitions)
+            {
+                const uint64_t first = static_cast<uint64_t>(p.startCylinder) * profiHeads * profiSectors;
+                const uint64_t count = static_cast<uint64_t>(p.cylinders) * profiHeads * profiSectors;
+                CpmGeometry g;
+                g.blocks = static_cast<uint32_t>(std::min<uint64_t>(count / 4, 65536));
+                g.entries = p.entries;
+                if (p.startCylinder < 2 || count / 4 == 0 || p.entries == 0 ||
+                    first + count > device.SectorCount() ||
+                    static_cast<uint64_t>(g.entries) * 32 > static_cast<uint64_t>(g.blocks) * CpmGeometry::kBlock)
+                {
+                    _notes.push_back("Profi partition " + p.name + " does not fit the disk");
+                    continue;
+                }
+                auto cache = std::make_shared<SectorCache>();
+                CpmFileSystem fs(ProfiReaderAt(device, first, cache), g);
+                std::string why;
+                if (!fs.IsCpm(&why, true))
+                {
+                    _notes.push_back("Profi partition " + p.name + " has no directory (" + why + ")");
+                    continue;
+                }
+                DiskFsVolume v;
+                v.id = "cpm-" + std::to_string(p.startCylinder);
+                DescribeCpm(fs, v, "Profi CP/M");
+                if (device.IsWritable())
+                {
+                    fs.SetWriter(ProfiWriterAt(device, first, cache));
+                    v.writable = true;
+                }
+                v.label = p.name;
+                v.offset = first * kSector;
+                v.bytes = count * kSector;
+                taken.emplace_back(first, first + count);
+                add(std::move(v), std::make_unique<CpmDriver>(std::move(fs)));
+            }
         }
     }
 

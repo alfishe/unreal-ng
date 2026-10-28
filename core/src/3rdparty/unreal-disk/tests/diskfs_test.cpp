@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -148,6 +149,70 @@ TEST(DiskFs_Test, IsdosDevicesAnywhere)
     std::string error;
     ASSERT_TRUE(fs.Read(fs.Volumes()[1].id, "HDD_NEMO/HELP/ide+5.hlp", data, error)) << error;
     EXPECT_EQ(data.size(), 2498u);
+}
+
+TEST(DiskFs_Test, ProfiCpmPartitions)
+{
+    // A Profi disk as FORMATHD.COM lays it out, 2 heads x 16 sectors: the header at cylinder 1 (LBA 32), the table
+    // after it, SYSTEM from cylinder 2 with a file, an empty DISK01 from cylinder 6, an entry without the #AA mark
+    const size_t spc = 2 * 16;
+    std::vector<uint8_t> disk(8 * spc * 512, 0);
+    const auto word = [&](size_t at, uint32_t v) {
+        disk[at] = static_cast<uint8_t>(v);
+        disk[at + 1] = static_cast<uint8_t>(v >> 8);
+    };
+    const size_t header = spc * 512, table = header + 512;
+    word(header, 2);
+    word(header + 2, 16);
+    word(header + 4, 6);
+    word(header + 10, spc);
+    disk[header + 12] = 3;
+    disk[header + 13] = 1;
+    std::memcpy(disk.data() + header + 16, "ProfiHDD", 8);
+    const auto partition = [&](size_t n, const char* name, uint32_t start, uint32_t cylinders, bool marked) {
+        const size_t e = table + n * 32;
+        std::memcpy(disk.data() + e, name, std::strlen(name));
+        disk[e + 17] = marked ? 0xAA : 0;
+        word(e + 18, start);
+        word(e + 20, cylinders);
+        word(e + 22, static_cast<uint32_t>(cylinders * spc / 2));
+        word(e + 24, 64);
+    };
+    partition(0, "SYSTEM", 2, 4, true);
+    partition(1, "DISK01", 6, 2, true);
+    partition(2, "BROKEN", 6, 2, false);
+    std::memset(disk.data() + 2 * spc * 512, 0xE5, 2048);
+    std::memset(disk.data() + 6 * spc * 512, 0xE5, 2048);
+    uint8_t* e = disk.data() + 2 * spc * 512;
+    std::memset(e, 0, 32);
+    std::memcpy(e, "\0CONFIG  SYS", 12);
+    e[15] = 1;
+    e[16] = 1;  // block 1, the one after the directory
+    std::memcpy(disk.data() + 2 * spc * 512 + 2048, ".1\r\n\x1A", 5);
+    for (size_t i = 0; i < disk.size(); i += 2)
+        std::swap(disk[i], disk[i + 1]);  // as the Profi's IDE port stores the words
+
+    MemoryDevice hdd(disk, true);
+    DiskFs fs(hdd);
+    ASSERT_EQ(fs.Volumes().size(), 2u);
+    EXPECT_EQ(fs.Volumes()[0].id, "cpm-2");
+    EXPECT_EQ(fs.Volumes()[0].system, "Profi CP/M");
+    EXPECT_EQ(fs.Volumes()[0].label, "SYSTEM");
+    EXPECT_EQ(fs.Volumes()[0].offset, 2 * spc * 512);
+    EXPECT_EQ(fs.Volumes()[0].bytes, 4 * spc * 512);
+    EXPECT_EQ(fs.Volumes()[1].id, "cpm-6");
+    EXPECT_EQ(fs.Volumes()[1].label, "DISK01");
+    EXPECT_EQ(ReadFile(fs, "cpm-2", "CONFIG.SYS").size(), 128u);
+    EXPECT_EQ(ReadFile(fs, "cpm-2", "CONFIG.SYS")[1], '1');
+
+    // A write lands swapped like the rest: it reads back, on the empty partition too
+    const std::vector<uint8_t> text(3000, 'p');
+    std::string error;
+    ASSERT_TRUE(fs.Write("cpm-6", "NOTE.TXT", text, {}, error)) << error;
+    const std::vector<uint8_t> back = ReadFile(fs, "cpm-6", "NOTE.TXT");
+    ASSERT_EQ(back.size(), 3072u);
+    EXPECT_TRUE(std::equal(text.begin(), text.end(), back.begin()));
+    EXPECT_EQ(back[3000], 0x1A);
 }
 
 TEST(DiskFs_Test, TrdosWriteReadsBack)

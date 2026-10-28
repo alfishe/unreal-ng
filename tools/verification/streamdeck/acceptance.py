@@ -363,6 +363,7 @@ HOME_PAUSE = (0, 0)    # run.pause_toggle: always available (set.speed is not wh
 HOME_DEBUG = (3, 0)    # the Debugger menu (context debug)
 DIAL_FRAMES = 0        # ttd.jog_frames, on home and on Time
 SCRUB_SECONDS = 60     # ACC-1's criterion; --scrub-seconds shortens it
+HUMAN_DIAL = False     # --surface-dial: ACC-1's turns come from a person on the Surface Dial, not the deck's dial
 
 
 def check(name):
@@ -396,6 +397,15 @@ def acc1_scrub(rig):
     emulator = followed(rig)
     rig.navigate()
     rig.history(emulator, 300)
+    if HUMAN_DIAL:
+        # the Dial's profile acts in `ttd`; the deck's home sets `play` (the knob does nothing there), so the run sets
+        # `ttd` as a person would from the host and gives home's `play` back after
+        rig.action('ctx.set', 'ttd', emulator=emulator)
+        wait(lambda: rig.context(emulator)['context'] == 'ttd', 'the instance in ttd', 2)
+        try:
+            return acc1_surface_dial(rig, emulator)
+        finally:
+            rig.action('ctx.set', 'play', emulator=emulator)
     rng = random.Random(1)
     # host.clients counts every REST request; of the two reads that bracket the window exactly one falls inside it
     before = rest_requests(rig)
@@ -427,6 +437,68 @@ def acc1_scrub(rig):
     notes.append('the Surface Dial half needs the hardware: the dial here is the deck\'s, the host\'s cursor stands '
                  'in for the Dial\'s result')
     return notes
+
+
+def acc1_surface_dial(rig, emulator):
+    """ACC-1's Surface Dial half: a person turns the Dial (unreal-qt's host input, its debug profile's ttd.seek_by);
+    a rest is the host's cursor standing still for 250 ms after a move; at each the deck's strip shows that frame"""
+    def names():
+        status, body = rig.host('GET', '/api/v1/controllers/devices')
+        expect(status == 200, 'the host devices', body)
+        return [d.get('name') for d in body.get('devices') or []
+                if 'surface-dial' in json.dumps(d).lower()], [d.get('name') for d in body.get('devices') or []]
+
+    if not names()[0]:  # the Dial sleeps when idle and is gone from the host until touched
+        print('        TOUCH THE DIAL: it sleeps; waiting for it (120 s)', flush=True)
+    wait(lambda: names()[0], 'unreal-qt sees the Surface Dial', 120, 0.5)
+    _, since = activity_since(rig, 0, emulator)
+    start = rig.position(emulator)[0]
+    print(f'        TURN THE DIAL NOW: {SCRUB_SECONDS} s from the first step (frame {start})', flush=True)
+
+    def jogging():  # the first step takes the machine into its history and holds it there
+        status, body = rig.host('GET', f'/api/v1/emulator/{emulator}/ttd/position')
+        return status == 200 and body.get('paused') and body['current']['frame'] != start
+    wait(jogging, 'the Dial takes the machine into its history', 180, 0.02)
+    before = rest_requests(rig)
+    rig.host_requests = 0
+    deadline = time.monotonic() + SCRUB_SECONDS
+    rests, worst, last, still = 0, 0.0, rig.position(emulator)[0], time.monotonic()
+    moved = True
+    while time.monotonic() < deadline:
+        time.sleep(0.02)
+        frame = rig.position(emulator)[0]
+        if frame != last:
+            last, still, moved = frame, time.monotonic(), True
+            continue
+        if not moved or time.monotonic() - still < 0.25:
+            continue
+        rested = still
+
+        def agree():
+            host = rig.position(emulator)[0]
+            strip = rig.strip_frame()
+            return host == strip and rig.position(emulator)[0] == host and (host, strip)
+        host, _ = wait(agree, f'rest {rests + 1}: the strip shows the host\'s frame', 2.0, 0.02)
+        worst = max(worst, time.monotonic() - rested - 0.25)
+        rests += 1
+        moved, last = False, host
+    mine = rig.host_requests
+    after = rest_requests(rig)
+    daemon_requests = after - before - mine - 1
+    seeks = []
+    while True:  # the feed pages 64 entries at a time; the ring may have dropped the oldest
+        entries, last_seq = activity_since(rig, since, emulator)
+        seeks += [e for e in entries if e.get('id') == 'ttd.seek_by']
+        if not entries or last_seq == since:
+            break
+        since = last_seq
+    sources = sorted({e.get('surface') or '?' for e in seeks})
+    rig.live_again(emulator)
+    expect(rests >= 10, 'at least 10 rests', rests)
+    expect(daemon_requests <= 0, 'the daemon sent no HTTP request to the host while scrubbing', daemon_requests)
+    return [f'Surface Dial ({dials[0].get("name")}): {rests} rests in {SCRUB_SECONDS} s, the strip agreed within '
+            f'{worst * 1000:.0f} ms of the rest at worst; {sum(e.get('merged', 1) for e in seeks)} ttd.seek_by in the feed from {", ".join(sources)}; '
+            f'host REST requests {after - before - 1}, all {mine} the script\'s own']
 
 
 @check('acc2')
@@ -738,8 +810,9 @@ def acc7_conformance(rig):
 
 
 def run(args):
-    global SCRUB_SECONDS
+    global SCRUB_SECONDS, HUMAN_DIAL
     SCRUB_SECONDS = args.scrub_seconds
+    HUMAN_DIAL = args.surface_dial
     folder = os.path.join(REPO, 'scratch', 'streamdeck-acceptance', time.strftime('%Y%m%d-%H%M%S'))
     os.makedirs(folder)
     rig = Rig(args.build, args.port_base, folder, args.live, args.package)
@@ -797,6 +870,8 @@ def main():
     parser.add_argument('--keep', action='store_true', help='keep the rig running at the end')
     parser.add_argument('--package', help='an installed package to run instead of the build tree (ACC-5): the folder '
                         'holding UnrealNG.app, the Windows ZIP\'s or Linux tarball\'s top, an AppImage\'s usr/bin')
+    parser.add_argument('--surface-dial', action='store_true',
+                        help="ACC-1 with a person turning the Surface Dial (with --live, --only acc1)")
     parser.add_argument('--scrub-seconds', type=int, default=SCRUB_SECONDS, help="ACC-1's scrub (the criterion: 60)")
     sys.exit(run(parser.parse_args()))
 
