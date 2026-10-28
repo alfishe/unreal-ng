@@ -71,9 +71,9 @@ the phases that close them. Each phase is tested and committed on its own.
 | P5 | Next: DMA reads and writes through the main CPU's watchpoints (`dma_read` / `dma_write`), machine events on the main CPU (`cpu_int`, `cpu_reti`, `cpu_nmi`, `cpu_retn`, `machine_reset`, `divmmc_map`, `divmmc_unmap`, `esxdos_call`, `zxndma_start`, `zxndma_done`; BRK_EVENT kinds behind `machineEventWatch`). DivMMC / Multiface pages moved to a later step | `NextMachineEvents_Test` | done |
 | P6 | TS-Conf: DMA through the page watchpoints (`HandlePageRead` / `HandlePageWrite`, `dma_read` / `dma_write`), FMaps register writes through the port breakpoints, `BRK_BEAM` on the TS-Conf raster (`beamWatch`), events `cpu_int`, `tsdma_start`, `tsdma_done` | `TsConfMachineEvents_Test` | done |
 | P7 | Sprinter: the accelerator's repeated accesses through the main CPU's watchpoints (`accel_read` / `accel_write`), Z84C15 events (`cpu_int` / `cpu_reti` with the chain's source), PLD codes (`pld_read` / `pld_write`), journal events (`pld_event`) | `SprinterMachineEvents_Test` | done |
-| P8 | FDC command events (all WD1793 machines) | TR-DOS boot stops on the first read sector | |
+| P8 | FDC events on every WD1793 machine: `fdc_command` (the command byte, track and sector), `fdc_done` (the status) | `FdcMachineEvents_Test` (a TR-DOS boot stops on its first Read Sector) | done |
 
-P0-P7 are done on this branch with the GS debugger's X13. The generic event space (`BRK_EVENT` with a source) is built in
+P0-P8 are done on this branch with the GS debugger's X13. The generic event space (`BRK_EVENT` with a source) is built in
 P5, the first phase with machine events; P6-P8 add their kinds to it.
 
 ## Open decision

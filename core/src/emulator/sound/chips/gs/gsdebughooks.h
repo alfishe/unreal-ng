@@ -64,6 +64,8 @@ enum class GSCardEvent : uint8_t
     PldWrite,          ///< a Sprinter port write the PLD decodes: `value` the internal code, `port` the port
     PldEvent,          ///< a Sprinter PLD journal event: `value` its kind (the journal kinds in order:
                        ///< portdecoder_sprinter.cpp kJournalKinds), `port` its value or -1
+    FdcCommand,        ///< a WD1793 accepted a command: `value` the command byte, `port` track << 8 | sector register
+    FdcDone,           ///< a WD1793 command ended (INTRQ): `value` the status register, `port` the command byte
     Count
 };
 
@@ -109,6 +111,8 @@ inline const char* GSCardEventName(GSCardEvent kind)
         case GSCardEvent::PldRead: return "pld_read";
         case GSCardEvent::PldWrite: return "pld_write";
         case GSCardEvent::PldEvent: return "pld_event";
+        case GSCardEvent::FdcCommand: return "fdc_command";
+        case GSCardEvent::FdcDone: return "fdc_done";
         case GSCardEvent::Count: break;
     }
     return "unknown";

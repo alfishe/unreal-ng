@@ -3264,7 +3264,7 @@ namespace PythonBindings
                 return id;
             }, "Add a General Sound / NeoGS protocol event breakpoint: the card's (int, nmi, reset, page, card_command, "
                "card_data, card_reply) stop the machine at the card's next instruction, the host's (host_command, "
-               "host_data, host_reply) after the main CPU's access, the machine's events (the ZX Next's cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done; TS-Conf's cpu_int, tsdma_start, tsdma_done; the Sprinter's cpu_int, cpu_reti, pld_read, pld_write, pld_event) on "
+               "host_data, host_reply) after the main CPU's access, the machine's events (the ZX Next's cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done; TS-Conf's cpu_int, tsdma_start, tsdma_done; the Sprinter's cpu_int, cpu_reti, pld_read, pld_write, pld_event; every WD1793's fdc_command, fdc_done) on "
                "the main CPU; value / vmask filter the byte; cpu defaults to the kind's side. Returns the id; ValueError with the reason when refused",
                py::arg("kind"), py::arg("value") = -1, py::arg("vmask") = -1, py::arg("hits") = "", py::arg("cpu") = "")
             .def("bp_chipreg", [](Emulator& self, const std::string& chipName, int32_t reg, int32_t end, int32_t unit,

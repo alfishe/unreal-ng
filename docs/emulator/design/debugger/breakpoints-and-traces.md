@@ -272,3 +272,15 @@ whatever port pair, latch order or board the program reaches it through.
   order: 0 `reset`, 1 `ctrl_alt_del`, 2 `f12`, 3 `pld_load`, 4 `pld_configured`, 5 `clock`, 6 `port_7ffd`,
   7 `port_1ffd`, 8 `frame_lines`, 9 `all_mode`, 10 `hold`, 11 `rgmod`, 12 `cnf`, 13 `isa_stall`; the detail is the
   event's value.
+
+### The floppy controller (platform-debugging P8)
+
+Every machine with a WD1793 (the Beta 128 interface and the boards that carry one) reports two events on the main
+CPU:
+
+- `fdc_command` when the controller accepts a command (a write to the command register while it is not busy, or a
+  Force Interrupt): the value is the command byte, the detail `track << 8 | sector` from its registers. The stop comes
+  after the CPU's OUT. `bevent fdc_command --value 0x80 --vmask 0xE0` stops on every Read Sector, so a TR-DOS boot
+  stops on its first sector read with the track and sector in the detail.
+- `fdc_done` when a command ends (BUSY cleared, INTRQ raised): the value is the status register, the detail the
+  command byte. `--value 0x10 --vmask 0x10` stops on a Record Not Found.
