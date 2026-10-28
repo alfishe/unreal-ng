@@ -1,0 +1,44 @@
+# Ivan "Ironman" Stewart's Super Off Road (Virgin Mastertronic / Graftgold 1990), the 128K Z80 snapshot IRONM128 (the beeper
+# build: no AY writes at all). The menu takes ENTER for the highlighted line and 6 / 7 / 8 / 9 (Sinclair port 1: left,
+# right, down, up) to move; player 1 "Sinclair port 1" is the first line, "PRESS FIRE" is 0. In the race 9 (up) drives,
+# 0 (fire) is the nitro, 6 / 7 steer. Haptics (haptics.md §13 H5), found with TTD on a recorded run: the game has one beeper
+# player (#EB5A, the only writer of port #FE) fed through the queue byte #BA23 (the callers write the effect number there,
+# #EAF9 copies it to #BA22), so the callers are the event map: #C456 effect 3 = two cars collide (always the first car, the
+# player's, with its neighbour), #E2DC effect 2 = a car hits a track object (54 of 75 hits are the player's car, the rest the
+# computer cars: those are felt too), #E5D5 effect 5 = a money bag (the "20,000" caption appears at that frame), #E5C5
+# effect 4 = a nitro bonus. #E15B (effect 9, once at the start of a race) is left out.
+# Checked in real time (25 s, up held, a few steers, one nitro press): 40 collide (they come in bursts while two cars stay
+# pressed together, so the rule is mild), 31 bump, 1 nitro bonus, 0 money (the computer cars took the bags). Known limits:
+# only this snapshot is checked (the tapes may sit at other addresses); no engine rumble, the cars' speed is not a plain byte.
+schema: 1
+kind: play
+id: builtin/game/super-off-road
+label: Super Off Road
+match:
+  machines: [PENTAGON, 128K]
+  file_sha256: ["5b3408b7594c4da19014251d1929ccf7e10b507e9023bccca41ade67e7878271"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: "6" }
+    dpad.right:   { key: "7" }
+    lstick.left:  { key: "6" }
+    lstick.right: { key: "7" }
+    dpad.up:      { key: "9" }
+    dpad.down:    { key: "8" }
+    rt.click:     { key: "9", label: Accelerate }
+    lt.click:     { key: "8", label: Brake }
+    south:        { key: "0", label: Nitro }
+    menu:         { key: ENTER, label: Select }
+haptics:
+  sources:
+    collide: { probe: exec, address: "0xC456" }
+    bump:    { probe: exec, address: "0xE2DC" }
+    nitro:   { probe: exec, address: "0xE5C5" }
+    money:   { probe: exec, address: "0xE5D5" }
+  rules:
+    - { on: collide, play: hit, scale: 0.7 }
+    - { on: bump, play: tick, target: handle.low }
+    - { on: nitro, play: pickup }
+    - { on: money, play: pickup }

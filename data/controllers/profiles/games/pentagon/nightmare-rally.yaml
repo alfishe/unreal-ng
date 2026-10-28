@@ -1,0 +1,37 @@
+# Nightmare Rally (Hewson / Mr Micro 1985), the SpeedLock 2 TZX "Nightmare Rally.tzx" (a 48K game: from the 128K menu take
+# 48 BASIC and LOAD "", or on a Pentagon the Tape Loader; the loader menu needs ENTER held for about 30 frames; after the
+# load open the control editor with 2 and leave it with 0 once, otherwise the menu keys are not read). The default keys are
+# the Sinclair left set: 1 / 2 steer, 4 accelerates, 5 gear up, 3 gear down (the redefined keys were ignored; the key
+# variable is #802F). Haptics (haptics.md §13 H5), found with TTD on a recorded run: the speed is the byte #8013 (0 to 40,
+# the dial shows about 4 times it); #A30D is the head of the flag handler (ld hl,#8DFF; dec (hl): the checkpoint counter,
+# it calls the stage code #97A2 when the counter runs out), it runs once per flag passed, at the very frames where the
+# score grows by 100 and the flag leaves the screen (12838, 12871, 12922, 13058, 13131 in the recording).
+# Known limits: the collision with an obstacle is not found as an event (the stop-car routine #A2B4 never ran in the
+# recording); the gear shift is not an event.
+schema: 1
+kind: play
+id: builtin/game/nightmare-rally
+label: Nightmare Rally
+match:
+  machines: [PENTAGON, 128K, 48K]
+  file_sha256: ["29e4d91bea6a3106a68767f36eb18eedbcef4770ba918e40dd60315a6ac05e4a"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: "1" }
+    dpad.right:   { key: "2" }
+    lstick.left:  { key: "1" }
+    lstick.right: { key: "2" }
+    rt.click:     { key: "4", label: Accelerate }
+    east:         { key: "5", label: Gear up }
+    west:         { key: "3", label: Gear down }
+    south:        { key: "0", label: Select }
+    menu:         { key: ENTER, label: Start }
+haptics:
+  sources:
+    speed: { probe: value, address: "0x8013", scale: 5 }
+    flag:  { probe: exec, address: "0xA30D" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: flag, play: pickup }
