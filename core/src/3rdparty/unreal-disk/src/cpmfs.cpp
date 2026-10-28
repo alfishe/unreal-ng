@@ -260,7 +260,7 @@ uint32_t CpmFileSystem::Pointer(const uint8_t* e, uint32_t k) const
     return _geometry.Wide() ? (e[16 + 2 * k] | e[17 + 2 * k] << 8) : e[16 + k];
 }
 
-bool CpmFileSystem::IsCpm(std::string* why) const
+bool CpmFileSystem::IsCpm(std::string* why, bool empty) const
 {
     auto fail = [why](const std::string& reason) {
         if (why)
@@ -304,7 +304,7 @@ bool CpmFileSystem::IsCpm(std::string* why) const
         }
         files++;
     }
-    return files > 0 ? true : fail("no file");
+    return files > 0 || empty ? true : fail("no file");
 }
 
 bool CpmFileSystem::List(std::vector<CpmFile>& out, std::string& error) const

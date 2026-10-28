@@ -137,8 +137,8 @@ call.
 | [media/cd-audio.md](media/cd-audio.md) | CD audio in the ATAPI CD drive: CUE/BIN and CD CHD discs with audio tracks, play / pause / stop a track, the head (LBA, MSF, track, index), page 0Eh volume, the drive's mixer row; which machines have a CD drive |
 | [media/insert-disk.md](media/insert-disk.md) | Insert/eject disk images (`.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima .hfe .scp`, Hobeta), drives A-D, which formats upload by bytes, blank disks, catalog/sysinfo inspection, Sprinter 1.44 MB floppies and the density latch |
 | [media/insert-tape.md](media/insert-tape.md) | Load/eject tapes (`.tap/.tzx`), play/pause/seek/rewind, block catalog, fast-load plan, WAV import |
-| [media/load-snapshot.md](media/load-snapshot.md) | Load/save snapshots (`.sna/.z80/.szx`, TS-Conf `.spg` with automatic model switch), `force` on save, verify a state took effect, snapshot round-trips |
-| [media/play-rzx.md](media/play-rzx.md) | Play RZX input recordings (`.rzx`): model switch, progress, desync diagnosis, conventions |
+| [media/load-snapshot.md](media/load-snapshot.md) | Load/save snapshots (`.sna/.z80/.szx`, TS-Conf `.spg` with automatic model switch; `.rzx` goes to `rzx/play`, which call for which file), `force` on save, verify a state took effect, snapshot round-trips |
+| [media/play-rzx.md](media/play-rzx.md) | Play RZX input recordings (`.rzx`) with `rzx/play`, never `snapshot/load` (no model switch there): model switch, progress, desync diagnosis, conventions |
 | [media/author-udi-images.md](media/author-udi-images.md) | Creating proper UDI images: format capability matrix, host-side conversion/authoring, in-emulator formatting, weak-bit limits |
 | [media/video-recording.md](media/video-recording.md) | Record the screen to GIF/H.264/HEVC with an optional sound track (`audio: aac`) from MCP, WebAPI, CLI, Lua, Python; codec/container rules; ffprobe checks |
 | [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | Viewing emulator screen as agent: native MCP/WebAPI server-side binary saving without base64 transcript corruption |

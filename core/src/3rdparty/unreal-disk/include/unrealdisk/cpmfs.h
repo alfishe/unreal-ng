@@ -116,8 +116,9 @@ public:
     /// missing or a hard disk misses one of its fields (SECTORS, TRACKS, HEADSF, DIR, PATBEG)
     static bool ParseCds(const std::string& text, AtmCpmChannel& out);
 
-    /// The directory reads and passes the checks above; `why` the first failure
-    bool IsCpm(std::string* why = nullptr) const;
+    /// The directory reads and passes the checks above; `why` the first failure. `empty`: a directory without files
+    /// passes too (a partition table found the volume)
+    bool IsCpm(std::string* why = nullptr, bool empty = false) const;
 
     /// The files in directory order of their first entry; false with the reason when the directory does not read
     bool List(std::vector<CpmFile>& out, std::string& error) const;

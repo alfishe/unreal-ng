@@ -153,7 +153,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:107 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
 == pentagon512k
 model 0
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -184,7 +184,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:107 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
 == profi
 model 8
 mixer [Beeper] [AY] [COVOX]
@@ -259,7 +259,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:107 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:34 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:34 56:22 notRecorded 0
 == scorpion
 model 9
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -290,7 +290,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:107 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:34 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:34 56:22 notRecorded 0
 == spectrum128
 model 2
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
@@ -310,7 +310,7 @@ port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
-ttd 1:72 2:34 4:107 7:20 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 4:109 7:20 35:52 56:22 notRecorded 0
 == spectrum2
 model 17
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
@@ -330,7 +330,7 @@ port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
-ttd 1:72 2:34 4:107 7:20 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 4:109 7:20 35:52 56:22 notRecorded 0
 == spectrum2a
 model 18
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
@@ -351,7 +351,7 @@ port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
-ttd 1:72 2:34 4:107 7:20 13:16 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 4:109 7:20 13:16 35:52 56:22 notRecorded 0
 == spectrum3
 model 3
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
@@ -374,7 +374,7 @@ port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
-ttd 1:72 2:34 4:107 7:20 13:16 14:42 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 4:109 7:20 13:16 14:42 35:52 56:22 notRecorded 0
 == spectrum48
 model 1
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
@@ -393,7 +393,7 @@ port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
-ttd 1:72 2:34 4:107 7:20 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 4:109 7:20 35:52 56:22 notRecorded 0
 == sprinter
 model 19
 mixer [Beeper] [AY] [NeoGS] [NeoGS MP3] [Covox-Blaster]
@@ -462,6 +462,6 @@ fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
 fulldecode 00FF/00EF slot 1
-ttd 1:72 2:34 3:21 4:107 7:20 10:216 12:138 15:39 16:189 17:50 18:99 19:38 23:14 24:47 35:52 38:20 39:47 40:40 55:29 56:22 61:32 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 7:20 10:216 12:138 15:39 16:189 17:50 18:99 19:38 23:14 24:47 35:52 38:20 39:47 40:40 55:29 56:22 61:32 notRecorded 0
 == zx-diagnostics
 config turbosound 1 gs 4 moonsound 1 covoxFB 0 sd 1 network.card 0

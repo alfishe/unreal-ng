@@ -464,38 +464,80 @@ TEST(Surfaces_Test, Dial_PatternAndFeatureReports)
     EXPECT_EQ(parsed.autoTrigger, 1);
 }
 
-/// The writer: requests while a write is in flight merge (the latest pattern wins), the steps go first
-TEST(Surfaces_Test, DialWriter_LatestWinsStepsFirst)
+/// One play at a time: the Dial queues every output report it gets (ten buzzes in 300 ms buzzed ten times as long,
+/// 2026-10-28), so the next waits until the last has played; requests meanwhile keep the strongest, and after such
+/// an overflow a stop goes first
+TEST(Surfaces_Test, DialPlays_OneAtATimeTheStrongestWaits)
+{
+    SurfaceDialPlays plays({80, 250});
+    const std::vector<uint8_t> tick = SurfaceDial::PatternReport(HapticPattern::Tick);
+    const std::vector<uint8_t> twice = SurfaceDial::PatternReport(HapticPattern::Double);
+    const std::vector<uint8_t> buzz = SurfaceDial::PatternReport(HapticPattern::Buzz);
+    EXPECT_EQ(plays.PlayMs(tick), 80u);
+    EXPECT_EQ(plays.PlayMs(twice), 160u) << "two clicks, each at least the click's length";
+    EXPECT_EQ(plays.PlayMs(buzz), 250u);
+
+    plays.Offer(tick, 1000);
+    EXPECT_EQ(plays.Take(1000), (std::vector<std::vector<uint8_t>>{tick})) << "nothing plays: at once";
+    plays.Offer(tick, 1010);
+    EXPECT_TRUE(plays.Take(1010).empty()) << "the tick still plays";
+    EXPECT_EQ(plays.DueMs(), 1080u);
+    EXPECT_EQ(plays.Take(1080), (std::vector<std::vector<uint8_t>>{tick})) << "one waiting: no overflow, no stop";
+    EXPECT_EQ(plays.Dropped(), 0u);
+
+    // A fast turn at the end of the history: a buzz each step, a second tick among them
+    plays.Offer(buzz, 1100);
+    plays.Offer(tick, 1110);
+    plays.Offer(buzz, 1120);
+    plays.Offer(twice, 1130);
+    EXPECT_EQ(plays.Dropped(), 3u);
+    EXPECT_TRUE(plays.Take(1150).empty());
+    EXPECT_EQ(plays.Take(1160), (std::vector<std::vector<uint8_t>>{SurfaceDial::StopReport(), buzz}))
+        << "the strongest waited; a stop ends what the Dial may still hold";
+    EXPECT_FALSE(plays.Waiting());
+    EXPECT_EQ(plays.DueMs(), 1410u);
+    plays.Offer(tick, 1500);
+    EXPECT_EQ(plays.Take(1500), (std::vector<std::vector<uint8_t>>{tick})) << "the overflow is over: no stop";
+    EXPECT_EQ(SurfaceDial::StopReport(), (std::vector<uint8_t>{0x01, 1, 2, 0, 0})) << "Manual Trigger 2: stop";
+}
+
+/// The writer: requests while a write is in flight merge (the strongest pattern waits, a stop before it), the steps go
+/// first
+TEST(Surfaces_Test, DialWriter_StrongestWaitsStepsFirst)
 {
     std::mutex mutex;
     std::condition_variable gate;
     bool open = false;
     std::vector<std::pair<SurfaceDialWriter::ReportType, std::vector<uint8_t>>> written;
     std::atomic<int> started{0};
-    SurfaceDialWriter writer([&](SurfaceDialWriter::ReportType type, const std::vector<uint8_t>& report) {
-        std::unique_lock<std::mutex> lock(mutex);
-        ++started;
-        gate.wait(lock, [&] { return open; });  // the first write blocks as a BLE round trip would
-        written.emplace_back(type, report);
-        return true;
-    });
+    SurfaceDialWriter writer(
+        [&](SurfaceDialWriter::ReportType type, const std::vector<uint8_t>& report) {
+            std::unique_lock<std::mutex> lock(mutex);
+            ++started;
+            gate.wait(lock, [&] { return open; });  // the first write blocks as a BLE round trip would
+            written.emplace_back(type, report);
+            return true;
+        },
+        {}, {1, 1});
     writer.Pattern(HapticPattern::Tick);
     ASSERT_TRUE(TestWait::For([&] { return started.load() == 1; }));
-    writer.Pattern(HapticPattern::Double);
-    writer.Pattern(HapticPattern::Buzz);  // replaces the double, not written yet
+    writer.Pattern(HapticPattern::Buzz);
+    writer.Pattern(HapticPattern::Double);  // weaker than the buzz waiting: dropped
     writer.Steps({36, false});
     {
         std::lock_guard<std::mutex> lock(mutex);
         open = true;
     }
     gate.notify_all();
-    ASSERT_TRUE(TestWait::For([&] { return writer.Written() == 3; }));
+    ASSERT_TRUE(TestWait::For([&] { return writer.Written() == 4; }));
     std::lock_guard<std::mutex> lock(mutex);
-    ASSERT_EQ(written.size(), 3u);
+    ASSERT_EQ(written.size(), 4u);
     EXPECT_EQ(written[0].second, SurfaceDial::PatternReport(HapticPattern::Tick));
     EXPECT_EQ(written[1].first, SurfaceDialWriter::ReportType::Feature) << "the steps before the pattern";
     EXPECT_EQ(written[1].second, SurfaceDial::FeatureReport({36, false}));
-    EXPECT_EQ(written[2].second, SurfaceDial::PatternReport(HapticPattern::Buzz)) << "the latest pattern";
+    EXPECT_EQ(written[2].second, SurfaceDial::StopReport()) << "after an overflow";
+    EXPECT_EQ(written[3].second, SurfaceDial::PatternReport(HapticPattern::Buzz)) << "the strongest";
+    EXPECT_EQ(writer.Dropped(), 1u);
     EXPECT_EQ(writer.Failed(), 0u);
 }
 
