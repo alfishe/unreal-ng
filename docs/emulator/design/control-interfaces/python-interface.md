@@ -1570,6 +1570,13 @@ hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 #    None only when nothing matched and no marker stopped the search.
 #    Dicts carry 'covered_from', 'covered_from_tinframe', 'covered_to',
 #    'covered_to_tinframe': the searched span (command-interface.md -> Search window).
+
+# One Z80 address on two banks: only the runs from page 3; every hit, newest first, the machine stays
+hits = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, limit=500)
+# {'hits': [{'frame': 4700, 'tinframe': 812, 't': 336899052, 'pc': 0xC000, 'phys_page': 3}, ...],
+#  'count': 500, 'truncated': True, 'next_before': 336512000, ...}
+more = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, before=hits['next_before'])
+# phys_page='rom': runs from the ROM. Bounds: before_frame= / before_tin= or before= (machine T), from_frame=
 ```
 
 **Reverse search:**
@@ -1601,8 +1608,13 @@ result = emu.ttd_find_last(
     pc_to=0x8000,
     before_frame=4823,         # search at or before this point (default: current position)
     before_tin=0,
-    phys_page=5                # 0..255: one physical RAM page (ValueError otherwise)
+    phys_page=5                # 0..255 or 'rom': one physical RAM page (ValueError otherwise)
 )
+
+# Every write that changed the byte, newest first, with the byte it replaced; the machine stays
+changes = emu.ttd_find_last(addr=0x5B00, changes_only=True, all=True, limit=500)
+# {'hits': [{'frame': 4823, 'tinframe': 14982, 't': ..., 'value': 3, 'old_value': 2, 'pc': ..., ...}, ...],
+#  'count': 41, 'truncated': False, ...}   keywords: all, changes_only, limit, before (machine T), from_frame
 
 # The Sprinter's video RAM / fast RAM: space='vram' | 'cache', the address an offset in it
 result = emu.ttd_find_last(addr=0x4805, space='vram')
@@ -1700,12 +1712,22 @@ scan = emu.ttd_coverage_scan(kind='executed', addr_from=0x0038, addr_to=0x0040,
 #  'matching_frames': 3, 'scanned_frames': 183, 'truncated': False,
 #  'covered_from': 18, 'covered_to': 197, 'index_available': True}
 
+# The newest matches first, as runs of consecutive frames; a cut list carries the cursor
+runs = emu.ttd_coverage_scan(kind='executed', addr_from=0x8200, addr_to=0x8200, phys_page=2,
+                             order='newest', ranges=True, limit=50)
+# {'ranges': [[190, 192], [180, 180], ...], 'order': 'newest', 'exact': True, 'truncated': True,
+#  'next_to_frame': 87, 'first_match': 3, 'last_match': 192, ...}
+# exact=False without phys_page: the offset matched on every page; phys_page='rom' is the ROM's bucket
+
 # The Sprinter's video RAM by its own offsets (space='vram' / 'cache': offsets inside one 16 KB page)
 scan = emu.ttd_coverage_scan(kind='written', space='vram', addr_from=0x4805, addr_to=0x4805)
 
 # A memory at a past checkpoint, and what changed between two - from the store, no seek
 at = emu.ttd_memory_at('ram5', frame=150, offset=0x1C78, length=2)   # tinframe=T: a point inside the frame (ram, vram, cache)
 # {'space': 'ram', 'offset': 89208, 'length': 2, 'frame': 150, 'at_frame': 150, 'exact': True, 'hex': '6500'}
+# ram / ramN offsets are physical. space='cpu': Z80 addresses, what the CPU saw at frame:tinframe, with the banks
+cpu = emu.ttd_memory_at('cpu', frame=150, offset=0xC000, length=16, tinframe=20000)
+# {'space': 'cpu', 'banks': [{'window': 3, 'addr': '0xC000', 'kind': 'ram', 'page': 0, 'name': 'RAM 0'}, ...], 'hex': ...}
 diff = emu.ttd_memory_diff('neogs.ram', from_frame=150, to_frame=600)
 # {'space': 'neogs.ram', 'changed_bytes': 812, 'ranges': [{'offset': 4096, 'length': 64}, ...], 'truncated': False, ...}
 

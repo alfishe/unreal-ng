@@ -1152,6 +1152,11 @@ local r = ttd_reverse_continue({0x8000, 0x8010})
 --     blocked_by_marker = {kind, reason, frame, tinframe}  (as the WebAPI does)
 --     covered_from, covered_from_tinframe, covered_to, covered_to_tinframe:
 --     the searched span (command-interface.md -> Search window)
+
+-- Options (second table): phys_page (0..255 or "rom"), all, limit, before_frame / before_tin or before (machine T),
+-- from_frame. all = true: every hit newest first, the machine stays
+local hits = ttd_reverse_continue({0xC000}, { phys_page = 3, all = true, limit = 500 })
+-- --> { hits = { {frame, tinframe, t, pc, phys_page}, ... }, count, truncated, next_before, ... }
 ```
 
 **Reverse search:**
@@ -1173,8 +1178,12 @@ local r2 = ttd_find_last{
     pc_to     = 0x8000,
     before_frame = 4823,       -- search at or before this point (default: current position)
     before_tin = 0,
-    phys_page = 5              -- 0..255: one physical RAM page
+    phys_page = 5              -- 0..255 or "rom": one physical RAM page
 }
+-- Every write that changed the byte, newest first, with the byte it replaced (table form); the machine stays
+local changes = ttd_find_last{ addr = 0x5B00, changes_only = true, all = true, limit = 500 }
+-- --> { hits = { {frame, tinframe, t, pc, value, old_value, ...}, ... }, count, truncated, next_before }
+--     more keys: before (machine T), from_frame
 -- The Sprinter's video RAM / fast RAM: space = "vram" | "cache" (table form), addr = an offset in it
 local v = ttd_find_last{ addr = 0x4805, space = "vram" }
 -- --> { found = true, pc, space = "vram", offset = 0x4805, phys_page = nil, ... }
@@ -1270,12 +1279,20 @@ local scan = ttd_coverage_scan{kind = "executed", addr_from = 0x0038, addr_to = 
 --   matching_frames = 3, scanned_frames = 183, truncated = false,
 --   covered_from = 18, covered_to = 197, index_available = true }
 
+-- order = "newest": the newest matches first; ranges = true: runs {from, to}; a cut list carries next_from_frame
+-- (oldest order) or next_to_frame (newest); exact = false without phys_page (the offset matched on every page)
+local runs = ttd_coverage_scan{kind = "executed", addr_from = 0x8200, addr_to = 0x8200, phys_page = 2,
+                               order = "newest", ranges = true, limit = 50}
+
 -- The Sprinter's video RAM by its own offsets (space = "vram" / "cache": inside one 16 KB page)
 local written = ttd_coverage_scan{kind = "written", space = "vram", addr_from = 0x4805, addr_to = 0x4805}
 
 -- A memory at a past checkpoint, and what changed between two - from the store, no seek
 local at = ttd_memory_at{space = "ram5", frame = 150, offset = 0x1C78, length = 2}   -- tinframe = T: inside the frame (ram, vram, cache)
 -- { space = "ram", offset = 89208, length = 2, frame = 150, at_frame = 150, exact = true, hex = "6500" }
+-- ram / ramN offsets are physical; space = "cpu": Z80 addresses as the CPU saw them, with banks = {{window, addr,
+-- kind, page, name}, ...}
+local cpu = ttd_memory_at{space = "cpu", frame = 150, tinframe = 20000, offset = 0xC000, length = 16}
 local diff = ttd_memory_diff{space = "neogs.ram", from_frame = 150, to_frame = 600}
 -- { space = "neogs.ram", changed_bytes = ..., ranges = { {offset = 4096, length = 64}, ... }, truncated = false }
 

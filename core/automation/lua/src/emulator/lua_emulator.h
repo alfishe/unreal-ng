@@ -5946,11 +5946,18 @@ public:
             return reply.Ok() && reply.body.find("reached")->b;
         });
 
-        lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable) -> sol::object {
+        // ttd_reverse_continue({pcs}, {phys_page=, all=, limit=, before_frame=, before_tin=, before=, from_frame=})
+        lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable,
+                                                        sol::optional<sol::table> optionsTable) -> sol::object {
             std::string pcs;
             for (auto& pair : pcsTable)
                 pcs += (pcs.empty() ? "" : ",") + TtdOptionText(pair.second);
-            StateNode value = TtdScriptValue(TtdRun("reverse-continue", {{"pcs", pcs}}));
+            std::map<std::string, std::string> options;
+            if (optionsTable)
+                for (const auto& [key, value] : *optionsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            options["pcs"] = pcs;
+            StateNode value = TtdScriptValue(TtdRun("reverse-continue", options));
             if (!value.find("matched"))
                 value["matched"] = false;
             return StateNodeToLua(ts, value);

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -335,11 +336,15 @@ struct TTDCoverageScanResult
     std::optional<PhysPage> physPage;  ///< 0..255, or kPhysPageNone for the ROM/no-page bucket
     uint64_t scannedFrames = 0;
     uint64_t matchingFrames = 0;
-    std::vector<uint64_t> frames;
-    uint64_t firstMatch = 0;
-    uint64_t lastMatch = 0;
+    std::vector<uint64_t> frames;            ///< Matching frames in scan order (asRanges: empty)
+    std::vector<std::pair<uint64_t, uint64_t>> ranges;   ///< asRanges: runs of consecutive matches [from, to]
+    uint64_t firstMatch = 0;                 ///< Oldest matching frame in the window (valid iff matchingFrames)
+    uint64_t lastMatch = 0;                  ///< Newest matching frame in the window, also when truncated
     uint64_t coveredFrom = 0;                ///< First frame the index covers; the query window is clamped to it
     uint64_t coveredTo = 0;                  ///< Last frame the index covers
+    /// Truncated: the window the next call scans to go on (from/to frame), the list's last item excluded
+    uint64_t nextFrom = 0;
+    uint64_t nextTo = 0;
     bool truncated = false;
     bool indexAvailable = false;
 };
@@ -442,13 +447,78 @@ struct TTDJournalBuildState
     uint64_t total = 0;   ///< frames to build
 };
 
+/// @brief Memory as the CPU saw it at a point of the history (memory-at space cpu).
+struct TTDCpuView
+{
+    struct Window
+    {
+        uint8_t kind = 0xFF;    ///< MemoryBankModeEnum: 0 ROM, 1 RAM, 2 cache; 0xFF unknown
+        uint16_t page = 0xFF;   ///< The ROM, RAM or cache page mapped there
+        std::string name;       ///< The bank's name as the debugger shows it
+    };
+    bool ok = false;
+    std::string error;          ///< !ok: why
+    TTDTimePoint at{};          ///< Where the replay stood when it read
+    std::vector<uint8_t> bytes;
+    Window windows[4];          ///< The four 16 KB windows' mapping
+};
+
+/// @brief How FindAccesses walks: one hit or a list, every access or only the writes that changed the byte.
+struct TTDFindOptions
+{
+    bool all = false;           ///< Up to `limit` hits (false: the newest one)
+    bool changesOnly = false;   ///< Memory writes only: skip a write that stores the byte already there
+    size_t limit = 100;         ///< all: most hits returned
+    uint64_t fromFrame = 0;     ///< Not older than this frame's start
+};
+
+/// @brief One access FindAccesses found.
+struct TTDFoundAccess
+{
+    TTDSearchResult access;
+    uint64_t globalT = 0;
+    bool hasOldValue = false;   ///< changesOnly: the byte the write replaced is known
+    uint8_t oldValue = 0;
+};
+
+/// @brief FindAccesses' answer: the hits newest first, and where the walk ended.
+struct TTDFindResult
+{
+    std::vector<TTDFoundAccess> hits;
+    bool truncated = false;               ///< Stopped at the limit: older hits exist
+    TTDExternalEvent blockingMarker{};    ///< Set iff a barrier ended the walk
+    TTDSearchWindow window{};
+};
+
+/// @brief What ReverseContinue looks for and how far.
+struct TTDReverseContinueQuery
+{
+    std::vector<uint16_t> pcs;            ///< Z80 addresses an instruction starts at (any of them)
+    std::optional<PhysPage> physPage;     ///< Only runs on this page (kPhysPageNone: ROM / no RAM page)
+    uint64_t beforeGlobalT = UINT64_MAX;  ///< At or before this machine time; UINT64_MAX: strictly before now
+    uint64_t fromFrame = 0;               ///< Not older than this frame's start
+    bool all = false;                     ///< Collect up to `limit` hits and leave the machine where it is
+    size_t limit = 100;                   ///< all: most hits returned
+};
+
+/// @brief One instruction start a reverse search found.
+struct TTDReverseHit
+{
+    TTDTimePoint time{};
+    uint64_t globalT = 0;
+    uint16_t pc = 0;
+    PhysPage physPage = kPhysPageNone;   ///< RAM page behind pc, or kPhysPageNone (ROM)
+};
+
 /// @brief Result struct returned by ReverseContinue.
 struct TTDReverseContinueResult
 {
     bool           matched   = false;
     uint16_t       pc        = 0xFFFF;   ///< Valid iff matched.
-    TTDTimePoint   arrivedAt{};          ///< Where the emulator landed.
+    TTDTimePoint   arrivedAt{};          ///< Where the emulator landed (single mode).
     TTDExternalEvent blockingMarker{};   ///< Set iff a barrier halted the scan.
     TTDSearchWindow  window{};           ///< Part of history the scan examined (TD-8).
+    std::vector<TTDReverseHit> hits;     ///< Newest first; single mode: the one hit
+    bool truncated = false;              ///< all: the walk stopped at the limit, older hits may exist
 };
 }  // namespace ttd

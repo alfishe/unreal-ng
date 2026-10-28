@@ -337,6 +337,15 @@ inline std::string TtdOptionTextPy(const pybind11::handle& o)
     return py::str(o).cast<std::string>();
 }
 
+/// Keyword arguments as TTD options (True / False, a number, a string), over the named ones
+inline void TtdKwargsPy(std::map<std::string, std::string>& options, const pybind11::kwargs& kwargs)
+{
+    namespace py = pybind11;
+    for (const auto& [key, value] : kwargs)
+        if (!value.is_none())
+            options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+}
+
 /// One symbol verb through SymbolControl: keyword arguments as options (a list as a comma list), the reply's body; a
 /// refusal adds ok = False and error = the message
 inline pybind11::object SymbolsPy(Emulator& emulator, const std::string& verb, std::map<std::string, std::string> options,
@@ -5759,8 +5768,11 @@ namespace PythonBindings
                                       py::object physPageObj,
                                       py::object addrFromObj,
                                       py::object addrToObj,
-                                      py::object spaceObj) -> py::object {
+                                      py::object spaceObj,
+                                      const py::kwargs& kwargs) -> py::object {
                 std::map<std::string, std::string> options{{"access", access}};
+                // all, changes_only, limit, before, from_frame
+                TtdKwargsPy(options, kwargs);
                 // space="vram" / "cache": addr / addr_from / addr_to are offsets in that memory
                 if (!spaceObj.is_none())
                     options["space"] = py::str(spaceObj).cast<std::string>();
@@ -5786,10 +5798,12 @@ namespace PythonBindings
                     value["error"] = reply.message;
                     return StateNodeToPy(value);
                 }
-                if (!reply.body.find("found")->b && !reply.body.find("blocked"))
+                if (!reply.body.find("found")->b && !reply.body.find("blocked") && !reply.body.find("hits"))
                     return py::none();  // genuinely no match
                 return StateNodeToPy(reply.body);
-            }, "Reverse search: find last access at address or within address/PC range",
+            }, "Reverse search: find last access at address or within address/PC range. Keywords: all=True (the list "
+               "newest first, the machine stays), changes_only=True (writes that changed the byte, with old_value), "
+               "limit, before (machine T, at or before), from_frame (not older)",
                py::arg("addr") = py::none(),
                py::arg("access") = "write",
                py::arg("value") = py::none(),
@@ -5830,11 +5844,14 @@ namespace PythonBindings
             }, "Step back N scanlines of the machine (lands at nearest M1 <= target)",
                py::arg("scanlines") = 1)
 
-            .def("ttd_reverse_continue", [](Emulator& self, const std::vector<uint16_t>& pcs) -> py::object {
+            .def("ttd_reverse_continue", [](Emulator& self, const std::vector<uint16_t>& pcs, const py::kwargs& kwargs) -> py::object {
                 std::string list;
                 for (uint16_t pc : pcs)
                     list += (list.empty() ? "" : ",") + std::to_string(pc);
-                const ttd::TTDReply reply = TtdRunPy(self, "reverse-continue", {{"pcs", list}});
+                std::map<std::string, std::string> options{{"pcs", list}};
+                // phys_page, all, limit, before_frame, before_tin, before, from_frame
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "reverse-continue", options);
                 if (reply.error == ttd::TTDControlError::BadRequest)
                     throw py::value_error(reply.message);
                 if (!reply.Ok())
@@ -5844,10 +5861,12 @@ namespace PythonBindings
                     value["error"] = reply.message;
                     return StateNodeToPy(value);
                 }
-                if (!reply.body.find("matched")->b && !reply.body.find("blocked_by_marker"))
+                if (!reply.body.find("matched")->b && !reply.body.find("blocked_by_marker") && !reply.body.find("hits"))
                     return py::none();
                 return StateNodeToPy(reply.body);
-            }, "Run backward until any PC matches; returns dict or None",
+            }, "Run backward until any PC matches; returns dict or None. Keywords: phys_page (a page or 'rom'), "
+               "all=True (every hit newest first, the machine stays), limit, before_frame / before_tin or before "
+               "(at or before), from_frame (not older)",
                py::arg("pcs"))
 
             .def("ttd_coverage_probe", [](Emulator& self, uint64_t frame, const std::string& kindStr,
@@ -5866,7 +5885,7 @@ namespace PythonBindings
 
             .def("ttd_coverage_scan", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj,
                                          const std::string& kindStr, uint32_t addrFrom, uint32_t addrTo,
-                                         py::object pageObj, size_t limit, py::object spaceObj) -> py::object {
+                                         py::object pageObj, size_t limit, py::object spaceObj, const py::kwargs& kwargs) -> py::object {
                 std::map<std::string, std::string> options{
                     {"from_frame", std::to_string(fromFrame)}, {"kind", kindStr},
                     {"addr_from", std::to_string(addrFrom)},   {"addr_to", std::to_string(addrTo)},
@@ -5877,8 +5896,10 @@ namespace PythonBindings
                     options["phys_page"] = TtdOptionTextPy(pageObj);
                 if (!spaceObj.is_none())
                     options["space"] = py::str(spaceObj).cast<std::string>();
+                TtdKwargsPy(options, kwargs);   // order="newest", ranges=True
                 return TtdCoveragePy(TtdRunPy(self, "coverage-scan", options));
-            }, "Frames in from_frame..to_frame that touched the address range (coverage index)",
+            }, "Frames in from_frame..to_frame that touched the address range (coverage index). Keywords: "
+               "order='newest' (the newest matches first), ranges=True (runs of consecutive frames)",
                 py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = "executed",
                 py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(), py::arg("limit") = 200,
                 py::arg("space") = py::none())
