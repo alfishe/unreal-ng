@@ -4528,6 +4528,10 @@ namespace PythonBindings
                 return StateNodeToPy(DeviceState::MultiSound(self.GetContext()));
             }, "The ZX-MultiSound card: options, shadowed built-ins, CPLD latches, YM2203 pair (the TSFM report's chips), "
                "SAA1099, General Sound, DACs, MIDI summary ({'available': False, ...} without the card)")
+            .def("wildsound_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::WildSound(self.GetContext()));
+            }, "The Sprinter's ISA Wild Sound: mode, stream, storage, the uploaded track, the XM player's position and "
+               "channels, both AY chips ({'available': False, ...} without the card)")
             .def("midi_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Midi(self.GetContext()));
             }, "The MIDI line and the SAM2695 synthesizer: 16 parts (program, preset, volume, pan, voices, notes), "

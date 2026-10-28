@@ -422,7 +422,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 			if (sprinterisa::ParseKind(v, kind))
 				slot.kind = static_cast<uint8_t>(kind);
 			else
-				MLOGWARNING("Config: unknown [ISA] %s=%s (NONE | ZXBUS | RAM | NE2000 | EL3C509B | SPRINTERESP | MODEM | DUAL16552), %s kept",
+				MLOGWARNING("Config: unknown [ISA] %s=%s (NONE | ZXBUS | RAM | NE2000 | EL3C509B | SPRINTERESP | MODEM | DUAL16552 | WILDSOUND), %s kept",
 				            prefix.c_str(), v, sprinterisa::KindName(static_cast<sprinterisa::CardKind>(slot.kind)));
 		}
 		const auto slotKind = static_cast<sprinterisa::CardKind>(slot.kind);
@@ -455,6 +455,13 @@ bool Config::ParseConfig(IniFile& inimanager)
 		}
 		else if (kind == sprinterisa::CardKind::Dual16552)
 			slot.irq = sprinterisa::kSerialDefaultIrqA;
+		else if (kind == sprinterisa::CardKind::WildSound)
+		{
+			// The ISA Wild Sound answers at I/O #000-#001 (what prosiak.exe uses; the board's glue is undocumented,
+			// docs/inprogress/2026-10-09-wildsound/design.md §2.1); no IRQ
+			slot.base = 0;
+			slot.irq = 0;
+		}
 		if (const char* v = inimanager.GetValue("ISA", (prefix + "Base").c_str(), nullptr))
 		{
 			uint16_t base = 0;

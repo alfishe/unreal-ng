@@ -51,6 +51,7 @@ enum class CardKind : uint8_t
     SprinterEsp = 5,  ///< SprinterESP Wi-Fi: a 16550 + an ESP8266 at #3E8 (network phase SN3)
     Modem = 6,        ///< ISA Hayes modem (network phase SN4)
     Dual16552 = 7,    ///< SprinterSerial: two 16550s (network phase SN4)
+    WildSound = 8,    ///< Robus's ISA Wild Sound: two AY and an XM player on an STM32 (docs/inprogress/2026-10-09-wildsound)
 };
 
 /// NE2000 variants (network tdd §6.4)

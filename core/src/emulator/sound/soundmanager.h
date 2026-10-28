@@ -35,7 +35,7 @@
 #include "stdafx.h"
 
 class EmulatorContext;
-class ICard;
+class ICardAudio;
 class SoundChip_Moonsound;
 
 /// The GS slot as other threads see it (SoundManager::generalSoundSlot)
@@ -662,9 +662,9 @@ public:
     /// A card's mixer rows join the registry (volume / mute / solo / capture / HUD like any row) and its frames run
     /// with the machine's: FrameStart at every frame start, FrameEnd with the frame's sample count (0 in turbo
     /// without audio). Called by SlotManager at machine creation and release
-    void attachSlotCard(ICard* card);
-    void detachSlotCard(ICard* card);
-    const std::vector<ICard*>& slotCards() const { return _slotCards; }
+    void attachSlotCard(ICardAudio* card);
+    void detachSlotCard(ICardAudio* card);
+    const std::vector<ICardAudio*>& slotCards() const { return _slotCards; }
     /// Why a row is silent by hardware ("shadowed by zxbus.1"); empty when nothing hides it
     void setDeviceState(AudioSourceType type, const std::string& state);
     std::string deviceState(AudioSourceType type) const;
@@ -925,18 +925,18 @@ public:
 private:
     // Cards the slots build themselves (ZX-bus slots card.h; the ZX-MultiSound): SlotManager owns them, the mixer
     // drives their frames and mixes their rows
-    std::vector<ICard*> _slotCards;
+    std::vector<ICardAudio*> _slotCards;
     /// The slot cards' SSG rows (CardMixerRow::ssgRow) get what the AY socket's chips get: the AY / SSG tone voicing
     /// (one stage per row, set up, requested, reset and invalidated together with _ayVoicing0 / _ayVoicing1) and then
     /// the AY character chain (punch, room: configured, set up, reset and gated together with _ayChain0 /
     /// _ayChain1, Sound HQ only). Both restart when the card restarts its render layers (a TTD restore)
     struct CardSsgRow
     {
-        ICard* card = nullptr;
+        ICardAudio* card = nullptr;
         AudioSourceType type = AudioSourceType::Custom;
         std::unique_ptr<VoicingStage> stage;
         std::unique_ptr<AudioCharacterChain> chain;
-        uint64_t renderEpoch = 0;   // the card's ICard::RenderEpoch the stage and the chain run in
+        uint64_t renderEpoch = 0;   // the card's ICardAudio::RenderEpoch the stage and the chain run in
     };
     std::vector<CardSsgRow> _cardSsgRows;
     /// A card row's chain takes the socket chains' settings (chip type, punch preset, punch, room)
