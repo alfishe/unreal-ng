@@ -315,6 +315,9 @@ void AutomationWebAPI::start()
 
     _stopThread = false;
 
+    // Staged uploads of instances that crashed or were killed (a normal exit removes its own)
+    api::v1::UploadHelper::Instance().sweepLeftovers();
+
     // Debugger events for /api/v1/websocket subscribers
     DebugEventHub::Instance().Start();
     // Companion events for /api/v1/companions/events: the same view as GET /api/v1/companions/me

@@ -158,9 +158,11 @@ void SnapshotController::load(const HttpRequestPtr& req,
 
 ### 3.3 Temp file staging
 
-Per-session upload folder: `writable_root/uploads/<session_uuid>/`
+Per-session upload folder: `writable_root/uploads/<pid>-<random>/`
 - Created on first upload of the session
 - Cleaned up entirely on `app_shutdown()` or app exit
+- A process that crashed or was killed leaves its folder: the next WebAPI start removes every `<pid>-*` folder whose
+  process is gone (`SweepUploadSessions`; a running instance's folder stays)
 - Files named `<upload_seq>_<filename>` (sequence avoids collisions)
 - `writable_root` unless set (`UploadHelper::setWritableRoot`): `<system temp>/unreal-ng`, never the executable's
   folder (a signed bundle or a read-only install; until 2026-10-27 the fallback was that folder, and a package build

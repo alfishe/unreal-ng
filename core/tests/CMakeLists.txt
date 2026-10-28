@@ -268,6 +268,7 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/webapi/src/ws-hub.cpp
             ${ROOT_DIR}/core/automation/webapi/src/surface-hub.cpp
             ${ROOT_DIR}/core/automation/webapi/src/debug-event-hub.cpp
+            ${ROOT_DIR}/core/automation/webapi/src/common/upload_sweep.cpp
         )
         target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/automation/webapi/src)
         target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/automation/mcp/src)
