@@ -166,7 +166,8 @@
         body["properties"]["blocks"]["description"] = "mkdir: iS-DOS: the catalogue's size, 1-16 blocks (mkdir.com /s; left out: 2 Classic, 3 Chic)";
         body["properties"]["attributes"]["type"] = "string";
         body["properties"]["attributes"]["description"] =
-            "attrib: the volume's attribute letters (volumes lists them): '+R-H' sets and clears, 'RA' leaves exactly these";
+            "attrib: the volume's attribute letters (volumes lists them): '+R-H' sets and clears, 'RA' leaves exactly these; "
+            "write: the same, set once the file is written";
         body["properties"]["time"]["type"] = "string";
         body["properties"]["time"]["description"] = "attrib: the date and time (FAT, iS-DOS, MB-02): '2026-10-26 14:30[:05]', 'now' or UTC seconds";
         body["properties"]["label"]["type"] = "string";
@@ -178,7 +179,14 @@
         body["properties"]["in"]["type"] = "string";
         body["properties"]["in"]["description"] = "write: the file's bytes from this host file";
         body["properties"]["start"]["type"] = "string";
-        body["properties"]["start"]["description"] = "write: the TR-DOS start / +3DOS CODE / iS-DOS load address: 32768, 0x8000 or #8000";
+        body["properties"]["start"]["description"] =
+            "write: the TR-DOS / MDOS start, the +3DOS / MB-02 CODE address or program autostart line, the iS-DOS load address: 32768, 0x8000 or #8000";
+        body["properties"]["type"]["type"] = "string";
+        body["properties"]["type"]["description"] =
+            "write: the header's type: program, numbers, chars or code (+3DOS; MB-02 program or code; left out: code)";
+        body["properties"]["param2"]["type"] = "string";
+        body["properties"]["param2"]["description"] =
+            "write: +3DOS, MB-02, MDOS: the header's param 2 (left out: a program's length, i.e. no variables; else 32768)";
         body["properties"]["header"]["type"] = "boolean";
         body["properties"]["header"]["description"] = "write: +3DOS: false leaves out the 128-byte +3DOS header";
         body["properties"]["descriptor"]["type"] = "object";

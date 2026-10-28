@@ -2139,3 +2139,9 @@ bool MemoryAccessTracker::IsCalltraceCapturing() const
 {
     return _feature_calltrace_enabled && _calltraceSessionState == ProfilerSessionState::Capturing;
 }
+
+bool MemoryAccessTracker::HasCapturingSession() const
+{
+    return _memorySessionState == ProfilerSessionState::Capturing ||
+           _calltraceSessionState == ProfilerSessionState::Capturing;
+}

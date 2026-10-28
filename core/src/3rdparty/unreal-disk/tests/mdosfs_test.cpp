@@ -251,6 +251,7 @@ TEST(MdosFs, Mdos3ContainerAndPartitionSlots)
     DiskFs searched(hdd3);
     ASSERT_EQ(searched.Volumes().size(), 3u);
     EXPECT_EQ(searched.Volumes()[0].offset, (1948u + 1) * 512);
+
 }
 
 TEST(MdosFs, Mdos3CardOfFat16Files)
@@ -283,6 +284,20 @@ TEST(MdosFs, Mdos3CardOfFat16Files)
     ASSERT_EQ(entries.size(), 11u);
     EXPECT_EQ(entries[1].name, "intro4yes!.B");
     EXPECT_EQ(ReadFile(fs, "mdos-1", entries[1].path).size(), entries[1].size);
+
+    // The same partition moved to LBA 5000: its files are found wherever the partition is
+    const std::vector<uint8_t> image = Bytes("loaders/mdos/mdos3-cf-fat16.img");
+    std::vector<uint8_t> moved(5000 * 512, 0);
+    std::copy(image.begin(), image.begin() + 512, moved.begin());
+    moved[446 + 8] = 5000 & 0xFF;
+    moved[446 + 9] = 5000 >> 8;
+    moved[446 + 10] = moved[446 + 11] = 0;
+    moved.insert(moved.end(), image.begin() + 63 * 512, image.end());
+    MemoryDevice far(moved);
+    DiskFs deep(far);
+    ASSERT_EQ(deep.Volumes().size(), 3u);
+    EXPECT_EQ(deep.Volumes()[1].id, "mdos-0");
+    EXPECT_EQ(deep.Volumes()[1].offset, (5000u - 63 + 116 + 1) * 512);
 }
 
 TEST(MdosFs, LoopingChainFailsAndOtherDisksAreNoMdos)
@@ -361,6 +376,20 @@ TEST(MdosFs, D80WriteDeleteRenameAttributesLabel)
     ASSERT_TRUE(fs.Write("", "prog.P", Pattern(40, 3), options, error)) << error;
     ASSERT_TRUE(fs.Stat("", "prog.P", entry, error)) << error;
     EXPECT_EQ(entry.Field("param2"), 40);
+    // A program with variables after it; the attributes as MDOS's PROTECT leaves them
+    DiskFsWriteOptions vars = options;
+    vars.param2 = 30;
+    vars.attributes = "RE";
+    ASSERT_TRUE(fs.Write("", "vars.P", Pattern(40, 3), vars, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "vars.P", entry, error)) << error;
+    EXPECT_EQ(entry.Field("param2"), 30);
+    EXPECT_EQ(entry.attributes, "....R.E.");
+    vars.basicType = 0;
+    EXPECT_FALSE(fs.Write("", "typed.P", {1}, vars, error));
+    EXPECT_NE(error.find("no header type"), std::string::npos) << error;
+    EXPECT_FALSE(fs.Delete("", "vars.P", error));  // no D
+    ASSERT_TRUE(fs.SetAttributes("", "vars.P", "+D", error)) << error;
+    ASSERT_TRUE(fs.Delete("", "vars.P", error)) << error;
 
     // Too big, a bad name
     EXPECT_FALSE(fs.Write("", "big.B", Pattern(static_cast<size_t>(free) + 512, 4), {}, error));

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <functional>
 #include <set>
 
 #include "unrealdisk/blockdevice.h"
@@ -28,10 +29,11 @@ constexpr uint32_t kSector = BlockDevice::kSectorSize;
 /// The geometry of a hard disk without one in its image (16 heads, 63 sectors: the ATM-Turbo IDE images)
 constexpr uint64_t kDefaultHeads = 16;
 constexpr uint64_t kDefaultSectors = 63;
-/// iS-DOS devices are looked for at this many cylinder boundaries at most (a 2 GB disk of 16 x 63 cylinders)
-constexpr uint64_t kMaxCylinderScan = 4096;
-/// Without a #49 partition the first MDOS3 slot is looked for in this many sectors from LBA 0 (2 MiB)
+/// Outside the FAT volumes an MDOS3 slot without a #49 partition is looked for in this many sectors from LBA 0
 constexpr uint64_t kMdos3Search = 4096;
+/// After the end of a volume an iS-DOS device is looked for in this many sectors: a cylinder of 16 heads of 63 (the
+/// most an IDE drive reports), where the HDD driver starts the next device
+constexpr uint64_t kIsdosChainWindow = 16 * 63;
 /// A BS-DOS 309 virtual floppy on its #47 partition: 2 MiB
 constexpr uint64_t kBsdosDisc = 4096;
 
@@ -151,6 +153,83 @@ IsdosFileSystem::BlockWriter BlockWriterAt(BlockDevice& device, uint64_t offset,
         return device.WriteSector(lba, sector);
     };
 }
+
+using SectorRanges = std::vector<std::pair<uint64_t, uint64_t>>;
+
+/// The first sector from `from` up to `to` outside the `taken` ranges for which `match` holds, each one read (a run
+/// the device knows to be zeros is skipped: no signature is all zeros); `to` when none
+uint64_t ScanUntaken(BlockDevice& device, uint64_t from, uint64_t to, SectorRanges taken,
+                     const std::function<bool(const uint8_t*)>& match)
+{
+    std::sort(taken.begin(), taken.end());
+    size_t next = 0;
+    uint8_t s[kSector];
+    uint64_t asked = 0;  // ZeroRun is asked once in 128 sectors (a file image answers it with a system call)
+    for (uint64_t lba = from; lba < to;)
+    {
+        while (next < taken.size() && taken[next].second <= lba)
+            next++;
+        if (next < taken.size() && taken[next].first <= lba)
+        {
+            lba = taken[next].second;
+            asked = 0;
+            continue;
+        }
+        if (lba >= asked)
+        {
+            if (const uint64_t zeros = device.ZeroRun(lba))
+            {
+                lba += zeros;
+                continue;
+            }
+            asked = lba + 128;
+        }
+        if (device.ReadSector(lba, s) && match(s))
+            return lba;
+        lba++;
+    }
+    return to;
+}
+
+/// The lowest device LBA where a file of the FAT volumes starts with "SDOS": an .md3 file, or MDOS3 slot files, on a
+/// card. The firmware reads the disk sector by sector up to the first; a file's first sector is where it meets it
+/// (`none` when no file starts so)
+uint64_t FirstSdosFile(const std::vector<std::pair<std::shared_ptr<BlockDevice>, uint64_t>>& fats, CodePage page,
+                       uint64_t none)
+{
+    uint64_t best = none;
+    for (const auto& [volume, first] : fats)
+    {
+        FatFs fs(*volume, page);
+        if (!fs.Open())
+            continue;
+        std::vector<FatNode> dirs{fs.Root()};
+        std::set<uint32_t> seen;  // a damaged tree may loop
+        while (!dirs.empty())
+        {
+            const FatNode dir = dirs.back();
+            dirs.pop_back();
+            std::vector<FatNode> entries;
+            if (!fs.List(dir, entries))
+                continue;
+            for (const FatNode& node : entries)
+            {
+                std::vector<std::pair<uint64_t, uint32_t>> runs;
+                uint8_t s[kSector];
+                if (node.IsDirectory())
+                {
+                    if (node.firstCluster && seen.insert(node.firstCluster).second)
+                        dirs.push_back(node);
+                }
+                else if (node.size >= kSector && node.firstCluster && fs.Extents(node, runs) && !runs.empty() &&
+                         first + runs[0].first < best && volume->ReadSector(runs[0].first, s) &&
+                         std::memcmp(s, "SDOS", 4) == 0)
+                    best = first + runs[0].first;
+            }
+        }
+    }
+    return best;
+}
 }  // namespace
 
 /// region <Drivers>
@@ -183,6 +262,10 @@ struct DiskFs::Driver
     virtual bool SizedDirectories() const { return false; }
     /// Whether the entry may be deleted (a recursive delete checks every entry before it deletes one)
     virtual bool Deletable(const DiskFsEntry&, std::string&) { return true; }
+    /// The header types Write takes as DiskFsWriteOptions::basicType, as digits ("": none)
+    virtual std::string BasicTypes() const { return {}; }
+    /// Whether Write takes DiskFsWriteOptions::param2
+    virtual bool TakesParam2() const { return false; }
     /// The attribute letters SetAttributes takes ("": none)
     virtual std::string AttributeLetters() const { return {}; }
     /// The entry's attributes set to exactly `letters` (of AttributeLetters, upper case)
@@ -418,8 +501,20 @@ struct Plus3Driver : DiskFs::Driver
         Plus3FileSystem::WriteOptions write;
         write.header = options.header;
         write.param1 = options.start;
+        if (!options.header && (options.basicType >= 0 || options.param2 >= 0))
+        {
+            error = "a type and param 2 go in the +3DOS header: leave header on";
+            return false;
+        }
+        write.basicType = static_cast<uint8_t>(options.basicType >= 0 ? options.basicType : 3);
+        write.param2 = static_cast<uint16_t>(options.param2 >= 0           ? options.param2
+                                             : write.basicType == 0 ? std::min<size_t>(data.size(), 0xFFFF)
+                                                                    : 0x8000);
         return fs.Write(path, data, write, error);
     }
+
+    std::string BasicTypes() const override { return "0123"; }
+    bool TakesParam2() const override { return true; }
 
     bool Delete(const std::string& path, std::string& error) override { return fs.Delete(path, error); }
 
@@ -1277,9 +1372,16 @@ struct Mb02Driver : BsdosTree<Mb02FileSystem>
             return false;
         Mb02FileSystem::WriteOptions write;
         write.start = options.start;
+        write.type = static_cast<uint8_t>(options.basicType >= 0 ? options.basicType : 3);
+        write.param2 = static_cast<uint16_t>(options.param2 >= 0  ? options.param2
+                                             : write.type == 0 ? std::min<size_t>(data.size(), 0xFFFF)
+                                                               : 0x8000);
         Dos(options.mtime, write.date, write.time);
         return fs.Write(number, Unescape(name), data, write, error);
     }
+
+    std::string BasicTypes() const override { return "03"; }
+    bool TakesParam2() const override { return true; }
 
     bool Delete(const std::string& path, std::string& error) override
     {
@@ -1455,9 +1557,13 @@ struct MdosDriver : DiskFs::Driver
         MdosFileSystem::WriteOptions write;
         write.start = options.start;
         // A program: its length without variables; else as a tape header's CODE
-        write.param2 = type == 'P' ? static_cast<uint16_t>(std::min<size_t>(data.size(), 0xFFFF)) : 0x8000;
+        write.param2 = static_cast<uint16_t>(options.param2 >= 0 ? options.param2
+                                             : type == 'P'        ? std::min<size_t>(data.size(), 0xFFFF)
+                                                                  : 0x8000);
         return fs.Write(name, type, data, write, error);
     }
+
+    bool TakesParam2() const override { return true; }
 
     bool Delete(const std::string& path, std::string& error) override
     {
@@ -1680,7 +1786,8 @@ void DiskFs::Probe()
     }
 
     // FAT: a superfloppy, else the partitions of the MBR
-    std::vector<std::pair<uint64_t, uint64_t>> taken;  ///< sector ranges of the FAT volumes
+    std::vector<std::pair<uint64_t, uint64_t>> taken;  ///< sector ranges of the volumes found
+    std::vector<std::pair<std::shared_ptr<BlockDevice>, uint64_t>> fats;  ///< each FAT volume's device and first LBA
     {
         DiskFsVolume v;
         v.id = "fat";
@@ -1691,6 +1798,7 @@ void DiskFs::Probe()
             if (auto driver = OpenFat(Borrow(device), _page, v))
             {
                 taken.emplace_back(0, v.bytes / kSector);
+                fats.emplace_back(Borrow(device), 0);
                 add(std::move(v), std::move(driver));
             }
         }
@@ -1708,6 +1816,7 @@ void DiskFs::Probe()
                 {
                     p.offset = partition.first * kSector;
                     taken.emplace_back(partition.first, partition.first + partition.count);
+                    fats.emplace_back(window, partition.first);
                     add(std::move(p), std::move(driver));
                 }
                 else
@@ -1783,39 +1892,24 @@ void DiskFs::Probe()
 
     // MDOS3 (divIDE), as its firmware finds them (nmi.a80 ZPRACPAR, PARTSEL): the primary MBR partitions of type #49,
     // else the whole disk from its first sector that starts with "SDOS" (a FAT16 card whose first files are the
-    // slots, an .md3 file). A partition is slots of 1693 sectors, an info sector ("SDOS", the slot's name) and a
-    // virtual disk
+    // slots, an .md3 file; looked for after iS-DOS, below). A partition is slots of 1693 sectors, an info sector
+    // ("SDOS", the slot's name) and a virtual disk
+    struct Mdos3Partition
     {
-        struct Mdos3Partition
+        uint64_t base = 0, count = 0;
+        uint32_t number = 0;  ///< 1..4 for an MBR partition, 0 for the whole disk
+    };
+    std::vector<Mdos3Partition> partitions;
+    if (s0[510] == 0x55 && s0[511] == 0xAA)
+        for (uint32_t number = 0; number < 4; number++)
         {
-            uint64_t base = 0, count = 0;
-            uint32_t number = 0;  ///< 1..4 for an MBR partition, 0 for the whole disk
-        };
-        std::vector<Mdos3Partition> partitions;
-        if (s0[510] == 0x55 && s0[511] == 0xAA)
-            for (uint32_t number = 0; number < 4; number++)
-            {
-                const uint8_t* entry = s0 + 446 + number * 16;
-                const uint64_t first =
-                    entry[8] | entry[9] << 8 | entry[10] << 16 | static_cast<uint64_t>(entry[11]) << 24;
-                const uint64_t count =
-                    entry[12] | entry[13] << 8 | entry[14] << 16 | static_cast<uint64_t>(entry[15]) << 24;
-                if (entry[4] == 0x49 && count && first < device.SectorCount())
-                    partitions.push_back({first, std::min(count, device.SectorCount() - first), number + 1});
-            }
-        if (partitions.empty())
-        {
-            // The firmware searches the whole disk; here the first kMdos3Search sectors, where a FAT16 card of
-            // 512-byte clusters (MDOS3's how-to) keeps its first file
-            uint8_t s[kSector];
-            const uint64_t last = std::min<uint64_t>(device.SectorCount(), kMdos3Search);
-            for (uint64_t lba = 0; lba < last; lba++)
-                if (device.ReadSector(lba, s) && std::memcmp(s, "SDOS", 4) == 0)
-                {
-                    partitions.push_back({lba, device.SectorCount() - lba, 0});
-                    break;
-                }
+            const uint8_t* entry = s0 + 446 + number * 16;
+            const uint64_t first = entry[8] | entry[9] << 8 | entry[10] << 16 | static_cast<uint64_t>(entry[11]) << 24;
+            const uint64_t count = entry[12] | entry[13] << 8 | entry[14] << 16 | static_cast<uint64_t>(entry[15]) << 24;
+            if (entry[4] == 0x49 && count && first < device.SectorCount())
+                partitions.push_back({first, std::min(count, device.SectorCount() - first), number + 1});
         }
+    auto addMdos3 = [&] {
         for (const auto& [base, count, number] : partitions)
         {
             auto read = [&device, base = base](uint64_t lba, uint8_t* dst) {
@@ -1872,7 +1966,8 @@ void DiskFs::Probe()
                 add(std::move(v), std::move(driver));
             }
         }
-    }
+    };
+    addMdos3();
 
     // BS-DOS 309 (the divIDE HDD BIOS, bsdos309-hdd_bios.a80): the first primary MBR partition of type #47 holds the
     // virtual floppies @1..@255 back to back, 2 MiB each. The BIOS places a floppy's track, side and sector (as
@@ -1955,10 +2050,40 @@ void DiskFs::Probe()
     };
     if (isdosAt(0, "isdos"))
         return;
+    // The driver keeps each device's first cylinder in its own settings (ide+.blk set by idetune.com, ZX Format 5),
+    // the devices one after the other from cylinder 0, in the geometry it was told: the image's cylinders, then the
+    // sectors of a cylinder (16 heads of 63 sectors at most) after the end of every volume found, a device found
+    // there adding its own end
     const uint64_t cylinder = heads * sectors;
-    const uint64_t cylinders = std::min(device.SectorCount() / cylinder, kMaxCylinderScan);
-    for (uint64_t c = 1; c < cylinders; c++)
-        isdosAt(c * cylinder, "isdos-" + std::to_string(c));
+    auto idOf = [cylinder](uint64_t lba) {
+        return lba % cylinder == 0 ? "isdos-" + std::to_string(lba / cylinder) : "isdos-lba" + std::to_string(lba);
+    };
+    for (uint64_t lba = cylinder; lba < device.SectorCount(); lba += cylinder)
+        isdosAt(lba, idOf(lba));
+    for (size_t i = 0; i <= taken.size(); i++)
+    {
+        const uint64_t from = i == 0 ? 1 : taken[i - 1].second, to = std::min(device.SectorCount(), from + kIsdosChainWindow);
+        for (uint64_t lba = from; lba < to; lba++)
+            if (isdosAt(lba, idOf(lba)))
+                break;
+    }
+
+    // MDOS3 with no #49 partition: the firmware reads the whole disk from LBA 0 up to the first "SDOS" sector. Here
+    // the FAT volumes' files by their first sectors wherever they are, and the other sectors of the first
+    // kMdos3Search (an .md3 written to a disk whole): reading every sector of a large disk takes seconds, too slow
+    // for each look
+    if (partitions.empty())
+    {
+        const uint64_t file = FirstSdosFile(fats, _page, device.SectorCount());
+        const uint64_t raw = ScanUntaken(device, 0, std::min(file, kMdos3Search), taken,
+                                         [](const uint8_t* s) { return std::memcmp(s, "SDOS", 4) == 0; });
+        const uint64_t lba = raw < std::min(file, kMdos3Search) ? raw : file;
+        if (lba < device.SectorCount())
+        {
+            partitions.push_back({lba, device.SectorCount() - lba, 0});
+            addMdos3();
+        }
+    }
 }
 
 DiskFs::Driver* DiskFs::Find(const std::string& volume, std::string& error, size_t* index)
@@ -2034,9 +2159,59 @@ DiskFs::Driver* DiskFs::FindWritable(const std::string& volume, std::string& err
     return driver;
 }
 
+namespace
+{
+/// `attributes` applied to the letters `current`: "+R-H" changes them, "RA" replaces them. False with the reason on a
+/// letter the volume does not take
+bool AttributeSet(const DiskFsVolume& v, const std::string& current, const std::string& attributes, std::string& set,
+                  std::string& error)
+{
+    if (v.attributes.empty())
+    {
+        error = "the " + v.system + " volume '" + v.id + "' has no file attributes";
+        return false;
+    }
+    set.clear();
+    const bool relative = !attributes.empty() && (attributes[0] == '+' || attributes[0] == '-');
+    if (relative)
+        for (const char c : current)
+            if (v.attributes.find(c) != std::string::npos)
+                set += c;
+    char sign = '+';
+    for (const char raw : attributes)
+    {
+        const char c = static_cast<char>(std::toupper(static_cast<unsigned char>(raw)));
+        if (relative && (c == '+' || c == '-'))
+        {
+            sign = c;
+            continue;
+        }
+        if (v.attributes.find(c) == std::string::npos)
+        {
+            error = "attributes '" + attributes + "': the " + v.system + " volume takes " + v.attributes + " (+R-H changes, RA sets exactly)";
+            return false;
+        }
+        const size_t at = set.find(c);
+        if (sign == '+' && at == std::string::npos)
+            set += c;
+        else if (sign == '-' && at != std::string::npos)
+            set.erase(at, 1);
+    }
+    if (attributes.empty() || (relative && attributes.find_first_not_of("+-") == std::string::npos))
+    {
+        error = "name the attributes: the " + v.system + " volume takes " + v.attributes + " (+R-H changes, RA sets exactly)";
+        return false;
+    }
+    return true;
+}
+}  // namespace
+
 bool DiskFs::Write(const std::string& volume, const std::string& path, const std::vector<uint8_t>& data,
                    const DiskFsWriteOptions& options, std::string& error)
 {
+    size_t index = 0;
+    if (!Find(volume, error, &index))
+        return false;
     Driver* driver = FindWritable(volume, error);
     const std::string clean = CleanPath(path);
     if (driver && clean.empty())
@@ -2044,7 +2219,35 @@ bool DiskFs::Write(const std::string& volume, const std::string& path, const std
         error = "name a file";
         return false;
     }
-    return driver && driver->Write(clean, data, options, error);
+    if (!driver)
+        return false;
+    // Everything asked for is checked before the disk changes
+    const DiskFsVolume& v = _volumes[index];
+    if (options.basicType >= 0)
+    {
+        static const char* const kTypes[] = {"a program (0)", "a number array (1)", "a character array (2)", "CODE (3)"};
+        const std::string types = driver->BasicTypes();
+        if (options.basicType > 3 || types.find(static_cast<char>('0' + options.basicType)) == std::string::npos)
+        {
+            std::string takes;
+            for (const char t : types)
+                takes += (takes.empty() ? "" : ", ") + std::string(kTypes[t - '0']);
+            error = "type " + std::to_string(options.basicType) + ": the " + v.system + " volume takes " +
+                    (takes.empty() ? "no header type" : takes);
+            return false;
+        }
+    }
+    if (options.param2 >= 0 && (!driver->TakesParam2() || options.param2 > 0xFFFF))
+    {
+        error = driver->TakesParam2() ? "param2 is 0-65535" : "the " + v.system + " volume keeps no header param 2";
+        return false;
+    }
+    std::string set;
+    if (!options.attributes.empty() && !AttributeSet(v, {}, options.attributes, set, error))
+        return false;
+    if (!driver->Write(clean, data, options, error))
+        return false;
+    return options.attributes.empty() || SetAttributes(volume, clean, options.attributes, error);
 }
 
 bool DiskFs::Delete(const std::string& volume, const std::string& path, std::string& error, bool recursive)
@@ -2146,11 +2349,9 @@ bool DiskFs::SetAttributes(const std::string& volume, const std::string& path, c
     if (!driver)
         return false;
     const DiskFsVolume& v = _volumes[index];
-    if (v.attributes.empty())
-    {
-        error = "the " + v.system + " volume '" + v.id + "' has no file attributes";
+    std::string set;
+    if (!AttributeSet(v, {}, attributes, set, error))
         return false;
-    }
     const std::string clean = CleanPath(path);
     DiskFsEntry entry;
     if (clean.empty())
@@ -2158,41 +2359,9 @@ bool DiskFs::SetAttributes(const std::string& volume, const std::string& path, c
         error = "name the file";
         return false;
     }
-    if (!Stat(volume, clean, entry, error))
-        return false;
     // The letters set now, then the change: "+R-H" or exactly "RA"
-    std::string set;
-    for (const char c : entry.attributes)
-        if (v.attributes.find(c) != std::string::npos)
-            set += c;
-    const bool relative = !attributes.empty() && (attributes[0] == '+' || attributes[0] == '-');
-    if (!relative)
-        set.clear();
-    char sign = '+';
-    for (const char raw : attributes)
-    {
-        const char c = static_cast<char>(std::toupper(static_cast<unsigned char>(raw)));
-        if (relative && (c == '+' || c == '-'))
-        {
-            sign = c;
-            continue;
-        }
-        if (v.attributes.find(c) == std::string::npos)
-        {
-            error = "attributes '" + attributes + "': the " + v.system + " volume takes " + v.attributes + " (+R-H changes, RA sets exactly)";
-            return false;
-        }
-        const size_t at = set.find(c);
-        if (sign == '+' && at == std::string::npos)
-            set += c;
-        else if (sign == '-' && at != std::string::npos)
-            set.erase(at, 1);
-    }
-    if (attributes.empty() || (relative && attributes.find_first_not_of("+-") == std::string::npos))
-    {
-        error = "name the attributes: the " + v.system + " volume takes " + v.attributes + " (+R-H changes, RA sets exactly)";
+    if (!Stat(volume, clean, entry, error) || !AttributeSet(v, entry.attributes, attributes, set, error))
         return false;
-    }
     error.clear();
     return driver->SetAttributes(entry, set, error);
 }

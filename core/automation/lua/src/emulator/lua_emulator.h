@@ -3433,22 +3433,32 @@ public:
         });
 
         // Snapshot operations
-        // snapshot_load(path [, commit]) -> ok, reason, emulator_id: the reason is set when TTD refuses the load
-        // (recording), the snapshot pipeline refuses it (the machine's policy, an unknown commit name) or the load
-        // fails. `commit` chooses who writes the machine: omitted = the plan decides (the machine's own policy, else
-        // the legacy commit), "legacy" = the legacy commit always, or a registered policy name. A file that needs
-        // another model (an SPG: TS-Conf) switches it first when this Lua is not bound to one machine (as
-        // rzx_play); emulator_id is then the new instance
-        lua.set_function("snapshot_load", [this](const std::string& path, sol::optional<std::string> commit)
+        // snapshot_load(path [, commit | {commit, switch_model}]) -> ok, reason, emulator_id: the reason is set when
+        // TTD refuses the load (recording), the snapshot pipeline refuses it (the machine's policy, an unknown commit
+        // name, a machine that cannot hold the file) or the load fails. `commit` chooses who writes the machine:
+        // omitted = the plan decides (the machine's own policy, else the legacy commit), "legacy" = the legacy commit
+        // always, or a registered policy name. A file for another machine (an SPG: TS-Conf; an SZX of another model,
+        // a 128K .z80 / .sna on a 48K) switches the model first when this Lua is not bound to one machine (as
+        // rzx_play): `switch_model` true / false, omitted = the launcher's rule (an SPG switches, a snapshot of
+        // another machine only with [SNAPSHOT] SwitchModel=1); emulator_id is then the new instance
+        lua.set_function("snapshot_load", [this](const std::string& path, sol::optional<sol::object> arg)
                                               -> std::tuple<bool, std::string, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator", ""};
             SnapshotLoadRequest request;
             request.emulatorId = emulator->GetId();
             request.path = path;
+            if (arg && arg->is<std::string>())
+                request.commit = arg->as<std::string>();
+            else if (arg && arg->is<sol::table>())
+            {
+                const sol::table options = arg->as<sol::table>();
+                request.commit = options.get_or<std::string>("commit", "");
+                if (const sol::optional<bool> switchModel = options.get<sol::optional<bool>>("switch_model"))
+                    request.switchModel = *switchModel;
+            }
             if (_emulator != nullptr)
-                request.switchModel = false;   // a script bound to a machine never replaces it; unbound: the launcher's default
-            request.commit = commit.value_or("");
+                request.switchModel = false;   // a script bound to a machine never replaces it; unbound: as asked
             const SnapshotLoadResult result = SnapshotLauncher::Load(request);
             return {result.ok, result.message, result.emulator ? result.emulator->GetId() : std::string()};
         });
@@ -5946,11 +5956,18 @@ public:
             return reply.Ok() && reply.body.find("reached")->b;
         });
 
-        lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable) -> sol::object {
+        // ttd_reverse_continue({pcs}, {phys_page=, all=, limit=, before_frame=, before_tin=, before=, from_frame=})
+        lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable,
+                                                        sol::optional<sol::table> optionsTable) -> sol::object {
             std::string pcs;
             for (auto& pair : pcsTable)
                 pcs += (pcs.empty() ? "" : ",") + TtdOptionText(pair.second);
-            StateNode value = TtdScriptValue(TtdRun("reverse-continue", {{"pcs", pcs}}));
+            std::map<std::string, std::string> options;
+            if (optionsTable)
+                for (const auto& [key, value] : *optionsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            options["pcs"] = pcs;
+            StateNode value = TtdScriptValue(TtdRun("reverse-continue", options));
             if (!value.find("matched"))
                 value["matched"] = false;
             return StateNodeToLua(ts, value);

@@ -31,6 +31,7 @@ constexpr uint16_t kUsed = 0x8000;
 constexpr uint16_t kLsn = 0x3FFF;
 constexpr uint32_t kBackup = 1;  ///< the backup sector: system sectors go here first
 constexpr uint32_t kEntry = 32;
+constexpr uint16_t kProgramAddress = 23755;  ///< a program's body address as BS-DOS saves one (PROG of a 48K machine)
 
 void SetWord(uint8_t* p, uint32_t value)
 {
@@ -502,12 +503,12 @@ bool Mb02FileSystem::Write(uint8_t dir, const std::string& name, const std::vect
     e[0x00] = static_cast<uint8_t>(Mb02File::kValid | Mb02File::kHeader | (bytes.empty() ? 0 : Mb02File::kBody));
     SetWord(e + 0x01, options.time);
     SetWord(e + 0x03, options.date);
-    e[0x05] = 3;  // CODE
+    e[0x05] = options.type;
     PutName(e + 0x06, name);
     SetWord(e + 0x10, static_cast<uint32_t>(std::min<size_t>(bytes.size(), 0xFFFF)));
     SetWord(e + 0x12, options.start);
-    SetWord(e + 0x14, 0x8000);
-    SetWord(e + 0x16, options.start);
+    SetWord(e + 0x14, options.param2);
+    SetWord(e + 0x16, options.type == 0 ? kProgramAddress : options.start);
     const uint32_t length = static_cast<uint32_t>(bytes.size());
     for (int k = 0; k < 4; k++)
         e[0x18 + k] = static_cast<uint8_t>(length >> (8 * k));

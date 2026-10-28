@@ -375,7 +375,8 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd find-last --addr <A>         Reverse search: find last access at address" << NEWLINE;
     ss << "    [--access write|read|execute|io]  (default: write)" << NEWLINE;
     ss << "    [--value V] [--pc-from X] [--pc-to Y]" << NEWLINE;
-    ss << "    [--before-frame F] [--before-tin T] [--space ram|vram|cache]" << NEWLINE;
+    ss << "    [--before-frame F] [--before-tin T] [--before T] [--from-frame F] [--space ram|vram|cache]" << NEWLINE;
+    ss << "    [--phys-page P|rom] [--all] [--changes-only] [--limit N]" << NEWLINE;
     ss << "  ttd memory-at --space S --frame F [--tinframe T] [--offset O] [--length N]   (alias: mat)" << NEWLINE;
     ss << "                                   A memory at a past checkpoint, without seeking (S: ram, ramN, or a" << NEWLINE;
     ss << "                                   region: vram, cache, neogs.ram, ... - memory regions lists them)" << NEWLINE;
@@ -398,6 +399,8 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "    [--tstates T]                     Step back T t-states (aligns to M1)" << NEWLINE;
     ss << "    [--scanlines L]                   Step back L scanlines (the machine's line length each)" << NEWLINE;
     ss << "  ttd reverse-continue --pc <A>    Run backward until any PC matches" << NEWLINE;
+    ss << "      [--phys-page P|rom] [--all] [--limit N] [--before-frame F [--before-tin T] | --before T] [--from-frame F]"
+       << NEWLINE;
     ss << "    [--pc <B> ...]                    (repeat --pc for multiple breakpoints)" << NEWLINE;
     ss << "  Aliases: rs=reverse-step, rc=reverse-continue" << NEWLINE;
     ss << NEWLINE;
@@ -1207,12 +1210,17 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         {"--addr", "addr"},       {"--addr-from", "addr_from"},   {"--addr-to", "addr_to"},
         {"--access", "access"},   {"--value", "value"},           {"--pc-from", "pc_from"},
         {"--pc-to", "pc_to"},     {"--phys-page", "phys_page"},   {"--before-frame", "before_frame"},
-        {"--before-tin", "before_tin"}, {"--space", "space"}};
+        {"--before-tin", "before_tin"}, {"--space", "space"},   {"--before", "before"},
+        {"--from-frame", "from_frame"}, {"--limit", "limit"}};
     std::map<std::string, std::string> options;
     for (size_t i = 1; i < args.size(); ++i)
     {
         const auto flag = flags.find(args[i]);
-        if (flag != flags.end() && i + 1 < args.size())
+        if (args[i] == "--all")
+            options["all"] = "true";   // the hit list, newest first
+        else if (args[i] == "--changes-only")
+            options["changes_only"] = "true";   // writes that changed the byte
+        else if (flag != flags.end() && i + 1 < args.size())
             options[flag->second] = args[++i];
     }
     // --before-tin alone: T-state of frame 0, as before
@@ -1226,7 +1234,8 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
                              (reply.error == ttd::TTDControlError::BadRequest
                                   ? std::string("Usage: ttd find-last [--addr <A> | --addr-from <F> --addr-to <T>] "
                                                 "[--access write|read|execute|io] [--value V] [--pc-from X] [--pc-to Y] "
-                                                "[--phys-page P] [--space ram|vram|cache] [--before-frame F] [--before-tin T]") +
+                                                "[--phys-page P|rom] [--space ram|vram|cache] [--before-frame F] [--before-tin T] "
+                                                "[--before T] [--from-frame F] [--all] [--changes-only] [--limit N]") +
                                         NEWLINE
                                   : std::string()));
         return;
@@ -1234,7 +1243,33 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
 
     const StateNode& b = reply.body;
     std::stringstream ss;
-    if (b.find("found")->b)
+    if (const StateNode* hits = b.find("hits"))
+    {
+        // --all: the list, newest first
+        ss << "TTD: " << b.find("count")->i << " match(es), newest first" << NEWLINE;
+        for (const StateNode& h : hits->items)
+        {
+            ss << "  frame " << h.find("frame")->i << " t " << h.find("tinframe")->i << "  " << h.find("access")->s
+               << "  PC #" << std::hex << std::uppercase << std::setfill('0') << std::setw(4) << h.find("pc")->i
+               << "  value #" << std::setw(2) << h.find("value")->i;
+            if (const StateNode* old = h.find("old_value"); old && old->kind != StateNode::Kind::Null)
+                ss << " (was #" << std::setw(2) << old->i << ")";
+            if (const StateNode* addr = h.find("addr"))
+                ss << "  addr #" << std::setw(4) << addr->i;
+            else if (const StateNode* offset = h.find("offset"))
+                ss << "  " << h.find("space")->s << " #" << std::setw(5) << offset->i;
+            ss << std::dec << std::setfill(' ');
+            if (h.find("phys_page")->kind != StateNode::Kind::Null)
+                ss << "  page " << h.find("phys_page")->i;
+            ss << NEWLINE;
+        }
+        if (b.find("truncated")->b)
+            ss << "More: --before " << b.find("next_before")->i << NEWLINE;
+        if (b.find("blocked"))
+            ss << "Stopped at the marker at frame=" << b.find("marker_frame")->i << " tInFrame=" << b.find("marker_tinframe")->i
+               << " (" << b.find("marker_reason")->s << ")" << NEWLINE;
+    }
+    else if (b.find("found")->b)
     {
         ss << "TTD: Match found" << NEWLINE;
         ss << "  Frame:    " << b.find("frame")->i << NEWLINE;
@@ -1242,6 +1277,8 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         ss << "  PC:       0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(4) << b.find("pc")->i
            << NEWLINE;
         ss << "  Value:    0x" << std::setw(2) << b.find("value")->i << NEWLINE;
+        if (const StateNode* old = b.find("old_value"); old && old->kind != StateNode::Kind::Null)
+            ss << "  Was:      0x" << std::setw(2) << old->i << NEWLINE;
         ss << "  PhysPage: " << std::dec;
         const StateNode* offset = b.find("offset");   // --space vram / cache: the offset in that memory
         if (offset)
@@ -1356,19 +1393,32 @@ void CLIProcessor::HandleTTDReverseStep(const ClientSession& session, EmulatorCo
 void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,
                                              const std::vector<std::string>& args)
 {
-    // One or more --pc <V> arguments
+    // One or more --pc <V> arguments, then the page, bounds and the --all list
+    static const std::map<std::string, std::string> flags = {
+        {"--phys-page", "phys_page"},   {"--before-frame", "before_frame"}, {"--before-tin", "before_tin"},
+        {"--before", "before"},         {"--from-frame", "from_frame"},     {"--limit", "limit"}};
+    std::map<std::string, std::string> options;
     std::string pcs;
     for (size_t i = 1; i < args.size(); ++i)
+    {
+        const auto flag = flags.find(args[i]);
         if (args[i] == "--pc" && i + 1 < args.size())
             pcs += (pcs.empty() ? "" : ",") + args[++i];
+        else if (args[i] == "--all")
+            options["all"] = "true";
+        else if (flag != flags.end() && i + 1 < args.size())
+            options[flag->second] = args[++i];
+    }
     if (pcs.empty())
     {
         session.SendResponse(std::string("Error: --pc is required (at least one)") + NEWLINE +
-                             "Usage: ttd reverse-continue --pc <A> [--pc <B> ...]" + NEWLINE);
+                             "Usage: ttd reverse-continue --pc <A> [--pc <B> ...] [--phys-page P|rom] [--all] [--limit N] "
+                             "[--before-frame F [--before-tin T] | --before T] [--from-frame F]" + NEWLINE);
         return;
     }
+    options["pcs"] = pcs;
 
-    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"reverse-continue", {{"pcs", pcs}}});
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"reverse-continue", options});
     if (!reply.Ok())
     {
         session.SendResponse("Error: " + reply.message + NEWLINE);
@@ -1376,7 +1426,29 @@ void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, Emulat
     }
     const StateNode& b = reply.body;
     std::stringstream ss;
-    if (b.find("matched")->b)
+    if (const StateNode* hits = b.find("hits"))
+    {
+        // --all: every hit, newest first; the machine did not move
+        ss << "TTD: " << b.find("count")->i << " PC hit(s), newest first" << NEWLINE;
+        for (const StateNode& h : hits->items)
+        {
+            ss << "  frame " << h.find("frame")->i << " t " << h.find("tinframe")->i << "  PC #" << std::hex
+               << std::uppercase << std::setfill('0') << std::setw(4) << h.find("pc")->i << std::dec << std::setfill(' ')
+               << "  page ";
+            const StateNode* page = h.find("phys_page");   // a number, or "rom" (the page-less bucket)
+            if (page->kind == StateNode::Kind::String)
+                ss << page->s;
+            else
+                ss << page->i;
+            ss << NEWLINE;
+        }
+        if (b.find("truncated")->b)
+            ss << "More: --before " << b.find("next_before")->i << NEWLINE;
+        if (const StateNode* m = b.find("blocked_by_marker"))
+            ss << "Stopped at the marker at (frame=" << m->find("frame")->i << ", tInFrame=" << m->find("tinframe")->i
+               << "): " << m->find("reason")->s << NEWLINE;
+    }
+    else if (b.find("matched")->b)
     {
         ss << "TTD: Reverse-continue hit PC=0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(4)
            << b.find("pc")->i << std::dec << " at (frame=" << b.find("frame")->i
@@ -1420,12 +1492,14 @@ void CLIProcessor::HandleTTDCoverage(const ClientSession& session, EmulatorConte
         {"--page", "phys_page"},      {"--phys-page", "phys_page"}, {"-p", "phys_page"},
         {"--space", "space"},
         {"--limit", "limit"},         {"-l", "limit"},           {"--bucket", "bucket_size"},
-        {"--bucket-size", "bucket_size"}};
+        {"--bucket-size", "bucket_size"}, {"--order", "order"}};
     std::map<std::string, std::string> options;
     for (size_t i = 2; i < args.size(); ++i)
     {
         const auto flag = flags.find(args[i]);
-        if (flag != flags.end() && i + 1 < args.size())
+        if (args[i] == "--ranges")
+            options["ranges"] = "true";   // runs of consecutive frames instead of the frame list
+        else if (flag != flags.end() && i + 1 < args.size())
             options[flag->second] = args[++i];
     }
     const std::string verb = "coverage-" + sub;
@@ -1467,14 +1541,35 @@ void CLIProcessor::HandleTTDCoverage(const ClientSession& session, EmulatorConte
         if (b.find("truncated")->b)
             ss << " [TRUNCATED]";
         ss << NEWLINE;
-        const auto& frames = b.find("frames")->items;
-        if (!frames.empty())
+        const std::string order = b.find("order")->s;
+        if (const StateNode* ranges = b.find("ranges"))
         {
-            ss << "Matching frames: ";
-            for (size_t n = 0; n < frames.size(); ++n)
-                ss << (n ? ", " : "") << frames[n].i;
+            if (!ranges->items.empty())
+            {
+                ss << "Matching runs (" << order << " first): ";
+                for (size_t n = 0; n < ranges->items.size(); ++n)
+                {
+                    const auto& run = ranges->items[n].items;
+                    ss << (n ? ", " : "") << run[0].i;
+                    if (run[1].i != run[0].i)
+                        ss << "-" << run[1].i;
+                }
+                ss << NEWLINE;
+            }
+        }
+        else if (const StateNode* frames = b.find("frames"); frames && !frames->items.empty())
+        {
+            ss << "Matching frames (" << order << " first): ";
+            for (size_t n = 0; n < frames->items.size(); ++n)
+                ss << (n ? ", " : "") << frames->items[n].i;
             ss << NEWLINE;
         }
+        if (const StateNode* next = b.find("next_from_frame"))
+            ss << "More: --from-frame " << next->i << NEWLINE;
+        else if (const StateNode* nextTo = b.find("next_to_frame"))
+            ss << "More: --to-frame " << nextTo->i << NEWLINE;
+        if (!b.find("exact")->b && b.find("matching_frames")->i > 0)
+            ss << "Not exact: without --page the offset matched on every page; give --page N (or rom)" << NEWLINE;
     }
     else
     {

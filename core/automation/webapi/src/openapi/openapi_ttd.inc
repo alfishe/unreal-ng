@@ -658,7 +658,10 @@
         at["description"] =
             "Bytes of any memory the session records (machine RAM, the Sprinter's video and fast RAM, sound card RAM and "
             "flash, VDAC2, EEPROMs ...) at the newest checkpoint at or before 'frame', from the engine's store: the "
-            "machine does not move. at_frame names the checkpoint read, exact whether it is the frame asked for.";
+            "machine does not move. at_frame names the checkpoint read, exact whether it is the frame asked for. ram / "
+            "ramN offsets are physical. Space cpu: offset is a Z80 address (offset + length at most 65536) and the bytes "
+            "are what the CPU saw at frame / tinframe through its paging then (a silent replay, the machine restored), "
+            "with banks [{window, addr, kind, page, name}].";
         Json::Value& atBody = at["requestBody"]["content"]["application/json"]["schema"];
         atBody["properties"]["frame"]["type"] = "integer";
         atBody["properties"]["offset"]["type"] = "string";
@@ -666,7 +669,9 @@
         atBody["properties"]["length"]["type"] = "integer";
         atBody["properties"]["length"]["description"] = "Bytes, 1..65536, default 256 (clipped at the memory's end)";
         atBody["required"].append("frame");
-        at["responses"]["200"]["description"] = "{space, offset, length, frame, at_frame, exact, hex}";
+        atBody["properties"]["tinframe"]["type"] = "integer";
+        atBody["properties"]["tinframe"]["description"] = "A point inside the frame (ram, ramN, vram, cache, cpu)";
+        at["responses"]["200"]["description"] = "{space, offset, length, frame, at_frame, exact, hex}; space cpu adds banks";
         Json::Value& diff = paths[kDiff]["post"];
         diff["summary"] = "What changed in a memory between two checkpoints";
         diff["description"] =
@@ -698,7 +703,7 @@
         "journal), 'ay-select', 'border', 'beeper', or 'in' / 'out' narrowed with the "
         "raw filters. Nothing is replayed: it answers the same on a loaded .ttd file. "
         "409 when the session has no port journal (TSConf, ZX Next, NeoGS, a file "
-        "without it) or while a recording is running. With 'file' it searches a .ttd on "
+        "without it), or when a long run keeps a running recording's CPU busy (pause and ask again). With 'file' it searches a .ttd on "
         "disk instead, without loading it (400 when the file cannot be read or has no journals).";
     paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["parameters"][0]["in"] = "path";
@@ -856,6 +861,29 @@
     paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][1]["description"] =
         "ram (default), vram (the Sprinter's video RAM) or cache (its fast RAM): addr_from / addr_to are then "
         "offsets in that memory, inside one 16 KB page; the answer names space, offset_from, offset_to";
+    {
+        Json::Value& params = paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"];
+        const char* const extra[][2] = {
+            {"phys_page", "0..255, or rom (the bucket all ROM shares). Without it on space ram the offset matches on "
+                          "every page and 16 KB window (exact: false in the answer)"},
+            {"limit", "List entries, 1..10000 (default 200): frames, or runs with ranges=true"},
+            {"order", "oldest (default) or newest: newest lists the newest matches first"},
+            {"ranges", "true: ranges[[from, to], ...] (runs of consecutive matching frames) instead of frames[]"}};
+        for (const auto& [name, text] : extra)
+        {
+            Json::Value param;
+            param["name"] = name;
+            param["in"] = "query";
+            param["schema"]["type"] = "string";
+            param["description"] = text;
+            params.append(param);
+        }
+        paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["responses"]["200"]["description"] =
+            "{kind, addr_from, addr_to, phys_page, order, exact, frames[] or ranges[], first_match, last_match (the true "
+            "ends of the window, also when the list is cut), matching_frames, scanned_frames, truncated, "
+            "next_from_frame (oldest order) / next_to_frame (newest order) when cut: pass it back as from_frame / "
+            "to_frame, index_available, covered_from, covered_to}";
+    }
 
     // =====================================================================
     // GET /ttd/coverage/summary — activity heatmap across frame intervals

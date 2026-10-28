@@ -1360,12 +1360,31 @@
     schemas["TTDFindLastRequest"]["properties"]["before_frame"]["format"] = "uint64";
     schemas["TTDFindLastRequest"]["properties"]["before_tin"]["type"] = "integer";
     schemas["TTDFindLastRequest"]["properties"]["before_tin"]["format"] = "uint32";
-    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["type"] = "integer";
-    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["minimum"] = 0;
-    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["maximum"] = 255;
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["oneOf"][0]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["oneOf"][0]["minimum"] = 0;
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["oneOf"][0]["maximum"] = 255;
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["oneOf"][1]["type"] = "string";
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["oneOf"][1]["enum"].append("rom");
     schemas["TTDFindLastRequest"]["properties"]["phys_page"]["description"] =
-        "Physical RAM page 0..255 (JSON number only; 400 otherwise). Pins the search to one page, so a banked "
-        "address does not answer with another page's access.";
+        "Physical RAM page 0..255, or \"rom\" (the bucket all ROM shares: reads and instruction starts); 400 "
+        "otherwise. Pins the search to one page, so a banked address does not answer with another page's access.";
+    schemas["TTDFindLastRequest"]["properties"]["before"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["before"]["format"] = "uint64";
+    schemas["TTDFindLastRequest"]["properties"]["before"]["description"] =
+        "At or before this machine time (a hit's t, or next_before of a cut list); instead of before_frame";
+    schemas["TTDFindLastRequest"]["properties"]["from_frame"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["from_frame"]["format"] = "uint64";
+    schemas["TTDFindLastRequest"]["properties"]["from_frame"]["description"] = "Do not look older than this frame's start";
+    schemas["TTDFindLastRequest"]["properties"]["all"]["type"] = "boolean";
+    schemas["TTDFindLastRequest"]["properties"]["all"]["description"] =
+        "Every match newest first (up to limit) in hits[]; the machine does not move";
+    schemas["TTDFindLastRequest"]["properties"]["changes_only"]["type"] = "boolean";
+    schemas["TTDFindLastRequest"]["properties"]["changes_only"]["description"] =
+        "access write only: skip a write that stored the byte already there; each hit carries old_value";
+    schemas["TTDFindLastRequest"]["properties"]["limit"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["limit"]["minimum"] = 1;
+    schemas["TTDFindLastRequest"]["properties"]["limit"]["maximum"] = 10000;
+    schemas["TTDFindLastRequest"]["properties"]["limit"]["default"] = 100;
     schemas["TTDFindLastRequest"]["properties"]["space"]["type"] = "string";
     schemas["TTDFindLastRequest"]["properties"]["space"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* space : {"ram", "vram", "cache"})
@@ -1404,6 +1423,24 @@
     schemas["TTDFindLastResponse"]["properties"]["offset"]["description"] =
         "The offset in the video / fast RAM (space vram / cache)";
     schemas["TTDFindLastResponse"]["properties"]["access"]["type"] = "string";
+    schemas["TTDFindLastResponse"]["properties"]["t"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["t"]["format"] = "uint64";
+    schemas["TTDFindLastResponse"]["properties"]["t"]["description"] = "all / changes_only / from_frame: the hit's machine time";
+    schemas["TTDFindLastResponse"]["properties"]["old_value"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["old_value"]["nullable"] = true;
+    schemas["TTDFindLastResponse"]["properties"]["old_value"]["description"] =
+        "changes_only: the byte the write replaced; null when unknown";
+    schemas["TTDFindLastResponse"]["properties"]["hits"]["type"] = "array";
+    schemas["TTDFindLastResponse"]["properties"]["hits"]["description"] =
+        "all: the matches newest first, each with frame, tinframe, t, pc, value, phys_page, access, space, addr / "
+        "offset (and old_value with changes_only)";
+    schemas["TTDFindLastResponse"]["properties"]["hits"]["items"]["type"] = "object";
+    schemas["TTDFindLastResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["truncated"]["type"] = "boolean";
+    schemas["TTDFindLastResponse"]["properties"]["truncated"]["description"] = "all: stopped at limit, older matches exist";
+    schemas["TTDFindLastResponse"]["properties"]["next_before"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["next_before"]["format"] = "uint64";
+    schemas["TTDFindLastResponse"]["properties"]["next_before"]["description"] = "truncated: pass it as before for the next page";
     schemas["TTDFindLastResponse"]["properties"]["blocked"]["type"] = "boolean";
     schemas["TTDFindLastResponse"]["properties"]["marker_frame"]["type"] = "integer";
     schemas["TTDFindLastResponse"]["properties"]["marker_frame"]["format"] = "uint64";
@@ -1492,6 +1529,34 @@
         "Non-empty list of reverse breakpoint PCs (required), 0..65535 each: a number, or a string "
         "(decimal, \"0x..\", \"#..\" or \"$..\"). A bad entry is a 400.";
     schemas["TTDReverseContinueRequest"]["required"].append("pcs");
+    schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][0]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][0]["minimum"] = 0;
+    schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][0]["maximum"] = 255;
+    schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][1]["type"] = "string";
+    schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][1]["enum"].append("rom");
+    schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["description"] =
+        "Only instructions run from this RAM page (or \"rom\"): one Z80 address on two banks is two searches";
+    schemas["TTDReverseContinueRequest"]["properties"]["all"]["type"] = "boolean";
+    schemas["TTDReverseContinueRequest"]["properties"]["all"]["description"] =
+        "Every hit newest first (up to limit) in hits[]; the machine does not move";
+    schemas["TTDReverseContinueRequest"]["properties"]["limit"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["limit"]["minimum"] = 1;
+    schemas["TTDReverseContinueRequest"]["properties"]["limit"]["maximum"] = 10000;
+    schemas["TTDReverseContinueRequest"]["properties"]["limit"]["default"] = 100;
+    schemas["TTDReverseContinueRequest"]["properties"]["before_frame"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["before_frame"]["format"] = "uint64";
+    schemas["TTDReverseContinueRequest"]["properties"]["before_frame"]["description"] =
+        "At or before this frame (+ before_tin) instead of strictly before the current position";
+    schemas["TTDReverseContinueRequest"]["properties"]["before_tin"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["before_tin"]["format"] = "uint32";
+    schemas["TTDReverseContinueRequest"]["properties"]["before_tin"]["description"] = "With before_frame only (400 alone)";
+    schemas["TTDReverseContinueRequest"]["properties"]["before"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["before"]["format"] = "uint64";
+    schemas["TTDReverseContinueRequest"]["properties"]["before"]["description"] =
+        "At or before this machine time (a hit's t, or next_before)";
+    schemas["TTDReverseContinueRequest"]["properties"]["from_frame"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["from_frame"]["format"] = "uint64";
+    schemas["TTDReverseContinueRequest"]["properties"]["from_frame"]["description"] = "Do not look older than this frame's start";
 
     schemas["TTDReverseContinueResponse"]["type"] = "object";
     schemas["TTDReverseContinueResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
@@ -1505,6 +1570,21 @@
     schemas["TTDReverseContinueResponse"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDReverseContinueResponse"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDReverseContinueResponse"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDReverseContinueResponse"]["properties"]["t"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["t"]["format"] = "uint64";
+    schemas["TTDReverseContinueResponse"]["properties"]["t"]["description"] = "The hit's machine time (single mode)";
+    schemas["TTDReverseContinueResponse"]["properties"]["phys_page"]["description"] =
+        "The page the hit ran from: 0..255, or \"rom\"";
+    schemas["TTDReverseContinueResponse"]["properties"]["hits"]["type"] = "array";
+    schemas["TTDReverseContinueResponse"]["properties"]["hits"]["description"] =
+        "all: the hits newest first, each {frame, tinframe, t, pc, phys_page}";
+    schemas["TTDReverseContinueResponse"]["properties"]["hits"]["items"]["type"] = "object";
+    schemas["TTDReverseContinueResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["truncated"]["type"] = "boolean";
+    schemas["TTDReverseContinueResponse"]["properties"]["next_before"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["next_before"]["format"] = "uint64";
+    schemas["TTDReverseContinueResponse"]["properties"]["next_before"]["description"] =
+        "truncated: pass it as before for the next page";
     schemas["TTDReverseContinueResponse"]["properties"]["blocked_by_marker"]["$ref"] =
         "#/components/schemas/TTDMarker";
     schemas["TTDReverseContinueResponse"]["properties"]["covered_from"]["type"] = "integer";
