@@ -597,10 +597,13 @@ void CLIProcessor::HandleEventBreakpoint(const ClientSession& session, const std
            << "  zxndma_start, zxndma_done" << NEWLINE
            << "Machine (the main CPU, TS-Conf): cpu_int (int_sel: 0 frame, 1 line, 2 DMA, 3 wait port)," << NEWLINE
            << "  tsdma_start (the device), tsdma_done (1 the end, 0 aborted)" << NEWLINE
+           << "Machine (the main CPU, Sprinter): cpu_int / cpu_reti (0-3 CTC, 4-5 SIO, 6-7 PIO, 8 the PLD's /INT)," << NEWLINE
+           << "  pld_read / pld_write (the PLD's internal code), pld_event (the journal's kind: 9 all_mode, ...)" << NEWLINE
            << "--value / --vmask filter the event's byte." << NEWLINE << "Examples:" << NEWLINE
            << "  bevent card_command --value 0x0F  - the card takes command #0F" << NEWLINE
            << "  bevent host_command               - the host writes any command" << NEWLINE
-           << "  bevent esxdos_call --value 0x9A   - a program opens a file (F_OPEN)";
+           << "  bevent esxdos_call --value 0x9A   - a program opens a file (F_OPEN)" << NEWLINE
+           << "  bevent pld_write --value 0xC2     - the Sprinter writes the border, whatever port the table maps";
         session.SendResponse(ss.str());
         return;
     }

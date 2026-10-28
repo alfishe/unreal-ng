@@ -118,11 +118,22 @@ public:
         const uint8_t bank = static_cast<uint8_t>(addr >> 14);
         return _bank_mode[bank] == BANK_RAM && _action[bank] != BankAction::Isa;
     }
-    /// A read the accelerator repeats: the window's byte with the graphics redirect, no CPU wait
-    uint8_t AcceleratorRead(uint16_t addr) { return MemoryReadFast(addr, false); }
+    /// A read the accelerator repeats: the window's byte with the graphics redirect, no CPU wait. In debug mode the
+    /// CPU's read watchpoints see it (accel_read; platform-debugging P7)
+    uint8_t AcceleratorRead(uint16_t addr)
+    {
+        const uint8_t value = MemoryReadFast(addr, false);
+        if (AcceleratorWatched()) [[unlikely]]
+            ReportAcceleratorAccess(false, addr, value);
+        return value;
+    }
     /// A store the accelerator repeats: the plain store, TTD dirty page, then the write intercept
     /// (graphics pages, VRAM shadow, reset page) - what a CPU write does, without its wait
     void AcceleratorWrite(uint16_t addr, uint8_t value);
+private:
+    bool AcceleratorWatched() const;
+    /// A watchpoint on the CPU address (or the page its window shows) stops: accel_write / accel_read
+    void ReportAcceleratorAccess(bool write, uint16_t addr, uint8_t value);
     /// endregion </Accelerator accesses>
 
     /// region <Spectrum screen shadow>

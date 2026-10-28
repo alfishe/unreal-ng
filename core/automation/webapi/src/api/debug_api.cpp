@@ -1138,7 +1138,7 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         if (!body["event"].isString() || !ParseGSCardEvent(body["event"].asString().c_str(), kind))
         {
             badRequest("'event': int, nmi, reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, "
-                       "dma_start, dma_done, gscfg0 (cpu gs), host_command, host_data, host_reply, cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done, tsdma_start, tsdma_done (cpu main)");
+                       "dma_start, dma_done, gscfg0 (cpu gs), host_command, host_data, host_reply, cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done, tsdma_start, tsdma_done, pld_read, pld_write, pld_event (cpu main)");
             return;
         }
         value = static_cast<uint32_t>(kind);

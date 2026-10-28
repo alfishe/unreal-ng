@@ -37,12 +37,15 @@ enum class GSCardEvent : uint8_t
     DmaStart,          ///< a NeoGS DMA module started: `value` the module (0 ZX-DMA, 1 SD, 2 MP3)
     DmaDone,           ///< a NeoGS DMA module ended: `value` the module, `port` 1 when it finished (interrupt), 0 aborted
     ConfigWrite,       ///< the card wrote NeoGS GSCFG0 (every write, a clock change or not): `value` the byte
-    // The machine's events, the main CPU's (platform-debugging P5-P6; appended). The ZX Next and TS-Conf tell them;
-    // `port` (the tap hit's `arg`) carries the detail
+    // The machine's events, the main CPU's (platform-debugging P5-P7; appended). The ZX Next, TS-Conf and the
+    // Sprinter tell them; `port` (the tap hit's `arg`) carries the detail
     CpuInt,            ///< a maskable interrupt accepted: `value` the source, `port` the IM2 vector the controller gave.
                        ///< The Next (NextInterruptSource): 0 line, 1-2 UART RX, 3-10 CTC 0-7, 11 ULA, 12-13 UART TX.
-                       ///< TS-Conf (int_sel): 0 frame, 1 line, 2 DMA, 3 wait port. #FE: none pending (spurious)
-    CpuReti,           ///< RETI ended the hardware IM2 source in service: `value` the source
+                       ///< TS-Conf (int_sel): 0 frame, 1 line, 2 DMA, 3 wait port. The Sprinter (the Z84C15's chain,
+                       ///< then the board): 0-3 CTC 0-3, 4-5 SIO A / B, 6-7 PIO A / B, 8 the PLD's /INT.
+                       ///< #FE: none pending (spurious)
+    CpuReti,           ///< RETI ended the hardware IM2 source in service: `value` the source (the Sprinter: as cpu_int,
+                       ///< 8 when no on-chip source was in service)
     CpuNmi,            ///< an NMI request: `value` the source (0 M1 button, 1 drive button, 2 I/O trap, 3 other), bit 7
                        ///< set when the machine refused it
     CpuRetn,           ///< RETN: `value` the session it ended (0 none, 1 Multiface, 2 DivMMC)
@@ -57,6 +60,10 @@ enum class GSCardEvent : uint8_t
     ZxnDmaDone,        ///< the zxnDMA stopped: `value` 1 at the end of the block, 0 disabled or reset
     TsDmaStart,        ///< the TS-Conf DMA began a transfer (a DMA_CTRL write): `value` the device (DMA_CTRL bits 7, 2-0)
     TsDmaDone,         ///< the TS-Conf DMA stopped: `value` 1 at its end (the DMA INT), 0 aborted by a new DMA_CTRL
+    PldRead,           ///< a Sprinter port read the PLD decodes: `value` the internal code (port table), `port` the port
+    PldWrite,          ///< a Sprinter port write the PLD decodes: `value` the internal code, `port` the port
+    PldEvent,          ///< a Sprinter PLD journal event: `value` its kind (the journal kinds in order:
+                       ///< portdecoder_sprinter.cpp kJournalKinds), `port` its value or -1
     Count
 };
 
@@ -99,6 +106,9 @@ inline const char* GSCardEventName(GSCardEvent kind)
         case GSCardEvent::ZxnDmaDone: return "zxndma_done";
         case GSCardEvent::TsDmaStart: return "tsdma_start";
         case GSCardEvent::TsDmaDone: return "tsdma_done";
+        case GSCardEvent::PldRead: return "pld_read";
+        case GSCardEvent::PldWrite: return "pld_write";
+        case GSCardEvent::PldEvent: return "pld_event";
         case GSCardEvent::Count: break;
     }
     return "unknown";

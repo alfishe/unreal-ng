@@ -334,7 +334,10 @@ enum class BreakpointHitKind : uint8_t
     DmaWrite,  // a bus master other than the CPU (a DMA) wrote a watched byte (address: the offset in the 16 KB page on a
                // card, the CPU address on the Next, whose DMA drives the CPU's address bus)
     ChipRegister,  // a sound chip's register write (BRK_CHIPREG; address: the register)
-    DmaRead        // the Next's DMA read a watched byte (address: the CPU address)
+    DmaRead,       // a DMA read a watched byte (address: as DmaWrite - the CPU address on the Next, the offset in the
+                   // 16 KB page on TS-Conf)
+    AccelWrite,    // the Sprinter's accelerator repeated a store onto a watched byte (address: the CPU address)
+    AccelRead      // the Sprinter's accelerator repeated a read of a watched byte (address: the CPU address)
 };
 
 /// The automation surfaces' name of a breakpoint access kind
@@ -357,6 +360,8 @@ inline const char* BreakpointHitKindName(BreakpointHitKind kind)
         case BreakpointHitKind::DmaWrite: return "dma_write";
         case BreakpointHitKind::ChipRegister: return "chip_register";
         case BreakpointHitKind::DmaRead: return "dma_read";
+        case BreakpointHitKind::AccelWrite: return "accel_write";
+        case BreakpointHitKind::AccelRead: return "accel_read";
     }
     return "execute";
 }

@@ -254,3 +254,21 @@ whatever port pair, latch order or board the program reaches it through.
 - **Events.** `cpu_int` (value: int_sel, 0 frame, 1 line, 2 DMA, 3 wait port, #FE none pending; the detail the vector
   #FF / #FD / #FB / #F9), `tsdma_start` (value: the device, DMA_CTRL bits 7 and 2-0), `tsdma_done` (1 the end with
   the DMA INT, 0 aborted by a new DMA_CTRL).
+
+### The Sprinter (platform-debugging P7)
+
+- **Accelerator.** The CPU's own access is the first one of a block operation; the PLD repeats it (`LD C,C` fill,
+  `LD L,L` copy, the vertical modes, `LD H,H` double). The repeats go through the main CPU's watchpoints on the CPU
+  address and on the page its window shows, in debug mode: the stop's access is `accel_write` / `accel_read`, its
+  address the CPU address. The operation runs to its end; the machine parks after the byte (a direct step ends
+  after the instruction).
+- **Z84C15.** `cpu_int` names the source of the chip's daisy chain, then the board: 0-3 CTC 0-3, 4-5 SIO A / B,
+  6-7 PIO A / B, 8 the PLD's /INT (frame, keyboard); the detail is the vector. `cpu_reti` the source whose service
+  ended (8: none on the chip).
+- **PLD codes.** `pld_read` / `pld_write` stop on a port the PLD decodes, by its internal code from the port table
+  (`bevent pld_write --value 0xC2` stops on every border write whatever port the table maps to it); the detail is the
+  port. The Z84C15's own ports have no code.
+- **Journal.** `pld_event` fires with the PLD journal's events, journal on or off: the value is the kind, in this
+  order: 0 `reset`, 1 `ctrl_alt_del`, 2 `f12`, 3 `pld_load`, 4 `pld_configured`, 5 `clock`, 6 `port_7ffd`,
+  7 `port_1ffd`, 8 `frame_lines`, 9 `all_mode`, 10 `hold`, 11 `rgmod`, 12 `cnf`, 13 `isa_stall`; the detail is the
+  event's value.

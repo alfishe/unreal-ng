@@ -75,6 +75,8 @@ public:
     virtual ~IZ84InterruptObserver() = default;
     virtual void OnChipAcknowledge(uint8_t vector) = 0;
     virtual void OnChipReti() = 0;
+    /// The acknowledge went to the board's /INT (no on-chip source pending): `vector` its byte
+    virtual void OnBoardAcknowledge(uint8_t vector) { (void)vector; }
 };
 
 /// @file z84c15engine.h

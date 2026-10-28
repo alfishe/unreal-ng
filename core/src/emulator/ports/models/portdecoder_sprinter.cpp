@@ -5,6 +5,7 @@
 
 #include "portdecoder_sprinter.h"
 #include "sprinter/sprinterzxsnapshot.h"
+#include "debugger/targets/gscardtarget.h"
 #include "emulator/emulator.h"
 #include "emulator/io/sprinter/isa/cards/isabusdevicecard.h"
 #include "emulator/io/sprinter/isa/cards/isazxbusadapter.h"
@@ -785,8 +786,21 @@ void PortDecoder_Sprinter::NotePioRequest(bool ipBefore)
                                          who.empty() ? "no ISA line: another PB bit" : who.c_str()));
 }
 
+void PortDecoder_Sprinter::OnBoardAcknowledge(uint8_t vector)
+{
+    NoteMachineEvent(GSCardEvent::CpuInt, 8, vector);
+}
+
+void PortDecoder_Sprinter::NoteMachineEvent(GSCardEvent kind, uint8_t value, int arg)
+{
+    if (_context->machineEventWatch) [[unlikely]]
+        GSReportHostEvent(_context, kind, value, arg);
+}
+
 void PortDecoder_Sprinter::OnChipAcknowledge(uint8_t vector)
 {
+    const int source = _z84.LastAcknowledgedSource();
+    NoteMachineEvent(GSCardEvent::CpuInt, source >= 0 ? static_cast<uint8_t>(source) : 0xFE, vector);
     const Z84Lib::Z84Pio::Port& b = _z84.pio.GetPort(1);
     if (!b.ius || _pioBIusSeen)
         return;
@@ -813,6 +827,8 @@ void PortDecoder_Sprinter::OnChipAcknowledge(uint8_t vector)
 
 void PortDecoder_Sprinter::OnChipReti()
 {
+    const int source = _z84.LastRetiredSource();
+    NoteMachineEvent(GSCardEvent::CpuReti, source >= 0 ? static_cast<uint8_t>(source) : 8);
     if (!_pioBIusSeen || _z84.pio.GetPort(1).ius)
         return;
     _pioBIusSeen = false;
@@ -1196,6 +1212,7 @@ uint8_t PortDecoder_Sprinter::DecodePortIn(uint16_t port, uint16_t pc)
 
         const uint8_t code = LookupCode(port, true);
         disp.internalCode = code;
+        NoteMachineEvent(GSCardEvent::PldRead, code, port);
         if (!ActiveModule().ReadCode(*this, code, port, value))
             _registry.Standard().ReadCode(*this, code, port, value);
     }
@@ -1259,6 +1276,7 @@ void PortDecoder_Sprinter::DecodePortOut(uint16_t port, uint8_t value, uint16_t 
         const uint8_t code = LookupCode(port, false);
         if (!z84Port)
             disp.internalCode = code;
+        NoteMachineEvent(GSCardEvent::PldWrite, code, port);
         if (code >= 0xC0 && code < 0xF0)
             _pld.Cell(code) = value;  // every cell is storage first
         if (!ActiveModule().WriteCode(*this, code, port, value))
@@ -1605,9 +1623,27 @@ uint16_t PortDecoder_Sprinter::CpuPc() const
     return z80 ? z80->pc : 0;
 }
 
+/// The journal's kinds in the order pld_event numbers them (breakpoints-and-traces.md, Sprinter)
+static constexpr const char* kJournalKinds[] = {"reset", "ctrl_alt_del", "f12", "pld_load", "pld_configured",
+                                                "clock", "port_7ffd", "port_1ffd", "frame_lines", "all_mode",
+                                                "hold", "rgmod", "cnf", "isa_stall"};
+
 void PortDecoder_Sprinter::JournalEvent(const char* kind, uint16_t pc, int port, int value, int previous, std::string text,
                                         std::vector<std::string> details)
 {
+    if (_context->machineEventWatch) [[unlikely]]
+    {
+        for (size_t i = 0; i < std::size(kJournalKinds); i++)
+        {
+            if (std::strcmp(kJournalKinds[i], kind) == 0)
+            {
+                NoteMachineEvent(GSCardEvent::PldEvent, static_cast<uint8_t>(i), value);
+                break;
+            }
+        }
+    }
+    if (!_journal.Enabled())
+        return;  // only the breakpoints listened
     MachineEvent e;
     e.frame = _state->frame_counter;
     e.t = BaseTstate();
