@@ -117,7 +117,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `retarget` | bool | true | save: a disk TRD cannot hold goes to `<name>.udi` |
 | `compression` | `none`, `default` (lzma, zlib, huff, flac), or up to four of `zlib`, `lzma`, `huff`, `flac`, `zstd` | the source CHD's codecs, else `default` | save, export of a hard disk or card to a `.chd` |
 | `parent` | a CHD file | — | export to a `.chd`: a child of that CHD (only the hunks that differ are stored) |
-| `volume` | a volume id (`trdos`, `plus3`, `isdos`, `fat`, `p1`..`p4`, `isdos-<cylinder>`), a file system (`fat16`) or an index | the first | files, read, write, delete, rename, mkdir, attrib, label |
+| `volume` | a volume id (`trdos`, `plus3`, `isdos`, `fat`, `p1`..`p4`, `isdos-<cylinder>`, `isdos-lba<sector>`), a file system (`fat16`) or an index | the first | files, read, write, delete, rename, mkdir, attrib, label |
 | `recursive` | bool | false | files (the whole tree), delete (a directory with its contents) |
 | `parents` | bool | false | mkdir: the missing directories on the way too, an existing one is no error |
 | `continuous` | bool | false | mkdir: iS-DOS: a continuous catalogue (TASiS `mkdir.com /c`) |

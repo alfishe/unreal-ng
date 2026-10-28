@@ -251,6 +251,7 @@ TEST(MdosFs, Mdos3ContainerAndPartitionSlots)
     DiskFs searched(hdd3);
     ASSERT_EQ(searched.Volumes().size(), 3u);
     EXPECT_EQ(searched.Volumes()[0].offset, (1948u + 1) * 512);
+
 }
 
 TEST(MdosFs, Mdos3CardOfFat16Files)
@@ -283,6 +284,20 @@ TEST(MdosFs, Mdos3CardOfFat16Files)
     ASSERT_EQ(entries.size(), 11u);
     EXPECT_EQ(entries[1].name, "intro4yes!.B");
     EXPECT_EQ(ReadFile(fs, "mdos-1", entries[1].path).size(), entries[1].size);
+
+    // The same partition moved to LBA 5000: its files are found wherever the partition is
+    const std::vector<uint8_t> image = Bytes("loaders/mdos/mdos3-cf-fat16.img");
+    std::vector<uint8_t> moved(5000 * 512, 0);
+    std::copy(image.begin(), image.begin() + 512, moved.begin());
+    moved[446 + 8] = 5000 & 0xFF;
+    moved[446 + 9] = 5000 >> 8;
+    moved[446 + 10] = moved[446 + 11] = 0;
+    moved.insert(moved.end(), image.begin() + 63 * 512, image.end());
+    MemoryDevice far(moved);
+    DiskFs deep(far);
+    ASSERT_EQ(deep.Volumes().size(), 3u);
+    EXPECT_EQ(deep.Volumes()[1].id, "mdos-0");
+    EXPECT_EQ(deep.Volumes()[1].offset, (5000u - 63 + 116 + 1) * 512);
 }
 
 TEST(MdosFs, LoopingChainFailsAndOtherDisksAreNoMdos)

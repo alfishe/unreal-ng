@@ -34,7 +34,7 @@ the label, its offset and size on the disk and the free bytes (-1 when not known
 | Medium | Probe (in this order) | Volume ids |
 |---|---|---|
 | Floppy | ATM CP/M (the directory at #2000); TR-DOS (the system sector 9: label at +0xF5, free sectors; an empty catalogue on an ATM CP/M disk is no volume); MDOS (`SDOS` in the boot sector, the FAT reserving LSN 0-13; it ends the probe); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); +3DOS (skipped when FAT matched); MB-02 (the boot sector, the FAT, the root in the DIRS sector; it ends the probe); MB-01 (the boot sector anywhere on track 0, side 0, the FAT; it ends the probe); iS-DOS / TASiS (the descriptor in block 0) | `cpm`, `trdos`, `mdos`, `fat`, `plus3`, `mb02`, `mb01`, `isdos` |
-| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them; MDOS3: the slots of each primary MBR partition of type #49, else of the whole device from the first sector in its first 4096 that starts with `SDOS` (an `.md3` file, slot files copied first onto a FAT16 card); BS-DOS 309: the floppies @1..@255 of the first primary MBR partition of type #47; iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary outside the FAT and CP/M partitions | `fat`, `p1`..`p4`, `cpm-<cylinder>`, `mdos-<slot>`, `mb02-<n>`, `isdos`, `isdos-<cylinder>` |
+| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them; MDOS3: the slots of each primary MBR partition of type #49, else of the whole device from its first sector that starts with `SDOS`: the first sector of a file of any FAT volume, wherever it lies (an `.md3` file, slot files copied onto a FAT16 card), or another sector of the first 4096 (an `.md3` written to the disk whole); looked for after iS-DOS; BS-DOS 309: the floppies @1..@255 of the first primary MBR partition of type #47; iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary of the image's geometry and in the 1008 sectors (a cylinder of 16 heads of 63) after the end of every volume found, a device found adding its own end (the HDD driver places the devices one after the other, a cylinder of the geometry it was told apart); outside the other volumes | `fat`, `p1`..`p4`, `cpm-<cylinder>`, `mdos-<slot>`, `mb02-<n>`, `isdos`, `isdos-<cylinder>`, `isdos-lba<sector>` (off the image's cylinders) |
 
 A cylinder is the device's native geometry (heads x sectors), else 16 x 63 as the ATM-Turbo HDD driver lays out its
 devices (`ATM_HDD.HDD` has devices at cylinders 70, 103, ...). At most 4096 cylinders are scanned. A device found
@@ -355,7 +355,11 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
 - MB-02: files are written as a program or CODE (no arrays), no attributes (the byte at #1D is undocumented). The BS-DOS 309 hard disk layout
   comes from its BIOS source, not from an image of a real disk.
 - MB-01: read only, from its description (see [MB-01 layout](#mb-01-layout)); no real disk checks it.
-- MDOS: no file times (MDOS keeps none). An MDOS3 partition is found by its MBR type #49 (`nmi.a80`); without one the first `SDOS` sector
-  is looked for in the first 4096 sectors (2 MiB) only, the firmware searches the whole disk.
+- MDOS: no file times (MDOS keeps none). An MDOS3 partition is found by its MBR type #49 (`nmi.a80`); without one
+  the firmware reads the disk sector by sector up to the first `SDOS` one. Here the first sector of every FAT file,
+  and outside the FAT volumes the first 4096 sectors (2 MiB) only: reading a 2 GB disk sector by sector takes about
+  10 seconds, too slow for each look at the disk.
+- iS-DOS: the HDD driver keeps where its devices start in its own settings, not on the disk. A device is found at a
+  cylinder boundary of the image's geometry or within a cylinder (1008 sectors) after another volume's end; one placed
+  further off, past an unused gap, is not.
 - Not read: other file systems of a hard disk.
-- An iS-DOS device on a hard disk is found at a cylinder boundary only.

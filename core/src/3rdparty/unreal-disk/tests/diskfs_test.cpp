@@ -129,6 +129,27 @@ TEST(DiskFs_Test, IsdosDeviceAtACylinder)
     EXPECT_EQ(whole.Volumes()[0].id, "isdos");
 }
 
+TEST(DiskFs_Test, IsdosDevicesAnywhere)
+{
+    // Devices placed by a driver set up for another geometry: off the image's cylinders, one right after the other
+    const std::vector<uint8_t> device = Bytes("loaders/isdos/HDDNEMO.img");
+    const size_t first = 777, second = first + device.size() / 512 + 5;
+    std::vector<uint8_t> disk((second + 200) * 512 + device.size(), 0);
+    std::memcpy(disk.data() + first * 512, device.data(), device.size());
+    std::memcpy(disk.data() + second * 512, device.data(), device.size());
+    MemoryDevice hdd(disk);
+    DiskFs fs(hdd);
+    ASSERT_EQ(fs.Volumes().size(), 2u);
+    EXPECT_EQ(fs.Volumes()[0].id, "isdos-lba777");
+    EXPECT_EQ(fs.Volumes()[0].offset, first * 512);
+    EXPECT_EQ(fs.Volumes()[1].id, "isdos-lba" + std::to_string(second));
+
+    std::vector<uint8_t> data;
+    std::string error;
+    ASSERT_TRUE(fs.Read(fs.Volumes()[1].id, "HDD_NEMO/HELP/ide+5.hlp", data, error)) << error;
+    EXPECT_EQ(data.size(), 2498u);
+}
+
 TEST(DiskFs_Test, TrdosWriteReadsBack)
 {
     auto disk = std::make_unique<DiskImage>(uint8_t{80}, uint8_t{2});
