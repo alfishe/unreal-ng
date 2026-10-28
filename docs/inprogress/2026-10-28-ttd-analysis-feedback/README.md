@@ -133,3 +133,71 @@ The recording side has no change: `UNREAL_TTD_BENCH_ENGINE=controller`, `TTDMatr
 interleaved rounds, median CPU time. All 12 rows are within -8 % .. +1 % of the baseline with no sign in favour of
 either side; for example, `TTDMatrix/controller/PENTAGON/game` 1804 vs 1776 ms and `BM_Frame_TTD_Gaming` 890 vs 899 us
 per 1000 frames. This is the noise of a loaded machine.
+
+## Engine fix: TurboSound FM replays on any host (POC 038 findings F1, F2)
+
+POC 038 found two cases where a replay from a checkpoint did not reach the next checkpoint's state. Both are in the
+TurboSound FM (TSFM), whose TTD state holds its render loop's position: sample and decimator phases, the render
+cursor and the frame's render progress.
+
+- **F2: host settings.** The render loop runs differently with the sound off, in LQ and in turbo. A replay with
+  other host settings than the recording's ended with other TSFM bytes. CPU, RAM and every answer stayed exact; the
+  device state and later audio did not.
+- **F1: the first frame.** A recording started right after a reset, before the FM chips adopted the CPU's clock.
+  The baseline checkpoint did not store that the adoption was still due, so a replay from it clocked the chips
+  differently. Every later interval was exact.
+
+The fix:
+
+- **The render mode is pinned while the machine is bound to a timeline** (`ITurboSoundDevice::setTtdRenderPinned`).
+  The mode is the quality (HQ or LQ) and whether synthesis is suppressed (sound off, turbo without audio).
+  - A recording changes the mode only at a frame start, before the frame's checkpoint. The checkpoint stores it in
+    the TSFM board byte: bit 4 LQ, bit 6 suppressed.
+  - A replay keeps the mode of the checkpoint it loaded, whatever the host asks. Sound off or turbo on the host only
+    silences the output.
+  - A mode change while recording is a `ConfigChange` cut: the fingerprint has `render.sound_hq` and, new,
+    `render.sound_generation`. A replay that crosses that frame start takes the checkpoint there.
+- **The baseline stores the pending clock adoption** (board byte bit 5), and the timeline is stored relative to the
+  axis origin while the adoption is due (`Ym2203Pair::saveTimeline` / `loadTimeline`).
+- **The mixer's sample phase advances in turbo** when the TSFM rendered, so the next frame's phase matches.
+
+The blob size and version do not change. Blobs written before have 0 in the new bits: HQ, not suppressed, no
+adoption due.
+
+A sound-off recording costs what it cost before. A first version rendered the full path for every pinned
+recording, which doubled the cost of a sound-off recording. The pinned mode avoids that.
+
+### Proof
+
+- `TTDTsfmRenderMode_Test`: 16 cases. It records on a fresh Pentagon with the TSFM, starting right after the reset.
+  The recordings are HQ, LQ, sound off, and HQ then LQ, sound on then off, sound off then on from frame 2. The replays
+  run as recorded, sound off, LQ, turbo and turbo with audio. For every interval, the baseline one included, the
+  state at the frame end is compared with the next checkpoint: CPU, chipset, decoded devices and RAM. The base
+  commit fails all 16: every case replays the baseline interval.
+- POC 038 with clones running with the sound off, in LQ, in turbo and in turbo with audio: 0 mismatches on
+  W1-W3, the baseline interval included.
+- `testdata/slots/fitted-devices.txt`: the TSFM blob of a freshly created machine is 2 bytes longer compressed
+  (107 -> 109): bit 5 is set, since the adoption is due right after the reset.
+- Goldens moved by the format only. `TsfmGolden_Test.LowQuality44100` changed because of bit 4 in its blobs (the audio is the
+  same). `TtdBlobAndRestore` changed because the load pins the mode: the restored device keeps rendering through the
+  script's suppressed frames.
+
+### Cost (2026-10-28, M-series Mac, Release)
+
+`BM_Prof_Pentagon_TtdRecord*` and `BM_Prof_Pentagon_TsfmTune_*` in `frame_profile_benchmark.cpp` (new rows: a v2
+recording with the sound on, off and in LQ, idle ROM and a TSFM tune). Three interleaved rounds, median CPU time per
+frame, base `e851b0f35` vs the fix:
+
+| Row | Base | Fix |
+|-----|------|-----|
+| TtdRecordNormal (idle) | 352 us | 361 us |
+| TtdRecordSoundOff (idle) | 454 us | 464 us |
+| TtdRecordSoundLQ (idle) | 618 us | 625 us |
+| TsfmTune ShipNormal (no TTD) | 854 us | 827 us |
+| TsfmTune TtdRecordNormal | 1385 us | 1327 us |
+| TsfmTune TtdRecordSoundOff | 1032 us | 1039 us |
+| TsfmTune TtdRecordSoundLQ | 1121 us | 1097 us |
+
+All rows are within -4 % .. +3 %. The rounds themselves differ by up to 15 %, so this is noise. `BM_Frame_*` in
+`ttd_frame_overhead_benchmark.cpp` drives the v1 manager: with the sound off it skips the FM core, which a v2
+recording never does, so it does not measure this change.

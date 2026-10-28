@@ -8,6 +8,7 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/slotmanager.h"
 #include "emulator/sound/audio.h"
+#include "emulator/sound/soundmanager.h"
 
 namespace ttd
 {
@@ -40,6 +41,10 @@ TTDConfigFingerprint CaptureConfigFingerprint(const EmulatorContext& context, ui
             fp.Add("render.sound_hq", features->isEnabled(Features::kSoundHQ) ? 1 : 0);
             fp.Add("render.screen_hq", features->isEnabled(Features::kScreenHQ) ? 1 : 0);
         }
+    // Sound off: the TurboSound FM renders nothing then, and its render loop's position is TTD state. The value the
+    // devices got at this frame's start (a change while recording is a cut, so a replay takes the checkpoint there)
+    if (context.pSoundManager)
+        fp.Add("render.sound_generation", context.pSoundManager->isGenerationOff() ? 0 : 1);
 
     // Board options that change timing or decoding (the model's own only)
     fp.Add("fdc.turbo_vg", static_cast<uint64_t>(static_cast<int64_t>(c.fdcTurboVg)));
