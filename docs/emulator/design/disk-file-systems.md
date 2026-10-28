@@ -228,12 +228,12 @@ writes and its info byte 36 is not `1` (MDOS3's write protection).
 
 | Surface | Volumes | Directory | File | Write | Delete, rename, mkdir | Attributes, time, label |
 |---|---|---|---|---|---|---|
-| CLI | `media volumes <slot>` | `media files <slot> [dir] [--volume id] [--recursive]` | `media read <slot> <file> [--volume id] [--out path]` (a hex dump of up to 4 KiB without `--out`) | `media write <slot> <file> --in host-file \| --data base64 [--start n] [--header=false] [--volume id]` | `media delete <slot> <file> [--volume id] [--recursive]`, `media rename <slot> <file> <to> [--volume id]`, `media mkdir <slot> <dir> [--volume id] [--parents] [--continuous] [--blocks n]` | `media attrib <slot> <file> [+R-H \| RA] [--time "YYYY-MM-DD HH:MM"] [--volume id]`, `media label <slot> <name> [--volume id]` |
-| REST | `GET /media/{slot}/volumes` | `GET /media/{slot}/files?path=&volume=&recursive=` | `GET /media/{slot}/read?path=&volume=&out=&raw=` (`raw=true`: `application/octet-stream`); `POST /media/{slot}/{verb}` too | `POST /media/{slot}/write` (`path`, `data` \| `in`, `start`, `header`, `volume`), or the bytes as the body (`application/octet-stream`, `?path=`) | `POST /media/{slot}/delete` (`path`, `volume`, `recursive`), `POST /media/{slot}/rename` (`path`, `to`, `volume`), `POST /media/{slot}/mkdir` (`path`, `volume`, `parents`, `continuous`, `blocks`) | `POST /media/{slot}/attrib` (`path`, `attributes`, `time`, `volume`), `POST /media/{slot}/label` (`label`, `volume`) |
+| CLI | `media volumes <slot>` | `media files <slot> [dir] [--volume id] [--recursive]` | `media read <slot> <file> [--volume id] [--out path]` (a hex dump of up to 4 KiB without `--out`) | `media write <slot> <file> --in host-file \| --data base64 [--start n] [--header=false] [--type t] [--param2 n] [--attributes RA] [--volume id]` | `media delete <slot> <file> [--volume id] [--recursive]`, `media rename <slot> <file> <to> [--volume id]`, `media mkdir <slot> <dir> [--volume id] [--parents] [--continuous] [--blocks n]` | `media attrib <slot> <file> [+R-H \| RA] [--time "YYYY-MM-DD HH:MM"] [--volume id]`, `media label <slot> <name> [--volume id]` |
+| REST | `GET /media/{slot}/volumes` | `GET /media/{slot}/files?path=&volume=&recursive=` | `GET /media/{slot}/read?path=&volume=&out=&raw=` (`raw=true`: `application/octet-stream`); `POST /media/{slot}/{verb}` too | `POST /media/{slot}/write` (`path`, `data` \| `in`, `start`, `header`, `type`, `param2`, `attributes`, `volume`), or the bytes as the body (`application/octet-stream`, `?path=`) | `POST /media/{slot}/delete` (`path`, `volume`, `recursive`), `POST /media/{slot}/rename` (`path`, `to`, `volume`), `POST /media/{slot}/mkdir` (`path`, `volume`, `parents`, `continuous`, `blocks`) | `POST /media/{slot}/attrib` (`path`, `attributes`, `time`, `volume`), `POST /media/{slot}/label` (`label`, `volume`) |
 | WebSocket | the REST routes as a `call` | | | | | |
-| MCP | `media` `volumes` | `media` `files` (`volume`, `recursive`) | `media` `read` (`volume`, `out`; the text carries base64 up to about 16 KiB) | `media` `write` (`path`, `data` or `in`, `start`, `header`, `volume`) | `media` `delete` (`path`, `volume`, `recursive`), `media` `rename` (`path`, `to`, `volume`), `media` `mkdir` (`path`, `volume`, `parents`, `continuous`, `blocks`) | `media` `attrib` (`path`, `attributes`, `time`, `volume`), `media` `label` (`label`, `volume`) |
-| Python | `emu.media_volumes(slot)` | `emu.media_files(slot, path, volume=, recursive=)` | `emu.media_read(slot, path, volume=, out=)`; `emu.media_read_bytes(slot, path, volume)` gives `bytes` | `emu.media_write(slot, path, data, start=, header=, volume=)` (`data` bytes, or `in_="host file"`) | `emu.media_delete(slot, path, volume=, recursive=)`, `emu.media_rename(slot, path, to, volume=)`, `emu.media_mkdir(slot, path, volume=, parents=, continuous=, blocks=)` | `emu.media_attrib(slot, path, attributes=, time=, volume=)`, `emu.media_label(slot, label, volume=)` |
-| Lua | `media_volumes(slot)` | `media_files(slot, dir, {volume=, recursive=})` | `media_read(slot, file, {volume=, out=})`; `media_read_bytes(slot, file, volume)` gives a string or nil and the reason | `media_write(slot, file, bytes, {start=, header=, volume=})` (`bytes` nil: `{["in"] = "host file"}`) | `media_delete(slot, file, {volume=, recursive=})`, `media_rename(slot, file, to, {volume=})`, `media_mkdir(slot, dir, {volume=, parents=, continuous=, blocks=})` | `media_attrib(slot, file, {attributes=, time=, volume=})`, `media_label(slot, label, {volume=})` |
+| MCP | `media` `volumes` | `media` `files` (`volume`, `recursive`) | `media` `read` (`volume`, `out`; the text carries base64 up to about 16 KiB) | `media` `write` (`path`, `data` or `in`, `start`, `header`, `type`, `param2`, `attributes`, `volume`) | `media` `delete` (`path`, `volume`, `recursive`), `media` `rename` (`path`, `to`, `volume`), `media` `mkdir` (`path`, `volume`, `parents`, `continuous`, `blocks`) | `media` `attrib` (`path`, `attributes`, `time`, `volume`), `media` `label` (`label`, `volume`) |
+| Python | `emu.media_volumes(slot)` | `emu.media_files(slot, path, volume=, recursive=)` | `emu.media_read(slot, path, volume=, out=)`; `emu.media_read_bytes(slot, path, volume)` gives `bytes` | `emu.media_write(slot, path, data, start=, header=, type=, param2=, attributes=, volume=)` (`data` bytes, or `in_="host file"`) | `emu.media_delete(slot, path, volume=, recursive=)`, `emu.media_rename(slot, path, to, volume=)`, `emu.media_mkdir(slot, path, volume=, parents=, continuous=, blocks=)` | `emu.media_attrib(slot, path, attributes=, time=, volume=)`, `emu.media_label(slot, label, volume=)` |
+| Lua | `media_volumes(slot)` | `media_files(slot, dir, {volume=, recursive=})` | `media_read(slot, file, {volume=, out=})`; `media_read_bytes(slot, file, volume)` gives a string or nil and the reason | `media_write(slot, file, bytes, {start=, header=, type=, param2=, attributes=, volume=})` (`bytes` nil: `{["in"] = "host file"}`) | `media_delete(slot, file, {volume=, recursive=})`, `media_rename(slot, file, to, {volume=})`, `media_mkdir(slot, dir, {volume=, parents=, continuous=, blocks=})` | `media_attrib(slot, file, {attributes=, time=, volume=})`, `media_label(slot, label, {volume=})` |
 | C++ (analyzers) | `OpenDiskFs(medium)->Volumes()`, or `DiskFs(image)` / `DiskFs(device)` | `List(volume, path, recursive, out, error)` | `Read(volume, path, data, error)` | `Write(volume, path, data, options, error)` | `Delete(volume, path, error, recursive)`, `Rename(volume, path, to, error)`, `MakeDirectory(volume, path, parents, mtime \| DiskFsDirectoryOptions, error)` | `SetAttributes(volume, path, letters, error)`, `SetTime(volume, path, mtime, error)`, `SetLabel(volume, label, mtime, error)` |
 
 `read` answers base64 `data` up to 16 MiB; a bigger file needs `out`. An empty slot, a tape or a CD answers
@@ -243,7 +243,8 @@ The media verbs read a block medium under the time-travel read tap: nothing is j
 C++ caller reads at a coherent moment (the emulator paused, parked, or on its own thread).
 
 `zxdisk` gives the same on image files: `zxdisk volumes <image>`, `zxdisk ls <image> [dir] [-r]`, `zxdisk cat <image>
-<file> [-o out]`, `zxdisk put <image> <host-file> [name] [--start n]`, `zxdisk rm <image> <file> [-r]`, `zxdisk mv <image>
+<file> [-o out]`, `zxdisk put <image> <host-file> [name] [--start n] [--type t]
+[--param2 n] [--attributes RA]`, `zxdisk rm <image> <file> [-r]`, `zxdisk mv <image>
 <file> <new-name>`, `zxdisk mkdir <image> <dir> [-p]`, `zxdisk attrib <image> <file> [+R-H|RA] [--time t]`, `zxdisk
 label <image> <name>`. The writing verbs save a floppy back (or to `-o`, its extension picking the format); a hard
 disk or card image is changed in place, or copied to `-o` first and the copy changed.
@@ -254,13 +255,18 @@ disk or card image is changed in place, or copied to `-o` first and the copy cha
 
 - **TR-DOS**: `NAME.T` (a type byte that is no letter as `\xNN`); `start` is the start field, `lengthField` false
   leaves the length 0 (as XAS saves).
-- **+3DOS**: `NAME.TYP` (1-8 characters, a type of up to 3), a +3DOS header unless `header` is false; `start` is the
-  CODE address.
+- **+3DOS**: `NAME.TYP` (1-8 characters, a type of up to 3), a +3DOS header unless `header` is false; `basicType`
+  is the header's type (0 program, 1 number array, 2 char array, 3 CODE, the default), `start` its param 1 (CODE's
+  load address, a program's autostart line), `param2` its param 2 (default: a program's length, else 32768).
 - **iS-DOS / TASiS**: a file into a catalogue (`SHELL/new.txt`), laid out as the kernel lays it out: the first free
   slot of the catalogue (it grows by 32 bytes, see below), the blocks
   first fit from block 0, continuous when one run of at most 255 blocks holds it, else segmented (a table block and up
   to 85 runs). `start` is the load address; FSUM (the checksum at +26), the date and the time are set, NEFIL counts it.
   Names: letters, digits and ``#$&+-=_\`!@%'(){|}~``, Cyrillic as CP866; at most 126 files in a catalogue.
+- **MB-02**: a file into a directory (`Games/klad`) with a tape header: `basicType` 0 (a program, its body at 23755)
+  or 3 (CODE, the default, its body at `start`), `start` param 1, `param2` param 2 as on +3DOS. Arrays are refused:
+  their body address is not known.
+- **MDOS**: `NAME.T`, the type from the name's letter (`P`, `B`, `N`, `C`); `start` param 1, `param2` param 2.
 - **FAT12 / 16 / 32**: any path of an existing directory, a long name with its 8.3 alias; the clusters checked
   against the free space first, the date and time from the host's wall clock.
 
@@ -302,6 +308,11 @@ directories"). Per file system:
   this way (status #61, +17 = +19, the parent's +14 768: `/c` with the default 3 blocks). With `parents` only the
   last directory takes `continuous` and `blocks`; another file system refuses them.
 
+`basicType` (the media verbs' `type`: `program`, `numbers`, `chars`, `code` or 0-3) on any other file system is
+refused ("type 1: the <system> volume takes no header type"), as is `param2` ("keeps no header param 2") and a type or
+param 2 with `header` false. `attributes` takes the letters `SetAttributes` takes (below), checked before the write
+and set right after it: a letter the volume lacks writes nothing.
+
 ## Attributes, times, labels
 
 `SetAttributes(volume, path, letters)` takes the volume's attribute letters (`DiskFsVolume::attributes`), any case:
@@ -339,10 +350,9 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
 
 ## Limits
 
-- iS-DOS: files are written with no R / W / hidden bits (`attrib` sets them after).
 - ATM CP/M: no directories (USER1..USER15 are user areas, there while a file is in one). A hard disk partition is
   found only when the configuration record or a `.CDS` file on a partition found names it.
-- MB-02: files are written as CODE (type 3) with a tape header, no attributes. The BS-DOS 309 hard disk layout
+- MB-02: files are written as a program or CODE (no arrays), no attributes (the byte at #1D is undocumented). The BS-DOS 309 hard disk layout
   comes from its BIOS source, not from an image of a real disk.
 - MB-01: read only, from its description (see [MB-01 layout](#mb-01-layout)); no real disk checks it.
 - MDOS: no file times (MDOS keeps none). An MDOS3 partition is found by its MBR type #49 (`nmi.a80`); without one the first `SDOS` sector

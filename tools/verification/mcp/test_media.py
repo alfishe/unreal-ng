@@ -96,6 +96,13 @@ def test_disk_write(s):
     expect(base64.b64decode(data) == code, 'the bytes read back', r.text)
     r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'HELLO.C'}, ok=False)
     expect(r.is_error and "'data'" in r.text, 'no bytes is refused', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'P2.C', 'data': 'AA==', 'param2': '1'}, ok=False)
+    expect(r.is_error and 'param 2' in r.text, 'a param 2 TR-DOS lacks is refused', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'AT.C', 'data': 'AA==', 'attributes': 'R'},
+               ok=False)
+    expect(r.is_error and 'no file attributes' in r.text, 'attributes TR-DOS lacks are refused', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A'})
+    expect('P2.C' not in r.text and 'AT.C' not in r.text, 'nothing written on a refusal', r.text)
     s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
 
 
@@ -218,6 +225,15 @@ def test_disk_mb02(s):
     r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'Small demo/New dir/NEW'})
     data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
     expect(base64.b64decode(data) == b'ABC', 'read back', r.text[:200])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'Small demo/New dir/RUN', 'data': 'QUJD',
+                         'type': 'program', 'start': '10'})
+    expect(not r.is_error, 'a program written', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'Small demo/New dir/ARR', 'data': 'QUJD',
+                         'type': 'numbers'}, ok=False)
+    expect(r.is_error and 'a program (0), CODE (3)' in r.text, 'an array type is refused with the types', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'Small demo/New dir/BAD', 'data': 'QUJD',
+                         'type': 'basic'}, ok=False)
+    expect(r.is_error and "option 'type'" in r.text, 'an unknown type name is refused', r.text)
     s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
 
 
@@ -238,6 +254,15 @@ def test_disk_mdos(s):
     r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'new.B'})
     data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
     expect(base64.b64decode(data) == b'ABC', 'read back', r.text[:200])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'vars.P', 'data': 'QUJD', 'param2': '2',
+                         'attributes': 'RE'})
+    expect(not r.is_error, 'a program written with param 2 and attributes', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A'})
+    expect('vars.P 3 bytes' in r.text and '....R.E.' in r.text, 'the attributes set at write in the listing',
+           r.text[:800])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'typed.C', 'data': 'QUJD', 'type': 'code'},
+               ok=False)
+    expect(r.is_error and 'type' in r.text, 'MDOS takes the type from the name, a type option is refused', r.text)
     s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
 
 

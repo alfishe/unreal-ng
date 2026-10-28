@@ -361,6 +361,20 @@ TEST(MdosFs, D80WriteDeleteRenameAttributesLabel)
     ASSERT_TRUE(fs.Write("", "prog.P", Pattern(40, 3), options, error)) << error;
     ASSERT_TRUE(fs.Stat("", "prog.P", entry, error)) << error;
     EXPECT_EQ(entry.Field("param2"), 40);
+    // A program with variables after it; the attributes as MDOS's PROTECT leaves them
+    DiskFsWriteOptions vars = options;
+    vars.param2 = 30;
+    vars.attributes = "RE";
+    ASSERT_TRUE(fs.Write("", "vars.P", Pattern(40, 3), vars, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "vars.P", entry, error)) << error;
+    EXPECT_EQ(entry.Field("param2"), 30);
+    EXPECT_EQ(entry.attributes, "....R.E.");
+    vars.basicType = 0;
+    EXPECT_FALSE(fs.Write("", "typed.P", {1}, vars, error));
+    EXPECT_NE(error.find("no header type"), std::string::npos) << error;
+    EXPECT_FALSE(fs.Delete("", "vars.P", error));  // no D
+    ASSERT_TRUE(fs.SetAttributes("", "vars.P", "+D", error)) << error;
+    ASSERT_TRUE(fs.Delete("", "vars.P", error)) << error;
 
     // Too big, a bad name
     EXPECT_FALSE(fs.Write("", "big.B", Pattern(static_cast<size_t>(free) + 512, 4), {}, error));

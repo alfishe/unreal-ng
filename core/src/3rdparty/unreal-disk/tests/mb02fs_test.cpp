@@ -468,6 +468,25 @@ TEST(Mb02Fs, FilesAndDirectoriesWritten)
     ASSERT_TRUE(fs.Write("", "empty", {}, {}, error)) << error;
     ASSERT_TRUE(fs.Stat("", "empty", entry, error)) << error;
     EXPECT_EQ(entry.Field("flags"), 0x90);
+
+    // A program as BS-DOS saves one (autoexe): its autostart line, its length as param 2, the body at 23755
+    DiskFsWriteOptions program;
+    program.basicType = 0;
+    program.start = 10;
+    ASSERT_TRUE(fs.Write("", "run", Pattern(138, 6), program, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "run", entry, error)) << error;
+    EXPECT_EQ(entry.Field("type"), 0);
+    EXPECT_EQ(entry.start, 10u);
+    EXPECT_EQ(entry.Field("param2"), 138);
+    EXPECT_EQ(entry.Field("address"), 23755);
+    program.basicType = 1;  // where BS-DOS loads an array is not known
+    EXPECT_FALSE(fs.Write("", "array", {1}, program, error));
+    EXPECT_NE(error.find("a program (0), CODE (3)"), std::string::npos) << error;
+    program.attributes = "R";
+    program.basicType = 3;
+    EXPECT_FALSE(fs.Write("", "array", {1}, program, error));
+    EXPECT_NE(error.find("no file attributes"), std::string::npos) << error;
+    ASSERT_TRUE(fs.Delete("", "run", error)) << error;
     EXPECT_EQ(entry.mtime, 0);
 
     // The root holds 31 entries a sector: the second file grows it by one

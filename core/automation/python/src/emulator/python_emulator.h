@@ -2161,7 +2161,8 @@ namespace PythonBindings
                      return MediaCallPy(self, "write", slot, path, all);
                  }, py::arg("slot"), py::arg("path"), py::arg("data") = py::none(),
                  "A file onto the disk in a slot (TR-DOS NAME.T, +3DOS NAME.TYP, iS-DOS, FAT): data=bytes or "
-                 "in_='host file' (start=0x8000, header=False, volume=)")
+                 "in_='host file' (start=0x8000, header=False, type='program' | 'numbers' | 'chars' | 'code', param2=, "
+                 "attributes='RA' | '+R-H', volume=)")
             .def("media_delete", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "delete", slot, path, options);
                  }, py::arg("slot"), py::arg("path"),

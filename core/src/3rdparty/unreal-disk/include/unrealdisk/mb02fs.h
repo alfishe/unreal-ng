@@ -83,7 +83,9 @@ public:
 
     struct WriteOptions
     {
-        uint16_t start = 0;  ///< the CODE header's start and the body address
+        uint16_t start = 0;      ///< param 1: CODE's start and body address, a program's autostart line
+        uint8_t type = 3;        ///< the header's type: 3 CODE, 0 a program (its body at 23755, as BS-DOS saves one)
+        uint16_t param2 = 0x8000;  ///< a program's length without variables
         uint16_t date = 0;   ///< MS-DOS date and time (0: none)
         uint16_t time = 0;
     };
