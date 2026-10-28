@@ -1155,9 +1155,14 @@ void SoundManager::handleFrameStart()
 {
     _emulationThread.store(std::this_thread::get_id(), std::memory_order_relaxed);
 
-    // The turbo low-quality override, set on whatever thread toggled turbo (setTurboLowQualityOverride)
+    // The TTD render pin first (ITurboSoundDevice::setTtdRenderPinned): bound to a timeline, the device changes its
+    // render mode only at its frame start (a recording) or not at all (a replay), whatever the settings below ask.
+    // Then the turbo low-quality override, set on whatever thread toggled turbo (setTurboLowQualityOverride)
     if (_turboSound)
+    {
+        _turboSound->setTtdRenderPinned(ttdPinsTurboSoundRender(), ttdRecordsTurboSoundRender());
         _turboSound->setHQEnabled(isHQActive());
+    }
 
     // Apply a pending live core-rate change at the frame boundary (the
     // emulation thread owns all DSP state here). Deferred while a recording
@@ -1223,6 +1228,7 @@ void SoundManager::handleFrameStart()
         // the port / register / level state keeps being tracked (what the program can read back and
         // what the first edge after un-muting depends on), only synthesis and filtering stop
         const bool generationOff = suppressed || !_feature_sound_enabled;
+        _generationOff = generationOff;
         _beeper->setSynthesisSuppressed(generationOff);
         if (_covox)
             _covox->setSynthesisSuppressed(generationOff);
@@ -1379,6 +1385,10 @@ void SoundManager::handleFrameEnd()
     const CONFIG& frameConfig = _context->config;
     if (frameConfig.turbo_mode && !frameConfig.turbo_mode_audio && !hasFrameAudioTaps())
     {
+        // The TurboSound device rendered this frame for the TTD pin: the sample accumulator counts the frame as the
+        // device did, or the next frame start (followSamplePhase) would take the device's phase back
+        if (_turboSound && _turboSound->getRenderedSamplesThisFrame() > 0 && frameConfig.frame > 0)
+            _sampleAccumulator = (_sampleAccumulator + uint64_t(frameConfig.frame) * _coreRate) % CPU_CLOCK_RATE;
         // A gap in the voiced stream: the pre-roll history no longer precedes the next frame
         // (and the character chains restart at the next frame with audio)
         _chainsGap = true;
@@ -2070,6 +2080,17 @@ void SoundManager::updateDrcControl()
     }
 
     _drcResampler.setRatio(baseRatio * (1.0 + trim));
+}
+
+bool SoundManager::ttdPinsTurboSoundRender() const
+{
+    return _context && _context->pFeatureManager && _context->pFeatureManager->isTtdTimelineBound();
+}
+
+bool SoundManager::ttdRecordsTurboSoundRender() const
+{
+    return _context && _context->pFeatureManager && _context->pFeatureManager->isTtdRecordingActive() &&
+           !_context->ttdReplayActive;
 }
 
 /// @brief Update feature cache flags from FeatureManager.
