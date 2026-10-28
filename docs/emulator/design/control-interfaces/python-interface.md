@@ -1412,7 +1412,7 @@ Module functions, by emulator id (default: the selected machine). A model switch
 
 `Emulator.rzx_stop()` and `Emulator.rzx_status()` act on that machine; `Emulator.snapshot_load("game.rzx")` plays a recording on it as it is.
 
-`unreal.snapshot_load(path, emulator_id="", switch_model=True)` returns `{ok, message, emulator_id, model_switched, previous_emulator_id, required_model}`: a TS-Conf program (`.spg`) on another model switches the machine to TS-Conf first (`emulator_id` is the new one); an `.szx` of another model, or a `.z80` / `.sna` the machine cannot hold (a 128K file on a 48K: the machine its header names), switches with `switch_model=True` and is refused otherwise ([webapi-interface.md](./webapi-interface.md) has the rule). `Emulator.snapshot_load` is bound to its machine and raises `RuntimeError` for such a file instead.
+`unreal.snapshot_load(path, emulator_id="", switch_model=None, commit="")` returns `{ok, message, emulator_id, model_switched, previous_emulator_id, required_model}`: a TS-Conf program (`.spg`) on another model switches the machine to TS-Conf first unless `switch_model=False` (`emulator_id` is the new one); an `.szx` of another model, or a `.z80` / `.sna` the machine cannot hold (a 128K file on a 48K: the machine its header names), switches with `switch_model=True` and is refused otherwise ([webapi-interface.md](./webapi-interface.md) has the rule). `Emulator.snapshot_load` is bound to its machine and raises `RuntimeError` for such a file instead.
 
 ```python
 r = unreal.rzx_play("games/greenberet.rzx")          # on a 48K: switches to a 128K

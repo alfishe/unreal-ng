@@ -934,6 +934,12 @@ void RegisterLoadSoftware(ToolRegistry& registry)
         "commit that has always loaded snapshots); 'legacy' = the legacy commit even where the machine has a policy; "
         "or a registered policy name (an unknown name is refused and the answer lists the known ones). The answer's "
         "report shows the commit that ran, or why the load was refused";
+    schema["properties"]["switch_model"]["type"] = "boolean";
+    schema["properties"]["switch_model"]["description"] =
+        "Snapshots and RZX recordings: a file for another machine (an .szx saved on another model, a 128K .z80 / .sna "
+        "on a 48K, an .spg) replaces this machine with the one it needs (true: the answer's emulator_id is the new "
+        "one) or is refused with the machine named (false). Omitted: an .spg and an .rzx switch, a snapshot of "
+        "another machine is refused unless the configuration has [SNAPSHOT] SwitchModel=1";
     schema["properties"]["inspect"]["type"] = "boolean";
     schema["properties"]["inspect"]["default"] = false;
     schema["properties"]["inspect"]["description"] =
@@ -992,6 +998,10 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             bool autostart = args.isMember("autostart") && args["autostart"].asBool();
             const bool inspect = args.isMember("inspect") && args["inspect"].asBool();
             const bool pausedFirst = args.isMember("paused") && args["paused"].asBool();
+            // Not given: the surface's default (the launcher's rule for a snapshot, a switch for a recording)
+            const std::string switchModel = !args.isMember("switch_model") || !args["switch_model"].isBool()
+                                                ? std::string()
+                                                : (args["switch_model"].asBool() ? "true" : "false");
             std::string commit = args.isMember("commit") && args["commit"].isString() ? args["commit"].asString() : "";
             // A policy name is an identifier: it goes into a query string as is
             if (commit.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != std::string::npos)
@@ -1008,7 +1018,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             const bool isLocalFile = TryReadLocalFile(path, *fileContent);
             const std::string filename = ExtractFilename(path);
 
-            TargetResolver::ResolveFromArgs(args, caller, [path, ext, pausedFirst, isSnapshot, isTape, isDisk, play, autostart, drive, inspect, commit, &caller, done,
+            TargetResolver::ResolveFromArgs(args, caller, [path, ext, pausedFirst, isSnapshot, isTape, isDisk, play, autostart, drive, inspect, commit, switchModel, &caller, done,
                                                            isLocalFile, fileContent, filename](bool ok, const std::string& idOrError) {
                 if (!ok)
                 {
@@ -1033,13 +1043,17 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                     {
                         if (isLocalFile)
                         {
-                            ForwardCallRaw("POST", Endpoint(id, "/rzx/play"), *fileContent, headers, caller,
+                            const std::string endpoint =
+                                Endpoint(id, "/rzx/play") + (switchModel.empty() ? std::string() : "?switch_model=" + switchModel);
+                            ForwardCallRaw("POST", endpoint, *fileContent, headers, caller,
                                            "Playing RZX " + filename + " (uploaded) from " + id, done);
                         }
                         else
                         {
                             Json::Value body;
                             body["path"] = path;
+                            if (!switchModel.empty())
+                                body["switch_model"] = switchModel == "true";
                             ForwardCall("POST", Endpoint(id, "/rzx/play"), &body, caller, "Playing RZX " + path + " from " + id,
                                         done);
                         }
@@ -1053,8 +1067,12 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                         const std::string verb = inspect ? "Inspected snapshot " : "Loaded snapshot ";
                         if (isLocalFile)
                         {
-                            const std::string endpoint =
-                                Endpoint(id, action) + (commit.empty() ? std::string() : "?commit=" + commit);
+                            std::string query;
+                            if (!commit.empty())
+                                query += "commit=" + commit;
+                            if (!switchModel.empty())
+                                query += (query.empty() ? "" : "&") + std::string("switch_model=") + switchModel;
+                            const std::string endpoint = Endpoint(id, action) + (query.empty() ? std::string() : "?" + query);
                             ForwardCallRaw("POST", endpoint, *fileContent, headers, caller,
                                            verb + filename + " (uploaded) on " + id, done);
                         }
@@ -1064,6 +1082,8 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                             body["path"] = path;
                             if (!commit.empty())
                                 body["commit"] = commit;
+                            if (!switchModel.empty())
+                                body["switch_model"] = switchModel == "true";
                             ForwardCall("POST", Endpoint(id, action), &body, caller, verb + path + " on " + id, done);
                         }
                         return;

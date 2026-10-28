@@ -551,6 +551,42 @@ TEST_F(McpTools_Test, LoadSoftware_Snapshot_CarriesTheCommitChoice)
     EXPECT_FALSE(_caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/load")->body.isMember("commit"));
 }
 
+TEST_F(McpTools_Test, LoadSoftware_Snapshot_CarriesTheSwitchModelChoice)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/snapshot/load"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["path"] = "/games/exolon128.z80";
+    args["switch_model"] = true;
+    ASSERT_FALSE(RunTool(*_registry, "load_software", args, *_caller).isError);
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/load");
+    ASSERT_NE(call, nullptr);
+    ASSERT_TRUE(call->body.isMember("switch_model"));
+    EXPECT_TRUE(call->body["switch_model"].asBool());
+
+    args["switch_model"] = false;
+    RunTool(*_registry, "load_software", args, *_caller);
+    EXPECT_FALSE(_caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/load")->body["switch_model"].asBool());
+
+    // Not given: the body says nothing, the launcher's rule decides
+    Json::Value plain;
+    plain["path"] = "/games/other.z80";
+    RunTool(*_registry, "load_software", plain, *_caller);
+    EXPECT_FALSE(_caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/load")->body.isMember("switch_model"));
+}
+
+TEST_F(McpTools_Test, LoadSoftware_Rzx_CarriesTheSwitchModelChoice)
+{
+    Json::Value args;
+    args["path"] = "/nonexistent/game.rzx";
+    args["switch_model"] = false;
+    ASSERT_FALSE(RunTool(*_registry, "load_software", args, *_caller).isError);
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/rzx/play");
+    ASSERT_NE(call, nullptr);
+    ASSERT_TRUE(call->body.isMember("switch_model"));
+    EXPECT_FALSE(call->body["switch_model"].asBool());
+}
+
 TEST_F(McpTools_Test, LoadSoftware_Inspect_AsksWhatALoadWouldDoAndLoadsNothing)
 {
     _caller->routes["POST /api/v1/emulator/emu-1/snapshot/inspect"] = {200, Json::Value(Json::objectValue)};
