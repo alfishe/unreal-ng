@@ -120,8 +120,10 @@ Runs in CI on macOS, Windows, Linux (ACC-7), next to [§3.1](#31-device-wire-and
 `tools/verification/streamdeck/acceptance.py` runs ACC-1 … ACC-7 against an offscreen, muted unreal-qt with its own
 HOME and ports (`--port-base`, default 9400), its supervised daemon (`mode: always`, USB off) and a studio whose own
 Stream Deck + XL is the deck. `--live` drives the real deck through a mirror studio instead; `--only acc1,acc6`
-picks checks; `--scrub-seconds` shortens ACC-1 (the criterion is 60 s); `--keep` leaves the rig running. A check
-prints `ok`, `FAIL` with the reason, or `skip` with what it proved and what needs hardware or packaging.
+picks checks; `--scrub-seconds` shortens ACC-1 (the criterion is 60 s); `--keep` leaves the rig running;
+`--package <dir>` runs an installed package instead of the build tree (the folder holding `UnrealNG.app`, the Windows
+ZIP's top, an extracted AppImage's `usr/bin`; its own unreal-qt starts its own daemon, the windows visible: a package
+deploys the native platform plugin only). A check prints `ok`, `FAIL` with the reason, or `skip` with what it proved and what needs hardware or packaging.
 
 | Check | What the script does | Result 2026-10-27 (hardware-free; `--live` on the Stream Deck + XL) |
 |:--|:--|:--|
@@ -129,7 +131,7 @@ prints `ok`, `FAIL` with the reason, or `skip` with what it proved and what need
 | ACC-2 | The deck's DEBUG key sets `debug` on the host (timed by the host's clock, the activity feed's `t_ms`, from the key event it followed: a menu key acts on down or up); `ctx.set` from the WebAPI takes the deck to the Debugger; both under 150 ms | ok: 4 ms and 15 ms (live: 10 ms and 16 ms) |
 | ACC-3 | A second instance (48K) in a view of its own: the deck's target follows the activated view; then the deck's surface session is pinned (`PUT /api/v1/surfaces/sessions/{id}/pin`) and holds while the focus moves | ok (live too): every `join` of the surface topic is a `TargetState` session |
 | ACC-4 | One `run.pause_toggle` in the activity feed per press from the deck and from an own Neo playing a one-key scenario; with `--live`, a late mirror's LCD equals the first mirror's (the machine paused so the strip's counters stand; `area=lcd`, as the studio draws its own knob angles) | skip: the presses pass, the mirror half needs a real deck (live: ok, byte for byte) |
-| ACC-5 | The shipped scenario: no absolute path or forbidden step, `scenario check --catalogue` clean, every action id known to the host | skip: passes on the build tree; a fresh install of each package is the packaging run's |
+| ACC-5 | The shipped scenario: no absolute path or forbidden step, `scenario check --catalogue` clean, every action id known to the host | skip on the build tree (passes there); with `--package` on a fresh install of each package, 2026-10-27 at `31af7eb2f`: ok on all three, 117 action ids all known, the check clean, the daemon the package's own (macOS: the DMG copied out, the helper in `UnrealNG.app/Contents/MacOS`; Windows: the MSVC ZIP unpacked on Windows 10 with a bare `PATH`; Linux: the AppImage extracted in a clean Ubuntu 24.04 with only python3 and the desktop's GL, fontconfig, xkbcommon, dbus libraries) |
 | ACC-6 | A scrub on Time, `kill -9` of the daemon, live again: frames per second (from the live TTD position: `emulator.stats` publishes its frame in steps of 25), the worst frame time, the WebAPI's answer time; the restarted daemon, the studio rejoined, the same page | ok: 48.8 fps (nominal 48.83), worst frame 0.7 ms, restarted in 3.8 s, the deck back on Time (the daemon keeps each deck's path in `deck-pages.json`); live: 48.74 fps, worst 0.9 ms |
 | ACC-7 | `streamdeck-tests` and `streamdeck-studio-tests` headless; the four `build-streamdeck-*` jobs in `cmake-ci.yml` | ok: 2861 and 481 checks |
 
@@ -139,9 +141,11 @@ history, so the press checks use `run.pause_toggle` (pressed twice). `ttd.resume
 jog's pause; `run.resume` follows (once the published `run.state` shows the pause), and the machine needs about half a
 second to reach its rate. Found and fixed on the way: the deck left frozen on its last page when the daemon ended (it
 now goes dark with `UNREAL-NG STREAM DECK STOPPED`, and waits up to 2 s for a deck a USB timeout dropped), the strip
-drawn again at the live frame rate with nothing on it moving (its key now holds only what it draws), and unreal-qt
+drawn again at the live frame rate with nothing on it moving (its key now holds only what it draws), unreal-qt
 crashing on quit with WebSocket clients connected (trantor's `TcpServer::stop()` now closes the connections on their
-loops before the server goes).
+loops before the server goes), and WebAPI uploads staged inside the executable's folder: a build tree's leftovers
+(test tapes and snapshots) went into the macOS DMG, and an installed app would write into its signed bundle (they now
+go to `<system temp>/unreal-ng/uploads`).
 
 ## 6. Cross-platform
 

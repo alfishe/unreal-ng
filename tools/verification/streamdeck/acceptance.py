@@ -8,13 +8,14 @@ their pairing, their deck or their running daemon.
 The deck the checks drive is the studio's own Stream Deck + XL (input through the studio's automation, as a finger
 on it); with `--live` it is the attached deck, driven through a mirror studio of it (its input goes to the daemon as
 the deck's). What needs hardware the rig does not have is a `skip` with the reason (the Surface Dial of ACC-1, the
-mirrors of ACC-4 without a real deck, the platform packages of ACC-5, CI's other OSes of ACC-7).
+mirrors of ACC-4 without a real deck, the platform packages of ACC-5 without --package, CI's other OSes of ACC-7).
 
     acceptance.py --build cmake-build-agent-release            # the hardware-free checks
     acceptance.py --build ... --only acc2,acc6                  # some of them
     acceptance.py --build ... --scrub-seconds 10                # a shorter ACC-1 (the criterion is 60 s)
     acceptance.py --build ... --keep                            # leave the rig running (prints its ports)
     acceptance.py --only none --live                            # the manual review rig: visible unreal-qt, real deck
+    acceptance.py --package <installed package> --only acc5     # ACC-5 on a fresh install (see --package)
 
 Each check prints what it measured; the exit code is the number of failed checks. Stdlib only."""
 
@@ -92,13 +93,45 @@ def free(port):
         return probe.connect_ex(('127.0.0.1', port)) != 0
 
 
+def process_path(pid):
+    """The executable a process runs"""
+    if os.name == 'nt':
+        command = ['powershell', '-NoProfile', '-Command', f'(Get-Process -Id {pid}).Path']
+    elif os.path.exists(f'/proc/{pid}/exe'):
+        return os.readlink(f'/proc/{pid}/exe')
+    else:
+        command = ['ps', '-p', str(pid), '-o', 'comm=']
+    return subprocess.run(command, capture_output=True, text=True).stdout.strip()
+
+
 class Rig:
     """unreal-qt (WebAPI base+0, CLI +100, MCP +200, ...), its daemon (automation base+50, viewers base+51) and the
     studios (automation base+60 ...), all with HOME and the daemon lock in the run folder"""
 
-    def __init__(self, build, base, folder, live=False):
+    def __init__(self, build, base, folder, live=False, package=None):
         self.live = live  # a visible unreal-qt and the daemon on the attached deck (owner-assisted ACC-1 / ACC-4)
+        self.package = package  # an installed package's root: its own binaries and data, its own daemon lookup
         self.bin = os.path.join(REPO, build, 'bin')
+        self.data = self.bin  # the directory holding streamdeck/
+        self.qt = os.path.join(self.bin, 'unreal-qt.app', 'Contents', 'MacOS', 'unreal-qt')
+        self.studio_binary = os.path.join(self.bin, 'unreal-streamdeck-studio.app', 'Contents', 'MacOS',
+                                          'unreal-streamdeck-studio')
+        app = os.path.join(package or '', 'UnrealNG.app')
+        if package and os.path.isdir(app):  # macOS: the helper and the data inside the suite's bundle
+            self.bin = os.path.join(app, 'Contents', 'MacOS')
+            self.data = os.path.join(app, 'Contents', 'Resources')
+            self.qt = os.path.join(self.bin, 'unreal-qt')
+            self.studio_binary = os.path.join(app, 'Contents', 'Applications', 'Stream Deck Studio.app', 'Contents',
+                                              'MacOS', 'unreal-streamdeck-studio')
+        elif package:  # Windows ZIP, Linux tarball / extracted AppImage usr/bin: everything side by side
+            self.bin = self.data = package
+            exe = '.exe' if os.name == 'nt' else ''
+            self.qt = os.path.join(package, 'unreal-qt' + exe)
+            self.studio_binary = os.path.join(package, 'unreal-streamdeck-studio' + exe)
+        if not os.path.exists(self.qt):
+            self.qt = os.path.join(self.bin, 'unreal-qt')
+        if not os.path.exists(self.studio_binary):
+            self.studio_binary = os.path.join(self.bin, 'unreal-streamdeck-studio')
         self.base = base
         self.folder = folder
         self.home = os.path.join(folder, 'home')
@@ -108,7 +141,7 @@ class Rig:
         self.viewers = base + 51
         self.studios = []
         self.processes = []
-        self.qt = None
+        self.qt_process = None
         self.session = None
         self.own = None    # the own studio's automation port (hardware-free)
         self.input = None  # the studio whose input drives the deck (the own one, or a mirror of the real deck)
@@ -124,13 +157,18 @@ class Rig:
             env[name] = str(self.base + offset)
         env['UNREAL_COMPANION_TOKENS'] = f'acceptance:{TOKEN}:all'
         env['UNREAL_STREAMDECK_LOCK'] = os.path.join(self.folder, 'unreal-streamdeck.lock')
-        env['UNREAL_STREAMDECK_BIN'] = os.path.join(self.bin, 'unreal-streamdeck')
+        if not self.package:  # a package's unreal-qt finds its own daemon: part of what ACC-5 checks
+            env['UNREAL_STREAMDECK_BIN'] = os.path.join(self.bin, 'unreal-streamdeck')
         env['UNREAL_QT_VIEW_SETTINGS'] = 'off'
         env['UNREAL_RECENT_FILES'] = 'off'
         env.pop('UNREAL_STREAMDECK_SUPERVISOR', None)
         if not self.live:
             env['UNREAL_STREAMDECK_USB'] = 'off'  # the daemon never opens the user's deck
         return env
+
+    def platform(self):
+        """offscreen, but visible with --live, and with --package: a package deploys the native platform plugin only"""
+        return [] if self.live or self.package else ['-platform', 'offscreen']
 
     def log(self, name):
         return open(os.path.join(self.folder, name + '.log'), 'ab')
@@ -143,12 +181,9 @@ class Rig:
         # The daemon's pairing as `unreal-streamdeck pair` leaves it: the token the instance was started with
         with open(os.path.join(self.home, '.config', 'unreal-streamdeck', 'companion.json'), 'w') as f:
             json.dump({'webapi': f'127.0.0.1:{self.webapi}', 'token': TOKEN, 'companion_id': 'acceptance'}, f)
-        qt = os.path.join(self.bin, 'unreal-qt.app', 'Contents', 'MacOS', 'unreal-qt')
-        if not os.path.exists(qt):
-            qt = os.path.join(self.bin, 'unreal-qt')
-        self.qt = subprocess.Popen([qt] + ([] if self.live else ['-platform', 'offscreen']), env=self.env(), stdout=self.log('unreal-qt'),
+        self.qt_process = subprocess.Popen([self.qt] + self.platform(), env=self.env(), stdout=self.log('unreal-qt'),
                                    stderr=subprocess.STDOUT)
-        self.processes.append(self.qt)
+        self.processes.append(self.qt_process)
         self.session = Session(f'http://127.0.0.1:{self.mcp}/mcp', 'PENTAGON')
         wait(lambda: self.session.rpc('ping', timeout=2) is not None, 'unreal-qt answers on MCP', 40, 0.3)
         self.machine()
@@ -214,10 +249,7 @@ class Rig:
     def studio(self, args, name):
         """A studio on the next automation port: `--own plusxl` or a mirror (`--mirror`, the default role)"""
         port = self.base + 60 + len(self.studios)
-        binary = os.path.join(self.bin, 'unreal-streamdeck-studio.app', 'Contents', 'MacOS', 'unreal-streamdeck-studio')
-        if not os.path.exists(binary):
-            binary = os.path.join(self.bin, 'unreal-streamdeck-studio')
-        process = subprocess.Popen([binary, '-platform', 'offscreen', '--daemon', f'127.0.0.1:{self.viewers}',
+        process = subprocess.Popen([self.studio_binary] + self.platform() + ['--daemon', f'127.0.0.1:{self.viewers}',
                                     '--daemon-api', str(self.daemon), '--api-port', str(port)] + args,
                                    env=self.env(), stdout=self.log(name), stderr=subprocess.STDOUT)
         self.processes.append(process)
@@ -572,10 +604,10 @@ def acc5_default_scenario(rig):
     status, decks = http(rig.daemon, 'GET', '/api/v1/decks')
     expect(status == 200, 'the decks', decks)
     deck = next(d for d in decks['decks'] if d['serial'] == rig.deck)
-    product = os.path.join(rig.bin, 'streamdeck', 'scenarios', 'unreal.deck.yaml')
+    product = os.path.join(rig.data, 'streamdeck', 'scenarios', 'unreal.deck.yaml')
     expect(os.path.realpath(deck['scenario']) == os.path.realpath(product) and deck.get('start_scenario'),
            'the Stream Deck + XL plays the product scenario as its start scenario', deck.get('scenario'))
-    files = [product, os.path.join(rig.bin, 'streamdeck', 'scenarios', 'shared', 'speed.deck.yaml')]
+    files = [product, os.path.join(rig.data, 'streamdeck', 'scenarios', 'shared', 'speed.deck.yaml')]
     for name in files:
         with open(name) as f:
             for number, line in enumerate(f, 1):
@@ -583,7 +615,7 @@ def acc5_default_scenario(rig):
                        line.strip())
                 expect(not FORBIDDEN.search(line),
                        f'no shell / open / keys / webapi step ({os.path.basename(name)}:{number})', line.strip())
-    catalogue = os.path.join(rig.bin, 'streamdeck', 'catalogue.json')
+    catalogue = os.path.join(rig.data, 'streamdeck', 'catalogue.json')
     checked = subprocess.run([os.path.join(rig.bin, 'unreal-streamdeck'), 'scenario', 'check', product,
                               '--catalogue', catalogue], capture_output=True, text=True, timeout=60)
     output = (checked.stdout + checked.stderr).strip()
@@ -598,6 +630,16 @@ def acc5_default_scenario(rig):
         used = set(re.findall(r'^\s*id:\s*([a-z][a-z0-9_]*\.[a-z0-9_.]+)\s*$', f.read(), re.M))
     unknown = sorted(used - known)
     expect(not unknown, 'every action id is in the host\'s catalogue', unknown)
+    if rig.package:
+        # the daemon the package's unreal-qt started: its own helper, not one from the build tree or PATH
+        pid = rig.health().get('pid')
+        expect(pid, 'the daemon reports its pid')
+        started = process_path(pid)
+        exe = '.exe' if os.name == 'nt' else ''
+        expect(os.path.normcase(os.path.realpath(started)) ==
+               os.path.normcase(os.path.realpath(os.path.join(rig.bin, 'unreal-streamdeck' + exe))),
+               'the package\'s unreal-qt started the package\'s daemon', started)
+        return [f'{len(used)} action ids, all known; the check clean; the daemon {started}']
     raise Skip(f'passed on the build tree\'s data ({len(used)} action ids, all known; the check clean); a fresh '
                'install of each platform package is the packaging run\'s')
 
@@ -700,7 +742,7 @@ def run(args):
     SCRUB_SECONDS = args.scrub_seconds
     folder = os.path.join(REPO, 'scratch', 'streamdeck-acceptance', time.strftime('%Y%m%d-%H%M%S'))
     os.makedirs(folder)
-    rig = Rig(args.build, args.port_base, folder, args.live)
+    rig = Rig(args.build, args.port_base, folder, args.live, args.package)
     failed = passed = skipped = 0
     try:
         rig.start()
@@ -753,6 +795,8 @@ def main():
     parser.add_argument('--live', action='store_true',
                         help='visible unreal-qt, the daemon opens the attached deck (implies --keep)')
     parser.add_argument('--keep', action='store_true', help='keep the rig running at the end')
+    parser.add_argument('--package', help='an installed package to run instead of the build tree (ACC-5): the folder '
+                        'holding UnrealNG.app, the Windows ZIP\'s or Linux tarball\'s top, an AppImage\'s usr/bin')
     parser.add_argument('--scrub-seconds', type=int, default=SCRUB_SECONDS, help="ACC-1's scrub (the criterion: 60)")
     sys.exit(run(parser.parse_args()))
 
