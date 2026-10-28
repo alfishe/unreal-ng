@@ -1,0 +1,37 @@
+# Spy Hunter (U.S. Gold 1985), the 48K TAP "SPYHUNTE.TAP" (loads in about 3 min of tape, then a menu: 1 selects KEYBOARD, 0 starts
+# the game, which asks for the control keys: define LEFT O, RIGHT P, UP Q, DOWN A, FIRE Z (do not use Space as fire: Space is the
+# pause, "FREEZE" on the screen, and Symbol Shift resumes it), then 1 = happy, N = novice). Haptics (haptics.md §13 H5), found with
+# TTD on a recorded run: the game has a single beeper player (#DDD4 is the only OUT to #FE) with two entries, #DDA8 (the noise
+# burst of the machine gun, once per shot) and #DDE0 (the explosion, entered through the setter #DDDA, which arms two repeats),
+# the coverage per burst separated them against the key log (fire at frames 16032 and 16452 gave #DDA8 bursts, the other bursts all
+# had #DDE0).
+# Checked in real time (Q held, three one-second Z bursts, four steers): 5 shot for the three bursts, 8 boom in 17 s (each explosion
+# arms the sound twice, so it counts twice); the engine, the grass and the crash into the roadside are not events yet.
+schema: 1
+kind: play
+id: builtin/game/spy-hunter
+label: Spy Hunter
+match:
+  machines: [PENTAGON, 128K, 48K]
+  file_sha256: ["e92069826dd373cecef2b568437e27f4e5a9be466881a4e48f3af660bf51dfcf"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    rt.click:     { key: Q, label: Accelerate }
+    lt.click:     { key: A, label: Brake }
+    south:        { key: Z, label: Fire }
+    west:         { key: SPACE, label: Pause }
+    east:         { key: SYM, label: Resume }
+    menu:         { key: "1", label: Select }
+haptics:
+  sources:
+    shot: { probe: exec, address: "0xDDA8" }
+    boom: { probe: exec, address: "0xDDDA" }
+  rules:
+    - { on: shot, play: tick, scale: 0.5 }
+    - { on: boom, play: explosion, scale: 0.7 }

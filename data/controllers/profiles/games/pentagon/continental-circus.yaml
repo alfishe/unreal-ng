@@ -1,0 +1,36 @@
+# Continental Circus (Virgin Mastertronic / Sega 1989), the TZX "Continental Circus.tzx" (128K tape loader, Tape Loader then the
+# game loads in about 8 tape blocks; the high-score screens come first: any key reaches the control menu, "1. Keyboard" is
+# the default and ENTER starts the game; with the joystick lines the car does not respond to keys). Keyboard from the game's own
+# key table (#AD70: LEFT Z, RIGHT X, PAUSE P, ACCELERATOR O, GEAR Space, QUIT Q: no brake): O accelerates, Space is the
+# gear change (hold it for the high gear: 201 km/h), Z / X steer. Haptics (haptics.md §13 H5), found with TTD on a recorded run
+# (the key table by port-events, the speed by sampling RAM against the HUD, the writers by find-last): the speed is the 16-bit
+# word #B504 (low byte 0 to 174, the HUD shows about 1.2 times it); #835E is the head of the collision handler (it sets the
+# crash state #43 and divides the speed by 4 at #8364..#836F, 108 -> 27 in one write), run once per crash and then the wreck
+# state #83A1 follows for about 450 frames.
+# Checked in real time (O + Space held 5 s, then Z and X alternating 3 s each): 1 crash in 29 s, the speed level follows the car.
+# Known limits: the rival overtakes and the roadside are not events yet.
+schema: 1
+kind: play
+id: builtin/game/continental-circus
+label: Continental Circus
+match:
+  machines: [PENTAGON, 128K]
+  file_sha256: ["24e86719bf183e03618bf713d3ee23f0e8307c8e698f229f15f2d6d0a8eb899d"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: Z }
+    dpad.right:   { key: X }
+    lstick.left:  { key: Z }
+    lstick.right: { key: X }
+    rt.click:     { key: O, label: Accelerate }
+    south:        { key: SPACE, label: Gear }
+    menu:         { key: ENTER, label: Start }
+haptics:
+  sources:
+    speed: { probe: value, address: "0xB504", scale: 1.3 }
+    crash: { probe: exec, address: "0x835E" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: crash, play: explosion, scale: 0.9 }
