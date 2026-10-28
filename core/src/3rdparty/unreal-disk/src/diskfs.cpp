@@ -1782,6 +1782,38 @@ void DiskFs::Probe()
     {
         // ATM CP/M before TR-DOS: its reserved cylinder 0 often holds an empty TR-DOS catalogue, which is no volume
         // then
+        // Profi CP/M: 1024-byte sectors (5 a track), the directory from cylinder 0 (Micco / Kondor MicroDOS) or
+        // cylinder 2 (Klug CP/M); it ends the probe
+        const DiskImage::Track* first = _floppy->getTrackForCylinderAndSide(0, 0);
+        const DiskImage::Sector* one = first ? first->findSector(1) : nullptr;
+        if (one && one->dataSize == 1024)
+        {
+            CpmFileSystem profi = CpmFileSystem::ProfiFloppy(*_floppy);
+            // FORMAT.COM's system track (sectors 1, 2, 3, 4, 9) marks a Profi disk: an empty one is a volume too
+            const bool marked = first->findSector(9) && !first->findSector(5);
+            const char* system = "Profi CP/M";
+            bool found = profi.IsCpm(nullptr, marked);
+            if (!found)
+            {
+                CpmFileSystem klug = CpmFileSystem::KlugFloppy(*_floppy);
+                found = klug.IsCpm();
+                if (found)
+                {
+                    profi = std::move(klug);
+                    system = "Klug CP/M";
+                }
+            }
+            if (found)
+            {
+                DiskFsVolume v;
+                v.id = "cpm";
+                v.writable = true;
+                DescribeCpm(profi, v, system);
+                v.bytes = static_cast<uint64_t>(_floppy->getCylinders()) * _floppy->getSides() * 5 * 1024;
+                add(std::move(v), std::make_unique<CpmDriver>(std::move(profi)));
+                return;
+            }
+        }
         CpmFileSystem cpm = CpmFileSystem::AtmFloppy(*_floppy);
         const bool isCpm = cpm.IsCpm();
         if (isCpm)

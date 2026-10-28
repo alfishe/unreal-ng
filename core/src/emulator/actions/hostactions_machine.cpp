@@ -312,7 +312,7 @@ ActionResult ExportMedia(const ActionCall& call)
     if (!format.empty() && format[0] == '.')
         format.erase(0, 1);
     static const std::vector<std::string> disks = {"trd", "scl", "udi", "fdi", "dsk", "td0",
-                                                   "mgt", "img", "mb2", "d80", "hfe", "scp"};
+                                                   "mgt", "img", "mb2", "d80", "pro", "hfe", "scp"};
     static const std::vector<std::string> tapes = {"tap", "tzx"};
     const bool tape = info->descriptor.kind == MediaKind::Tape;
     const bool floppy = info->descriptor.kind == MediaKind::Floppy;
@@ -320,7 +320,7 @@ ActionResult ExportMedia(const ActionCall& call)
     {
         if (format.empty())
             return BadRequest(std::string("format: ") + (tape ? "tap or tzx" : floppy ? "trd, scl, udi, fdi, dsk, td0, "
-                                                                                        "mgt, img, mb2, d80, hfe or scp"
+                                                                                        "mgt, img, mb2, d80, pro, hfe or scp"
                                                                                       : "the image format") +
                               " (or path)");
         if (info->source.empty() || FileHelper::IsFolder(info->source))

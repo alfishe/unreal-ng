@@ -33,7 +33,7 @@ the label, its offset and size on the disk and the free bytes (-1 when not known
 
 | Medium | Probe (in this order) | Volume ids |
 |---|---|---|
-| Floppy | ATM CP/M (the directory at #2000); TR-DOS (the system sector 9: label at +0xF5, free sectors; an empty catalogue on an ATM CP/M disk is no volume); MDOS (`SDOS` in the boot sector, the FAT reserving LSN 0-13; it ends the probe); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); +3DOS (skipped when FAT matched); MB-02 (the boot sector, the FAT, the root in the DIRS sector; it ends the probe); MB-01 (the boot sector anywhere on track 0, side 0, the FAT; it ends the probe); iS-DOS / TASiS (the descriptor in block 0) | `cpm`, `trdos`, `mdos`, `fat`, `plus3`, `mb02`, `mb01`, `isdos` |
+| Floppy | Profi CP/M (1024-byte sectors, the directory from byte 0, else Klug CP/M's from cylinder 2; see [Profi CP/M layout](#profi-cpm-layout); it ends the probe); ATM CP/M (the directory at #2000); TR-DOS (the system sector 9: label at +0xF5, free sectors; an empty catalogue on an ATM CP/M disk is no volume); MDOS (`SDOS` in the boot sector, the FAT reserving LSN 0-13; it ends the probe); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); +3DOS (skipped when FAT matched); MB-02 (the boot sector, the FAT, the root in the DIRS sector; it ends the probe); MB-01 (the boot sector anywhere on track 0, side 0, the FAT; it ends the probe); iS-DOS / TASiS (the descriptor in block 0) | `cpm`, `trdos`, `mdos`, `fat`, `plus3`, `mb02`, `mb01`, `isdos` |
 | Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them; Profi CP/M: the partitions of the table after the `ProfiHDD` header at cylinder 1 (see [Profi CP/M layout](#profi-cpm-layout)), over a FAT volume too; MDOS3: the slots of each primary MBR partition of type #49, else of the whole device from its first sector that starts with `SDOS`: the first sector of a file of any FAT volume, wherever it lies (an `.md3` file, slot files copied onto a FAT16 card), or another sector of the first 4096 (an `.md3` written to the disk whole); looked for after iS-DOS; BS-DOS 309: the floppies @1..@255 of the first primary MBR partition of type #47; iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary of the image's geometry and in the 1008 sectors (a cylinder of 16 heads of 63) after the end of every volume found, a device found adding its own end (the HDD driver places the devices one after the other, a cylinder of the geometry it was told apart); outside the other volumes | `fat`, `p1`..`p4`, `cpm-<cylinder>` (ATM and Profi CP/M), `mdos-<slot>`, `mb02-<n>`, `isdos`, `isdos-<cylinder>`, `isdos-lba<sector>` (off the image's cylinders) |
 
 A cylinder is the device's native geometry (heads x sectors), else 16 x 63 as the ATM-Turbo HDD driver lays out its
@@ -123,6 +123,14 @@ word first: a dump has the two bytes of every word swapped, all of them read and
   empty partition is one. `ASSIGN C:HDD0\SYSTEM D:HDD1\DISK01` gives the CP/M drives; every partition is a volume
   here, `cpm-<start cylinder>` labelled with its name.
 - **System**: the rest of cylinder 1 from sector 6 holds the boot code the BIOS loads (`MBOOTHDD.COM`); no volume.
+- **Floppy**: 80 cylinders x 2 sides x 5 sectors of 1024 bytes (`DOSBIO.DRV`'s DPB: SPT 40, 2 KB blocks, DSM 399,
+  DRM 127, OFF 0), logical track t on cylinder t / 2, side t % 2, the directory from byte 0. `FORMAT.COM` numbers
+  the sectors of cylinder 0 side 0 1, 2, 3, 4, 9 (its first track type, the system track): sector 9 is the fifth,
+  and a file's data lies in it (block 2). All 103 floppies of 5 x 1024 in the `PROFI_DISK` collection have it, and a
+  disk with it is a volume even empty; 94 of them read, 5 have a blank name (see [Limits](#limits)), 4 a damaged
+  directory (a block used twice, user #53). A `.pro` dump loads with that track and saves it back as the fifth sector.
+  Klug CP/M 2.3 (`KLUGCPM.TD0`, 82 cylinders) keeps its system on cylinders 0-1: the directory from cylinder 2, DSM
+  389 (its BIOS's DPB: OFF 4), read as `Klug CP/M` when the cylinder 0 directory does not pass.
 
 The BIOS does not read sector 0: the SPM disk also has an MBR with a FAT32 partition from sector 63 over the whole
 disk, its FATs written over by the CP/M partition later. Both are shown.
@@ -374,7 +382,8 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
 
 - ATM CP/M: no directories (USER1..USER15 are user areas, there while a file is in one). A hard disk partition is
   found only when the configuration record or a `.CDS` file on a partition found names it.
-- Profi CP/M: hard disks only; a Profi CP/M floppy (`.pro`, 80 x 2 x 5 x 1024) is not read.
+- Profi CP/M: a floppy with a file of a blank name (all eleven bytes spaces: 5 of the 103 collection floppies have
+  one, a file CP/M itself keeps) fails the directory check and is no volume.
 - MB-02: files are written as a program or CODE (no arrays), no attributes (the byte at #1D is undocumented). The BS-DOS 309 hard disk layout
   comes from its BIOS source, not from an image of a real disk.
 - MB-01: read only, from its description (see [MB-01 layout](#mb-01-layout)); no real disk checks it.

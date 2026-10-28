@@ -54,6 +54,7 @@ add_library(unreal-disk STATIC
     src/loaders/loader_mb02.cpp
     src/loaders/loader_mdos.cpp
     src/loaders/loader_mgt.cpp
+    src/loaders/loader_pro.cpp
     src/loaders/loader_rawpc.cpp
     src/loaders/loader_scl.cpp
     src/loaders/loader_scp.cpp
