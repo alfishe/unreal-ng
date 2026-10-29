@@ -16,6 +16,7 @@ Unreal-NG supports loading and saving disk images in multiple formats. All forma
 | [Raw PC floppy](rawpc.md) | `.img`, `.ima` | ✔ | ✔ | 720 KB (9×512, DD) / 1.44 MB (18×512, HD) sector dump |
 | [MB-02](mb02.md) | `.mb2`, `.mbd` | ✔ | ✔ | MB-02 (BS-DOS) 1024-byte sectors in logical order, recognized by the boot sector |
 | [MDOS](mdos.md) | `.d40`, `.d80` | ✔ | ✔ | Didaktik D40 / D80 (MDOS) 512-byte sectors in logical order, recognized by the boot sector |
+| [Profi CP/M](pro.md) | `.pro` | ✔ | ✔ | Profi CP/M 5×1024 sector dump, cylinder 0 side 0 with sector IDs 1, 2, 3, 4, 9 |
 | [Hobeta](hobeta.md) | `.$?` | ✔ | ✔ | Single TR-DOS file with header |
 | HFE | `.hfe` | — | — | Planned (flux-level) |
 | SCP | `.scp` | — | — | Planned (SuperCard Pro flux) |
@@ -41,6 +42,7 @@ Formats without signatures use size/extension heuristics:
 - **Raw PC floppy**: size 737280 or 1474560, checked before the TRD rule
 - **MB-02**: the boot sector (`18 .. .. 02`, 2 sides, 1 sector a cluster) and its geometry matching the size, before the TRD and MGT rules
 - **MDOS**: `SDOS` at 204 of the boot sector and its geometry matching the size, before the raw PC size rule
+- **Profi CP/M**: the `.pro` extension and a size of 80..83 cylinders x 10 240 bytes (819 200 like an MGT: the extension decides)
 - **MGT/IMG**: size 819200; `.mgt` = interleaved sides, `.img` = sequential
 
 ## Universal Track Model

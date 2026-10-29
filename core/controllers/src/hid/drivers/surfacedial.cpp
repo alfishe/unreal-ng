@@ -235,9 +235,8 @@ uint32_t SurfaceDialPlays::Strength(const std::vector<uint8_t>& report)
     return (report[2] == kBuzzWave ? 1000u : 0u) + report[1];
 }
 
-void SurfaceDialPlays::Offer(std::vector<uint8_t> report, uint64_t nowMs)
+void SurfaceDialPlays::Offer(std::vector<uint8_t> report)
 {
-    (void)nowMs;
     if (!_pending)
     {
         _pending = std::move(report);
@@ -253,12 +252,21 @@ void SurfaceDialPlays::Offer(std::vector<uint8_t> report, uint64_t nowMs)
 std::vector<std::vector<uint8_t>> SurfaceDialPlays::Take(uint64_t nowMs)
 {
     std::vector<std::vector<uint8_t>> reports;
-    if (!_pending || nowMs < _busyUntilMs)
+    if (!Waiting() || nowMs < DueMs())
         return reports;
-    if (_overflow)
+    if (!_pending)
+    {
+        // The buzz has played its length: the device would go on to its own cutoff
+        reports.push_back(SurfaceDial::StopReport());
+        _stopAtMs = 0;
+        return reports;
+    }
+    if (_overflow || _stopAtMs != 0)
         reports.push_back(SurfaceDial::StopReport());
     reports.push_back(std::move(*_pending));
-    _busyUntilMs = nowMs + PlayMs(reports.back());
+    const std::vector<uint8_t>& play = reports.back();
+    _busyUntilMs = nowMs + PlayMs(play);
+    _stopAtMs = play.size() > 2 && play[2] == kBuzzWave ? _busyUntilMs : 0;
     _pending.reset();
     _overflow = false;
     return reports;
@@ -301,7 +309,7 @@ void SurfaceDialWriter::Pattern(HapticPattern pattern)
 {
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        _plays.Offer(SurfaceDial::PatternReport(pattern), DialNowMs());
+        _plays.Offer(SurfaceDial::PatternReport(pattern));
     }
     _wake.notify_all();
 }
@@ -310,7 +318,7 @@ void SurfaceDialWriter::Clicks(const HapticClicks& clicks)
 {
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        _plays.Offer(SurfaceDial::HapticReport(clicks), DialNowMs());
+        _plays.Offer(SurfaceDial::HapticReport(clicks));
     }
     _wake.notify_all();
 }
@@ -396,7 +404,8 @@ void SurfaceDialWriter::Run()
             ++(ok ? _written : _failed);
             continue;
         }
-        // A play waits until the last one has played (SurfaceDialPlays); new steps or the end do not
+        // A play waits until the last one has played, the stop until the buzz has (SurfaceDialPlays); new steps or
+        // the end do not
         const uint64_t nowMs = DialNowMs();
         if (nowMs < _plays.DueMs())
         {

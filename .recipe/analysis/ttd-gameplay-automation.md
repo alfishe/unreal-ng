@@ -63,6 +63,16 @@ numbers: `find-last {"addr": queue, "access": "write"}` per hit, dedupe by `(pc,
 the screen (a "20,000" caption at a money-bag write). For "whose event is it" read `IX` / `IY` at the hit
 (`reverse-continue {"pcs":[pc]}` then `GET /registers`): car games keep one struct per car, the player's is the first.
 
+### Shortcut for keyboard games: find the key reader first
+
+`POST /ttd/port-events {"event":"key"}` names the PC of the game's own `IN` (Turbo Esprit: `#F3B3`, inside the key-test
+function `#F3A6`). Search the RAM for `CD lo hi` (calls of that function) and read the callers: the code after each call
+sets the input flags of the player record, and `seek {frame, tinframe}` to a hit plus `GET /registers` gives IX. Diff the
+record across phases (idle / accelerate / brake / fire) to get the speed byte, then `find-last` for its writers. A branch
+experiment (`seek`, `POST /ttd/resume`, `POST /pause`, press keys, `run_frames`) answers "what does this key change".
+A `value` probe reports level = value x scale / 255, so scale = 255 / max value. Z80 snapshots of many games are on
+archive.org (`zx_*` items) when a tape image is damaged.
+
 ## 4. Turn the finding into a check
 
 - A probe (`exec` address, or `write` with `when: "=="`) goes into the game profile; `GET /monitor/game.events` returns

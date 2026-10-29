@@ -132,6 +132,9 @@ TEST(FloppyFormats_Test, RawPcFloppyIsRecognizedBySize)
     EXPECT_EQ(FloppyFormats::Probe(sized("cpm.ima", 737280, head)), "rawpc");
     EXPECT_EQ(FloppyFormats::Probe(sized("disk.dat", 737280, "")), "rawpc");
     EXPECT_EQ(FloppyFormats::Probe(sized("mgt-sized.img", 819200, "")), "mgt");
+    EXPECT_EQ(FloppyFormats::Probe(sized("profi.pro", 819200, "")), "pro") << "the same size, the extension decides";
+    EXPECT_EQ(FloppyFormats::Probe(sized("klug.pro", 839680, "")), "pro");
+    EXPECT_EQ(FloppyFormats::Probe(Fixture("testdata/loaders/pro/ReadFile.pro")), "pro");
     EXPECT_EQ(FloppyFormats::Probe(sized("big.img", 1474560 + 512, "")), "") << "only the exact sizes";
     EXPECT_EQ(FloppyFormats::Probe(Fixture("testdata/loaders/mgt/synthetic.img")), "mgt");
     EXPECT_EQ(FloppyFormats::Probe(Fixture("testdata/loaders/mgt/synthetic.mgt")), "mgt");
@@ -140,6 +143,7 @@ TEST(FloppyFormats_Test, RawPcFloppyIsRecognizedBySize)
     const std::vector<std::string> extensions = FloppyFormats::Extensions();
     EXPECT_NE(std::find(extensions.begin(), extensions.end(), "img"), extensions.end());
     EXPECT_NE(std::find(extensions.begin(), extensions.end(), "ima"), extensions.end());
+    EXPECT_NE(std::find(extensions.begin(), extensions.end(), "pro"), extensions.end());
 }
 
 /// Load names the format; Save to .img writes a raw PC disk back as a raw dump (not MGT), and a disk the guest

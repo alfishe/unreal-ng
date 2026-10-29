@@ -6,8 +6,12 @@
 # the dial shows about 4 times it); #A30D is the head of the flag handler (ld hl,#8DFF; dec (hl): the checkpoint counter,
 # it calls the stage code #97A2 when the counter runs out), it runs once per flag passed, at the very frames where the
 # score grows by 100 and the flag leaves the screen (12838, 12871, 12922, 13058, 13131 in the recording).
-# Known limits: the collision with an obstacle is not found as an event (the stop-car routine #A2B4 never ran in the
-# recording); the gear shift is not an event.
+# Collisions (a second recording, 4 held and steering, each checked on the frames): #A2D1 is the head of the crash routine,
+# run once when the car hits scenery and flips (a tree, frame 483588 there; it also subtracts 5 from the speed at #A2F8),
+# #A2B4 is the stop-car routine, run once when the car runs into a solid block (a building, frame 483986).
+# Checked in real time (4 held, three gear-ups, steering, 60 s): the speed level follows the car (7 in first gear, 37 in
+# third), 1 `stop`; `crash` and `flag` did not come up in that run (no tree or flag met), they are only checked on the
+# recordings. Known limits: the gear shift and the enemy cars are not events.
 schema: 1
 kind: play
 id: builtin/game/nightmare-rally
@@ -32,6 +36,10 @@ haptics:
   sources:
     speed: { probe: value, address: "0x8013", scale: 5 }
     flag:  { probe: exec, address: "0xA30D" }
+    crash: { probe: exec, address: "0xA2D1" }
+    stop:  { probe: exec, address: "0xA2B4" }
   rules:
     - { on: speed, play: engine, target: handle.low }
     - { on: flag, play: pickup }
+    - { on: crash, play: explosion, scale: 0.8 }
+    - { on: stop, play: hit }

@@ -947,10 +947,17 @@ struct CpmDriver : DiskFs::Driver
 {
     explicit CpmDriver(CpmFileSystem fs) : fs(std::move(fs)) {}
 
+    /// The name as listed: a name of eleven blanks (CP/M keeps one) as "\x20", the escape of a blank
+    static std::string NameOf(const CpmFile& f)
+    {
+        const std::string name = Ascii(f.FullName());
+        return name.empty() ? "\\x20" : name;
+    }
+
     /// User 0 at the root, users 1-15 in the directories USER1..USER15
     static std::string PathOf(const CpmFile& f)
     {
-        const std::string name = Ascii(f.FullName());
+        const std::string name = NameOf(f);
         return f.user ? "USER" + std::to_string(f.user) + "/" + name : name;
     }
 
@@ -977,7 +984,7 @@ struct CpmDriver : DiskFs::Driver
                 listed = true;
                 DiskFsEntry e;
                 e.path = PathOf(f);
-                e.name = Ascii(f.FullName());
+                e.name = NameOf(f);
                 e.size = f.size;
                 static const char letters[] = "RSA";
                 for (int bit = 0; bit < 3; bit++)

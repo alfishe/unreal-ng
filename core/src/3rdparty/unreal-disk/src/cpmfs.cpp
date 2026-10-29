@@ -168,8 +168,8 @@ CpmFileSystem CpmFileSystem::AtmFloppy(DiskImage& image)
 
 CpmFileSystem CpmFileSystem::ProfiFloppy(DiskImage& image)
 {
-    // DOSBIO.DRV's DPB: SPT 40, BSH 4, EXM 0, DSM 399, DRM 127, AL0 #C0, OFF 0. FORMAT.COM's system track (its
-    // default type) numbers the sectors 1, 2, 3, 4, 9: sector 9 stands for the fifth.
+    // DOSBIO.DRV's DPB: SPT 40, BSH 4, EXM 0, DSM 399, DRM 127, AL0 #C0, OFF 0. The driver reads the fifth sector
+    // of logical track 0 as R = 9 (HDD22.DRV #094D), the sector the BIOS boots from.
     CpmGeometry geometry;
     geometry.blocks = 400;
     geometry.entries = 128;
@@ -315,7 +315,8 @@ bool CpmFileSystem::IsCpm(std::string* why, bool empty) const
         const std::string at = "entry " + std::to_string(i);
         if (e[0] > 15)
             return fail(at + ": user " + std::to_string(e[0]));
-        // A blank name with a type happens (PASC_MT.TRD: "        .COM"); all eleven blank does not
+        // A blank name happens, with a type (PASC_MT.TRD: "        .COM") and without (five Profi floppies of
+        // PROFI_DISK.ZIP keep a file of eleven blanks); it counts as a file only next to a named one
         bool named = false;
         for (int k = 1; k < 12; k++)
         {
@@ -323,8 +324,6 @@ bool CpmFileSystem::IsCpm(std::string* why, bool empty) const
                 return fail(at + ": no name");
             named = named || (e[k] & 0x7F) != ' ';
         }
-        if (!named)
-            return fail(at + ": no name");
         if (e[12] > 31 || e[13] != 0 || e[15] > 128)
             return fail(at + ": no extent");
         const uint32_t pointers = UsedPointers(e);
@@ -337,7 +336,7 @@ bool CpmFileSystem::IsCpm(std::string* why, bool empty) const
                 return fail(at + ": block " + std::to_string(block) + " used twice");
             used[block] = true;
         }
-        files++;
+        files += named;
     }
     return files > 0 || empty ? true : fail("no file");
 }

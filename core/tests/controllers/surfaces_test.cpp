@@ -466,7 +466,7 @@ TEST(Surfaces_Test, Dial_PatternAndFeatureReports)
 
 /// One play at a time: the Dial queues every output report it gets (ten buzzes in 300 ms buzzed ten times as long,
 /// 2026-10-28), so the next waits until the last has played; requests meanwhile keep the strongest, and after such
-/// an overflow a stop goes first
+/// an overflow a stop goes first. A buzz is ended by a stop after its length, or by the stop before the next play
 TEST(Surfaces_Test, DialPlays_OneAtATimeTheStrongestWaits)
 {
     SurfaceDialPlays plays({80, 250});
@@ -477,32 +477,45 @@ TEST(Surfaces_Test, DialPlays_OneAtATimeTheStrongestWaits)
     EXPECT_EQ(plays.PlayMs(twice), 160u) << "two clicks, each at least the click's length";
     EXPECT_EQ(plays.PlayMs(buzz), 250u);
 
-    plays.Offer(tick, 1000);
+    plays.Offer(tick);
     EXPECT_EQ(plays.Take(1000), (std::vector<std::vector<uint8_t>>{tick})) << "nothing plays: at once";
-    plays.Offer(tick, 1010);
+    plays.Offer(tick);
     EXPECT_TRUE(plays.Take(1010).empty()) << "the tick still plays";
     EXPECT_EQ(plays.DueMs(), 1080u);
     EXPECT_EQ(plays.Take(1080), (std::vector<std::vector<uint8_t>>{tick})) << "one waiting: no overflow, no stop";
     EXPECT_EQ(plays.Dropped(), 0u);
 
     // A fast turn at the end of the history: a buzz each step, a second tick among them
-    plays.Offer(buzz, 1100);
-    plays.Offer(tick, 1110);
-    plays.Offer(buzz, 1120);
-    plays.Offer(twice, 1130);
+    plays.Offer(buzz);
+    plays.Offer(tick);
+    plays.Offer(buzz);
+    plays.Offer(twice);
     EXPECT_EQ(plays.Dropped(), 3u);
     EXPECT_TRUE(plays.Take(1150).empty());
     EXPECT_EQ(plays.Take(1160), (std::vector<std::vector<uint8_t>>{SurfaceDial::StopReport(), buzz}))
         << "the strongest waited; a stop ends what the Dial may still hold";
-    EXPECT_FALSE(plays.Waiting());
+    ASSERT_TRUE(plays.Waiting()) << "the stop that ends the buzz";
     EXPECT_EQ(plays.DueMs(), 1410u);
-    plays.Offer(tick, 1500);
+    EXPECT_TRUE(plays.Take(1409).empty());
+    EXPECT_EQ(plays.Take(1410), (std::vector<std::vector<uint8_t>>{SurfaceDial::StopReport()}))
+        << "the buzz lasts its length, not the device's cutoff";
+    EXPECT_FALSE(plays.Waiting());
+    plays.Offer(tick);
     EXPECT_EQ(plays.Take(1500), (std::vector<std::vector<uint8_t>>{tick})) << "the overflow is over: no stop";
+
+    // A buzz at each step at the end of the history, slower than the buzz: each ends the last one
+    plays.Offer(buzz);
+    EXPECT_EQ(plays.Take(1600), (std::vector<std::vector<uint8_t>>{buzz}));
+    plays.Offer(buzz);
+    EXPECT_EQ(plays.Take(1850), (std::vector<std::vector<uint8_t>>{SurfaceDial::StopReport(), buzz}))
+        << "never two buzzes in the Dial";
+    EXPECT_EQ(plays.Take(2100), (std::vector<std::vector<uint8_t>>{SurfaceDial::StopReport()}));
+    EXPECT_FALSE(plays.Waiting());
     EXPECT_EQ(SurfaceDial::StopReport(), (std::vector<uint8_t>{0x01, 1, 2, 0, 0})) << "Manual Trigger 2: stop";
 }
 
 /// The writer: requests while a write is in flight merge (the strongest pattern waits, a stop before it), the steps go
-/// first
+/// first, a buzz is stopped after its length
 TEST(Surfaces_Test, DialWriter_StrongestWaitsStepsFirst)
 {
     std::mutex mutex;
@@ -529,14 +542,15 @@ TEST(Surfaces_Test, DialWriter_StrongestWaitsStepsFirst)
         open = true;
     }
     gate.notify_all();
-    ASSERT_TRUE(TestWait::For([&] { return writer.Written() == 4; }));
+    ASSERT_TRUE(TestWait::For([&] { return writer.Written() == 5; }));
     std::lock_guard<std::mutex> lock(mutex);
-    ASSERT_EQ(written.size(), 4u);
+    ASSERT_EQ(written.size(), 5u);
     EXPECT_EQ(written[0].second, SurfaceDial::PatternReport(HapticPattern::Tick));
     EXPECT_EQ(written[1].first, SurfaceDialWriter::ReportType::Feature) << "the steps before the pattern";
     EXPECT_EQ(written[1].second, SurfaceDial::FeatureReport({36, false}));
     EXPECT_EQ(written[2].second, SurfaceDial::StopReport()) << "after an overflow";
     EXPECT_EQ(written[3].second, SurfaceDial::PatternReport(HapticPattern::Buzz)) << "the strongest";
+    EXPECT_EQ(written[4].second, SurfaceDial::StopReport()) << "the buzz ends after its length";
     EXPECT_EQ(writer.Dropped(), 1u);
     EXPECT_EQ(writer.Failed(), 0u);
 }

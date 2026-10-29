@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """media / load_software / rzx_playback: the slots, loading a tape from testdata, errors name the file, the files of
-a disk, writing a file onto a TR-DOS disk, an ATM CP/M floppy read, a snapshot
+a disk, writing a file onto a TR-DOS disk, an ATM CP/M floppy read, a Profi CP/M .pro read, written and exported, a snapshot
 for another machine switches only when asked"""
 
 import base64
@@ -16,6 +16,7 @@ ISDOS = os.path.join(ROOT, 'testdata', 'loaders', 'isdos', 'ISDOS50.FDI')
 ATM_CPM = os.path.join(ROOT, 'testdata', 'machines', 'atm', 'cpm', 'prince.trd')
 MB02 = os.path.join(ROOT, 'testdata', 'loaders', 'mb02', 'SYS308.MB2')
 MDOS = os.path.join(ROOT, 'testdata', 'loaders', 'mdos', 'bootdisk.d80')
+PROFI_PRO = os.path.join(ROOT, 'testdata', 'loaders', 'pro', 'ReadFile.pro')
 Z80_128 = os.path.join(ROOT, 'testdata', 'loaders', 'z80', 'libspectrum', 'synth-128.z80')
 
 
@@ -267,6 +268,36 @@ def test_disk_mdos(s):
     expect(r.is_error and 'type' in r.text, 'MDOS takes the type from the name, a type option is refused', r.text)
     s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
 
+
+
+def test_disk_profi_cpm_pro(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': PROFI_PRO})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'volumes', 'slot': 'A'})
+    expect('cpm: Profi CP/M' in r.text and 'read only' not in r.text, 'the Profi CP/M volume, writable, in the text',
+           r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A', 'recursive': True})
+    expect('BOOTK.COM 896 bytes' in r.text and 'USER15/DSKKE9A.DRV' in r.text, 'the files and user 15 in the text',
+           r.text[:800])
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'BOOTK.COM'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    with open(PROFI_PRO, 'rb') as f:
+        image = f.read()
+    expect(base64.b64decode(data) == image[4096:4096 + 896], 'BOOTK.COM is the boot sector R = 9', r.text[:200])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'NEW.TXT', 'data': 'QUJD'})
+    expect(not r.is_error, 'a file written', r.text)
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'NEW.TXT'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(base64.b64decode(data)[:4] == b'ABC\x1a', 'read back, the record padded with #1A', r.text[:200])
+    out = os.path.join(ROOT, 'scratch', 'mcp-media', 'profi-export.pro')
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    r = s.call('media', {'action': 'export', 'slot': 'A', 'path': out})
+    expect(not r.is_error and os.path.exists(out), 'exported as .pro', r.text)
+    with open(out, 'rb') as f:
+        exported = f.read()
+    expect(len(exported) == len(image) and exported[4096:5120] == image[4096:5120],
+           'the dump keeps its size and the boot sector in the fifth place of track 0', str(len(exported)))
+    s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
 
 
 def test_zz_snapshot_for_another_machine_switches_only_when_asked(s):
