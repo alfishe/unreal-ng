@@ -9,8 +9,9 @@
 # surface limit: when the player is faster than the limit of the tile under the car (ix+#0C, 88 mph on the grass) the speed is
 # cut to the limit, so #9BE6 runs on every scrape of the grass.
 # Checked in real time (SPACE, then 42 s of random O / P): the speed level follows the car (100 to 159 mph seen), 9 `offroad` on
-# the grass. Known limits: no hit on a traffic car found (none occurred in the recordings),
-# no siren or pickup events.
+# the grass. The crash is #9137, the crash sound set-up (it picks the effect by speed / 8: under 5, under 12, more): it ran 4 times
+# in a 3700-frame recording, each time at a hit (a tree at 103 mph, bushes and cars beside the road: the car shakes, the position
+# drops), after #9A81 / #9A8E has zeroed the speed (#9A8F). Known limits: no siren or pickup events.
 schema: 1
 kind: play
 id: builtin/game/cisco-heat
@@ -32,6 +33,8 @@ haptics:
   sources:
     speed:   { probe: value, address: "0x5BB3", scale: 1.45 }
     offroad: { probe: exec, address: "0x9BE6" }
+    crash:   { probe: exec, address: "0x9137" }
   rules:
     - { on: speed, play: engine, target: handle.low }
     - { on: offroad, play: rumble-strip }
+    - { on: crash, play: explosion, scale: 0.9 }

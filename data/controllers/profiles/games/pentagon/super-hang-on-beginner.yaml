@@ -8,7 +8,9 @@
 # #B4C5 is the head of the stop routine (xor a; ld (speed),a ...), run once per crash (the bike falls and the wreck lies on the road;
 # it also runs when the time is out: GAME OVER stops the bike the same way). Checked in real time on all four parts (Q held 5 s,
 # then O / P held until it fires): speed value 23 at full throttle (level 0.99), 9 at the cruise, 1 `crash` per run.
-# Known limits: a crash cannot be told from the time-out by the probe; no off-road, overtake or checkpoint event yet.
+# The off-road drag is the "dec a; ld (accel),a" step of the speed update (beginner #B561; it runs only while the bike's lateral
+# position |#A71A| is large, 0 runs on the road, 16 in 3 s on the sand, and the speed falls 25 -> 10 meanwhile), found in the other parts by
+# the byte shape FE 50 38 07 3A xx xx 3D 32 xx xx. A crash cannot be told from the time-out by the probe; no overtake or checkpoint event yet.
 schema: 1
 kind: play
 id: builtin/game/super-hang-on-beginner
@@ -32,6 +34,8 @@ haptics:
   sources:
     speed: { probe: value, address: "0xB6CC", scale: 11 }
     crash: { probe: exec, address: "0xB4C5" }
+    offroad: { probe: exec, address: "0xB561" }
   rules:
     - { on: speed, play: engine, target: handle.low }
     - { on: crash, play: explosion, scale: 0.9 }
+    - { on: offroad, play: rumble-strip }
