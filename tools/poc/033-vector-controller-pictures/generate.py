@@ -103,6 +103,9 @@ def problems(name, pic, written):
         if "circle" in shape:
             cx, cy, r = shape["circle"]
             box = (cx - r, cy - r, cx + r, cy + r)
+        elif "polygon" in shape:
+            xs, ys = [x for x, _ in shape["polygon"]], [y for _, y in shape["polygon"]]
+            box = (min(xs), min(ys), max(xs), max(ys))
         else:
             x, y, w, h = shape["rect"]
             box = (x, y, x + w, y + h)

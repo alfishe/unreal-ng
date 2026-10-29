@@ -21,6 +21,7 @@ NextMemory::NextMemory(EmulatorContext* context) : Memory(context)
     _debugContendedIf = std::make_unique<MemoryInterface>(static_cast<MemoryReadCallback>(&NextMemory::SlotReadContendedDebug),
                                                           static_cast<MemoryWriteCallback>(&NextMemory::SlotWriteContendedDebug));
     _toolReadRedirect = true;  // DirectReadFromZ80Memory asks the slot table
+    _toolWriteRedirect = true;  // and DirectWriteToZ80Memory writes through it
     ResetMmu();
 }
 
@@ -115,6 +116,38 @@ void NextMemory::SlotWriteDebug(uint16_t addr, uint8_t value)
 uint8_t NextMemory::ToolReadRedirect(uint16_t addr, [[maybe_unused]] uint8_t normal) const
 {
     return PeekSlot(addr);
+}
+
+bool NextMemory::ToolWriteRedirect(uint16_t addr, uint8_t value)
+{
+    PokeSlot(addr, value);
+    return true;
+}
+
+MemoryPageDescriptor NextMemory::MapZ80AddressToPhysicalPage(uint16_t address)
+{
+    MemoryPageDescriptor result;
+    result.slotShift = 13;
+    const uint8_t* host = _memory + _readOff[address >> 13] + (address & (kSlotSize - 1));
+    const uint8_t* ram = RAMBase();
+    const uint8_t* rom = ROMBase();
+    if (host >= ram && host < ram + static_cast<size_t>(MAX_RAM_PAGES) * PAGE_SIZE)
+    {
+        const size_t offset = static_cast<size_t>(host - ram);
+        result.mode = BANK_RAM;
+        result.page = static_cast<uint8_t>(offset / PAGE_SIZE);
+        result.addressInPage = static_cast<uint16_t>(offset % PAGE_SIZE);
+    }
+    else if (host >= rom && host < rom + static_cast<size_t>(MAX_ROM_PAGES) * PAGE_SIZE)
+    {
+        const size_t offset = static_cast<size_t>(host - rom);
+        result.mode = BANK_ROM;
+        result.page = static_cast<uint8_t>(offset / PAGE_SIZE);
+        result.addressInPage = static_cast<uint16_t>(offset % PAGE_SIZE);
+    }
+    else
+        result.addressInPage = static_cast<uint16_t>(address & 0x3FFF);  // the trash page: no page (DivMMC and Multiface memory is in the ROM pages)
+    return result;
 }
 
 uint8_t NextMemory::PeekSlot(uint16_t addr) const

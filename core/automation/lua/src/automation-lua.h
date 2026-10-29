@@ -24,6 +24,8 @@ protected:
     std::queue<std::function<void()>> _taskQueue;
     std::mutex _queueMutex;
     std::condition_variable _queueCV;
+    /// A script callback has hits (docs/features/script-callbacks.md): set by the emulation thread under _queueMutex
+    bool _callbacksPending = false;
     
     // Initialization synchronization
     std::mutex _initMutex;
@@ -54,6 +56,11 @@ public:
     // Remote interpreter control methods
     bool executeCode(const std::string& code, std::string& errorMessage, std::string& capturedOutput);
     bool executeFile(const std::string& path, std::string& errorMessage, std::string& capturedOutput);
+    /// The headless runner (unreal-qt --script): runs the file on the interpreter's thread, its print on stdout. The
+    /// exit code is the chunk's result: an integer as is, true 0, false 1, nothing 0; an error 1 with the message
+    int runFile(const std::string& path, std::string& errorMessage);
+    /// The interpreter's state exists (start() returned)
+    bool ready();
     std::string getStatusString() const;
     
     // Query a Lua expression and return its value as a string

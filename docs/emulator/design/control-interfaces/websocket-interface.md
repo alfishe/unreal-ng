@@ -98,7 +98,7 @@ The surface targets, readouts and activity (Stream Deck SD4: `GET /api/v1/surfac
 | `input.connectors` | per instance the joystick connectors `{connectors: [{id, kind, device, fixed, port?}]}` (`GET /controllers/connectors`) | none | implemented (2026-10-21) |
 | `surface` | control surfaces: opened by `join` (not by `subscribe`): `action`, `result`, `ctx`, readouts, `target`, `revoked` ([below](#31-the-surface-topic)) | per action | implemented (S4); `activity`, `catalogue`, the readout vocabulary and views: Stream Deck SD4 |
 | `instances` | the companion's live view of the instances (`hello`, `emulator`, `emulator_gone`, `snapshot`): `/api/v1/companions/events` on this socket ([§3.2](#32-the-instances-topic)) | none (a companion's own view) | implemented |
-| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
+| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
 | `host.stats` | the host process, once for the process (no `instance`): `{cpu_percent, cpu_percent_host, cores, rss_bytes, peak_rss_bytes, virtual_bytes, threads, cpu_time_s, uptime_s, …}`, sampled at most twice a second (`GET /api/v1/monitor/host.stats`, [command-interface.md §17](./command-interface.md#17-monitoring)) | none | implemented |
 | `host.clients` | the process: per plane (`rest`, `ws`, `events`, `debug_ws`, `mcp`, `cli`) `{connections, opened, requests}`, `companions`, `instances` (`GET /api/v1/monitor/host.clients`) | none | implemented |
 | `emulator.stats` | per instance the measured pace `{state, measuring, fps, nominal_fps, speed_percent, frame_time_us {avg, max}, frame_budget_percent, halted_percent, interrupts_per_frame, frame, t_states, turbo, cpu {mhz, base_mhz, multiplier, host_multiplier, hw_turbo_ratio}}`: a new value every 0.5 s while it runs (`GET /api/v1/monitor/emulator.stats`) | none | implemented |
@@ -109,7 +109,7 @@ The surface targets, readouts and activity (Stream Deck SD4: `GET /api/v1/surfac
 | `ttd.status` | per instance `{state, recording, history, frame, first, end, frames, checkpoints, memory_bytes, history_bytes, page_store_bytes, bookmarks, write_journal_records, input_events, evicted_checkpoints}`: the cursor's fields at the rate, the sizes refreshed every 2 s (`GET /api/v1/monitor/ttd.status`; the full status is `GET …/ttd/status`) | none | implemented |
 | `debug.analyzers` | per instance the profilers' session states `{opcode, memory, calltrace, coverage {available, recording, instructions}, pchist}` (`GET /api/v1/monitor/debug.analyzers`) | none | implemented |
 | `controllers.state` | per instance `{connectors [{id, kind, device, plugged, fixed}], plugged}` (`GET /api/v1/monitor/controllers.state`) | none | implemented |
-| `game.events` | per instance the game's events `{available, profile, frame, seq, events {<name>: {kind, fires, last_frame, level, value}}, recent [{seq, frame, name}]}` (`GET /api/v1/monitor/game.events`); a new value when an event fires or a watched value changes, coalesced at `max_hz`: `recent` holds the fired ones between two messages | none | implemented |
+| `game.events` | per instance the game's events `{available, profile, frame, seq, events {<name>: {kind, fires, last_frame, level, value, condition?, condition_error?}}, recent [{seq, frame, name}]}` (`GET /api/v1/monitor/game.events`); a new value when an event fires or a watched value changes, coalesced at `max_hz`: `recent` holds the fired ones between two messages | none | implemented |
 | `debug.watches` | per instance the memory watches' totals `{available, session, revision, watches [{name, kind (region / port), start + length or port + mask, reads, writes, executes (regions)}]}` (`GET /api/v1/monitor/debug.watches`); published at every frame's end and on every watch change; the callers and values are in `GET .../profiler/memory/watches` | none | implemented |
 | `debug.asm_sync` | the asm synchroniser's watch: `asm_sync_*` (the `asm_sync` topic of `/api/v1/websocket`) | none; no token needed from this host | implemented |
 
@@ -214,6 +214,16 @@ DebugEventHub's events ([debugger protocol §5](../../../inprogress/2026-09-28-d
   not taken).
 - An event stream, not a value: queued per connection (256 at most), the oldest dropped first; the next event sent
   carries `"dropped": n` ([§4](#4-delivery-and-threads)).
+- `callbacks_changed` (`{id, callback}`, `{id, removed: true}`, or `{id: 0, hooks}` when the script hooks go unpaced or
+  back to real time): a Lua / Python [script callback](../../../features/script-callbacks.md)
+  was registered, resumed, re-policied, suspended or disabled over its budget (`callback` as one entry of
+  `GET /callbacks`), or removed. The routes that manage them (`GET /callbacks`, `POST /callbacks/{cb_id}/resume`,
+  `DELETE /callbacks/{cb_id}`, `PUT /callbacks/{cb_id}/policy`) are `call`s like every route. A hit is not an event:
+  the statistics are read with `GET /callbacks`.
+
+```json
+← {"t":"debug.events","op":"event","event":"callbacks_changed","id":3,"callback":{"id":3,"on":"tap","owner":"lua","label":"slow","target":"tap write #5C78","state":"suspended","reason":"3 calls over 1000 us within 50 frames",…},"seq":40,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
+```
 
 ## 4. Delivery and threads
 

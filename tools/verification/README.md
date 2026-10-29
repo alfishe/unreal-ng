@@ -235,3 +235,11 @@ All scripts are designed to be cross-platform and have been tested on:
 *   `cmake`
 *   `rsync`
 *   `sudo` privileges (required on Linux/WSL for mounting/unmounting)
+
+---
+
+### Headless runner (`headless/`)
+
+`headless/test_headless_runner.py <unreal-qt> [--port-base 18695]`: `unreal-qt --headless --script <file.lua>
+--exit-on-script` ends with the script's exit code (an integer, `true` / `false`, an error), its `print` on stdout, the
+emulator muted. One unreal-qt per case on its own ports (~2 s a case).

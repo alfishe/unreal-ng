@@ -222,7 +222,8 @@ public:
     /// instrumented memory path whatever the 'debugmode' feature says: the manager holds debug mode on while the
     /// machine replays and gives the feature its say back after. The one writer of Z80::isDebugMode (M4)
     void OnModeChanged(const coordinator::ModeState& from, const coordinator::ModeState& to) override;
-    /// @brief Debug mode as the CPU runs it: the feature, a replay's hold, or the taps' hold
+    /// @brief Debug mode as the CPU runs it: the feature, a replay's hold, the taps' hold, or the breakpoints' hold
+    /// with the 'breakpoints' feature on
     bool debugModeInEffect() const;
     /// @brief Read taps are armed, or write taps on a machine without the fast write's hook
     /// (BreakpointManager::ApplyTapDemand, breakpoint-taps §4): the CPU runs the debug path and memory breakpoints are
@@ -230,6 +231,11 @@ public:
     /// off takes effect too). Emulation thread or CPU held
     void setTapDebugHold(bool on);
     bool tapDebugHold() const;
+    /// @brief An active stopping breakpoint exists (BreakpointManager::ApplyTapDemand): while 'breakpoints' is on, the
+    /// CPU runs the debug path whatever 'debugmode' says, so the breakpoint fires (a hidden debugger window switching
+    /// 'debugmode' off cannot leave it accepted and inert). No breakpoints: 'debugmode' alone decides
+    void setBreakpointDebugHold(bool on);
+    bool breakpointDebugHold() const;
 
     EmulatorContext* context() const
     {
@@ -255,6 +261,7 @@ private:
     void applyDebugMode();
     bool _replayDebugHold = false;  ///< the machine replays: debug mode on (OnModeChanged)
     bool _tapDebugHold = false;     ///< taps need the debug path (setTapDebugHold)
+    bool _breakpointDebugHold = false;  ///< stopping breakpoints exist (setBreakpointDebugHold)
 
     EmulatorContext* _context;
     std::unordered_map<std::string, FeatureInfo> _features;  // id -> FeatureInfo

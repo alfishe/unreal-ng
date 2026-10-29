@@ -454,7 +454,10 @@ uint8_t Z84C15Engine::ChainSource::AcknowledgeInterrupt(uint32_t t)
             _engine._observer->OnChipAcknowledge(vector);
         return vector;
     }
-    return _engine._external ? _engine._external->AcknowledgeInterrupt(t) : 0xFF;
+    const uint8_t vector = _engine._external ? _engine._external->AcknowledgeInterrupt(t) : 0xFF;
+    if (_engine._observer)
+        _engine._observer->OnBoardAcknowledge(vector);
+    return vector;
 }
 
 void Z84C15Engine::ChainSource::OnReti()

@@ -13,6 +13,8 @@
 #include <string>
 #include <vector>
 
+#include "common/statenode_json.h"
+#include "debugger/callbacks/callbackcontrol.h"
 #include "mcp-tool-utils.h"
 #include "mcp-tools.h"
 
@@ -244,4 +246,153 @@ TEST_F(McpDebugTools_Test, AnalyzePerformance_GsPortTraceControlsThroughTheContr
     // It used to POST to the GET-only /state/audio/gs/porttrace: the start failed
     EXPECT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/control/audio/gs/porttrace"), nullptr);
     EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/state/audio/gs/porttrace"), nullptr);
+}
+
+TEST_F(McpDebugTools_Test, ControlExecution_ConditionsInTheArgumentsAndTheText)
+{
+    Json::Value added;
+    added["id"] = 7;
+    added["condition"] = "A == 7";
+    _caller->routes["POST /api/v1/emulator/emu-1/breakpoints"] = {201, added};
+    Json::Value feature;
+    feature["enabled"] = true;
+    _caller->routes["GET /api/v1/emulator/emu-1/feature/breakpoints"] = {200, feature};
+
+    Json::Value add;
+    add["action"] = "bp_add";
+    add["address"] = "0x8000";
+    add["condition"] = "a==7";
+    add["condition_dialect"] = "c";
+    const mcp::ToolResult result = Run("control_execution", add);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeCaller::RecordedCall* post = _caller->Last("POST", "/api/v1/emulator/emu-1/breakpoints");
+    ASSERT_NE(post, nullptr);
+    EXPECT_EQ(post->body["condition"].asString(), "a==7");
+    EXPECT_EQ(post->body["condition_dialect"].asString(), "c");
+    EXPECT_NE(result.text.find("#7 if A == 7"), std::string::npos) << "the text shows the condition: " << result.text;
+
+    Json::Value set;
+    set["action"] = "bp_condition";
+    set["bp_id"] = "7";
+    EXPECT_TRUE(Run("control_execution", set).isError) << "bp_condition needs a condition";
+    set["condition"] = "B == 0";
+    Json::Value answer;
+    answer["condition"] = "B == 0";
+    _caller->routes["PUT /api/v1/emulator/emu-1/breakpoints/7/condition"] = {200, answer};
+    const mcp::ToolResult changed = Run("control_execution", set);
+    ASSERT_FALSE(changed.isError);
+    EXPECT_EQ(_caller->Last("PUT", "/api/v1/emulator/emu-1/breakpoints/7/condition")->body["condition"].asString(),
+              "B == 0");
+    EXPECT_EQ(changed.text, "Condition set: B == 0");
+
+    Json::Value bp;
+    bp["id"] = 7;
+    bp["type"] = "memory";
+    bp["address"] = 0x8000;
+    bp["execute"] = true;
+    bp["active"] = true;
+    bp["hit_count"] = 2;
+    bp["match_count"] = 9;
+    bp["condition"] = "B == 0";
+    bp["condition_error"] = "no CPU (frame 3, PC #8000)";
+    Json::Value list;
+    list["breakpoints"].append(bp);
+    _caller->routes["GET /api/v1/emulator/emu-1/breakpoints"] = {200, list};
+    Json::Value ls;
+    ls["action"] = "bp_list";
+    const mcp::ToolResult listed = Run("control_execution", ls);
+    EXPECT_NE(listed.text.find("hits 2 matched 9 if B == 0 [condition failed: no CPU"), std::string::npos)
+        << listed.text;
+}
+
+/// The script callbacks' ops: the routes and bodies, and the text an agent sees is the CLI's (core callback_control)
+TEST_F(McpDebugTools_Test, ControlExecution_CallbacksListAndManage)
+{
+    CallbackInfo tap;
+    tap.id = 4;
+    tap.owner = "lua";
+    tap.label = "lives";
+    tap.target = "tap write #5C78 if MDT < MDT@prev";
+    tap.breakpointId = 12;
+    tap.state = CallbackState::Suspended;
+    tap.reason = "3 calls over 1000 us within 50 frames";
+    tap.budgetUs = 1000;
+    tap.ring = 256;
+    tap.stats.hits = 9;
+    tap.stats.calls = 9;
+    tap.stats.overruns = 3;
+    tap.stats.maxUs = 1800;
+    tap.stats.lastOverrunFrame = 77;
+    tap.stats.lastOverrunUs = 1800;
+    CallbackInfo event;
+    event.id = 5;
+    event.trigger = CallbackTrigger::GameEvent;
+    event.owner = "python";
+    event.target = "event died";
+    event.event = "died";
+    const StateNode report = callback_control::ListNode({tap, event});
+    _caller->routes["GET /api/v1/emulator/emu-1/callbacks"] = {200, StateNodeToJson(report)};
+
+    Json::Value args;
+    args["action"] = "callbacks";
+    const mcp::ToolResult listed = Run("control_execution", args);
+    ASSERT_FALSE(listed.isError) << listed.text;
+    EXPECT_EQ(listed.text, callback_control::FormatList(report)) << "the same text as the CLI's callback list";
+    EXPECT_NE(listed.text.find("#4 tap write #5C78 if MDT < MDT@prev (lua \"lives\") suspended"), std::string::npos)
+        << listed.text;
+    EXPECT_NE(listed.text.find("last overrun 1800 us at frame 77; reason: 3 calls over 1000 us"), std::string::npos)
+        << listed.text;
+    EXPECT_EQ(listed.structured["callbacks"].size(), 2u);
+
+    _caller->routes["GET /api/v1/emulator/emu-1/callbacks"] = {200, StateNodeToJson(callback_control::ListNode({}))};
+    EXPECT_NE(Run("control_execution", args).text.find("Script callbacks: 0 (a Lua or Python script registers them"),
+              std::string::npos);
+
+    Json::Value resume;
+    resume["action"] = "callback_resume";
+    EXPECT_TRUE(Run("control_execution", resume).isError) << "callback_resume needs callback_id";
+    resume["callback_id"] = 4;
+    tap.state = CallbackState::Active;
+    tap.reason.clear();
+    Json::Value answer;
+    answer["status"] = "success";
+    answer["message"] = "Callback 4 resumed";
+    answer["callback"] = StateNodeToJson(callback_control::InfoNode(tap));
+    _caller->routes["POST /api/v1/emulator/emu-1/callbacks/4/resume"] = {200, answer};
+    const mcp::ToolResult resumed = Run("control_execution", resume);
+    ASSERT_FALSE(resumed.isError);
+    EXPECT_EQ(resumed.text.rfind("Callback 4 resumed: #4 tap write #5C78", 0), 0u) << resumed.text;
+    EXPECT_NE(resumed.text.find(" active, "), std::string::npos) << resumed.text;
+
+    Json::Value policy;
+    policy["action"] = "callback_policy";
+    policy["callback_id"] = 4;
+    EXPECT_TRUE(Run("control_execution", policy).isError) << "callback_policy needs a policy";
+    policy["policy"] = "ignore";
+    ASSERT_FALSE(Run("control_execution", policy).isError);
+    const FakeCaller::RecordedCall* put = _caller->Last("PUT", "/api/v1/emulator/emu-1/callbacks/4/policy");
+    ASSERT_NE(put, nullptr);
+    EXPECT_EQ(put->body["policy"].asString(), "ignore");
+
+    Json::Value remove;
+    remove["action"] = "callback_remove";
+    remove["callback_id"] = 4;
+    Json::Value removed;
+    removed["status"] = "success";
+    removed["message"] = "Callback 4 removed";
+    removed["id"] = 4;
+    removed["removed"] = true;
+    _caller->routes["DELETE /api/v1/emulator/emu-1/callbacks/4"] = {200, removed};
+    const mcp::ToolResult gone = Run("control_execution", remove);
+    ASSERT_FALSE(gone.isError);
+    EXPECT_EQ(gone.text, "Callback 4 removed");
+
+    Json::Value missing;
+    missing["error"] = "Not Found";
+    missing["message"] = "No callback 9";
+    _caller->routes["DELETE /api/v1/emulator/emu-1/callbacks/9"] = {404, missing};
+    remove["callback_id"] = 9;
+    const mcp::ToolResult refused = Run("control_execution", remove);
+    EXPECT_TRUE(refused.isError);
+    EXPECT_NE(refused.text.find("No callback 9"), std::string::npos) << refused.text;
 }

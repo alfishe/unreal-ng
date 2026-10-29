@@ -69,6 +69,11 @@ public:
     static Automation& GetInstance();
     
     std::string getEmulatorIdOrFirst(const std::string& providedId);
+
+    /// The headless runner (unreal-qt --script): the Lua interpreter is up; run a file there, its exit code
+    /// (AutomationLua::runFile). Without Lua automation: not ready, 1 with the reason
+    bool IsLuaReady();
+    int RunLuaFile(const std::string& path, std::string& error);
     
 #if ENABLE_PYTHON_AUTOMATION
     AutomationPython* getPython() { return _python; }

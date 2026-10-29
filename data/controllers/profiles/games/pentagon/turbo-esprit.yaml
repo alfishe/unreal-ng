@@ -1,0 +1,46 @@
+# Turbo Esprit (Durell 1986), the Erbe TZX "Turbo Esprit (Erbe).tzx" (the Spanish release; a 48K game: the 128K loader resets
+# on it, so take 48 BASIC (down x3, ENTER held about 30 frames), then LOAD "" (J, SYM+P twice, ENTER); the load ends at the
+# Durell title, any key opens "MENU TURBO ESPRIT": 8 COMENZAR, then the city 1 to 4). The game's own key table
+# (menu 2 REDEFINIR TECLADO): J left, L right, K fire, A brake, S accelerate, M map, T suicide; the editor asks all seven keys in a
+# row and does not leave until the last one, so a stray key in it moves the whole table. Haptics (haptics.md §13 H5), found with
+# TTD on recorded runs: the drive is a first-person chase through a city and the only continuous state on the HUD is SANCION
+# (the penalty counter, it grows in steps of 10 to 50 while the car is off the lane or on the pavement); #A08C is the head of the
+# routine that adds it (run every ~44 frames while J is held into the wall, once when T ends a life), so it plays as a tick.
+# The speed is the byte #75F7 of the player record (IX = #75E2; 0 to 5, one writer #F4D7, it climbs under S, hovers at 4..5 and
+# falls to 0 under A); fire is the key test of K inside the input handler #EB10 (HL = #7525 + 6): #F57F is past the guards of
+# the fire routine #F575 (it returns early on the pause and menu states), so it runs once per shot. A collision with a vehicle
+# is #EC94 (it sets bit 3 of the player's flags (ix+#2D) and the state words #760D / #760F, called from #ED0E or #ECF2 by the kind
+# of hit; the speed falls by 2 to 5 in the same frame): 4 runs in a 3600-frame recording, the same 4 frames as the speed drops that
+# no key caused. The traffic events (#DD00 .. #E000) repeat at the same absolute frames whatever the keys, so they are scenery and not mapped.
+# held 12 s: 7 `penalty`; then 42 s of S with random J / L every 0.7 s: 4 `crash` and 36 `penalty`).
+schema: 1
+kind: play
+id: builtin/game/turbo-esprit
+label: Turbo Esprit
+match:
+  machines: [PENTAGON, 128K, 48K]
+  file_sha256: ["0cb1dc8628d1402cfa54f3827c67365ecfe783a8c39dbf96e80a9cfe263feec5"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: J }
+    dpad.right:   { key: L }
+    lstick.left:  { key: J }
+    lstick.right: { key: L }
+    rt.click:     { key: S, label: Accelerate }
+    lt.click:     { key: A, label: Brake }
+    south:        { key: K, label: Fire }
+    west:         { key: M, label: Map }
+    menu:         { key: "8", label: Start }
+haptics:
+  sources:
+    speed:   { probe: value, address: "0x75F7", scale: 51 }
+    fire:    { probe: exec, address: "0xF57F" }
+    crash:   { probe: exec, address: "0xEC94" }
+    penalty: { probe: exec, address: "0xA08C" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: fire, play: shot }
+    - { on: crash, play: hit }
+    - { on: penalty, play: tick, target: handle.low }

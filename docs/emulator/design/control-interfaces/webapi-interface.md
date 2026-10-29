@@ -412,7 +412,7 @@ and stops at a breakpoint (`stop_reason`). The `run.state` topic of `/api/v1/ws`
 > | Field | Meaning |
 > |-------|---------|
 > | `held` | `true` while any hold is active |
-> | `holders` | active holds by reason: `direct_run`, `ttd_replay`, `turbo` (all `0` while the machine plays) |
+> | `holders` | active holds by reason: `direct_run`, `ttd_replay`, `turbo`, `unpaced` (all `0` while the machine plays) |
 > | `holds_taken` | holds ever taken, by reason |
 > | `stale_holds_cleared` | leaked holds a `resume` dropped (should stay `0`; each one is also logged) |
 > | `frames_delivered` / `frames_audible` / `frames_held` | emulated frames handed to the speakers / of those, not silent / withheld |
@@ -813,6 +813,7 @@ POST   /api/v1/emulator/{id}/breakpoints/remove            {select}: remove a se
 GET    /api/v1/emulator/{id}/breakpoints/groups            The groups: {groups: [{name, total, active, ids}]}
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/group     {group}: move to a group ("" / "default": back)
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/note      {note}: the annotation ("" clears)
+PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/condition {condition, dialect?}: set or ("" ) clear a condition
 ```
 
 A selection names the user's breakpoints only: `all`, an id, a kind (`exec`, `read`, `write`, `mem`, `port`, `in`,
@@ -834,6 +835,8 @@ read that sees the key change. Each route is a WebSocket `call` too; a change is
   "slot_only": false,
   "port_mask": 255,
   "hits": ">=5",
+  "condition": "A == 7",
+  "condition_dialect": "c",
   "note": "optional annotation",
   "group": "optional group name"
 }
@@ -850,6 +853,7 @@ Everything but `type` and `address` is optional (the debugger protocol's Breakpo
 | `doors`, `value`, `value_mask` | ZX Next `nextreg*` only: `address` is the register (`address_end` a range); `doors` a comma separated list or array of `nextreg` (the NEXTREG instructions), `port` (OUT `#253B`), `copper` (a copper MOVE), default all (a read always comes through the port); `value` stops only on that byte, `value_mask` compares only those bits (default `255` with a value). The reply and the list carry `doors`, `value`, `value_mask`. |
 | `hc` | ZX Next `beam` only: `address` is the line of the copper's counter (NR #64 applied), `hc` the pixel clock in the row (0..511, default 0). A `copper` breakpoint takes `address` = list index (0..1023), `address_end` a range. |
 | `hits` | `"5"` stops on the 5th hit only, `">=5"` from the 5th on, `"%5"` every 5th. Every matching access is counted (`hit_count`). The same as `hit_mode` (`always` / `equal` / `at_least` / `multiple`) + `hit_target`. Stepping on from the breakpoint the machine stopped at is not counted again. |
+| `condition`, `condition_dialect` | Memory and port breakpoints: stop only when the expression holds (`"VAL == 0"`, `"(VAL & 7) == 2"`, `"A == 7 && M(#5C3A) != 0"`); the Unreal order and hex numbers, `condition_dialect` `"c"` for C's precedence and decimal numbers ([the language](../../../features/conditional-breakpoints.md)). A bad condition is 400 with the reason and the column, nothing is added. The reply and the list carry `condition` in the canonical form, `match_count` (every match; `hit_count` then counts the matches where it held, and `hits` works on them) and, after a run-time failure, `condition_error` (the breakpoint is skipped, never stops; enabling it or a new condition clears it). `PUT .../condition` changes it later (404 for an unknown id, 400 keeps the old one). |
 
 Errors (400) name the problem: a range ending before it starts, a page range leaving its page, a missing
 page, a mask on a memory breakpoint, a hit policy without a target. The reply and the list carry
@@ -857,6 +861,30 @@ page, a mask on a memory breakpoint, a hit policy without a target. The reply an
 
 `note` and `group` (optional) are stored with the breakpoint and echoed in the reply; a group is created
 on use (default `default`). Adding a breakpoint that already exists returns its id and applies them to it.
+
+### Script callbacks
+
+A Lua or Python script registers a [callback](../../../features/script-callbacks.md) (`on_tap`, `on_breakpoint`,
+`on_game_event`); a remote client cannot (a function lives in a script), but it lists and manages them, with the
+semantics of Lua's `callbacks()`, `callback_resume`, `callback_remove` and `callback_policy`:
+
+```
+GET    /api/v1/emulator/{id}/callbacks                     {count, hooks?, callbacks: [...]}: every callback with its statistics
+POST   /api/v1/emulator/{id}/callbacks/{cb_id}/resume      A suspended one active again, fresh statistics (409: disabled)
+DELETE /api/v1/emulator/{id}/callbacks/{cb_id}             Remove it and its tap (the script is not told)
+PUT    /api/v1/emulator/{id}/callbacks/{cb_id}/policy      {policy: suspend | disable | ignore | unpaced}
+```
+
+A callback has the Lua table's fields: `id, on` (`tap`, `breakpoint`, `game_event`), `owner` (`lua`, `python`),
+`label, target` (`"tap write #5C78 if MDT == 0"`, `"breakpoint 3"`, `"event died"`), `breakpoint`, `event`,
+`policy, state` (`active`, `suspended`, `disabled`), `reason`, `budget_us, ring, pending, hits, dropped, calls,
+errors, overruns, total_us, max_us, p99_us`, `last_overrun_frame` / `last_overrun_us` (after an overrun) and
+`last_error` (after an error); a frame or sync hook also has `mode` (`frame`, `sync`; else `deferred`), `aborted`
+and `instructions`; the optional ones are absent until they apply. With hooks the list has `hooks`: `{unpaced,
+unpaced_spans, last_frame_us, max_frame_us, frames_over_share, frame_share_percent}`. Resume and policy answer
+`{status, message, callback}`, remove `{status, message, id, removed}`; an unknown callback is 404, a bad id or
+policy 400 (`unpaced` for a deferred callback too). Each route is a WebSocket `call`; a change is pushed as `callbacks_changed` on `debug.events`. The
+changing routes pass the automation gate as the breakpoint routes do.
 
 ### Analyzers
 ```

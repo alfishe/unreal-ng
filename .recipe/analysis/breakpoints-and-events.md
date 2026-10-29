@@ -15,12 +15,21 @@ A step from the execution breakpoint the machine is stopped at runs that instruc
 on from a breakpoint). A machine that sits at an address with a breakpoint without having stopped
 there (fresh reset, a jump done by a seek) stops on the first step, without executing.
 
-Memory breakpoints need debug mode and the `breakpoints` feature. The feature can be off while debug mode is on
+Memory breakpoints need the `breakpoints` feature (debug mode follows: an active breakpoint holds it on). The feature can be off while debug mode is on
 (seen 2026-10-10 on a `PENTAGON` created through the WebAPI): the breakpoint is added `active` but its `hit_count`
 stays 0. Switch it on with `PUT /feature/breakpoints {"enabled":true}` (it switches debug mode on too; `PUT /debugmode` alone
 does not switch the feature on) and check `GET /features` when a breakpoint
 never fires. A memory breakpoint stops during the access, so the PC is inside or just past the writing instruction
 ([articles/program-state-reverse.md](../articles/program-state-reverse.md)).
+
+**Conditions.** A memory or port breakpoint takes a `condition` (`"A == 7"`, `"VAL == 0"`, `"(VAL & 7) == 2"`): it
+stops only when the expression holds, `match_count` counts every match and `hit_count` the ones where it held:
+[conditional-breakpoints.md](conditional-breakpoints.md).
+
+While the `breakpoints` feature is on, an active breakpoint holds the debug path on whatever `debugmode` says (since
+2026-10-26). Before, the Qt window that adopted a machine created through the WebAPI / MCP switched `debugmode` off
+when its debugger was hidden, and a breakpoint set just before was accepted and never fired; now the window leaves an
+adopted machine's debug mode as it is, and the hold covers every other way.
 
 **Ranges.** Any execution, read or write breakpoint can cover a range: `address` + `address_end`. A
 range is checked as fast as one address, and so are ten thousand of them (the emulator paints them

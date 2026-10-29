@@ -168,8 +168,8 @@ CpmFileSystem CpmFileSystem::AtmFloppy(DiskImage& image)
 
 CpmFileSystem CpmFileSystem::ProfiFloppy(DiskImage& image)
 {
-    // DOSBIO.DRV's DPB: SPT 40, BSH 4, EXM 0, DSM 399, DRM 127, AL0 #C0, OFF 0. FORMAT.COM's system track (its
-    // default type) numbers the sectors 1, 2, 3, 4, 9: sector 9 stands for the fifth.
+    // DOSBIO.DRV's DPB: SPT 40, BSH 4, EXM 0, DSM 399, DRM 127, AL0 #C0, OFF 0. The driver reads the fifth sector
+    // of logical track 0 as R = 9 (HDD22.DRV #094D), the sector the BIOS boots from.
     CpmGeometry geometry;
     geometry.blocks = 400;
     geometry.entries = 128;
@@ -295,6 +295,43 @@ uint32_t CpmFileSystem::Pointer(const uint8_t* e, uint32_t k) const
     return _geometry.Wide() ? (e[16 + 2 * k] | e[17 + 2 * k] << 8) : e[16 + k];
 }
 
+namespace
+{
+/// Why the used entry `e` does not read (empty when it does): user 0-15, printable name bytes, EX <= 31, S1 0,
+/// RC <= 128. `named`: not all eleven blank
+std::string EntryFault(const uint8_t* e, bool& named)
+{
+    if (e[0] > 15)
+        return "user " + std::to_string(e[0]);
+    // A blank name happens, with a type (PASC_MT.TRD: "        .COM") and without (five Profi floppies of
+    // PROFI_DISK.ZIP keep a file of eleven blanks); it counts as a file only next to a named one
+    named = false;
+    for (int k = 1; k < 12; k++)
+    {
+        if ((e[k] & 0x7F) < 0x20 || (e[k] & 0x7F) > 0x7E)
+            return "no name";
+        named = named || (e[k] & 0x7F) != ' ';
+    }
+    if (e[12] > 31 || e[13] != 0 || e[15] > 128)
+        return "no extent";
+    return {};
+}
+}  // namespace
+
+bool CpmFileSystem::LooksLikeDirectory(const uint8_t* bytes, uint32_t count)
+{
+    bool file = false;
+    for (uint32_t i = 0; i < count; i++)
+    {
+        const uint8_t* e = bytes + i * kEntry;
+        bool named = false;
+        if (e[0] != 0xE5 && !EntryFault(e, named).empty())
+            return false;
+        file = file || (e[0] != 0xE5 && named);
+    }
+    return file;
+}
+
 bool CpmFileSystem::IsCpm(std::string* why, bool empty) const
 {
     auto fail = [why](const std::string& reason) {
@@ -313,20 +350,9 @@ bool CpmFileSystem::IsCpm(std::string* why, bool empty) const
         if (e[0] == 0xE5)
             continue;
         const std::string at = "entry " + std::to_string(i);
-        if (e[0] > 15)
-            return fail(at + ": user " + std::to_string(e[0]));
-        // A blank name with a type happens (PASC_MT.TRD: "        .COM"); all eleven blank does not
         bool named = false;
-        for (int k = 1; k < 12; k++)
-        {
-            if ((e[k] & 0x7F) < 0x20 || (e[k] & 0x7F) > 0x7E)
-                return fail(at + ": no name");
-            named = named || (e[k] & 0x7F) != ' ';
-        }
-        if (!named)
-            return fail(at + ": no name");
-        if (e[12] > 31 || e[13] != 0 || e[15] > 128)
-            return fail(at + ": no extent");
+        if (const std::string fault = EntryFault(e, named); !fault.empty())
+            return fail(at + ": " + fault);
         const uint32_t pointers = UsedPointers(e);
         for (uint32_t k = 0; k < pointers; k++)
         {
@@ -337,7 +363,7 @@ bool CpmFileSystem::IsCpm(std::string* why, bool empty) const
                 return fail(at + ": block " + std::to_string(block) + " used twice");
             used[block] = true;
         }
-        files++;
+        files += named;
     }
     return files > 0 || empty ? true : fail("no file");
 }
@@ -450,6 +476,24 @@ bool CpmFileSystem::FreeBlocks(uint32_t& out) const
                 used[Pointer(e, k)] = true;
     }
     out = static_cast<uint32_t>(std::count(used.begin(), used.end(), false));
+    return true;
+}
+
+bool CpmFileSystem::LastUsedBlock(uint32_t& out) const
+{
+    std::vector<uint8_t> dir;
+    if (!Directory(dir))
+        return false;
+    out = std::max<uint32_t>(_geometry.DirectoryBlocks(), 1) - 1;
+    for (uint32_t i = 0; i < _geometry.entries; i++)
+    {
+        const uint8_t* e = dir.data() + i * kEntry;
+        if (e[0] > 15)
+            continue;
+        for (uint32_t k = 0, n = UsedPointers(e); k < n; k++)
+            if (Pointer(e, k) < _geometry.blocks)
+                out = std::max(out, Pointer(e, k));
+    }
     return true;
 }
 

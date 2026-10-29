@@ -363,6 +363,14 @@ std::map<std::string, ScrubChoice>& ScrubChoices()
     return choices;
 }
 
+/// The shuttle ring's turn per instance and side (run.pace_shuttle_faster / _slower): the presets it has moved since it
+/// left the centre
+std::map<std::string, int>& ShuttleTurns()
+{
+    static std::map<std::string, int> turns;
+    return turns;
+}
+
 /// ttd.find_last / ttd.find_last_write: find-last at the address (or the cursor), then the seek there (seek: true)
 ActionResult FindLast(const ActionCall& call, const char* access)
 {
@@ -575,6 +583,8 @@ void DropSteppingState(const std::string& instanceId)
     DebuggerCursors::Instance().Drop(instanceId);
     std::lock_guard<std::mutex> lock(ScrubMutex());
     ScrubChoices().erase(instanceId);
+    ShuttleTurns().erase(instanceId + "/faster");
+    ShuttleTurns().erase(instanceId + "/slower");
 }
 
 bool AddressParam(const StateNode& params, const char* name, uint16_t& address, std::string& error)
@@ -669,6 +679,33 @@ std::vector<RegistrationHandle> RegisterSteppingActions(ActionRegistry& registry
             return Paced(PacerOf(call)->Shift(call.requester, delta));
         },
         Rules(ScopeRun));
+    // A spring-loaded ring (the ShuttlePRO's) moves the pace from where it is, as the slider does: turned further from
+    // the centre, one preset per position (7 a side, level n / 7; an analog source is cut into the same 7 steps);
+    // turning back and the spring's return change nothing, so the pace stays where the turn left it
+    for (const bool faster : {true, false})
+        add(faster ? "run.pace_shuttle_faster" : "run.pace_shuttle_slower",
+            faster ? "Pace coarser on a shuttle ring" : "Pace finer on a shuttle ring", run, ValueKind::Level, "",
+            [faster](const ActionCall& call) {
+                const std::shared_ptr<RunPacer> pacer = PacerOf(call);
+                constexpr double kPositions = 7;
+                const int turn = static_cast<int>(std::llround(std::clamp(call.value.level, 0.0, 1.0) * kPositions));
+                int moved = 0;
+                {
+                    std::lock_guard<std::mutex> lock(ScrubMutex());
+                    int& held = ShuttleTurns()[call.emulator->GetId() + (faster ? "/faster" : "/slower")];
+                    if (turn == 0)
+                        held = 0;
+                    else if (turn > held)
+                    {
+                        moved = turn - held;
+                        held = turn;
+                    }
+                }
+                if (moved == 0)
+                    return ActionResult::Success(pacer->StateBody());
+                return Paced(pacer->Shift(call.requester, faster ? -moved : moved));
+            },
+            Rules(ScopeRun));
     {
         ActionRules rules = Rules(ScopeRun);
         rules.state = [](Emulator& emulator, const ActionValue&) -> std::optional<bool> {

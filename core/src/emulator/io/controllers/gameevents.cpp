@@ -17,6 +17,7 @@ void GameEventLog::Define(const std::vector<GameEventInfo>& events, const std::s
         Event event;
         event.name = events[index].name;
         event.level = events[index].level;
+        event.condition = events[index].condition;
         _state.events.push_back(std::move(event));
     }
     _revision++;
@@ -25,6 +26,15 @@ void GameEventLog::Define(const std::vector<GameEventInfo>& events, const std::s
 void GameEventLog::Clear()
 {
     Define({}, {});
+}
+
+void GameEventLog::SetConditionError(size_t index, const std::string& error)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (index >= _state.events.size())
+        return;
+    _state.events[index].conditionError = error;
+    _revision++;
 }
 
 void GameEventLog::Record(const GameEventFrame& frame)

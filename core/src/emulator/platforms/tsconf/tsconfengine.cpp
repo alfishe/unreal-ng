@@ -430,7 +430,10 @@ void TsConfEngine::OnMachineStep(uint32_t t)
 {
     _interrupts.OnMachineStep(t);
     CatchUp(t);
+    const uint32_t from = _stepEndRaster;
     _stepEndRaster = RasterAt(t);
+    if (_context->beamWatch && onBeam && _stepEndRaster > from) [[unlikely]]
+        onBeam(from, _stepEndRaster);
 }
 
 uint32_t TsConfEngine::IdleFetchesUntil(uint16_t fetch, uint32_t t)
@@ -457,6 +460,8 @@ void TsConfEngine::OnMachineFrameRollover(uint32_t frameLength)
     // the next frame starts at line 0
     CatchUp(kFrameTacts * std::max<uint32_t>(_context->emulatorState.current_z80_frequency_multiplier, 1u));
     AccountBudget(kFrameTacts);
+    if (_context->beamWatch && onBeam && _stepEndRaster < kFrameTacts) [[unlikely]]
+        onBeam(_stepEndRaster, kFrameTacts);  // the frame's tail after its last step
     _ts.engNextLine = 0;
     _ts.budgetRaster = 0;
     _stepEndRaster = 0;

@@ -71,6 +71,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_stepping.inc"
 #include "openapi/openapi_pace.inc"
 #include "openapi/openapi_breakpoints.inc"
+#include "openapi/openapi_callbacks.inc"
 #include "openapi/openapi_debug.inc"
 #include "openapi/openapi_labels.inc"
 #include "openapi/openapi_symbols.inc"

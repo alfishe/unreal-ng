@@ -156,22 +156,23 @@ IsdosFileSystem::BlockWriter BlockWriterAt(BlockDevice& device, uint64_t offset,
 
 using SectorRanges = std::vector<std::pair<uint64_t, uint64_t>>;
 
-/// The first sector from `from` up to `to` outside the `taken` ranges for which `match` holds, each one read (a run
-/// the device knows to be zeros is skipped: no signature is all zeros); `to` when none
+/// The first sector from `from` up to `to` outside the `taken` ranges for which `match` holds, each multiple of
+/// `step` read (a run the device knows to be zeros is skipped: no signature is all zeros); `to` when none
 uint64_t ScanUntaken(BlockDevice& device, uint64_t from, uint64_t to, SectorRanges taken,
-                     const std::function<bool(const uint8_t*)>& match)
+                     const std::function<bool(const uint8_t*)>& match, uint64_t step = 1)
 {
     std::sort(taken.begin(), taken.end());
+    auto align = [step](uint64_t lba) { return (lba + step - 1) / step * step; };
     size_t next = 0;
     uint8_t s[kSector];
     uint64_t asked = 0;  // ZeroRun is asked once in 128 sectors (a file image answers it with a system call)
-    for (uint64_t lba = from; lba < to;)
+    for (uint64_t lba = align(from); lba < to;)
     {
         while (next < taken.size() && taken[next].second <= lba)
             next++;
         if (next < taken.size() && taken[next].first <= lba)
         {
-            lba = taken[next].second;
+            lba = align(taken[next].second);
             asked = 0;
             continue;
         }
@@ -179,14 +180,14 @@ uint64_t ScanUntaken(BlockDevice& device, uint64_t from, uint64_t to, SectorRang
         {
             if (const uint64_t zeros = device.ZeroRun(lba))
             {
-                lba += zeros;
+                lba = align(lba + zeros);
                 continue;
             }
             asked = lba + 128;
         }
         if (device.ReadSector(lba, s) && match(s))
             return lba;
-        lba++;
+        lba += step;
     }
     return to;
 }
@@ -947,10 +948,17 @@ struct CpmDriver : DiskFs::Driver
 {
     explicit CpmDriver(CpmFileSystem fs) : fs(std::move(fs)) {}
 
+    /// The name as listed: a name of eleven blanks (CP/M keeps one) as "\x20", the escape of a blank
+    static std::string NameOf(const CpmFile& f)
+    {
+        const std::string name = Ascii(f.FullName());
+        return name.empty() ? "\\x20" : name;
+    }
+
     /// User 0 at the root, users 1-15 in the directories USER1..USER15
     static std::string PathOf(const CpmFile& f)
     {
-        const std::string name = Ascii(f.FullName());
+        const std::string name = NameOf(f);
         return f.user ? "USER" + std::to_string(f.user) + "/" + name : name;
     }
 
@@ -977,7 +985,7 @@ struct CpmDriver : DiskFs::Driver
                 listed = true;
                 DiskFsEntry e;
                 e.path = PathOf(f);
-                e.name = Ascii(f.FullName());
+                e.name = NameOf(f);
                 e.size = f.size;
                 static const char letters[] = "RSA";
                 for (int bit = 0; bit < 3; bit++)
@@ -1978,15 +1986,31 @@ void DiskFs::Probe()
 
     // ATM CP/M: the drives of the configuration record in sector 0, then the hard disk descriptors (.CDS) of the same
     // unit kept on them (AUTOEXEC.SUB assigns them)
-    std::vector<AtmCpmChannel> channels;
-    if (CpmFileSystem::ParseAtmConfig(s0, channels))
-    {
-        std::set<std::vector<uint32_t>> seen;
+    // The .CDS files of user 0 on `fs` that describe a hard disk partition of `unit`
+    auto atmDescriptors = [](const CpmFileSystem& fs, uint8_t unit, std::vector<AtmCpmChannel>& channels) {
+        std::vector<CpmFile> files;
+        std::string why;
+        fs.List(files, why);
+        for (const CpmFile& f : files)
+        {
+            std::vector<uint8_t> text;
+            AtmCpmChannel cds;
+            if (f.user == 0 && f.type == "CDS" && f.size <= 4096 && fs.Read(f, text, why) &&
+                CpmFileSystem::ParseCds(std::string(text.begin(), text.end()), cds) && cds.driver == 4 &&
+                cds.unit == unit)
+            {
+                cds.source = f.FullName();
+                channels.push_back(cds);
+            }
+        }
+    };
+    std::set<std::vector<uint32_t>> atmSeen;
+    auto addAtm = [&](std::vector<AtmCpmChannel>& channels) {
         for (size_t i = 0; i < channels.size(); i++)
         {
             const AtmCpmChannel c = channels[i];
             if (c.driver != 4 || c.sectorSize != kSector || c.heads == 0 || c.sectors == 0 || c.heads > heads ||
-                c.sectors > sectors || !seen.insert({c.startCylinder, c.heads, c.sectors, c.reserved}).second)
+                c.sectors > sectors || !atmSeen.insert({c.startCylinder, c.heads, c.sectors, c.reserved}).second)
                 continue;
             const CpmGeometry g = c.Geometry();
             const uint64_t first = static_cast<uint64_t>(c.startCylinder) * heads * sectors;
@@ -2005,20 +2029,7 @@ void DiskFs::Probe()
                     _notes.push_back(std::string("ATM CP/M drive ") + c.drive + ": has no directory (" + why + ")");
                 continue;
             }
-            std::vector<CpmFile> files;
-            fs.List(files, why);
-            for (const CpmFile& f : files)
-            {
-                std::vector<uint8_t> text;
-                AtmCpmChannel cds;
-                if (f.user == 0 && f.type == "CDS" && f.size <= 4096 && fs.Read(f, text, why) &&
-                    CpmFileSystem::ParseCds(std::string(text.begin(), text.end()), cds) && cds.driver == 4 &&
-                    cds.unit == c.unit)
-                {
-                    cds.source = f.FullName();
-                    channels.push_back(cds);
-                }
-            }
+            atmDescriptors(fs, c.unit, channels);
             DiskFsVolume v;
             v.id = "cpm-" + std::to_string(c.startCylinder);
             DescribeCpm(fs, v);
@@ -2033,7 +2044,10 @@ void DiskFs::Probe()
             taken.emplace_back(first, end);
             add(std::move(v), std::make_unique<CpmDriver>(std::move(fs)));
         }
-    }
+    };
+    std::vector<AtmCpmChannel> channels;
+    if (CpmFileSystem::ParseAtmConfig(s0, channels))
+        addAtm(channels);
 
     // Profi CP/M: the partitions of the table after the ProfiHDD header, each a CP/M volume of 2 KB blocks from its
     // first cylinder on with the directory first (HDD22.DRV: DSM = cylinders x H x S / 4 - 1, DRM the entry's). The
@@ -2276,6 +2290,119 @@ void DiskFs::Probe()
         {
             partitions.push_back({lba, device.SectorCount() - lba, 0});
             addMdos3();
+        }
+    }
+
+    // ATM CP/M partitions no configuration record names (assigned from a floppy's .CDS, or the record lost). A
+    // partition starts at a cylinder, its directory past the reserved tracks (the NedoPC installation guide: PATBEG,
+    // SYS, the disk's own heads and sectors), so at the start of a track; looked for outside the volumes found. The
+    // size, the directory's entries and the width of the block numbers are not on the disk: the space up to the next
+    // volume (8 MB at most, DBLDR's 16 bits), the most entries that read (512 down to 64) and the width the BIOS gives
+    // that size, else the other. A .CDS of unit 0 kept on one gives its partitions as the BIOS sees them; one no .CDS
+    // describes is read only (a write could run past its unknown end)
+    {
+        const uint64_t total = device.SectorCount(), cylinderSectors = heads * sectors;
+        auto nextVolume = [&](uint64_t lba) {
+            uint64_t next = total;
+            for (const auto& [from, to] : taken)
+                if (from > lba)
+                    next = std::min(next, from);
+            return next;
+        };
+        auto channelAt = [&](uint64_t lba) {
+            AtmCpmChannel c;
+            c.driver = 4;
+            c.heads = static_cast<uint32_t>(heads);
+            c.sectors = static_cast<uint32_t>(sectors);
+            c.sectorSize = kSector;
+            c.startCylinder = static_cast<uint32_t>(lba / cylinderSectors);
+            c.reserved = static_cast<uint32_t>(lba % cylinderSectors / sectors);
+            return c;
+        };
+        // The geometry the directory at `lba` reads with in `count` sectors
+        auto fit = [&](uint64_t lba, uint64_t count, CpmGeometry& out) {
+            const uint32_t room =
+                static_cast<uint32_t>(std::min<uint64_t>(count * kSector / CpmGeometry::kBlock, 4096));
+            const AtmCpmChannel c = channelAt(lba);
+            auto cache = std::make_shared<SectorCache>();
+            // The width the BIOS gives a volume of `room` blocks first; 16-bit numbers only past 256 blocks
+            const bool bios = room > 256;
+            for (const bool wide : {bios, !bios})
+            {
+                if (wide && room <= 256)
+                    continue;
+                for (uint32_t entries = 512; entries >= 64; entries -= 64)
+                {
+                    CpmGeometry g;
+                    g.blocks = wide ? room : std::min<uint32_t>(room, 256);
+                    g.entries = entries;
+                    if (g.DirectoryBlocks() >= g.blocks)
+                        continue;
+                    if (CpmFileSystem(CpmReaderAt(device, c, heads, sectors, cache), g).IsCpm())
+                    {
+                        out = g;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+        std::vector<uint64_t> found;  // the directories' LBAs
+        for (uint64_t from = 0; from < total;)
+        {
+            const uint64_t lba = ScanUntaken(
+                device, from, total, taken, [](const uint8_t* s) { return CpmFileSystem::LooksLikeDirectory(s, 16); },
+                sectors);
+            if (lba >= total)
+                break;
+            CpmGeometry g;
+            uint32_t last = 0;
+            auto cache = std::make_shared<SectorCache>();
+            if (fit(lba, nextVolume(lba) - lba, g) &&
+                CpmFileSystem(CpmReaderAt(device, channelAt(lba), heads, sectors, cache), g).LastUsedBlock(last))
+            {
+                // A file's bytes hold no partition
+                found.push_back(lba);
+                from = lba + (static_cast<uint64_t>(last) + 1) * (CpmGeometry::kBlock / kSector);
+            }
+            else
+                from = lba + 1;
+        }
+        // Each up to the next one's cylinder; the .CDS files on them first
+        auto room = [&](size_t i) {
+            const uint64_t next = i + 1 < found.size() ? found[i + 1] / cylinderSectors * cylinderSectors : total;
+            return std::min(next, nextVolume(found[i])) - found[i];
+        };
+        std::vector<AtmCpmChannel> described;
+        for (size_t i = 0; i < found.size(); i++)
+        {
+            CpmGeometry g;
+            auto cache = std::make_shared<SectorCache>();
+            if (fit(found[i], room(i), g))
+                atmDescriptors(CpmFileSystem(CpmReaderAt(device, channelAt(found[i]), heads, sectors, cache), g), 0,
+                               described);
+        }
+        addAtm(described);
+        for (size_t i = 0; i < found.size(); i++)
+        {
+            bool overlaps = false;
+            for (const auto& [from, to] : taken)
+                overlaps = overlaps || (found[i] >= from && found[i] < to);
+            CpmGeometry g;
+            if (overlaps || !fit(found[i], room(i), g))
+                continue;
+            const AtmCpmChannel c = channelAt(found[i]);
+            auto cache = std::make_shared<SectorCache>();
+            CpmFileSystem fs(CpmReaderAt(device, c, heads, sectors, cache), g);
+            DiskFsVolume v;
+            v.id = "cpm-" + std::to_string(c.startCylinder);
+            DescribeCpm(fs, v);
+            v.offset = found[i] * kSector;
+            v.bytes = static_cast<uint64_t>(g.blocks) * CpmGeometry::kBlock;
+            taken.emplace_back(found[i], found[i] + v.bytes / kSector);
+            _notes.push_back("ATM CP/M partition at cylinder " + std::to_string(c.startCylinder) +
+                             " found by its directory: no descriptor gives its size, read only");
+            add(std::move(v), std::make_unique<CpmDriver>(std::move(fs)));
         }
     }
 }

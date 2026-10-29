@@ -45,10 +45,11 @@ inline std::string Table(const StateNode& mixer, const char* newline, const std:
         const StateNode* holders = host->find("holders");
         char line[256];
         std::snprintf(line, sizeof line,
-                      "host output: %s (holders: direct_run %lld, ttd_replay %lld, turbo %lld; stale cleared %lld) "
-                      "frames delivered %lld, audible %lld, held %lld",
+                      "host output: %s (holders: direct_run %lld, ttd_replay %lld, turbo %lld, unpaced %lld; stale "
+                      "cleared %lld) frames delivered %lld, audible %lld, held %lld",
                       held && held->b ? "held" : "playing", count(holders, "direct_run"), count(holders, "ttd_replay"),
-                      count(holders, "turbo"), count(host, "stale_holds_cleared"), count(host, "frames_delivered"),
+                      count(holders, "turbo"), count(holders, "unpaced"), count(host, "stale_holds_cleared"),
+                      count(host, "frames_delivered"),
                       count(host, "frames_audible"), count(host, "frames_held"));
         out += line;
         out += newline;
