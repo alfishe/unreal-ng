@@ -519,6 +519,8 @@ PRUNED = {
     'ttd.scrub_back': 'a level action of the GUI (held stick / trigger), not a key press',
     'ttd.scrub_forward': 'a level action of the GUI (held stick / trigger), not a key press',
     'run.pace_by': 'a dial (delta) action',
+    'run.pace_shuttle_faster': 'a level action (a spring-loaded shuttle ring), not a key press',
+    'run.pace_shuttle_slower': 'a level action (a spring-loaded shuttle ring), not a key press',
     'video.crt_param_by': 'a dial (delta) action',
     'video.blending_decay_by': 'a dial (delta) action',
 }

@@ -89,6 +89,50 @@ bool ReadHid(const JsonValue& hid, DeviceMatch::HidMap& out, std::string& error)
             out.bits.push_back({static_cast<uint8_t>(report->AsNumber()), static_cast<uint32_t>(byte->AsNumber()),
                                 static_cast<uint8_t>(bit->AsNumber()), control});
         }
+    if (const JsonValue* usages = hid.Find("usages"); usages != nullptr)
+    {
+        if (!usages->IsArray())
+        {
+            error = "'hid.usages' is a list of {usage, control, read}";
+            return false;
+        }
+        for (const JsonValue& entry : usages->Items())
+        {
+            // "01:38": the page and the usage in hex
+            HidUsage usage;
+            const std::string code = Text(entry, "usage");
+            const size_t colon = code.find(':');
+            const JsonValue page = JsonValue::String(colon == std::string::npos ? std::string{} : code.substr(0, colon));
+            const JsonValue id = JsonValue::String(colon == std::string::npos ? std::string{} : code.substr(colon + 1));
+            usage.control = Text(entry, "control");
+            const JsonValue* min = entry.Find("min");
+            const JsonValue* max = entry.Find("max");
+            if (!Hex(&page, usage.page) || !Hex(&id, usage.usage) || usage.control.empty() ||
+                !HidReadFromName(Text(entry, "read"), usage.read) || (min == nullptr) != (max == nullptr) ||
+                (min != nullptr && (!min->IsNumber() || !max->IsNumber() || min->AsNumber() >= max->AsNumber())))
+            {
+                error = "a 'hid.usages' entry is {usage \"<page>:<usage>\" in hex, control, read button / axis / "
+                        "trigger / split / encoder / counter, optional min < max}";
+                return false;
+            }
+            if (min != nullptr)
+            {
+                usage.range = true;
+                usage.min = static_cast<int32_t>(min->AsNumber());
+                usage.max = static_cast<int32_t>(max->AsNumber());
+            }
+            out.usages.push_back(usage);
+        }
+    }
+    if (const JsonValue* application = hid.Find("application"); application != nullptr)
+    {
+        if (!application->IsString() || application->AsString() != "any")
+        {
+            error = "'hid.application' is \"any\" (the fields of every application collection) or absent (a pad's)";
+            return false;
+        }
+        out.anyApplication = true;
+    }
     return true;
 }
 
@@ -391,6 +435,21 @@ std::vector<std::string> DeviceDatabase::FamilyIds() const
     for (const Family& family : _families)
         ids.push_back(family.info.family);
     return ids;
+}
+
+std::vector<std::pair<uint16_t, uint16_t>> DeviceDatabase::SurfaceProducts() const
+{
+    std::vector<std::pair<uint16_t, uint16_t>> out;
+    for (const Family& family : _families)
+    {
+        if (family.info.player || family.info.ignore)
+            continue;
+        for (const Match& match : family.matches)
+            for (uint16_t product : match.products)
+                if (std::find(out.begin(), out.end(), std::pair{match.vendor, product}) == out.end())
+                    out.emplace_back(match.vendor, product);
+    }
+    return out;
 }
 
 std::shared_ptr<const DeviceDatabase> DeviceDatabase::Active()
