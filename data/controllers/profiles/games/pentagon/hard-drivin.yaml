@@ -8,8 +8,9 @@
 # a 4 s full throttle, up to about 200 at the top, the shadow copy at #A9A0 is the same value one buffer later). The wreck is
 # #F5E1, the head of the INSTANT REPLAY set-up beside the speed writer #F56D (it runs once per wreck: the speed fell 229 -> 14
 # in the same frame, the replay text came after; it is the only run of that block in a 1500-frame recording).
-# Known limits: the off-road state ("OFF ROAD n") and the plain object hits (the speed drops 101 -> 3 without a replay) are not
-# mapped yet.
+# The off-road state is the flag byte #951E (255 while the car is off the road: #9E45 sets it in the frame loop, the road check
+# #ECBC clears it); the "OFF ROAD n" countdown is the BCD byte #951F (#A413 steps it down, 9 to 0, then the game ends the run).
+# Known limits: the plain object hits (the speed drops 101 -> 3 without a replay) are not mapped yet.
 schema: 1
 kind: play
 id: builtin/game/hard-drivin
@@ -33,7 +34,9 @@ layers:
 haptics:
   sources:
     speed: { probe: value, address: "0x965B", scale: 1.25 }
+    offroad: { probe: value, address: "0x951E", scale: 0.6 }
     crash: { probe: exec, address: "0xF5E1" }
   rules:
     - { on: speed, play: engine, target: handle.low }
+    - { on: offroad, play: rumble-strip }
     - { on: crash, play: explosion, scale: 0.9 }
