@@ -1024,6 +1024,22 @@
    "gui": false
   },
   {
+   "id": "run.pace_shuttle_faster",
+   "label": "Pace coarser on a shuttle ring",
+   "group": "Run",
+   "kind": "level",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pace_shuttle_slower",
+   "label": "Pace finer on a shuttle ring",
+   "group": "Run",
+   "kind": "level",
+   "held": false,
+   "gui": false
+  },
+  {
    "id": "run.pace_toggle",
    "label": "Pace run / pause",
    "group": "Run",

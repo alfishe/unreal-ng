@@ -23,7 +23,7 @@ public:
     static std::vector<std::string> Extensions() { return unrealdisk::FloppyFormats::Extensions(); }
 
     /// The format of the file at `path` ("trd", "scl", "fdi", "udi", "dsk", "td0", "mgt", "rawpc", "mb02", "mdos",
-    /// "hfe", "scp", "hobeta"), empty when nothing matches
+    /// "pro", "hfe", "scp", "hobeta"), empty when nothing matches
     static std::string Probe(const std::string& path) { return unrealdisk::FloppyFormats::Probe(path); }
 
     /// Load the file at `path` into a new DiskImage; `context` gives the loaders the machine's settings

@@ -276,7 +276,7 @@ Commands to manage the connection and emulator instances. These commands are ess
 | `status` | | | Show the runtime status (Running/Paused/Stopped/Debug) of all emulator instances, including ID, symbolic name, uptime, and current state. |
 | `list` | | | List all managed emulator instances with their UUIDs, status (Running/Paused/Stopped), and debug state. Stopped instances are removed from this list. |
 | `select <id>` | | `<emulator-id>` | Select the active emulator instance for subsequent commands. The `<id>` can be either the UUID or symbolic ID. All following commands (reset, pause, registers, etc.) will operate on this selected instance. |
-| `open <file>` | | `<file-path>` | Open and load a file into the selected emulator. Supports multiple formats: tape images (.tap, .tzx), snapshots (.z80, .sna, .szx), RZX input recordings (.rzx: played on this machine, see §12), disk images (.trd, .scl, .fdi). File type is auto-detected by extension. |
+| `open <file>` | | `<file-path>` | Open and load a file into the selected emulator. Supports multiple formats: tape images (.tap, .tzx), snapshots (.z80, .sna, .szx), RZX input recordings (.rzx: played on this machine, see §12), disk images (every floppy format: .trd, .scl, .fdi, .udi, .dsk, .td0, .mgt, .img, .mb2, .d80, .pro, ...; see `docs/file-formats/disk-images/README.md`). File type is auto-detected by extension. |
 | `exit` | `quit` | | Terminate the control session. For CLI, closes the TCP connection. Does not stop the emulator instances themselves. |
 | `dummy` | | | No-operation command used for connection initialization and testing. Returns a simple acknowledgment. Useful for verifying the connection is alive. |
 
@@ -545,7 +545,7 @@ runs at full speed pauses it and starts the pace; `full` while the pace runs sto
 | MCP | `control_execution` action `pace` (`pace_op` `get`) | `control_execution` action `pace`, `pace_op` `set` / `next` / `prev` / `start` / `stop` / `toggle` / `step`, `preset`, `interval_ms` |
 | Python | `emu.pace()` | `emu.pace_set("5fps", 200)`, `pace_interval(ms)`, `pace_next()`, `pace_prev()`, `pace_start()`, `pace_stop()`, `pace_toggle()`, `pace_step()` (a refusal raises `RuntimeError`) |
 | Lua | `pace()` | `pace_set("5fps", 200)`, `pace_interval(ms)`, `pace_next()`, ... `pace_step()` (a table with `ok`, `error` on a refusal) |
-| Actions | readout `run.state` → `pace`, toggle `toggle.run.pace_toggle` | `run.pace_set`, `run.pace_next`, `run.pace_prev`, `run.pace_by` (a dial), `run.pace_toggle`, `run.pace_stop`, `run.pace_step` |
+| Actions | readout `run.state` → `pace`, toggle `toggle.run.pace_toggle` | `run.pace_set`, `run.pace_next`, `run.pace_prev`, `run.pace_by` (a dial), `run.pace_shuttle_faster` / `_slower` (a shuttle ring), `run.pace_toggle`, `run.pace_stop`, `run.pace_step` |
 | Qt | the debugger's speed control shows the pacer (`NC_RUN_PACE`) | its slider, interval, play / pause and step submit the actions |
 
 **Runs to a place.** Each is a `RunControl` verb (`core/src/emulator/execution/runcontrol.h`: the claim rule, the
@@ -4067,6 +4067,7 @@ Run, step and time-travel units (Stream Deck use cases D1, D2, D3, D5, D6; `core
 | `run.pace_set` | press | `preset?`, `interval_ms?` | Choose the pace (§2.1); off full speed on a running machine it pauses and paces |
 | `run.pace_next`, `run.pace_prev` | press | | A finer / coarser preset |
 | `run.pace_by` | delta | | A dial walks the ladder |
+| `run.pace_shuttle_faster`, `run.pace_shuttle_slower` | level | | A spring-loaded ring (the ShuttlePRO's) moves the pace from where it is: a preset per position further from the centre (level n / 7), coarser up to full speed / finer; the return changes nothing |
 | `run.pace_toggle` | press (toggle) | | Run at the pace / stop; at full speed pause / continue (the dial's push); `toggle.run.pace_toggle` |
 | `run.pace_stop`, `run.pace_step` | press | | Stop the pace; one step at it |
 | `run.to_pixel` | press | | To the first paper pixel (needs a pause) |

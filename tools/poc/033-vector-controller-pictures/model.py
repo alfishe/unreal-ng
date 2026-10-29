@@ -37,7 +37,8 @@ class View:
         self.parts[layer].append((self.named(control), svg))
 
     def spot(self, control, label, shape, side, anchor=None, analog=None, group=None, quiet=False):
-        """A hotspot: @p shape ("circle", cx, cy, r) or ("rect", x, y, w, h) in mm of this view"""
+        """A hotspot: @p shape ("circle", cx, cy, r), ("rect", x, y, w, h) or ("polygon", [(x, y), ...]) in mm of this
+        view"""
         control = self.named(control)
         group = self.named(group)
         if shape[0] == "circle":
@@ -45,6 +46,10 @@ class View:
             x, y = self.canvas(cx, cy)
             canvas_shape = {"circle": [round(x), round(y), round(r * self.scale)]}
             centre = (x, y)
+        elif shape[0] == "polygon":
+            points = [self.canvas(x, y) for x, y in shape[1]]
+            canvas_shape = {"polygon": [[round(x), round(y)] for x, y in points]}
+            centre = (sum(x for x, _ in points) / len(points), sum(y for _, y in points) / len(points))
         else:
             _, x, y, w, h = shape
             x0, y0 = self.canvas(x, y)

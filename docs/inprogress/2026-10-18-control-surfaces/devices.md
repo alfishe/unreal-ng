@@ -11,7 +11,8 @@
 - [1. Surface Dial](#1-surface-dial)
 - [2. Stream Deck + XL through streamdeck-bridge](#2-stream-deck--xl-through-streamdeck-bridge)
 - [3. Later: DIY HID devices and MIDI](#3-later-diy-hid-devices-and-midi)
-- [4. Database entry](#4-database-entry)
+- [4. Contour ShuttlePRO v2 and ShuttleXpress](#4-contour-shuttlepro-v2-and-shuttlexpress)
+- [5. Database entry](#5-database-entry)
 
 ## 1. Surface Dial
 
@@ -101,7 +102,41 @@ owns it, renders its faces and runs the scenario; raw access from the core stays
 - A MIDI controller is a local host device too: a MIDI backend (CoreMIDI, WinMM, ALSA) maps relative CC to
   `Encoder`, notes to buttons.
 
-## 4. Database entry
+## 4. Contour ShuttlePRO v2 and ShuttleXpress
+
+Contour Design `0B33:0030` (ShuttlePRO v2: 15 keys, a jog wheel, a spring-loaded shuttle ring) and `0B33:0020`
+(ShuttleXpress: keys K5-K9 only, the same report), USB. No driver of its own: the family's `hid` map in
+`devices.json` reads it through the generic HID path ([device-database.md §2](../2026-10-17-controller-manager/device-database.md)),
+and `data/controllers/profiles/debug/shuttle-pro.yaml` makes it a debugger remote. Report layout from the
+descriptor captured on macOS (`testdata/controllers/hid-captures/shuttle-pro/`) and from the Linux tools that read it
+([agraef/ShuttlePRO](https://github.com/agraef/ShuttlePRO), LinuxCNC `shuttle`):
+
+| Byte | Field | The descriptor says | The device does | Read as |
+|:--|:--|:--|:--|:--|
+| 0 | shuttle | Wheel `01:38`, relative, -128..127 | absolute -7..7, 0 at rest | `split` -7..7: `shuttle.left`, `shuttle.right` 0..1 |
+| 1 | jog | Dial `01:37`, 0..255 | a counter, 10 counts a turn, wraps | `counter`: `jog` steps (Encoder) |
+| 2 | — | constant | 0 | — |
+| 3-4 | keys | Button 1..13 | K1..K15 in bits 0..14 | `button.1`..`button.13`; K14, K15 (byte 4 bits 5, 6) as `bits` |
+
+The rows on the device: K1-K4, K5-K9, K14 jog K15, K10 K11, K12 K13. The descriptor's collection is a Consumer
+Control (`0C:01`), so the map has `"application": "any"`, and the backends open it by id (`"player": false`). Linux's
+hid-input drops the zero of a relative usage, so the ring's return to the centre never comes through evdev: the evdev
+backend reads the hidraw node (`70-unreal-ng.rules` gives the user access to it and to its event node). The
+owner's capture (`macos-usb/2026-10-28-descriptor-and-reports.txt`, replayed by `ShuttlePro_Capture_TheOwnersDevice`)
+confirms all 15 keys, K14 / K15 included, and the ring's -7..7. The ShuttleXpress's key bits are taken from those
+tools, not yet from a capture of reports.
+
+The picture (`data/controllers/images/shuttle-pro-v2/`) is drawn by POC 033's generator
+(`tools/poc/033-vector-controller-pictures/devices/contour.py`): the outline traced on Contour's front view, the keys
+on a 5 mm grid, a hotspot per control (the tilted keys as polygons, the ring as two half rings, the jog wheel as an
+encoder), so the controllers dialog shows each control's binding and lights it while held. The ShuttleXpress has no
+picture of its own yet.
+
+The ring in the debug profile is the debugger's speed control, moved from where it is (`run.pace_shuttle_slower` /
+`_faster`): each position further right (CW) a preset slower, down to 1 instruction; left (CCW) a preset faster, up
+to full speed; the spring's return changes nothing.
+
+## 5. Database entry
 
 A family in `data/controllers/devices.json`, in its schema (`families[]` with `id`, `name`, `vendor`, `match[]`,
 `layout`, `images`, `glyphs`, `controls[]` names, `devicedatabase.cpp`):

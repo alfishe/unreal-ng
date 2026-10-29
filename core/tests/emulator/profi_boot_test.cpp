@@ -37,6 +37,7 @@
 #include "_helpers/scratchfolder.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/io/network/networkmanager.h"
@@ -404,6 +405,33 @@ TEST_F(ProfiBoot_Test, CpmBootsFromTheKondorSystemDisk)
     const uint32_t lines = HiresLinesWithInk(context);
     std::cout << "hi-res lines with ink: " << lines << "\n";
     EXPECT_GE(lines, 80u) << "the sign-on and the AUTOEXEC output fill the screen";
+}
+
+TEST_F(ProfiBoot_Test, CpmBootsFromAProDump)
+{
+    // A .pro dump keeps no sector IDs: the BIOS boots from R = 9 on cylinder 0 side 0, so the loader must give that
+    // track IDs 1, 2, 3, 4, 9 (docs/file-formats/disk-images/pro.md). CP/M mode on = the boot sector ran
+    const std::string disk = TestPathHelper::GetTestDataPath("loaders/pro/ReadFile.pro");
+    EmulatorContext* context = _emulator->GetContext();
+    _emulator->EnableTurboMode();
+    _emulator->RunNFrames(600, true);   // the BIOS menu
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(disk, 0, &error)) << error;
+    TapKeys("ENT");                      // the first entry: CP/M
+    const auto booted = [&] {
+        return (context->emulatorState.pDFFD & 0xA0) == 0xA0 &&
+               (!TestTier::Long() || HiresLinesWithInk(context) >= 80);
+    };
+    EmulatorTestHelper::RunUntil(_emulator.get(), booted, 2500, 25);
+
+    EXPECT_NE(context->emulatorState.pDFFD & 0x20, 0) << "CP/M mode: the BIOS read the boot sector R = 9";
+    EXPECT_NE(context->emulatorState.pDFFD & 0x80, 0) << "hi-res";
+    if (TestTier::Long())
+    {
+        const uint16_t pc = context->pCore->GetZ80()->pc;
+        EXPECT_FALSE(pc >= 0x8000 && pc < 0x8300) << "stuck in the boot loader, pc=" << std::hex << pc;
+        EXPECT_GE(HiresLinesWithInk(context), 80u) << "the sign-on and the AUTOEXEC output fill the screen";
+    }
 }
 
 /// @brief The CP/M switch at power-on: the board holds #DFFD at #00 (research-profi-v5-open-items.md Q6), so the
