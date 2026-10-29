@@ -1,5 +1,6 @@
 // ATM CP/M: the floppies (a directory at #2000, an empty TR-DOS catalogue in cylinder 0 is no volume then), a hard disk
-// whose configuration record and .CDS descriptor give two partitions, 8-bit block numbers, Scorpion MOA CP/M refused;
+// whose configuration record and .CDS descriptor give two partitions (and without the record its directories), 8-bit
+// block numbers, Scorpion MOA CP/M refused;
 // files written, deleted, renamed and their attributes set on a floppy, a partition and 8-bit block numbers
 
 #include "unrealdisk/cpmfs.h"
@@ -244,11 +245,55 @@ TEST(CpmFs_Test, HardDiskPartitionsFromTheConfigurationRecordAndCdsFiles)
     // (8064 - 252) / 16 = 488 blocks: the directory 2, sys.trd 301, the two .CDS files 2
     EXPECT_EQ(fs.Volumes()[0].freeBytes, (488 - 2 - 301 - 2) * 2048);
 
-    // Without the record the disk has no CP/M volume
+    // Without the record (D: assigned from a floppy) D:'s directory is found at the start of a track: read only, up
+    // to E:'s cylinder, as large as the BIOS makes it; its HDDE.CDS still gives E:
     std::memset(disk.data(), 0, 512);
     MemoryDevice bare(disk);
-    DiskFs none(bare);
-    EXPECT_TRUE(none.Volumes().empty());
+    DiskFs found(bare);
+    ASSERT_EQ(found.Volumes().size(), 2u);
+    EXPECT_EQ(found.Volumes()[0].id, "cpm-3");
+    EXPECT_EQ(found.Volumes()[0].label, "HDDE.CDS");
+    EXPECT_EQ(found.Volumes()[1].id, "cpm-1");
+    EXPECT_EQ(found.Volumes()[1].offset, d);
+    EXPECT_EQ(found.Volumes()[1].bytes, 488u * 2048);
+    EXPECT_FALSE(found.Volumes()[1].writable);
+    EXPECT_EQ(found.Volumes()[1].freeBytes, (488 - 2 - 301 - 2) * 2048);
+    EXPECT_EQ(Crc32(ReadFile(found, "cpm-1", "DOC.COM")), 0xBF5555B3u);
+    EXPECT_EQ(Crc32(ReadFile(found, "cpm-3", "TITLE1.DAT")), 0x5C771324u);
+}
+
+TEST(CpmFs_Test, HardDiskPartitionOfOneCylinderFoundWithEightBitBlockNumbers)
+{
+    // No record, no .CDS: the last cylinder of the disk (16 x 63, one reserved track) holds 236 blocks, so the BIOS
+    // gives it 8-bit block numbers
+    constexpr size_t kCylinder = 16 * 63 * 512;
+    std::vector<uint8_t> disk(3 * kCylinder, 0x00);
+    const size_t dir = 2 * kCylinder + 63 * 512;
+    std::fill(disk.begin() + dir, disk.end(), 0xE5);
+    uint8_t* e = disk.data() + dir;
+    std::memset(e, 0, 32);
+    std::memcpy(e + 1, "SMALL   BIN", 11);
+    e[15] = 32;  // 4 KB: blocks 2 and 3
+    e[16] = 2;
+    e[17] = 3;
+    const std::vector<uint8_t> data = Pattern(4096, 6);
+    std::copy(data.begin(), data.end(), disk.begin() + dir + 2 * 2048);
+
+    MemoryDevice hdd(disk);
+    DiskFs fs(hdd);
+    ASSERT_EQ(fs.Volumes().size(), 1u);
+    EXPECT_EQ(fs.Volumes()[0].id, "cpm-2");
+    EXPECT_EQ(fs.Volumes()[0].bytes, 236u * 2048);
+    EXPECT_EQ(ReadFile(fs, "", "SMALL.BIN"), data);
+
+    // With a free cylinder after it the room is past 256 blocks: 16-bit numbers do not read (#0302 is off the
+    // volume), 8-bit ones do, the volume 256 blocks at most
+    disk.resize(4 * kCylinder, 0x00);
+    MemoryDevice larger(disk);
+    DiskFs wider(larger);
+    ASSERT_EQ(wider.Volumes().size(), 1u);
+    EXPECT_EQ(wider.Volumes()[0].bytes, 256u * 2048);
+    EXPECT_EQ(ReadFile(wider, "", "SMALL.BIN"), data);
 }
 
 TEST(CpmFs_Test, EightBitBlockNumbersHoldTwoExtentsAnEntry)
