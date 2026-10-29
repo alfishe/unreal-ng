@@ -37,6 +37,7 @@ struct HookEdits
     static constexpr size_t kMaxPokes = 65536;
     std::vector<std::pair<uint16_t, uint8_t>> pokes;      ///< in order
     std::vector<std::pair<std::string, uint16_t>> regs;   ///< register name, value, in order
+    bool view = false;  ///< a card's view call: its writes wait for the card's boundary too, never recorded
     bool Empty() const { return pokes.empty() && regs.empty(); }
 };
 

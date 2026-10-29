@@ -1001,7 +1001,9 @@ void SoundChip_NeoGS::handleFrameEnd(size_t expectedSamples)
     if (_frameTicks <= 0)
         return;
 
+    _frameEndCatchUp = true;
     runTo(_frameStartTicks + _frameTicks);
+    _frameEndCatchUp = false;
     _zx.onFrameEnd();
 
     int samples = expectedSamples > 0
@@ -1496,6 +1498,14 @@ bool SoundChip_NeoGS::cardRegisters(Z80CpuRegisters& out) const
     if (!_cpu)
         return false;
     Z80CpuGetRegisters(_cpu, &out);
+    return true;
+}
+
+bool SoundChip_NeoGS::setCardRegisters(const Z80CpuRegisters& regs)
+{
+    if (!_cpu)
+        return false;
+    Z80CpuSetRegisters(_cpu, &regs);
     return true;
 }
 

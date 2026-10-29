@@ -1175,6 +1175,28 @@ Every debug memory callback knows who is on the bus:
 - **Headless:** `unreal-ng --headless --script test.lua --exit-on-script`
   returns the script's exit code.
 
+**Card writes from a hook (Q3, owner 2026-10-29).** A time travel track is immutable: what changes the machine
+after a seek is a fork, and the fork's track records it. A card hook writes the card the way a main CPU `logic` hook
+writes the machine:
+
+- `poke` (card memory as the card CPU sees it), `set_reg` (the card CPU's registers) and the byte a card read sees
+  (the sync hook's return value). `poke` / `set_reg` are made at the card's next instruction boundary (a register
+  set inside a step would be lost), the read's byte at once. Role `view`: refused while a session records or is
+  browsed. Role `logic`: while a session records each write is an input of the track. While a session is browsed nothing writes (a hook does not run in a
+  replay; seek + resume forks, and the fork records).
+- **Where it sits in the track.** The card runs behind the host and catches up at the host's port accesses and the
+  frame end; a replay repeats the same catch-ups, so the card's time in the frame (`totalGsCycles -
+  _frameStartGsCycles`, NeoGS `_runner.now() - _frameStartTicks`, both in the card state) places an edit exactly. The
+  record is a `DebuggerEdit` event at the main CPU's position of the hook (its payload `kEditCardBytes`,
+  `kEditCardCpu`, `kEditCardRead`: the card's CPU id, the card time in the frame, the address or port and the bytes).
+- **The frame.** The card's frame-end catch-up runs after the frame counter moved on: an edit made there names the
+  frame the card is in (`GeneralSoundCard::inFrameEndCatchUp`), and its event sits just past that frame's end.
+- **Replay.** At the first instruction of a frame the controller hands every card edit of that frame (two frames of
+  events from the cursor hold them) to the card's target (`DeliverCardEdits`), which takes the card's debug loop
+  while edits wait; the main cursor passes those events by. At the
+  boundary whose card time reaches an edit's, `poke` / `set_reg` are made; a read substitution replaces the byte of
+  the read at that card time and address. The hook itself does not run.
+
 ### 8A.8 Audio tools (AU1-AU6)
 
 - **Mute and solo (AU1)** are applied in `GSAudioOut` / the NeoGS mixer, on

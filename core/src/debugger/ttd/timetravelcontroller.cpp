@@ -74,6 +74,8 @@
 #include "emulator/sound/soundmanager.h"                 // SoundManager
 #include "stdafx.h"
 #include "debugger/ttd/ttdsessionport.h"
+#include "debugger/debugmanager.h"
+#include "debugger/targets/gscardtarget.h"
 
 // Static assertion: the .ttd v1 format assumes a little-endian host. Every
 // multi-byte field in the header / cpu_state / chipset_state is written in
@@ -2272,6 +2274,36 @@ void TimeTravelController::ApplyLiveInput(TTDInputEvent ev, const TTDNetInput* n
     ApplyInputEvent(ev, InputDevicesOf(_context), net ? &applied : nullptr, payload);
 }
 
+// The records of a tool edit's payload (BeginToolEdit / EndToolEdit, RecordScriptEdit, RecordCardEdits)
+namespace
+{
+enum : uint8_t
+{
+    kEditRamPage = 1,
+    kEditRegionPiece = 2,
+    kEditDeviceState = 3,
+    kEditCpu = 4,
+    kEditChipset = 5,
+    kEditClock = 6,
+    kEditBanks = 7,
+    kEditDeviceStateAt = 8,   ///< a device state by its index in the session's device table (D23; kind 3: by v1 id)
+    kEditCpuBytes = 9,        ///< bytes through the CPU's view (RecordScriptEdit)
+    kEditCardEdit = 10,       ///< a card hook's write (RecordCardEdits): id cpu | kind << 8, index the address,
+                              ///< bytes the frame (8), the card time (8), the edit's bytes
+};
+void PutEditRecord(std::vector<uint8_t>& out, uint8_t kind, uint16_t id, uint32_t index, const uint8_t* bytes,
+                   uint32_t length)
+{
+    const size_t at = out.size();
+    out.resize(at + 11 + length);
+    out[at] = kind;
+    std::memcpy(out.data() + at + 1, &id, 2);
+    std::memcpy(out.data() + at + 3, &index, 4);
+    std::memcpy(out.data() + at + 7, &length, 4);
+    std::memcpy(out.data() + at + 11, bytes, length);
+}
+}  // namespace
+
 void TimeTravelController::ServiceInput()
 {
     if (!_context)
@@ -2298,13 +2330,18 @@ void TimeTravelController::ServiceInput()
         }
         const TTDMachineTime start = _inputFrameStart;
         const TTDEventLog& log = _replayEngine->Events();
+        if (now.frame != _cardEditFrame)
+            DeliverCardEdits(now.frame);
         if (_inputFrameKnown)
             while (_engineEventCursor < log.Count() && log.At(_engineEventCursor).machineTime <= start + now.tInFrame)
             {
                 const TTDEvent& ev = log.At(_engineEventCursor++);
                 if (ev.kind == TTDEventKind::DebuggerEdit && TTDEventLog::RoleOf(ev) == TTDEventRole::Input)
                 {
-                    ApplyToolEdit(_replayEngine->Payloads().Bytes(ev.payload));
+                    // A card's edits went to its target at the frame's start (DeliverCardEdits)
+                    const std::vector<uint8_t>& payload = _replayEngine->Payloads().Bytes(ev.payload);
+                    if (payload.empty() || payload[0] != kEditCardEdit)
+                        ApplyToolEdit(payload);
                     continue;
                 }
                 if (!IsInputKind(ev.kind))
@@ -2427,6 +2464,7 @@ void TimeTravelController::ArmInputPlayback()
         _engineEventCursor = _replayEngine->Events().CursorAt(start + now.tInFrame);
         _inputPlaybackArmed = _engineEventCursor < _replayEngine->Events().Count();
     }
+    _cardEditFrame = UINT64_MAX;
     UpdateInputWorkFlag();
 }
 
@@ -2435,6 +2473,8 @@ void TimeTravelController::DisarmInputPlayback()
     _inputPlaybackArmed = false;
     _inputCursor = 0;
     _inputStartFrame = UINT64_MAX;
+    if (_cardEditFrame != UINT64_MAX)
+        DeliverCardEdits(UINT64_MAX);
     UpdateInputWorkFlag();
 }
 
@@ -2573,32 +2613,6 @@ TTDPortSearchResult TimeTravelController::SearchPortEvents(const TTDPortQuery& q
 // 8 a device state by its table index, 9 bytes written through the CPU's view
 // (a logic callback: index = the first address, written in order as a tool's
 // poke writes them; the replay reaches the same paging, so they land alike)
-namespace
-{
-enum : uint8_t
-{
-    kEditRamPage = 1,
-    kEditRegionPiece = 2,
-    kEditDeviceState = 3,
-    kEditCpu = 4,
-    kEditChipset = 5,
-    kEditClock = 6,
-    kEditBanks = 7,
-    kEditDeviceStateAt = 8,   ///< a device state by its index in the session's device table (D23; kind 3: by v1 id)
-    kEditCpuBytes = 9,        ///< bytes through the CPU's view (RecordScriptEdit)
-};
-void PutEditRecord(std::vector<uint8_t>& out, uint8_t kind, uint16_t id, uint32_t index, const uint8_t* bytes,
-                   uint32_t length)
-{
-    const size_t at = out.size();
-    out.resize(at + 11 + length);
-    out[at] = kind;
-    std::memcpy(out.data() + at + 1, &id, 2);
-    std::memcpy(out.data() + at + 3, &index, 4);
-    std::memcpy(out.data() + at + 7, &length, 4);
-    std::memcpy(out.data() + at + 11, bytes, length);
-}
-}  // namespace
 
 void TimeTravelController::BeginToolEdit()
 {
@@ -2742,6 +2756,86 @@ void TimeTravelController::RecordScriptEdit(const char* source, const std::vecto
                           {_context->emulatorState.frame_counter, TInFrameNow()});
     if (_externalEvents.Size() > before)
         _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
+}
+
+void TimeTravelController::RecordCardEdits(const char* source, const std::vector<TTDCardEdit>& edits)
+{
+    if (_state != TTDSessionState::Recording || !_context || edits.empty())
+        return;
+    std::vector<uint8_t> payload;
+    std::vector<uint8_t> bytes;
+    for (const TTDCardEdit& edit : edits)
+    {
+        bytes.resize(16 + edit.bytes.size());
+        std::memcpy(bytes.data(), &edit.frame, 8);
+        std::memcpy(bytes.data() + 8, &edit.at, 8);
+        if (!edit.bytes.empty())
+            std::memcpy(bytes.data() + 16, edit.bytes.data(), edit.bytes.size());
+        PutEditRecord(payload, kEditCardEdit, static_cast<uint16_t>(edit.cpu | (edit.kind << 8)), edit.address,
+                      bytes.data(), static_cast<uint32_t>(bytes.size()));
+    }
+    const size_t before = _externalEvents.Size();
+    RecordExternalEventAt(TTDExternalEventKind::DebuggerEdit, source,
+                          {_context->emulatorState.frame_counter, TInFrameNow()});
+    if (_externalEvents.Size() > before)
+        _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
+}
+
+void TimeTravelController::DeliverCardEdits(uint64_t frame)
+{
+    _cardEditFrame = frame;
+    DebugManager* debug = _context ? _context->pDebugManager : nullptr;
+    if (!debug)
+        return;
+    GSCardTarget* targets[] = {debug->GetCardTarget(DebugCpuId::GS), debug->GetCardTarget(DebugCpuId::MultiSoundGS)};
+    for (GSCardTarget* target : targets)
+        if (target)
+            target->ClearReplayEdits();
+    // The frame's edits sit at the main CPU's positions in it, the frame-end catch-up's just past its end: two
+    // frames of events from the cursor on hold them all
+    TTDMachineTime start = 0;
+    if (frame != UINT64_MAX && _replayEngine && _replayEngine->Frames().Start(frame, start))
+    {
+        const TTDEventLog& log = _replayEngine->Events();
+        const TTDMachineTime end = start + 2 * static_cast<TTDMachineTime>(FrameSpan());
+        for (size_t i = _engineEventCursor; i < log.Count() && log.At(i).machineTime < end; ++i)
+        {
+            const TTDEvent& ev = log.At(i);
+            if (ev.kind != TTDEventKind::DebuggerEdit || TTDEventLog::RoleOf(ev) != TTDEventRole::Input)
+                continue;
+            const std::vector<uint8_t>& payload = _replayEngine->Payloads().Bytes(ev.payload);
+            size_t at = 0;
+            while (at + 11 + 16 <= payload.size() && payload[at] == kEditCardEdit)
+            {
+                uint16_t id = 0;
+                uint32_t index = 0, length = 0;
+                std::memcpy(&id, payload.data() + at + 1, 2);
+                std::memcpy(&index, payload.data() + at + 3, 4);
+                std::memcpy(&length, payload.data() + at + 7, 4);
+                const uint8_t* bytes = payload.data() + at + 11;
+                at += 11 + length;
+                if (at > payload.size() || length < 16)
+                    break;
+                TTDCardEdit edit;
+                edit.cpu = static_cast<uint8_t>(id & 0xFF);
+                edit.kind = static_cast<TTDCardEdit::Kind>(id >> 8);
+                std::memcpy(&edit.frame, bytes, 8);
+                std::memcpy(&edit.at, bytes + 8, 8);
+                edit.address = static_cast<uint16_t>(index);
+                edit.bytes.assign(bytes + 16, bytes + length);
+                if (edit.frame != frame)
+                    continue;
+                if (GSCardTarget* target = debug->GetCardTarget(static_cast<DebugCpuId>(edit.cpu)))
+                {
+                    _engineMemoryKnown = false;   // the target writes the card's memory past the trackers
+                    target->AddReplayEdit(std::move(edit));
+                }
+            }
+        }
+    }
+    for (GSCardTarget* target : targets)
+        if (target)
+            target->CommitReplayEdits();
 }
 
 void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)

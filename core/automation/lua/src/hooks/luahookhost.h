@@ -9,8 +9,9 @@
 /// seed (kRandomSeed) and math.randomseed takes an explicit one: no host randomness and no host time in a hook.
 /// A logic callback's poke and set_reg are kept in the call's HookEdits, not made.
 ///
-/// A call on a hit of the sound card's CPU (CallbackHit::cpu) reads the card: peek its memory, reg its registers. It
-/// does not write the card; a sync call on a card read hands the card another byte by returning it (0..255).
+/// A call on a hit of the sound card's CPU (CallbackHit::cpu) reads the card: peek its memory, reg its registers. Its
+/// poke and set_reg, of either role, go to the call's HookEdits for the card's next boundary (GSCardTarget); a sync
+/// call on a card read hands the card another byte by returning it (0..255).
 
 #include <cstdint>
 #include <map>

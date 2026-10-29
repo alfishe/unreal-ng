@@ -164,6 +164,10 @@ public:
     bool cardRegisters(Z80CpuRegisters& out) const override;
     int64_t cardTime() const override { return totalGsCycles(); }
     double cardUnitsPerSecond() const override { return _unitsPerSecond; }
+    int64_t cardFrameTime() const override { return totalGsCycles() - _frameStartGsCycles; }
+    bool inFrameEndCatchUp() const override { return _frameEndCatchUp; }
+    bool pokeCardMemory(uint16_t addr, uint8_t value) override;
+    bool setCardRegisters(const Z80CpuRegisters& regs) override;
 
     // Coprocessor capability: this is the LLE personality
     bool hasCoprocessor() const override { return true; }
@@ -496,6 +500,7 @@ private:
     GSCardRunner<SoundChip_GeneralSound> _runner;
     int64_t _gsCyclesAbs = 0;
     int64_t _frameStartGsCycles = 0;
+    bool _frameEndCatchUp = false;  // inside handleFrameEnd's run (a card hook's edit names the frame)
     uint64_t _frameStartZxTacts = 0;
     int64_t _frameGsCycles = 0;
     bool _nmiPending = false;

@@ -77,7 +77,8 @@ the phases that close them. Each phase is tested and committed on its own.
 P0-P9 are done on this branch with the GS debugger's X13. The generic event space (`BRK_EVENT` with a source) is built in
 P5, the first phase with machine events; P6-P8 add their kinds to it.
 
-## Open decision
+## Decided
 
-- Writing the card (or a device) from a hook: a `logic` role for the card CPU with a time travel journal, or only the
-  read and byte replacement there is now. Waits for the owner (gs-debugger Q3).
+- Writing the card from a hook (gs-debugger Q3, owner 2026-10-29): a card hook writes the card; a `logic` hook's
+  writes and read bytes are inputs of the recording's track, which a replay applies without the hook (a seek and
+  resume forks and records its own). Done: gs-debugger [TODO](../2026-09-27-gs-debugger/TODO.md) §D.
