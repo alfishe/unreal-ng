@@ -3003,6 +3003,8 @@ void TimeTravelController::PauseRecordingForBrowsing()
 bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* outResult)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    // The picture's restore (the frame before) follows the seek's: it decodes only what differs
+    const KnownMemoryScope knownMemory{*this};
     // Each new Detached window starts with a clean auto-pause signal.
     // The flag is set by OnFrameBoundary when execution runs past
     // SessionEndPosition(); clearing here means callers can poll

@@ -49,8 +49,16 @@ Status:
   left, apart from the pieces the trackers marked since. The live state put back, a tool edit and the scope's end
   forget it. Test: `ttdincrementalrestore_test.cpp` (memory equal to full restores, fewer pieces decoded). POC 039
   rerun (thread CPU time, loaded host, about ±20 %): W1 writes-all 1101 → 356 µs a frame, changes-all 1174 → 421;
-  W2 writes-all 30 → 20. Seeks and the frame cache are unchanged: they wait for B2 (each seek composes the picture
-  and puts the live state back).
+  W2 writes-all 30 → 20.
+- B2 (uncommitted). The internal seeks (memory-at, the frame cache, a resume) already never composed; only the
+  public seek does, and the user needs its picture. The public seek is a KnownMemoryScope instead, so the
+  picture's restore of the frame before decodes only what differs from the seek's: seek W1 2446 → 1644 µs, W2
+  4193 → 3082, W3 1815 → 1543 (no sound card memory there); mid-frame seek W1 2704 → 1807, W2 5026 → 3742, W3
+  2799 → 2348. Next candidate: the picture's replay of the frame
+  before lands exactly on a frame-start target, so the seek's own restore and the live state save and put back
+  can go (one restore and one frame); needs a machine-state equality test on every model and the barrier case.
+- B3: little left after B1 (W1 writes-all 343 µs a frame against 272 continuous), and the verbs walk newest
+  first, so there is nothing to run on from.
 
 ### C. HALT idle while TTD records and replays
 
