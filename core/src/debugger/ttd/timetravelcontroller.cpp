@@ -1826,8 +1826,8 @@ TTDWrittenFn TimeTravelController::TakeWrittenSinceRestore()
         if (page < _writtenRamPages.size())
             _writtenRamPages[page] = 1;
 
-    // Per engine region: its tracker (matched by the live memory it watches); a region no tracker watches counts
-    // as written whole
+    // Per engine region: its tracker (matched by the live memory it watches); a region no armed tracker watches
+    // counts as written whole
     const std::vector<TTDRegionDesc>& regions = _engine->Regions();
     const uint8_t* ram = _memory ? _memory->RAMPageAddress(0) : nullptr;
     _writtenPieces.resize(regions.size());
@@ -1842,7 +1842,7 @@ TTDWrittenFn TimeTravelController::TakeWrittenSinceRestore()
         }
         const TTDDeviceRegion* watched = nullptr;
         for (const TTDDeviceRegion& d : _shadowDeviceRegions)
-            if (desc.memory && d.desc.memory == desc.memory && d.tracker && !d.compareEachCapture)
+            if (_shadowArmed && desc.memory && d.desc.memory == desc.memory && d.tracker && !d.compareEachCapture)
                 watched = &d;
         marks.assign(desc.pieces, watched ? 0 : 1);
         if (!watched)
