@@ -589,3 +589,38 @@ TEST(CpmFs_Test, ProfiFloppyFromTheReadFileDisk)
     EXPECT_TRUE(std::equal(boot.begin(), boot.end(), image.begin() + 4096));
     EXPECT_EQ(ReadFile(fs, "", "USER15/BIOS.BIN").size(), 2048u);
 }
+
+TEST(CpmFs_Test, BlankNamedFileListsAsAnEscapedBlank)
+{
+    // Five PROFI_DISK.ZIP floppies keep a file of eleven blanks next to their named ones (CPM_1.FDI: 21 760 bytes in
+    // blocks #91-#9B): it lists as "\x20", reads and takes a name
+    std::vector<uint8_t> dump(80 * 2 * 5 * 1024, 0xE5);
+    PutEntry(dump.data(), "BOOT    COM", 16, {2});
+    PutEntry(dump.data() + 32, "           ", 1, {3});
+    const std::vector<uint8_t> blank = Pattern(128, 4);
+    std::copy(blank.begin(), blank.end(), dump.begin() + 3 * 2048);
+
+    LoaderPRO loader({}, "");
+    std::vector<std::string> warnings;
+    std::unique_ptr<DiskImage> disk(loader.parse(dump.data(), dump.size(), warnings));
+    ASSERT_NE(disk, nullptr);
+    DiskFs fs(*disk);
+    ASSERT_EQ(fs.Volumes().size(), 1u);
+    std::vector<DiskFsEntry> entries;
+    std::string error;
+    ASSERT_TRUE(fs.List("", "", true, entries, error)) << error;
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[1].path, "\\x20");
+    EXPECT_EQ(entries[1].size, 128u);
+    EXPECT_EQ(ReadFile(fs, "", "\\x20"), blank);
+    ASSERT_TRUE(fs.Rename("", "\\x20", "FOUND.BIN", error)) << error;
+    EXPECT_EQ(ReadFile(fs, "", "FOUND.BIN"), blank);
+
+    // Alone it makes no volume: the Klug layout has no system-track mark to stand for an empty disk
+    std::vector<uint8_t> klug(82 * 2 * 5 * 1024, 0xE5);
+    constexpr size_t kDirectory = 4 * 5 * 1024;
+    PutEntry(klug.data() + kDirectory, "           ", 1, {3});
+    std::unique_ptr<DiskImage> lone(loader.parse(klug.data(), klug.size(), warnings));
+    ASSERT_NE(lone, nullptr);
+    EXPECT_FALSE(CpmFileSystem::KlugFloppy(*lone).IsCpm());
+}

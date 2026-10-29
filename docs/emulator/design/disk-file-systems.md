@@ -99,9 +99,10 @@ entry, EXM 1). The size is the last extent's `(EX + 32 * S2) * 16384 + RC * 128`
   BIOS computes it. The BIOS addresses the disk by cylinder, head and sector of the descriptor; the image maps them
   with its own geometry (16 x 63 when it has none).
 
-A volume is taken only when every used entry reads: user 0-15, printable name bytes (not all blank), EX <= 31, S1 0,
-RC <= 128 and every block it needs inside the volume, past the directory, used once; at least one file. Scorpion
-MOA CP/M (`testdata/machines/scorpion/cpm/`) fails it, and so does none of about 7500 TR-DOS and SCL images; all 104
+A volume is taken only when every used entry reads: user 0-15, printable name bytes, EX <= 31, S1 0, RC <= 128 and
+every block it needs inside the volume, past the directory, used once; at least one file with a name. A file of eleven
+blanks (CP/M keeps one: five Profi floppies of `PROFI_DISK` have it, four of them read) lists as `\x20`, the escape of a blank: it reads,
+is deleted and renamed under it. Scorpion MOA CP/M (`testdata/machines/scorpion/cpm/`) fails it, and so does none of about 7500 TR-DOS and SCL images; all 104
 ATM CP/M floppies of the collection pass. `ATM_HDD.HDD` gives D: (cylinder 1, from the record) and E:, F:, G:
 (cylinders 6, 22, 38, from `HDDE.CDS`..`HDDG.CDS`); its descriptors of other disks (15 heads) find no directory.
 
@@ -129,7 +130,7 @@ word first: a dump has the two bytes of every word swapped, all of them read and
   #0861, `LD (IX+3),9`), and the floppy driver reads the fifth sector of logical track 0 as R = 9 (`HDD22.DRV` at
   #094D: the record's sector + 1, 9 instead of 5 while the track is 0), so block 2 lies in it. Not an interleave:
   the physical order varies between disks (1 9 4 3 2, 9 4 3 2 1), the ID set does not. All 103 floppies of 5 x 1024
-  in the `PROFI_DISK` collection have it, and a disk with it is a volume even empty; 94 of them read, 5 have a blank name (see [Limits](#limits)), 4 a damaged
+  in the `PROFI_DISK` collection have it, and a disk with it is a volume even empty; 98 of them read, 5 have a damaged
   directory (a block used twice, user #53). A `.pro` dump loads with that track and saves it back as the fifth sector
   ([.pro](../../file-formats/disk-images/pro.md)).
   Klug CP/M 2.3 (`KLUGCPM.TD0`, 82 cylinders) keeps its system on cylinders 0-1: the directory from cylinder 2, DSM
@@ -385,8 +386,6 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
 
 - ATM CP/M: no directories (USER1..USER15 are user areas, there while a file is in one). A hard disk partition is
   found only when the configuration record or a `.CDS` file on a partition found names it.
-- Profi CP/M: a floppy with a file of a blank name (all eleven bytes spaces: 5 of the 103 collection floppies have
-  one, a file CP/M itself keeps) fails the directory check and is no volume.
 - MB-02: files are written as a program or CODE (no arrays), no attributes (the byte at #1D is undocumented). The BS-DOS 309 hard disk layout
   comes from its BIOS source, not from an image of a real disk.
 - MB-01: read only, from its description (see [MB-01 layout](#mb-01-layout)); no real disk checks it.
