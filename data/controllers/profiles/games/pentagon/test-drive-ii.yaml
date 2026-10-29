@@ -1,0 +1,34 @@
+# Test Drive II: The Duel (Accolade 1989), the 48K Z80 snapshot "Test_Drive_II_The_Duel_1989_Accolade.z80" (archive.org zx_*). The
+# snapshot sits on the car-choice screens: SPACE then ENTER lead to the options page; Z toggles the controls (Joystick /
+# Keyboard: take Keyboard), ENTER starts the race (2.6 miles, clock at the top). The game's own key scan #7F8B (flags in #8270,
+# used by #8065..#8137): Q steers left, W right, L accelerates, K brakes, SPACE changes gear; P pauses and X (row FEFE) quits.
+# The speed dial does not coast down: it holds the speed reached until K brakes. Haptics (haptics.md §13 H5), found with TTD on
+# a recorded run, matching the dial reading by reading: the speed is the byte #F058 = dial / 4 (0 to 22 at 88, 24 at about 96;
+# a drop of a few units at a time is a gear change). The writer is #8168.
+# Checked in real time (L held 32 s, random Q / W every 0.8 s): the level follows the dial (0.71 to 0.81 at cruise). Known limits: only speed so far; the desert beside the
+# road costs no speed, and no crash with a car, a cliff or the police occurred in the first miles, so the crash events are not
+# mapped yet.
+schema: 1
+kind: play
+id: builtin/game/test-drive-ii
+label: Test Drive II
+match:
+  machines: [48K, 128K, PENTAGON]
+  file_sha256: ["3a0ad44f69d648c20e4f25ccc94440f29b06ba672018dd4b11c6918c799a2b56"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: Q }
+    dpad.right:   { key: W }
+    lstick.left:  { key: Q }
+    lstick.right: { key: W }
+    rt.click:     { key: L, label: Accelerate }
+    lt.click:     { key: K, label: Brake }
+    south:        { key: SPACE, label: Gear }
+    menu:         { key: ENTER, label: Start }
+haptics:
+  sources:
+    speed: { probe: value, address: "0xF058", scale: 9 }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
