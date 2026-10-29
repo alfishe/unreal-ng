@@ -2812,7 +2812,10 @@ void TimeTravelController::DeliverCardEdits(uint64_t frame)
                 if (edit.frame != frame)
                     continue;
                 if (GSCardTarget* target = debug->GetCardTarget(static_cast<DebugCpuId>(edit.cpu)))
+                {
+                    _engineMemoryKnown = false;   // the target writes the card's memory past the trackers
                     target->AddReplayEdit(std::move(edit));
+                }
             }
         }
     }
