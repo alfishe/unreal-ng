@@ -147,8 +147,8 @@ private:
     SurfaceDialFeature _feature;
 };
 
-/// How long the Dial plays an output report: a click waveform takes about the retrigger period, the buzz (continuous,
-/// cut off by the device) longer. SurfaceDialPlays waits that long before the next play
+/// How long the Dial plays an output report: a click waveform takes about the retrigger period; the buzz is
+/// continuous until the device's own cutoff, so the writer ends it itself with a stop after buzzMs
 struct SurfaceDialPlayTiming
 {
     uint32_t clickMs = 80;
@@ -157,10 +157,13 @@ struct SurfaceDialPlayTiming
 
 /// The Dial's output reports, one play at a time. The Dial takes every output report at once (a write is a ~30 ms
 /// Bluetooth LE round trip) and plays them one after another: ten buzzes written in 300 ms buzz ten times as long as
-/// one, and a fast turn at the end of the history kept it buzzing for seconds (measured 2026-10-28). So the next report
-/// goes when the previous one has played; until then one waits, the strongest asked for (a buzz over more clicks over
-/// fewer). An overflow (a request while one already waits: the hand outruns the Dial) drops the weaker, and the next
-/// play goes after a stop (StopReport), which also ends whatever the Dial still holds when the timing is short
+/// one, and a turn at the end of the history (an `edge` buzz each step) kept it buzzing for seconds after the hand
+/// stopped (measured 2026-10-28). A stop (StopReport) ends the play and what is queued behind it. So:
+/// - the next report goes when the last one has played; until then one waits, the strongest asked for (a buzz over
+///   more clicks over fewer);
+/// - a buzz lasts buzzMs: a stop follows it then, unless another play comes first, which then goes after a stop;
+/// - an overflow (a request while one already waits: the hand outruns the Dial) drops the weaker, and the next play
+///   goes after a stop too
 class SurfaceDialPlays
 {
 public:
@@ -168,25 +171,27 @@ public:
     {
     }
 
-    /// A play asked for at @p nowMs (an output report 1)
-    void Offer(std::vector<uint8_t> report, uint64_t nowMs);
-    /// The reports to write at @p nowMs, in order: none while the last play goes on or nothing waits; a stop before
-    /// the play after an overflow. The play counts from @p nowMs
+    /// A play asked for (an output report 1)
+    void Offer(std::vector<uint8_t> report);
+    /// The reports to write at @p nowMs, in order: none before DueMs; a play (a stop before it after a buzz or an
+    /// overflow), or the stop that ends a buzz. The play counts from @p nowMs
     std::vector<std::vector<uint8_t>> Take(uint64_t nowMs);
+    /// Something to write: a play waits or a buzz is to be stopped
     bool Waiting() const
     {
-        return _pending.has_value();
+        return _pending.has_value() || _stopAtMs != 0;
     }
-    /// When the waiting report may go
+    /// When Take has it
     uint64_t DueMs() const
     {
-        return _busyUntilMs;
+        return _pending ? _busyUntilMs : _stopAtMs;
     }
     /// Nothing waits any more (the writer ends)
     void Clear()
     {
         _pending.reset();
         _overflow = false;
+        _stopAtMs = 0;
     }
     /// Plays dropped by overflows so far
     uint64_t Dropped() const
@@ -195,7 +200,7 @@ public:
     }
 
     /// How long the Dial plays @p report (output report 1): its Repeat Count times the waveform's length (a click at
-    /// least the retrigger period)
+    /// least the retrigger period, a buzz buzzMs)
     uint32_t PlayMs(const std::vector<uint8_t>& report) const;
     /// The order an overflow keeps: a buzz, then more plays
     static uint32_t Strength(const std::vector<uint8_t>& report);
@@ -204,6 +209,7 @@ private:
     SurfaceDialPlayTiming _timing;
     std::optional<std::vector<uint8_t>> _pending;
     uint64_t _busyUntilMs = 0;
+    uint64_t _stopAtMs = 0;  ///< a buzz plays: the stop that ends it is due then (0: none)
     bool _overflow = false;
     uint64_t _dropped = 0;
 };
