@@ -56,6 +56,15 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
 - [x] The MultiSound card's General Sound as the `ms` CPU (2026-10-27): a second `GSCardTarget` found through
   `ICard::DebugGeneralSound`; `--cpu ms`, `cpu="ms"`, `?cpu=ms`. Test: `GSCardTarget_Test.TheMultiSoundsGeneralSoundIsTheMsCpu`.
 
+### D. Card writes from a hook (Q3, owner 2026-10-29: the fork's track records them; design §8A.7)
+
+- [x] `poke` / `set_reg` in a card hook (either role, at the card's next boundary: `GSCardTarget::QueueHookEdits`);
+  a read's substitution allowed while recording for `logic` (2026-10-29).
+- [x] TTD: card edits as `DebuggerEdit` inputs (`kEditCardEdit`) placed by the card frame and time; the replay hands
+  a frame's edits to the card target (`DeliverCardEdits`), applied at that card time without the hook.
+- [x] Test: `LuaGSCardHook_Test.ALogicCardHookIsRecordedAndReplayedWithoutRunningIt` (record a substitution, a poke
+  and a register, seek back, replay: the same card state, the hook not called).
+
 ### Later
 
 - [x] Card breakpoint conditions (2026-10-27): the card's registers, memory and pages through `IDebugTarget::Registers`

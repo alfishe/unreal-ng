@@ -67,6 +67,25 @@ struct TTDCursor
     bool operator!=(const TTDCursor& other) const { return !(*this == other); }
 };
 
+/// @brief A card hook's write of a sound card (gs-debugger design §8A.7, Q3): an input of the track that the replay
+/// hands to the card's debug target, applied when the card reaches the same time of the same frame
+struct TTDCardEdit
+{
+    enum Kind : uint8_t
+    {
+        Bytes = 0,   ///< `bytes` written from `address` on, as the card CPU's write would land
+        Cpu = 1,     ///< `bytes`: the card CPU's Z80CpuRegisters
+        Read = 2,    ///< the memory read at `address` sees `bytes[0]`
+        PortIn = 3,  ///< the port read of `address` sees `bytes[0]`
+    };
+    uint8_t cpu = 0;       ///< DebugCpuId of the card
+    Kind kind = Bytes;
+    uint64_t frame = 0;    ///< the ZX frame the card was in (its frame-end catch-up counts to that frame)
+    int64_t at = 0;        ///< GeneralSoundCard::cardFrameTime at the instruction boundary (a read: of its step)
+    uint16_t address = 0;
+    std::vector<uint8_t> bytes;
+};
+
 /// @brief Stable string identifier for a TTDSessionState.
 ///
 /// The values ("idle" / "recording" / "detached") are part of the public
@@ -180,6 +199,13 @@ public:
         (void)source;
         (void)pokes;
         (void)cpu;
+    }
+    /// A card hook's writes, just made by the card's target (GSCardTarget): a recording keeps them as one edit there,
+    /// which a replay hands back to the target for the card time they name (the hook never runs on replay)
+    virtual void RecordCardEdits(const char* source, const std::vector<TTDCardEdit>& edits)
+    {
+        (void)source;
+        (void)edits;
     }
     /// A device was swapped for another one (the General Sound card): every device of @p oldType leaves, @p device
     /// comes in under its own key
