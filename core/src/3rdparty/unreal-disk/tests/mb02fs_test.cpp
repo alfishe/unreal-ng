@@ -1,6 +1,6 @@
 // MB-02: the BS-DOS 308 system disk (its directory tree, every body against the tape copies of the same archive), the
 // raw image told from MGT by its boot sector, a FAT chain that loops; files and directories written; the BS-DOS 309
-// virtual floppies of a #47 hard disk partition; an MB-01 (BS-DOS 52-105) disk as Busy describes it
+// virtual floppies of a #47 hard disk partition; an MB-01 (BS-DOS 52-105) disk as Busy describes it, read and written
 
 #include "unrealdisk/mb02fs.h"
 
@@ -333,7 +333,7 @@ TEST(Mb01Fs, ABusyDescribedDiskReads)
     EXPECT_EQ(v.id, "mb01");
     EXPECT_EQ(v.system, "MB-01 BS-DOS");
     EXPECT_EQ(v.label, "Busy MB-01");
-    EXPECT_FALSE(v.writable);
+    EXPECT_TRUE(v.writable);
     EXPECT_EQ(v.freeBytes, (800 - 13) * 1024);
     std::vector<DiskFsEntry> all;
     std::string error;
@@ -354,7 +354,6 @@ TEST(Mb01Fs, ABusyDescribedDiskReads)
     EXPECT_EQ(data, std::vector<uint8_t>(100, 0x47));
     ASSERT_TRUE(fs.Read("", "~3", data, error)) << error;
     EXPECT_EQ(data, std::vector<uint8_t>(10, 0x48));
-    EXPECT_FALSE(fs.Write("", "new", {1}, {}, error));
 
     // Without the MB-01 mark: none
     std::unique_ptr<DiskImage> other = Mb01Disk(false);
@@ -542,6 +541,122 @@ TEST(Mb02Fs, FilesAndDirectoriesWritten)
     std::vector<DiskFsEntry> all;
     ASSERT_TRUE(reread.List("", "", true, all, error)) << error;
     EXPECT_EQ(all.size(), 29u + 22u + 8u + 2u);
+}
+
+TEST(Mb01Fs, FilesAndDirectoriesWritten)
+{
+    std::unique_ptr<DiskImage> disk = Mb01Disk();
+    DiskFs fs(*disk);
+    ASSERT_EQ(fs.Volumes().size(), 1u);
+    std::string error;
+
+    // A file of two sectors and a bit in "Games": the first free slot of the one file list is the deleted "old" one,
+    // the sectors the free ones from LSN 13
+    const std::vector<uint8_t> data = Pattern(2 * 1024 + 252, 1);
+    DiskFsWriteOptions options;
+    options.start = 0x8000;
+    options.mtime = 1262347200;  // 2010-01-01 12:00
+    ASSERT_TRUE(fs.Write("", "Games/new", data, options, error)) << error;
+    std::vector<uint8_t> read;
+    ASSERT_TRUE(fs.Read("", "Games/new", read, error)) << error;
+    EXPECT_EQ(read, data);
+    DiskFsEntry entry;
+    ASSERT_TRUE(fs.Stat("", "Games/new", entry, error)) << error;
+    EXPECT_EQ(entry.start, 0x8000u);
+    EXPECT_EQ(entry.Field("type"), 3);
+    EXPECT_EQ(entry.Field("address"), 0x8000);
+    EXPECT_EQ(entry.Field("entry"), 2);
+    EXPECT_EQ(entry.Field("sector"), 13);
+    EXPECT_EQ(entry.Field("flags"), 0x63);
+    EXPECT_EQ(entry.mtime, 1262347200);
+
+    // Written over in its slot, its old sectors the first free ones; an empty file has no body
+    const std::vector<uint8_t> shorter = Pattern(1024, 2);
+    ASSERT_TRUE(fs.Write("", "hello", shorter, options, error)) << error;
+    ASSERT_TRUE(fs.Read("", "hello", read, error)) << error;
+    EXPECT_EQ(read, shorter);
+    ASSERT_TRUE(fs.Stat("", "hello", entry, error)) << error;
+    EXPECT_EQ(entry.Field("entry"), 0);
+    EXPECT_EQ(entry.Field("sector"), 9);
+    ASSERT_TRUE(fs.Write("", "empty", {}, {}, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "empty", entry, error)) << error;
+    EXPECT_EQ(entry.Field("flags"), 0x23);
+    EXPECT_EQ(entry.Field("entry"), 4);
+
+    // A program: its autostart line, its length as param 2, the body at 23755; arrays are refused
+    DiskFsWriteOptions program;
+    program.basicType = 0;
+    program.start = 10;
+    ASSERT_TRUE(fs.Write("", "run", Pattern(138, 6), program, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "run", entry, error)) << error;
+    EXPECT_EQ(entry.Field("flags"), 0x60);
+    EXPECT_EQ(entry.Field("param2"), 138);
+    EXPECT_EQ(entry.Field("address"), 23755);
+    program.basicType = 1;
+    EXPECT_FALSE(fs.Write("", "array", {1}, program, error));
+    ASSERT_TRUE(fs.Delete("", "run", error)) << error;
+
+    // The file list holds 32 entries a sector: slots 5..31, then the list grows by a system sector
+    for (int k = 0; k < 28; k++)
+        ASSERT_TRUE(fs.Write("", "f" + std::to_string(k), Pattern(10, static_cast<uint8_t>(k)), {}, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "f27", entry, error)) << error;
+    EXPECT_EQ(entry.Field("entry"), 32);
+    ASSERT_TRUE(fs.Read("", "f27", read, error)) << error;
+    EXPECT_EQ(read, Pattern(10, 27));
+
+    // Directories: made in the first invalid slot, a file moved into one, renamed, refused while not empty, gone
+    ASSERT_TRUE(fs.MakeDirectory("", "Games/Sub", false, 1262347200, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "Games/Sub", entry, error)) << error;
+    EXPECT_TRUE(entry.directory);
+    EXPECT_EQ(entry.Field("dir"), 2);
+    EXPECT_EQ(entry.mtime, 1262347200);
+    ASSERT_TRUE(fs.Rename("", "f0", "/Games/Sub/moved", error)) << error;
+    ASSERT_TRUE(fs.Read("", "Games/Sub/moved", read, error)) << error;
+    EXPECT_EQ(read, Pattern(10, 0));
+    EXPECT_FALSE(fs.Stat("", "f0", entry, error));
+    EXPECT_FALSE(fs.Rename("", "f1", "f2", error));
+    ASSERT_TRUE(fs.Rename("", "Games/Sub", "/Top", error)) << error;
+    ASSERT_TRUE(fs.Read("", "Top/moved", read, error)) << error;
+    EXPECT_FALSE(fs.Rename("", "Top", "/Top/Inner", error));
+    EXPECT_FALSE(fs.Delete("", "Top", error));
+    EXPECT_NE(error.find("not empty"), std::string::npos) << error;
+    ASSERT_TRUE(fs.SetTime("", "Top/moved", 1262390400, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "Top/moved", entry, error)) << error;
+    EXPECT_EQ(entry.mtime, 1262390400);
+    ASSERT_TRUE(fs.Delete("", "Top", error, true)) << error;
+    EXPECT_FALSE(fs.Stat("", "Top", entry, error));
+
+    // The directory list holds 64 a sector: slots 2..63, then it grows
+    for (int k = 0; k < 63; k++)
+        ASSERT_TRUE(fs.MakeDirectory("", "d" + std::to_string(k), false, 0, error)) << error;
+    ASSERT_TRUE(fs.Stat("", "d62", entry, error)) << error;
+    EXPECT_EQ(entry.Field("dir"), 64);
+    ASSERT_TRUE(fs.Write("", "d62/inner", Pattern(5, 9), {}, error)) << error;
+
+    // Too big, bad names
+    EXPECT_FALSE(fs.Write("", "huge", Pattern(800 * 1024, 5), {}, error));
+    EXPECT_NE(error.find("not enough free sectors"), std::string::npos) << error;
+    EXPECT_FALSE(fs.Write("", "elevenchars", data, {}, error));
+    EXPECT_FALSE(fs.Write("", "No dir/x", data, {}, error));
+    ASSERT_TRUE(fs.SetLabel("", "Renamed", 0, error)) << error;
+
+    // On the disk: both FAT copies alike (FAT1 at LSN 3-4, FAT2 at 5-6), the files there again; used past LSN 12:
+    // new 3, hello one less, f1..f27, d62/inner, a sector more of each list
+    auto at = [&](uint32_t lsn) { return disk->getTrackForCylinderAndSide(0, lsn / 5)->findSector(lsn % 5 + 1)->data; };
+    EXPECT_EQ(std::memcmp(at(3), at(5), 1024), 0);
+    EXPECT_EQ(std::memcmp(at(4), at(6), 1024), 0);
+    DiskFs reread(*disk);
+    ASSERT_EQ(reread.Volumes().size(), 1u);
+    EXPECT_EQ(reread.Volumes()[0].label, "Renamed");
+    EXPECT_EQ(reread.Volumes()[0].freeBytes, (787 - 3 + 1 - 27 - 1 - 2) * 1024);
+    ASSERT_TRUE(reread.Read("", "Games/new", read, error)) << error;
+    EXPECT_EQ(read, data);
+    ASSERT_TRUE(reread.Read("", "d62/inner", read, error)) << error;
+    EXPECT_EQ(read, Pattern(5, 9));
+    std::vector<DiskFsEntry> all;
+    ASSERT_TRUE(reread.List("", "", true, all, error)) << error;
+    // hello, ~3, empty, f1..f27, Games, Games/game, Games/new, d0..d62, d62/inner
+    EXPECT_EQ(all.size(), 3u + 27u + 3u + 63u + 1u);
 }
 
 TEST(Mb02Fs, Bsdos309FloppiesOfTheHardDiskPartition)

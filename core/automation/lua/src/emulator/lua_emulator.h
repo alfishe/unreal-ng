@@ -2364,7 +2364,7 @@ public:
         lua.set_function("media_changes", [mediaCall](sol::this_state s, const std::string& slot) {
             return mediaCall(s, "changes", slot, "", sol::nullopt);
         });
-        // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT (DSS, NedoOS); write, delete, rename, mkdir
+        // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02 / MB-01, MDOS, FAT (DSS, NedoOS); write, delete, rename, mkdir
         lua.set_function("media_volumes", [mediaCall](sol::this_state s, const std::string& slot) {
             return mediaCall(s, "volumes", slot, "", sol::nullopt);
         });
@@ -2410,7 +2410,7 @@ public:
                                                      sol::optional<sol::table> opts) {
             return mediaCall(s, "delete", slot, path, opts);
         });
-        // A new directory (FAT, iS-DOS catalogue, MB-02); opts {parents = true} makes the missing ones on the way, an
+        // A new directory (FAT, iS-DOS catalogue, MB-02 / MB-01); opts {parents = true} makes the missing ones on the way, an
         // iS-DOS catalogue takes {continuous = true, blocks = 1-16}
         lua.set_function("media_mkdir", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
                                                     sol::optional<sol::table> opts) {

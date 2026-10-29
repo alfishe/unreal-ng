@@ -1315,7 +1315,7 @@ bool FindProfiDisk(BlockDevice& device, uint64_t& heads, uint64_t& sectors, std:
 }
 
 /// The tree of a BS-DOS disk, MB-02 (Mb02FileSystem) or MB-01 (Mb01FileSystem): its directories by number with a
-/// parent each, the files of a directory by entry
+/// parent each, the files of a directory by entry; both write the same way
 template <typename Fs>
 struct BsdosTree : DiskFs::Driver
 {
@@ -1463,19 +1463,6 @@ struct BsdosTree : DiskFs::Driver
         return FileOf(path, f, error) && fs.Read(f, data, error);
     }
 
-    Fs fs;
-    const char* system;
-};
-
-struct Mb01Driver : BsdosTree<Mb01FileSystem>
-{
-    explicit Mb01Driver(Mb01FileSystem fs) : BsdosTree(std::move(fs), "MB-01") {}
-};
-
-struct Mb02Driver : BsdosTree<Mb02FileSystem>
-{
-    explicit Mb02Driver(Mb02FileSystem fs) : BsdosTree(std::move(fs), "MB-02") {}
-
     static void Dos(int64_t mtime, uint16_t& date, uint16_t& time)
     {
         date = time = 0;
@@ -1491,7 +1478,7 @@ struct Mb02Driver : BsdosTree<Mb02FileSystem>
         uint8_t number = 0;
         if (!DirNumber(dir, number, error))
             return false;
-        Mb02FileSystem::WriteOptions write;
+        typename Fs::WriteOptions write;
         write.start = options.start;
         write.type = static_cast<uint8_t>(options.basicType >= 0 ? options.basicType : 3);
         write.param2 = static_cast<uint16_t>(options.param2 >= 0  ? options.param2
@@ -1569,6 +1556,19 @@ struct Mb02Driver : BsdosTree<Mb02FileSystem>
     bool HasTimes() const override { return true; }
     bool HasLabel() const override { return true; }
     std::string Label() const override { return Ascii(fs.Boot().name); }
+
+    Fs fs;
+    const char* system;
+};
+
+struct Mb01Driver : BsdosTree<Mb01FileSystem>
+{
+    explicit Mb01Driver(Mb01FileSystem fs) : BsdosTree(std::move(fs), "MB-01") {}
+};
+
+struct Mb02Driver : BsdosTree<Mb02FileSystem>
+{
+    explicit Mb02Driver(Mb02FileSystem fs) : BsdosTree(std::move(fs), "MB-02") {}
 };
 
 struct MdosDriver : DiskFs::Driver
@@ -1913,6 +1913,7 @@ void DiskFs::Probe()
             v.label = Ascii(mb01.Boot().name);
             v.bytes = static_cast<uint64_t>(mb01.Boot().Sectors()) * Mb01FileSystem::kSector;
             v.freeBytes = static_cast<int64_t>(mb01.FreeSectors()) * Mb01FileSystem::kSector;
+            v.writable = true;
             add(std::move(v), std::make_unique<Mb01Driver>(std::move(mb01)));
             return;
         }
