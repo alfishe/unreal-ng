@@ -6,10 +6,13 @@
 # TTD on recorded runs: the drive is a first-person chase through a city and the only continuous state on the HUD is SANCION
 # (the penalty counter, it grows in steps of 10 to 50 while the car is off the lane or on the pavement); #A08C is the head of the
 # routine that adds it (run every ~44 frames while J is held into the wall, once when T ends a life), so it plays as a tick.
-# The speed is not a byte of its own (the dials follow no monotone variable: S only flips a key-state word at #72CE), the
-# traffic events (#DD00 .. #E000) repeat at the same absolute frames whatever the keys, so they are scenery and not mapped.
-# Checked in real time (menu 8, city 1, S held, then J held 14 s): 10 `penalty` and SANCION 000010; 10 s of idle, of S alone and
-# of L alone gave 0. Known limits: no engine level, no hit on a vehicle and no fire event found.
+# The speed is the byte #75F7 of the player record (IX = #75E2; 0 to 5, one writer #F4D7, it climbs under S, hovers at 4..5 and
+# falls to 0 under A); fire is the key test of K inside the input handler #EB10 (HL = #7525 + 6): #F57F is past the guards of
+# the fire routine #F575 (it returns early on the pause and menu states), so it runs once per shot. A collision with a vehicle
+# is #EC94 (it sets bit 3 of the player's flags (ix+#2D) and the state words #760D / #760F, called from #ED0E or #ECF2 by the kind
+# of hit; the speed falls by 2 to 5 in the same frame): 4 runs in a 3600-frame recording, the same 4 frames as the speed drops that
+# no key caused. The traffic events (#DD00 .. #E000) repeat at the same absolute frames whatever the keys, so they are scenery and not mapped.
+# held 12 s: 7 `penalty`; then 42 s of S with random J / L every 0.7 s: 4 `crash` and 36 `penalty`).
 schema: 1
 kind: play
 id: builtin/game/turbo-esprit
@@ -32,6 +35,12 @@ layers:
     menu:         { key: "8", label: Start }
 haptics:
   sources:
+    speed:   { probe: value, address: "0x75F7", scale: 51 }
+    fire:    { probe: exec, address: "0xF57F" }
+    crash:   { probe: exec, address: "0xEC94" }
     penalty: { probe: exec, address: "0xA08C" }
   rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: fire, play: shot }
+    - { on: crash, play: hit }
     - { on: penalty, play: tick, target: handle.low }
