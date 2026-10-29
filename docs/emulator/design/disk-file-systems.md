@@ -124,11 +124,14 @@ word first: a dump has the two bytes of every word swapped, all of them read and
   here, `cpm-<start cylinder>` labelled with its name.
 - **System**: the rest of cylinder 1 from sector 6 holds the boot code the BIOS loads (`MBOOTHDD.COM`); no volume.
 - **Floppy**: 80 cylinders x 2 sides x 5 sectors of 1024 bytes (`DOSBIO.DRV`'s DPB: SPT 40, 2 KB blocks, DSM 399,
-  DRM 127, OFF 0), logical track t on cylinder t / 2, side t % 2, the directory from byte 0. `FORMAT.COM` numbers
-  the sectors of cylinder 0 side 0 1, 2, 3, 4, 9 (its first track type, the system track): sector 9 is the fifth,
-  and a file's data lies in it (block 2). All 103 floppies of 5 x 1024 in the `PROFI_DISK` collection have it, and a
-  disk with it is a volume even empty; 94 of them read, 5 have a blank name (see [Limits](#limits)), 4 a damaged
-  directory (a block used twice, user #53). A `.pro` dump loads with that track and saves it back as the fifth sector.
+  DRM 127, OFF 0), logical track t on cylinder t / 2, side t % 2, the directory from byte 0. Cylinder 0 side 0
+  has the sector IDs 1, 2, 3, 4, 9 (`FORMAT.COM`'s first track type): the BIOS boots from R = 9 (BIOS 2.0 at
+  #0861, `LD (IX+3),9`), and the floppy driver reads the fifth sector of logical track 0 as R = 9 (`HDD22.DRV` at
+  #094D: the record's sector + 1, 9 instead of 5 while the track is 0), so block 2 lies in it. Not an interleave:
+  the physical order varies between disks (1 9 4 3 2, 9 4 3 2 1), the ID set does not. All 103 floppies of 5 x 1024
+  in the `PROFI_DISK` collection have it, and a disk with it is a volume even empty; 94 of them read, 5 have a blank name (see [Limits](#limits)), 4 a damaged
+  directory (a block used twice, user #53). A `.pro` dump loads with that track and saves it back as the fifth sector
+  ([.pro](../../file-formats/disk-images/pro.md)).
   Klug CP/M 2.3 (`KLUGCPM.TD0`, 82 cylinders) keeps its system on cylinders 0-1: the directory from cylinder 2, DSM
   389 (its BIOS's DPB: OFF 4), read as `Klug CP/M` when the cylinder 0 directory does not pass.
 

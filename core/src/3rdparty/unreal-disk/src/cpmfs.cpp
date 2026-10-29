@@ -168,8 +168,8 @@ CpmFileSystem CpmFileSystem::AtmFloppy(DiskImage& image)
 
 CpmFileSystem CpmFileSystem::ProfiFloppy(DiskImage& image)
 {
-    // DOSBIO.DRV's DPB: SPT 40, BSH 4, EXM 0, DSM 399, DRM 127, AL0 #C0, OFF 0. FORMAT.COM's system track (its
-    // default type) numbers the sectors 1, 2, 3, 4, 9: sector 9 stands for the fifth.
+    // DOSBIO.DRV's DPB: SPT 40, BSH 4, EXM 0, DSM 399, DRM 127, AL0 #C0, OFF 0. The driver reads the fifth sector
+    // of logical track 0 as R = 9 (HDD22.DRV #094D), the sector the BIOS boots from.
     CpmGeometry geometry;
     geometry.blocks = 400;
     geometry.entries = 128;

@@ -20,6 +20,7 @@
 #include <debugger/ttd/ttdprobe.h>
 #include <3rdparty/message-center/messagecenter.h>
 
+#include <algorithm>
 #include <cctype>
 #include <map>
 #include <iomanip>
@@ -905,7 +906,8 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                     refusal = _emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, path);
                     ok = refusal.empty() && _emulator->LoadTape(path);
                 }
-                else if (ext == "trd" || ext == "scl" || ext == "fdi")
+                else if (const auto disks = Emulator::SupportedDiskExtensions();
+                         std::find(disks.begin(), disks.end(), ext) != disks.end())
                 {
                     refusal = _emulator->AskMediaChange(Emulator::MediaChange::LoadDisk, 0, path);
                     ok = refusal.empty() && _emulator->LoadDisk(path);
