@@ -574,3 +574,18 @@ TEST(CpmFs_Test, KlugCpmFloppyHasItsDirectoryAfterTwoSystemCylinders)
     EXPECT_EQ(fs.Volumes()[0].freeBytes, (390 - 2 - 1) * 2048);
     EXPECT_EQ(ReadFile(fs, "", "PIP.COM"), pip);
 }
+
+TEST(CpmFs_Test, ProfiFloppyFromTheReadFileDisk)
+{
+    // BOOTK.COM is block 2: the boot sector, R = 9 on cylinder 0 side 0
+    const auto disk = Load("loaders/pro/ReadFile.pro");
+    ASSERT_NE(disk, nullptr);
+    DiskFs fs(*disk);
+    ASSERT_EQ(fs.Volumes().size(), 1u);
+    EXPECT_EQ(fs.Volumes()[0].system, "Profi CP/M");
+    const std::vector<uint8_t> image = Bytes("loaders/pro/ReadFile.pro");
+    const std::vector<uint8_t> boot = ReadFile(fs, "", "BOOTK.COM");
+    ASSERT_EQ(boot.size(), 896u);
+    EXPECT_TRUE(std::equal(boot.begin(), boot.end(), image.begin() + 4096));
+    EXPECT_EQ(ReadFile(fs, "", "USER15/BIOS.BIN").size(), 2048u);
+}

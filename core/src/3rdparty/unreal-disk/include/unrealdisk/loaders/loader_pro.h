@@ -16,14 +16,18 @@ namespace unrealdisk
 /// Profi MicroDOS disk without any low-level information.
 ///
 /// 80 cylinders x 2 sides x 5 sectors x 1024 bytes (819 200 bytes; 81-83 cylinders taken too), sector IDs 1..5,
-/// N = 3, the head byte the side. Cylinder 0 side 0 is FORMAT.COM's system track, IDs 1, 2, 3, 4, 9: the fifth
-/// sector there is 9 on all 103 such disks of the PROFI_DISK collection, and a file's data lies in it. The tracks follow
-/// each other cylinder-major with the sides interleaved: c0/h0, c0/h1, c1/h0, ... - the order of the CP/M logical
-/// tracks (DOSBIO.DRV: SPT 40, one side a logical track). Recognized by its extension and size only (no signature).
+/// N = 3, the head byte the side. Cylinder 0 side 0 (FORMAT.COM's system track) has IDs 1, 2, 3, 4, 9: the BIOS
+/// boots from R = 9 (BIOS 2.0 at #0861: `LD (IX+3),9`), and the floppy driver reads the fifth sector of logical track
+/// 0 as R = 9 (HDD22.DRV at #094D: `CP 5 : ... : LD (IX+3),9` while the track is 0). Not an interleave: the physical
+/// order varies (1 9 4 3 2, 9 4 3 2 1), the ID set does not. The tracks follow each other cylinder-major with the
+/// sides interleaved: c0/h0, c0/h1, c1/h0, ... - the order of the CP/M logical tracks (DOSBIO.DRV: SPT 40, one side
+/// a logical track). Recognized by its extension and size only (no signature).
 ///
 /// Every track is a double-density MFM track of 6 250 bytes (250 kbit/s). Saving writes the sectors back while the
 /// layout is still regular (5 sectors of 1024 bytes, 1..5 on every track, 9 standing for 5 on the system track);
 /// otherwise the save is refused with the reason, and the image can be exported as UDI.
+///
+/// Format and references: docs/file-formats/disk-images/pro.md
 class LoaderPRO
 {
     /// region <Constants>
