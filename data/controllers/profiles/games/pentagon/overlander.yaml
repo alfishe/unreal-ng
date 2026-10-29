@@ -7,7 +7,8 @@
 # step per ~11 frames: it is the slow-down after a crash and under the brake); #7297 is the head of the player-hit handler (it
 # runs once per crash, the car explodes and the speed falls 15 -> 0 in the next 140 frames), #6A72 is the respawn (speed set to 0,
 # state #11, shield counter #F067 = #18).
-# Known limits: fire, kills and pickups are not mapped yet.
+# #5FE3 is the shot spawn (it fills the bullet record #F049 from the weapon #F045; 5 runs for 6 Z taps, the sixth was refused while
+# two shots were in flight). Known limits: kills and pickups are not mapped yet.
 schema: 1
 kind: play
 id: builtin/game/overlander
@@ -32,6 +33,8 @@ haptics:
   sources:
     speed: { probe: value, address: "0xF019", scale: 17 }
     crash: { probe: exec, address: "0x7297" }
+    fire:  { probe: exec, address: "0x5FE3" }
   rules:
     - { on: speed, play: engine, target: handle.low }
     - { on: crash, play: explosion, scale: 0.9 }
+    - { on: fire, play: shot, scale: 0.6 }

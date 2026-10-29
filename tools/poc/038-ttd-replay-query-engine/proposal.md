@@ -1,5 +1,9 @@
 # 038 — proposal: a replay query engine in core
 
+> **Deferred (owner, 2026-10-28).** Phase 2 makes the in-place replay fast first
+> ([phase 2 plan](../../../docs/inprogress/2026-10-28-ttd-analysis-feedback/phase-2-plan.md), POC 040). The pool
+> comes back only if real agent questions need it: one background clone first, then this pool for batch work.
+
 The POC code is not linked into core. Adoption re-implements it in `core/src/debugger/ttd/` with unit tests,
 exactness tests per model and A/B benchmarks against today's verbs.
 

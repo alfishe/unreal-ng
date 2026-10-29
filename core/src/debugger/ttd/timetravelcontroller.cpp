@@ -1776,13 +1776,24 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
     // --- Every region (machine RAM, device memories), then the devices, then the
     // banks the restored latches select ---
     const PerfClock::time_point memoryStart = PerfClock::now();
-    _engine->ForgetMemory();
+    // Inside a run of replays the engine knows what its last restore left in memory: only the pieces written
+    // since and those whose version differs are decoded. Anything else starts from nothing known
+    const bool memoryKnown = _engineMemoryKnown && _knownMemoryDepth > 0;
+    const TTDWrittenFn written = memoryKnown ? TakeWrittenSinceRestore() : TTDWrittenFn{};
+    if (!memoryKnown)
+    {
+        _engine->ForgetMemory();
+        (void)TakeWrittenSinceRestore();   // the marks so far are covered by forgetting: start counting here
+    }
     CheckEngineCheckpoint(size_t(engineIndex), false);
     SetMediaToCheckpoint(size_t(engineIndex));
-    const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex));
+    const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex), written, &_lastMemoryRestore);
+    _engineMemoryKnown = _knownMemoryDepth > 0 && memory.Ok();
     const PerfClock::time_point devicesStart = PerfClock::now();
     const TTDRestoreResult devices =
         _engine->RestoreDevices(size_t(engineIndex), TTDRestoreContext{engineCp->position.frame, 0, true});
+    if (_engineMemoryKnown)
+        (void)TakeWrittenSinceRestore();   // marks the restore itself made (a device loading its state) hold the checkpoint
     if (!memory.Ok() || devices.status != TTDRestoreStatus::Exact)
         MLOGWARNING("TimeTravelController::RestoreCheckpoint — engine restore of frame %llu: %s%s%s",
                     static_cast<unsigned long long>(cp.time.frame), memory.message.c_str(),
@@ -1799,6 +1810,60 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
     _perf.lastRestoreMemoryNs = elapsedNs(memoryStart, devicesStart);
     _perf.lastRestoreDevicesNs = elapsedNs(devicesStart, devicesEnd);
     _perf.lastRestoreScreenNs = elapsedNs(devicesEnd, PerfClock::now());
+}
+
+TTDWrittenFn TimeTravelController::TakeWrittenSinceRestore()
+{
+    // A device that tracks writes its own way (MoonSound's wave memory) moves them into its trackers first
+    for (ITTDRegionSource* source : _peripherals.RegionSources())
+        source->TTDBeforeCapture();
+
+    _writtenPages.clear();
+    if (_dirtyTracker)
+        _dirtyTracker->CollectAndClear(_writtenPages);
+    _writtenRamPages.assign(_modelRamPages, 0);
+    for (const uint16_t page : _writtenPages)
+        if (page < _writtenRamPages.size())
+            _writtenRamPages[page] = 1;
+
+    // Per engine region: its tracker (matched by the live memory it watches); a region no tracker watches counts
+    // as written whole
+    const std::vector<TTDRegionDesc>& regions = _engine->Regions();
+    const uint8_t* ram = _memory ? _memory->RAMPageAddress(0) : nullptr;
+    _writtenPieces.resize(regions.size());
+    for (size_t r = 0; r < regions.size(); ++r)
+    {
+        std::vector<uint8_t>& marks = _writtenPieces[r];
+        const TTDRegionDesc& desc = regions[r];
+        if (desc.memory && desc.memory == ram)
+        {
+            marks.clear();   // machine RAM: by page
+            continue;
+        }
+        const TTDDeviceRegion* watched = nullptr;
+        for (const TTDDeviceRegion& d : _shadowDeviceRegions)
+            if (desc.memory && d.desc.memory == desc.memory && d.tracker && !d.compareEachCapture)
+                watched = &d;
+        marks.assign(desc.pieces, watched ? 0 : 1);
+        if (!watched)
+            continue;
+        _writtenScratch.clear();
+        watched->tracker->CollectAndClear(_writtenScratch);
+        for (const uint32_t p : _writtenScratch)
+            if (p < marks.size())
+                marks[p] = 1;
+    }
+    return [this](uint32_t region, uint32_t piece) {
+        if (region >= _writtenPieces.size())
+            return true;
+        const std::vector<uint8_t>& marks = _writtenPieces[region];
+        if (marks.empty())
+        {
+            const size_t page = piece / 4;   // machine RAM: 16 KB pages of four pieces
+            return page >= _writtenRamPages.size() || _writtenRamPages[page] != 0;
+        }
+        return piece >= marks.size() || marks[piece] != 0;
+    };
 }
 
 void TimeTravelController::ResyncScreenState()
@@ -2758,6 +2823,7 @@ void TimeTravelController::DeliverCardEdits(uint64_t frame)
 
 void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
 {
+    _engineMemoryKnown = false;   // the edit writes memory past the trackers
     std::vector<TTDRegionDesc> regions = LiveRegions();
     TTDBankOverrides banks;
     bool haveBanks = false;
@@ -3077,6 +3143,8 @@ void TimeTravelController::PauseRecordingForBrowsing()
 bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* outResult)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    // The picture's restore (the frame before) follows the seek's: it decodes only what differs
+    const KnownMemoryScope knownMemory{*this};
     // Each new Detached window starts with a clean auto-pause signal.
     // The flag is set by OnFrameBoundary when execution runs past
     // SessionEndPosition(); clearing here means callers can poll
@@ -4861,6 +4929,7 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
                                                           const TTDJournalBuildProgress& progress)
 {
     TTDJournalBuildResult r;
+    const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
     if (!_context)
     {
         r.error = "no machine";
@@ -5044,6 +5113,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
                                   TTDSearchWindow* outWindow)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Read};
+    const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
     // ------------------------------------------------------------------
     // Guards — same shape as SeekTo.
     // ------------------------------------------------------------------
@@ -5324,6 +5394,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
     // Replays checkpoints and puts the machine back: an operation that changes it
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     TTDFindResult result;
+    const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
 
     // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
@@ -5805,6 +5876,7 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
                                       TTDExternalEvent* outBlockingMarkerStorage)
 {
     EnumerateResult result;
+    const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
     if (outBlockingMarkerStorage)
         *outBlockingMarkerStorage = TTDExternalEvent{};
 
@@ -6564,6 +6636,7 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
 
 void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
 {
+    _engineMemoryKnown = false;   // the caller's memory comes back behind the engine
     Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
 
     // Mirror RestoreCheckpoint's ordering (TDD §8.1): CPU, chipset,
