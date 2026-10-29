@@ -1,0 +1,43 @@
+# ATV Simulator (Codemasters 1987), a 48K Z80 snapshot (the TZX is denied by the publisher; the snapshot is the
+# archive.org / WoS dump). In the menu ENTER moves the cursor and SPACE takes it; keyboard play: S left (brake), D right
+# (accelerates), F wheel up, C wheel down, Z jump (it also gets the rider up after a crash). A race starts on foot: walk
+# right to the quad, jump on it. Haptics (haptics.md §13 H5), found with TTD on a real-time recording: the speed is the
+# byte #D77B (0 to 21, the bar on the screen); #E072 is run once per crash into an obstacle (the call from #E04B, the
+# same code in two recordings, a cactus and a rock); #E793 is the end of the terrain follower #E774 and runs when the
+# quad meets a bump, a few frames before the hop. Checked by play in real time: 15 s of holding D = 6 `bump` and 1 `crash`
+# (the cactus at the end of the trail; the screenshot shows the rider on the ground). Known limits: the rider's animation
+# byte #D73C is a sprite phase (the same value means different things in a hop and in a crash), so take-off and
+# touch-down are not events yet; the wheelie flip-over (F held too long) does not run #E072 and is silent.
+schema: 1
+kind: play
+id: builtin/game/atv-simulator
+label: ATV Simulator
+match:
+  machines: [48K, 128K, PENTAGON]
+  file_sha256: ["9bb0a2d231e3507d8ec45e160586c1384cb0f383d8a18ba153e8c032d332cc1b"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: S }
+    dpad.right:   { key: D }
+    lstick.left:  { key: S }
+    lstick.right: { key: D }
+    rt.click:     { key: D, label: Accelerate }
+    lt.click:     { key: S, label: Brake }
+    dpad.up:      { key: F }
+    lstick.up:    { key: F }
+    dpad.down:    { key: C }
+    lstick.down:  { key: C }
+    south:        { key: Z, label: Jump }
+    east:         { key: SPACE, label: Select }
+    menu:         { key: ENTER, label: Next }
+haptics:
+  sources:
+    speed:  { probe: value, address: "0xD77B", scale: 12 }
+    crash:  { probe: exec, address: "0xE072" }
+    bump:   { probe: exec, address: "0xE793" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: crash, play: thump }
+    - { on: bump, play: knock, target: handle.low }

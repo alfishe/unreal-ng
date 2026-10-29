@@ -222,6 +222,13 @@ flowchart TB
    Python `controllers_match`) tells which profiles match and how; `context` carries the signatures, `game_matches`
    ([id, how], strongest first) and `haptics_reason`. Measured on the vtrd.in collection by
    [POC 034](../../../tools/poc/034-media-signatures/README.md).
+   A program the client did not load itself (a NEX or SNX started from NextZXOS's Browser, a snapshot picked in a
+   menu) reaches the same keys through the guest's reads: `GuestProgramWatch` (core, `emulator/media`) sits on the
+   read tap of every block medium; 16 consecutive sectors read inside one program file (NEX, SNX, SNA, Z80, SZX, TAP,
+   TZX, TRD, SCL, SP, found through the volume's FAT) make it post `NC_GUEST_PROGRAM` with the file's bytes, and the
+   Qt client computes the signatures from them as for a file it loaded, so the game profile applies by its hash with
+   no manual choice. The same file read again within 3 s is one load; a write to the card makes the file map built
+   again at the next run.
 2. **Port-read heuristic.** The core's `PortReadWatch` ([architecture.md §13](architecture.md#13-code-placement))
    counts the guest's reads per frame, smoothed, from the end of loading for up to 30 s of play:
 
@@ -438,6 +445,13 @@ line.
 
 Writing a new game profile step by step (finding the game's keys and haptic triggers, the header comment, the index,
 the tests): [the game-haptics recipe](../../../.recipe/input/game-haptics.md).
+
+### 7.5a Keys of the keys-joystick: `joystick_keys`
+
+A play profile may name the keys of the core's keyboard-as-joystick (the QAOP-style `JoystickKeys=` option) for the
+games that read it: `joystick_keys: "up:q,down:a,left:o,right:p,fire:m"`. The most specific play profile wins; while the
+port-read watch decides on the keyboard joystick, the profile's keys replace the option's default, and the pad's d-pad
+needs no key bindings of its own (Exolon: `fire:space`, or `fire:m` for the Exolon-M release).
 
 ### 7.6 Schemes: `extends`
 

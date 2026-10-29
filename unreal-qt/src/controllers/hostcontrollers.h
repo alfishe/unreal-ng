@@ -5,6 +5,7 @@
 /// HostInputService and ProfileStore, the bound emulator's IHostInputSource, the player connector each pad drives
 /// (retro-devices.md §4, the machine default) and the profiles re-applied whenever a device or the machine changes.
 
+#include <QByteArray>
 #include <QObject>
 #include <QString>
 #include <QTimer>
@@ -213,6 +214,7 @@ private:
     /// Plug what the resolved profiles' connectors name, where the machine holds something else
     void applyConnectorPlans();
     void onFileLoaded(const QString& emulatorId, const QString& path);
+    void onGuestProgram(const QString& emulatorId, const QString& path, const QByteArray& data);
     void checkAuto();
     void applyAuto(const controllers::AutoDecision& decision);
     bool saveUserProfile(controllers::Profile profile, QString& error);
@@ -232,13 +234,18 @@ private:
     std::shared_ptr<controllers::IHapticFeed> _hapticFeed;
     std::string _hapticsKey;  ///< what _hapticFeed was made from: a re-resolve to the same keeps its state
     uint64_t _fileObserver = 0;
+    uint64_t _guestObserver = 0;
     uint64_t _contextObserver = 0;
     uint64_t _breakpointObserver = 0;
     /// The signatures, file hash and TR-DOS file set of the program loaded last into the bound emulator (only those
     /// fields are used)
     controllers::ProfileContext _program;
     QString _fileName;
-    bool _autoDone = false;      ///< decided (or a kept game profile holds the connectors) for this program
+    /// Latched: the port reads decided the joystick (or a kept game profile holds the connectors) for this program, the
+    /// watch is off. A program that reads the whole keyboard (a menu) decides nothing: the watch goes on until it
+    /// reads a joystick
+    bool _autoDone = false;
+    bool _keyboardNoticed = false;
     std::string _autoConnector;  ///< the connector the decision chose: the first pad drives it
     controllers::AutoDecision _decision;
     std::unique_ptr<controllers::HostInputService> _service;

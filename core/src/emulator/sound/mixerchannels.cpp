@@ -123,7 +123,7 @@ void Describe(const SoundManager& sound, AudioSourceType type, std::vector<Mixer
             return;
 #endif
         default:
-            for (ICard* card : sound.slotCards())
+            for (ICardAudio* card : sound.slotCards())
                 card->MixerChannels(type, out);
             return;
     }
@@ -189,7 +189,7 @@ void Apply(SoundManager& sound, AudioSourceType type, size_t index, bool muted, 
             return;
 #endif
         default:
-            for (ICard* card : sound.slotCards())
+            for (ICardAudio* card : sound.slotCards())
                 card->SetMixerChannel(type, index, muted, volume);
             return;
     }

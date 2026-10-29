@@ -252,6 +252,31 @@ TEST_P(SurfaceActions_Test, SeekByWithoutAHistoryIsNotNowRecordFirst)
     EXPECT_EQ(result.message, "record first");
 }
 
+// A deck greys a key out by the host's reason: the verbs that move through or mark a history have none to act on
+// before a recording, and get one once a history is recorded (running or stopped)
+TEST_P(SurfaceActions_Test, HistoryVerbsAreUnavailableUntilAHistoryIsRecorded)
+{
+    ActionValue press;
+    press.kind = ValueKind::Press;
+    press.pressed = true;
+    const char* verbs[] = {"ttd.bookmark_add",          "ttd.resume_live",       "ttd.step_back_frame",
+                           "ttd.step_forward_frame",    "ttd.step_back_instruction", "ttd.step_forward_instruction",
+                           "ttd.reverse_step",          "ttd.reverse_continue",  "ttd.jog_frames",
+                           "ttd.jog_instructions"};
+    for (const char* id : verbs)
+        EXPECT_EQ(_registry->Unavailable(id, press), "record first") << id;
+    EXPECT_EQ(_registry->Run("ttd.bookmark_add", press).error, "not_now");
+    EXPECT_EQ(_registry->Unavailable("ttd.record_toggle", press), "") << "recording needs no history";
+
+    ASSERT_TRUE(Ttd("start").Ok());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    EXPECT_EQ(_registry->Unavailable("ttd.bookmark_add", press), "") << "while recording";
+    ASSERT_TRUE(Ttd("stop").Ok());
+    for (const char* id : verbs)  // the instruction steps still need a pause: their own reason, not the history
+        EXPECT_NE(_registry->Unavailable(id, press), "record first") << id << " on a stopped history";
+    EXPECT_EQ(_registry->Unavailable("ttd.bookmark_add", press), "") << "on a stopped history";
+}
+
 TEST_P(SurfaceActions_Test, SeekByMovesByTheCurveAndClampsToTheHistoryWithAnEdgeMark)
 {
     uint64_t first = 0;

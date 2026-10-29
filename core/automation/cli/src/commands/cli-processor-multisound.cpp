@@ -50,6 +50,25 @@ void CLIProcessor::HandleMultiSound(const ClientSession& session, const std::vec
         session.SendResponse(std::string("Usage: multisound [--full|--json]") + NEWLINE);
 }
 
+// wildsound [--json]: the Sprinter's ISA Wild Sound (DeviceState::WildSound; docs/inprogress/2026-10-09-wildsound)
+void CLIProcessor::HandleWildSound(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("Error: No emulator selected.") + NEWLINE);
+        return;
+    }
+    const StateNode report = DeviceState::WildSound(emulator->GetContext());
+    const std::string mode = args.empty() ? "" : args[0];
+    if (mode == "--json")
+        session.SendResponse(StateNodeToJsonText(report) + NEWLINE);
+    else if (mode.empty())
+        session.SendResponse(Lines(DeviceState::ToText(report), NEWLINE));
+    else
+        session.SendResponse(std::string("Usage: wildsound [--json]") + NEWLINE);
+}
+
 void CLIProcessor::HandleMidi(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);

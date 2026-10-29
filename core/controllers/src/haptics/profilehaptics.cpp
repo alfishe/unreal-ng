@@ -273,6 +273,14 @@ void ProfileHaptics::OnHapticFrame(const HapticFrame& frame)
             index++;
         if (index == _profile.sources.size() || levels[index] <= 0)
             continue;
+        if (!rule.gate.empty())
+        {
+            size_t gate = 0;
+            while (gate < _profile.sources.size() && _profile.sources[gate].name != rule.gate)
+                gate++;
+            if (gate == _profile.sources.size() || _states[gate].value != rule.gateValue)
+                continue;
+        }
         HapticEffect effect;
         if (!BuiltinHapticEffect(rule.play, effect))
             continue;

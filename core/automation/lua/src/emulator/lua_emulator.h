@@ -14,7 +14,9 @@
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/memory/memorycounters.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/memory/memorywatch.h"
 #include "debugger/media/sectorwrite.h"
 #include "debugger/pchistory/pchistory.h"
 #include "debugger/ports/portwrite.h"
@@ -1254,6 +1256,155 @@ public:
             return {sol::make_object(s, std::string(read.bytes.begin(), read.bytes.end())), sol::make_object(s, sol::lua_nil)};
         });
 
+        // memory_counters{space=, start=, length=, addresses=, view=, kinds=, min=, limit=} -> {space, session,
+        // allocated, reads, writes, executes, matched, truncated, cells = {{address, r, w, x}, ...}} | nil, error
+        // (MemoryCounters: space cpu / phys / ram / ram5; view top (default) / sparse / dense; addresses a table or
+        // "0x5C00,0x8000-0x80FF")
+        lua.set_function("memory_counters", [this](sol::this_state s, sol::optional<sol::table> options)
+                                                -> std::tuple<sol::object, sol::object> {
+            sol::state_view view(s);
+            auto fail = [&s](const std::string& error) -> std::tuple<sol::object, sol::object> {
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, error)};
+            };
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return fail("no emulator");
+            MemoryCounters::Request request;
+            request.mode = MemoryCounters::Mode::Top;
+            std::string error;
+            if (options)
+            {
+                const sol::table& o = *options;
+                request.space = o.get_or<std::string>("space", "");
+                request.start = o.get_or<uint32_t>("start", 0);
+                request.length = o.get_or<uint32_t>("length", 0);
+                request.min = o.get_or<uint32_t>("min", 1);
+                request.limit = o.get_or<uint32_t>("limit", 4096);
+                if (!MemoryCounters::ParseMode(o.get_or<std::string>("view", "top"), request.mode, error) ||
+                    !MemoryCounters::ParseKinds(o.get_or<std::string>("kinds", "rwx"), request.kinds, error))
+                    return fail(error);
+                const sol::object addresses = o["addresses"];
+                if (addresses.is<std::string>())
+                {
+                    if (!MemoryCounters::ParseAddresses(addresses.as<std::string>(), request.addresses, error))
+                        return fail(error);
+                }
+                else if (addresses.is<sol::table>())
+                {
+                    for (const auto& [key, value] : addresses.as<sol::table>())
+                        request.addresses.push_back(value.as<uint32_t>());
+                }
+            }
+            else
+                request.limit = 4096;
+            const MemoryCounters::Result result = MemoryCounters::Read(emulator->GetContext(), request);
+            if (!result.error.empty())
+                return fail(result.error);
+            sol::table table = view.create_table();
+            table["space"] = result.space;
+            table["space_size"] = result.spaceSize;
+            table["session"] = result.session;
+            table["allocated"] = result.allocated;
+            table["start"] = result.start;
+            table["length"] = result.length;
+            table["reads"] = result.reads;
+            table["writes"] = result.writes;
+            table["executes"] = result.executes;
+            table["matched"] = result.matched;
+            table["truncated"] = result.truncated;
+            sol::table cells = view.create_table(static_cast<int>(result.cells.size()), 0);
+            for (size_t i = 0; i < result.cells.size(); i++)
+            {
+                const MemoryCounters::Cell& cell = result.cells[i];
+                cells[i + 1] = view.create_table_with(1, cell.address, 2, cell.reads, 3, cell.writes, 4, cell.executes);
+            }
+            table["cells"] = cells;
+            return {sol::make_object(s, table), sol::make_object(s, sol::lua_nil)};
+        });
+
+        // memory_counter(address [, space]) -> reads, writes, executes | nil, error
+        lua.set_function("memory_counter", [this](sol::this_state s, uint32_t address, sol::optional<std::string> space)
+                                               -> std::tuple<sol::object, sol::object, sol::object> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator")), sol::make_object(s, sol::lua_nil)};
+            const MemoryCounters::Result result = MemoryCounters::ReadCell(emulator->GetContext(), space.value_or(""), address);
+            if (!result.error.empty())
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error), sol::make_object(s, sol::lua_nil)};
+            const MemoryCounters::Cell& cell = result.cells[0];
+            return {sol::make_object(s, cell.reads), sol::make_object(s, cell.writes), sol::make_object(s, cell.executes)};
+        });
+
+        // Memory watches (MemoryWatch): memory_watch_add(name, start, length [, {callers=, values=}]),
+        // memory_watch_port(name, port [, mask [, {callers=, values=}]]), memory_watch_remove(name), memory_watch_clear()
+        // -> true | nil, error; memory_watches() -> {{name, kind, start, length, port, mask, reads, writes, executes,
+        // callers = {[pc] = count}, values = {[value] = count}}, ...} | nil, error
+        auto watchOptions = [](const sol::optional<sol::table>& table) {
+            MemoryWatch::Options options;
+            if (table)
+            {
+                options.callers = table->get_or("callers", false);
+                options.values = table->get_or("values", false);
+            }
+            return options;
+        };
+        auto watchReply = [](sol::this_state s, const MemoryWatch::Result& result) -> std::tuple<sol::object, sol::object> {
+            if (!result.ok)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error)};
+            return {sol::make_object(s, true), sol::make_object(s, sol::lua_nil)};
+        };
+        lua.set_function("memory_watch_add", [this, watchOptions, watchReply](sol::this_state s, const std::string& name, uint32_t start,
+                                                                             uint32_t length, sol::optional<sol::table> options) {
+            return watchReply(s, MemoryWatch::AddRegion(effectiveEmulator(), name, start, length, watchOptions(options)));
+        });
+        lua.set_function("memory_watch_port", [this, watchOptions, watchReply](sol::this_state s, const std::string& name, uint32_t port,
+                                                                              sol::optional<uint32_t> mask, sol::optional<sol::table> options) {
+            return watchReply(s, MemoryWatch::AddPort(effectiveEmulator(), name, port, mask.value_or(0xFFFF), watchOptions(options)));
+        });
+        lua.set_function("memory_watch_remove", [this, watchReply](sol::this_state s, const std::string& name) {
+            return watchReply(s, MemoryWatch::Remove(effectiveEmulator(), name));
+        });
+        lua.set_function("memory_watch_clear", [this, watchReply](sol::this_state s) {
+            return watchReply(s, MemoryWatch::Clear(effectiveEmulator()));
+        });
+        lua.set_function("memory_watches", [this](sol::this_state s) -> std::tuple<sol::object, sol::object> {
+            const MemoryWatch::Result result = MemoryWatch::List(effectiveEmulator());
+            if (!result.ok)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, result.error)};
+            sol::state_view view(s);
+            sol::table list = view.create_table();
+            int index = 1;
+            for (const MemoryWatch::Watch& watch : result.watches)
+            {
+                sol::table entry = view.create_table();
+                entry["name"] = watch.name;
+                entry["kind"] = watch.port ? "port" : "region";
+                if (watch.port)
+                {
+                    entry["port"] = watch.start;
+                    entry["mask"] = watch.mask;
+                }
+                else
+                {
+                    entry["start"] = watch.start;
+                    entry["length"] = watch.length;
+                    entry["executes"] = watch.executes;
+                }
+                entry["reads"] = watch.reads;
+                entry["writes"] = watch.writes;
+                sol::table callers = view.create_table();
+                for (const auto& [pc, count] : watch.callers)
+                    callers[pc] = count;
+                sol::table values = view.create_table();
+                for (const auto& [value, count] : watch.values)
+                    values[static_cast<int>(value)] = count;
+                entry["callers"] = callers;
+                entry["values"] = values;
+                list[index++] = entry;
+            }
+            return {sol::make_object(s, list), sol::make_object(s, sol::lua_nil)};
+        });
+
         // A debugger's port write through the decoder (PortWrite): port_out(0x13AF, 0x20) -> true | nil, error
         lua.set_function("port_out", [this](sol::this_state s, int64_t port, int64_t value) -> std::tuple<sol::object, sol::object> {
             Emulator* emulator = effectiveEmulator();
@@ -1829,7 +1980,9 @@ public:
         // media_protect(slot, on), media_compose(descriptor [, opts]), media_layers(slot),
         // media_volumes(slot), media_files(slot [, dir, opts]), media_read(slot, file [, opts]),
         // media_read_bytes(slot, file [, volume]), media_write(slot, file, bytes [, opts]) (bytes nil: opts["in"]
-        // names a host file), and media(verb, slot, path, opts).
+        // names a host file), media_delete(slot, file [, opts]), media_rename(slot, file, to [, opts]),
+        // media_mkdir(slot, dir [, opts]), media_attrib(slot, file, opts), media_label(slot, name [, opts]),
+        // and media(verb, slot, path, opts).
         // slot: fdd.b, B, b:, sd, floppy:1, tag:sd+neogs ("auto" for insert).
         // opts: {access="readonly", save=true, export="x.trd", discard=true, async=true, ...}.
         // Each returns the reply table every surface returns: ok, error, message,
@@ -2248,7 +2401,7 @@ public:
         lua.set_function("media_changes", [mediaCall](sol::this_state s, const std::string& slot) {
             return mediaCall(s, "changes", slot, "", sol::nullopt);
         });
-        // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); read only
+        // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT (DSS, NedoOS); write, delete, rename, mkdir
         lua.set_function("media_volumes", [mediaCall](sol::this_state s, const std::string& slot) {
             return mediaCall(s, "volumes", slot, "", sol::nullopt);
         });
@@ -2277,7 +2430,7 @@ public:
             base64::Decode(reply.body.find("data")->s, bytes);
             return {sol::make_object(view, std::string(bytes.begin(), bytes.end())), sol::make_object(view, sol::lua_nil)};
         });
-        // A file onto a slot's TR-DOS / +3DOS floppy: `bytes` a Lua string, or nil with opts["in"] a host file
+        // A file onto a slot's disk (TR-DOS, +3DOS, iS-DOS, FAT): `bytes` a Lua string, or nil with opts["in"] a host file
         lua.set_function("media_write", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
                                                     sol::optional<std::string> bytes, sol::optional<sol::table> opts) {
             if (!bytes)
@@ -2289,6 +2442,43 @@ public:
                     all[key] = value;
             all["data"] = base64::Encode(std::vector<uint8_t>(bytes->begin(), bytes->end()));
             return mediaCall(s, "write", slot, path, all);
+        });
+        lua.set_function("media_delete", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
+                                                     sol::optional<sol::table> opts) {
+            return mediaCall(s, "delete", slot, path, opts);
+        });
+        // A new directory (FAT, iS-DOS catalogue, MB-02); opts {parents = true} makes the missing ones on the way, an
+        // iS-DOS catalogue takes {continuous = true, blocks = 1-16}
+        lua.set_function("media_mkdir", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
+                                                    sol::optional<sol::table> opts) {
+            return mediaCall(s, "mkdir", slot, path, opts);
+        });
+        // A file's attributes and time: opts {attributes = "+R-H", time = "2026-10-26 14:30"}
+        lua.set_function("media_attrib", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
+                                                     sol::optional<sol::table> opts) {
+            return mediaCall(s, "attrib", slot, path, opts);
+        });
+        // The volume's name: FAT label ("" removes it), TR-DOS disk title, iS-DOS device name
+        lua.set_function("media_label", [mediaCall](sol::this_state s, const std::string& slot, const std::string& label,
+                                                    sol::optional<sol::table> opts) {
+            sol::state_view view(s);
+            sol::table all = view.create_table();
+            if (opts)
+                for (const auto& [key, value] : *opts)
+                    all[key] = value;
+            all["label"] = label;
+            return mediaCall(s, "label", slot, "", all);
+        });
+        // A bare `to` stays in the file's directory; a path from the root moves it (iS-DOS, FAT)
+        lua.set_function("media_rename", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path,
+                                                     const std::string& to, sol::optional<sol::table> opts) {
+            sol::state_view view(s);
+            sol::table all = view.create_table();
+            if (opts)
+                for (const auto& [key, value] : *opts)
+                    all[key] = value;
+            all["to"] = to;
+            return mediaCall(s, "rename", slot, path, all);
         });
         for (const char* verb : {"insert", "swap"})
         {
@@ -3280,22 +3470,32 @@ public:
         });
 
         // Snapshot operations
-        // snapshot_load(path [, commit]) -> ok, reason, emulator_id: the reason is set when TTD refuses the load
-        // (recording), the snapshot pipeline refuses it (the machine's policy, an unknown commit name) or the load
-        // fails. `commit` chooses who writes the machine: omitted = the plan decides (the machine's own policy, else
-        // the legacy commit), "legacy" = the legacy commit always, or a registered policy name. A file that needs
-        // another model (an SPG: TS-Conf) switches it first when this Lua is not bound to one machine (as
-        // rzx_play); emulator_id is then the new instance
-        lua.set_function("snapshot_load", [this](const std::string& path, sol::optional<std::string> commit)
+        // snapshot_load(path [, commit | {commit, switch_model}]) -> ok, reason, emulator_id: the reason is set when
+        // TTD refuses the load (recording), the snapshot pipeline refuses it (the machine's policy, an unknown commit
+        // name, a machine that cannot hold the file) or the load fails. `commit` chooses who writes the machine:
+        // omitted = the plan decides (the machine's own policy, else the legacy commit), "legacy" = the legacy commit
+        // always, or a registered policy name. A file for another machine (an SPG: TS-Conf; an SZX of another model,
+        // a 128K .z80 / .sna on a 48K) switches the model first when this Lua is not bound to one machine (as
+        // rzx_play): `switch_model` true / false, omitted = the launcher's rule (an SPG switches, a snapshot of
+        // another machine only with [SNAPSHOT] SwitchModel=1); emulator_id is then the new instance
+        lua.set_function("snapshot_load", [this](const std::string& path, sol::optional<sol::object> arg)
                                               -> std::tuple<bool, std::string, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator", ""};
             SnapshotLoadRequest request;
             request.emulatorId = emulator->GetId();
             request.path = path;
+            if (arg && arg->is<std::string>())
+                request.commit = arg->as<std::string>();
+            else if (arg && arg->is<sol::table>())
+            {
+                const sol::table options = arg->as<sol::table>();
+                request.commit = options.get_or<std::string>("commit", "");
+                if (const sol::optional<bool> switchModel = options.get<sol::optional<bool>>("switch_model"))
+                    request.switchModel = *switchModel;
+            }
             if (_emulator != nullptr)
-                request.switchModel = false;   // a script bound to a machine never replaces it; unbound: the launcher's default
-            request.commit = commit.value_or("");
+                request.switchModel = false;   // a script bound to a machine never replaces it; unbound: as asked
             const SnapshotLoadResult result = SnapshotLauncher::Load(request);
             return {result.ok, result.message, result.emulator ? result.emulator->GetId() : std::string()};
         });
@@ -5234,6 +5434,11 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::MultiSound(ctx));
         });
+        // The Sprinter's ISA Wild Sound (DeviceState::WildSound); unavailable without the card
+        lua.set_function("wildsound_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::WildSound(ctx));
+        });
         lua.set_function("midi_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Midi(ctx));
@@ -5892,11 +6097,18 @@ public:
             return reply.Ok() && reply.body.find("reached")->b;
         });
 
-        lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable) -> sol::object {
+        // ttd_reverse_continue({pcs}, {phys_page=, all=, limit=, before_frame=, before_tin=, before=, from_frame=})
+        lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable,
+                                                        sol::optional<sol::table> optionsTable) -> sol::object {
             std::string pcs;
             for (auto& pair : pcsTable)
                 pcs += (pcs.empty() ? "" : ",") + TtdOptionText(pair.second);
-            StateNode value = TtdScriptValue(TtdRun("reverse-continue", {{"pcs", pcs}}));
+            std::map<std::string, std::string> options;
+            if (optionsTable)
+                for (const auto& [key, value] : *optionsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            options["pcs"] = pcs;
+            StateNode value = TtdScriptValue(TtdRun("reverse-continue", options));
             if (!value.find("matched"))
                 value["matched"] = false;
             return StateNodeToLua(ts, value);

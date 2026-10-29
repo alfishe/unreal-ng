@@ -653,11 +653,18 @@ emu.media_eject("B", discard=True, async_=True)          # "async" is a Python k
 emu.media_info("sd"); emu.media_formats(kind="floppy"); emu.media_save("A"); emu.media_export("sd", "/tmp/card.img")
 emu.media_targets("/discs/dna_nemo.iso")                 # where a file can go: file, targets, default, refusal
 emu.media_discard("A"); emu.media_rescan("sd"); emu.media_create("B"); emu.media_protect("A", True)
-emu.media_volumes("hd")                                  # the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, FAT partitions
+emu.media_volumes("hd")                                  # the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT partitions
 emu.media_files("A", "SHELL", recursive=True)            # a directory's entries; volume="p1" picks a volume
 emu.media_read("A", "read_me.txt", out="/tmp/r.txt")     # base64 data, or written to out
 data = emu.media_read_bytes("hd", "AUTOEXEC.BAT", volume="p1")  # bytes; RuntimeError when it fails
-emu.media_write("A", "PROG.C", b"\xf3\xc9", start=0x8000)  # onto a TR-DOS / +3DOS floppy; in_="prog.bin" a host file
+emu.media_write("A", "PROG.C", b"\xf3\xc9", start=0x8000)  # onto any file system of the disk; in_="prog.bin" a host file
+emu.media_rename("A", "PROG.C", "GAME.C")                 # a bare name stays in its directory; "/x" moves a file or a directory (iS-DOS, FAT)
+emu.media_delete("hd", "OLD.TXT", volume="p1")
+emu.media_mkdir("hd", "GAMES/NEW", parents=True)          # a FAT directory, an iS-DOS catalogue
+emu.media_mkdir("A", "WORK", continuous=True, blocks=4)   # an iS-DOS continuous catalogue of 4 blocks
+emu.media_delete("hd", "GAMES", recursive=True)           # a directory with its contents
+emu.media_attrib("hd", "GAME.COM", attributes="+R-H", time="2026-10-26 14:30")  # FAT RHSA, iS-DOS RWHD, +3DOS RSA
+emu.media_label("hd", "WORK DISK")                         # FAT label, TR-DOS title, iS-DOS device name
 emu.media(verb, slot, path, **options)                   # any verb
 ```
 
@@ -1356,11 +1363,25 @@ emu.memory_profiler_clear()    # Clear all data
 status = emu.memory_profiler_status()
 # Returns: {'feature_enabled': True, 'capturing': True, 'session_state': 'capturing', 'tracking_mode': 'physical'}
 
-# Data retrieval
-pages = emu.memory_profiler_pages(limit=20)   # Get per-page access summaries
-counters = emu.memory_profiler_counters(page=5, mode='physical')  # Address-level counters
-regions = emu.memory_profiler_regions()       # Monitored region statistics
-emu.memory_profiler_save('/path/output', format='yaml')  # Save data to file
+# Per-address counters (MemoryCounters, docs/emulator/design/debugger/memory-counters.md)
+hot = emu.memory_counters(space="cpu", view="top", kinds="x", limit=16)   # hot code, heaviest first
+for address, reads, writes, executes in hot["cells"]:
+    print(f"{address:04X} r={reads} w={writes} x={executes}")
+banks = emu.memory_counters(space="phys", view="top", kinds="w")          # cell // 0x4000 = absolute page
+touched = emu.memory_counters(space="ram5", view="sparse", min=1)         # every touched cell of RAM 5
+cells = emu.memory_counters(addresses="0x5C00,0x5C08,0x8000-0x800F")      # exactly these cells
+r, w, x = emu.memory_counter(0x5C08)                                      # one cell (space="cpu")
+# Window: start=, length= (0: to the end); view="dense" gives every cell; ValueError with the reason
+
+# Watches (MemoryWatch): regions of CPU addresses and partially decoded ports, with callers / values
+emu.memory_watch_add("sysvars", 0x5C00, 0xC0, callers=True)
+emu.memory_watch_port("kempston", 0x1F, 0x00FF, values=True)   # every port with low byte 0x1F
+emu.memory_watch_port("keys", 0xFE, 0x00FF, callers=True)
+for watch in emu.memory_watches():   # [{name, kind, start/length or port/mask, reads, writes, executes, callers, values}]
+    print(watch["name"], watch["reads"], watch["writes"], watch["callers"])
+emu.memory_watch_remove("sysvars")
+emu.memory_watch_clear()
+# Session control on every plane: emu.trace("memory", "start") (also stop / pause / resume / clear / status)
 ```
 
 ### Call Trace Profiler
@@ -1433,7 +1454,7 @@ Module functions, by emulator id (default: the selected machine). A model switch
 
 `Emulator.rzx_stop()` and `Emulator.rzx_status()` act on that machine; `Emulator.snapshot_load("game.rzx")` plays a recording on it as it is.
 
-`unreal.snapshot_load(path, emulator_id="", switch_model=True)` returns `{ok, message, emulator_id, model_switched, previous_emulator_id, required_model}`: a TS-Conf program (`.spg`) on another model switches the machine to TS-Conf first (`emulator_id` is the new one). `Emulator.snapshot_load` is bound to its machine and raises `RuntimeError` for such a file instead.
+`unreal.snapshot_load(path, emulator_id="", switch_model=None, commit="")` returns `{ok, message, emulator_id, model_switched, previous_emulator_id, required_model}`: a TS-Conf program (`.spg`) on another model switches the machine to TS-Conf first unless `switch_model=False` (`emulator_id` is the new one); an `.szx` of another model, or a `.z80` / `.sna` the machine cannot hold (a 128K file on a 48K: the machine its header names), switches with `switch_model=True` and is refused otherwise ([webapi-interface.md](./webapi-interface.md) has the rule). `Emulator.snapshot_load` is bound to its machine and raises `RuntimeError` for such a file instead.
 
 ```python
 r = unreal.rzx_play("games/greenberet.rzx")          # on a 48K: switches to a 128K
@@ -1591,6 +1612,13 @@ hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 #    None only when nothing matched and no marker stopped the search.
 #    Dicts carry 'covered_from', 'covered_from_tinframe', 'covered_to',
 #    'covered_to_tinframe': the searched span (command-interface.md -> Search window).
+
+# One Z80 address on two banks: only the runs from page 3; every hit, newest first, the machine stays
+hits = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, limit=500)
+# {'hits': [{'frame': 4700, 'tinframe': 812, 't': 336899052, 'pc': 0xC000, 'phys_page': 3}, ...],
+#  'count': 500, 'truncated': True, 'next_before': 336512000, ...}
+more = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, before=hits['next_before'])
+# phys_page='rom': runs from the ROM. Bounds: before_frame= / before_tin= or before= (machine T), from_frame=
 ```
 
 **Reverse search:**
@@ -1622,8 +1650,13 @@ result = emu.ttd_find_last(
     pc_to=0x8000,
     before_frame=4823,         # search at or before this point (default: current position)
     before_tin=0,
-    phys_page=5                # 0..255: one physical RAM page (ValueError otherwise)
+    phys_page=5                # 0..255 or 'rom': one physical RAM page (ValueError otherwise)
 )
+
+# Every write that changed the byte, newest first, with the byte it replaced; the machine stays
+changes = emu.ttd_find_last(addr=0x5B00, changes_only=True, all=True, limit=500)
+# {'hits': [{'frame': 4823, 'tinframe': 14982, 't': ..., 'value': 3, 'old_value': 2, 'pc': ..., ...}, ...],
+#  'count': 41, 'truncated': False, ...}   keywords: all, changes_only, limit, before (machine T), from_frame
 
 # The Sprinter's video RAM / fast RAM: space='vram' | 'cache', the address an offset in it
 result = emu.ttd_find_last(addr=0x4805, space='vram')
@@ -1721,12 +1754,22 @@ scan = emu.ttd_coverage_scan(kind='executed', addr_from=0x0038, addr_to=0x0040,
 #  'matching_frames': 3, 'scanned_frames': 183, 'truncated': False,
 #  'covered_from': 18, 'covered_to': 197, 'index_available': True}
 
+# The newest matches first, as runs of consecutive frames; a cut list carries the cursor
+runs = emu.ttd_coverage_scan(kind='executed', addr_from=0x8200, addr_to=0x8200, phys_page=2,
+                             order='newest', ranges=True, limit=50)
+# {'ranges': [[190, 192], [180, 180], ...], 'order': 'newest', 'exact': True, 'truncated': True,
+#  'next_to_frame': 87, 'first_match': 3, 'last_match': 192, ...}
+# exact=False without phys_page: the offset matched on every page; phys_page='rom' is the ROM's bucket
+
 # The Sprinter's video RAM by its own offsets (space='vram' / 'cache': offsets inside one 16 KB page)
 scan = emu.ttd_coverage_scan(kind='written', space='vram', addr_from=0x4805, addr_to=0x4805)
 
 # A memory at a past checkpoint, and what changed between two - from the store, no seek
 at = emu.ttd_memory_at('ram5', frame=150, offset=0x1C78, length=2)   # tinframe=T: a point inside the frame (ram, vram, cache)
 # {'space': 'ram', 'offset': 89208, 'length': 2, 'frame': 150, 'at_frame': 150, 'exact': True, 'hex': '6500'}
+# ram / ramN offsets are physical. space='cpu': Z80 addresses, what the CPU saw at frame:tinframe, with the banks
+cpu = emu.ttd_memory_at('cpu', frame=150, offset=0xC000, length=16, tinframe=20000)
+# {'space': 'cpu', 'banks': [{'window': 3, 'addr': '0xC000', 'kind': 'ram', 'page': 0, 'name': 'RAM 0'}, ...], 'hex': ...}
 diff = emu.ttd_memory_diff('neogs.ram', from_frame=150, to_frame=600)
 # {'space': 'neogs.ram', 'changed_bytes': 812, 'ranges': [{'offset': 4096, 'length': 64}, ...], 'truncated': False, ...}
 

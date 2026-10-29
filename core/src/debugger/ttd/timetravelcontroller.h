@@ -1190,6 +1190,10 @@ public:
         std::optional<PhysPage> physPage = std::nullopt) const;
 
     /// @brief Scan frames in [fromFrame, toFrame] touching range (TD-7 §3.1.2).
+    ///
+    /// The list keeps the first `limit` matches in scan order: oldest first, or newest first with
+    /// `newestFirst`. With `asRanges` it holds runs of consecutive matching frames and `limit` counts runs.
+    /// The counts and first / last match cover the whole window either way.
     TTDCoverageScanResult QueryCoverageScan(
         uint64_t fromFrame,
         uint64_t toFrame,
@@ -1197,7 +1201,12 @@ public:
         uint16_t addrFrom,
         uint16_t addrTo,
         std::optional<PhysPage> physPage = std::nullopt,
-        size_t limit = 200) const;
+        size_t limit = 200,
+        bool newestFirst = false,
+        bool asRanges = false) const;
+
+    /// Most items a coverage scan list returns (frames or runs)
+    static constexpr size_t kCoverageScanLimitMax = 10000;
 
     /// @brief Activity heatmap over [fromFrame, toFrame] (TD-7 §3.1.3).
     TTDCoverageSummaryResult QueryCoverageSummary(
@@ -1302,6 +1311,28 @@ public:
     ///                     {matched=false} immediately.
     /// @return See TTDReverseContinueResult.
     TTDReverseContinueResult ReverseContinue(const std::vector<uint16_t>& breakpoints);
+
+    /// @brief Every access matching @p q, newest first, back from q.beforeGlobalT (UINT64_MAX: now).
+    ///
+    /// The list mode of FindLastAccess: write-journal segments answer at once, other frames are replayed from
+    /// their checkpoints (pruned by the coverage index). With changesOnly a write counts only when it changes
+    /// the byte: the byte it replaced is the previous write to the same page and offset, or the byte at the
+    /// checkpoint the stretch starts from. The machine stays exactly where it stood.
+    TTDFindResult FindAccesses(const TTDSearchQuery& q, const TTDFindOptions& options);
+
+    /// @brief The Z80's view of memory at @p at: @p length bytes from Z80 address @p offset and the four
+    /// windows' mapping. Replays there silently and puts the machine back exactly where it stood (like a frame
+    /// cache build). Fails on a replay barrier before the point, or a point outside the history.
+    TTDCpuView ReadCpuView(const TTDTimePoint& at, uint16_t offset, size_t length);
+
+    /// @brief ReverseContinue with bounds, a page filter and the all mode.
+    ///
+    /// Single mode: the newest hit in (fromFrame, before], the machine moved there. All mode: up to `limit` hits,
+    /// newest first; the machine is replayed from checkpoints and put back exactly where it stood.
+    TTDReverseContinueResult ReverseContinue(const TTDReverseContinueQuery& query);
+
+    /// Most hits an all-mode reverse search or find-last returns
+    static constexpr size_t kReverseHitLimitMax = 10000;
 
     /// @brief Read-only accessor for the write journal (for serialization
     /// and tests).

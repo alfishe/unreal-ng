@@ -7,6 +7,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/memoryaccesstracker.h"
 
 using ROMControlPoints::PointDef;
 using ROMControlPoints::RomKind;
@@ -54,7 +55,10 @@ void EditorMonitor::Disarm()
     {
         if (_restoreBreakpoints)
             features->setFeature(Features::kBreakpoints, false);
-        if (_restoreDebugMode)
+        // A memory or call trace session started since Arm() needs debug mode: it is no longer ours to restore
+        const bool sessionNeedsIt =
+            _context->pMemory != nullptr && _context->pMemory->GetAccessTracker().HasCapturingSession();
+        if (_restoreDebugMode && !sessionNeedsIt)
             features->setFeature(Features::kDebugMode, false);
     }
     _restoreBreakpoints = false;

@@ -206,11 +206,18 @@ media_eject("B", {export = "/tmp/b.trd"})
 media_info("sd"); media_formats("floppy"); media_save("A"); media_export("sd", "/tmp/card.img")
 media_targets("/discs/dna_nemo.iso")                    -- where a file can go: file, targets, default, refusal
 media_discard("A"); media_rescan("sd"); media_create("B"); media_protect("A", true)
-media_volumes("hd")                                     -- the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, FAT partitions
+media_volumes("hd")                                     -- the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT partitions
 media_files("A", "SHELL", {recursive = true})           -- a directory's entries; {volume = "p1"} picks a volume
 media_read("A", "read_me.txt", {out = "/tmp/r.txt"})    -- base64 data, or written to out
 local bytes, why = media_read_bytes("hd", "AUTOEXEC.BAT", "p1")  -- the bytes as a string, or nil and the reason
-media_write("A", "PROG.C", "\243\201", {start = 0x8000})  -- onto a TR-DOS / +3DOS floppy; nil, {["in"] = "prog.bin"} a host file
+media_write("A", "PROG.C", "\243\201", {start = 0x8000})  -- onto any file system of the disk; nil, {["in"] = "prog.bin"} a host file
+media_rename("A", "PROG.C", "GAME.C")                   -- a bare name stays in its directory; "/x" moves a file or a directory (iS-DOS, FAT)
+media_delete("hd", "OLD.TXT", {volume = "p1"})
+media_mkdir("hd", "GAMES/NEW", {parents = true})         -- a FAT directory, an iS-DOS catalogue
+media_mkdir("A", "WORK", {continuous = true, blocks = 4}) -- an iS-DOS continuous catalogue of 4 blocks
+media_delete("hd", "GAMES", {recursive = true})          -- a directory with its contents
+media_attrib("hd", "GAME.COM", {attributes = "+R-H", time = "2026-10-26 14:30"})  -- FAT RHSA, iS-DOS RWHD, +3DOS RSA
+media_label("hd", "WORK DISK")                           -- FAT label, TR-DOS title, iS-DOS device name
 media(verb, slot, path, opts)                           -- any verb
 ```
 
@@ -910,7 +917,7 @@ local enabled = emu:feature_get("debugmode")
 ```
 
 > [!NOTE]
-> Memory counters (`memcounters`) and call trace (`calltrace`) are available via CLI and WebAPI. Full Lua bindings for these analysis features are planned.
+> Memory counters and watches: `memory_counters`, `memory_counter`, `memory_watch_*` (see Memory Profiler below). The call trace (`calltrace`) is available via CLI and WebAPI.
 
 ### Opcode Profiler
 
@@ -951,22 +958,26 @@ local trace = profiler_trace(500)
 Track memory access patterns across all physical memory pages (RAM/ROM/Cache).
 
 ```lua
--- Session control
-memory_profiler_start()    -- Enable feature, start capture
-memory_profiler_stop()     -- Stop capture
-memory_profiler_pause()    -- Pause capture (retain data)
-memory_profiler_resume()   -- Resume paused capture
-memory_profiler_clear()    -- Clear all data
+-- Session control (tracecontrol): trace("memory", "start"), also stop / pause / resume / clear / status
+trace("memory", "start")
 
--- Status query
-local status = memory_profiler_status()
--- status.feature_enabled, status.capturing, status.session_state, status.tracking_mode
+-- Per-address counters (MemoryCounters, docs/emulator/design/debugger/memory-counters.md): a table or nil, error
+local hot = memory_counters{space = "cpu", view = "top", kinds = "x", limit = 16}
+for _, cell in ipairs(hot.cells) do            -- cell = {address, reads, writes, executes}
+    print(string.format("%04X r=%d w=%d x=%d", cell[1], cell[2], cell[3], cell[4]))
+end
+local banks = memory_counters{space = "phys", view = "top", kinds = "w"}   -- cell[1] // 0x4000 = absolute page
+local cells = memory_counters{addresses = "0x5C00,0x5C08,0x8000-0x800F"}  -- or a table of addresses
+local r, w, x = memory_counter(0x5C08)          -- one cell; memory_counter(0x1C08, "ram5")
 
--- Data retrieval
-local pages = memory_profiler_pages(20)      -- Get per-page access summaries
-local counters = memory_profiler_counters(5, "physical")  -- Address-level counters for page
-local regions = memory_profiler_regions()    -- Monitored region statistics
-memory_profiler_save("/path/output", "yaml") -- Save data to file
+-- Watches (MemoryWatch): true or nil, error
+memory_watch_add("sysvars", 0x5C00, 0xC0, {callers = true})
+memory_watch_port("kempston", 0x1F, 0x00FF, {values = true})   -- every port with low byte 0x1F
+for _, watch in ipairs(memory_watches()) do     -- {name, kind, start, length / port, mask, reads, writes, executes, callers, values}
+    print(watch.name, watch.reads, watch.writes)
+end
+memory_watch_remove("sysvars")
+memory_watch_clear()
 ```
 
 ### Call Trace Profiler
@@ -1035,7 +1046,7 @@ Play RZX input recordings: the start snapshot loads, then every `IN` returns the
 | `rzx_stop()` | boolean | Stop playing; `false` when nothing played. |
 | `rzx_status()` | table | `loaded`, `active`, `summary`, `path`, `creator`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `snapshots_applied`, `keyframes`, `keyframe_bytes`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
 
-`snapshot_load("game.rzx")` plays a recording on the machine as it is. `snapshot_load` returns `ok, reason, emulator_id`: a TS-Conf program (`.spg`) on another model switches the machine to TS-Conf first when the script is not bound to one machine (`emulator_id` is then the new instance), and is refused with the reason when it is.
+`snapshot_load("game.rzx")` plays a recording on the machine as it is. `snapshot_load(path [, commit | {commit = name, switch_model = bool}])` returns `ok, reason, emulator_id`: a TS-Conf program (`.spg`) on another model switches the machine to TS-Conf first unless `switch_model = false` (`emulator_id` is then the new instance). An `.szx` of another model, or a `.z80` / `.sna` the machine cannot hold (a 128K file on a 48K), switches with `switch_model = true` (or `[SNAPSHOT] SwitchModel=1` in the configuration) and is refused with the machine it needs otherwise. A script bound to one machine never switches: such a file is refused with the reason.
 
 ```lua
 local r = rzx_play("games/ericfloaters.rzx", {desync_mode = "tolerant"})
@@ -1178,6 +1189,11 @@ local r = ttd_reverse_continue({0x8000, 0x8010})
 --     blocked_by_marker = {kind, reason, frame, tinframe}  (as the WebAPI does)
 --     covered_from, covered_from_tinframe, covered_to, covered_to_tinframe:
 --     the searched span (command-interface.md -> Search window)
+
+-- Options (second table): phys_page (0..255 or "rom"), all, limit, before_frame / before_tin or before (machine T),
+-- from_frame. all = true: every hit newest first, the machine stays
+local hits = ttd_reverse_continue({0xC000}, { phys_page = 3, all = true, limit = 500 })
+-- --> { hits = { {frame, tinframe, t, pc, phys_page}, ... }, count, truncated, next_before, ... }
 ```
 
 **Reverse search:**
@@ -1199,8 +1215,12 @@ local r2 = ttd_find_last{
     pc_to     = 0x8000,
     before_frame = 4823,       -- search at or before this point (default: current position)
     before_tin = 0,
-    phys_page = 5              -- 0..255: one physical RAM page
+    phys_page = 5              -- 0..255 or "rom": one physical RAM page
 }
+-- Every write that changed the byte, newest first, with the byte it replaced (table form); the machine stays
+local changes = ttd_find_last{ addr = 0x5B00, changes_only = true, all = true, limit = 500 }
+-- --> { hits = { {frame, tinframe, t, pc, value, old_value, ...}, ... }, count, truncated, next_before }
+--     more keys: before (machine T), from_frame
 -- The Sprinter's video RAM / fast RAM: space = "vram" | "cache" (table form), addr = an offset in it
 local v = ttd_find_last{ addr = 0x4805, space = "vram" }
 -- --> { found = true, pc, space = "vram", offset = 0x4805, phys_page = nil, ... }
@@ -1296,12 +1316,20 @@ local scan = ttd_coverage_scan{kind = "executed", addr_from = 0x0038, addr_to = 
 --   matching_frames = 3, scanned_frames = 183, truncated = false,
 --   covered_from = 18, covered_to = 197, index_available = true }
 
+-- order = "newest": the newest matches first; ranges = true: runs {from, to}; a cut list carries next_from_frame
+-- (oldest order) or next_to_frame (newest); exact = false without phys_page (the offset matched on every page)
+local runs = ttd_coverage_scan{kind = "executed", addr_from = 0x8200, addr_to = 0x8200, phys_page = 2,
+                               order = "newest", ranges = true, limit = 50}
+
 -- The Sprinter's video RAM by its own offsets (space = "vram" / "cache": inside one 16 KB page)
 local written = ttd_coverage_scan{kind = "written", space = "vram", addr_from = 0x4805, addr_to = 0x4805}
 
 -- A memory at a past checkpoint, and what changed between two - from the store, no seek
 local at = ttd_memory_at{space = "ram5", frame = 150, offset = 0x1C78, length = 2}   -- tinframe = T: inside the frame (ram, vram, cache)
 -- { space = "ram", offset = 89208, length = 2, frame = 150, at_frame = 150, exact = true, hex = "6500" }
+-- ram / ramN offsets are physical; space = "cpu": Z80 addresses as the CPU saw them, with banks = {{window, addr,
+-- kind, page, name}, ...}
+local cpu = ttd_memory_at{space = "cpu", frame = 150, tinframe = 20000, offset = 0xC000, length = 16}
 local diff = ttd_memory_diff{space = "neogs.ram", from_frame = 150, to_frame = 600}
 -- { space = "neogs.ram", changed_bytes = ..., ranges = { {offset = 4096, length = 64}, ... }, truncated = false }
 

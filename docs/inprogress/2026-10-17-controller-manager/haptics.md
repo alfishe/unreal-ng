@@ -261,7 +261,15 @@ Built (2026-10-23), the HD frequency:
 ### 6.2 Built-in effect library
 
 `tick`, `knock`, `thump`, `explosion`, `engine` (follow), `heartbeat` (pattern), `hit`, `life-lost`, `pickup`,
-`shot`, `rumble-strip`. Profiles reference them by id and may override fields.
+`shot`, `rumble-strip`, `impact`. Profiles reference them by id and may override fields. `impact` is a hard front on
+every actuator at once (both handle motors at full, both triggers at 0.8, 1 ms attack, about 100 ms): a bullet that
+hits the hero, where `hit` is too soft. `whip` / `whip-left` are a lash: a crack on the high motor and the trigger of the
+side it flies to (120 ms), and `whip-drag` / `whip-drag-left` the drag of a continuous source (a `frame` source holds
+it as long as the lash is out).
+
+A rule may carry `if: {source: <a value source>, equals: 0..255}`: it plays only while the byte that source watches
+equals the number at the frame the event fires (the direction a hero faces: `if: {source: facing, equals: 2}`). The
+profile `builtin/game/montana-mike` uses it for the whip's side.
 
 ### 6.3 Mixer
 
@@ -613,6 +621,7 @@ and prove a game's triggers: [the game-haptics recipe](../../../.recipe/input/ga
 | `builtin/game/chase-hq-gs` | CHASE_GS (General Sound version) | the speed, crash, hit and turbo above; its effect requests go to the GS |
 | `builtin/game/chase-hq-demo` | CHASEHQD (Sinclair User demo, variables #514 lower) | the speed word #9D36, #9F8E, #A1B0, #8327, as above; the pad drives its Sinclair joystick keys |
 | `builtin/game/dizzy-x` | `testdata/loaders/sna/Dizzy X.sna` (2026-10-26; Sinclair 6 7 8 9 0 only) | exec #795A (jump starts) → `tick` on the high motor; #7A97 (lands from a fall) → `knock` on the low motor; #847A (energy taken) → `hit`; #8B80 (life lost) → `life-lost`. The game requests a sound by writing its number to #767D: every writer is an event (the method: [game-haptics recipe](../../../.recipe/input/game-haptics.md)) |
+| `builtin/game/aliens-neoplasma-2` | ANP2.nex v1.6.1 (a Next NEX from the SD card; the v1.6 demo has its own document) | exec page 5 #29D3 (jump) → `tick` on the high motor; #29F4 (landing) → `knock` on the low motor; the energy byte #7F70 (page 5 #3F70) decreased → `hit`; reaching 0 (every death: bullet, gas, water, fall) → `life-lost`; exec page 2 #37AA (an enemy bullet kills the hero, found in a TTD recording of the owner: the energy goes 5 → 0 from #B7AE, past #B27D and #B1C2) → `impact`, a hard front on every actuator (both triggers too). #B1C2 (water) stays an event only |
 
 Each profile also binds the pad: the game's keys on the d-pad, the left stick and the face buttons.
 

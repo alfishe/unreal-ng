@@ -551,6 +551,42 @@ TEST_F(McpTools_Test, LoadSoftware_Snapshot_CarriesTheCommitChoice)
     EXPECT_FALSE(_caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/load")->body.isMember("commit"));
 }
 
+TEST_F(McpTools_Test, LoadSoftware_Snapshot_CarriesTheSwitchModelChoice)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/snapshot/load"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["path"] = "/games/exolon128.z80";
+    args["switch_model"] = true;
+    ASSERT_FALSE(RunTool(*_registry, "load_software", args, *_caller).isError);
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/load");
+    ASSERT_NE(call, nullptr);
+    ASSERT_TRUE(call->body.isMember("switch_model"));
+    EXPECT_TRUE(call->body["switch_model"].asBool());
+
+    args["switch_model"] = false;
+    RunTool(*_registry, "load_software", args, *_caller);
+    EXPECT_FALSE(_caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/load")->body["switch_model"].asBool());
+
+    // Not given: the body says nothing, the launcher's rule decides
+    Json::Value plain;
+    plain["path"] = "/games/other.z80";
+    RunTool(*_registry, "load_software", plain, *_caller);
+    EXPECT_FALSE(_caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/load")->body.isMember("switch_model"));
+}
+
+TEST_F(McpTools_Test, LoadSoftware_Rzx_CarriesTheSwitchModelChoice)
+{
+    Json::Value args;
+    args["path"] = "/nonexistent/game.rzx";
+    args["switch_model"] = false;
+    ASSERT_FALSE(RunTool(*_registry, "load_software", args, *_caller).isError);
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/rzx/play");
+    ASSERT_NE(call, nullptr);
+    ASSERT_TRUE(call->body.isMember("switch_model"));
+    EXPECT_FALSE(call->body["switch_model"].asBool());
+}
+
 TEST_F(McpTools_Test, LoadSoftware_Inspect_AsksWhatALoadWouldDoAndLoadsNothing)
 {
     _caller->routes["POST /api/v1/emulator/emu-1/snapshot/inspect"] = {200, Json::Value(Json::objectValue)};
@@ -2140,6 +2176,70 @@ TEST_F(McpTools_Test, AnalyzePerformance_Vdac2LineBudgetSet_PutsAndValidates)
     Json::Value empty;
     empty["action"] = "vdac2_line_budget_set";
     EXPECT_TRUE(RunTool(*_registry, "analyze_performance", empty, *_caller).isError);
+}
+
+TEST_F(McpTools_Test, AnalyzePerformance_MemoryCounters_ListsCellsInText)
+{
+    Json::Value reply;
+    reply["space"] = "phys";
+    reply["session_state"] = "capturing";
+    reply["allocated"] = true;
+    reply["totals"]["reads"] = 7;
+    reply["totals"]["writes"] = 0;
+    reply["totals"]["executes"] = 40;
+    reply["matched"] = 2;
+    reply["min"] = 1;
+    reply["kinds"] = "x";
+    Json::Value cell(Json::arrayValue);
+    cell.append(0x15C08);
+    cell.append(7);
+    cell.append(0);
+    cell.append(40);
+    cell.append("ram5");
+    reply["cells"].append(cell);
+    _caller->routes["GET /api/v1/emulator/emu-1/profiler/memory/counters?space=phys&format=top&kinds=x&limit=4"] = {200,
+                                                                                                                   reply};
+
+    Json::Value args;
+    args["action"] = "memory_counters";
+    args["space"] = "phys";
+    args["kinds"] = "x";
+    args["limit"] = 4;
+    mcp::ToolResult result = RunTool(*_registry, "analyze_performance", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("1 cell(s) of 2 at or above min 1 (x)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("0x15C08 (ram5 0x1C08) r=7 w=0 x=40"), std::string::npos) << result.text;
+
+    args["view"] = "heaviest";
+    EXPECT_TRUE(RunTool(*_registry, "analyze_performance", args, *_caller).isError);
+}
+
+TEST_F(McpTools_Test, AnalyzePerformance_MemoryWatch_AddsPortAndRefusesWithoutName)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/profiler/memory/watches"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "memory_watch";
+    args["op"] = "add";
+    args["name"] = "kempston";
+    args["port"] = "0x1F";
+    args["mask"] = 255;
+    args["values"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "analyze_performance", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/profiler/memory/watches");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["name"].asString(), "kempston");
+    EXPECT_EQ(call->body["port"].asString(), "0x1F");
+    EXPECT_EQ(call->body["mask"].asString(), "255");
+    EXPECT_TRUE(call->body["values"].asBool());
+
+    Json::Value nameless;
+    nameless["action"] = "memory_watch";
+    nameless["op"] = "remove";
+    EXPECT_TRUE(RunTool(*_registry, "analyze_performance", nameless, *_caller).isError);
 }
 
 TEST_F(McpTools_Test, ManageSymbols_List_GetsLabels)
@@ -4626,4 +4726,131 @@ TEST_F(McpTools_Test, CompanionManage_ListsAndRevokes)
     result = RunTool(*_registry, "companion_manage", revokeAll, *_caller);
     ASSERT_FALSE(result.isError) << result.text;
     EXPECT_NE(result.text.find("3 companion(s) revoked"), std::string::npos) << result.text;
+}
+
+/// The analysis lists (2026-10-28-ttd-analysis-feedback): an agent may read only the text, so the hits, the frames,
+/// the cursor and the banks are in it; the new options reach the WebAPI
+TEST_F(McpTools_Test, TimeTravel_AnalysisListsAreInTheText)
+{
+    Json::Value rc;
+    rc["matched"] = true;
+    rc["pc"] = 0xC000;
+    rc["count"] = 2;
+    rc["truncated"] = true;
+    rc["next_before"] = 9999;
+    for (int page : {3, 1})
+    {
+        Json::Value hit;
+        hit["frame"] = 20 - page;
+        hit["tinframe"] = 100;
+        hit["t"] = 10000 + page;
+        hit["pc"] = 0xC000;
+        hit["phys_page"] = page;
+        rc["hits"].append(hit);
+    }
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-continue"] = {200, rc};
+    Json::Value args;
+    args["action"] = "reverse_continue";
+    args["pcs"].append("0xC000");
+    args["all"] = true;
+    args["limit"] = 2;
+    args["phys_page"] = "rom";
+    args["before_frame"] = 30;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/reverse-continue");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["all"].asBool());
+    EXPECT_EQ(call->body["limit"].asUInt(), 2u);
+    EXPECT_EQ(call->body["phys_page"].asString(), "rom");
+    EXPECT_EQ(call->body["before_frame"].asUInt(), 30u);
+    EXPECT_NE(result.text.find("frame 17 t=100 PC 0xC000 page 3"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("frame 19 t=100 PC 0xC000 page 1"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("before=9999"), std::string::npos) << result.text;
+
+    Json::Value fl;
+    fl["found"] = true;
+    fl["count"] = 1;
+    fl["truncated"] = false;
+    Json::Value write;
+    write["frame"] = 5;
+    write["tinframe"] = 700;
+    write["t"] = 4242;
+    write["pc"] = 0x8013;
+    write["value"] = 5;
+    write["old_value"] = 0;
+    write["access"] = "write";
+    write["space"] = "ram";
+    write["addr"] = 0x8101;
+    write["phys_page"] = 2;
+    fl["hits"].append(write);
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/find-last"] = {200, fl};
+    args = Json::Value();
+    args["action"] = "find_last";
+    args["addr"] = "0x8101";
+    args["changes_only"] = true;
+    args["all"] = true;
+    args["before"] = 123456;
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/find-last");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["changes_only"].asBool());
+    EXPECT_EQ(call->body["before"].asUInt64(), 123456u);
+    EXPECT_NE(result.text.find("frame 5 t=700 write PC 0x8013 value 5 (was 0) addr 0x8101 page 2"), std::string::npos)
+        << result.text;
+
+    Json::Value scan;
+    scan["index_available"] = true;
+    scan["index_available"] = true;
+    scan["scanned_frames"] = 40;
+    scan["matching_frames"] = 9;
+    scan["first_match"] = 2;
+    scan["last_match"] = 39;
+    scan["order"] = "newest";
+    scan["exact"] = false;
+    scan["truncated"] = true;
+    scan["next_to_frame"] = 29;
+    for (int f : {39, 38, 37, 33, 30})
+        scan["frames"].append(f);
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/coverage/scan?addr_from=0x8200&addr_to=0x8200&limit=5&order=newest"] =
+        {200, scan};
+    args = Json::Value();
+    args["action"] = "coverage_scan";
+    args["addr_from"] = "0x8200";
+    args["addr_to"] = "0x8200";
+    args["limit"] = 5;
+    args["order"] = "newest";
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("39-37, 33, 30"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("to_frame=29"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("Not exact"), std::string::npos) << result.text;
+
+    Json::Value at;
+    at["space"] = "cpu";
+    at["offset"] = 0x8000;
+    at["length"] = 2;
+    at["at_frame"] = 7;
+    at["exact"] = true;
+    at["hex"] = "F30E";
+    for (int w = 0; w < 4; ++w)
+    {
+        Json::Value bank;
+        bank["window"] = w;
+        bank["addr"] = std::vector<std::string>{"0x0000", "0x4000", "0x8000", "0xC000"}[w];
+        bank["name"] = std::vector<std::string>{"ROM 3", "RAM 5", "RAM 2", "RAM 1"}[w];
+        at["banks"].append(bank);
+    }
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/memory-at"] = {200, at};
+    args = Json::Value();
+    args["action"] = "memory_at";
+    args["space"] = "cpu";
+    args["frame"] = 7;
+    args["offset"] = "0x8000";
+    args["length"] = 2;
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("0xC000 RAM 1"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("F30E"), std::string::npos) << result.text;
 }

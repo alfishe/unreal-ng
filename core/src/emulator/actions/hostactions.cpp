@@ -18,6 +18,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/joystick/debugjoystickmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/ttd/timetravelhooks.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/actions/actionparams.h"
 #include "emulator/actions/actionregistry.h"
@@ -91,6 +92,15 @@ std::string NoTtd(Emulator& emulator, const ActionValue&)
     EmulatorContext* context = emulator.GetContext();
     return context != nullptr && context->pTimeTravelHooks != nullptr ? std::string()
                                                                       : std::string("time travel is not available");
+}
+
+/// Time travel with a recorded history (the published cursor: never waits for the machine)
+std::string NoHistory(Emulator& emulator, const ActionValue& value)
+{
+    if (std::string why = NoTtd(emulator, value); !why.empty())
+        return why;
+    return emulator.GetContext()->pTimeTravelHooks->PublishedCursor().history ? std::string()
+                                                                                : std::string("record first");
 }
 
 ActionResult FromRun(RunReply reply)
@@ -1549,25 +1559,25 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
                 ttd::TTDControl(call.emulator->GetContext()).Execute({name, ParamOptions(call.value.params)}));
         };
     };
-    auto ttdRules = [](const char* method, const char* subpath) {
+    auto ttdRules = [](const char* method, const char* subpath, bool history = false) {
         ActionRules rules = RouteRules(method, subpath);
-        rules.unavailable = NoTtd;
+        rules.unavailable = history ? NoHistory : NoTtd;
         return rules;
     };
     add("ttd.start", "Start recording", ttdGroup, ValueKind::Press, "", verb("start"), ttdRules("POST", "/ttd/start"));
     add("ttd.stop", "Stop recording", ttdGroup, ValueKind::Press, "", verb("stop"), ttdRules("POST", "/ttd/stop"));
     add("ttd.seek", "Go to a frame or bookmark", ttdGroup, ValueKind::Press, "frame + tinframe?, or bookmark",
-        verb("seek"), ttdRules("POST", "/ttd/seek"));
+        verb("seek"), ttdRules("POST", "/ttd/seek", true));
     add("ttd.bookmark_delete", "Delete a bookmark", ttdGroup, ValueKind::Press, "label", verb("bookmark-delete"),
-        ttdRules("DELETE", "/ttd/bookmarks/A"));
+        ttdRules("DELETE", "/ttd/bookmarks/A", true));
     add("ttd.invalidate", "Drop the history", ttdGroup, ValueKind::Press, "", verb("invalidate"),
-        ttdRules("POST", "/ttd/invalidate"));
+        ttdRules("POST", "/ttd/invalidate", true));
     add("ttd.history_limit", "History limit", ttdGroup, ValueKind::Press, "frames?, bytes?", verb("history-limit"),
         ttdRules("POST", "/ttd/history-limit"));
     add("ttd.journal", "Input journal", ttdGroup, ValueKind::Press, "enabled", verb("journal"),
         ttdRules("POST", "/ttd/journal"));
     add("ttd.dump", "Save the session", ttdGroup, ValueKind::Press, "path", verb("dump"),
-        ttdRules("POST", "/ttd/dump"));
+        ttdRules("POST", "/ttd/dump", true));
     add("ttd.load", "Open a session", ttdGroup, ValueKind::Press, "path", verb("load"), ttdRules("POST", "/ttd/load"));
     // endregion </Time travel>
 

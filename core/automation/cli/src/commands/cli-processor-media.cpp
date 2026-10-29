@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <ctime>
 #include <iomanip>
 #include <set>
 #include <sstream>
@@ -24,13 +25,15 @@ namespace
     /// Options that take a value; every other option is a flag
     const std::set<std::string> kValueOptions = {"access", "fs",       "codepage", "free", "format", "kind",
                                                  "export", "cylinders", "sides",   "size", "on",     "retarget",
-                                                 "compression", "parent", "volume", "out", "in", "data", "start"};
+                                                 "compression", "parent", "volume", "out", "in", "data", "start", "to",
+                                                 "attributes", "time", "label", "blocks", "type", "param2"};
 
     /// Verbs that take a path after the slot
     bool TakesPath(const std::string& verb)
     {
         return verb == "insert" || verb == "swap" || verb == "save" || verb == "export" || verb == "targets" ||
-               verb == "compose" || verb == "files" || verb == "read" || verb == "write";
+               verb == "compose" || verb == "files" || verb == "read" || verb == "write" || verb == "delete" ||
+               verb == "rename" || verb == "mkdir" || verb == "attrib";
     }
 
     /// `media compose` / `media layers`: the layout and one line per layer
@@ -150,6 +153,12 @@ void CLIProcessor::HandleMedia(const ClientSession& session, const std::vector<s
         request.selector = positional[next++];
     if (TakesPath(verb) && next < positional.size())
         request.path = positional[next++];
+    if (verb == "rename" && !request.options.count("to") && next < positional.size())
+        request.options["to"] = positional[next++];  // media rename A OLD.C NEW.C
+    if (verb == "attrib" && !request.options.count("attributes") && next < positional.size())
+        request.options["attributes"] = positional[next++];  // media attrib A GAME.C +R-H
+    if (verb == "label" && !request.options.count("label") && next < positional.size())
+        request.options["label"] = positional[next++];  // media label A "MY DISK"
     if (next < positional.size())
     {
         session.SendResponse("Error: unexpected argument '" + positional[next] + "'" + NEWLINE +
@@ -274,6 +283,14 @@ void CLIProcessor::HandleMedia(const ClientSession& session, const std::vector<s
                 out << ", " << free->i << " free";
             if (v.find("offset")->i)
                 out << ", at byte " << v.find("offset")->i;
+            if (const StateNode* writable = v.find("writable"); writable && !writable->b)
+                out << ", read only";
+            if (const StateNode* letters = v.find("attributes"); letters && !letters->s.empty())
+                out << ", attributes " << letters->s;
+            if (const StateNode* times = v.find("times"); times && times->b)
+                out << ", times";
+            if (const StateNode* labels = v.find("labels"); labels && labels->b)
+                out << ", label";
             out << NEWLINE;
         }
         for (const StateNode& n : body.find("notes")->items)
@@ -303,11 +320,43 @@ void CLIProcessor::HandleMedia(const ClientSession& session, const std::vector<s
         for (const StateNode& n : body.find("notes")->items)
             out << "  note: " << n.s << NEWLINE;
     }
-    else if (verb == "write")
+    else if (verb == "write" || verb == "delete" || verb == "rename" || verb == "mkdir" || verb == "attrib" || verb == "label")
     {
-        out << "  wrote " << body.find("path")->s << " (" << body.find("size")->i << " bytes) on slot " << reply.slot
-            << ", volume " << body.find("volume")->s << NEWLINE;
-        out << "  unsaved: " << body.find("changes")->s << " (media save / eject --save keeps them)" << NEWLINE;
+        const std::string path = body.find("path") ? body.find("path")->s : std::string();
+        if (verb == "label")
+            out << "  labelled '" << body.find("label")->s << "'";
+        else if (verb == "attrib")
+        {
+            out << "  changed " << path;
+            if (const StateNode* a = body.find("attributes"))
+                out << ": " << (a->s.empty() ? std::string("no attributes") : a->s);
+            if (const StateNode* t = body.find("mtime"))
+            {
+                const std::time_t seconds = static_cast<std::time_t>(t->i);
+                std::tm tm {};
+#ifdef _WIN32
+                gmtime_s(&tm, &seconds);
+#else
+                gmtime_r(&seconds, &tm);
+#endif
+                char when[32];
+                std::strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", &tm);
+                out << ", " << when;
+            }
+        }
+        else if (verb == "write")
+            out << "  wrote " << path << " (" << body.find("size")->i << " bytes)";
+        else if (verb == "delete")
+            out << "  deleted " << path;
+        else if (verb == "mkdir")
+            out << "  made " << path;
+        else
+            out << "  renamed " << path << " to " << body.find("to")->s;
+        out << " on slot " << reply.slot << ", volume " << body.find("volume")->s << NEWLINE;
+        if (body.find("access")->s == "writethrough")
+            out << "  written through to the disk's file" << NEWLINE;
+        else
+            out << "  unsaved: " << body.find("changes")->s << " (media save / eject --save keeps them)" << NEWLINE;
     }
     else if (verb == "read" && !body.find("savedPath"))
     {
@@ -374,14 +423,34 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "                                 (insert takes the descriptor like any file)" << NEWLINE;
     out << "  layers <slot>                - a composite medium's layers" << NEWLINE;
     out << "  changes <slot>               - the guest's unsaved writes as file operations (and their layers)" << NEWLINE;
-    out << "  volumes <slot>               - the file systems on the disk: TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS," << NEWLINE
-        << "                                 NedoOS): floppies, FAT partitions, iS-DOS devices of an ATM hard disk" << NEWLINE;
+    out << "  volumes <slot>               - the file systems on the disk: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02," << NEWLINE
+        << "                                 MDOS, FAT (DSS, NedoOS): floppies, FAT partitions, ATM CP/M partitions and" << NEWLINE
+        << "                                 iS-DOS devices of an ATM hard disk" << NEWLINE;
     out << "  files <slot> [dir] [--volume id] [--recursive] - a directory's entries (the first volume by default)" << NEWLINE;
     out << "  read <slot> <file> [--volume id] [--out host-file] - a file's bytes (a hex dump without --out)" << NEWLINE;
-    out << "  write <slot> <file> --in host-file | --data base64 [--start n] [--header=false] [--volume id]" << NEWLINE
-        << "                               - a file onto a TR-DOS (NAME.T) or +3DOS (NAME.TYP) floppy, an older file" << NEWLINE
-        << "                                 of that name replaced; --start: the TR-DOS start / +3DOS CODE address" << NEWLINE
-        << "                                 (#8000, 0x8000, 32768); --header=false: +3DOS without its header" << NEWLINE;
+    out << "  write <slot> <file> --in host-file | --data base64 [--start n] [--header=false] [--type t] [--param2 n]" << NEWLINE
+        << "                               [--attributes RA] [--volume id]" << NEWLINE
+        << "                               - a file onto the disk (TR-DOS NAME.T, +3DOS NAME.TYP, MDOS name.T, FAT and" << NEWLINE
+        << "                                 iS-DOS dir/name.ext, MB-02 dir/name, ATM CP/M USERn/NAME.TYP), an older file of that name replaced; --start: the" << NEWLINE
+        << "                                 TR-DOS / MDOS start, +3DOS / MB-02 CODE address or program autostart line, iS-DOS" << NEWLINE
+        << "                                 load address (#8000, 0x8000, 32768); --header=false: +3DOS without its header;" << NEWLINE
+        << "                                 --type program|numbers|chars|code (+3DOS; MB-02 program or code), --param2 (+3DOS," << NEWLINE
+        << "                                 MB-02, MDOS: a program's length without variables by default); --attributes as" << NEWLINE
+        << "                                 attrib takes them, set once the file is written" << NEWLINE;
+    out << "  delete <slot> <file> [--volume id] [--recursive] - delete a file or an empty directory (FAT, iS-DOS, MB-02);" << NEWLINE
+        << "                                 --recursive: a directory with everything in it" << NEWLINE;
+    out << "  rename <slot> <file> <new-name> [--volume id] - a bare new name keeps it in its directory; FAT," << NEWLINE
+        << "                                 iS-DOS and MB-02 take a path from the root (/name: the root), moving the file or" << NEWLINE
+        << "                                 the directory" << NEWLINE;
+    out << "  mkdir <slot> <dir> [--volume id] [--parents] [--continuous] [--blocks n] - a new directory (FAT, iS-DOS" << NEWLINE
+        << "                                 catalogue, MB-02); --parents: the missing ones on the way too; iS-DOS:" << NEWLINE
+        << "                                 --continuous a continuous catalogue, --blocks its size 1-16 (mkdir.com /c /s)" << NEWLINE;
+    out << "  attrib <slot> <file> [+R-H | RA] [--time 2026-10-26T14:30[:05] | now] [--volume id]" << NEWLINE
+        << "                               - the attributes (FAT R H S A, iS-DOS R W H D, +3DOS / CP/M R S A, MDOS HSPARWED;" << NEWLINE
+        << "                                 +R-H changes, RA sets exactly) and the date and time (FAT, iS-DOS, MB-02)" << NEWLINE
+        << "                                 of a file or directory" << NEWLINE;
+    out << "  label <slot> <name> [--volume id] - the FAT volume label (\"\" removes it), TR-DOS disk title, iS-DOS" << NEWLINE
+        << "                                 device name, MB-02 or MDOS disk name" << NEWLINE;
     out << "  flatten <slot> [path] --strategy flat|delta|commit|write-back [--plan] [--force]" << NEWLINE
         << "                               [--onConflict refuse|keep-both]" << NEWLINE
         << "                               - a composite by a named strategy (commit: into the graft base image;" << NEWLINE

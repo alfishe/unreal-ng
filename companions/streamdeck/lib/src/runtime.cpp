@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <deque>
 
+#include "sdb/draw.h"
 #include "sdb/format.h"
 #include "sdb/iconpacks.h"
 #include "sdb/scenariorender.h"
@@ -260,6 +261,7 @@ void Runtime::Step(int timeoutMs)
             _nav.Rebind(_s, ids);
             _toggles.clear();
             _holds.clear();
+            _dialHint = StripLive::kAllDials, _dialHintUntil = NowMs() + 2000;  // the reloaded page opens anew
             force = true;
             reloaded = true;
             _dev.Note("scenario reloaded: " + _s.name + ", menu " + JoinPath(Layout(_s, _nav, _m).path));
@@ -873,6 +875,8 @@ void Runtime::FailureBanner(const Job& j, const std::string& message)
 
 void Runtime::NoteMenu()
 {
+    if (onPathChanged)
+        onPathChanged(_s.name, _nav.Ids());
     _status.clear();  // a readout belongs to the menu that showed it
     _dialHint = StripLive::kAllDials, _dialHintUntil = NowMs() + 2000;  // a page's dial labels for a moment
     _dev.Note("menu: " + JoinPath(_page.path));
@@ -960,6 +964,34 @@ void Runtime::SetNotice(const std::string& text)
 {
     std::lock_guard l(_mu);
     _notice = text;
+}
+
+void Runtime::RestorePath(const std::vector<std::string>& ids)
+{
+    std::lock_guard l(_mu);
+    _nav.Rebind(_s, ids);
+    _page = Layout(_s, _nav, _m);
+}
+
+void Runtime::ShowStopped(const std::string& text)
+{
+    (void)_dev.ClearAllKeys();
+    if (_m.HasLcd())
+    {
+        Rgb strip(_m.lcdLogicalW, _m.lcdLogicalH, 10, 10, 14);
+        const std::string t = DisplayText(text);
+        int scale = 4;
+        while (scale > 1 && draw::TextWidth(t, scale) > strip.w - 24)
+            --scale;
+        draw::Text(strip, (strip.w - draw::TextWidth(t, scale)) / 2, (strip.h - 7 * scale) / 2, t, scale,
+                   draw::Color{150, 150, 160});
+        (void)_dev.SetLcdFull(strip, 100);
+    }
+    // A write that failed on the way (a USB timeout as the daemon ends) lost the handle: the picture waits in the
+    // transport's cache for the reopen, which only a read does. Up to 2 s for it, else the deck stays as it was
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!_dev.Connected() && std::chrono::steady_clock::now() < until)
+        (void)_dev.PollEvents(100);
 }
 
 std::string Runtime::Notice() const

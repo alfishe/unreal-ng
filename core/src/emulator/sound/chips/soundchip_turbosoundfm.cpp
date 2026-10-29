@@ -76,6 +76,13 @@ void SoundChip_TurboSoundFM::reset()
 
 void SoundChip_TurboSoundFM::handleFrameStart()
 {
+    // A recording's render mode changes only here, before the frame's checkpoint records it (setTtdRenderPinned)
+    if (_ttdFollowsHost && (_pinnedHQ != _hostHQ || _pinnedSuppressed != _hostSuppressed))
+    {
+        _pinnedHQ = _hostHQ;
+        _pinnedSuppressed = _hostSuppressed;
+        applyRenderMode();
+    }
     settleSteps();
     // Frame rollover (§5.2): Core::AdjustFrameCounters already subtracted
     // the frame length from z80->t; shift the core's position and every
@@ -599,6 +606,17 @@ void SoundChip_TurboSoundFM::handleFrameEnd()
     // position is the frame end the per-step sync reached, and the next frame start rebases from it
     catchUp();
 
+    // Rendered only for the TTD pin: the host asked for no output this frame (turbo, sound off), so the output path
+    // sees the silence it expects
+    if (_ttdPinned && _hostSuppressed && !_pair.synthesisSuppressed())
+    {
+        memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
+        memset(_chip0Buffer, 0x00, _chip0AudioDescriptor.memoryBufferSizeInBytes);
+        memset(_chip1Buffer, 0x00, _chip1AudioDescriptor.memoryBufferSizeInBytes);
+        memset(_fm0Buffer, 0x00, _fm0AudioDescriptor.memoryBufferSizeInBytes);
+        memset(_fm1Buffer, 0x00, _fm1AudioDescriptor.memoryBufferSizeInBytes);
+    }
+
     // HUD activity (AY/TS and FM): SoundManager (AudioActivityIndicators),
     // from the audio-settings LEDs computed on the chip / FM buffers
 
@@ -843,8 +861,15 @@ void SoundChip_TurboSoundFM::TTDSaveState(uint8_t* dst) const
 
     put_u8(cur, kTsfmStateVersion);
     // Bit 3: the render cursor's pending re-anchor (consumed at the next frame
-    // start; a capture inside a frame - a recording's first checkpoint - can hold it)
-    put_u8(cur, static_cast<uint8_t>(EncodeBoardByte(_board) | (_renderReanchor ? 0x08 : 0)));
+    // start; a capture inside a frame - a recording's first checkpoint - can hold it).
+    // Bit 4: the render path is LQ (the SSG tick schedule differs from HQ; 0 in
+    // blobs written before, all of them HQ: the corpus is recorded with soundhq on).
+    // Bit 5: the pair still adopts the CPU's clock at its next sync (a capture
+    // right after a reset: a recording started before the first step).
+    // Bit 6: synthesis is suppressed (sound off, turbo: the render loop stands)
+    put_u8(cur, static_cast<uint8_t>(EncodeBoardByte(_board) | (_renderReanchor ? 0x08 : 0) |
+                                      (_pair.hqEnabled() ? 0 : 0x10) | (_pair.adoptsCpuClock() ? 0x20 : 0) |
+                                      (_pair.synthesisSuppressed() ? 0x40 : 0)));
     put_u64(cur, _samplePhase);
     put_f64(cur, _decimationPhase);
     put_f64(cur, _pair.chip(0)->ssg.decimatorLeft().phase());
@@ -869,6 +894,13 @@ void SoundChip_TurboSoundFM::TTDSaveState(uint8_t* dst) const
 
 void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
 {
+    // A checkpoint loads only under TTD: the replay from it runs the pinned render path in the blob's mode (board
+    // byte bits 4 and 6), set before the restore, which overrides what the switch noted
+    _ttdPinned = true;
+    _ttdFollowsHost = false;
+    _pinnedHQ = (src[1] & 0x10) == 0;
+    _pinnedSuppressed = (src[1] & 0x40) != 0;
+    applyRenderMode();
     _stepPending = false;   // the restored state replaces what the gate noted
     _stepDeadline = 0;
     _quietDeferral = false;
@@ -904,7 +936,7 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
     // next syncTo() clocks the FM chips over exactly the T-states the
     // original run did (adopting the next position instead skipped the first
     // instruction's T-states and slipped every FM sample clock)
-    _pair.loadTimeline(cur, nowT());
+    _pair.loadTimeline(cur, nowT(), (boardByte & 0x20) != 0);
 
     // v5 tail: the current frame's render progress
     const uint32_t lastTStates = get_u32(cur);
@@ -971,6 +1003,21 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
                                          uint64_t(_ayBufferIndex / AUDIO_CHANNELS) * CPU_CLOCK_RATE;
         _context->pSoundManager->adoptSamplePhase(frameStartPhase);
     }
+}
+
+void SoundChip_TurboSoundFM::TTDRecordingStarted()
+{
+    catchUp();
+    // Pinned already: a recording resumed in a session keeps the session's quality. Otherwise the host's quality as
+    // the manager has it now: the recording lock may have just ended turbo, whose LQ override the device would see
+    // only at the next frame start
+    if (!_ttdPinned)
+    {
+        if (_context->pSoundManager)
+            _hostHQ = _context->pSoundManager->isHQActive();
+        setTtdRenderPinned(true, true);
+    }
+    _deferAllowed = false;
 }
 
 uint64_t SoundChip_TurboSoundFM::TTDHashState() const

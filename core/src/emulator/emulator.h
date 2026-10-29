@@ -596,6 +596,9 @@ public:
     /// when the file is not a snapshot this emulator can read
     bool InspectSnapshot(const std::string& path, const snapshot::Options& options, StateNode& result,
                          std::string& error);
+    /// The same dry plan, as data: the file's image and the plan's report; `proceeds` = the load would go ahead
+    bool PlanSnapshot(const std::string& path, const snapshot::Options& options, snapshot::Image& image,
+                      snapshot::Report& plan, bool& proceeds, std::string& error);
     /// The snapshot pipeline's report of the last load: the commit that ran (or the refusal and why), the verdicts that
     /// led to it, the format's per-block outcomes, warnings. Read it after the load returned
     const snapshot::Report& LastSnapshotReport() const { return _lastSnapshotReport; }

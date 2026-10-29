@@ -88,7 +88,7 @@ struct MonitoredRegion
 {
     std::string name;           // User-friendly name for the region
     uint16_t startAddress;      // Start address of the region
-    uint16_t length;            // Length of the region in bytes
+    uint32_t length;            // Length of the region in bytes (start + length <= 0x10000)
     MonitoringOptions options;  // Tracking options for this region
     AccessStats stats;          // Access statistics for this region
     TrackingMode mode;          // Tracking mode for this region
@@ -99,8 +99,22 @@ struct MonitoredPort
 {
     std::string name;           // User-friendly name for the port
     uint16_t port;              // Port number
+    uint16_t mask = 0xFFFF;     // Address lines compared: an access counts when (access & mask) == (port & mask)
     MonitoringOptions options;  // Tracking options for this port
     AccessStats stats;          // Access statistics for this port
+};
+
+// A monitored region's or port's totals as the emulation thread published them (PublishWatches)
+struct PublishedWatch
+{
+    std::string name;
+    bool port = false;
+    uint16_t start = 0;      // region: first CPU address; port: the port
+    uint32_t length = 0;     // region only
+    uint16_t mask = 0xFFFF;  // port only
+    uint32_t readCount = 0;
+    uint32_t writeCount = 0;
+    uint32_t executeCount = 0;
 };
 
 // Structure to hold segment information for time-based tracking
@@ -166,9 +180,13 @@ private:
     std::vector<MonitoredRegion> _monitoredRegions;
     std::vector<MonitoredPort> _monitoredPorts;
 
-    // Fast lookup maps for regions and ports
+    // The watches' totals for other threads (PublishWatches)
+    mutable std::mutex _publishedMutex;
+    std::vector<PublishedWatch> _publishedWatches;
+    uint64_t _publishedRevision = 0;
+
+    // Fast lookup map for regions (ports are few and partially decoded: a scan of _monitoredPorts)
     std::unordered_map<uint16_t, std::vector<size_t>> _addressToRegionMap;  // address -> indices in _monitoredRegions
-    std::unordered_map<uint16_t, size_t> _portToIndexMap;                   // port -> index in _monitoredPorts
 
     // Segmented tracking
     bool _segmentTrackingEnabled = false;
@@ -277,18 +295,27 @@ public:
 
     /// @brief Check if call trace is actively capturing
     bool IsCalltraceCapturing() const;
+
+    /// @brief A memory or call trace session is capturing: it needs the debug memory interface, so whoever
+    /// switched debug mode on for its own needs leaves it on
+    bool HasCapturingSession() const;
     /// endregion </Session Control - Call Trace>
     /// endregion </Initialization>
 
     /// region <Region and Port Monitoring>
 public:
-    // Add a monitored memory region with the specified options
-    bool AddMonitoredRegion(const std::string& name, uint16_t startAddress, uint16_t length,
+    // The emulation thread updates the regions' and ports' stats without a lock: add, remove, clear and read them
+    // where nothing executes (paused, stopped, or between frames: MemoryWatch runs them at a coherent moment)
+
+    // Add a monitored memory region with the specified options; false for a taken name, an empty region or one past
+    // 0xFFFF
+    bool AddMonitoredRegion(const std::string& name, uint16_t startAddress, uint32_t length,
                             const MonitoringOptions& options = MonitoringOptions());
 
-    // Add a monitored I/O port with the specified options
+    // Add a monitored I/O port with the specified options; `mask` selects the address lines compared (0x00FF: any
+    // port with the low byte of `port`)
     bool AddMonitoredPort(const std::string& name, uint16_t port,
-                          const MonitoringOptions& options = MonitoringOptions());
+                          const MonitoringOptions& options = MonitoringOptions(), uint16_t mask = 0xFFFF);
 
     // Remove a monitored memory region by name
     bool RemoveMonitoredRegion(const std::string& name);
@@ -301,6 +328,20 @@ public:
 
     // Get statistics for a monitored I/O port
     const AccessStats* GetPortStats(const std::string& name) const;
+
+    // Every monitored region and port with its stats
+    const std::vector<MonitoredRegion>& GetMonitoredRegions() const { return _monitoredRegions; }
+    const std::vector<MonitoredPort>& GetMonitoredPorts() const { return _monitoredPorts; }
+
+    // Remove every monitored region and port
+    void ClearMonitored();
+
+    // Copy every watch's totals for readers on other threads (the debug.watches topic): at a frame's end on the
+    // emulation thread, and after a watch change. Nothing to do while no watch exists and none was published
+    void PublishWatches();
+
+    // The published totals and their revision (grows on every publish)
+    std::vector<PublishedWatch> PublishedWatches(uint64_t* revision = nullptr) const;
     /// endregion </Region and Port Monitoring>
 
     /// region <Segmented Tracking>

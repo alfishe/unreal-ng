@@ -672,6 +672,9 @@ class HttpAppFrameworkImpl final : public HttpAppFramework
     bool isRequestStreamEnabled() const override;
 
   private:
+    // Returns when the IO loops have run what was queued on them (bounded)
+    void drainIoLoops();
+
     void registerHttpController(const std::string &pathPattern,
                                 const internal::HttpBinderBasePtr &binder,
                                 const std::vector<HttpMethod> &validMethods,

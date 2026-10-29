@@ -1,7 +1,7 @@
 # Breakpoint taps: one non-stopping observation path for analyzers, haptics and scripts
 
 **Status:** 2026-10-26: phases 1-4 implemented (§10; §6 and §7 say where the build differs from the design); phase 5
-(conditions and script callbacks, [conditions-and-callbacks.md](conditions-and-callbacks.md), measured in POC 038) is
+(conditions and script callbacks, [conditions-and-callbacks.md](conditions-and-callbacks.md), measured in POC 039) is
 built 2026-10-27. §1 describes the state before the work.
 
 The emulator gets more and more watchers that never stop the CPU: analyzers (TR-DOS, NedoOS, DSS, ROM print, the

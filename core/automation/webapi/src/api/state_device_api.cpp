@@ -151,6 +151,18 @@ void EmulatorAPI::getStateAudioMultiSound(const HttpRequestPtr& req,
     ReplyState(DeviceState::MultiSound(emulator->GetContext()), callback);
 }
 
+/// @brief GET /api/v1/emulator/{id}/state/audio/wildsound
+void EmulatorAPI::getStateAudioWildSound(const HttpRequestPtr& req,
+                                         std::function<void(const HttpResponsePtr&)>&& callback,
+                                         const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::WildSound(emulator->GetContext()), callback);
+}
+
 /// @brief GET /api/v1/emulator/{id}/state/audio/midi
 void EmulatorAPI::getStateAudioMidi(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                     const std::string& id) const

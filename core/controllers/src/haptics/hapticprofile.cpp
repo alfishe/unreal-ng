@@ -30,8 +30,9 @@ const Library& TheLibrary()
             l.ids.emplace_back(id);
         };
         auto adsr = [&l](const char* id, float low, float high, uint32_t ms, uint32_t attack, uint32_t decay,
-                         float sustain, uint32_t release, uint8_t priority) {
-            HapticEffect effect({low, high, 0.0f, 0.0f}, ms);
+                         float sustain, uint32_t release, uint8_t priority, float leftTrigger = 0.0f,
+                         float rightTrigger = 0.0f) {
+            HapticEffect effect({low, high, leftTrigger, rightTrigger}, ms);
             effect.shape = HapticShape::Adsr;
             effect.attackMs = attack;
             effect.decayMs = decay;
@@ -57,7 +58,15 @@ const Library& TheLibrary()
         pulse("engine", 0.5f, 0.0f, 45, 0);
         pattern("heartbeat", 0.7f, 0.0f, 700, {{90, 1.0f}, {90, 0.0f}, {110, 0.7f}, {410, 0.0f}}, 1);
         adsr("hit", 0.8f, 0.6f, 150, 2, 60, 0.3f, 60, 2);
+        // A hard front: full on every actuator at once (the triggers too), gone in about 100 ms. A bullet in the hero
+        adsr("impact", 1.0f, 1.0f, 130, 1, 70, 0.15f, 40, 2, 0.8f, 0.8f);
         pattern("life-lost", 1.0f, 1.0f, 800, {{150, 1.0f}, {100, 0.0f}, {150, 1.0f}, {100, 0.0f}, {300, 0.6f}}, 3);
+        // A lash: the crack at the start (the high motor and the trigger of the side it flies to), then the drag that
+        // a profile holds as long as the lash is out (`whip-drag*`, a continuous source plays them as pulses)
+        adsr("whip", 0.5f, 1.0f, 120, 1, 40, 0.3f, 50, 2, 0.0f, 1.0f);
+        adsr("whip-left", 0.5f, 1.0f, 120, 1, 40, 0.3f, 50, 2, 1.0f, 0.0f);
+        adsr("whip-drag", 0.45f, 0.1f, 45, 1, 20, 1.0f, 10, 1, 0.0f, 0.55f);
+        adsr("whip-drag-left", 0.45f, 0.1f, 45, 1, 20, 1.0f, 10, 1, 0.55f, 0.0f);
         adsr("pickup", 0.0f, 0.6f, 80, 5, 30, 0.5f, 45, 1);
         adsr("shot", 0.3f, 0.7f, 70, 1, 30, 0.2f, 40, 1);
         pattern("rumble-strip", 0.3f, 0.3f, 45, {{20, 1.0f}, {20, 0.0f}}, 0);
@@ -69,7 +78,7 @@ const Library& TheLibrary()
             uint16_t lowHz;
             uint16_t highHz;
         } hd[] = {{"tick", 0, 320},       {"knock", 100, 200},  {"thump", 60, 160},   {"explosion", 50, 120},
-                  {"engine", 80, 0},      {"heartbeat", 60, 0}, {"hit", 120, 240},    {"life-lost", 80, 160},
+                  {"engine", 80, 0},      {"heartbeat", 60, 0}, {"hit", 120, 240},    {"impact", 90, 200},  {"whip", 70, 260},   {"whip-left", 70, 260}, {"whip-drag", 60, 120}, {"whip-drag-left", 60, 120},  {"life-lost", 80, 160},
                   {"pickup", 0, 400},     {"shot", 150, 300},   {"rumble-strip", 90, 180}};
         for (const auto& entry : hd)
         {
@@ -737,6 +746,25 @@ bool ParseHapticProfile(const JsonValue& section, HapticProfile& out, std::strin
                 return false;
             }
             rule.priority = static_cast<uint8_t>(priority);
+            if (const JsonValue* gate = spec.Find("if"))
+            {
+                double equals = 0;
+                if (!gate->IsObject() || !Text(*gate, "source", rule.gate, error, where + ".if") ||
+                    !Number(*gate, "equals", equals, error, where + ".if") || rule.gate.empty() || equals < 0 ||
+                    equals > 255)
+                {
+                    if (error.empty())
+                        error = where + ": 'if' is {source: <value source>, equals: 0..255}";
+                    return false;
+                }
+                const HapticSource* gateSource = profile.Find(rule.gate);
+                if (gateSource == nullptr || gateSource->kind != HapticSourceKind::Value)
+                {
+                    error = where + ".if: 'source' names no `value` source ('" + rule.gate + "')";
+                    return false;
+                }
+                rule.gateValue = static_cast<uint8_t>(equals);
+            }
             if (const JsonValue* hd = spec.Find("hd"))
             {
                 if (!hd->IsObject())

@@ -251,6 +251,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // ZX-MultiSound card and its MIDI synthesizer
                         {"multisound", &CLIProcessor::HandleMultiSound},
+                        {"wildsound", &CLIProcessor::HandleWildSound},
                         {"midi", &CLIProcessor::HandleMidi},
 
                         // CD audio of the ATAPI CD drives
@@ -866,6 +867,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << NEWLINE;
     oss << "ZX-MultiSound and MIDI:" << NEWLINE;
     oss << "  multisound [--full|--json] - The card: options, CPLD, YM2203 pair, SAA1099, GS, DACs, MIDI" << NEWLINE;
+    oss << "  wildsound [--json]         - Sprinter ISA Wild Sound: mode, stream, storage, track, XM player, AY" << NEWLINE;
     oss << "  midi [--json]          - MIDI line, bank, 16 parts (program, volume, notes sounding)" << NEWLINE;
     oss << "  midi panic             - Every voice of the synthesizer stops" << NEWLINE;
     oss << NEWLINE;

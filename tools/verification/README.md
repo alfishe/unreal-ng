@@ -35,6 +35,19 @@ application).
 
 ---
 
+### Disk images (`disk/`)
+
+[`disk/`](disk/README.md): disk images that do not load or boot.
+
+- `dsk-tracks.py` reads a DSK without the emulator: odd tracks, and the marks inside long dumps that give the real
+  layout of a CPDRead protection track.
+- `disk-boot-check.py` boots a set of images and keeps a results table, screenshots and a contact sheet.
+- `fdc-probe.py` traces a hanging load frame by frame: registers, floppy controller, stack and the code it returns to.
+
+`--launch` starts an offscreen instance on ports of its own.
+
+---
+
 ### MCP (`mcp/`)
 
 [`mcp/run_all.py`](mcp/README.md): the MCP server as an agent sees it, one script per block of tools (protocol,

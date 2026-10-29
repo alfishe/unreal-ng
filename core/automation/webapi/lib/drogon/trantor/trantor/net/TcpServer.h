@@ -270,6 +270,7 @@ class TRANTOR_EXPORT TcpServer : NonCopyable
 
   private:
     void handleCloseInLoop(const TcpConnectionPtr &connectionPtr);
+    void closeAllInLoop();
     void newConnection(int fd, const InetAddress &peer);
     void connectionClosed(const TcpConnectionPtr &connectionPtr);
 
@@ -277,6 +278,8 @@ class TRANTOR_EXPORT TcpServer : NonCopyable
     std::unique_ptr<Acceptor> acceptorPtr_;
     std::string serverName_;
     std::set<TcpConnectionPtr> connSet_;
+    // unreal-ng: expires with the server; a close queued on loop_ checks it
+    std::shared_ptr<bool> alive_{std::make_shared<bool>(true)};
 
     RecvMessageCallback recvMessageCallback_;
     ConnectionCallback connectionCallback_;

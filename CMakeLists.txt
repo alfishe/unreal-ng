@@ -366,6 +366,12 @@ if (BUILD_SIGNATURE_POC AND TARGET unrealng::swsignature)
 	add_subdirectory(tools/poc/034-media-signatures/cpp)
 endif ()
 
+# POC 038 (TTD replay query engine): window queries replayed on headless clones; needs the core
+option(BUILD_TTD_REPLAY_POC "Build POC 038 ttd-replay-poc (tools/poc/038-ttd-replay-query-engine)" OFF)
+if (BUILD_TTD_REPLAY_POC AND TARGET unrealng::core)
+	add_subdirectory(tools/poc/038-ttd-replay-query-engine/cpp)
+endif ()
+
 # Steam Deck client experiments (SDL3), built on their own: the other PoCs are not needed
 # (apps/steamdeck-client/build.sh configures a steamrt4 container with this ON)
 option(BUILD_STEAMDECK_POC "Build the Steam Deck client PoCs (apps/steamdeck-client, needs SDL3)" OFF)

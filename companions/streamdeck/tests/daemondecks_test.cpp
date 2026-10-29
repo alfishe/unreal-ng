@@ -291,6 +291,59 @@ void TestDaemonDecks()
     CHECK(!bad.LoadStart(&err) && !err.empty());
     started.Remove("S1");
 
+    // No start file, a default file (the data directory's product scenario): decks of its model begin on it, the
+    // others on the idle scenario; the start scenario again is the default for that deck. A start file wins.
+    const fs::path product = dir / "product.deck.json";
+    WriteScenario(product, "product");  // made for the Neo
+    DaemonDecks::Options d;
+    d.defaultFile = product.string();
+    DaemonDecks byModel(d);
+    automation::Api byModelApi("unreal-streamdeck", "1.0");
+    byModel.AddRoutes(byModelApi);
+    CHECK(byModel.LoadStart(&err));
+    CHECK(byModel.StartFileFor(FindModelByName("neo")) == product.string());
+    CHECK(byModel.StartFileFor(FindModelByName("plusxl")).empty());
+    CHECK(byModel.StartFileFor(nullptr).empty());
+    TestDeck neo("neo", "N1", byModel.StartScenario(FindModelByName("neo")));
+    TestDeck xl("plusxl", "X1", byModel.StartScenario(FindModelByName("plusxl")));
+    byModel.Add("N1", neo.dev.GetModel(), false, neo.rt);
+    byModel.Add("X1", xl.dev.GetModel(), true, xl.rt);
+    CHECK(neo.Playing() == "product");
+    CHECK(xl.Playing() == "idle");
+    CHECK(Call(byModelApi, "GET", "/api/v1/decks/N1").body["scenario"] == product.string());
+    CHECK(Call(byModelApi, "GET", "/api/v1/decks/N1").body["start_scenario"] == true);
+    CHECK(Call(byModelApi, "GET", "/api/v1/decks/X1").body["scenario"] == "");
+    CHECK(byModel.LoadScenario("N1", mine.string(), false, &err));
+    CHECK(neo.Playing() == "mine4");
+    CHECK_EQ(Call(byModelApi, "DELETE", "/api/v1/decks/N1/scenario").status, 200);
+    CHECK(neo.Playing() == "product");
+    CHECK(Call(byModelApi, "GET", "/api/v1/decks/N1").body["start_scenario"] == true);
+    // A reload reads the default file as it is now, not the copy loaded at the start
+    WriteScenario(product, "product2");
+    CHECK_EQ(Call(byModelApi, "POST", "/api/v1/reload", {{"deck", "N1"}}).status, 200);
+    CHECK(neo.Playing() == "product2");
+    CHECK(Call(byModelApi, "GET", "/api/v1/decks/N1").body["start_scenario"] == true);
+    byModel.Remove("N1");
+    byModel.Remove("X1");
+
+    DaemonDecks::Options both = d;
+    both.startFile = mine.string();
+    DaemonDecks startWins(both);
+    CHECK(startWins.LoadStart(&err));
+    CHECK(startWins.StartFileFor(FindModelByName("neo")) == mine.string());
+    CHECK(startWins.StartScenario(FindModelByName("neo")).name == "mine4");
+
+    // A broken default: the daemon runs, every deck gets the idle scenario, the log says why
+    DaemonDecks::Options broke;
+    broke.defaultFile = broken.string();
+    DaemonDecks brokenDefault(broke);
+    std::vector<std::string> said;
+    brokenDefault.log = [&](const std::string& l) { said.push_back(l); };
+    CHECK(brokenDefault.LoadStart(&err));
+    CHECK(brokenDefault.StartScenario(FindModelByName("neo")).name == "idle");
+    CHECK(brokenDefault.StartFileFor(FindModelByName("neo")).empty());
+    CHECK(said.size() == 1 && said[0].find("not played") != std::string::npos);
+
     std::error_code ec;
     fs::remove_all(dir, ec);
 }

@@ -9,7 +9,7 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 
 | Command | What |
 |:--|:--|
-| `unreal-streamdeck run [scenario] [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck; without one, the built-in [idle scenario](#the-idle-scenario) (the UnrealNG look) until a scenario is loaded for a deck |
+| `unreal-streamdeck run [scenario] [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck; without one, the data directory's product scenario (`streamdeck/scenarios/unreal.deck.yaml`) on decks of the model it is made for and the built-in [idle scenario](#the-idle-scenario) (the UnrealNG look) on the others, until a scenario is loaded for a deck |
 | `unreal-streamdeck pair [--webapi URL] [--name NAME] [--file F]` | Pair with unreal-ng as a companion (approved at the emulator's GUI); the token goes to `~/.config/unreal-streamdeck/companion.json` (mode 0600). With a daemon running (and no `--file`) it pairs through it (`POST /api/v1/pair`) and prints its state |
 | `unreal-streamdeck scenario check \| convert \| upgrade \| extract \| resolve ...` | Check scenario files (`check` also warns about action ids the catalogue lacks: `$data/streamdeck/catalogue.json` or `--catalogue F`), convert them to another file format, upgrade format v1 to v2 |
 | `unreal-streamdeck --help` | The usage on stdout, exit 0 (without a command: the same, exit 2) |
@@ -33,6 +33,7 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 | `--parent PID[,PID]` | Live for these processes: stop when the last is gone or releases it ([below](#one-daemon-and-its-starters)) |
 | `--with-parent` | The same for the process that started it (all platforms) |
 | `--activity LOOK` | How every deck shows what other surfaces do, over the scenarios' own `settings.activity`: `scenario`, `off`, `flash`, `line` (unreal-qt passes its setting) |
+| `--idle` | No product scenario: the idle one on every deck until a scenario is loaded |
 | `--lock FILE` / `--no-lock` | Another single-instance lock file (default: [below](#one-daemon-and-its-starters)), or none (tests, a second daemon on purpose) |
 
 ## The surface client
@@ -48,9 +49,10 @@ on the daemon's network loop (no thread of its own), with the token of `unreal-s
 | Readouts | `subscribe` with exactly what the scenario names: the readouts of the faces' `state` paths (`run.state.paused` -> `run.state`) and of the strips (`ttd` -> `ttd.position`, `run` -> `run.state`, `tape` -> `media.tape`, `target` -> `machine`), at 50 Hz with a TTD timeline, else 10 Hz. Values go into the faces (`Runtime::SetReadout`) and the strip ([below](#strip-readouts)); a deck with a session polls nothing (its REST poller thread ends) |
 | Contexts | `ctx` from the core moves the deck to the nearest menu declaring it (`Runtime::OnContext`); entering a menu with a `context` sends `ctx.set`. After a new instance (a machine replaced, unreal-qt restarted) the deck keeps its page and sends its context to the new instance |
 | Activity | `activity` (an action another surface ran on the target) flashes the visible keys bound to the same id; `settings.activity.strip: "line"` adds a quiet line "LABEL - surface" for `seconds`; `ttd.seek_by` is ignored by default (Q-3) |
-| Target | `target` (the instance the session drives: model, RAM, index, follow / pinned) is the strip's target line. A `{"view": n}` target the host refuses (`not_now`: no views on the surface topic yet) is joined again with `"follow"` |
+| Target | `target` (the instance the session drives: model, RAM, index, view, follow / view / instance) is the strip's target line. Each deck's session is a `TargetState` session on the host: unreal-qt's surfaces table and `PUT /api/v1/surfaces/sessions/{id}/pin` pin it, and the deck is told by `target`. A `{"view": n}` target the host cannot bind (`not_now`: a host without views; `Not Found`: no view `vN`) is joined again with `"follow"` |
 | Instances | The `instances` topic on the same connection: the host's instance list (`GET /api/v1/surface`) |
 | Reconnect | A dropped socket (unreal-qt quits or restarts) reconnects with backoff 0.25 s .. 5 s and joins every deck again; meanwhile the strips say `RECONNECTING` and the REST fallback serves |
+| Page | Each deck's menu path (by serial and scenario) is kept in `~/.config/unreal-streamdeck/deck-pages.json` whenever it changes (written through a temporary file): a restarted daemon opens the deck where it was (the longest prefix of the path the scenario still has) |
 | Revoked | `revoked` (or a handshake refused with 401: a token the host no longer knows) stops the client: every strip says `COMPANION REVOKED - TOUCH TO PAIR`, actions fail at once. The companion file is looked at every 2 s; a new token ([pairing](#pairing)) connects again |
 | Not paired | No companion file: REST only, every strip says `NOT PAIRED - TOUCH TO PAIR`, the file is watched the same way |
 
@@ -124,7 +126,8 @@ attached), Stream Deck Studio (it starts one when none answers). The daemon watc
 `EVFILT_PROC` on macOS, a pidfd on Linux, a process handle on Windows; looked at every 250 ms by the watcher thread) and
 stops cleanly when the last one is gone or gives its lease back (`DELETE /api/v1/parents/{pid}`): unreal-qt quitting
 leaves it running while a studio still holds it, and the other way round. A daemon started with no parent (by hand)
-is nobody's: leases come and go, it stays until `POST /api/v1/quit` or a signal.
+is nobody's: leases come and go, it stays until `POST /api/v1/quit` or a signal. When it stops, the real deck is left dark with `UNREAL-NG STREAM DECK
+STOPPED` on the strip, not frozen on a page whose keys no longer answer.
 
 | Route | What |
 |:--|:--|
@@ -140,7 +143,8 @@ restarts, adoption) is in [the design](../../inprogress/2026-10-19-streamdeck-in
 
 ## The idle scenario
 
-Without a scenario every deck plays the idle one: the UnrealNG theme of the data directory
+Without a scenario (and with `--idle`, or on a deck of another model than the product scenario's, or without that
+file) a deck plays the idle one: the UnrealNG theme of the data directory
 (`$data/streamdeck/themes/unrealng`, [below](#data-directory)), laid out for the deck's model when the deck appears
 (`sdb/idlescenario.h`). Its keys are pictures only: pressing one does nothing (an empty `multi`).
 
@@ -157,7 +161,11 @@ Never the time-travel timeline: it is a strip readout, never keys (and idle has 
 theme's `ttd_strip.png` (`lcd_ttd` in `theme.json`) is a picture of that readout for the strip; the live one is the
 runtime's strip status (SD5). The brightness is the theme's (60). `GET /api/v1/decks/{serial}/scenario?document=true` shows the document made for
 that deck; a picture spread over several keys is one file with a region per key (`file.png#xywh=x,y,w,h`, below).
-`DELETE .../scenario` and `POST /api/v1/reload` make it again (an edited theme shows).
+`DELETE .../scenario` and `POST /api/v1/reload` make it again (an edited theme shows); for a deck on the product
+scenario `POST /api/v1/reload` reads that file again (`DaemonDecks::StartFileFor`).
+
+`UNREAL_STREAMDECK_USB=off` opens no USB deck: a test rig runs its own decks beside the user's daemon and deck
+([environment variables](../../emulator/environment-variables.md)).
 
 ## Data directory
 
@@ -377,7 +385,7 @@ Default scenarios and themes (`data/streamdeck/`) are not packaged yet (SD5).
 | `emu-snapshot` (no `--api`), `emu-model`, `emu-record` | v1, against `unreal-streamdeck-studio --listen` | In v2 a viewer's model is the viewer's own choice (a mirror follows the deck, an own deck is picked in the studio or with its `PUT /api/v1/connection`) and recording is the studio's (`POST /api/v1/recording` on its port): there is nothing for the daemon to forward. They stay as the protocol tests of the v1 server, with `sdctl --device emu:...` |
 
 ```
-unreal-streamdeck run my-scenario.yaml &    # the default scenario ships with SD5; no file: the idle screen
+unreal-streamdeck run my-scenario.yaml &    # no file: the product scenario on its model, the idle screen elsewhere
 sdctl viewer --seconds 3                  # mirror of the first deck: replay, then live frames
 sdctl viewer --own neo --seconds 3        # a Neo of its own, with its own runtime
 ```

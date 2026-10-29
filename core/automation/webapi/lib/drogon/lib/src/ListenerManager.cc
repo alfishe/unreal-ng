@@ -15,6 +15,8 @@
 #include "ListenerManager.h"
 #include <drogon/config.h>
 #include <fcntl.h>
+#include <chrono>
+#include <future>
 #include <trantor/utils/Logger.h>
 #include "HttpAppFrameworkImpl.h"
 #include "HttpServer.h"
@@ -204,16 +206,32 @@ void ListenerManager::startListening()
     }
 }
 
-void ListenerManager::stopListening()
+void ListenerManager::stopListening(const std::function<void()> &drainIoLoops)
 {
     for (auto &serverPtr : servers_)
     {
         serverPtr->stop();
     }
+    if (drainIoLoops)
+    {
+        // The connections are closed on the IO loops
+        drainIoLoops();
+    }
     if (listeningThread_)
     {
         auto loop = listeningThread_->getLoop();
         assert(!loop->isInLoopThread());
+        if (drainIoLoops)
+        {
+            // The close notifications the IO loops queued on the listening
+            // loop run before it quits; they queue the connections' destroy
+            // on the IO loops, which the second drain waits for
+            auto barrier = std::make_shared<std::promise<void>>();
+            auto done = barrier->get_future();
+            loop->queueInLoop([barrier]() { barrier->set_value(); });
+            done.wait_for(std::chrono::seconds(2));
+            drainIoLoops();
+        }
         loop->quit();
         listeningThread_->wait();
     }

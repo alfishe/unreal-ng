@@ -399,6 +399,7 @@ private:
     void HandleMonitor(const ClientSession& session, const std::vector<std::string>& args);
     // ZX-MultiSound and its MIDI synthesizer (cli-processor-multisound.cpp, DeviceState::MultiSound / Midi, MidiControl)
     void HandleMultiSound(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleWildSound(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMidi(const ClientSession& session, const std::vector<std::string>& args);
     // CD audio of the ATAPI CD drives (cli-processor-cdaudio.cpp, CdAudioControl)
     void HandleCdAudio(const ClientSession& session, const std::vector<std::string>& args);

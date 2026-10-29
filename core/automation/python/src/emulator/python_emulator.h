@@ -6,7 +6,9 @@
 #include "emulator/execution/runpacer.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "debugger/memory/memorycounters.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/memory/memorywatch.h"
 #include "debugger/media/sectorwrite.h"
 #include "debugger/pchistory/pchistory.h"
 #include "debugger/ports/portwrite.h"
@@ -355,6 +357,15 @@ inline std::string TtdOptionTextPy(const pybind11::handle& o)
     if (py::isinstance<py::bool_>(o))
         return o.cast<bool>() ? "true" : "false";
     return py::str(o).cast<std::string>();
+}
+
+/// Keyword arguments as TTD options (True / False, a number, a string), over the named ones
+inline void TtdKwargsPy(std::map<std::string, std::string>& options, const pybind11::kwargs& kwargs)
+{
+    namespace py = pybind11;
+    for (const auto& [key, value] : kwargs)
+        if (!value.is_none())
+            options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
 }
 
 /// One symbol verb through SymbolControl: keyword arguments as options (a list as a comma list), the reply's body; a
@@ -1493,7 +1504,7 @@ namespace PythonBindings
             d["report"] = result.report.format.empty() ? py::none() : StateNodeToPy(result.report.ToStateNode());
             return d;
         }, "Load a snapshot; a file for another model: .spg (TSL) switches the model unless switch_model is False, an .szx saved on "
-           "another model is refused unless switch_model is True (or the configuration says [SNAPSHOT] SwitchModel=1). "
+           "another model, or a .z80 / .sna the machine cannot hold (a 128K file on a 48K), is refused unless switch_model is True (or the configuration says [SNAPSHOT] SwitchModel=1). "
            "commit chooses who writes the machine: '' = the plan decides (the machine's own policy, else the legacy "
            "commit), 'legacy', or a registered policy name; the answer's report says what was done or why not",
            py::arg("path"), py::arg("emulator_id") = "", py::arg("switch_model") = py::none(), py::arg("commit") = "");
@@ -2122,6 +2133,133 @@ namespace PythonBindings
             }, "Read raw bytes (MemoryRead): the CPU view (wraps at 0xFFFF, up to 65536), a page 'ram5' / 'rom2' / "
                "'cache0' (stops at the page's end) or 'ram' (every RAM page back to back); ValueError with the reason",
                py::arg("addr"), py::arg("len"), py::arg("space") = "cpu")
+            .def("memory_counters", [](Emulator& self, const std::string& space, uint32_t start, uint32_t length,
+                                       const py::object& addresses, const std::string& view, const std::string& kinds,
+                                       uint32_t min, uint32_t limit) -> py::dict {
+                MemoryCounters::Request request;
+                request.space = space;
+                request.start = start;
+                request.length = length;
+                request.min = min;
+                request.limit = limit;
+                std::string error;
+                if (!MemoryCounters::ParseMode(view, request.mode, error) || !MemoryCounters::ParseKinds(kinds, request.kinds, error))
+                    throw py::value_error(error);
+                if (py::isinstance<py::str>(addresses))
+                {
+                    if (!MemoryCounters::ParseAddresses(addresses.cast<std::string>(), request.addresses, error))
+                        throw py::value_error(error);
+                }
+                else if (!addresses.is_none())
+                {
+                    for (auto item : addresses)
+                        request.addresses.push_back(item.cast<uint32_t>());
+                }
+                const MemoryCounters::Result result = MemoryCounters::Read(self.GetContext(), request);
+                if (!result.error.empty())
+                    throw py::value_error(result.error);
+                py::dict dict;
+                dict["space"] = result.space;
+                dict["space_size"] = result.spaceSize;
+                dict["session"] = result.session;
+                dict["allocated"] = result.allocated;
+                dict["start"] = result.start;
+                dict["length"] = result.length;
+                dict["reads"] = result.reads;
+                dict["writes"] = result.writes;
+                dict["executes"] = result.executes;
+                dict["matched"] = result.matched;
+                dict["truncated"] = result.truncated;
+                py::list cells;
+                for (const MemoryCounters::Cell& cell : result.cells)
+                    cells.append(py::make_tuple(cell.address, cell.reads, cell.writes, cell.executes));
+                dict["cells"] = cells;
+                return dict;
+            }, "Per-address memory access counters (MemoryCounters; start the session with trace('memory', 'start')): "
+               "space 'cpu' (the CPU's 64K), 'phys' (every physical page: cell // 0x4000 is the page, ram 0..255, cache, "
+               "misc, rom), 'ram' or a page 'ram5' / 'rom2' / 'cache0'; a window start + length (0: to the end) or "
+               "addresses (a list, or '0x5C00,0x8000-0x80FF'); view 'top' (heaviest first), 'sparse' or 'dense'; kinds "
+               "'r' / 'w' / 'x' mixed for the weight; min, limit. Returns {space, session, allocated, reads, writes, "
+               "executes (window totals), matched, truncated, cells [(address, reads, writes, executes)]}; ValueError "
+               "with the reason",
+               py::arg("space") = "cpu", py::arg("start") = 0, py::arg("length") = 0, py::arg("addresses") = py::none(),
+               py::arg("view") = "top", py::arg("kinds") = "rwx", py::arg("min") = 1, py::arg("limit") = 4096)
+            .def("memory_counter", [](Emulator& self, uint32_t address, const std::string& space) -> py::tuple {
+                const MemoryCounters::Result result = MemoryCounters::ReadCell(self.GetContext(), space, address);
+                if (!result.error.empty())
+                    throw py::value_error(result.error);
+                const MemoryCounters::Cell& cell = result.cells[0];
+                return py::make_tuple(cell.reads, cell.writes, cell.executes);
+            }, "One cell's (reads, writes, executes) in space ('cpu', 'phys', 'ram', 'ram5'); ValueError with the reason",
+               py::arg("address"), py::arg("space") = "cpu")
+            .def("memory_watch_add", [](Emulator& self, const std::string& name, uint32_t start, uint32_t length, bool callers,
+                                        bool values) {
+                MemoryWatch::Options options;
+                options.callers = callers;
+                options.values = values;
+                const MemoryWatch::Result result = MemoryWatch::AddRegion(&self, name, start, length, options);
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+            }, "Watch CPU addresses start..start+length-1 (MemoryWatch): reads, writes, executes, and with callers / values "
+               "the PCs and the values; counts while the memory session captures. RuntimeError with the reason",
+               py::arg("name"), py::arg("start"), py::arg("length"), py::arg("callers") = false, py::arg("values") = false)
+            .def("memory_watch_port", [](Emulator& self, const std::string& name, uint32_t port, uint32_t mask, bool callers,
+                                         bool values) {
+                MemoryWatch::Options options;
+                options.callers = callers;
+                options.values = values;
+                const MemoryWatch::Result result = MemoryWatch::AddPort(&self, name, port, mask, options);
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+            }, "Watch the ports whose address lines in mask equal port's (mask 0x00FF with port 0x1F: every Kempston read): "
+               "reads, writes, callers, values. RuntimeError with the reason",
+               py::arg("name"), py::arg("port"), py::arg("mask") = 0xFFFF, py::arg("callers") = false, py::arg("values") = false)
+            .def("memory_watch_remove", [](Emulator& self, const std::string& name) {
+                const MemoryWatch::Result result = MemoryWatch::Remove(&self, name);
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+            }, "Remove the memory watch of that name", py::arg("name"))
+            .def("memory_watch_clear", [](Emulator& self) {
+                const MemoryWatch::Result result = MemoryWatch::Clear(&self);
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+            }, "Remove every memory watch")
+            .def("memory_watches", [](Emulator& self) -> py::list {
+                const MemoryWatch::Result result = MemoryWatch::List(&self);
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+                py::list list;
+                for (const MemoryWatch::Watch& watch : result.watches)
+                {
+                    py::dict entry;
+                    entry["name"] = watch.name;
+                    entry["kind"] = watch.port ? "port" : "region";
+                    if (watch.port)
+                    {
+                        entry["port"] = watch.start;
+                        entry["mask"] = watch.mask;
+                    }
+                    else
+                    {
+                        entry["start"] = watch.start;
+                        entry["length"] = watch.length;
+                        entry["executes"] = watch.executes;
+                    }
+                    entry["reads"] = watch.reads;
+                    entry["writes"] = watch.writes;
+                    py::dict callers;
+                    for (const auto& [pc, count] : watch.callers)
+                        callers[py::int_(pc)] = count;
+                    py::dict values;
+                    for (const auto& [value, count] : watch.values)
+                        values[py::int_(value)] = count;
+                    entry["callers"] = callers;
+                    entry["values"] = values;
+                    list.append(entry);
+                }
+                return list;
+            }, "Every memory watch: [{name, kind, start + length + executes or port + mask, reads, writes, callers "
+               "{pc: count}, values {value: count}}]")
             .def("port_out", [](Emulator& self, int64_t port, int64_t value) {
                 uint16_t p = 0;
                 uint8_t v = 0;
@@ -2377,7 +2515,7 @@ namespace PythonBindings
                  py::arg("slot"), "A composite medium's layers and layout")
             .def("media_changes", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "changes", slot, "", py::kwargs()); },
                  py::arg("slot"), "The guest's unsaved writes as file operations, with the layer each touched")
-            // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, FAT (DSS, NedoOS); read only
+            // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT (DSS, NedoOS); write, delete, rename, mkdir, attrib, label
             .def("media_volumes", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "volumes", slot, "", py::kwargs()); },
                  py::arg("slot"), "The file systems on the disk in a slot (floppy, hard disk, SD card)")
             .def("media_files", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
@@ -2410,8 +2548,36 @@ namespace PythonBindings
                      }
                      return MediaCallPy(self, "write", slot, path, all);
                  }, py::arg("slot"), py::arg("path"), py::arg("data") = py::none(),
-                 "A file onto the TR-DOS (NAME.T) or +3DOS (NAME.TYP) floppy in a slot: data=bytes or in_='host file' "
-                 "(start=0x8000, header=False, volume=)")
+                 "A file onto the disk in a slot (TR-DOS NAME.T, +3DOS NAME.TYP, iS-DOS, FAT): data=bytes or "
+                 "in_='host file' (start=0x8000, header=False, type='program' | 'numbers' | 'chars' | 'code', param2=, "
+                 "attributes='RA' | '+R-H', volume=)")
+            .def("media_delete", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "delete", slot, path, options);
+                 }, py::arg("slot"), py::arg("path"),
+                 "Delete a file or an empty iS-DOS / FAT directory on the disk (volume=, recursive=True: a directory with its contents)")
+            .def("media_mkdir", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "mkdir", slot, path, options);
+                 }, py::arg("slot"), py::arg("path"), "A new directory on the disk: FAT, iS-DOS catalogue, MB-02 (volume=, parents=True; iS-DOS: continuous=True, blocks=1-16)")
+            .def("media_attrib", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "attrib", slot, path, options);
+                 }, py::arg("slot"), py::arg("path"), "A file's attributes and time: attributes='+R-H' or 'RA', time='2026-10-26 14:30' (volume=)")
+            .def("media_label", [](Emulator& self, const std::string& slot, const std::string& label, const py::kwargs& options) {
+                     py::kwargs all;
+                     for (auto item : options)
+                         all[item.first] = item.second;
+                     all["label"] = label;
+                     return MediaCallPy(self, "label", slot, "", all);
+                 }, py::arg("slot"), py::arg("label"), "The volume's name: FAT label ('' removes it), TR-DOS title, iS-DOS device name (volume=)")
+            .def("media_rename", [](Emulator& self, const std::string& slot, const std::string& path, const std::string& to,
+                                    const py::kwargs& options) {
+                     py::kwargs all;
+                     for (const auto& item : options)
+                         all[item.first] = item.second;
+                     all["to"] = to;
+                     return MediaCallPy(self, "rename", slot, path, all);
+                 }, py::arg("slot"), py::arg("path"), py::arg("to"),
+                 "Rename a file or directory on the disk: a bare name stays in its directory, a path from the root moves it (iS-DOS, FAT) "
+                 "(volume=)")
             .def("media_insert", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "insert", slot, path, options);
                  }, py::arg("slot"), py::arg("path"), "Insert a file or a folder ('auto' picks the slot)")
@@ -4853,6 +5019,10 @@ namespace PythonBindings
                 return StateNodeToPy(DeviceState::MultiSound(self.GetContext()));
             }, "The ZX-MultiSound card: options, shadowed built-ins, CPLD latches, YM2203 pair (the TSFM report's chips), "
                "SAA1099, General Sound, DACs, MIDI summary ({'available': False, ...} without the card)")
+            .def("wildsound_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::WildSound(self.GetContext()));
+            }, "The Sprinter's ISA Wild Sound: mode, stream, storage, the uploaded track, the XM player's position and "
+               "channels, both AY chips ({'available': False, ...} without the card)")
             .def("midi_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Midi(self.GetContext()));
             }, "The MIDI line and the SAM2695 synthesizer: 16 parts (program, preset, volume, pan, voices, notes), "
@@ -6080,8 +6250,11 @@ namespace PythonBindings
                                       py::object physPageObj,
                                       py::object addrFromObj,
                                       py::object addrToObj,
-                                      py::object spaceObj) -> py::object {
+                                      py::object spaceObj,
+                                      const py::kwargs& kwargs) -> py::object {
                 std::map<std::string, std::string> options{{"access", access}};
+                // all, changes_only, limit, before, from_frame
+                TtdKwargsPy(options, kwargs);
                 // space="vram" / "cache": addr / addr_from / addr_to are offsets in that memory
                 if (!spaceObj.is_none())
                     options["space"] = py::str(spaceObj).cast<std::string>();
@@ -6107,10 +6280,12 @@ namespace PythonBindings
                     value["error"] = reply.message;
                     return StateNodeToPy(value);
                 }
-                if (!reply.body.find("found")->b && !reply.body.find("blocked"))
+                if (!reply.body.find("found")->b && !reply.body.find("blocked") && !reply.body.find("hits"))
                     return py::none();  // genuinely no match
                 return StateNodeToPy(reply.body);
-            }, "Reverse search: find last access at address or within address/PC range",
+            }, "Reverse search: find last access at address or within address/PC range. Keywords: all=True (the list "
+               "newest first, the machine stays), changes_only=True (writes that changed the byte, with old_value), "
+               "limit, before (machine T, at or before), from_frame (not older)",
                py::arg("addr") = py::none(),
                py::arg("access") = "write",
                py::arg("value") = py::none(),
@@ -6151,11 +6326,14 @@ namespace PythonBindings
             }, "Step back N scanlines of the machine (lands at nearest M1 <= target)",
                py::arg("scanlines") = 1)
 
-            .def("ttd_reverse_continue", [](Emulator& self, const std::vector<uint16_t>& pcs) -> py::object {
+            .def("ttd_reverse_continue", [](Emulator& self, const std::vector<uint16_t>& pcs, const py::kwargs& kwargs) -> py::object {
                 std::string list;
                 for (uint16_t pc : pcs)
                     list += (list.empty() ? "" : ",") + std::to_string(pc);
-                const ttd::TTDReply reply = TtdRunPy(self, "reverse-continue", {{"pcs", list}});
+                std::map<std::string, std::string> options{{"pcs", list}};
+                // phys_page, all, limit, before_frame, before_tin, before, from_frame
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "reverse-continue", options);
                 if (reply.error == ttd::TTDControlError::BadRequest)
                     throw py::value_error(reply.message);
                 if (!reply.Ok())
@@ -6165,10 +6343,12 @@ namespace PythonBindings
                     value["error"] = reply.message;
                     return StateNodeToPy(value);
                 }
-                if (!reply.body.find("matched")->b && !reply.body.find("blocked_by_marker"))
+                if (!reply.body.find("matched")->b && !reply.body.find("blocked_by_marker") && !reply.body.find("hits"))
                     return py::none();
                 return StateNodeToPy(reply.body);
-            }, "Run backward until any PC matches; returns dict or None",
+            }, "Run backward until any PC matches; returns dict or None. Keywords: phys_page (a page or 'rom'), "
+               "all=True (every hit newest first, the machine stays), limit, before_frame / before_tin or before "
+               "(at or before), from_frame (not older)",
                py::arg("pcs"))
 
             .def("ttd_coverage_probe", [](Emulator& self, uint64_t frame, const std::string& kindStr,
@@ -6187,7 +6367,7 @@ namespace PythonBindings
 
             .def("ttd_coverage_scan", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj,
                                          const std::string& kindStr, uint32_t addrFrom, uint32_t addrTo,
-                                         py::object pageObj, size_t limit, py::object spaceObj) -> py::object {
+                                         py::object pageObj, size_t limit, py::object spaceObj, const py::kwargs& kwargs) -> py::object {
                 std::map<std::string, std::string> options{
                     {"from_frame", std::to_string(fromFrame)}, {"kind", kindStr},
                     {"addr_from", std::to_string(addrFrom)},   {"addr_to", std::to_string(addrTo)},
@@ -6198,8 +6378,10 @@ namespace PythonBindings
                     options["phys_page"] = TtdOptionTextPy(pageObj);
                 if (!spaceObj.is_none())
                     options["space"] = py::str(spaceObj).cast<std::string>();
+                TtdKwargsPy(options, kwargs);   // order="newest", ranges=True
                 return TtdCoveragePy(TtdRunPy(self, "coverage-scan", options));
-            }, "Frames in from_frame..to_frame that touched the address range (coverage index)",
+            }, "Frames in from_frame..to_frame that touched the address range (coverage index). Keywords: "
+               "order='newest' (the newest matches first), ranges=True (runs of consecutive frames)",
                 py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = "executed",
                 py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(), py::arg("limit") = 200,
                 py::arg("space") = py::none())

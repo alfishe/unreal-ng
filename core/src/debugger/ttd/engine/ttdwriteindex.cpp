@@ -85,6 +85,38 @@ std::optional<TTDWriteRecord> TTDWriteIndex::FindLastInRange(
     return std::nullopt;
 }
 
+void TTDWriteIndex::ForEachBackward(uint64_t afterT, uint64_t upToT,
+                                    const std::function<bool(const TTDWriteRecord&)>& visit) const
+{
+    if (upToT <= afterT)
+        return;
+    // False once the walk is over: a record at or before afterT, or the visitor stopped it
+    auto scan = [&](const std::vector<TTDWriteRecord>& records) {
+        for (size_t k = records.size(); k > 0; --k)
+        {
+            const TTDWriteRecord& r = records[k - 1];
+            if (r.globalT > upToT)
+                continue;
+            if (r.globalT <= afterT || !visit(r))
+                return false;
+        }
+        return true;
+    };
+    // Newest first: the open block, then the sealed ones whose span meets the range
+    if (!scan(_open))
+        return;
+    for (size_t b = _blocks.size(); b > 0; --b)
+    {
+        const Block& block = _blocks[b - 1];
+        if (block.lastT <= afterT)
+            return;
+        if (block.firstT > upToT)
+            continue;
+        if (!scan(Decode(b - 1)))
+            return;
+    }
+}
+
 void TTDWriteIndex::ForEach(const std::function<void(const TTDWriteRecord&)>& visit) const
 {
     for (size_t b = 0; b < _blocks.size(); ++b)

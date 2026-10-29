@@ -94,6 +94,7 @@ private:
     std::condition_variable _retiredCv;
     std::thread _retiredWatchdog;
     bool _retiredWatchdogStop = false;
+    bool _retiredWatchdogClosed = false;   // the destructor ran: no restart
     std::chrono::milliseconds _retiredWarnAfter = kRetiredAliveWarnAfter;
     std::chrono::milliseconds _retiredWarnEvery = kRetiredAliveWarnEvery;
     std::atomic<uint64_t> _retiredWarnings{0};
@@ -103,7 +104,7 @@ private:
 
     void TrackRetired(const std::shared_ptr<Emulator>& emulator);
     void WatchRetired();
-    void StopRetiredWatchdog();
+    void StopRetiredWatchdog(bool final = false);
     /// Stop (bounded), retire, track: the end of every removal
     void RetireRemoved(const std::shared_ptr<Emulator>& emulator, const char* caller);
     /// endregion </Retired instances>

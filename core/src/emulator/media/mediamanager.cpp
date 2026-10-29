@@ -30,6 +30,7 @@
 #include "emulator/io/storage/cd/cdimage.h"
 #include "emulator/io/storage/mediareadtap.h"
 #include "emulator/media/mediawritegate.h"
+#include "emulator/media/guestprogramwatch.h"
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
@@ -815,7 +816,8 @@ MediaTransferReport MediaManager::AdoptMediaSet(MediaTransfer transfer)
             if (HostWriteHold* hold = state.attached->Hold())
                 hold->SetHolding(_holdHostWrites);
             if (MediaReadTap* tap = state.attached->ReadTap())
-                tap->Bind(&_readJournal, entry.slotId, this);
+                tap->Bind(&_readJournal, entry.slotId, this, &_guestProgramWatch);
+            _guestProgramWatch.Reset(entry.slotId);
             if (CdImage* cd = state.attached->Cd())
                 cd->BindReadJournal(&_readJournal, entry.slotId);
             state.slot->Attach(*state.attached);
@@ -1356,6 +1358,7 @@ void MediaManager::NoteWrite(const std::string& slotId, const char* detail)
     if (it == _slots.end())
         return;
     SlotState& state = it->second;
+    _guestProgramWatch.Forget(slotId);  // the card's files may be new after a write
     MarkWrite(state);
     // A replay records nothing: the writes are the recording's
     if ((_context && _context->ttdReplayActive) || state.writeEventThisFrame)
@@ -1379,6 +1382,7 @@ void MediaManager::BeforeSectorWrite(const std::string& slotId, uint64_t lba, IB
     if (it == _slots.end())
         return;
     SlotState& state = it->second;
+    _guestProgramWatch.Forget(slotId);
     MarkWrite(state);
     if (!KeepsVersions() || state.undo.Has(state.writtenFrames, MediaUndoLog::Unit::Sector, lba))
         return;
@@ -1605,7 +1609,8 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         if (HostWriteHold* hold = state.attached->Hold())
             hold->SetHolding(_holdHostWrites);
         if (MediaReadTap* tap = state.attached->ReadTap())
-            tap->Bind(&_readJournal, slotId, this);
+            tap->Bind(&_readJournal, slotId, this, &_guestProgramWatch);
+        _guestProgramWatch.Reset(slotId);
         if (CdImage* cd = state.attached->Cd())
             cd->BindReadJournal(&_readJournal, slotId);
         state.slot->Attach(*state.attached);

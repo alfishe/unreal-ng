@@ -531,6 +531,44 @@ StateNode BufferFill(size_t used, size_t capacity, size_t slotBytes)
 
 // How full each trace buffer is: the counters the recorders keep (atomics, a shared lock, the call trace's own lock),
 // read at most once a second (the call trace's lock is the one its writer takes per event: never at a monitor's 10 Hz)
+StateNode Watches(Emulator& emulator)
+{
+    // The totals the emulation thread published at the last frame's end (or a watch change): never the live stats
+    EmulatorContext* context = emulator.GetContext();
+    StateNode node = StateNode::Object();
+    node["available"] = context->pMemory != nullptr;
+    StateNode& list = node["watches"];
+    list = StateNode::Array();
+    if (context->pMemory == nullptr)
+        return node;
+    MemoryAccessTracker& tracker = context->pMemory->GetAccessTracker();
+    node["session"] = SessionStateName(tracker.GetMemorySessionState());
+    uint64_t revision = 0;
+    for (const PublishedWatch& watch : tracker.PublishedWatches(&revision))
+    {
+        StateNode entry = StateNode::Object();
+        entry["name"] = watch.name;
+        entry["kind"] = std::string(watch.port ? "port" : "region");
+        if (watch.port)
+        {
+            entry["port"] = static_cast<int64_t>(watch.start);
+            entry["mask"] = static_cast<int64_t>(watch.mask);
+        }
+        else
+        {
+            entry["start"] = static_cast<int64_t>(watch.start);
+            entry["length"] = static_cast<int64_t>(watch.length);
+        }
+        entry["reads"] = static_cast<int64_t>(watch.readCount);
+        entry["writes"] = static_cast<int64_t>(watch.writeCount);
+        if (!watch.port)
+            entry["executes"] = static_cast<int64_t>(watch.executeCount);
+        list.push(std::move(entry));
+    }
+    node["revision"] = static_cast<int64_t>(revision);
+    return node;
+}
+
 StateNode Buffers(Emulator& emulator)
 {
     return CachedValue("debug.buffers", emulator.GetId(), 0, 1.0, [&emulator] {
@@ -739,7 +777,7 @@ const std::vector<std::string>& InstanceNames()
     static const std::vector<std::string> names = {"emulator.stats", "debug.breakpoints", "media.slots",
                                                    "recording.state", "debug.labels",     "ttd.status",
                                                    "debug.analyzers", "controllers.state", "debug.buffers",
-                                                   "game.events"};
+                                                   "game.events",     "debug.watches"};
     return names;
 }
 
@@ -789,6 +827,8 @@ StateNode ReadInstance(const std::string& name, Emulator& emulator)
         return Controllers(emulator);
     if (name == "game.events")
         return GameEvents(emulator);
+    if (name == "debug.watches")
+        return Watches(emulator);
     return {};
 }
 

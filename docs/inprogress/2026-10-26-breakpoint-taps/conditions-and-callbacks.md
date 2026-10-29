@@ -1,12 +1,12 @@
 # Conditions and script callbacks on breakpoints and taps
 
-**Status:** 2026-10-26: design, measured in [POC 038](../../../tools/poc/038-condition-engine-callbacks/README.md);
+**Status:** 2026-10-26: design, measured in [POC 039](../../../tools/poc/039-condition-engine-callbacks/README.md);
 the decisions in §8 are taken. 2026-10-27: phases 1-5 (§9) are built, the GS read-value hooks included. Phase 1 (F1 core): [conditional breakpoints](../../features/conditional-breakpoints.md). It covers phase 5 of the [taps](README.md) and the condition engine F1 of
 [conditional breakpoints](../2026-08-17-conditional-breakpoints/design.md).
 
 ## 1. What the numbers say
 
-All numbers below are from POC 038 on an M-series Mac. The frame is 20 ms; 10 % of it is the deferred-tier budget of
+All numbers below are from POC 039 on an M-series Mac. The frame is 20 ms; 10 % of it is the deferred-tier budget of
 R02 P-5.
 
 | Item | Cost per hit | Verdict |
@@ -26,7 +26,7 @@ The engine itself is not the risk; where a callback runs is.
 ## 2. Requirement coverage
 
 The audit is 2026-10-26: about 60 requirements from 15 documents. The full table is in
-[requirements-audit.md](../../../tools/poc/038-condition-engine-callbacks/requirements-audit.md). The blocks below say what the engine covers, what needs an addition, and what
+[requirements-audit.md](../../../tools/poc/039-condition-engine-callbacks/requirements-audit.md). The blocks below say what the engine covers, what needs an addition, and what
 conflicts.
 
 ### 2.1 Covered by F1 as designed (with the measured cost)

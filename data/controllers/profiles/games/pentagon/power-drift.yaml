@@ -1,0 +1,39 @@
+# Power Drift (Activision / Sega 1989), the Hit Squad TZX "Power Drift (The Hit Squad).tzx" (128K tape loader: pick Tape Loader;
+# the tape is a Speedlock multiload of about 14 minutes, the title stays up while it loads, so wait until the tape stops; then
+# any key reaches the control menu: 4 KEYBOARD, 0 START GAME, then Z takes the driver and Z again the course).
+# Keyboard: Q accelerates, O left, P right (the speed is shown in the top bar). Haptics (haptics.md §13 H5), found with TTD on a
+# recorded run: the speed is the byte #E7EE (0 to 255, about 177 at cruise, the bar shows 0.93 of it); the writers of the byte
+# show the state: #C9B2 / #CA0C slow the car (-12 / -8 per 5 frames), #CA0C only while #E46C is set; #E46C is the off-road flag
+# (255 when the lateral position #E43C leaves the road, recomputed by #CA12 every frame), #CEB5 is the entry of the wreck
+# (it sets the wreck state #E446 and the screen shake #C20C), run once per crash (three crashes in the recording, three runs).
+# Checked in real time (Q held 6 s, then 3 s each of P and O alternating): 2 crashes, the speed and off-road levels follow the
+# car; known limits: the pickup of score marks and the rival hits are
+# not events yet, brake is not checked (A is a guess from the other Sega ports).
+schema: 1
+kind: play
+id: builtin/game/power-drift
+label: Power Drift
+match:
+  machines: [PENTAGON, 128K]
+  file_sha256: ["18edbb15aca5706f3eb7578a70134e2970c0431bb9be70e95e510d0e553d7896"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    rt.click:     { key: Q, label: Accelerate }
+    lt.click:     { key: A, label: Brake }
+    south:        { key: Z, label: Select }
+    menu:         { key: "0", label: Start }
+haptics:
+  sources:
+    speed:   { probe: value, address: "0xE7EE", scale: 1.1 }
+    offroad: { probe: value, address: "0xE46C", scale: 0.6 }
+    crash:   { probe: exec, address: "0xCEB5" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: offroad, play: rumble-strip }
+    - { on: crash, play: explosion, scale: 0.9 }

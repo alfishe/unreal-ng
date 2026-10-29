@@ -1,6 +1,6 @@
 #pragma once
 
-// The +3DOS file system (the Spectrum +3, CP/M 2.2's layout) on a disk image, both ways: list, read, write, delete.
+// The +3DOS file system (the Spectrum +3, CP/M 2.2's layout) on a disk image, both ways: list, read, write, delete, rename.
 // The disk's geometry comes from the specification in its first sector (track 0, the first sector; byte 0 the format
 // 0-3), else the +3 standard: one side, 40 tracks of nine 512-byte sectors numbered 1-9, one reserved track, 1K blocks,
 // two directory blocks (64 entries). The directory: 32-byte entries (user, name 8, type 3 with the attribute bits,
@@ -29,6 +29,9 @@ struct Plus3File
     uint8_t basicType = 0;       ///< the header's BASIC type (3 = CODE)
     uint16_t param1 = 0;         ///< the header's first parameter (CODE: the load address)
     uint16_t param2 = 0;
+    uint8_t attributes = 0;      ///< the type's high bits: kReadOnly (t1'), kSystem (t2'), kArchive (t3')
+
+    static constexpr uint8_t kReadOnly = 1, kSystem = 2, kArchive = 4;
 
     /// NAME.TYP (NAME when there is no type)
     std::string FullName() const { return type.empty() ? name : name + "." + type; }
@@ -67,6 +70,18 @@ public:
 
     /// Every entry of NAME.TYP marked deleted (user #E5)
     bool Delete(const std::string& name, std::string& error);
+
+    /// Every entry of NAME.TYP takes `newName` (the attribute bits stay). False when there is no such file, the new
+    /// name is no CP/M name or a file of that name is there already
+    bool Rename(const std::string& name, const std::string& newName, std::string& error);
+
+    /// The attribute bits of every entry of NAME.TYP (Plus3File::kReadOnly | kSystem | kArchive), as +3DOS
+    /// SET ATTRIBUTES (and CP/M's SET) puts them into the high bits of the type
+    bool SetAttributes(const std::string& name, uint8_t attributes, std::string& error);
+
+    /// `name` is a CP/M file name: 1-8 characters, an optional type of up to 3, printable ASCII without
+    /// < > . , ; : = ? * [ ], no blank in front
+    static bool ValidName(const std::string& name);
 
 private:
     DiskImage& _image;

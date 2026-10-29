@@ -234,7 +234,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         schema["properties"][key]["type"] = "string";
         schema["properties"][key]["description"] =
             "'create' with model SPRINTER: the card in ISA slot 1 / 2 - none | ne2000 | zxbus | ram | el3c509b | "
-            "sprinteresp | modem | dual16552 (default [ISA] Slot1 = none, Slot2 = ne2000; a kind not built yet is "
+            "sprinteresp | modem | dual16552 | wildsound (default [ISA] Slot1 = none, Slot2 = ne2000; a kind not built yet is "
             "refused in the slot report /state/isa); fixed for the instance's lifetime";
     }
     schema["properties"]["profi_keyboard"]["type"] = "string";
@@ -936,6 +936,12 @@ void RegisterLoadSoftware(ToolRegistry& registry)
         "commit that has always loaded snapshots); 'legacy' = the legacy commit even where the machine has a policy; "
         "or a registered policy name (an unknown name is refused and the answer lists the known ones). The answer's "
         "report shows the commit that ran, or why the load was refused";
+    schema["properties"]["switch_model"]["type"] = "boolean";
+    schema["properties"]["switch_model"]["description"] =
+        "Snapshots and RZX recordings: a file for another machine (an .szx saved on another model, a 128K .z80 / .sna "
+        "on a 48K, an .spg) replaces this machine with the one it needs (true: the answer's emulator_id is the new "
+        "one) or is refused with the machine named (false). Omitted: an .spg and an .rzx switch, a snapshot of "
+        "another machine is refused unless the configuration has [SNAPSHOT] SwitchModel=1";
     schema["properties"]["inspect"]["type"] = "boolean";
     schema["properties"]["inspect"]["default"] = false;
     schema["properties"]["inspect"]["description"] =
@@ -952,7 +958,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
     registry.Register(
         "load_software",
         "Load software into the emulator by auto-detecting the file type: snapshots (.sna .snx .z80 .szx), TS-Conf programs (.spg, switches the machine to model TSL: the answer's emulator_id is then the new one), RZX input recordings (.rzx, played on the machine the recording needs), tapes (.tap .tzx .spc .sta .ltp .zxt), "
-        "disk images (.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima). The machine must be created first (target:'auto' "
+        "disk images (.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima .mb2 .mbd .d40 .d80 .pro). The machine must be created first (target:'auto' "
         "handles that). If the path exists locally on the MCP host, the file is uploaded to the emulator "
         "automatically; otherwise, the path is passed to the emulator for direct loading.",
         std::move(schema),
@@ -970,7 +976,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             {
                 done(ToolResult::Error("Cannot determine file type of '" + path +
                                             "'. Supported: .sna .snx .z80 .szx .spg (snapshot), .rzx (input recording), .tap .tzx .spc .sta .ltp .zxt (tape), "
-                                            ".trd .scl .fdi .udi .dsk .td0 .mgt .img .ima (disk)"));
+                                            ".trd .scl .fdi .udi .dsk .td0 .mgt .img .ima .mb2 .mbd .d40 .d80 .pro (disk)"));
                 return;
             }
             std::string ext = path.substr(dot + 1);
@@ -980,12 +986,13 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             const auto& tapeExtensions = TapeExtensions();
             bool isTape = std::find(tapeExtensions.begin(), tapeExtensions.end(), ext) != tapeExtensions.end();
             bool isDisk = ext == "trd" || ext == "scl" || ext == "fdi" || ext == "udi" || ext == "dsk" ||
-                          ext == "td0" || ext == "mgt" || ext == "img" || ext == "ima";
+                          ext == "td0" || ext == "mgt" || ext == "img" || ext == "ima" ||
+                          ext == "mb2" || ext == "mbd" || ext == "d40" || ext == "d80" || ext == "pro";
             if (!isSnapshot && !isTape && !isDisk)
             {
                 done(ToolResult::Error("Unsupported file type '." + ext +
                                             "'. Supported: .sna .snx .z80 .szx .spg (snapshot), .rzx (input recording), .tap .tzx .spc .sta .ltp .zxt (tape), "
-                                            ".trd .scl .fdi .udi .dsk .td0 .mgt .img .ima (disk)"));
+                                            ".trd .scl .fdi .udi .dsk .td0 .mgt .img .ima .mb2 .mbd .d40 .d80 .pro (disk)"));
                 return;
             }
 
@@ -993,6 +1000,10 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             bool autostart = args.isMember("autostart") && args["autostart"].asBool();
             const bool inspect = args.isMember("inspect") && args["inspect"].asBool();
             const bool pausedFirst = args.isMember("paused") && args["paused"].asBool();
+            // Not given: the surface's default (the launcher's rule for a snapshot, a switch for a recording)
+            const std::string switchModel = !args.isMember("switch_model") || !args["switch_model"].isBool()
+                                                ? std::string()
+                                                : (args["switch_model"].asBool() ? "true" : "false");
             std::string commit = args.isMember("commit") && args["commit"].isString() ? args["commit"].asString() : "";
             // A policy name is an identifier: it goes into a query string as is
             if (commit.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != std::string::npos)
@@ -1009,7 +1020,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             const bool isLocalFile = TryReadLocalFile(path, *fileContent);
             const std::string filename = ExtractFilename(path);
 
-            TargetResolver::ResolveFromArgs(args, caller, [path, ext, pausedFirst, isSnapshot, isTape, isDisk, play, autostart, drive, inspect, commit, &caller, done,
+            TargetResolver::ResolveFromArgs(args, caller, [path, ext, pausedFirst, isSnapshot, isTape, isDisk, play, autostart, drive, inspect, commit, switchModel, &caller, done,
                                                            isLocalFile, fileContent, filename](bool ok, const std::string& idOrError) {
                 if (!ok)
                 {
@@ -1034,13 +1045,17 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                     {
                         if (isLocalFile)
                         {
-                            ForwardCallRaw("POST", Endpoint(id, "/rzx/play"), *fileContent, headers, caller,
+                            const std::string endpoint =
+                                Endpoint(id, "/rzx/play") + (switchModel.empty() ? std::string() : "?switch_model=" + switchModel);
+                            ForwardCallRaw("POST", endpoint, *fileContent, headers, caller,
                                            "Playing RZX " + filename + " (uploaded) from " + id, done);
                         }
                         else
                         {
                             Json::Value body;
                             body["path"] = path;
+                            if (!switchModel.empty())
+                                body["switch_model"] = switchModel == "true";
                             ForwardCall("POST", Endpoint(id, "/rzx/play"), &body, caller, "Playing RZX " + path + " from " + id,
                                         done);
                         }
@@ -1054,8 +1069,12 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                         const std::string verb = inspect ? "Inspected snapshot " : "Loaded snapshot ";
                         if (isLocalFile)
                         {
-                            const std::string endpoint =
-                                Endpoint(id, action) + (commit.empty() ? std::string() : "?commit=" + commit);
+                            std::string query;
+                            if (!commit.empty())
+                                query += "commit=" + commit;
+                            if (!switchModel.empty())
+                                query += (query.empty() ? "" : "&") + std::string("switch_model=") + switchModel;
+                            const std::string endpoint = Endpoint(id, action) + (query.empty() ? std::string() : "?" + query);
                             ForwardCallRaw("POST", endpoint, *fileContent, headers, caller,
                                            verb + filename + " (uploaded) on " + id, done);
                         }
@@ -1065,6 +1084,8 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                             body["path"] = path;
                             if (!commit.empty())
                                 body["commit"] = commit;
+                            if (!switchModel.empty())
+                                body["switch_model"] = switchModel == "true";
                             ForwardCall("POST", Endpoint(id, action), &body, caller, verb + path + " on " + id, done);
                         }
                         return;
@@ -2231,7 +2252,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_magic_port", "next_audio", "next_input", "next_uart", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
-                               "audio_multisound", "audio_midi", "execution", "monitor"})
+                               "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound"})
     {
         allowed.append(aspect);
     }
@@ -2271,6 +2292,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "/api/v1/emulator/{id}/network/traffic?since=&adapter=&kind=&last=[&format=pcapng], control with POST "
         "{action: clear | start (path: a pcapng file, unbounded) | stop | ring | stream (port: a live pcapng stream for "
         "Wireshark, 0 = any free port) | stream-stop}), "
+        "'audio_wildsound' = the Sprinter ISA Wild Sound (mode AY / XM, stream command and position, storage, the "
+        "uploaded track, the XM player's position and channels, both AY chips), "
         "'audio_multisound' = the ZX-MultiSound card (options, the built-ins its slot shadows, CPLD latches, the YM2203 "
         "pair as the TSFM report's chips, SAA1099 voices and envelopes, the General Sound report, DACs, MIDI summary), "
         "'audio_midi' = its MIDI line and SAM2695 synthesizer (16 parts: program, preset name, volume, pan, voices, "
@@ -2541,11 +2564,11 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
                     aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi" && aspect != "execution" &&
-                    aspect != "monitor")
+                    aspect != "monitor" && aspect != "audio_wildsound")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound"));
                     return;
                 }
             }
@@ -3252,10 +3275,13 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
-                        else if (aspect == "audio_multisound" || aspect == "audio_midi")
+                        else if (aspect == "audio_multisound" || aspect == "audio_midi" || aspect == "audio_wildsound")
                         {
-                            // ZX-MultiSound / its MIDI synthesizer via the WebAPI (DeviceState::MultiSound / Midi); 404 = not fitted
-                            const std::string path = aspect == "audio_midi" ? "/state/audio/midi" : "/state/audio/multisound";
+                            // ZX-MultiSound / its MIDI synthesizer / the Sprinter's Wild Sound via the WebAPI
+                            // (DeviceState::MultiSound / Midi / WildSound); 404 = not fitted
+                            const std::string path = aspect == "audio_midi"        ? "/state/audio/midi"
+                                                     : aspect == "audio_wildsound" ? "/state/audio/wildsound"
+                                                                                   : "/state/audio/multisound";
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
@@ -4281,6 +4307,28 @@ void RegisterInspectState(ToolRegistry& registry)
                                                 << slot["envelope"]["phase"].asString();
                                 }
                             }
+                            else if (aspect == "audio_wildsound")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[audio_wildsound] " << value["description"].asString();
+                                for (const Json::Value& card : value["cards"])
+                                {
+                                    const Json::Value& ws = card["wild_sound"];
+                                    out << "\n[audio_wildsound] slot " << card["slot"].asInt() << ": " << ws["mode"].asString()
+                                        << " mode, " << (ws["unlocked"].asBool() ? "unlocked" : "locked") << ", stream "
+                                        << ws["stream"]["command_name"].asString() << " " << ws["stream"]["pos"].asUInt64() << "/"
+                                        << ws["stream"]["size"].asUInt64() << ", storage " << ws["storage"]["used"].asUInt64()
+                                        << " bytes";
+                                    if (ws.isMember("track"))
+                                        out << ", track \"" << ws["track"]["name"].asString() << "\" "
+                                            << ws["track"]["channels"].asInt() << " ch";
+                                    const Json::Value& p = card["player"];
+                                    if (p["playing"].asBool())
+                                        out << "\n  playing order " << p["order"].asInt() << " pattern " << p["pattern"].asInt()
+                                            << " row " << p["row"].asInt() << ", speed " << p["speed"].asInt() << " BPM "
+                                            << p["bpm"].asInt();
+                                }
+                            }
                             else if (aspect == "audio_multisound")
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
@@ -5186,6 +5234,71 @@ bool CopyNumber(const Json::Value& args, const char* field, Json::Value& body, s
     return true;
 }
 
+/// phys_page: a page number (integer or "0x.." string) or "rom"; the WebAPI checks the range
+bool CopyPhysPage(const Json::Value& args, Json::Value& body, std::string& error)
+{
+    if (!args.isMember("phys_page"))
+        return true;
+    const Json::Value& v = args["phys_page"];
+    if (v.isString() && (v.asString() == "rom" || v.asString() == "ROM"))
+    {
+        body["phys_page"] = "rom";
+        return true;
+    }
+    return CopyNumber(args, "phys_page", body, error);
+}
+
+/// phys_page as a query parameter: the number, or rom
+std::string PhysPageParam(const Json::Value& v)
+{
+    if (v.isString())
+        return UrlEncodeSegment(v.asString());
+    return std::to_string(v.asUInt());
+}
+
+/// The reverse searches' list options: all, changes_only, limit, before, from_frame (verbatim; the WebAPI checks them)
+bool CopySearchListOptions(const Json::Value& args, Json::Value& body, std::string& error)
+{
+    for (const char* flag : {"all", "changes_only"})
+        if (args.isMember(flag))
+        {
+            if (!args[flag].isBool())
+            {
+                error = std::string("'") + flag + "' must be true or false";
+                return false;
+            }
+            body[flag] = args[flag];
+        }
+    return CopyNumber(args, "limit", body, error) && CopyNumber(args, "before", body, error) &&
+           CopyNumber(args, "from_frame", body, error) && CopyPhysPage(args, body, error);
+}
+
+/// Frame numbers as runs: "10-14, 20, 31-32"
+std::string FormatFrameRuns(const Json::Value& frames)
+{
+    std::string out;
+    for (Json::ArrayIndex i = 0; i < frames.size();)
+    {
+        const uint64_t from = frames[i].asUInt64();
+        uint64_t to = from;
+        Json::ArrayIndex j = i + 1;
+        int step = 0;   // a run: consecutive frames, ascending (+1) or descending (-1)
+        while (j < frames.size())
+        {
+            const uint64_t next = frames[j].asUInt64();
+            if (step == 0)
+                step = next == to + 1 ? 1 : next + 1 == to ? -1 : 0;
+            if (step == 0 || (step > 0 ? next != to + 1 : next + 1 != to))
+                break;
+            to = next;
+            ++j;
+        }
+        out += (out.empty() ? "" : ", ") + std::to_string(from) + (to != from ? "-" + std::to_string(to) : "");
+        i = j;
+    }
+    return out;
+}
+
 void RegisterTimeTravel(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -5213,10 +5326,14 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "paused point continues it, 'stop' ends it; on backend v1 they return an error while recording): "
         "'seek' (frame + optional tinframe), "
         "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
-        "'reverse_step' (count instructions, tstates OR scanlines back), 'reverse_continue' (run backward until PC hits one of pcs), "
-        "'find_last' (latest write/read/execute/io at an address before the current point, or before before_frame). "
-        "'port_events' answers 'when did the program ...' from the port journals without replay (needs a stopped or "
-        "paused recording, works on a loaded file): event 'key' (saw a key down; event_arg a key name such as 'a', "
+        "'reverse_step' (count instructions, tstates OR scanlines back), 'reverse_continue' (run backward until PC hits one of pcs; "
+        "phys_page keeps only runs on that page; all=true lists every hit newest first up to limit and leaves the machine "
+        "where it is; next_before pages on), "
+        "'find_last' (latest write/read/execute/io at an address before the current point, or before before_frame; "
+        "changes_only=true skips writes that store the byte already there and gives old_value; all=true lists the hits "
+        "newest first up to limit, the machine stays; next_before pages on). "
+        "'port_events' answers 'when did the program ...' from the port journals without replay (also while recording: "
+        "it holds the CPU for the search; works on a loaded file): event 'key' (saw a key down; event_arg a key name such as 'a', "
         "'enter', 'space'), 'ear' (saw the tape signal change), 'ay-read' / 'ay-write' / 'ay-select' (event_arg an AY "
         "register), 'border', 'beeper', 'in' / 'out' (narrow with port / port_mask / value / value_mask). "
         "'resume' continues recording from the current (or given) point and DISCARDS the history after it; it needs the "
@@ -5232,7 +5349,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "reports the bound on the recorded history - while recording, the oldest frames are released beyond it and "
         "the session start moves forward; a file saved afterwards replays its remaining frames exactly. 'start' "
         "takes the same two fields. "
-        "Coverage index: 'coverage_probe' (did frame X touch an address range), 'coverage_scan' (which frames did), "
+        "Coverage index: 'coverage_probe' (did frame X touch an address range), 'coverage_scan' (which frames did: the "
+        "list, oldest first or order=newest, ranges=true for runs of frames, next_from_frame / next_to_frame page on; "
+        "exact=false means the offset matched on any page - give phys_page), "
         "'coverage_summary' (bucketed activity heatmap). "
         "Write journal (who wrote an address last, answered at once; off by default): 'journal_on' / 'journal_off' "
         "switch it at any moment, also while recording (each on-off span is a segment); 'journal_build' builds it by "
@@ -5288,6 +5407,25 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["pcs"]["items"]["type"] = "string";
     schema["properties"]["pcs"]["description"] =
         "reverse_continue: reverse breakpoints - PC addresses as integers or '0x8000' strings (non-empty)";
+    schema["properties"]["all"]["type"] = "boolean";
+    schema["properties"]["all"]["description"] =
+        "reverse_continue / find_last: every hit newest first (up to limit, default 100, at most 10000) instead of the "
+        "newest one; the machine is not moved. A truncated list gives next_before: pass it as 'before' for the next page";
+    schema["properties"]["changes_only"]["type"] = "boolean";
+    schema["properties"]["changes_only"]["description"] =
+        "find_last (access write): skip writes that store the byte already there; each hit gives old_value";
+    schema["properties"]["before"]["type"] = "integer";
+    schema["properties"]["before"]["description"] =
+        "find_last / reverse_continue: at or before this machine time (T-states, the hits' 't'); instead of before_frame";
+    schema["properties"]["order"]["type"] = "string";
+    schema["properties"]["order"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["order"]["enum"].append("oldest");
+    schema["properties"]["order"]["enum"].append("newest");
+    schema["properties"]["order"]["description"] =
+        "coverage_scan: the list keeps the first 'limit' matches oldest first (default) or newest first";
+    schema["properties"]["ranges"]["type"] = "boolean";
+    schema["properties"]["ranges"]["description"] =
+        "coverage_scan: runs of consecutive matching frames [from, to] instead of single frames (limit counts runs)";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
         "dump / load / file_info: .ttd file path (load also takes a recording's folder under ~/.unreal-ng/ttd/, or "
@@ -5299,15 +5437,18 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "that memory";
     schema["properties"]["space"]["type"] = "string";
     schema["properties"]["space"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* space : {"ram", "vram", "cache"})
+    for (const char* space : {"ram", "vram", "cache", "cpu"})
         schema["properties"]["space"]["enum"].append(space);
     schema["properties"]["space"]["description"] =
         "find_last / coverage_probe / coverage_scan: the memory searched - ram (Z80 addresses, default), vram (the "
         "Sprinter's 256 KB video RAM) or cache (its 64 KB fast RAM); for vram / cache addr / addr_from / addr_to are "
-        "offsets inside one 16 KB page. memory_at / memory_diff (required): ram, ramN, or any memory the session "
-        "records by name or alias (sprinter.vram / vram, cache, neogs.ram, gs.ram, moonsound.wave, evo.flash ...)";
+        "offsets inside one 16 KB page. memory_at / memory_diff (required): ram (all RAM pages back to back, page N at "
+        "N x 0x4000 - on a 48K machine Z80 0xC000 is page 0), ramN, or any memory the session records by name or alias "
+        "(sprinter.vram / vram, cache, neogs.ram, gs.ram, moonsound.wave, evo.flash ...). memory_at space cpu: Z80 "
+        "addresses as the CPU saw them at frame / tinframe, with the four windows' ROM / RAM pages";
     schema["properties"]["offset"]["type"] = "string";
-    schema["properties"]["offset"]["description"] = "memory_at: byte offset in the space (number, '0x..', '#..'), default 0";
+    schema["properties"]["offset"]["description"] =
+        "memory_at: byte offset in the space (number, '0x..', '#..'), default 0; space cpu: the Z80 address";
     schema["properties"]["length"]["type"] = "integer";
     schema["properties"]["length"]["description"] = "memory_at: bytes, default 256, at most 65536";
     schema["properties"]["access"]["type"] = "string";
@@ -5319,7 +5460,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["access"]["description"] = "find_last: access kind to search for (default 'write')";
     schema["properties"]["value"]["type"] = "string";
     schema["properties"]["value"]["description"] =
-        "find_last: only accesses that moved this byte value (0..255); port_events: (value & value_mask) == value";
+        "find_last: only accesses of this byte value (0..255; for writes the value written); port_events: "
+        "(value & value_mask) == value";
     schema["properties"]["event"]["type"] = "string";
     schema["properties"]["event"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* e : {"key", "ear", "ay-read", "ay-write", "ay-select", "border", "beeper", "in", "out"})
@@ -5355,12 +5497,14 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["pc_to"]["description"] = "find_last: only accesses made by code with PC <= pc_to";
     schema["properties"]["before_frame"]["type"] = "integer";
     schema["properties"]["before_frame"]["description"] =
-        "find_last: search backward from this frame instead of the current position";
+        "find_last / reverse_continue: search backward from this frame (at or before it, with before_tin) instead of "
+        "the current position";
     schema["properties"]["before_tin"]["type"] = "integer";
-    schema["properties"]["before_tin"]["description"] = "find_last: T-states within before_frame (default 0)";
+    schema["properties"]["before_tin"]["description"] = "find_last / reverse_continue: T-states within before_frame (default 0)";
     schema["properties"]["from_frame"]["type"] = "integer";
     schema["properties"]["from_frame"]["description"] =
-        "Starting frame for coverage_scan / coverage_summary / port_events / journal_build / export_clip";
+        "Starting frame for coverage_scan / coverage_summary / port_events / journal_build / export_clip; the oldest "
+        "frame find_last / reverse_continue look at";
     schema["properties"]["to_frame"]["type"] = "integer";
     schema["properties"]["to_frame"]["description"] =
         "Ending frame for coverage_scan / coverage_summary / port_events / journal_build / export_clip";
@@ -5374,13 +5518,16 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["addr_to"]["type"] = "string";
     schema["properties"]["addr_to"]["description"] =
         "End Z80 address (inclusive) of a range for find_last or a coverage query (e.g. '0xBFFF' or 49151)";
-    schema["properties"]["phys_page"]["type"] = "integer";
+    schema["properties"]["phys_page"]["type"] = Json::Value(Json::arrayValue);
+    schema["properties"]["phys_page"]["type"].append("integer");
+    schema["properties"]["phys_page"]["type"].append("string");
     schema["properties"]["phys_page"]["description"] =
-        "Optional physical RAM page (0..255) for find_last or a coverage query - picks the bank on paged machines";
+        "Optional physical RAM page (0..255), or 'rom' (code / data with no RAM page), for find_last, reverse_continue "
+        "or a coverage query - picks the bank on paged machines; without it an address matches on every page";
     schema["properties"]["limit"]["type"] = "integer";
     schema["properties"]["limit"]["description"] =
-        "Max results for coverage_scan (default 200) or port_events (default 100), or max buckets for coverage_summary "
-        "(default 100)";
+        "Max results for coverage_scan (default 200, at most 10000), port_events (default 100), find_last / "
+        "reverse_continue with all (default 100, at most 10000), or max buckets for coverage_summary (default 100)";
     schema["properties"]["bucket_size"]["type"] = "integer";
     schema["properties"]["bucket_size"]["description"] = "Frames per bucket for coverage_summary (default: auto)";
     schema["required"].append("action");
@@ -5549,6 +5696,17 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     pcs.append(number);
                 }
                 (*body)["pcs"] = pcs;
+                if (!CopySearchListOptions(args, *body, error) || !CopyNumber(args, "before_frame", *body, error) ||
+                    !CopyNumber(args, "before_tin", *body, error))
+                {
+                    done(ToolResult::Error(error));
+                    return;
+                }
+                if (args.isMember("changes_only"))
+                {
+                    done(ToolResult::Error("'changes_only' is a find_last option"));
+                    return;
+                }
             }
             else if (action == "memory_at" || action == "memory_diff")
             {
@@ -5587,7 +5745,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         (*body)[field] = args[field];
                     }
                 }
-                if (!CopyNumber(args, "phys_page", *body, error) || !CopyNumber(args, "before_frame", *body, error) ||
+                if (!CopySearchListOptions(args, *body, error) || !CopyNumber(args, "before_frame", *body, error) ||
                     !CopyNumber(args, "before_tin", *body, error))
                 {
                     done(ToolResult::Error(error));
@@ -5819,6 +5977,27 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 else if (action == "reverse_continue")
                 {
                     CallAndSummarize("POST", Endpoint(id, "/ttd/reverse-continue"), body.get(), caller, [](const Json::Value& b) {
+                        if (b.isMember("hits"))
+                        {
+                            // all: the list itself, newest first (an agent may read only this text)
+                            std::ostringstream out;
+                            const Json::Value& hits = b["hits"];
+                            out << b["count"].asUInt64() << " PC hit(s), newest first, the machine did not move";
+                            const Json::ArrayIndex shown = std::min<Json::ArrayIndex>(hits.size(), 200);
+                            for (Json::ArrayIndex i = 0; i < shown; i++)
+                            {
+                                const Json::Value& h = hits[i];
+                                out << "\n  " << FormatTimePoint(h["frame"], h["tinframe"]) << " PC " << Hex16(h["pc"].asUInt())
+                                    << " page " << (h["phys_page"].isString() ? h["phys_page"].asString() : std::to_string(h["phys_page"].asUInt()));
+                            }
+                            if (hits.size() > shown)
+                                out << "\n  ... " << (hits.size() - shown) << " more in the structured result";
+                            if (b["truncated"].asBool())
+                                out << "\n[TRUNCATED] older hits remain: go on with before=" << b["next_before"].asUInt64();
+                            if (b.isMember("blocked_by_marker"))
+                                out << "\nBlocked by marker " << FormatMarker(b["blocked_by_marker"]) << ": no hits older than it";
+                            return out.str() + FormatSearchWindow(b) + FormatCheck(b);
+                        }
                         std::string text = b["matched"].asBool()
                                                ? "Hit PC " + Hex16(b["pc"].asUInt()) + " at " + FormatTimePoint(b["frame"], b["tinframe"])
                                                : std::string("No PC match");
@@ -5837,7 +6016,16 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                            " at offset " + std::to_string(b["offset"].asUInt64()) + " as at frame " +
                                            std::to_string(b["at_frame"].asUInt64()) +
                                            (b["tinframe"].asUInt64() ? " t=" + std::to_string(b["tinframe"].asUInt64()) : std::string()) +
-                                           (b["exact"].asBool() ? "" : " (the checkpoint before the frame asked)") + ": ";
+                                           (b["exact"].asBool() ? "" : " (the checkpoint before the frame asked)");
+                        if (b.isMember("banks"))
+                        {
+                            // space cpu: how the Z80's 64 KB was paged there
+                            std::string banks;
+                            for (const Json::Value& w : b["banks"])
+                                banks += (banks.empty() ? "" : ", ") + w["addr"].asString() + " " + w["name"].asString();
+                            text += " [" + banks + "]";
+                        }
+                        text += ": ";
                         return text + (hex.size() > 128 ? hex.substr(0, 128) + "... (full in the data)" : hex);
                     }, done);
                 }
@@ -5858,10 +6046,50 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 else if (action == "find_last")
                 {
                     CallAndSummarize("POST", Endpoint(id, "/ttd/find-last"), body.get(), caller, [](const Json::Value& b) {
+                        auto oldValue = [](const Json::Value& h) {
+                            if (!h.isMember("old_value"))
+                                return std::string();
+                            return h["old_value"].isNull() ? std::string(" (was unknown)") : " (was " + std::to_string(h["old_value"].asUInt()) + ")";
+                        };
+                        if (b.isMember("hits"))
+                        {
+                            // all: the list itself, newest first (an agent may read only this text)
+                            std::ostringstream out;
+                            const Json::Value& hits = b["hits"];
+                            out << b["count"].asUInt64() << " access(es), newest first, the machine did not move";
+                            const Json::ArrayIndex shown = std::min<Json::ArrayIndex>(hits.size(), 200);
+                            for (Json::ArrayIndex i = 0; i < shown; i++)
+                            {
+                                const Json::Value& h = hits[i];
+                                out << "\n  " << FormatTimePoint(h["frame"], h["tinframe"]) << " " << h["access"].asString() << " PC "
+                                    << Hex16(h["pc"].asUInt()) << " value " << h["value"].asUInt() << oldValue(h);
+                                if (h.isMember("addr"))
+                                    out << " addr " << Hex16(h["addr"].asUInt());
+                                else if (h.isMember("offset"))
+                                    out << " " << h["space"].asString() << " offset " << h["offset"].asUInt();
+                                if (!h["phys_page"].isNull())
+                                    out << " page " << h["phys_page"].asUInt();
+                            }
+                            if (hits.size() > shown)
+                                out << "\n  ... " << (hits.size() - shown) << " more in the structured result";
+                            if (b["truncated"].asBool())
+                                out << "\n[TRUNCATED] older accesses remain: go on with before=" << b["next_before"].asUInt64();
+                            if (b["blocked"].asBool())
+                            {
+                                Json::Value marker;
+                                marker["frame"] = b["marker_frame"];
+                                marker["tinframe"] = b["marker_tinframe"];
+                                marker["kind"] = b["marker_kind"];
+                                marker["reason"] = b["marker_reason"];
+                                out << "\nStopped at the replay barrier " << FormatMarker(marker) << ": nothing older is searched";
+                            }
+                            return out.str() + FormatSearchWindow(b);
+                        }
                         if (b["found"].asBool())
                         {
                             std::string text = "Last " + b["access"].asString() + " at " + FormatTimePoint(b["frame"], b["tinframe"]) +
-                                               " by PC " + Hex16(b["pc"].asUInt()) + ", value " + std::to_string(b["value"].asUInt());
+                                               " by PC " + Hex16(b["pc"].asUInt()) + ", value " + std::to_string(b["value"].asUInt()) +
+                                               oldValue(b);
                             if (!b["phys_page"].isNull())
                             {
                                 text += ", RAM page " + std::to_string(b["phys_page"].asUInt());
@@ -5993,7 +6221,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     if (args.isMember("kind")) query += "kind=" + UrlEncodeSegment(args["kind"].asString()) + "&";
                     if (args.isMember("addr_from")) query += "addr_from=" + UrlEncodeSegment(args["addr_from"].asString()) + "&";
                     if (args.isMember("addr_to")) query += "addr_to=" + UrlEncodeSegment(args["addr_to"].asString()) + "&";
-                    if (args.isMember("phys_page")) query += "phys_page=" + std::to_string(args["phys_page"].asUInt()) + "&";
+                    if (args.isMember("phys_page")) query += "phys_page=" + PhysPageParam(args["phys_page"]) + "&";
                     if (query.back() == '&' || query.back() == '?') query.pop_back();
 
                     caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
@@ -6017,8 +6245,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     if (args.isMember("kind")) query += "kind=" + UrlEncodeSegment(args["kind"].asString()) + "&";
                     if (args.isMember("addr_from")) query += "addr_from=" + UrlEncodeSegment(args["addr_from"].asString()) + "&";
                     if (args.isMember("addr_to")) query += "addr_to=" + UrlEncodeSegment(args["addr_to"].asString()) + "&";
-                    if (args.isMember("phys_page")) query += "phys_page=" + std::to_string(args["phys_page"].asUInt()) + "&";
+                    if (args.isMember("phys_page")) query += "phys_page=" + PhysPageParam(args["phys_page"]) + "&";
                     if (args.isMember("limit")) query += "limit=" + std::to_string(args["limit"].asUInt()) + "&";
+                    if (args.isMember("order")) query += "order=" + UrlEncodeSegment(args["order"].asString()) + "&";
+                    if (args.isMember("ranges")) query += std::string("ranges=") + (args["ranges"].asBool() ? "true" : "false") + "&";
                     if (query.back() == '&' || query.back() == '?') query.pop_back();
 
                     caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
@@ -6031,12 +6261,35 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             return;
                         }
                         std::ostringstream out;
-                        out << "Matched " << body["matching_frames"].asUInt64() << " / " << body["scanned_frames"].asUInt64()
-                            << " scanned frames (first=" << body["first_match"].asUInt64() << ", last=" << body["last_match"].asUInt64() << ")";
+                        const uint64_t matched = body["matching_frames"].asUInt64();
+                        out << "Matched " << matched << " / " << body["scanned_frames"].asUInt64() << " scanned frames";
+                        if (matched > 0)
+                            out << " (first=" << body["first_match"].asUInt64() << ", last=" << body["last_match"].asUInt64() << ")";
                         if (body.isMember("covered_from")) {
                             out << " [index covers " << body["covered_from"].asUInt64() << ".." << body["covered_to"].asUInt64() << "]";
                         }
-                        if (body["truncated"].asBool()) out << " [TRUNCATED]";
+                        // The list itself: an agent may read only this text
+                        if (body.isMember("ranges")) {
+                            std::string runs;
+                            for (const Json::Value& r : body["ranges"])
+                                runs += (runs.empty() ? "" : ", ") + std::to_string(r[0].asUInt64()) +
+                                        (r[1].asUInt64() != r[0].asUInt64() ? "-" + std::to_string(r[1].asUInt64()) : "");
+                            out << "\nRuns (" << body["ranges"].size() << ", " << body["order"].asString() << " first): " << runs;
+                        } else if (body["frames"].size() > 0) {
+                            out << "\nFrames (" << body["frames"].size() << ", " << body["order"].asString()
+                                << " first): " << FormatFrameRuns(body["frames"]);
+                        }
+                        if (body["truncated"].asBool()) {
+                            out << "\n[TRUNCATED] the list holds the first " << (body.isMember("ranges") ? body["ranges"].size() : body["frames"].size())
+                                << "; go on with ";
+                            if (body.isMember("next_from_frame"))
+                                out << "from_frame=" << body["next_from_frame"].asUInt64();
+                            else
+                                out << "to_frame=" << body["next_to_frame"].asUInt64();
+                        }
+                        if (!body["exact"].asBool() && matched > 0)
+                            out << "\nNot exact: without phys_page the offset matched on every page and 16 KB window - a frame "
+                                   "may hold another page's access. Give phys_page (or 'rom') for exact frames.";
                         done(ToolResult::Ok(out.str(), std::move(body)));
                     });
                 }

@@ -737,7 +737,7 @@ While a time-travel (TTD) recording runs, a memory write (`PUT /memory/{addr}`) 
 
 ### Settings Management
 ```
-GET  /api/v1/emulator/{id}/settings            All settings, grouped (io_acceleration, disk_interface, audio) plus turbo_mode, speed, turbo_active, turbo_audio
+GET  /api/v1/emulator/{id}/settings            All settings, grouped (io_acceleration, disk_interface, audio) plus turbo_mode, speed, effective_speed, turbo_active, turbo_audio
 GET  /api/v1/emulator/{id}/settings/{name}     One setting value (fast_tape, turbo_tape, fast_disk, turbo_mode, speed, turbo_audio, turbo_active, trdos_traps, audio_rate, ...)
 PUT  /api/v1/emulator/{id}/settings/{name}     Update a setting (body: {"value": ...})
 ```
@@ -751,6 +751,7 @@ Settings are per-instance and runtime-only — nothing is written to the ini.
 | `speed` | Host speed multiplier `1`, `2`, `4`, `8` or `16` (a JSON number, or a decimal or `"0x.."` string). The emulated machine runs N times faster; applied at the next frame. `GET /settings/speed` also lists `allowed`. | 400 for any other value. 409 for anything but `1` while a TTD recording runs. A change on a stopped or loaded TTD session drops that session's history (frame timing is part of the recording); re-selecting the current speed changes nothing. |
 | `turbo_mode` | Bool: run as fast as the host allows (the `turbomode` feature). | 409 for `true` while a TTD recording runs. |
 | `turbo_audio` | Bool: keep generating audio (at a raised pitch) in turbo mode. Off by default. Applied at once if turbo is running. | — |
+| `effective_speed` | Read-only number: host `speed` x the machine's own hardware turbo (TS-Conf 3.5/7/14 MHz, Scorpion, ATM). Only `speed` is locked to 1 while TTD records; a guest switching its hardware turbo (Wild Commander does, around SD I/O) moves this one, and wall-clock speed stays 1x. | 400 (read-only). |
 | `turbo_active` | Read-only bool: the engine runs unthrottled right now, because of `turbo_mode` or because turbo tape is warping a load. | 400 (read-only; switch turbo with `turbo_mode`). |
 
 ```json
@@ -1065,8 +1066,15 @@ POST /api/v1/emulator/{id}/profiler/memory/resume     Resume paused session
 POST /api/v1/emulator/{id}/profiler/memory/clear      Clear all profiler data
 GET  /api/v1/emulator/{id}/profiler/memory/status     Get profiler status
 GET  /api/v1/emulator/{id}/profiler/memory/pages      Get per-page access summaries (?limit=N)
-GET  /api/v1/emulator/{id}/profiler/memory/counters   Get address-level counters (?page=N, ?mode=z80|physical)
-GET  /api/v1/emulator/{id}/profiler/memory/regions    Get monitored region statistics
+GET  /api/v1/emulator/{id}/profiler/memory/counters   Get address-level counters (MemoryCounters):
+     ?space=cpu|phys|ram|ram5  &start=&length= (or &end=)  &addresses=0x5C00,0x8000-0x80FF
+     &format=top|sparse|dense|binary  &kinds=r|w|x mix  &min=  &limit=
+     (older form without space / addresses: ?mode=z80|physical&page=N&start=&end=&format=dense|sparse)
+GET    /api/v1/emulator/{id}/profiler/memory/watches        Every watch with reads, writes, executes, callers, values
+POST   /api/v1/emulator/{id}/profiler/memory/watches        Add a watch: {"name","start","length"} or {"name","port","mask"},
+                                                            + "callers", "values", "max_callers", "max_values"
+DELETE /api/v1/emulator/{id}/profiler/memory/watches        Remove every watch
+DELETE /api/v1/emulator/{id}/profiler/memory/watches/{name} Remove one watch (404 when there is none)
 POST /api/v1/emulator/{id}/profiler/memory/save       Save access data to file (body: {"path": "...", "format": "yaml"})
 ```
 
@@ -1104,6 +1112,41 @@ POST /api/v1/emulator/{id}/profiler/memory/save       Save access data to file (
   }
 }
 ```
+
+**Counters Response** (`?space=phys&format=top&kinds=w&limit=2`): `cells` are `[address, reads, writes, executes]`;
+in `phys` a fifth element names the cell's page (`address % 0x4000` is the offset in it). `format=dense` answers
+`counters {reads, writes, executes}` instead. `format=binary` answers `application/octet-stream`: the dense window as
+three little-endian `uint32` arrays (reads, writes, executes), with the headers `X-Space`, `X-Start`, `X-Length`,
+`X-Layout` and `X-Session-State`.
+
+```json
+{
+  "emulator_id": "550e8400-...",
+  "space": "phys", "space_size": 6373376, "format": "top", "kinds": "w",
+  "session_state": "capturing", "allocated": true,
+  "start": 0, "length": 6373376,
+  "totals": {"reads": 1203344, "writes": 91822, "executes": 2210334},
+  "cells": [[89088, 0, 4410, 0, "ram5"], [89089, 0, 4410, 0, "ram5"]],
+  "count": 2, "min": 1, "limit": 2, "matched": 7012, "truncated": true
+}
+```
+
+**Watches Response** (`GET .../profiler/memory/watches`; a POST answers the same with the added watch):
+
+```json
+{
+  "moment": "frame",
+  "count": 1,
+  "watches": [
+    {"name": "kempston", "kind": "port", "port": 31, "mask": 255, "reads": 1250, "writes": 0,
+     "callers_tracked": true, "values_tracked": true, "max_callers": 100, "max_values": 256,
+     "callers": [[34816, 1250]], "values": [[0, 1240], [16, 10]]}
+  ]
+}
+```
+
+`callers` and `values` are `[key, count]`, most frequent first. A machine busy past 500 ms answers 503. A bad
+watch answers 400, and a missing name 404. The `debug.watches` topic of `/api/v1/ws` pushes the totals.
 
 ### Call Trace Profiler
 
@@ -1870,7 +1913,7 @@ POST /api/v1/emulator/{id}/snapshot/load  ✅ Implemented
 POST /api/v1/emulator/{id}/snapshot/transfer  ✅ Implemented — in-memory state transfer, see [automation.md](../../../features/automation.md#machine-state-transfer)
 ```
 
-A file that needs another machine switches the model before it loads: a TS-Conf program (`.spg`) on a Pentagon becomes a TS-Conf (`TSL`, 4096K) instance with the media carried over, then the program loads there. The answer then has `"model_switched": true`, `"model": "TSL"`, `emulator_id` (the new instance; use it from now on) and `previous_emulator_id`. With `"switch_model": false` (body field, or a query parameter with an upload) the load is refused with 409, `required_model` and `required_ram_kb`. MCP `load_software`, CLI `snapshot load`, Lua `snapshot_load` and Python `unreal.snapshot_load` share this rule, and so does opening the file in unreal-qt (menu, drag and drop, command line).
+A file that needs another machine switches the model before it loads: a TS-Conf program (`.spg`) on a Pentagon becomes a TS-Conf (`TSL`, 4096K) instance with the media carried over, then the program loads there. A snapshot of a machine the running one cannot hold switches to the machine it was made on: a 128K `.z80` on a 48K to the model its header names (128K, +2, +2A, +3, Pentagon, Scorpion), a 128K `.sna` to a 128K, a Pentagon 512 file on a Pentagon 128 to a Pentagon 512; an `.szx` saved on another model to that model. These switch only when asked (`"switch_model": true`) or when the configuration has `[SNAPSHOT] SwitchModel=1`; otherwise the load is refused with the machine named. The answer then has `"model_switched": true`, `"model": "TSL"`, `emulator_id` (the new instance; use it from now on) and `previous_emulator_id`. With `"switch_model": false` (body field, or a query parameter with an upload) the load is refused with 409, `required_model` and `required_ram_kb`. MCP `load_software`, CLI `snapshot load`, Lua `snapshot_load` and Python `unreal.snapshot_load` share this rule, and so does opening the file in unreal-qt (menu, drag and drop, command line).
 
 ### RZX Playback
 
@@ -1960,11 +2003,11 @@ Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset
 | `POST` | `/ttd/step-forward` | — | `stepped`, `frame`, `tinframe` (one frame forward, inside recorded history) | ✅ Implemented |
 | `POST` | `/ttd/step-instruction` | Optional `{"dir": "back"\|"forward"\|"fwd"}` (default `back`) | `stepped`, `dir` (`back`/`forward`), `frame`, `tinframe` | ✅ Implemented |
 | `POST` | `/ttd/reverse-step` | Exactly one of `{"count": N}` (instructions), `{"tstates": T}` or `{"scanlines": L}` (L lines of the machine's `t_line`; the t-state forms land on the nearest instruction start at or before the target). 400 for more than one or none. | `reached`, `mode` (`count`/`tstates`/`scanlines`), `tstates` (scanlines), `frame`, `tinframe` | ✅ Implemented |
-| `POST` | `/ttd/reverse-continue` | `{"pcs": [A, B, ...]}` — non-empty array of addresses 0..65535: numbers, or strings (decimal, `"0x.."`, `"#.."`, `"$.."`) | `matched`, `pc`, `frame`, `tinframe`, `blocked_by_marker {kind, reason, frame, tinframe}` (only when a marker stopped it), `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` (the searched span; see [Search window](./command-interface.md#ttd-session-rules)) | ✅ Implemented |
-| `POST` | `/ttd/memory-at` | `{space, frame, tinframe?, offset?, length?}` (`tinframe`: a point inside the frame - its writes up to there are applied from the write journal, built for that frame by replay when missing; `ram` / `vram` / `cache` only, 400 for other memories): space `ram`, `ramN` or a memory the session records by name or alias (`sprinter.vram` / `vram`, `cache`, `neogs.ram`, `gs.ram`, `moonsound.wave`, `evo.flash` ...) | `space` (the engine's region), `offset`, `length`, `frame`, `at_frame` (the checkpoint read: the newest at or before `frame`), `exact`, `hex`. The machine does not move. 400 for a memory not recorded or a frame before the first checkpoint; 501 on backend v1 | ✅ Implemented |
+| `POST` | `/ttd/reverse-continue` | `{"pcs": [A, B, ...], "phys_page"?, "all"?, "limit"?, "before_frame"?, "before_tin"?, "before"?, "from_frame"?}` — `pcs`: non-empty array of addresses 0..65535: numbers, or strings (decimal, `"0x.."`, `"#.."`, `"$.."`). `phys_page`: 0..255 or `"rom"` - only instructions run from that page. `all: true`: every hit, newest first, up to `limit` (default 100, 1..10000), and the machine does not move. `before_frame` [+ `before_tin`] or `before` (machine T): at or before that point (default: strictly before the current position). `from_frame`: not older than that frame | `matched`, `pc`, `frame`, `tinframe`, `t`, `phys_page` (a number or `"rom"`); with `all`: `hits [{frame, tinframe, t, pc, phys_page}]`, `count`, `truncated`, `next_before` (pass it back as `before` for the next page); `blocked_by_marker {kind, reason, frame, tinframe}` (only when a marker stopped it), `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` (the searched span; see [Search window](./command-interface.md#ttd-session-rules)). 400 for `before_tin` without `before_frame` | ✅ Implemented |
+| `POST` | `/ttd/memory-at` | `{space, frame, tinframe?, offset?, length?}` (`tinframe`: a point inside the frame - its writes up to there are applied from the write journal, built for that frame by replay when missing; `ram` / `vram` / `cache` only, 400 for other memories): space `ram`, `ramN` or a memory the session records by name or alias (`sprinter.vram` / `vram`, `cache`, `neogs.ram`, `gs.ram`, `moonsound.wave`, `evo.flash` ...). `ram` / `ramN` offsets are physical: on a Pentagon in 48K mode Z80 `0xC000` is page 0, so `ram` offset `0xC000` is page 3, not what the CPU saw. Space `cpu`: `offset` is a Z80 address and the bytes are what the CPU saw at `frame` / `tinframe` (through its paging then; `offset + length` at most 65536) | `space` (the engine's region), `offset`, `length`, `frame`, `at_frame` (the checkpoint read: the newest at or before `frame`), `exact`, `hex`; space `cpu` adds `banks [{window, addr, kind (rom / ram / cache), page, name}]` (the mapping of each 16 KB window there) and is always exact (it replays to the point silently and restores the machine). The machine does not move. 400 for a memory not recorded or a frame before the first checkpoint; 501 on backend v1 | ✅ Implemented |
 | `POST` | `/ttd/memory-diff` | `{space, from_frame, to_frame, limit?}` | `space`, `at_from`, `at_to`, `changed_bytes`, `ranges` [{`offset`, `length`}] (default limit 100), `truncated`; `ramN` compares that page only | ✅ Implemented |
-| `POST` | `/ttd/find-last` | See "find-last request" below | `found`; on a hit `frame`, `tinframe`, `pc`, `value`, `phys_page` (`null` for ROM / no RAM page / another space), `access`, `space`, and `addr` (space `ram`) or `offset` (space `vram` / `cache`); when a marker blocked the search `blocked: true`, `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason`; always (unless refused) `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` - the searched span | ✅ Implemented |
-| `POST` | `/ttd/port-events` | `{"event": "key", "arg": "space", ...options}` | "When did the program ...": `event`, `direction` (`in`/`out`), `count`, `truncated`, `scanned`, `hits` (`index`, `frame`, `tinframe`, `port`, `value`, `pc`, `ay_register` for AY queries). 409 without port journals or while a recording runs. See "port-events request" below | ✅ Implemented |
+| `POST` | `/ttd/find-last` | See "find-last request" below | `found`; on a hit `frame`, `tinframe`, `pc`, `value`, `phys_page` (`null` for ROM / no RAM page / another space), `access`, `space`, and `addr` (space `ram`) or `offset` (space `vram` / `cache`); with `changes_only` also `t` and `old_value` (the byte the write replaced; `null` when unknown); with `all`: `hits [...]` (each as above plus `t`), `count`, `truncated`, `next_before`; when a marker blocked the search `blocked: true`, `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason`; always (unless refused) `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` - the searched span | ✅ Implemented |
+| `POST` | `/ttd/port-events` | `{"event": "key", "arg": "space", ...options}` | "When did the program ...": `event`, `direction` (`in`/`out`), `count`, `truncated`, `scanned`, `hits` (`index`, `frame`, `tinframe`, `port`, `value`, `pc`, `ay_register` for AY queries). Works while a recording runs (on the engine: it holds the CPU for the read). 409 without port journals, or when a long run keeps the CPU busy (pause and ask again). See "port-events request" below | ✅ Implemented |
 | `POST` | `/ttd/resume` | Optional `{"frame": N, "tinframe"?: T}`; default is the current position | `resumed`, `frame`, `tinframe`, `state`. Truncates everything after the point and records again; resumes the emulator on success. Fails (`resumed: false`) from `idle` — seek first. | ✅ Implemented |
 | `GET`  | `/ttd/position` | — | `current {frame, tinframe}`, `session_end {frame, tinframe}`, `state`, `history`, `first_frame`, `paused`, `fps` (the machine's unscaled frame rate). The bounds come from the TTD's published cursor: the read never parks the machine (companions poll it at 50 Hz) | ✅ Implemented |
 | `GET`  | `/ttd/markers` | — | `count`, `markers[] {frame, tinframe, kind, reason}` — kinds `tape_control`, `disk_write`, `debugger_edit` (a tool edit made while recording), `other`; `hardware_reset` is reserved and never written (a reset stops the recording instead) | ✅ Implemented |
@@ -1976,7 +2019,7 @@ Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset
 | `POST` | `/ttd/load` | `{"path": "..."}` - a `.ttd` file, or a recording's folder (or one of its `segment-NNNN.ttd` files): its segments are joined and loaded | `ok`, `path`, `checkpoint_count`, `session_start_frame`, `current_end_frame`, `state` (`idle`). 400 without `path` or when the file is refused (`ok: false`, `error` — e.g. a model mismatch naming both model ids); 404 if the file cannot be opened. | ✅ Implemented |
 | `GET` | `/api/v1/ttd/file-info` (no `{id}`) | `?path=<file.ttd>` | A `.ttd` file read without loading it: `ok`, `path`, `file_bytes`, `schema_version`, `flags`, `captured_at_unix_ms`, `recorded_by`, `session_state`, `session_start_frame`, `session_end_frame`, `checkpoint_count`, `page_slot_count`, `sections{...}`, `machine{model_id, model, ram_page_bound, rom_signature, peripheral_mask, peripherals, not_recorded, general_sound, turbo_sound}` (`not_recorded`: devices fitted but deliberately not recorded, e.g. `gs-lw`), `peripherals_from_header`. 400 without `path` or for a file that is no readable `.ttd` (`ok: false`, `error`); 404 if it cannot be opened. Keys: [command-interface.md → Reading a file before loading it](./command-interface.md). | ✅ Implemented |
 | `GET`  | `/ttd/coverage/probe` | `?frame=N&kind=executed\|written\|read&addr_from=A1&addr_to=A2&phys_page=P` | `frame`, `kind`, `addr_from`, `addr_to` (as `"0x%04X"` strings), `phys_page` (if given), `touched`, `index_available`. Frames outside the covered window return `index_available: false, touched: false`. 400 for missing `frame`, invalid `kind`, `addr_from > addr_to`, `phys_page > 255` or non-numeric values. | ✅ Implemented |
-| `GET`  | `/ttd/coverage/scan` | `?from_frame=F1&to_frame=F2&kind=…&addr_from=A1&addr_to=A2&phys_page=P&limit=L` (default limit 200) | `kind`, `addr_from`, `addr_to`, `phys_page`, `frames[]`, `first_match`, `last_match`, `matching_frames`, `scanned_frames`, `truncated`, `index_available`, and `covered_from`/`covered_to` when the index is available. Same 400 validation as probe (plus `limit >= 1`). | ✅ Implemented |
+| `GET`  | `/ttd/coverage/scan` | `?from_frame=F1&to_frame=F2&kind=…&addr_from=A1&addr_to=A2&phys_page=P&limit=L&order=oldest\|newest&ranges=true` (default limit 200, at most 10000; `phys_page` 0..255 or `rom`, the bucket all ROM shares) | `kind`, `addr_from`, `addr_to`, `phys_page`, `order`, `exact`, `frames[]` (or with `ranges=true` `ranges[[from, to], ...]`: runs of consecutive matching frames, `limit` counts runs), `first_match`, `last_match` (the true oldest / newest match in the window, also when the list is cut), `matching_frames`, `scanned_frames`, `truncated`, `index_available`, and `covered_from`/`covered_to` when the index is available. `order=newest` lists the newest matches first. A cut list carries the cursor: `next_from_frame` (oldest order) or `next_to_frame` (newest order) - pass it back as `from_frame` / `to_frame`. `exact: false` (no `phys_page` on space `ram`): the offset matched on every page and 16 KB window, so a frame may hold another page's access. Same 400 validation as probe (plus `limit` 1..10000). | ✅ Implemented |
 | `GET`  | `/ttd/coverage/summary` | `?from_frame=F1&to_frame=F2&kind=K&bucket_size=B&limit=L` (default limit 100; `bucket_size=0` = automatic) | `from_frame`, `to_frame`, `bucket_size`, `bucket_count`, `buckets[] {frame_start, frame_end, executed_distinct, written_distinct, read_distinct, has_keyframe}`, `index_available`, and `covered_from`/`covered_to` when available | ✅ Implemented |
 
 Query parameters for the coverage routes accept decimal or `0x` hex. `to_frame` defaults to the session end, the address range to the whole 64K, and `kind` to `executed` (probe/scan) or all kinds (summary).
@@ -2078,15 +2121,25 @@ Other options: `newest` (true: the last hits), `to`, `port`, `port_mask`, `value
 }
 ```
 
+Every write that changed the byte, newest first, without moving the machine:
+
+```json
+{ "addr": "0x5B00", "access": "write", "changes_only": true, "all": true, "limit": 500 }
+```
+
 | Field | Meaning |
 | :--- | :--- |
 | `addr` | Single address. Or use `addr_from` / `addr_to` for a range (either end may be omitted: 0 / 0xFFFF). |
 | `access` | `write` (default), `read`, `execute`, `io`. An unknown value falls back to `write`. |
 | `value` | Exact byte value, 0..255. |
 | `pc_from`, `pc_to` | Only accesses made by an instruction whose PC is in this range. |
-| `phys_page` | 0..255 (JSON number only). Pins the search to one physical RAM page, so a banked address does not answer with another page's write. |
+| `phys_page` | 0..255, or `"rom"` (the bucket all ROM shares; reads and instruction starts). Pins the search to one physical RAM page, so a banked address does not answer with another page's write. |
 | `space` | `space` picks the memory: `ram` (default; Z80 addresses), `vram` (the Sprinter's 256 KB video RAM) or `cache` (its 64 KB fast RAM). For `vram` / `cache` the address fields are offsets in that memory (`0x12345`), a single offset or a range inside one 16 KB page, and the answer names the byte by `space` and `offset` (the writes through a graphics window, the accelerator's stores and the reads through a graphics window land there; `phys_page` is `null`). |
-| `before_frame`, `before_tin` | Search at or before this point instead of the current position. `before_tin` is only read together with `before_frame`. |
+| `before_frame`, `before_tin` | Search at or before this point instead of the current position. `before_tin` without `before_frame` is a 400. |
+| `before` | The same bound as a machine time (`t` of a hit; `next_before` of a cut list). |
+| `from_frame` | Do not look older than the start of this frame. |
+| `all` | `true`: every match newest first, up to `limit` (default 100, 1..10000), plus `count`, `truncated` and `next_before`. The machine does not move. |
+| `changes_only` | `true` (writes only): skip a write that stored the byte already there. Each hit carries `old_value`: the previous write in the write journal, or the byte at the segment start from its checkpoint, or what the replay read before the store. Nothing extra is recorded. |
 
 At least one of `addr`, `addr_from`, `addr_to`, `pc_from`, `pc_to`, `value` is required (400 otherwise). `addr`, `addr_from`, `addr_to`, `value`, `pc_from` and `pc_to` may be JSON numbers or strings: decimal, `"0x.."`, `"#.."` or `"$.."`; an out-of-range value is a 400.
 

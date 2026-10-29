@@ -12,6 +12,9 @@
 #include <sstream>
 
 #include "base/featuremanager.h"
+#include "debugger/memory/memorycounters.h"
+#include "debugger/memory/memoryread.h"
+#include "debugger/memory/memorywatch.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -360,6 +363,13 @@ void CLIProcessor::HandleProfilerMemory(const ClientSession& session, const std:
         oss << "  profiler memory stop   - Stop capture" << NEWLINE;
         oss << "  profiler memory clear  - Clear data" << NEWLINE;
         oss << "  profiler memory status - Show status" << NEWLINE;
+        oss << "  profiler memory counters [space=cpu|phys|ram|ram5] [start=N] [length=N|end=N] [addresses=A,B,C-D]" << NEWLINE;
+        oss << "                           [view=top|sparse|dense] [kinds=rwx] [min=N] [limit=N]" << NEWLINE;
+        oss << "                         - Per-address read/write/execute counters (default: top 32 of cpu)" << NEWLINE;
+        oss << "  profiler memory cell <address> [space] - One cell's counters" << NEWLINE;
+        oss << "  profiler memory watch add <name> <start> <length> [callers] [values] - Watch CPU addresses" << NEWLINE;
+        oss << "  profiler memory watch port <name> <port> [mask] [callers] [values]   - Watch a port (mask 0xFF: low byte)" << NEWLINE;
+        oss << "  profiler memory watch remove <name> | clear | list" << NEWLINE;
         session.SendResponse(oss.str());
         return;
     }
@@ -404,6 +414,171 @@ void CLIProcessor::HandleProfilerMemory(const ClientSession& session, const std:
         oss << "Memory Profiler Status:" << NEWLINE;
         oss << "  Session State: " << SessionStateToString(tracker->GetMemorySessionState()) << NEWLINE;
         oss << "  Capturing:     " << (tracker->IsMemoryCapturing() ? "YES" : "NO") << NEWLINE;
+        session.SendResponse(oss.str());
+    }
+    else if (action == "counters" || action == "cell")
+    {
+        MemoryCounters::Request request;
+        request.mode = MemoryCounters::Mode::Top;
+        request.limit = 32;
+        std::string error;
+        bool ok = true;
+        if (action == "cell")
+        {
+            uint32_t address = 0;
+            if (args.size() < 3 || !MemoryRead::ParseNumber(args[2], address))
+            {
+                session.SendResponse("Usage: profiler memory cell <address> [space]" + std::string(NEWLINE));
+                return;
+            }
+            request.addresses = {address};
+            request.space = args.size() > 3 ? args[3] : "";
+        }
+        for (size_t i = 2; action == "counters" && ok && i < args.size(); i++)
+        {
+            const size_t eq = args[i].find('=');
+            const std::string key = eq == std::string::npos ? args[i] : args[i].substr(0, eq);
+            const std::string value = eq == std::string::npos ? std::string() : args[i].substr(eq + 1);
+            uint32_t number = 0;
+            const bool numeric = MemoryRead::ParseNumber(value, number);
+            if (key == "space")
+                request.space = value;
+            else if (key == "view" || key == "format")
+                ok = MemoryCounters::ParseMode(value, request.mode, error);
+            else if (key == "kinds")
+                ok = MemoryCounters::ParseKinds(value, request.kinds, error);
+            else if (key == "addresses")
+                ok = MemoryCounters::ParseAddresses(value, request.addresses, error);
+            else if ((key == "start" || key == "length" || key == "end" || key == "min" || key == "limit") && numeric)
+            {
+                if (key == "start")
+                    request.start = number;
+                else if (key == "length")
+                    request.length = number;
+                else if (key == "end")
+                    request.length = number >= request.start ? number - request.start + 1 : 0;
+                else if (key == "min")
+                    request.min = number;
+                else
+                    request.limit = number;
+            }
+            else
+            {
+                ok = false;
+                error = "unknown or bad argument '" + args[i] + "'";
+            }
+        }
+        if (!ok)
+        {
+            session.SendResponse("Error: " + error + std::string(NEWLINE));
+            return;
+        }
+        const MemoryCounters::Result result = MemoryCounters::Read(context, request);
+        if (!result.error.empty())
+        {
+            session.SendResponse("Error: " + result.error + std::string(NEWLINE));
+            return;
+        }
+        std::ostringstream oss;
+        oss << "Memory counters: " << result.space << ", session " << result.session;
+        if (!result.allocated)
+            oss << " (no counters yet: profiler memory start)";
+        oss << NEWLINE << "  totals r=" << result.reads << " w=" << result.writes << " x=" << result.executes;
+        if (request.addresses.empty() && request.mode != MemoryCounters::Mode::Dense)
+            oss << ", " << result.cells.size() << " of " << result.matched << " cells (" << MemoryCounters::ModeName(request.mode)
+                << ", kinds " << MemoryCounters::KindsName(request.kinds) << ")" << (result.truncated ? " truncated" : "");
+        oss << NEWLINE;
+        for (const MemoryCounters::Cell& cell : result.cells)
+        {
+            oss << "  0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << cell.address << std::dec;
+            if (result.space == "phys")
+                oss << " " << MemoryCounters::PhysPageName(cell.address / PAGE_SIZE) << ":0x" << std::hex << std::uppercase
+                    << std::setw(4) << std::setfill('0') << (cell.address % PAGE_SIZE) << std::dec;
+            oss << "  r=" << cell.reads << " w=" << cell.writes << " x=" << cell.executes << NEWLINE;
+        }
+        session.SendResponse(oss.str());
+    }
+    else if (action == "watch" || action == "watches")
+    {
+        const std::string op = action == "watches" ? "list" : (args.size() > 2 ? args[2] : "list");
+        MemoryWatch::Options options;
+        uint32_t numbers[2] = {0, 0};
+        auto flags = [&](size_t from) {
+            for (size_t i = from; i < args.size(); i++)
+            {
+                if (args[i] == "callers")
+                    options.callers = true;
+                else if (args[i] == "values")
+                    options.values = true;
+            }
+        };
+        MemoryWatch::Result result;
+        if (op == "list")
+            result = MemoryWatch::List(emulator.get());
+        else if (op == "clear")
+            result = MemoryWatch::Clear(emulator.get());
+        else if (op == "remove" && args.size() > 3)
+            result = MemoryWatch::Remove(emulator.get(), args[3]);
+        else if (op == "add" && args.size() > 5 && MemoryRead::ParseNumber(args[4], numbers[0]) &&
+                 MemoryRead::ParseNumber(args[5], numbers[1]))
+        {
+            flags(6);
+            result = MemoryWatch::AddRegion(emulator.get(), args[3], numbers[0], numbers[1], options);
+        }
+        else if (op == "port" && args.size() > 4 && MemoryRead::ParseNumber(args[4], numbers[0]))
+        {
+            numbers[1] = 0xFFFF;
+            size_t from = 5;
+            if (args.size() > 5 && MemoryRead::ParseNumber(args[5], numbers[1]))
+                from = 6;
+            flags(from);
+            result = MemoryWatch::AddPort(emulator.get(), args[3], numbers[0], numbers[1], options);
+        }
+        else
+        {
+            session.SendResponse("Usage: profiler memory watch add <name> <start> <length> [callers] [values] | port <name> "
+                                 "<port> [mask] [callers] [values] | remove <name> | clear | list" + std::string(NEWLINE));
+            return;
+        }
+        if (!result.ok)
+        {
+            session.SendResponse("Error: " + result.error + std::string(NEWLINE));
+            return;
+        }
+        if (op == "remove" || op == "clear")
+        {
+            session.SendResponse("Memory watch " + op + ": done (" + result.moment + ")" + std::string(NEWLINE));
+            return;
+        }
+        if (op == "list")
+            result = MemoryWatch::List(emulator.get());
+        std::ostringstream oss;
+        oss << "Memory watches: " << result.watches.size() << NEWLINE;
+        for (const MemoryWatch::Watch& watch : result.watches)
+        {
+            oss << "  " << watch.name << ": " << std::hex << std::uppercase << std::setfill('0');
+            if (watch.port)
+                oss << "port 0x" << std::setw(4) << watch.start << " mask 0x" << std::setw(4) << watch.mask;
+            else
+                oss << "region 0x" << std::setw(4) << watch.start << std::dec << " +" << watch.length;
+            oss << std::dec << "  r=" << watch.reads << " w=" << watch.writes;
+            if (!watch.port)
+                oss << " x=" << watch.executes;
+            if (!watch.callers.empty())
+            {
+                oss << "  callers:";
+                for (const auto& [pc, count] : watch.callers)
+                    oss << " 0x" << std::hex << std::uppercase << std::setw(4) << pc << std::dec << "x" << count;
+            }
+            if (!watch.values.empty())
+            {
+                oss << "  values:";
+                for (const auto& [value, count] : watch.values)
+                    oss << " 0x" << std::hex << std::uppercase << std::setw(2) << static_cast<unsigned>(value) << std::dec << "x"
+                        << count;
+            }
+            oss << NEWLINE;
+        }
         session.SendResponse(oss.str());
     }
     else

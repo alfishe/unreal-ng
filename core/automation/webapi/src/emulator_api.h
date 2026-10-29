@@ -391,6 +391,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateFdcActive, "/api/v1/emulator/state/fdc", drogon::Get);
     // ZX-MultiSound and its MIDI synthesizer (api/state_device_api.cpp, DeviceState::MultiSound / Midi, MidiControl)
     ADD_METHOD_TO(EmulatorAPI::getStateAudioMultiSound, "/api/v1/emulator/{id}/state/audio/multisound", drogon::Get);
+    // The Sprinter's ISA Wild Sound (api/state_device_api.cpp, DeviceState::WildSound)
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioWildSound, "/api/v1/emulator/{id}/state/audio/wildsound", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioMidi, "/api/v1/emulator/{id}/state/audio/midi", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postControlAudioMidi, "/api/v1/emulator/{id}/control/audio/midi", drogon::Post);
     // IDE board (implementation: api/state_device_api.cpp, core DeviceState::Ide)
@@ -586,6 +588,11 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getMemoryProfilerStatus, "/api/v1/emulator/{id}/profiler/memory/status", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getMemoryProfilerPages, "/api/v1/emulator/{id}/profiler/memory/pages", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getMemoryProfilerCounters, "/api/v1/emulator/{id}/profiler/memory/counters", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getMemoryWatches, "/api/v1/emulator/{id}/profiler/memory/watches", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postMemoryWatch, "/api/v1/emulator/{id}/profiler/memory/watches", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::deleteMemoryWatches, "/api/v1/emulator/{id}/profiler/memory/watches", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::deleteMemoryWatch, "/api/v1/emulator/{id}/profiler/memory/watches/{name}",
+                  drogon::Delete);
     ADD_METHOD_TO(EmulatorAPI::memoryProfilerSave, "/api/v1/emulator/{id}/profiler/memory/save", drogon::Post);
 
     // Call trace profiler control
@@ -1437,6 +1444,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                const std::string& id) const;
 
+    // The Sprinter's ISA Wild Sound (api/state_device_api.cpp)
+    void getStateAudioWildSound(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                const std::string& id) const;
     // ZX-MultiSound / MIDI (api/state_device_api.cpp)
     void getStateAudioMultiSound(const drogon::HttpRequestPtr& req,
                                  std::function<void(const drogon::HttpResponsePtr&)>&& callback,
@@ -1992,11 +2003,28 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getMemoryProfilerPages(const drogon::HttpRequestPtr& req,
                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                 const std::string& id) const;
-    /// @brief GET .../profiler/memory/counters?mode=z80|physical&page=N&start=&end=&format=dense|sparse
-    ///        - per-address read/write/execute counters
+    /// @brief GET .../profiler/memory/counters?space=cpu|phys|ram|ram5&start=&length=&addresses=&format=
+    ///        dense|sparse|top|binary&kinds=rwx&min=&limit= - per-address read/write/execute counters
+    ///        (MemoryCounters); without space / addresses and with format dense or sparse the older
+    ///        mode=z80|physical&page=N&start=&end= form
     void getMemoryProfilerCounters(const drogon::HttpRequestPtr& req,
                                    std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                    const std::string& id) const;
+    /// @brief GET .../profiler/memory/watches - every memory watch with its counts, callers and values
+    void getMemoryWatches(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// @brief POST .../profiler/memory/watches {"name", "start", "length"} or {"name", "port", "mask"}, plus
+    ///        "callers", "values", "max_callers", "max_values" - add a watch (MemoryWatch)
+    void postMemoryWatch(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// @brief DELETE .../profiler/memory/watches - remove every watch
+    void deleteMemoryWatches(const drogon::HttpRequestPtr& req,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    /// @brief DELETE .../profiler/memory/watches/{name} - remove one watch
+    void deleteMemoryWatch(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                           const std::string& name) const;
     /// @brief POST .../profiler/memory/save {"path", "format":"yaml", "single_file"} - write the data to disk
     void memoryProfilerSave(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback,

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """media / load_software / rzx_playback: the slots, loading a tape from testdata, errors name the file, the files of
-a disk, writing a file onto a TR-DOS disk"""
+a disk, writing a file onto a TR-DOS disk, an ATM CP/M floppy read, a snapshot
+for another machine switches only when asked"""
 
 import base64
 import os
@@ -12,6 +13,10 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')
 TAPE = os.path.join(ROOT, 'testdata', 'contention', 'rak-timing-test', 'timing.tap')
 SNAPSHOT = os.path.join(ROOT, 'testdata', 'loaders', 'sna', '7threality.sna')
 ISDOS = os.path.join(ROOT, 'testdata', 'loaders', 'isdos', 'ISDOS50.FDI')
+ATM_CPM = os.path.join(ROOT, 'testdata', 'machines', 'atm', 'cpm', 'prince.trd')
+MB02 = os.path.join(ROOT, 'testdata', 'loaders', 'mb02', 'SYS308.MB2')
+MDOS = os.path.join(ROOT, 'testdata', 'loaders', 'mdos', 'bootdisk.d80')
+Z80_128 = os.path.join(ROOT, 'testdata', 'loaders', 'z80', 'libspectrum', 'synth-128.z80')
 
 
 def test_slots_listed(s):
@@ -93,7 +98,190 @@ def test_disk_write(s):
     expect(base64.b64decode(data) == code, 'the bytes read back', r.text)
     r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'HELLO.C'}, ok=False)
     expect(r.is_error and "'data'" in r.text, 'no bytes is refused', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'P2.C', 'data': 'AA==', 'param2': '1'}, ok=False)
+    expect(r.is_error and 'param 2' in r.text, 'a param 2 TR-DOS lacks is refused', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'AT.C', 'data': 'AA==', 'attributes': 'R'},
+               ok=False)
+    expect(r.is_error and 'no file attributes' in r.text, 'attributes TR-DOS lacks are refused', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A'})
+    expect('P2.C' not in r.text and 'AT.C' not in r.text, 'nothing written on a refusal', r.text)
     s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
+
+
+def test_disk_delete_and_rename_on_isdos(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': ISDOS})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'SHELL/new.txt', 'data': base64.b64encode(b'isdos').decode()})
+    expect('wrote SHELL/new.txt (5 bytes)' in r.text and 'unsaved:' in r.text, 'the iS-DOS write in the text', r.text)
+    r = s.call('media', {'action': 'rename', 'slot': 'A', 'path': 'SHELL/new.txt', 'to': '/top.txt'})
+    expect('renamed SHELL/new.txt to /top.txt' in r.text, 'the move in the text', r.text)
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'top.txt'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(base64.b64decode(data) == b'isdos', 'the moved bytes read back', r.text)
+    r = s.call('media', {'action': 'delete', 'slot': 'A', 'path': 'top.txt'})
+    expect('deleted top.txt' in r.text, 'the delete in the text', r.text)
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'top.txt'}, ok=False)
+    expect(r.is_error, 'the deleted file is gone', r.text)
+    r = s.call('media', {'action': 'rename', 'slot': 'A', 'path': 'read_me.txt'}, ok=False)
+    expect(r.is_error and "'to'" in r.text, 'rename without to is refused', r.text)
+    s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
+
+
+def test_disk_catalogues_on_isdos(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': ISDOS})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'mkdir', 'slot': 'A', 'path': 'WORK/SUB', 'parents': True})
+    expect('made WORK/SUB' in r.text, 'the catalogues made, in the text', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'WORK/SUB/a.txt', 'data': base64.b64encode(b'deep').decode()})
+    expect(not r.is_error, 'a file into the new catalogue', r.text)
+    r = s.call('media', {'action': 'rename', 'slot': 'A', 'path': 'WORK/SUB', 'to': '/SUB'})
+    expect('renamed WORK/SUB to /SUB' in r.text, 'the catalogue moved', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A', 'path': 'SUB'})
+    expect('a.txt' in r.text, 'its file moved with it', r.text)
+    r = s.call('media', {'action': 'rename', 'slot': 'A', 'path': 'SUB', 'to': '/SUB/IN'}, ok=False)
+    expect(r.is_error and 'into itself' in r.text, 'not into itself', r.text)
+    r = s.call('media', {'action': 'delete', 'slot': 'A', 'path': 'SUB'}, ok=False)
+    expect(r.is_error and 'not empty' in r.text, 'a catalogue with a file stays', r.text)
+    for path in ('SUB', 'WORK'):
+        r = s.call('media', {'action': 'delete', 'slot': 'A', 'path': path, 'recursive': True})
+        expect(f'deleted {path}' in r.text, f'{path} deleted with its contents', r.text)
+    # A continuous catalogue of 4 blocks, as TASiS mkdir.com /c /s4
+    r = s.call('media', {'action': 'mkdir', 'slot': 'A', 'path': 'CONT', 'continuous': True, 'blocks': 4})
+    expect('made CONT' in r.text, 'the continuous catalogue made', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A'})
+    line = next((l for l in r.text.splitlines() if 'CONT' in l), '')
+    print('        ' + line.strip())
+    expect(line != '' and 'attributes S' not in line, 'listed, not segmented', r.text)
+    r = s.call('media', {'action': 'mkdir', 'slot': 'A', 'path': 'BIG', 'blocks': 17}, ok=False)
+    expect(r.is_error and '1-16' in r.text, 'blocks past 16 refused', r.text)
+    r = s.call('media', {'action': 'create', 'slot': 'B', 'format': 'trdos', 'discard': True})
+    r = s.call('media', {'action': 'mkdir', 'slot': 'B', 'path': 'X', 'continuous': True}, ok=False)
+    expect(r.is_error and 'iS-DOS' in r.text, 'continuous refused off iS-DOS', r.text)
+    r = s.call('media', {'action': 'mkdir', 'slot': 'B', 'path': 'X'}, ok=False)
+    expect(r.is_error and 'no directories' in r.text, 'TR-DOS has no directories', r.text)
+    for slot in ('A', 'B'):
+        s.call('media', {'action': 'eject', 'slot': slot, 'discard': True}, ok=False)
+
+
+def test_disk_attributes_time_and_label(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': ISDOS})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'volumes', 'slot': 'A'})
+    expect('RWHD' in r.text, 'the volume lists its letters', r.text)
+    r = s.call('media', {'action': 'attrib', 'slot': 'A', 'path': 'read_me.txt', 'attributes': '+HD',
+                         'time': '1999-12-31 23:59:58'})
+    expect('changed read_me.txt: attributes' in r.text and 'HD' in r.text and '946684798' in r.text,
+           'attributes and time set, in the text', r.text)
+    r = s.call('media', {'action': 'attrib', 'slot': 'A', 'path': 'read_me.txt', 'attributes': '+Q'}, ok=False)
+    expect(r.is_error and 'RWHD' in r.text, 'a letter iS-DOS lacks is refused with the letters', r.text)
+    r = s.call('media', {'action': 'label', 'slot': 'A', 'label': 'MY_DISK'})
+    expect("labelled 'MY_DISK'" in r.text, 'the device named', r.text)
+    r = s.call('media', {'action': 'create', 'slot': 'B', 'format': 'trdos', 'discard': True})
+    r = s.call('media', {'action': 'label', 'slot': 'B', 'label': 'Games 1'})
+    expect("labelled 'Games 1'" in r.text, 'the TR-DOS title set', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'B', 'path': 'A.C', 'data': 'AA=='})
+    r = s.call('media', {'action': 'attrib', 'slot': 'B', 'path': 'A.C', 'attributes': '+R'}, ok=False)
+    expect(r.is_error and 'no file attributes' in r.text, 'TR-DOS has no attributes', r.text)
+    for slot in ('A', 'B'):
+        s.call('media', {'action': 'eject', 'slot': slot, 'discard': True}, ok=False)
+
+
+def test_disk_atm_cpm(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': ATM_CPM})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'volumes', 'slot': 'A'})
+    expect('cpm: ATM CP/M' in r.text and 'read only' not in r.text and 'attributes RSA' in r.text,
+           'the CP/M volume, writable, its letters in the text', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A', 'recursive': True})
+    expect('PRINCE.DOC 11904 bytes' in r.text and 'USER15/CONFIG.DAT' in r.text, 'the files and user 15 in the text',
+           r.text[:800])
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'PRINCE.DOC'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(base64.b64decode(data)[7:23] == b'Prince of Persia', 'the bytes in the text', r.text[:200])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'USER3/NEW.TXT', 'data': 'QUJD'})
+    expect(not r.is_error, 'a file written to user 3', r.text)
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'USER3/NEW.TXT'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(base64.b64decode(data)[:4] == b'ABC\x1a', 'read back, the record padded with #1A', r.text[:200])
+    r = s.call('media', {'action': 'delete', 'slot': 'A', 'path': 'USER15/CONFIG.DAT'}, ok=False)
+    expect(r.is_error and 'read only' in r.text, 'a read-only file is not deleted', r.text)
+    s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
+
+
+def test_disk_mb02(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': MB02})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'volumes', 'slot': 'A'})
+    expect('mb02: MB-02 BS-DOS' in r.text and 'System 308' in r.text and 'read only' not in r.text,
+           'the MB-02 volume, its name, writable, in the text', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A', 'recursive': True})
+    expect('BSdos308 23450 bytes' in r.text and 'Small demo/bbicons' in r.text and 'tma~10' in r.text,
+           'the files, a directory and a second name in the text', r.text[:800])
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'Small demo/cdebusy'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(len(base64.b64decode(data)) == 768, 'the bytes in the text', r.text[:200])
+    r = s.call('media', {'action': 'mkdir', 'slot': 'A', 'path': 'Small demo/New dir'})
+    expect(not r.is_error, 'a directory made', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'Small demo/New dir/NEW', 'data': 'QUJD'})
+    expect(not r.is_error, 'a file written into it', r.text)
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'Small demo/New dir/NEW'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(base64.b64decode(data) == b'ABC', 'read back', r.text[:200])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'Small demo/New dir/RUN', 'data': 'QUJD',
+                         'type': 'program', 'start': '10'})
+    expect(not r.is_error, 'a program written', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'Small demo/New dir/ARR', 'data': 'QUJD',
+                         'type': 'numbers'}, ok=False)
+    expect(r.is_error and 'a program (0), CODE (3)' in r.text, 'an array type is refused with the types', r.text)
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'Small demo/New dir/BAD', 'data': 'QUJD',
+                         'type': 'basic'}, ok=False)
+    expect(r.is_error and "option 'type'" in r.text, 'an unknown type name is refused', r.text)
+    s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
+
+
+def test_disk_mdos(s):
+    r = s.call('media', {'action': 'insert', 'slot': 'A', 'path': MDOS})
+    expect(not r.is_error, 'inserted', r.text)
+    r = s.call('media', {'action': 'volumes', 'slot': 'A'})
+    expect('mdos: MDOS' in r.text and 'bootdisk' in r.text and 'read only' not in r.text and
+           'attributes HSPARWED' in r.text, 'the MDOS volume, its name, writable, its letters in the text', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A'})
+    expect('run.P 94 bytes' in r.text and 'H...RWED' in r.text, 'the files and their attributes in the text',
+           r.text[:800])
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'bootconf.B'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(len(base64.b64decode(data)) == 512, 'the bytes in the text', r.text[:200])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'new.B', 'data': 'QUJD'})
+    expect(not r.is_error, 'a file written', r.text)
+    r = s.call('media', {'action': 'read', 'slot': 'A', 'path': 'new.B'})
+    data = r.text.split('base64: ', 1)[1].strip() if 'base64: ' in r.text else ''
+    expect(base64.b64decode(data) == b'ABC', 'read back', r.text[:200])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'vars.P', 'data': 'QUJD', 'param2': '2',
+                         'attributes': 'RE'})
+    expect(not r.is_error, 'a program written with param 2 and attributes', r.text)
+    r = s.call('media', {'action': 'files', 'slot': 'A'})
+    expect('vars.P 3 bytes' in r.text and '....R.E.' in r.text, 'the attributes set at write in the listing',
+           r.text[:800])
+    r = s.call('media', {'action': 'write', 'slot': 'A', 'path': 'typed.C', 'data': 'QUJD', 'type': 'code'},
+               ok=False)
+    expect(r.is_error and 'type' in r.text, 'MDOS takes the type from the name, a type option is refused', r.text)
+    s.call('media', {'action': 'eject', 'slot': 'A', 'discard': True}, ok=False)
+
+
+
+def test_zz_snapshot_for_another_machine_switches_only_when_asked(s):
+    """A 128K .z80 on a 48K: refused with the machine it needs, switched with switch_model (the WebAPI rule)"""
+    s.fresh_machine('48K')
+    try:
+        r = s.call('load_software', {'path': Z80_128, 'switch_model': False}, ok=False)
+        expect(r.is_error and '128' in r.text, 'refused, the machine it needs named', r.text[:400])
+        r = s.call('load_software', {'path': Z80_128, 'switch_model': True})
+        expect(not r.is_error, 'loaded after the switch', r.text[:400])
+        status = s.call('emulator_manage', {'action': 'status', 'response_format': 'json'})
+        expect('128' in status.text, 'the machine is a 128K now', status.text[:400])
+    finally:
+        s.fresh_machine()
+
 
 if __name__ == '__main__':
     sys.exit(main(globals()))

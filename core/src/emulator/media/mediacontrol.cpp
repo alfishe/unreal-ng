@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <ctime>
 #include <fstream>
 #include <limits>
 #include <optional>
@@ -303,7 +304,7 @@ const std::vector<std::string>& MediaControl::Verbs()
     static const std::vector<std::string> verbs = {"list", "info", "formats", "targets", "insert", "eject", "swap",
                                                    "save", "export", "discard", "rescan", "create", "protect",
                                                    "compose", "layers", "changes", "flatten", "volumes", "files",
-                                                   "read", "write"};
+                                                   "read", "write", "delete", "rename", "mkdir", "attrib", "label"};
     return verbs;
 }
 
@@ -331,7 +332,12 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"volumes", {}},
         {"files", {"volume", "recursive"}},
         {"read", {"volume", "out"}},
-        {"write", {"volume", "in", "data", "start", "header"}},
+        {"write", {"volume", "in", "data", "start", "header", "type", "param2", "attributes"}},
+        {"delete", {"volume", "recursive"}},
+        {"mkdir", {"volume", "parents", "continuous", "blocks"}},
+        {"rename", {"volume", "to"}},
+        {"attrib", {"volume", "attributes", "time"}},
+        {"label", {"volume", "label"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -409,8 +415,8 @@ MediaReply MediaControl::Run(const MediaRequest& request)
         reply = Changes(request);
     else if (verb == "volumes" || verb == "files" || verb == "read")
         reply = Files(request, verb);
-    else if (verb == "write")
-        reply = WriteFile(request);
+    else if (verb == "write" || verb == "delete" || verb == "rename" || verb == "mkdir" || verb == "attrib" || verb == "label")
+        reply = EditFiles(request, verb);
     else
         reply = Protect(request);
     return reply;
@@ -526,6 +532,11 @@ namespace
         n["fs"] = v.fs;
         n["system"] = v.system;
         n["label"] = v.label;
+        n["writable"] = v.writable;
+        if (!v.attributes.empty())
+            n["attributes"] = v.attributes;
+        n["times"] = v.times;
+        n["labels"] = v.labels;
         n["offset"] = v.offset;
         n["bytes"] = v.bytes;
         if (v.freeBytes >= 0)
@@ -632,7 +643,61 @@ MediaReply MediaControl::Files(const MediaRequest& request, const std::string& v
     return reply;
 }
 
-MediaReply MediaControl::WriteFile(const MediaRequest& request)
+namespace
+{
+    /// The host's local date and time as seconds since 1970-01-01 of that wall clock (no zone): what a DOS stamps
+    int64_t LocalWallClock()
+    {
+        const std::time_t now = std::time(nullptr);
+        std::tm t {};
+#ifdef _WIN32
+        localtime_s(&t, &now);
+#else
+        localtime_r(&now, &t);
+#endif
+        // Howard Hinnant's days_from_civil
+        const int64_t year = t.tm_year + 1900;
+        const int64_t month = t.tm_mon + 1;
+        const int64_t y = month <= 2 ? year - 1 : year;
+        const int64_t era = y / 400;
+        const int64_t yoe = y - era * 400;
+        const int64_t doy = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + t.tm_mday - 1;
+        const int64_t days = era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+        return days * 86400 + t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec;
+    }
+
+    /// "2026-10-26 14:30[:05]" (or with a T), "now", or seconds: UTC seconds of the DOS wall clock (no time zone)
+    bool ParseWallClock(const std::string& text, int64_t& out)
+    {
+        if (text == "now")
+        {
+            out = LocalWallClock();
+            return true;
+        }
+        if (!text.empty() && text.find_first_not_of("0123456789") == std::string::npos && text.size() <= 12)
+        {
+            out = std::stoll(text);
+            return true;
+        }
+        int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+        char separator = 0;
+        int read = 0;
+        const int fields = std::sscanf(text.c_str(), "%4d-%2d-%2d%c%2d:%2d%n:%2d%n", &year, &month, &day, &separator, &hour, &minute, &read,
+                                       &second, &read);
+        if (fields < 6 || (separator != ' ' && separator != 'T') || static_cast<size_t>(read) != text.size() || year < 1980 ||
+            year > 2107 || month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59)
+            return false;
+        const int64_t y = month <= 2 ? year - 1 : year;
+        const int64_t era = y / 400;
+        const int64_t yoe = y - era * 400;
+        const int64_t doy = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1;
+        const int64_t days = era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+        out = days * 86400 + hour * 3600 + minute * 60 + second;
+        return true;
+    }
+}  // namespace
+
+MediaReply MediaControl::EditFiles(const MediaRequest& request, const std::string& verb)
 {
     MediaReply reply;
     reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
@@ -640,47 +705,108 @@ MediaReply MediaControl::WriteFile(const MediaRequest& request)
         return reply;
     const Options& o = request.options;
     const std::string volume = o.count("volume") ? Trim(o.at("volume")) : std::string();
-    if (Trim(request.path).empty())
-        return Fail(MediaError::BadRequest, "name the file to write (TR-DOS NAME.T, +3DOS NAME.TYP)");
-
-    // The bytes: base64 `data` or the host file `in`, one of them
-    const bool hasData = o.count("data") != 0;
-    const bool hasIn = o.count("in") != 0 && !Trim(o.at("in")).empty();
-    if (hasData == hasIn)
-        return Fail(MediaError::BadRequest, "give the bytes as 'data' (base64) or 'in' (a host file), one of them");
-    std::vector<uint8_t> data;
-    if (hasData && !base64::Decode(Trim(o.at("data")), data))
-        return Fail(MediaError::BadRequest, "option 'data': not base64");
-    if (hasIn)
+    if (Trim(request.path).empty() && verb != "label")
+        return Fail(MediaError::BadRequest, verb == "write"    ? "name the file to write (TR-DOS NAME.T, +3DOS NAME.TYP, FAT / iS-DOS dir/name.ext)"
+                                            : verb == "mkdir"  ? "name the directory to make"
+                                            : verb == "attrib" ? "name the file to change"
+                                                               : "name the file to " + verb);
+    // attrib: the letters and / or the time; label: the new name ("" removes a FAT label)
+    const std::string attributes = o.count("attributes") ? Trim(o.at("attributes")) : std::string();
+    int64_t mtime = 0;
+    const bool hasTime = o.count("time") != 0;
+    if (hasTime && !ParseWallClock(Trim(o.at("time")), mtime))
+        return Fail(MediaError::BadRequest, "option 'time': expected 2026-10-26 14:30[:05], now or seconds, got '" + o.at("time") + "'");
+    if (verb == "attrib" && attributes.empty() && !hasTime)
+        return Fail(MediaError::BadRequest, "give 'attributes' (+R-H changes, RA sets exactly) or 'time', or both");
+    if (verb == "label" && !o.count("label"))
+        return Fail(MediaError::BadRequest, "give the new name as 'label' (an empty one removes a FAT label)");
+    const std::string label = o.count("label") ? Trim(o.at("label")) : std::string();
+    const std::string to = o.count("to") ? Trim(o.at("to")) : std::string();
+    if (verb == "rename" && to.empty())
+        return Fail(MediaError::BadRequest, "give the new name as 'to'");
+    bool recursive = false, parents = false;
+    if (auto it = o.find("recursive"); it != o.end() && !ParseBool(it->second, recursive))
+        return Fail(MediaError::BadRequest, "option 'recursive': expected true or false, got '" + it->second + "'");
+    if (auto it = o.find("parents"); it != o.end() && !ParseBool(it->second, parents))
+        return Fail(MediaError::BadRequest, "option 'parents': expected true or false, got '" + it->second + "'");
+    // mkdir: an iS-DOS catalogue continuous and / or of 1-16 blocks (TASiS mkdir.com /c /s)
+    DiskFsDirectoryOptions directory;
+    if (auto it = o.find("continuous"); it != o.end() && !ParseBool(it->second, directory.continuous))
+        return Fail(MediaError::BadRequest, "option 'continuous': expected true or false, got '" + it->second + "'");
+    if (auto it = o.find("blocks"); it != o.end())
     {
-        std::ifstream in(FileHelper::ToFsPath(Trim(o.at("in"))), std::ios::binary);
-        if (!in)
-            return Fail(MediaError::UnreadableSource, "cannot read '" + Trim(o.at("in")) + "'");
-        data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    }
-
-    DiskFsWriteOptions options;
-    if (auto it = o.find("start"); it != o.end())
-    {
-        // Decimal, or hex as #8000 / $8000 / 0x8000
-        std::string text = Trim(it->second);
-        int base = 10;
-        const size_t prefix = !text.empty() && (text[0] == '#' || text[0] == '$')                             ? 1
-                              : text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X') ? 2
-                                                                                                         : 0;
-        if (prefix)
-        {
-            text.erase(0, prefix);
-            base = 16;
-        }
+        const std::string text = Trim(it->second);
         char* end = nullptr;
-        const unsigned long value = text.empty() ? 0x10000 : std::strtoul(text.c_str(), &end, base);
-        if (text.empty() || *end != 0 || value > 0xFFFF)
-            return Fail(MediaError::BadRequest, "option 'start': expected 0-65535 (#8000, 0x8000 or 32768), got '" + it->second + "'");
-        options.start = static_cast<uint16_t>(value);
+        const unsigned long value = text.empty() ? 0 : std::strtoul(text.c_str(), &end, 10);
+        if (text.empty() || *end != 0 || value < 1 || value > 16)
+            return Fail(MediaError::BadRequest, "option 'blocks': expected 1-16, got '" + it->second + "'");
+        directory.blocks = static_cast<uint32_t>(value);
     }
-    if (auto it = o.find("header"); it != o.end() && !ParseBool(it->second, options.header))
-        return Fail(MediaError::BadRequest, "option 'header': expected true or false, got '" + it->second + "'");
+
+    // write: the bytes as base64 `data` or the host file `in`, one of them
+    std::vector<uint8_t> data;
+    DiskFsWriteOptions options;
+    if (verb == "write")
+    {
+        const bool hasData = o.count("data") != 0;
+        const bool hasIn = o.count("in") != 0 && !Trim(o.at("in")).empty();
+        if (hasData == hasIn)
+            return Fail(MediaError::BadRequest, "give the bytes as 'data' (base64) or 'in' (a host file), one of them");
+        if (hasData && !base64::Decode(Trim(o.at("data")), data))
+            return Fail(MediaError::BadRequest, "option 'data': not base64");
+        if (hasIn)
+        {
+            std::ifstream in(FileHelper::ToFsPath(Trim(o.at("in"))), std::ios::binary);
+            if (!in)
+                return Fail(MediaError::UnreadableSource, "cannot read '" + Trim(o.at("in")) + "'");
+            data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        // Decimal, or hex as #8000 / $8000 / 0x8000
+        auto word = [](const std::string& raw, unsigned long& value) {
+            std::string text = Trim(raw);
+            int base = 10;
+            const size_t prefix = !text.empty() && (text[0] == '#' || text[0] == '$')                             ? 1
+                                  : text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X') ? 2
+                                                                                                             : 0;
+            if (prefix)
+            {
+                text.erase(0, prefix);
+                base = 16;
+            }
+            char* end = nullptr;
+            value = text.empty() ? 0x10000 : std::strtoul(text.c_str(), &end, base);
+            return !text.empty() && *end == 0 && value <= 0xFFFF;
+        };
+        unsigned long value = 0;
+        if (auto it = o.find("start"); it != o.end())
+        {
+            if (!word(it->second, value))
+                return Fail(MediaError::BadRequest, "option 'start': expected 0-65535 (#8000, 0x8000 or 32768), got '" + it->second + "'");
+            options.start = static_cast<uint16_t>(value);
+        }
+        if (auto it = o.find("param2"); it != o.end())
+        {
+            if (!word(it->second, value))
+                return Fail(MediaError::BadRequest, "option 'param2': expected 0-65535 (#8000, 0x8000 or 32768), got '" + it->second + "'");
+            options.param2 = static_cast<int32_t>(value);
+        }
+        if (auto it = o.find("type"); it != o.end())
+        {
+            static const std::vector<std::string> kTypes = {"program", "numbers", "chars", "code"};
+            const std::string text = Lower(Trim(it->second));
+            for (size_t t = 0; t < kTypes.size(); t++)
+                if (text == kTypes[t] || text == std::to_string(t))
+                    options.basicType = static_cast<int>(t);
+            if (options.basicType < 0)
+                return Fail(MediaError::BadRequest, "option 'type': expected program, numbers, chars or code (0-3), got '" + it->second + "'");
+        }
+        if (auto it = o.find("attributes"); it != o.end())
+            options.attributes = Trim(it->second);
+        if (auto it = o.find("header"); it != o.end() && !ParseBool(it->second, options.header))
+            return Fail(MediaError::BadRequest, "option 'header': expected true or false, got '" + it->second + "'");
+    }
+    // FAT and iS-DOS stamp the host's wall clock, as a DOS on the machine would stamp its own
+    options.mtime = LocalWallClock();
 
     const std::optional<SlotInfo> info = _manager->Info(reply.slot);
     if (info && info->writeProtect)
@@ -689,7 +815,6 @@ MediaReply MediaControl::WriteFile(const MediaRequest& request)
     // At a coherent moment (paused, stopped or between frames), as a tool's edit: a TTD session keeps it
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
     MediaResult result;
-    bool written = false;
     auto work = [&]() {
         Medium* medium = _manager->GetMedium(reply.slot);
         if (!medium)
@@ -697,47 +822,99 @@ MediaReply MediaControl::WriteFile(const MediaRequest& request)
             result = MediaResult::Fail(MediaError::NotSupported, "slot '" + reply.slot + "' is empty");
             return;
         }
-        DiskImage* floppy = medium->Floppy();
-        if (!floppy)
-        {
-            result = MediaResult::Fail(MediaError::NotSupported,
-                                       "slot '" + reply.slot + "': files are written on floppies only (TR-DOS, +3DOS)");
-            return;
-        }
         if (medium->Access() == AccessMode::ReadOnly)
         {
             result = MediaResult::Fail(MediaError::NotSupported, "slot '" + reply.slot + "': the disk is read only");
             return;
         }
-        DiskFs fs(*floppy);
-        if (fs.Volumes().empty())
+        DiskImage* floppy = medium->Floppy();
+        std::unique_ptr<IBlockDevice> device = floppy ? nullptr : ToolEditDevice(*medium);
+        if (!floppy && !device)
+        {
+            result = MediaResult::Fail(MediaError::NotSupported, "slot '" + reply.slot + "' holds no disk (a tape or a CD has no file system here)");
+            return;
+        }
+        std::unique_ptr<DiskFs> fs = floppy ? std::make_unique<DiskFs>(*floppy)
+                                            : std::make_unique<DiskFs>(*device, medium->Options().codePage.value_or(CodePage::Cp866));
+        if (fs->Volumes().empty())
         {
             result = MediaResult::Fail(MediaError::UnreadableSource, "slot '" + reply.slot + "': no file system found on the disk");
             return;
         }
         std::string error;
+        bool done = false;
         auto edit = [&]() {
-            // Every track as it was, for the medium's undo log (a TTD seek back sets the disk to it); without a TTD
-            // history the manager keeps nothing
-            for (int t = 0; t < floppy->getCylinders() * floppy->getSides(); t++)
-                if (const DiskImage::Track* track = floppy->getTrack(static_cast<uint8_t>(t)))
-                    _manager->BeforeTrackWrite(reply.slot, *track);
-            written = fs.Write(volume, request.path, data, options, error);
+            // A floppy: every track as it was, for the medium's undo log (a TTD seek back sets the disk to it; without
+            // a TTD history the manager keeps nothing). A block medium tells the log of each sector as it is written
+            if (floppy)
+                for (int t = 0; t < floppy->getCylinders() * floppy->getSides(); t++)
+                    if (const DiskImage::Track* track = floppy->getTrack(static_cast<uint8_t>(t)))
+                        _manager->BeforeTrackWrite(reply.slot, *track);
+            if (verb == "write")
+                done = fs->Write(volume, request.path, data, options, error);
+            else if (verb == "delete")
+                done = fs->Delete(volume, request.path, error, recursive);
+            else if (verb == "mkdir")
+            {
+                directory.mtime = options.mtime;
+                done = fs->MakeDirectory(volume, request.path, parents, directory, error);
+            }
+            else if (verb == "attrib")
+                done = (attributes.empty() || fs->SetAttributes(volume, request.path, attributes, error)) &&
+                       (!hasTime || fs->SetTime(volume, request.path, mtime, error));
+            else if (verb == "label")
+                done = fs->SetLabel(volume, label, options.mtime, error);
+            else
+                done = fs->Rename(volume, request.path, to, error);
         };
         std::string refused;
         if (emulator)
-            refused = emulator->EditMemoryFromTool("media write", edit);
+            refused = emulator->EditMemoryFromTool(verb == "write"    ? "media write"
+                                                   : verb == "delete" ? "media delete"
+                                                   : verb == "mkdir"  ? "media mkdir"
+                                                   : verb == "attrib" ? "media attrib"
+                                                   : verb == "label"  ? "media label"
+                                                                      : "media rename",
+                                                   edit);
         else
             edit();
         if (!refused.empty())
             result = MediaResult::Fail(MediaError::Recording, refused);
-        else if (!written)
-            result = MediaResult::Fail(error.find("read only") != std::string::npos ? MediaError::NotSupported : MediaError::BadRequest,
+        else if (!done)
+        {
+            // "not found", "no such entry" (FAT), "no file x", "no x on the <device>" (the others)
+            const bool missing = error.find("not found") != std::string::npos || error.find("no file") != std::string::npos ||
+                                 error.find("no such entry") != std::string::npos ||
+                                 (error.compare(0, 3, "no ") == 0 && error.find(" on the ") != std::string::npos);
+            const bool unable = error.find("read only") != std::string::npos || error.find("has no directories") != std::string::npos ||
+                                error.find("has no file attributes") != std::string::npos ||
+                                error.find("keeps no file times") != std::string::npos || error.find("has no label") != std::string::npos;
+            result = MediaResult::Fail(unable    ? MediaError::NotSupported
+                                       : missing ? MediaError::UnreadableSource
+                                                 : MediaError::BadRequest,
                                        "slot '" + reply.slot + "': " + error);
+        }
         else
         {
-            reply.body["volume"] = volume.empty() ? fs.Volumes().front().id : volume;
+            reply.body["volume"] = volume.empty() ? fs->Volumes().front().id : volume;
+            if (verb == "attrib")
+            {
+                // The entry as it is now
+                DiskFsEntry entry;
+                std::string ignored;
+                if (fs->Stat(volume, request.path, entry, ignored))
+                {
+                    reply.body["attributes"] = entry.attributes;
+                    if (entry.mtime)
+                        reply.body["mtime"] = entry.mtime;
+                }
+            }
+            if (verb == "label")
+                for (const DiskFsVolume& v : fs->Volumes())
+                    if (volume.empty() ? &v == &fs->Volumes().front() : v.id == volume)
+                        reply.body["label"] = v.label;
             reply.body["changes"] = medium->DescribeChanges();
+            reply.body["access"] = AccessModeName(medium->Access());
         }
     };
     if (emulator && emulator->RunAtCoherentMoment(work, 2000) == Emulator::CoherentMoment::Busy)
@@ -749,8 +926,12 @@ MediaReply MediaControl::WriteFile(const MediaRequest& request)
         reply.result = result;
         return reply;
     }
-    reply.body["path"] = request.path;
-    reply.body["size"] = static_cast<uint64_t>(data.size());
+    if (verb != "label")
+        reply.body["path"] = request.path;
+    if (verb == "write")
+        reply.body["size"] = static_cast<uint64_t>(data.size());
+    if (verb == "rename")
+        reply.body["to"] = to;
     return reply;
 }
 

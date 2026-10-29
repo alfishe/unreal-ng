@@ -1022,9 +1022,8 @@ MainWindow::~MainWindow()
     _streamDeckSupervision = nullptr;
     delete _controllersDialog;
     _controllersDialog = nullptr;
-    // The status bar's refresh timer reads the controllers' connector LED: off them before they go
     if (_statusBarManager)
-        _statusBarManager->setControllers(nullptr);
+        _statusBarManager->setControllers(nullptr);  // its 200 ms refresh still runs until the event loop ends
     delete _hostControllers;
     _hostControllers = nullptr;
 
@@ -1402,9 +1401,8 @@ void MainWindow::closeEvent(QCloseEvent* event)
     _streamDeckSupervision = nullptr;
     delete _controllersDialog;
     _controllersDialog = nullptr;
-    // The status bar's refresh timer reads the controllers' connector LED: off them before they go
     if (_statusBarManager)
-        _statusBarManager->setControllers(nullptr);
+        _statusBarManager->setControllers(nullptr);  // its 200 ms refresh still runs until the event loop ends
     delete _hostControllers;
     _hostControllers = nullptr;
     if (networkWindow)
@@ -2937,6 +2935,9 @@ void MainWindow::openDiskDialog()
                      buildFilterGroup(tr("TD0 Images"), {"td0"}) + ";;" +
                      buildFilterGroup(tr("MGT Images"), {"mgt", "img"}) + ";;" +
                      buildFilterGroup(tr("Raw PC Floppy Images"), {"img", "ima"}) + ";;" +
+                     buildFilterGroup(tr("MB-02 Images"), {"mb2", "mbd"}) + ";;" +
+                     buildFilterGroup(tr("MDOS (Didaktik) Images"), {"d40", "d80"}) + ";;" +
+                     buildFilterGroup(tr("Profi CP/M Images"), {"pro"}) + ";;" +
                      tr("All Files (*)");
 
     QString filePath = QFileDialog::getOpenFileName(this, tr("Open Disk"), _lastDirectory, filter);
@@ -4042,9 +4043,15 @@ void MainWindow::applyDebugInstrumentation(bool enabled)
     if (_emulator)
     {
         if (enabled)
+        {
             _emulator->DebugOn();
-        else
+            _debugInstrumentationByUi = true;
+        }
+        else if (_debugInstrumentationByUi)
+        {
             _emulator->DebugOff();
+            _debugInstrumentationByUi = false;
+        }
     }
 }
 
@@ -5662,12 +5669,10 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
     // 7. UI state
     updateMenuStates();
 
-    // Debug instrumentation follows the debugger window: on only while it is visible. An adopted machine keeps the
-    // debug mode its creator set (an automation client's breakpoints would be accepted and never fire): the window
-    // only adds it
-    const bool debuggerShown = debuggerWindow && debuggerWindow->isVisible();
-    if (origin == EmulatorOrigin::CreatedByGui || debuggerShown)
-        applyDebugInstrumentation(debuggerShown);
+    // Debug instrumentation follows the debugger window: on only while it is visible. The adopted instance's own
+    // debug mode (an automation client switched it on) is not the window's to switch off
+    _debugInstrumentationByUi = false;
+    applyDebugInstrumentation(debuggerWindow && debuggerWindow->isVisible());
 
     // Turbo render cap for this emulator: the display refresh rate we are on
     if (MainLoop* mainLoop = _emulator->GetMainLoop())

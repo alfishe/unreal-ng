@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 
 #include "unrealdisk/detail/helpers.h"
 #include "unrealdisk/detail/helpers.h"
@@ -37,6 +38,141 @@ namespace
         if (n <= 3 || stored == 0) return 0;
         const size_t real = realSize(n);
         return stored >= real ? real : stored;
+    }
+
+    /// One sector of a track as the file stores it
+    struct SectorEntry
+    {
+        uint8_t st1 = 0;
+        uint8_t st2 = 0;
+        size_t stored = 0;      // Bytes present in the file for this sector
+        const uint8_t* src = nullptr;
+    };
+
+    /// A protection track dumped with a growing N (CPDRead: N = 0..15) has each long field read on over the fields
+    /// after it, so a dump holds the next sector's ID field where the disk has it. That gives the distance between
+    /// the sectors, their real field length and GAP#3: lay the track out so, fill every field from the dump that
+    /// covers it, and the long fields read back from the stream as dumped. False when the dumps do not show it
+    bool layOutOverlappingFields(DiskImage::Track* track, uint8_t cylinder, uint8_t side, DiskImage::TrackFormatSpec spec,
+                                 const std::vector<SectorEntry>& entries, std::vector<std::string>& warnings)
+    {
+        const size_t count = entries.size();
+        if (spec.encoding != DiskImage::Encoding::MFM || count < 2) return false;
+
+        const size_t marks = 3;    // A1 A1 A1
+        const size_t idField = 7;  // FE C H R N and the CRC
+
+        // Data start of a sector to the FE of the next one, the same in every dump that reaches it
+        size_t toNextId = 0;
+        size_t witness = count;
+        for (size_t i = 0; i + 1 < count; i++)
+        {
+            const SectorEntry& se = entries[i];
+            const uint8_t id[] = {0xA1, 0xA1, 0xA1, 0xFE, spec.sectorCylinders[i + 1], spec.sectorHeads[i + 1],
+                                  spec.sectorNumbers[i + 1], spec.sectorSizeCodes[i + 1]};
+            const uint8_t* end = se.src + se.stored;
+            const uint8_t* at = std::search(se.src, end, std::begin(id), std::end(id));
+            if (at == end) continue;
+
+            const size_t distance = static_cast<size_t>(at - se.src) + marks;
+            if (toNextId != 0 && distance != toNextId) return false;
+            toNextId = distance;
+            witness = i;
+        }
+        if (witness == count || toNextId < marks + spec.syncLength + 3) return false;
+
+        // Around that ID in the witness dump: the sync before it, the standard ID-to-data part after it, and the
+        // gap between the data CRC and the sync, which gives the field length
+        const SectorEntry& w = entries[witness];
+        const size_t damAt = toNextId + idField + spec.gapPostID + spec.syncLength + marks;
+        if (damAt >= w.stored || (w.src[damAt] != 0xFB && w.src[damAt] != 0xF8)) return false;
+        const size_t syncStart = toNextId - marks - spec.syncLength;
+        for (size_t b = syncStart; b + marks < toNextId; b++)
+        {
+            if (w.src[b] != 0x00) return false;
+        }
+        size_t gapStart = syncStart;
+        while (gapStart > 0 && w.src[gapStart - 1] == spec.gapFill) gapStart--;
+        if (gapStart < 3) return false;  // At least one data byte and the CRC
+        const size_t field = gapStart - 2;
+        const size_t gap3 = syncStart - gapStart;
+        if (gap3 == 0 || gap3 > 255) return false;
+        const size_t pitch = damAt + 1;  // Data start to the next sector's data start
+
+        // The field of a sector stored without bytes lies inside a longer dump before it
+        std::vector<const uint8_t*> source(count, nullptr);
+        std::vector<size_t> available(count, 0);
+        for (size_t j = 0; j < count; j++)
+        {
+            if (entries[j].stored != 0)
+            {
+                source[j] = entries[j].src;
+                available[j] = entries[j].stored;
+                continue;
+            }
+            for (size_t i = j; i-- > 0;)
+            {
+                const SectorEntry& se = entries[i];
+                const size_t offset = (j - i) * pitch;
+                if (offset + field > se.stored || (se.src[offset - 1] != 0xFB && se.src[offset - 1] != 0xF8)) continue;
+                source[j] = se.src + offset;
+                available[j] = se.stored - offset;
+                break;
+            }
+            const bool missing = (entries[j].st1 & (LoaderDSK::ST1_NO_DATA | LoaderDSK::ST1_MISSING_ADDRESS_MARK)) != 0 ||
+                                 (entries[j].st2 & LoaderDSK::ST2_MISSING_DATA_MARK) != 0;
+            if (source[j] != nullptr && !missing) spec.idOnly[j] = 0;
+        }
+
+        spec.gapPostData = static_cast<uint8_t>(gap3);
+        spec.sectorDataLengths.assign(count, static_cast<uint16_t>(field));
+        // The index mark only where the revolution has room for it, as on the disk
+        if (spec.totalBytes() > MAX_TRACK_LEN) spec.indexMark = false;
+        spec.trackLength = std::max(MAX_TRACK_LEN, spec.totalBytes());
+        if (spec.trackLength > DiskImage::RawTrack::MAX_TRACK_SIZE) return false;
+
+        track->formatTrack(cylinder, side, spec);
+        std::vector<DiskImage::Sector>& sectors = track->sectors();
+        if (sectors.size() != count) return false;
+
+        uint8_t* raw = track->rawData();
+        for (size_t j = 0; j < count; j++)
+        {
+            DiskImage::Sector& sector = sectors[j];
+            const SectorEntry& se = entries[j];
+
+            // Into the stream, not through the sector view: a field whose 128 << (N & 3) bytes would run past the
+            // index has no view (the model's sector is ID only), yet its bytes are on the disk and read on into
+            if (!spec.isIdOnly(j))
+            {
+                const size_t start = sector.idamOffset + idField + spec.gapPostID + spec.syncLength + marks + 1;
+                if (start + field + 2 > track->rawSize()) return false;
+                if (se.st2 & LoaderDSK::ST2_CONTROL_MARK) raw[start - 1] = 0xF8;
+
+                // The CRC as dumped where the dump reaches it, else the one of the bytes kept
+                const size_t copied = std::min(available[j], field + 2);
+                if (copied != 0) std::memcpy(raw + start, source[j], copied);
+                if (copied < field + 2)
+                {
+                    const uint16_t crc = CRCHelper::crcWD1793(raw + start - 1, static_cast<uint16_t>(field + 1));
+                    std::memcpy(raw + start + field, &crc, sizeof(crc));
+                }
+            }
+
+            // ST1.DE without ST2.DD: the uPD765 failed the CRC of the ID field
+            if ((se.st1 & LoaderDSK::ST1_DATA_ERROR) && !(se.st2 & LoaderDSK::ST2_DATA_ERROR_IN_DATA))
+            {
+                sector.id->id_crc ^= 0x00FF;
+                sector.isIDCRCValid();
+            }
+        }
+
+        track->reindex();
+        track->markClean();
+
+        warnings.push_back(StringHelper::Format("DSK track cylinder %d side %d: overlapping long sector fields laid out as dumped, %zu sectors %zu bytes apart, %zu-byte fields, GAP#3 %zu",
+                                                cylinder, side, count, pitch, field, gap3));
+        return true;
     }
 }
 
@@ -157,13 +293,6 @@ bool LoaderDSK::parseTrack(DiskImage* image, uint8_t cylinder, uint8_t side, con
         spec.gapPostID = 11;
     }
 
-    struct SectorEntry
-    {
-        uint8_t st1 = 0;
-        uint8_t st2 = 0;
-        size_t stored = 0;      // Bytes present in the file for this sector
-        const uint8_t* src = nullptr;
-    };
     std::vector<SectorEntry> entries(sectorCount);
 
     spec.sectorNumbers.resize(sectorCount);
@@ -172,6 +301,10 @@ bool LoaderDSK::parseTrack(DiskImage* image, uint8_t cylinder, uint8_t side, con
     spec.sectorHeads.resize(sectorCount);
     spec.idOnly.assign(sectorCount, 0);
     spec.sectorDataLengths.assign(sectorCount, 0);
+
+    // CPDRead (v3.24) writes a 128-byte sector into a 256-byte slot of the file, its data then zero padding, so the
+    // sectors after it start 256 bytes on; the Extended DSK format has the sector data back to back
+    const bool cpdreadSlots = extended && _creator.rfind(CPDREAD_CREATOR, 0) == 0;
 
     const uint8_t* src = info + TRACK_INFO_SIZE;
     for (size_t i = 0; i < sectorCount; i++)
@@ -190,16 +323,25 @@ bool LoaderDSK::parseTrack(DiskImage* image, uint8_t cylinder, uint8_t side, con
         se.stored = extended ? readU16(entry + 6) : storedSizeStandard(n);
         se.src = src;
 
+        const bool noDataMark = (se.st1 & (ST1_NO_DATA | ST1_MISSING_ADDRESS_MARK)) != 0 || (se.st2 & ST2_MISSING_DATA_MARK) != 0;
         if (src + se.stored > dataEnd)
         {
-            warnings.push_back(StringHelper::Format("DSK track cylinder %d side %d: sector data truncated (sector %d, %zu bytes expected)",
-                                                    cylinder, side, entry[2], se.stored));
-            return false;
+            // The slots of a CPDRead track can run past the block it sized for the packed data: what falls out is
+            // the dump of a sector without a data field
+            if (cpdreadSlots && noDataMark && src >= dataEnd)
+            {
+                se.stored = 0;
+            }
+            else
+            {
+                warnings.push_back(StringHelper::Format("DSK track cylinder %d side %d: sector data truncated (sector %d, %zu bytes expected)",
+                                                        cylinder, side, entry[2], se.stored));
+                return false;
+            }
         }
-        src += se.stored;
+        src += (cpdreadSlots && se.stored == CPDREAD_SLOTTED_SIZE) ? CPDREAD_SLOT_SIZE : se.stored;
 
-        const bool idOnly = (se.st1 & (ST1_NO_DATA | ST1_MISSING_ADDRESS_MARK)) != 0 || (se.st2 & ST2_MISSING_DATA_MARK) != 0 ||
-                            (extended && se.stored == 0);
+        const bool idOnly = noDataMark || (extended && se.stored == 0);
         spec.idOnly[i] = idOnly ? 1 : 0;
 
         // N >= 4 (Speedlock +3 and the like, 8 KB sectors bigger than the track): the data field holds what was
@@ -222,6 +364,7 @@ bool LoaderDSK::parseTrack(DiskImage* image, uint8_t cylinder, uint8_t side, con
     }
 
     // Grow the track when the layout does not fit the nominal length; shrink GAP#3 as a last resort
+    std::vector<uint8_t> cutField(sectorCount, 0);
     if (!spec.fits())
     {
         const size_t needed = spec.totalBytes();
@@ -235,15 +378,51 @@ bool LoaderDSK::parseTrack(DiskImage* image, uint8_t cylinder, uint8_t side, con
         else
         {
             spec.trackLength = DiskImage::RawTrack::MAX_TRACK_SIZE;
+            const uint8_t gapPostData = spec.gapPostData;
             while (!spec.fits() && spec.gapPostData > 1) spec.gapPostData--;
             if (!spec.fits())
             {
-                warnings.push_back(StringHelper::Format("DSK track cylinder %d side %d: %d sectors do not fit into %zu bytes",
-                                                        cylinder, side, sectorCount, DiskImage::RawTrack::MAX_TRACK_SIZE));
-                return false;
+                // A dump of a protection track read with a growing N (CPDRead: N = 0..15, each field read on into the
+                // fields after it): the stored N >= 4 fields overlap on the disk and add up to more than a revolution.
+                // Lay the track out as the dumps show it; where they do not, cut the longest fields (never below the
+                // model size) until the layout fits, GAP#3 as dumped: a uPD765 reading such a sector gets the dumped
+                // bytes kept, then the track after them
+                spec.gapPostData = gapPostData;
+                if (layOutOverlappingFields(track, cylinder, side, spec, entries, warnings)) return true;
+
+                size_t cut = 0;
+                while (!spec.fits())
+                {
+                    size_t longest = sectorCount;
+                    for (size_t i = 0; i < sectorCount; i++)
+                    {
+                        if (spec.sectorDataLengths[i] > modelSize(spec.sectorSizeCodes[i]) &&
+                            (longest == sectorCount || spec.sectorDataLengths[i] > spec.sectorDataLengths[longest]))
+                            longest = i;
+                    }
+                    if (longest == sectorCount) break;
+                    const size_t over = spec.totalBytes() - spec.trackLength;
+                    const size_t room = spec.sectorDataLengths[longest] - modelSize(spec.sectorSizeCodes[longest]);
+                    const size_t by = std::min(over, room);
+                    spec.sectorDataLengths[longest] = static_cast<uint16_t>(spec.sectorDataLengths[longest] - by);
+                    cutField[longest] = 1;
+                    cut += by;
+                }
+                while (!spec.fits() && spec.gapPostData > 1) spec.gapPostData--;
+                if (!spec.fits())
+                {
+                    warnings.push_back(StringHelper::Format("DSK track cylinder %d side %d: %d sectors do not fit into %zu bytes",
+                                                            cylinder, side, sectorCount, DiskImage::RawTrack::MAX_TRACK_SIZE));
+                    return false;
+                }
+                warnings.push_back(StringHelper::Format("DSK track cylinder %d side %d: overlapping long sector fields cut by %zu bytes to fit %zu bytes, GAP#3 %d",
+                                                        cylinder, side, cut, DiskImage::RawTrack::MAX_TRACK_SIZE, spec.gapPostData));
             }
-            warnings.push_back(StringHelper::Format("DSK track cylinder %d side %d: layout too large, track grown to %zu bytes and GAP#3 reduced to %d",
-                                                    cylinder, side, DiskImage::RawTrack::MAX_TRACK_SIZE, spec.gapPostData));
+            else
+            {
+                warnings.push_back(StringHelper::Format("DSK track cylinder %d side %d: layout too large, track grown to %zu bytes and GAP#3 reduced to %d",
+                                                        cylinder, side, DiskImage::RawTrack::MAX_TRACK_SIZE, spec.gapPostData));
+            }
         }
     }
 
@@ -269,7 +448,8 @@ bool LoaderDSK::parseTrack(DiskImage* image, uint8_t cylinder, uint8_t side, con
             // The field in the stream: the model size, or the stored length of an N >= 4 sector
             const bool longField = spec.sectorDataLengths[i] != 0;
             const size_t size = longField ? spec.sectorDataLengths[i] : sector.dataSize;
-            const size_t copies = (se.stored > size && se.stored % size == 0) ? se.stored / size : 1;
+            // A field cut to fit the track holds a prefix of the dump, not several copies of a weak sector
+            const size_t copies = (!cutField[i] && se.stored > size && se.stored % size == 0) ? se.stored / size : 1;
 
             std::memcpy(sector.data, se.src, std::min(se.stored, size));
 
@@ -282,7 +462,7 @@ bool LoaderDSK::parseTrack(DiskImage* image, uint8_t cylinder, uint8_t side, con
                     if (copy[b] != se.src[b]) track->setWeakByte(sector.dataOffset + b, true);
                 }
             }
-            if (copies == 1 && se.stored > size)
+            if (copies == 1 && se.stored > size && !cutField[i])
             {
                 warnings.push_back(StringHelper::Format("DSK track cylinder %d side %d: sector %d stores %zu bytes for a %zu-byte sector, extra bytes dropped",
                                                         cylinder, side, sector.number(), se.stored, size));
