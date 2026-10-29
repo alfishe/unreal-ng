@@ -1,0 +1,37 @@
+# Turbo Esprit (Durell 1986), the Erbe TZX "Turbo Esprit (Erbe).tzx" (the Spanish release; a 48K game: the 128K loader resets
+# on it, so take 48 BASIC (down x3, ENTER held about 30 frames), then LOAD "" (J, SYM+P twice, ENTER); the load ends at the
+# Durell title, any key opens "MENU TURBO ESPRIT": 8 COMENZAR, then the city 1 to 4). The game's own key table
+# (menu 2 REDEFINIR TECLADO): J left, L right, K fire, A brake, S accelerate, M map, T suicide; the editor asks all seven keys in a
+# row and does not leave until the last one, so a stray key in it moves the whole table. Haptics (haptics.md §13 H5), found with
+# TTD on recorded runs: the drive is a first-person chase through a city and the only continuous state on the HUD is SANCION
+# (the penalty counter, it grows in steps of 10 to 50 while the car is off the lane or on the pavement); #A08C is the head of the
+# routine that adds it (run every ~44 frames while J is held into the wall, once when T ends a life), so it plays as a tick.
+# The speed is not a byte of its own (the dials follow no monotone variable: S only flips a key-state word at #72CE), the
+# traffic events (#DD00 .. #E000) repeat at the same absolute frames whatever the keys, so they are scenery and not mapped.
+# Checked in real time (menu 8, city 1, S held, then J held 14 s): 10 `penalty` and SANCION 000010; 10 s of idle, of S alone and
+# of L alone gave 0. Known limits: no engine level, no hit on a vehicle and no fire event found.
+schema: 1
+kind: play
+id: builtin/game/turbo-esprit
+label: Turbo Esprit
+match:
+  machines: [PENTAGON, 128K, 48K]
+  file_sha256: ["0cb1dc8628d1402cfa54f3827c67365ecfe783a8c39dbf96e80a9cfe263feec5"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: J }
+    dpad.right:   { key: L }
+    lstick.left:  { key: J }
+    lstick.right: { key: L }
+    rt.click:     { key: S, label: Accelerate }
+    lt.click:     { key: A, label: Brake }
+    south:        { key: K, label: Fire }
+    west:         { key: M, label: Map }
+    menu:         { key: "8", label: Start }
+haptics:
+  sources:
+    penalty: { probe: exec, address: "0xA08C" }
+  rules:
+    - { on: penalty, play: tick, target: handle.low }
