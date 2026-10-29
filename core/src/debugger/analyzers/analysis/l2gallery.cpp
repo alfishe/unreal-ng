@@ -78,8 +78,8 @@ Canvas DrawFrames(const L1Result& l1, const Region& r, const GalleryOptions& opt
     const Geometry& g = r.geometry;
     const uint32_t columns = g.width / 8u;
     const uint32_t across = g.mask ? 2u : 1u;
-    const uint32_t rowStep = columns * across;
-    const uint32_t frameBytes = rowStep * g.height + g.prefix;
+    const uint32_t lineStep = g.LineStep();
+    const uint32_t frameBytes = g.FrameBytes();
     const uint32_t stride = g.stride != 0 ? g.stride : frameBytes;
     uint32_t count = g.frames != 0 ? g.frames : 1u;
     if (r.Size() >= frameBytes)
@@ -101,7 +101,8 @@ Canvas DrawFrames(const L1Result& l1, const Region& r, const GalleryOptions& opt
         for (uint32_t y = 0; y < g.height; ++y)
             for (uint32_t c = 0; c < columns; ++c)
             {
-                const uint32_t at = base + g.prefix + y * rowStep + c * across;
+                const uint32_t at = base + g.prefix + (g.layout == "columns" ? c * lineStep + y * across
+                                                                             : y * lineStep + c * across);
                 const uint8_t pixels = ByteOf(l1, r, at + (g.mask ? 1u : 0u));
                 const uint8_t mask = g.mask ? ByteOf(l1, r, at) : 0;
                 for (uint32_t bit = 0; bit < 8; ++bit)

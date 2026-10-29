@@ -213,6 +213,22 @@ stride (half of it with a mask: twice as many reads as display writes, with an A
 instances began reading (`Stride::starts`), grouped by shape and laid on one lattice (the first gap up to one frame
 past the frame size sets the step; frames drawn between two seen ones are filled in, inferred).
 
+Drawn pieces: graphics drawn without a blit loop (unrolled LDI chains, stack copies, back buffers) are found from the
+value flow (`l1valueflow.h`). Every byte written to the screen's pixels names the memory byte its value came from (a
+copy keeps its source; a copied byte whose value goes to more than two places before it is written again is a table,
+the source itself; a buffer's byte goes to one place, two with both screens), and at each frame end each drawn source
+byte votes for the source bytes shown to its right and below it (`DrawStep`: the majority delta, steady at two or more
+frame ends). Bytes linked by steady steps form a piece (a right step longer than a mask's links only when every byte
+between is drawn too: the letters of a text are no column picture), then again by the set's most common pair of steps
+only (tiles a map stacks stay apart). The pair is the layout: right 1 (2 with a mask) and down the row pitch, stored in
+rows; down 1 (2) and right the column pitch, in columns. A line starts at a byte the one a stride back does not step
+to along the line (rows stored back to back: the end of the line before has no step right), the most common residue
+of those modulo the pitch; the cells drawn give the width and height. Pieces in a page not mapped at the start are
+read with that page in bank 3. An object whose frames are all one value in every byte (a back buffer's blank) is no
+picture. 8 x 8 frames on one lattice are a font of the game's own codes when eight or more different ones are drawn,
+not picked by a map, and the routine writing them to the screen reads them itself (printed straight to the screen;
+tiles composed in a back buffer and copied to the screen are sprites).
+
 At the end each buffer gets its field list (`FinishBufferFields`): one field per claim inside it, a group followed by
 its variables, the spans between as `unclaimed` (split where a page the code named by its high byte starts).
 

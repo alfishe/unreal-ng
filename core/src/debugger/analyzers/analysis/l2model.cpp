@@ -251,6 +251,24 @@ const CodeLine* L2Result::CodeAt(PhysKey key) const
     return it != code.end() && it->key == key ? &*it : nullptr;
 }
 
+uint32_t Geometry::LineStep() const
+{
+    if (pitch != 0)
+        return pitch;
+    const uint32_t pair = mask ? 2u : 1u;
+    return layout == "columns" ? height * pair : width / 8u * pair;
+}
+
+uint32_t Geometry::FrameBytes() const
+{
+    const uint32_t pair = mask ? 2u : 1u;
+    const uint32_t lines = layout == "columns" ? width / 8u : height;
+    const uint32_t length = layout == "columns" ? height : width / 8u;
+    if (lines == 0 || length == 0)
+        return prefix;
+    return (lines - 1u) * LineStep() + length * pair + prefix;
+}
+
 StateNode RegionNode(const Region& region)
 {
     StateNode node = StateNode::Object();
@@ -282,6 +300,8 @@ StateNode RegionNode(const Region& region)
         geometry["mask"] = true;
     if (g.prefix != 0)
         geometry["prefix"] = static_cast<uint64_t>(g.prefix);
+    if (g.pitch != 0)
+        geometry["pitch"] = static_cast<uint64_t>(g.pitch);
     if (!g.layout.empty())
         geometry["layout"] = g.layout;
     if (!g.terminator.empty())

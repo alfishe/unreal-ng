@@ -126,6 +126,14 @@ struct Geometry
     bool mask = false;
     /// Graphics: bytes before each frame's pixel rows (a tile's attribute)
     uint16_t prefix = 0;
+    /// Graphics: bytes from the start of one row to the next (layout "columns": of one column to the next); 0: the
+    /// row's own bytes. Larger: a window of a wider picture (a scrolled landscape shows part of each row)
+    uint16_t pitch = 0;
+
+    /// Graphics: bytes from one row's start (a column's) to the next
+    uint32_t LineStep() const;
+    /// Graphics: the bytes one frame spans, its prefix included
+    uint32_t FrameBytes() const;
     /// Graphics and screens: how the bytes are laid out: "rows" (row by row, width / 8 bytes a row), "screen" (the
     /// display file's order), "attributes" (one byte a cell, 32 a row), "cells" (a map: one byte a cell)
     std::string layout;

@@ -7,7 +7,8 @@
 /// (RST $10, the ROM print routines), itself or through a callee (two calls deep). The terminator is a zero after the run, bit 7 on its last character, a length byte before it,
 /// or none (the printing code holds the count). Text in a buffer: bytes only block copies wrote (a room's name copied
 /// to the room buffer and printed from there) are text when they are printable in every source the copies brought
-/// them from; the text is claimed in the buffer and in each source. What a block copy took to the screen is a picture,
+/// them from (the page the copy read: code and text copied out of a 128K bank the start did not map); the text is claimed
+/// in the buffer and in each source. What a block copy took to the screen is a picture,
 /// not text, at either end. A byte the glyph reader reads (an instruction that reads a font's bytes) is pixels too: a
 /// blitter that draws the characters and the sprites (Hungry Horace) reads both, the text is what selects a glyph.
 ///
@@ -17,6 +18,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <map>
 #include <set>
 #include <string>
 
@@ -139,13 +141,24 @@ void PrintedText(DetectorContext& context)
     if (printers.empty())
         return;
 
-    // The block copies into buffers: (destination, length, source), the lowest byte of each range
+    // The block copies into buffers: (destination, length, source), the lowest byte of each range; the source's page
+    // byte as the copy read it (another bank than the start's paging shows at that address: code and text copied out
+    // of a 128K page)
     struct Copy
     {
         uint16_t dst = 0;
         uint32_t length = 0;
         uint16_t src = 0;
+        PhysKey srcKey = kNoKey;  ///< the lowest source byte (kNoKey: not known)
+        /// The page byte the copy read at offset @p i (the start's paging past the end of the source's page)
+        PhysKey Source(const DetectorContext& context, uint32_t i) const
+        {
+            if (srcKey != kNoKey && KeyOffset(srcKey) + i <= 0x3FFFu)
+                return srcKey + i;
+            return context.Key(static_cast<uint16_t>(src + i));
+        }
     };
+
     std::vector<Copy> copies;
     std::vector<uint8_t> picture(0x10000, 0);  // the sources of copies to the screen
     for (const BlockCopy& c : l1.copies)
@@ -163,19 +176,28 @@ void PrintedText(DetectorContext& context)
                 std::fill(picture.begin() + src, picture.begin() + src + c.length, 1);
             continue;
         }
+        PhysKey srcKey = c.srcKey;
+        if (c.dir < 0)
+            srcKey = KeyOffset(c.srcKey) >= c.length - 1 ? c.srcKey - (c.length - 1) : kNoKey;
         if (std::none_of(copies.begin(), copies.end(),
                          [&](const Copy& o) { return o.dst == dst && o.length == c.length && o.src == src; }))
-            copies.push_back(Copy{dst, c.length, src});
+            copies.push_back(Copy{dst, c.length, src, srcKey});
     }
     const auto printable = [](uint8_t c) { return Printable(c) || Printable(static_cast<uint8_t>(c & 0x7F)); };
-    // A byte only block copies wrote: printable in every source (its first source's value; false: not such text)
-    const auto copied = [&](uint16_t z80, uint8_t& value) {
+    // A byte only block copies wrote: the one value they wrote, else printable in every source (its first source's
+    // value; a source page the start did not map has no start image: one value written is the evidence then; false:
+    // not such text)
+    const auto copied = [&](uint16_t z80, const ByteUse& u, uint8_t& value) {
         bool any = false;
         for (const Copy& c : copies)
         {
             if (z80 < c.dst || z80 > c.dst + c.length - 1)
                 continue;
-            const uint8_t v = context.Start(static_cast<uint16_t>(c.src + (z80 - c.dst)));
+            uint8_t v = 0;
+            if (u.distinct == 1)
+                v = u.minWritten;
+            else if (!l1.StartByte(c.Source(context, z80 - c.dst), v))
+                return false;
             if (!printable(v))
                 return false;
             if (!any)
@@ -219,7 +241,7 @@ void PrintedText(DetectorContext& context)
         uint8_t c = context.Start(z80);
         if ((u.flags & use::kWrite) != 0)
         {
-            if ((u.flags & (use::kOtherWrite | use::kIncDec)) != 0 || !copied(z80, c))
+            if ((u.flags & (use::kOtherWrite | use::kIncDec)) != 0 || !copied(z80, u, c))
                 continue;
             buffered[a] = 1;
         }
@@ -296,22 +318,26 @@ void PrintedText(DetectorContext& context)
             if (buffered[a] != 0)
             {
                 // The same text in each source, its own characters
-                std::set<uint16_t> sources;
+                std::map<uint16_t, PhysKey> sources;
                 for (const Copy& c : copies)
                     if (a >= c.dst && b <= c.dst + c.length - 1u)
-                        sources.insert(static_cast<uint16_t>(c.src + (a - c.dst)));
+                        sources.emplace(static_cast<uint16_t>(c.src + (a - c.dst)), c.Source(context, a - c.dst));
                 r.evidence.push_back(Evidence{"copy", static_cast<uint16_t>(a), sources.size(),
                                               "block copies brought it from " + std::to_string(sources.size()) +
                                                   (sources.size() == 1 ? " source" : " sources")});
-                for (const uint16_t at : sources)
+                for (const auto& [at, key] : sources)
                 {
                     Region source = r;
-                    source.geometry.text.clear();
+                    // Each source its own characters (a page the start did not map: the buffer's)
                     for (uint32_t i = 0; i < length; ++i)
-                        source.geometry.text += static_cast<char>(context.Start(static_cast<uint16_t>(at + i)) & 0x7F);
+                    {
+                        uint8_t v = 0;
+                        if (l1.StartByte(key + i, v))
+                            source.geometry.text[i] = static_cast<char>(v & 0x7F);
+                    }
                     source.evidence.back().detail = "copied to the buffer at " + Hex4(static_cast<uint16_t>(a)) +
                                                     " and printed there";
-                    context.Claim(std::move(source), at, static_cast<uint16_t>(at + length - 1));
+                    context.Claim(std::move(source), key, at, static_cast<uint16_t>(at + length - 1));
                 }
             }
             context.Claim(std::move(r), static_cast<uint16_t>(a), static_cast<uint16_t>(hi));

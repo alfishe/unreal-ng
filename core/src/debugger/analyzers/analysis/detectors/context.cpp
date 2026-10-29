@@ -60,6 +60,17 @@ bool DetectorContext::Claim(Region region, uint16_t lo, uint16_t hi)
     return out.store.Add(std::move(region));
 }
 
+bool DetectorContext::Claim(Region region, PhysKey key, uint16_t lo, uint16_t hi)
+{
+    if (hi < lo || !InScope(lo) || !InScope(hi) || (lo >> 14) != (hi >> 14) ||
+        KeyOffset(key) + static_cast<uint32_t>(hi - lo) > 0x3FFFu)
+        return false;
+    region.lo = key;
+    region.hi = key + (hi - lo);
+    region.z80 = lo;
+    return out.store.Add(std::move(region));
+}
+
 std::vector<uint8_t> DetectorContext::ClaimedMap() const
 {
     std::vector<uint8_t> map(0x10000, 0);

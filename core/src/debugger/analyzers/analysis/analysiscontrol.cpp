@@ -1001,6 +1001,8 @@ Reply Gallery(Emulator& emulator, const Options& options)
             text += " mask";
         if (g.prefix != 0)
             text += " +" + std::to_string(g.prefix);
+        if (g.pitch != 0)
+            text += " pitch " + std::to_string(g.pitch);
         return text;
     };
 

@@ -735,9 +735,13 @@ static std::string MediaClaims(const L2Result& l2)
     return out.str();
 }
 
+/// The sprite fixture draws unsynchronised to the frame: an animation frame has to be on the screen at two frame ends
+/// before its bytes' neighbours count, which takes about 10 frames
+constexpr unsigned kSpriteFrames = 10;
+
 TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_Test)
 {
-    const Built& b = Run("sprite-16x16.asm");
+    const Built& b = Run("sprite-16x16.asm", kSpriteFrames);
     ASSERT_FALSE(HasFailure());
     const Region* sprite = StartsAt(At("sprites"), RegionKind::Sprite, DetectorId::Graphics);
     ASSERT_NE(sprite, nullptr) << MediaClaims(b.l2);
@@ -759,7 +763,7 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_Test)
 /// from it instead of the row loop's source stride is not 16 x 16, and no claim may span the object records
 TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_WidthNotFromTheOuterLoop)
 {
-    const Built& b = Run("sprite-16x16.asm");
+    const Built& b = Run("sprite-16x16.asm", kSpriteFrames);
     ASSERT_FALSE(HasFailure());
     size_t sprites = 0;
     for (const Region& r : b.l2.store.Regions())
@@ -1020,10 +1024,29 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorFonts_UdgThroughTheRom)
     EXPECT_EQ(udg->geometry.frames, 21u);
 }
 
+/// An LDIR an interrupt broke into (the handler's own copy in the middle of it) is one copy, not its pieces: no run
+/// starts inside the 6000 bytes (the last run may stop short: the recording ended in it)
+TEST_F(AnalysisL2_Test, AnalysisCopies_InterruptedLdirIsOneCopy)
+{
+    const Built& b = Run("copy-interrupted.asm", 3);
+    ASSERT_FALSE(HasFailure());
+    uint64_t whole = 0;
+    std::ostringstream runs;
+    for (const BlockCopy& c : b.l1.copies)
+        if (c.dst >= 0xA000)
+        {
+            runs << std::hex << "$" << c.src << " -> $" << c.dst << std::dec << " " << c.length << " x" << c.count
+                 << "\n";
+            whole += c.src == 0 && c.dst == 0xA000 && c.length == 6000 ? c.count : 0;
+            EXPECT_EQ(c.src, 0u) << "a run that starts inside the copy\n" << runs.str();
+        }
+    EXPECT_GE(whole, 1u) << runs.str();
+}
+
 /// A back buffer copied by short rows (an LDI chain a row) is display: the frames drawn into it are graphics
 TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_BackBufferCopiedByRows)
 {
-    const Built& b = Run("backbuffer-rows.asm", 4);
+    const Built& b = Run("backbuffer-rows.asm", 10);
     ASSERT_FALSE(HasFailure());
     const Region* sprite = StartsAt(At("frames"), RegionKind::Sprite, DetectorId::Graphics);
     ASSERT_NE(sprite, nullptr) << MediaClaims(b.l2);
@@ -1041,7 +1064,7 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_BackBufferCopiedByRows)
 /// geometry JSON with stride, mask, prefix and layout
 TEST_F(AnalysisL2_Test, GraphicsGeometryInTheDraft)
 {
-    Run("sprite-16x16.asm");
+    Run("sprite-16x16.asm", kSpriteFrames);
     ASSERT_FALSE(HasFailure());
     const uint16_t sprites = At("sprites");
     const ExportResult skool = ExportDraft("skool");
@@ -1064,7 +1087,7 @@ TEST_F(AnalysisL2_Test, GraphicsGeometryInTheDraft)
 /// The gallery draws what the claims say: the frames in a grid at the scale, the same bytes every time
 TEST_F(AnalysisL2_Test, GalleryDrawsTheClaims)
 {
-    const Built& b = Run("sprite-16x16.asm");
+    const Built& b = Run("sprite-16x16.asm", kSpriteFrames);
     ASSERT_FALSE(HasFailure());
     const Region* sprite = StartsAt(At("sprites"), RegionKind::Sprite);
     ASSERT_NE(sprite, nullptr);

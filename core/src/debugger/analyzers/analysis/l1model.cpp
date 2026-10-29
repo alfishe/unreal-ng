@@ -850,6 +850,32 @@ StateNode L1Result::ToStateNode() const
         insList.push(std::move(node));
     }
     doc["instructions"] = std::move(insList);
+
+    // The source bytes drawn to the screen: [page, offset, draws, frames, positions, x, y, screen, writer page,
+    // writer offset, then delta, count, seen of the step right and of the step down]
+    StateNode drawnList = StateNode::Array();
+    for (const DrawnByte& d : drawn)
+    {
+        StateNode node = StateNode::Array();
+        node.push(static_cast<unsigned>(KeyPage(d.key)));
+        node.push(static_cast<unsigned>(KeyOffset(d.key)));
+        node.push(static_cast<uint64_t>(d.draws));
+        node.push(static_cast<uint64_t>(d.frames));
+        node.push(static_cast<uint64_t>(d.positions));
+        node.push(static_cast<unsigned>(d.x));
+        node.push(static_cast<unsigned>(d.y));
+        node.push(static_cast<unsigned>(d.screen));
+        node.push(static_cast<unsigned>(d.writer == kNoKey ? 0xFFFFu : KeyPage(d.writer)));
+        node.push(static_cast<unsigned>(d.writer == kNoKey ? 0u : KeyOffset(d.writer)));
+        for (const DrawStep* step : {&d.right, &d.down})
+        {
+            node.push(static_cast<int64_t>(step->delta));
+            node.push(static_cast<uint64_t>(step->count));
+            node.push(static_cast<uint64_t>(step->seen));
+        }
+        drawnList.push(std::move(node));
+    }
+    doc["drawn"] = std::move(drawnList);
     return doc;
 }
 

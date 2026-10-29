@@ -63,6 +63,9 @@ public:
 
     /// Add a claim in the Z80 view [lo, hi] (one page); false when out of scope or refused by the store
     bool Claim(Region region, uint16_t lo, uint16_t hi);
+    /// Add a claim of the page bytes from @p key that code saw at the Z80 [lo, hi] (one page): a page the start's
+    /// paging may not show (the source of a copy out of another bank)
+    bool Claim(Region region, PhysKey key, uint16_t lo, uint16_t hi);
 
     /// Per Z80 address (start's paging): 1 when a claim covers it (the code map's plain data and untouched
     /// fallbacks aside)

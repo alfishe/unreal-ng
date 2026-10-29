@@ -367,7 +367,7 @@ TEST_F(AnalysisControlL1_Test, GalleryListsAndDrawsTheGraphics)
     z80->sp = 0x9F00;
 
     ASSERT_TRUE(analysis::Execute(*_emulator, "start", {{"record", "true"}}).Ok());
-    _emulator->RunNFrames(3);
+    _emulator->RunNFrames(10);  // each animation frame on the screen at two frame ends
     const analysis::Reply built = analysis::Execute(*_emulator, "build", {{"wait", "20000"}});
     ASSERT_TRUE(built.Ok()) << built.message;
     ASSERT_EQ(Member(built.body, "state").s, "done") << built.text;

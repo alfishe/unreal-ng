@@ -278,11 +278,11 @@ std::string ImageMacro(const Region& r, uint32_t start, uint32_t end)
     }
     if (r.kind != RegionKind::Sprite && r.kind != RegionKind::Tile)
         return std::string();
-    if (g.width == 0 || g.width % 8 != 0 || g.height == 0 || g.height % 8 != 0 || g.width > 64)
+    if (g.width == 0 || g.width % 8 != 0 || g.height == 0 || g.height % 8 != 0 || g.width > 256)
         return std::string();
     const uint32_t columns = g.width / 8u;
-    const uint32_t rowStep = columns * (g.mask ? 2u : 1u);
-    const uint32_t frameBytes = rowStep * g.height + g.prefix;
+    const uint32_t lineStep = g.LineStep();
+    const uint32_t frameBytes = g.FrameBytes();
     const uint32_t stride = g.stride != 0 ? g.stride : frameBytes;
     const uint32_t scale = g.width <= 16 ? 4u : 2u;
     std::string cells;
@@ -293,8 +293,12 @@ std::string ImageMacro(const Region& r, uint32_t start, uint32_t end)
         if (base < start)
             continue;
         const uint32_t pixels = base + g.prefix;
-        const uint32_t across = g.mask ? 2u : 1u;
-        const uint32_t down = 8u * rowStep;
+        // Stored in columns: a UDG's rows are one byte (pair) apart, the next UDG across is a column further
+        const bool stacked = g.layout == "columns";
+        const uint32_t pair = g.mask ? 2u : 1u;
+        const uint32_t across = stacked ? lineStep : pair;
+        const uint32_t down = 8u * (stacked ? pair : lineStep);
+        const uint32_t udgStep = stacked ? pair : lineStep;
         const uint32_t first = pixels + (g.mask ? 1u : 0u);
         const uint32_t last = first + (columns - 1u) * across + (g.height / 8u - 1u) * down;
         std::string spec = std::to_string(first) + "-" + std::to_string(last) + "-" + std::to_string(across) + "-" +
@@ -306,7 +310,7 @@ std::string ImageMacro(const Region& r, uint32_t start, uint32_t end)
         if (g.prefix != 0)
             attrs = "[" + std::to_string(base) + "]";
         cells += std::string(shown == 0 ? "" : " | ") + "#UDGARRAY" + std::to_string(columns) + ",56," +
-                 std::to_string(scale) + "," + std::to_string(rowStep) + "(" + spec + ")" + attrs + "(" + name + "_" +
+                 std::to_string(scale) + "," + std::to_string(udgStep) + "(" + spec + ")" + attrs + "(" + name + "_" +
                  std::to_string(shown) + ")";
         ++shown;
     }
@@ -1605,7 +1609,7 @@ struct Exporter
                 << (r.z80 + r.Size() > 0xFFFFu ? std::string("$10000") : Hex4(r.z80 + r.Size()))
                 << "\", \"kind\": \"" << RegionKindName(r.kind) << "\", \"width\": " << g.width << ", \"height\": " << g.height << ", \"frames\": " << g.frames
                 << ", \"stride\": " << g.stride << ", \"mask\": " << (g.mask ? "true" : "false")
-                << ", \"prefix\": " << g.prefix << ", \"layout\": \"" << g.layout << "\", \"detector\": \""
+                << ", \"prefix\": " << g.prefix << ", \"pitch\": " << g.pitch << ", \"layout\": \"" << g.layout << "\", \"detector\": \""
                 << DetectorName(r.detector) << "\", \"confidence\": " << r.confidence << "}";
             first = false;
         }

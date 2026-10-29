@@ -8,13 +8,15 @@
       A game with an AY rip in ZXDB gets it (the music reference). The order is a hash of the row's key, not a
       choice: `dev` games are the ones tuned on, `holdout` games are only run to confirm.
   corpus.py run --manifest ... --data ... --key <key> --work scratch/corpus [--frames 15000] [--port-base 9720]
-      Loads the game in unreal-qt offscreen (tape: LOAD "" typed in emulated frames, then playback; disk: TR-DOS boot), waits for the load,
-      then captures with the analysis while the input is generic: the attract mode first, start keys, then
-      seeded random keyboard and Kempston play. Builds L1 / L2, exports the geometry, the gallery (one PNG per
+      Loads the game in unreal-qt offscreen (tape: LOAD "" typed in emulated frames, then playback; disk: TR-DOS
+      boot), waits for the load, finds the keys to play (Explorer: keys tried from saved states until the game
+      answers the stick), then captures with the analysis: those keys again, then seeded random keyboard and
+      Kempston play (with the attract mode and start keys first when no keys reached play). Builds L1 / L2, exports the geometry, the gallery (one PNG per
       font, sprite, tile), the music claims, the AY register writes as a PSG file (music.psg; music-chip2.psg for
       the second TurboSound chip) and a screen every 250 frames.
-  corpus.py run-all --manifest ... --data ... --set dev --work scratch/corpus
-      `run` for every game of the set (skips games with a result unless --again).
+  corpus.py run-all --manifest ... --data ... --set dev --work scratch/corpus [--shard i/n --port-base ...]
+      `run` for every game of the set (skips games with a result unless --again); --shard runs every n-th game
+      from the i-th, so n runs on other port bases share a set.
   corpus.py score --work scratch/corpus
       Per game: the share of the screens' character-like cells (one picture in three or more places) that a claimed
       font, a claimed tile, the ROM font nobody claimed, or nothing explains; fonts, sprites, music claims, PSG.
@@ -49,6 +51,7 @@ GAME_GENRES = range(1, 34)  # ZXDB genretypes "Adventure Game: Dungeon Crawl" ..
 TAPE_MACHINES = {'ZX-Spectrum 16K': '48K', 'ZX-Spectrum 16K/48K': '48K', 'ZX-Spectrum 48K': '48K',
                  'ZX-Spectrum 48K/128K': '128K', 'ZX-Spectrum 128K': '128K'}
 MEDIA_SUFFIXES = {'tape': ('.tzx', '.tap'), 'disk': ('.trd', '.scl')}
+PAGES_BEFORE = 2  # frames before each saved screen the RAM pages are saved too
 SCREEN_EVERY = 250
 
 # Generic input: what most games read. Keys of the start / menu screens, then play keys (QAOP, Sinclair 6789-0,
@@ -204,13 +207,15 @@ class Input:
         self.held = list(keys)
 
 
-def generic_input(seed, frames):
-    """[(frames, keys)]: the attract mode, start keys, then random play with a start key now and then (a game over
-    goes back to the menu)"""
+def generic_input(seed, frames, start=True):
+    """[(frames, keys)]: the attract mode, start keys (unless the explorer reached play: @p start false), then random
+    play with a start key now and then (a game over goes back to the menu)"""
     rng = random.Random(seed)
-    plan = [(1500, [])]
-    for key in START_KEYS:
-        plan += [(8, [key]), (120, [])]
+    plan = []
+    if start:
+        plan = [(1500, [])]
+        for key in START_KEYS:
+            plan += [(8, [key]), (120, [])]
     total = sum(n for n, _ in plan)
     while total < frames:
         if rng.random() < 0.04:
@@ -223,6 +228,138 @@ def generic_input(seed, frames):
     return plan
 
 
+# The explorer: from the loaded game to play by trying keys from saved states (SZX save + load is lossless)
+EXPLORE_KEYS = ['WAIT', 'LONGWAIT', 'ENTER', 'SPACE', '1', '2', '3', '4', '5', '0', 'Y', 'N', 'S', 'P', 'G', 'K', 'J', 'KF', 'M', 'Q',
+                'A', 'O', 'Z', 'X', 'C', 'I', 'B', 'H', 'L', 'R', 'E', 'T', 'D', 'F', 'U', 'W', 'V', '6', '7', '8', '9']
+CONTROL_PAIRS = [(['O', 'KL'], ['P', 'KR']), (['Q', 'KU'], ['A', 'KD']), (['6'], ['7']), (['9'], ['8'])]
+EXPLORE_IDLE = 100   # frames before the first key (the attract mode settles)
+EXPLORE_AFTER = 100  # frames after a key before the screen is compared
+EXPLORE_HOLD = 6
+EXPLORE_DEPTH = 10  # keys in a row at most
+EXPLORE_BEAM = 6    # states kept at each depth (at most two reached by the same key)
+CONTROL_CELLS = (3, 120)  # a moved player: a few cells, not a page
+CONTROL_FRAMES = 40
+
+
+def screen_signature(m):
+    """A coarse picture of the screen: per 8 x 8 cell its attribute and how many pixels are set (in fours)"""
+    scr = m.read(0x4000, 6912)
+    cells = bytearray(1536)
+    for cell in range(768):
+        row, col = cell // 32, cell % 32
+        base = ((row & 0x18) << 8) | ((row & 7) << 5) | col
+        ink = sum(bin(scr[base + (line << 8)]).count('1') for line in range(8))
+        cells[2 * cell] = scr[6144 + cell]
+        cells[2 * cell + 1] = ink // 4
+    return bytes(cells)
+
+
+def cells_differ(a, b):
+    return sum(1 for k in range(768) if a[2 * k] != b[2 * k] or a[2 * k + 1] != b[2 * k + 1])
+
+
+class Explorer:
+    """Finds the keys from the loaded game to play. A state is under control when holding opposite directions
+    from it leaves two different screens a few cells apart (a moved player, not a new menu page). Keys are searched
+    breadth first with a beam (run()); the steps replay exactly from the start state (the run is deterministic)."""
+
+    def __init__(self, m, player, folder):
+        self.m, self.player, self.folder = m, player, folder
+        self.start = os.path.join(folder, 'explore-start.szx')
+
+    def save(self, path):
+        self.m.post('/snapshot/save', {'path': path, 'force': True})
+
+    def restore(self, path):
+        self.m.post('/snapshot/load', {'path': path})
+
+    def tap(self, key):
+        """A key held EXPLORE_HOLD frames, then EXPLORE_AFTER frames; WAIT the same frames with no key (time is a
+        step too: a page that prints slowly reads no keys), LONGWAIT 500 frames"""
+        if key in ('WAIT', 'LONGWAIT'):
+            run_frames(self.m, EXPLORE_HOLD + EXPLORE_AFTER if key == 'WAIT' else 500, None, 0)
+            return
+        self.player.set([key])
+        run_frames(self.m, EXPLORE_HOLD, None, 0)
+        self.player.set([])
+        run_frames(self.m, EXPLORE_AFTER, None, 0)
+
+    def controlled(self, state):
+        for one, other in CONTROL_PAIRS:
+            shots = []
+            for keys in (one, other):
+                self.restore(state)
+                self.player.set(keys)
+                run_frames(self.m, CONTROL_FRAMES, None, 0)
+                self.player.set([])
+                shots.append(screen_signature(self.m))
+            d = cells_differ(*shots)
+            if CONTROL_CELLS[0] <= d <= CONTROL_CELLS[1]:
+                return one + other, d
+        return None, 0
+
+    def run(self):
+        """Beam search: from each of the EXPLORE_BEAM states kept, every key; each new screen (once) is checked
+        for control, the ones most unlike their state become the next states"""
+        self.save(self.start)
+        run_frames(self.m, EXPLORE_IDLE, None, 0)
+        first = os.path.join(self.folder, 'explore-0-0.szx')
+        self.save(first)
+        self.restore(first)
+        here = screen_signature(self.m)
+        seen = {here}
+        keys, d = self.controlled(first)
+        if keys:
+            return [], [{'depth': 0, 'control': keys, 'cells': d}], True
+        frontier = [(first, [], here)]
+        trace = []
+        for depth in range(1, EXPLORE_DEPTH + 1):
+            candidates = []
+            for state, steps, shot0 in frontier:
+                for key in EXPLORE_KEYS:
+                    self.restore(state)
+                    self.tap(key)
+                    shot = screen_signature(self.m)
+                    if shot in seen:
+                        continue
+                    seen.add(shot)
+                    path = os.path.join(self.folder, f'explore-{depth}-{len(candidates)}.szx')
+                    self.save(path)
+                    candidates.append((cells_differ(shot0, shot), path, steps + [key], shot))
+            if not candidates:
+                trace.append({'depth': depth, 'stuck': True})
+                break
+            candidates.sort(key=lambda c: -c[0])
+            for d0, path, steps, _ in candidates:
+                keys, d = self.controlled(path)
+                if keys:
+                    trace.append({'depth': depth, 'keys': steps, 'control': keys, 'cells': d,
+                                  'candidates': len(candidates)})
+                    return steps, trace, True
+            frontier, by_key = [], {}
+            for _, path, steps, shot in candidates:
+                if len(frontier) < EXPLORE_BEAM and by_key.get(steps[-1], 0) < 2:
+                    by_key[steps[-1]] = by_key.get(steps[-1], 0) + 1
+                    frontier.append((path, steps, shot))
+            trace.append({'depth': depth, 'candidates': [(c[2][-1], c[0]) for c in candidates],
+                          'kept': [st for _, st, _ in frontier]})
+        return frontier[0][1], trace, False
+
+    def replay(self):
+        """Back to the start state: play() then runs the same frames and keys as the exploration"""
+        self.restore(self.start)
+
+    def play(self, steps):
+        run_frames(self.m, EXPLORE_IDLE, None, 0)
+        for key in steps:
+            self.tap(key)
+        return EXPLORE_IDLE + sum(500 if k == 'LONGWAIT' else EXPLORE_HOLD + EXPLORE_AFTER for k in steps)
+
+    def clean(self):
+        for f in glob.glob(os.path.join(self.folder, 'explore-*.szx')):
+            os.remove(f)
+
+
 class Machine:
     """The session and the instance's WebAPI (memory reads go there: binary, no MCP text)"""
 
@@ -233,6 +370,10 @@ class Machine:
 
     def read(self, address, length):
         with urllib.request.urlopen(f'{self.url}/memory/read/{address}?length={length}&format=binary', timeout=30) as r:
+            return r.read()
+
+    def read_page(self, kind, page):
+        with urllib.request.urlopen(f'{self.url}/memory/page/{kind}/{page}?length=16384&format=binary', timeout=30) as r:
             return r.read()
 
     def get(self, path):
@@ -332,17 +473,37 @@ class Basic:
             self.keys('r', 'enter')  # 48K: K mode, R is RUN
 
 
+def save_pages(m, folder):
+    """Every RAM page as it is now (16 K each, ram-N.bin): the bytes the claims name and both screens of a 128K"""
+    os.makedirs(folder, exist_ok=True)
+    for page in range(8):
+        try:
+            data = m.read_page('ram', page)
+        except OSError:
+            break
+        if len(data) == 0x4000:
+            with open(os.path.join(folder, f'ram-{page}.bin'), 'wb') as f:
+                f.write(data)
+
+
 def run_frames(m, frames, screens, at, on_screen=None):
-    """Runs @p frames, saving the screen whenever the count passes a multiple of SCREEN_EVERY (and calling
-    @p on_screen then); returns the new count"""
+    """Runs @p frames, saving the screen and the RAM pages (snapshots/NNNNNN, accept.py: graphics a game overwrites
+    later, a screen in page 7) whenever the count passes a multiple of SCREEN_EVERY (and calling @p on_screen then);
+    the pages also PAGES_BEFORE frames and less before it (snapshots-before/NNNNNN-K: a buffer the game scrolls after
+    copying it to the screen shows on the screen as it was a frame or two before); returns the new count"""
     while frames > 0:
-        step = min(frames, SCREEN_EVERY - at % SCREEN_EVERY)
+        left = SCREEN_EVERY - at % SCREEN_EVERY
+        step = min(frames, (left - PAGES_BEFORE if left > PAGES_BEFORE else 1) if screens else left)
         m.s.call('control_execution', {'action': 'run_frames', 'frames': step})
         at += step
         frames -= step
+        left = SCREEN_EVERY - at % SCREEN_EVERY
+        if screens and left <= PAGES_BEFORE and at % SCREEN_EVERY != 0:
+            save_pages(m, os.path.join(os.path.dirname(screens), 'snapshots-before', f'{at + left:06d}-{left}'))
         if at % SCREEN_EVERY == 0 and screens:
             with open(os.path.join(screens, f'{at:06d}.scr'), 'wb') as f:
                 f.write(m.read(0x4000, 6912))
+            save_pages(m, os.path.join(os.path.dirname(screens), 'snapshots', f'{at:06d}'))
             if on_screen:
                 on_screen()
     return at
@@ -415,19 +576,25 @@ def run_game(game, args):
                               'body': {'muted': True}}, ok=False)
         m = Machine(s, args.port_base)
         report['load_frames'] = load(m, game, media, report, args)
+        player = Input(s)
+        explorer = Explorer(m, player, out)
+        steps, trace, reached = explorer.run()
+        report['explore'] = {'keys': steps, 'reached_control': reached, 'trace': trace}
+        explorer.replay()
         s.call('analysis', {'action': 'start', 'record': True})
         screens = os.path.join(out, 'screens')
         os.makedirs(screens, exist_ok=True)
-        player = Input(s)
-        basic = Basic(m, game['key'])
         ay = AyLog(m)
+        report['explore']['frames'] = explorer.play(steps)
+        explorer.clean()
+        basic = Basic(m, game['key'])
 
         def on_screen():
             ay.drain()
             basic.check(player)
 
         frames = 0
-        for count, keys in generic_input(game['key'], args.frames):
+        for count, keys in generic_input(game['key'], args.frames, start=not reached):
             player.set(keys)
             frames = run_frames(m, min(count, args.frames - frames), screens, frames, on_screen)
             if frames >= args.frames:
@@ -442,6 +609,8 @@ def run_game(game, args):
         # The glyphs and sprites the gallery names, as the game left them (the score compares screens to them)
         with open(os.path.join(out, 'ram.bin'), 'wb') as f:
             f.write(m.read(0, 0x10000))
+        # Every RAM page as the game left it: the claims of a 128K game name pages the end did not map (accept.py)
+        save_pages(m, os.path.join(out, 'pages'))
         s.call('analysis', {'action': 'build', 'path': os.path.join(out, 'l1.json'), 'wait': 30000})
         state = s.call('analysis', {'action': 'status'}).text
         while ': running' in state:
@@ -471,6 +640,12 @@ def run_game(game, args):
             q = s.call('analysis', {'action': 'query', 'kind': kind, 'limit': 100000}, ok=False)
             with open(os.path.join(out, f'regions-{kind}.json'), 'w') as f:
                 json.dump(q.structured or {}, f, indent=1)
+        if getattr(args, 'explain', None):
+            with open(os.path.join(out, 'explain.txt'), 'w') as f:
+                for address in args.explain.split(','):
+                    for what in ('byte', 'routine'):
+                        e = s.call('analysis', {'action': 'explain', 'address': address, 'what': what}, ok=False)
+                        f.write(f'=== {address} {what}\n{e.text}\n')
     except Exception as error:  # one game's failure is a row of the report, not the end of the corpus run
         report['error'] = f'{type(error).__name__}: {error}'
     finally:
@@ -618,10 +793,14 @@ def main():
         p.add_argument('--gallery-limit', type=int, default=60)
         if name == 'run':
             p.add_argument('--key', required=True)
+            p.add_argument('--explain', help='addresses (comma separated) whose byte and routine facts go to '
+                                             'explain.txt after the build')
         else:
             p.add_argument('--set', default='dev')
             p.add_argument('--kind', choices=('tape', 'disk'))
             p.add_argument('--again', action='store_true')
+            p.add_argument('--shard', default='0/1', help='i/n: every n-th game from the i-th (parallel runs on '
+                                                          'other --port-base)')
     p = sub.add_parser('score')
     p.add_argument('--work', required=True)
     args = parser.parse_args()
@@ -638,6 +817,8 @@ def main():
             raise SystemExit(f'{args.key} is not in the manifest')
     else:
         games = [g for g in games if g['set'] == args.set and (not args.kind or g['kind'] == args.kind)]
+        index, count = (int(v) for v in args.shard.split('/'))
+        games = games[index::count]
     for game in games:
         done = os.path.join(args.work, game['key'], 'run.json')
         if args.command == 'run-all' and not args.again and os.path.exists(done):

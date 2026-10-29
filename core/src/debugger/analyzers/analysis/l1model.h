@@ -344,6 +344,30 @@ struct BlockCopy
     uint64_t count = 0;       ///< runs with this source, destination and length
 };
 
+/// The source byte shown next to a drawn byte on the screen (to its right, or below it): how far after it in memory,
+/// the most frequent distance (a majority count: the times it was seen less the times another was)
+struct DrawStep
+{
+    int16_t delta = 0;   ///< the neighbour's offset less the byte's, same page; 0: none
+    uint32_t count = 0;  ///< the majority count of delta
+    uint32_t seen = 0;   ///< the neighbours seen
+};
+
+/// A memory byte whose value was written to the screen's pixels (l1valueflow.h)
+struct DrawnByte
+{
+    PhysKey key = 0;
+    uint32_t draws = 0;       ///< saturating
+    uint32_t frames = 0;      ///< distinct frames it was drawn in
+    uint32_t positions = 0;   ///< distinct positions it was drawn at (saturates at 255)
+    uint8_t x = 0;            ///< the last position: byte column 0..31, pixel line 0..191
+    uint8_t y = 0;
+    uint8_t screen = 0;       ///< the RAM page of the screen (5, 7)
+    PhysKey writer = kNoKey;  ///< the instruction that last wrote it to the screen
+    DrawStep right;           ///< the source byte shown in the byte column to the right
+    DrawStep down;            ///< the source byte shown on the pixel line below
+};
+
 /// DataFlow answers, one block plus one hop
 struct ImmediateAddress
 {
@@ -431,6 +455,7 @@ struct L1Result
     std::vector<BranchCondition> branches;
     std::vector<PointerUse> pointers;       ///< sorted by (form, origin)
     std::vector<BlockCopy> copies;          ///< sorted by (instruction, src, dst, length); at most 65536
+    std::vector<DrawnByte> drawn;           ///< sorted by key
     /// Per physical byte: what the code did with it (pages with a data access or code, sorted by page). Not in ToJson
     std::vector<BytePage> bytePages;
     /// The mapped pages' contents at the start and the end of the replay (sorted by page). Not in ToJson

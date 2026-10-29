@@ -9,6 +9,8 @@
 #include <tuple>
 #include <unordered_map>
 
+#include "debugger/analyzers/analysis/l1valueflow.h"
+
 namespace analysis
 {
 
@@ -588,6 +590,9 @@ struct L1Builder::Impl
     Origin shadowOrigins[6];  ///< B', C', D', E', H', L' (EXX swaps them with origins[0..5])
     std::vector<PointerAcc> ptrs;
     std::unordered_map<uint16_t, Origin> stackOrigins;  ///< stack slot -> the provenance a PUSH left there
+    /// Value provenance: the source bytes of what was drawn to the screen
+    ValueFlow valueFlow;
+    int32_t interruptPush = -1;  ///< the stack slot (low byte) an interrupt pushed to before this start (-1: none)
     /// The block copy in progress, and the runs seen: (first node, src, dst, length, dir) -> count
     struct CopyRun
     {
@@ -601,6 +606,10 @@ struct L1Builder::Impl
         PhysKey srcKey = 0;
         PhysKey dstKey = 0;
     } copyRun;
+    /// Runs another copy broke into (an interrupt's copies in the middle of an LDIR): the run goes on when a copy
+    /// continues it
+    static constexpr size_t kMaxParked = 4;
+    std::vector<CopyRun> parkedRuns;
     struct CopySeen
     {
         uint64_t count = 0;
@@ -610,17 +619,42 @@ struct L1Builder::Impl
     std::map<std::tuple<uint32_t, uint16_t, uint16_t, uint32_t, int>, CopySeen> copyRuns;
     static constexpr size_t kMaxCopies = 65536;  // a back buffer copied a row at a time is hundreds of distinct runs
 
-    void FlushCopy()
+    void Record(const CopyRun& run)
     {
-        if (copyRun.node != kNone && copyRun.length != 0)
+        if (run.node != kNone && run.length != 0)
         {
-            const auto key = std::make_tuple(copyRun.node, copyRun.src, copyRun.dst, copyRun.length, copyRun.dir);
+            const auto key = std::make_tuple(run.node, run.src, run.dst, run.length, run.dir);
             const auto it = copyRuns.find(key);
             if (it != copyRuns.end())
                 ++it->second.count;
             else if (copyRuns.size() < kMaxCopies)
-                copyRuns.emplace(key, CopySeen{1, copyRun.srcKey, copyRun.dstKey});
+                copyRuns.emplace(key, CopySeen{1, run.srcKey, run.dstKey});
         }
+    }
+
+    void FlushCopy()
+    {
+        Record(copyRun);
+        copyRun = CopyRun{};
+        for (const CopyRun& run : parkedRuns)
+            Record(run);
+        parkedRuns.clear();
+    }
+
+    /// The current run broke: park it (one of two bytes or more may go on later), the oldest parked one is done
+    void ParkCopy()
+    {
+        if (copyRun.length >= 2)
+        {
+            if (parkedRuns.size() == kMaxParked)
+            {
+                Record(parkedRuns.front());
+                parkedRuns.erase(parkedRuns.begin());
+            }
+            parkedRuns.push_back(copyRun);
+        }
+        else
+            Record(copyRun);
         copyRun = CopyRun{};
     }
 
@@ -648,7 +682,23 @@ struct L1Builder::Impl
                 ++c.length;
                 return;
             }
-            FlushCopy();
+            // A parked run this copy continues goes on (the copy an interrupt broke into)
+            const auto it = std::find_if(parkedRuns.begin(), parkedRuns.end(), [&](const CopyRun& p) {
+                return static_cast<uint16_t>(p.lastSrc + p.dir) == src &&
+                       static_cast<uint16_t>(p.lastDst + p.dir) == dst;
+            });
+            if (it != parkedRuns.end())
+            {
+                const CopyRun resumed = *it;
+                parkedRuns.erase(it);
+                ParkCopy();
+                c = resumed;
+                c.lastSrc = src;
+                c.lastDst = dst;
+                ++c.length;
+                return;
+            }
+            ParkCopy();
         }
         c.node = node;
         c.src = c.lastSrc = src;
@@ -1414,6 +1464,26 @@ struct L1Builder::Impl
             }
         }
 
+        // Value provenance
+        {
+            ValueFlow::Access accesses[L1Builder::kMaxEvents];
+            int accessCount = 0;
+            for (int i = dataStart; i < count; ++i)
+            {
+                const BusEvent& e = events[i];
+                if (e.type != 'R' && e.type != 'W')
+                    continue;
+                ValueFlow::Access& a = accesses[accessCount++];
+                a.write = e.type == 'W';
+                a.z80 = e.address;
+                a.key = MakeKey(pageOf(e.address), e.address);
+                a.push = a.write && interruptPush >= 0 &&
+                         (e.address == interruptPush || e.address == static_cast<uint16_t>(interruptPush + 1));
+                a.stack = op.mem == MemForm::Stack || a.push;
+            }
+            valueFlow.Instruction(op, accesses, accessCount, n.key, p.frame);
+        }
+
         // Live registers of the frame
         {
             Frame& f = stack.back();
@@ -1824,7 +1894,9 @@ struct L1Builder::Impl
                 after.sp = static_cast<uint16_t>(regs.sp + 2);
                 after.pc = returnAddress;
             }
+            interruptPush = interrupted ? regs.sp : -1;
             Finish(succNode, nextPc, after, now, events, count);
+            interruptPush = -1;
         }
         if (first)
         {
@@ -1908,6 +1980,7 @@ size_t L1Builder::MemoryBytes() const
         if (table)
             bytes += 0x4000 * sizeof(UseAcc);
     bytes += impl.ptrs.capacity() * sizeof(PointerAcc) + impl.wordPtrs.size() * 16;
+    bytes += impl.valueFlow.MemoryBytes();
     return bytes;
 }
 
@@ -2463,6 +2536,8 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
     std::sort(out.copies.begin(), out.copies.end(), [](const BlockCopy& a, const BlockCopy& b) {
         return std::make_tuple(a.instruction, a.src, a.dst, a.length) < std::make_tuple(b.instruction, b.src, b.dst, b.length);
     });
+
+    out.drawn = valueFlow.Build();
 
     // Pointer uses, sorted by form and origin
     for (const PointerAcc& acc : ptrs)

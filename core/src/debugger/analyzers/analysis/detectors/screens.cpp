@@ -5,6 +5,7 @@
 /// to the screen as they are). One claim per source address: the longest copy. The sources of one copier that are
 /// contiguous, overlap or leave gaps no longer than a copy (of 256 bytes at most) are one back buffer copied a row
 /// at a time: its rows are the most frequent step from source to source (at least the longest copy), in order.
+/// Less than a character row of the screen (256 bytes) is no picture: a sprite's saved background, a strip.
 
 #include <algorithm>
 #include <cstdio>
@@ -21,7 +22,8 @@ namespace analysis
 namespace
 {
 
-constexpr uint32_t kMaxRow = 256;  ///< a copy no longer is a row of a back buffer at most
+constexpr uint32_t kMaxRow = 256;     ///< a copy no longer is a row of a back buffer at most
+constexpr uint32_t kMinScreen = 256;  ///< a picture or buffer is a character row of the screen at least
 
 std::string Hex(uint16_t v)
 {
@@ -107,6 +109,8 @@ void DetectScreens(DetectorContext& context)
         const bool pixels = c->type == media::kPixels;
         const bool rows = s.copies > 1;
         const uint32_t size = end - src + 1;
+        if (size < kMinScreen)
+            continue;
         const uint32_t row = s.Row();
         Region r;
         r.kind = RegionKind::Screen;
