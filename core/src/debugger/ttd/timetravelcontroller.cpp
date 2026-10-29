@@ -2212,6 +2212,7 @@ bool TimeTravelController::SubmitLiveInputImpl(const TTDInputEvent& ev, const TT
             if (payload && length)
                 pending.payload.assign(payload, payload + length);
             _pendingInput.push_back(std::move(pending));
+            _pendingQueued.store(true);
         }
         _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, true);
         return true;
@@ -2234,6 +2235,7 @@ TimeTravelController::MachineTaskResult TimeTravelController::SubmitMachineTask(
         {
             std::lock_guard<std::mutex> lock(_pendingInputMutex);
             _pendingTasks.push_back(std::move(task));
+            _pendingQueued.store(true);
         }
         _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, true);
         return MachineTaskResult::Queued;
@@ -2289,9 +2291,14 @@ void TimeTravelController::ServiceInput()
     {
         // Phase 3 A/B: the engine's event log (input kinds; network bytes from its payloads)
         const TTDTimePoint now = InputEventTimeNow(_context);
-        TTDMachineTime start = 0;
+        if (now.frame != _inputStartFrame)
+        {
+            _inputStartFrame = now.frame;
+            _inputFrameKnown = _replayEngine->Frames().Start(now.frame, _inputFrameStart);
+        }
+        const TTDMachineTime start = _inputFrameStart;
         const TTDEventLog& log = _replayEngine->Events();
-        if (_replayEngine->Frames().Start(now.frame, start))
+        if (_inputFrameKnown)
             while (_engineEventCursor < log.Count() && log.At(_engineEventCursor).machineTime <= start + now.tInFrame)
             {
                 const TTDEvent& ev = log.At(_engineEventCursor++);
@@ -2346,21 +2353,26 @@ void TimeTravelController::ServiceInput()
             _inputPlaybackArmed = false;
     }
 
-    // 2. Live input queued by other threads: applied (and journaled) here, or
-    //    dropped when the journal took over input while it waited
-    DrainPendingLiveInput();
+    // Nothing queued (the common case while a journal plays): no mutex on this instruction
+    if (_pendingQueued.load())
+    {
+        // 2. Live input queued by other threads: applied (and journaled) here, or
+        //    dropped when the journal took over input while it waited
+        DrainPendingLiveInput();
 
-    // 3. Machine tasks queued by other threads (SubmitMachineTask), dropped
-    //    like live input when the journal took over while they waited
-    std::vector<std::function<void()>> tasks;
-    {
-        std::lock_guard<std::mutex> lock(_pendingInputMutex);
-        tasks.swap(_pendingTasks);
-    }
-    if (!tasks.empty() && !OwnsInput())
-    {
-        for (auto& task : tasks)
-            task();
+        // 3. Machine tasks queued by other threads (SubmitMachineTask), dropped
+        //    like live input when the journal took over while they waited
+        std::vector<std::function<void()>> tasks;
+        {
+            std::lock_guard<std::mutex> lock(_pendingInputMutex);
+            tasks.swap(_pendingTasks);
+            _pendingQueued.store(!_pendingInput.empty());
+        }
+        if (!tasks.empty() && !OwnsInput())
+        {
+            for (auto& task : tasks)
+                task();
+        }
     }
 
     UpdateInputWorkFlag();
@@ -2372,6 +2384,7 @@ void TimeTravelController::DrainPendingLiveInput()
     {
         std::lock_guard<std::mutex> lock(_pendingInputMutex);
         pending.swap(_pendingInput);
+        _pendingQueued.store(!_pendingTasks.empty());
     }
     if (!pending.empty() && !OwnsInput())
     {
@@ -2386,14 +2399,13 @@ void TimeTravelController::UpdateInputWorkFlag()
     if (!_context)
         return;
 
-    bool pending;
-    {
-        std::lock_guard<std::mutex> lock(_pendingInputMutex);
-        pending = !_pendingInput.empty() || !_pendingTasks.empty();
-    }
     // A paused recording is watched for the moment execution reaches where it paused
     const bool watchPausedEnd = _recordingPaused && _state == TTDSessionState::Detached;
-    _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, _inputPlaybackArmed || pending || watchPausedEnd);
+    const bool work = _inputPlaybackArmed || _pendingQueued.load() || watchPausedEnd;
+    _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, work);
+    // A producer that queued between the load and the clear set the flag before it: set it again
+    if (!work && _pendingQueued.load())
+        _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, true);
 }
 
 void TimeTravelController::ArmInputPlayback()
@@ -2406,6 +2418,7 @@ void TimeTravelController::ArmInputPlayback()
     // at them and the first step applies them (Z80::StepInstruction)
     _inputCursor = _inputJournal.FirstIndexAtOrAfter(InputEventTimeNow(_context));
     _inputPlaybackArmed = _inputCursor < _inputJournal.Size();
+    _inputStartFrame = UINT64_MAX;   // the engine (or its frame table) may be another one now
     if (_replayEngine)
     {
         const TTDTimePoint now = InputEventTimeNow(_context);
@@ -2421,6 +2434,7 @@ void TimeTravelController::DisarmInputPlayback()
 {
     _inputPlaybackArmed = false;
     _inputCursor = 0;
+    _inputStartFrame = UINT64_MAX;
     UpdateInputWorkFlag();
 }
 
@@ -4308,6 +4322,7 @@ void TimeTravelController::SetReplaySource(TimeTravelEngine* engine)
     if (!engine)
         engine = _engine.get();
     _replayEngine = engine;
+    _inputStartFrame = UINT64_MAX;
     _lastEngineCheck = {};
     _replayRomSignature = ComputeRomSignature();
     if (engine == _engine.get())

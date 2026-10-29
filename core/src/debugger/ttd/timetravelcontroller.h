@@ -2036,6 +2036,13 @@ private:
     };
     std::vector<PendingInput> _pendingInput;
     std::vector<std::function<void()>> _pendingTasks;
+    /// Either queue holds something; written under _pendingInputMutex, read without it by the per-instruction
+    /// ServiceInput, which takes the mutex only when it is set
+    std::atomic<bool> _pendingQueued{false};
+    /// The replay engine's start of the frame playback last looked up (one lookup a frame, not an instruction)
+    uint64_t _inputStartFrame = UINT64_MAX;
+    TTDMachineTime _inputFrameStart = 0;
+    bool _inputFrameKnown = false;
 
     /// Position the playback cursor at the restored machine time (events
     /// journaled at exactly that time are applied by the next instruction)
