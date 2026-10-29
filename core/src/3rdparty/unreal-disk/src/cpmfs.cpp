@@ -315,7 +315,8 @@ bool CpmFileSystem::IsCpm(std::string* why, bool empty) const
         const std::string at = "entry " + std::to_string(i);
         if (e[0] > 15)
             return fail(at + ": user " + std::to_string(e[0]));
-        // A blank name with a type happens (PASC_MT.TRD: "        .COM"); all eleven blank does not
+        // A blank name happens, with a type (PASC_MT.TRD: "        .COM") and without (five Profi floppies of
+        // PROFI_DISK.ZIP keep a file of eleven blanks); it counts as a file only next to a named one
         bool named = false;
         for (int k = 1; k < 12; k++)
         {
@@ -323,8 +324,6 @@ bool CpmFileSystem::IsCpm(std::string* why, bool empty) const
                 return fail(at + ": no name");
             named = named || (e[k] & 0x7F) != ' ';
         }
-        if (!named)
-            return fail(at + ": no name");
         if (e[12] > 31 || e[13] != 0 || e[15] > 128)
             return fail(at + ": no extent");
         const uint32_t pointers = UsedPointers(e);
@@ -337,7 +336,7 @@ bool CpmFileSystem::IsCpm(std::string* why, bool empty) const
                 return fail(at + ": block " + std::to_string(block) + " used twice");
             used[block] = true;
         }
-        files++;
+        files += named;
     }
     return files > 0 || empty ? true : fail("no file");
 }
