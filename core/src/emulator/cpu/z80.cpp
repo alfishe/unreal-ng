@@ -370,9 +370,17 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
     if (_nmi_pending_count > 0 || _context->emulatorState.nmiAtIntStartPending)
         return false;
 
-    // The instruction-start work (RunInstructionStartHooks, EngineStep) and the bus observers
-    if (isDebugMode || execTapHold || busTraceHook || InstructionStartObserved() || cycles_to_capture > 0)
+    // The instruction-start work (RunInstructionStartHooks, EngineStep) and the bus observers. TTD coverage is no
+    // observer of an idle stretch: its per-frame set already holds the HALT from the stretch's first real fetch
+    // (RunHaltedIdle learns the fetch length by one). Debug mode is none while no breakpoint or tap sees the HALT
+    if (execTapHold || busTraceHook || m1TraceHook || _context->ttdProbe.IsArmed() || cycles_to_capture > 0)
         return false;
+    if (isDebugMode)
+    {
+        DebugManager* debug = _context->pDebugManager;
+        if (debug && !debug->GetBreakpointsManager()->ExecIsInertAt(pc))
+            return false;
+    }
     if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
         return false;
     if (_feature_calltrace_enabled && _memory && _memory->GetAccessTracker().IsCalltraceCapturing())
@@ -405,7 +413,14 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
     if ((pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad) || (pc == 0x3FEC && _context->pDiskFastLoad) ||
         (pc == DiskAutostart::COMMAND_LOOP_ENTRY && _context->pDiskAutostart) || (pc == 0x0008 && _context->pRst8Trap))
         return false;
-    if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks; ttd && (ttd->IsRecording() || ttd->IsReplayActive()))
+    // A recording captures at frame ends (a target of the idle) and its coverage is kept above. A replay plays
+    // input and journals at their own times, which the idle does not stop at yet
+    if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks; ttd && ttd->IsReplayActive())
+        return false;
+    // An awake idle floppy controller stamps its time on every step (WD1793::handleStepAwake): the same behavior,
+    // but the stamp is in its checkpoint state, and a replay steps. While recording it has to be asleep
+    if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+        ttd && ttd->IsRecording() && _context->pBetaDisk && !_context->pBetaDisk->IsAsleep())
         return false;
 
     // The peripherals MainLoop::OnCPUStep steps: the screen and the sound catch up by time; the tape writes
@@ -536,9 +551,23 @@ bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
 {
     period = 1;
     const MemoryInterface* const memIf = MemIf;
-    const bool contended = memIf == FastContendedMemIf || memIf == OverlayFastContendedMemIf;
-    const bool overlay = memIf == OverlayFastMemIf || memIf == OverlayFastContendedMemIf;
-    if (!contended && !overlay && memIf != FastMemIf)
+    // The debug interfaces add the read's bookkeeping (Memory::ReadDebugEffects): for a fetch, the access
+    // tracker's execute count and the read breakpoints; neither may watch it
+    const bool debugIf = memIf == DbgMemIf || memIf == DbgContendedMemIf || memIf == OverlayDbgMemIf ||
+                         memIf == OverlayDbgContendedMemIf;
+    if (debugIf)
+    {
+        if (_memory->GetAccessTracker().IsMemoryCapturing())
+            return false;
+        DebugManager* debug = _context->pDebugManager;
+        if (debug && !debug->GetBreakpointsManager()->ReadIsInertAt(fetch))
+            return false;
+    }
+    const bool contended = memIf == FastContendedMemIf || memIf == OverlayFastContendedMemIf ||
+                           memIf == DbgContendedMemIf || memIf == OverlayDbgContendedMemIf;
+    const bool overlay = memIf == OverlayFastMemIf || memIf == OverlayFastContendedMemIf || memIf == OverlayDbgMemIf ||
+                         memIf == OverlayDbgContendedMemIf;
+    if (!contended && !overlay && memIf != FastMemIf && memIf != DbgMemIf)
         return false;
     if (contended)
     {

@@ -19,6 +19,10 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "base/featuremanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -341,4 +345,69 @@ TEST_F(HaltedIdle_Test, DemoScorpionShippedCards)
 {
     SoundCardScope shippedSound;
     Compare("SCORPION", "loaders/sna/eyeache1.sna", 0, true);
+}
+
+// Debug mode and a TTD recording (docs/inprogress/2026-10-28-ttd-analysis-feedback/phase-2-plan.md, C): the idle
+// runs while no breakpoint, tap or access count watches the HALT, and changes nothing there either
+namespace
+{
+template <class Run>   // HaltedIdle_Test::Run
+void DebugMode(Run& run)
+{
+    run.context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    run.context->pMemory->UpdateFeatureCache();
+}
+}  // namespace
+
+TEST_F(HaltedIdle_Test, HaltLoopPentagonDebugMode)
+{
+    _setup = [](Run& run) { DebugMode(run); };
+    Compare("PENTAGON", nullptr, 0x8000, true);
+}
+
+TEST_F(HaltedIdle_Test, HaltLoopPentagonTtdRecording)
+{
+    _setup = [](Run& run) {
+        DebugMode(run);
+        run.context->pFeatureManager->setFeature(Features::kTimeTravel, true);
+        run.context->pMemory->UpdateFeatureCache();
+        ASSERT_TRUE(run.context->pTimeTravelController->StartRecording());
+    };
+    Compare("PENTAGON", nullptr, 0x8000, true);
+    if (HasFailure())
+        return;
+
+    // The coverage index holds the HALT in every frame of both sessions, the idle's included
+    ttd::TimeTravelController* perStep = _perStep.context->pTimeTravelController;
+    ttd::TimeTravelController* inOneGo = _inOneGo.context->pTimeTravelController;
+    perStep->StopRecording();
+    inOneGo->StopRecording();
+    ASSERT_EQ(inOneGo->GetCheckpointCount(), perStep->GetCheckpointCount());
+    const auto scan = [](ttd::TimeTravelController* ttd) {
+        return ttd->QueryCoverageScan(0, UINT64_MAX, ttd::TTDCoverageKind::Executed, 0x8001, 0x8001, std::nullopt,
+                                      100000, false, false);
+    };
+    const ttd::TTDCoverageScanResult a = scan(perStep);
+    const ttd::TTDCoverageScanResult b = scan(inOneGo);
+    EXPECT_GT(a.matchingFrames, 100u);
+    EXPECT_EQ(b.frames, a.frames);
+}
+
+// A breakpoint on the HALT or a read watch on the byte after it sees every idle fetch: one per step
+TEST_F(HaltedIdle_Test, HaltLoopDebugModeWatchedRunsPerStep)
+{
+    for (const bool exec : {true, false})
+    {
+        Start(_inOneGo, "PENTAGON", true, nullptr, 0x8000);
+        ASSERT_FALSE(HasFatalFailure());
+        DebugMode(_inOneGo);
+        BreakpointManager* brk = _inOneGo.context->pDebugManager->GetBreakpointsManager();
+        const uint16_t id = exec ? brk->AddExecutionBreakpoint(0x8001) : brk->AddMemReadBreakpoint(0x8002);
+        ASSERT_NE(id, BRK_INVALID);
+        const uint64_t before = _inOneGo.z80->haltedIdleFetchesInOneGo;
+        _inOneGo.emulator->RunNFrames(20, /*skipBreakpoints=*/true);
+        EXPECT_EQ(_inOneGo.z80->haltedIdleFetchesInOneGo, before) << (exec ? "execution breakpoint" : "read watch");
+        EmulatorTestHelper::CleanupEmulator(_inOneGo.emulator);
+        _inOneGo = Run{};
+    }
 }

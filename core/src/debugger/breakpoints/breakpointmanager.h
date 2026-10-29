@@ -704,6 +704,10 @@ public:
             return BRK_INVALID;
         return ResolveMemory(BRK_KIND_EXEC, pc);
     }
+    /// A halted CPU's repeated idle fetch (Z80::RunHaltedIdle): no breakpoint or tap is told of an instruction start
+    /// at `pc` / of a read at `fetch`, so fetches run as time are not missed by one
+    bool ExecIsInertAt(uint16_t pc) const { return !_hotState.hasExec || !_hotState.MemoryBit(BRK_KIND_EXEC, pc); }
+    bool ReadIsInertAt(uint16_t fetch) const { return !_hotState.hasRead || !_hotState.MemoryBit(BRK_KIND_READ, fetch); }
     /// `value`: the byte read, for the conditions (-1: not known)
     uint16_t HandleMemoryRead(uint16_t readAddress, int value = -1)
     {

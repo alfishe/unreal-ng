@@ -1327,6 +1327,8 @@ public:
     {
         return _sleeping || (_state == S_IDLE && _motorTimeoutTStates <= 0);
     }
+    /// Asleep: handleStep returns at once. Awake and inert, it still stamps its time on every step (handleStepAwake)
+    bool IsAsleep() const { return _sleeping; }
     void handleFrameEnd();
     /// handleStep's work while the controller is awake
     void handleStepAwake();
