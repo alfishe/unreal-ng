@@ -385,27 +385,27 @@ Complete contract of what the stub answers. Per RSP convention, any packet not l
 |---|---|---|---|
 | `qSupported:…` | capability negotiation | ✅ | reply per §4.1; `ReverseStep+;ReverseContinue+` only when TTD on |
 | `QStartNoAckMode` | disable per-packet acks | ✅ | `OK`; TCP is reliable |
-| `!` | extended mode | ✅ | `OK` (no behavioral change) |
-| `?` | reason for last stop | ✅ | `T05…` with detail (`watch:`/`rwatch:`/`awatch:`/`swbreak:`); `S02` after interrupt |
-| `qXfer:features:read:<annex>:o,l` | target description | ✅ | chunked annex tree §4.2.1 |
+| `!` | extended mode | ❌ empty | not supported (`$#00`): no `R` / `vRun` behind it |
+| `?` | reason for last stop | ✅ | the last stop reply again (`T05…` with `swbreak:`/`hwbreak:`/`watch:`/`rwatch:`/`awatch:`; `T02` after interrupt) |
+| `qXfer:features:read:<annex>:o,l` | target description | ✅ | `target.xml` (flat), read in `m` / `l` chunks by offset and length; another annex: empty |
 | `qXfer:osdata:read:processes:o,l` | instance list | ✅ | one row per emulator instance §6.1 |
 | `vAttach;pid` | attach to instance | ✅ | binds session to instance, takes run-control claim §3.3/§6.1 |
-| `D` / `D;pid` | detach | ✅ | releases claim, removes gdb-owned breakpoints, `OK` |
+| `D` / `D;pid` | detach | ✅ | releases claim, removes gdb-owned breakpoints, lets a machine gdb stopped run again, `OK` |
 | `g` / `G…` | read / write all registers | ✅ | `Z80State` codec §4.2; `G` refused `E0D` while detached |
 | `p n` / `P n=v` | read / write one register | ✅ | regnum per XML incl. pseudo-registers §4.6; writes gated per feature |
 | `m addr,len` / `M addr,len:…` | read / write memory | ✅ | Z80 view + physical view §4.3; `M` refused `E0D` while detached |
 | `X addr,len:…` | binary-escaped write | ✅ | same path as `M`, faster bulk loads |
-| `c` / `C sig` | continue | ✅ | `Emulator::Resume()`; signal value ignored |
+| `c` / `C sig` | continue | ✅ | `Emulator::Resume()`; signal value ignored; the session keeps reading (0x03) until the stop; refused by run control: `E0D` + console reason; in the past: the history is cut there and the run goes on live (§8.3 of the parent TDD) |
 | `s` / `S sig` | step one instruction | ✅ | existing single-step; signal ignored |
 | `vCont?` | probe vCont | ✅ | `vCont;c;C;s;S` — the reply *is* the capability list; conforming clients never send unadvertised actions (`t`, `r`), so no ignore-handling is needed |
 | `vCont;…` | resume with actions | ✅ | single thread → degenerates to `c`/`s` |
 | `bs` | reverse step | ✅ (TTD) | `TTDManager::StepBackInstruction()` §3.2 |
 | `bc` | reverse continue | ✅ (TTD) | reverse search over armed bp/wp set §3.2 |
 | `Z0/z0 addr,kind` | sw breakpoint set/remove | ✅ | `AddExecutionBreakpoint` (owner `gdb`) |
-| `Z1/z1` | hw breakpoint | ✅ | identical to `Z0` (we're an emulator) |
-| `Z2/z2 addr,len` | write watchpoint | ✅ len ≤ 16 | per-address descriptors for `len ≤ 16` (covers 1–4-byte variables GDB actually emits); `E22` beyond until `BreakpointRangeDescription` is wired (G2) |
-| `Z3/z3 addr,len` | read watchpoint | ✅ len ≤ 16 | same rule, `AddMemReadBreakpoint` |
-| `Z4/z4 addr,len` | access watchpoint | ✅ len ≤ 16 | same rule, combined R\|W |
+| `Z1/z1` | hw breakpoint | ✅ | identical to `Z0` (we're an emulator); the stop says `hwbreak:` |
+| `Z2/z2 addr,len` | write watchpoint | ✅ | one unshared range breakpoint (owner `gdb`) over `addr .. addr+len-1`; `E22` past FFFF; `z` removes only gdb's own by id |
+| `Z3/z3 addr,len` | read watchpoint | ✅ | same rule, read access |
+| `Z4/z4 addr,len` | access watchpoint | ✅ | same rule, one breakpoint with read \| write access |
 | `0x03` (raw byte) | interrupt (Ctrl-C) | ✅ | `Emulator::Pause()` → `T02` |
 | `qRcmd,hex` | monitor commands | ✅ | §4.5 command set |
 | `qAttached` | attached to existing process? | ✅ | `1` (client detach ≠ kill) |
@@ -423,7 +423,7 @@ Byte-exact reference — the trailing `;` and the **empty value after `swbreak:`
 
 | Situation | Exact reply |
 |---|---|
-| Execution breakpoint | `T05swbreak:;thread:1;` |
+| Execution breakpoint | `T05swbreak:;thread:1;` (`Z1`: `T05hwbreak:;thread:1;`) |
 | Write watchpoint at 0x5B00 | `T05watch:5b00;thread:1;` |
 | Read watchpoint | `T05rwatch:5b00;thread:1;` |
 | Access watchpoint | `T05awatch:5b00;thread:1;` |

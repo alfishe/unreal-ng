@@ -136,6 +136,12 @@ public:
 
     /// The blocks no entry uses (the directory's taken)
     bool FreeBlocks(uint32_t& out) const;
+    /// The highest block an entry uses (the directory's last when none does)
+    bool LastUsedBlock(uint32_t& out) const;
+
+    /// The `count` directory entries at `bytes` are free or read as IsCpm wants them (their blocks not looked at),
+    /// one of them a file with a name: a sector that may start a directory
+    static bool LooksLikeDirectory(const uint8_t* bytes, uint32_t count);
 
     /// Writes go through `writer`; without one the volume is read only
     void SetWriter(ByteWriter writer)

@@ -24,6 +24,11 @@ struct GameEventInfo
     /// An event fires on a frame (exec, a write, an envelope restart); a level is a value every frame (a watched
     /// byte, a sound's envelope)
     bool level = false;
+    /// Its `if:` (empty: none), and where the condition is checked: the index of its breakpoint probe
+    /// (IHapticFeed::Probes) or of its frame condition (IHapticFeed::FrameConditions); -1: neither
+    std::string condition;
+    int probe = -1;
+    int frameCondition = -1;
 };
 
 /// What the feed found in one frame, in the order of its GameEventInfo list
@@ -49,6 +54,8 @@ public:
         uint64_t lastFrame = 0;  ///< 0: never
         float current = 0;       ///< the last frame's level
         int32_t value = -1;
+        std::string condition;       ///< the `if:` as written
+        std::string conditionError;  ///< why the machine refused it (the event then never fires); empty: armed
     };
     struct Fired
     {
@@ -70,6 +77,8 @@ public:
     void Define(const std::vector<GameEventInfo>& events, const std::string& profile);
     /// No feed, or one without events
     void Clear();
+    /// The machine refused the condition of event @p index (Define's order): why
+    void SetConditionError(size_t index, const std::string& error);
     /// One frame (the emulation thread, at the frame end)
     void Record(const GameEventFrame& frame);
     Snapshot Read() const;

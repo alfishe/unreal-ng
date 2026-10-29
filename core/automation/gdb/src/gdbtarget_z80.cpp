@@ -348,7 +348,8 @@ uint16_t GDBTargetZ80::readCPURegister(EmulatorContext* ctx, int regnum)
             case 9:  return state->alt.bc;
             case 10: return state->alt.de;
             case 11: return state->alt.hl;
-            case 12: return state->ir_;
+            // R's bit 7 is kept apart (r_hi, LD R,A); bits 6:0 count
+            case 12: return static_cast<uint16_t>((state->i << 8) | (state->r_low & 0x7F) | (state->r_hi & 0x80));
             case 13: return (state->iff1 ? 1 : 0) | (state->iff2 ? 2 : 0);
             case 14: return state->im;
             default: return 0;
@@ -392,7 +393,7 @@ void GDBTargetZ80::writeCPURegister(EmulatorContext* ctx, int regnum, uint16_t v
             case 9:  state->alt.bc = value; break;
             case 10: state->alt.de = value; break;
             case 11: state->alt.hl = value; break;
-            case 12: state->ir_ = value; break;
+            case 12: state->ir_ = value; state->r_hi = static_cast<uint8_t>(value & 0x80); break;
             case 13:
                 state->iff1 = (value & 1) ? 1 : 0;
                 state->iff2 = (value & 2) ? 1 : 0;

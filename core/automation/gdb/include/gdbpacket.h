@@ -95,7 +95,7 @@ public:
     /// @brief Reset state machine
     void reset();
 
-    /// @brief Check if an interrupt (0x03) was received
+    /// @brief Check if an interrupt (0x03 between packets) was received
     bool hasInterrupt() const { return _interrupt; }
 
     /// @brief Clear interrupt flag

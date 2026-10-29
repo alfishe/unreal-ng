@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -70,6 +71,7 @@ class RecordingFeed : public IHapticFeed
 public:
     std::vector<HapticProbe> probes;
     std::vector<HapticStream> streams;
+    std::vector<std::string> conditions;
     std::vector<HapticFrame> frames;
     std::vector<bool> holds;
 
@@ -84,6 +86,10 @@ public:
     std::vector<HapticStream> Streams() const override
     {
         return streams;
+    }
+    std::vector<std::string> FrameConditions() const override
+    {
+        return conditions;
     }
     void OnHapticHold(bool held) override
     {
@@ -489,4 +495,74 @@ TEST(HapticFeedTaps_Test, SoundriveChannelsAlone)
     context->pControllerManager->SetHapticFeed(nullptr);
     emulator->RunNFrames(1, true);
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST_F(HapticFeed_Test, ConditionsGateProbesAndFrameEnds)
+{
+    auto feed = std::make_shared<RecordingFeed>();
+    feed->probes = AllProbes();
+    feed->probes[0].condition = "RD == 1";   // an exec access has no read address: not armed
+    feed->probes[2].condition = "MDT < 5";   // the DEC's write only, not the one that puts the byte back
+    feed->probes[3].condition = "VAL == 9";  // the OUT writes 5
+    feed->conditions = {"M(#9000) == 5", "M(#9000) == 4", "RD == 1", "W(#9000)@prev == W(#9000)"};
+    _manager->SetHapticFeed(feed);
+    BreakpointManager* breakpoints = _context->pDebugManager->GetBreakpointsManager();
+    _emulator->RunNFrames(3, false);
+    EXPECT_EQ(ProbeCount(breakpoints), 4u) << "the probe whose condition does not compile is not armed";
+
+    ASSERT_GE(feed->frames.size(), 2u);
+    const HapticFrame& frame = feed->frames.back();
+    ASSERT_EQ(frame.probeCount, 5u);
+    EXPECT_EQ(frame.probeHits[0], 0u) << "never armed";
+    EXPECT_EQ(frame.probeHits[1], 1u) << "no condition: every read";
+    EXPECT_EQ(frame.probeHits[2], 1u) << "only the write of 4";
+    EXPECT_EQ(frame.probeHits[3], 0u) << "VAL is never 9";
+    ASSERT_EQ(frame.probeEventCount, 1u) << "the held write alone";
+    EXPECT_EQ(frame.probeEvents[0].value, kLives - 1);
+
+    ASSERT_EQ(frame.conditionCount, 4u);
+    EXPECT_EQ(frame.conditionsHeld, 0b1001u) << "the byte is back at 5 at every frame end; RD does not compile";
+    _manager->SetHapticFeed(nullptr);
+}
+
+TEST_F(HapticFeed_Test, ProfileConditionsReachTheGameEvents)
+{
+    HapticMixer mixer([](const HostDeviceId&, const RumbleLevels&) { return true; }, false);
+    JsonValue section;
+    std::string error;
+    ASSERT_TRUE(ParseJson(R"({"sources": {
+                                "five":  {"probe": "read", "address": "0x9000", "if": "MDT == 5"},
+                                "four":  {"probe": "read", "address": "0x9000", "if": "MDT == 4"},
+                                "full":  {"probe": "value", "address": "0x9000", "if": "M(#9000) == 5"},
+                                "empty": {"probe": "value", "address": "0x9000", "if": "M(#9000) == 4"},
+                                "bad":   {"probe": "value", "address": "0x9000", "if": "NOSUCH == 1"},
+                                "label": {"probe": "exec", "address": "0x8009", "if": "PC == NOSUCH"}}})",
+                          section, error))
+        << error;
+    HapticProfile profile;
+    ASSERT_TRUE(ParseHapticProfile(section, profile, error)) << error << " (a name may be a label of the machine)";
+    auto feed = std::make_shared<ProfileHaptics>(profile, "game/test", mixer, [] { return std::vector<HostDeviceId>{}; });
+    _manager->SetHapticFeed(feed);
+    _emulator->RunNFrames(4, false);
+
+    const GameEventLog::Snapshot events = _manager->GameEvents().Read();
+    ASSERT_TRUE(events.defined);
+    auto find = [&](const std::string& name) -> const GameEventLog::Event& {
+        const auto it = std::find_if(events.events.begin(), events.events.end(),
+                                     [&](const GameEventLog::Event& event) { return event.name == name; });
+        EXPECT_NE(it, events.events.end()) << name;
+        return *it;
+    };
+    EXPECT_GE(find("five").fires, 2u) << "the read of 5 every frame";
+    EXPECT_EQ(find("five").condition, "MDT == 5");
+    EXPECT_EQ(find("four").fires, 0u);
+    EXPECT_GE(find("full").fires, 2u) << "held at the frame end";
+    EXPECT_EQ(find("empty").fires, 0u);
+    EXPECT_EQ(find("empty").value, kLives) << "a gated source still reads its byte";
+    EXPECT_EQ(find("bad").fires, 0u);
+    EXPECT_NE(find("bad").conditionError.find("unknown name 'NOSUCH'"), std::string::npos) << find("bad").conditionError;
+    EXPECT_NE(find("label").conditionError.find("unknown name 'NOSUCH'"), std::string::npos)
+        << "a probe's condition is compiled when it is armed";
+    EXPECT_TRUE(find("five").conditionError.empty());
+    _manager->SetHapticFeed(nullptr);
 }

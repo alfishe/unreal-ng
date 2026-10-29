@@ -64,6 +64,7 @@ bool TsConfDma::SpiBusy() const
 /// ([V] dma.v:220-231, 309-313)
 void TsConfDma::Launch(uint8_t ctrl)
 {
+    const bool aborted = Busy();
     _ts.dmaDevice = static_cast<uint8_t>(((ctrl >> 4) & 0x08) | (ctrl & 0x07));
     uint8_t flags = TsConfDmaFlag::Active;
     if (ctrl & 0x40)
@@ -79,6 +80,12 @@ void TsConfDma::Launch(uint8_t ctrl)
     _ts.dmaBlocks = _ts.regs[TsConfReg::DmaNum];
     _ts.dmaCredit = 0;
     _ts.dmaDeviceFclk = 0;
+    if (eventWatch && *eventWatch && onActivity) [[unlikely]]
+    {
+        if (aborted)
+            onActivity(false, 0);
+        onActivity(true, _ts.dmaDevice);
+    }
 }
 
 /// The address registers are the live counters; AL also sets the low reload
@@ -178,7 +185,13 @@ void TsConfDma::SpendDevice()
 
 uint16_t TsConfDma::ReadWord(uint32_t wordAddress) const
 {
-    const uint8_t* p = _ram + (wordAddress & kWordMask) * 2;
+    const uint32_t byteAddress = (wordAddress & kWordMask) * 2;
+    const uint8_t* p = _ram + byteAddress;
+    if (busWatch && *busWatch && onAccess) [[unlikely]]
+    {
+        onAccess(false, byteAddress, p[0]);
+        onAccess(false, byteAddress + 1, p[1]);
+    }
     return static_cast<uint16_t>(p[0] | (p[1] << 8));
 }
 
@@ -190,6 +203,12 @@ void TsConfDma::WriteWord(uint32_t wordAddress, uint16_t value)
     p[1] = static_cast<uint8_t>(value >> 8);
     if (_memory)
         _memory->MarkRamPageEdited(static_cast<uint16_t>(byteAddress >> 14));
+    // The bytes are written first: a stop shows them
+    if (busWatch && *busWatch && onAccess) [[unlikely]]
+    {
+        onAccess(true, byteAddress, p[0]);
+        onAccess(true, byteAddress + 1, p[1]);
+    }
 }
 
 /// [V] dma.v:343-349: linear, or aligned - the low 7 / 8 word bits wrap in the
@@ -312,6 +331,8 @@ void TsConfDma::Finish()
     _ts.dmaCredit = 0;
     _ts.dmaDeviceFclk = 0;
     _interrupts.RaiseDma();
+    if (eventWatch && *eventWatch && onActivity) [[unlikely]]
+        onActivity(false, 1);
 }
 
 bool TsConfDma::WritesCram() const

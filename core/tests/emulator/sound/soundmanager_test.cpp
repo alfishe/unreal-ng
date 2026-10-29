@@ -755,11 +755,14 @@ TEST_F(SoundManagerHostOutput_Test, ReconcileDropsOnlyStaleHolds)
     auto sound = MakeSound();
     auto leaked = std::make_unique<SoundManager::HostOutputHold>(sound.get(), Reason::DirectRun);
     SoundManager::HostOutputHold replay(sound.get(), Reason::TtdReplay);
+    auto unpaced = std::make_unique<SoundManager::HostOutputHold>(sound.get(), Reason::Unpaced);
 
-    EXPECT_EQ(sound->reconcileHostOutputHolds(false, true, false), 1);
+    EXPECT_EQ(sound->reconcileHostOutputHolds(false, true, false, true), 1);
     EXPECT_EQ(sound->hostOutputHolds(Reason::DirectRun), 0);
     EXPECT_EQ(sound->hostOutputHolds(Reason::TtdReplay), 1) << "a replay in progress keeps its hold";
+    EXPECT_EQ(sound->hostOutputHolds(Reason::Unpaced), 1) << "so do unpaced script hooks";
     EXPECT_EQ(sound->hostOutputStaleHoldsCleared(), 1u);
+    unpaced.reset();
 
     SoundManager::HostOutputHold fresh(sound.get(), Reason::DirectRun);
     leaked.reset();  // the stale guard's release is void: it must not end the fresh run's hold
@@ -767,7 +770,7 @@ TEST_F(SoundManagerHostOutput_Test, ReconcileDropsOnlyStaleHolds)
     fresh.Release();
     replay.Release();
     EXPECT_FALSE(sound->isHostOutputHeld());
-    EXPECT_EQ(sound->reconcileHostOutputHolds(false, false, false), 0) << "nothing left to drop";
+    EXPECT_EQ(sound->reconcileHostOutputHolds(false, false, false, false), 0) << "nothing left to drop";
 
     _sink = Sink{};
     RunFrame(*sound);

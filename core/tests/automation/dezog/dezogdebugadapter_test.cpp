@@ -345,18 +345,18 @@ TEST_F(DezogDebugAdapter_test, RemoveUnknownBreakpointIsHarmless)
 
 /// region <Watchpoints>
 
-TEST_F(DezogDebugAdapter_test, WatchpointCreatesOneBreakpointPerByte)
+TEST_F(DezogDebugAdapter_test, WatchpointCreatesOneRangeBreakpoint)
 {
     BreakpointManager* bpManager = _emulator->GetBreakpointManager();
     size_t before = bpManager->GetBreakpointsCount();
 
     ASSERT_TRUE(_adapter->addWatchpoint(0x9000, 0, 4, dzrp::WatchAccess::WRITE));
-    EXPECT_EQ(bpManager->GetBreakpointsCount(), before + 4);
+    EXPECT_EQ(bpManager->GetBreakpointsCount(), before + 1);
     EXPECT_EQ(_adapter->getWatchpointCount(), 1u);
 
     // Idempotent re-add
     ASSERT_TRUE(_adapter->addWatchpoint(0x9000, 0, 4, dzrp::WatchAccess::WRITE));
-    EXPECT_EQ(bpManager->GetBreakpointsCount(), before + 4);
+    EXPECT_EQ(bpManager->GetBreakpointsCount(), before + 1);
 
     _adapter->removeWatchpoint(0x9000, 0, 4, dzrp::WatchAccess::WRITE);
     EXPECT_EQ(bpManager->GetBreakpointsCount(), before);
@@ -396,7 +396,10 @@ TEST_F(DezogDebugAdapter_test, WatchpointClampsAt64K)
     size_t before = bpManager->GetBreakpointsCount();
 
     ASSERT_TRUE(_adapter->addWatchpoint(0xFFFE, 0, 8, dzrp::WatchAccess::WRITE));
-    EXPECT_EQ(bpManager->GetBreakpointsCount(), before + 2);
+    ASSERT_EQ(bpManager->GetBreakpointsCount(), before + 1);
+    for (const auto& [id, desc] : bpManager->GetAllBreakpoints())
+        if (desc->z80address == 0xFFFE)
+            EXPECT_EQ(desc->z80addressEnd, 0xFFFF);
 
     _adapter->removeWatchpoint(0xFFFE, 0, 8, dzrp::WatchAccess::WRITE);
     EXPECT_EQ(bpManager->GetBreakpointsCount(), before);
@@ -528,7 +531,7 @@ TEST_F(DezogDebugAdapter_test, WriteWatchpointHitNotifies)
     _adapter->removeWatchpoint(WATCH_TARGET, 0, 1, dzrp::WatchAccess::WRITE);
 }
 
-TEST_F(DezogDebugAdapter_test, ReadWriteWatchpointReportsReadReason)
+TEST_F(DezogDebugAdapter_test, ReadWriteWatchpointReportsTheAccessDirection)
 {
     installProgram();
     ASSERT_TRUE(_adapter->addWatchpoint(WATCH_TARGET, 0, 1, dzrp::WatchAccess::READ_WRITE));
@@ -537,8 +540,8 @@ TEST_F(DezogDebugAdapter_test, ReadWriteWatchpointReportsReadReason)
 
     PauseEvent ev{};
     ASSERT_TRUE(waitForEvent(ev));
-    // Direction is not carried by the payload: combined watchpoints report READ
-    EXPECT_EQ(ev.reason, dzrp::BreakReason::WATCHPOINT_READ);
+    // The hit carries its direction: the program writes the target, so an 'rw' watchpoint reports a write
+    EXPECT_EQ(ev.reason, dzrp::BreakReason::WATCHPOINT_WRITE);
     EXPECT_EQ(ev.address, WATCH_TARGET);
 
     _adapter->removeWatchpoint(WATCH_TARGET, 0, 1, dzrp::WatchAccess::READ_WRITE);
@@ -1394,3 +1397,33 @@ TEST_F(DezogHistory_test, HistoryEntriesAreServedInTheSpotPrefetchShape)
 }
 
 /// endregion </Instruction history (TTD reverse debugging)>
+
+// A stop DeZog has no breakpoint for (here a port breakpoint another surface set): told as another reason with its
+// text, so DeZog shows it instead of finding no breakpoint at the PC and running on (platform-debugging P4)
+TEST_F(DezogDebugAdapter_test, AStopDeZogHasNoBreakpointForIsToldWithItsText)
+{
+    const std::vector<uint8_t> program = {
+        0xF3,              // DI
+        0x3E, 0x01,        // LD A,1
+        0xD3, 0xFE,        // OUT (#FE),A: port #01FE
+        0xC3, 0x01, 0x80   // JP 8001h
+    };
+    _adapter->writeMemory(PROGRAM_START, program);
+    _adapter->setRegister(dzrp::RegisterId::PC, PROGRAM_START);
+    BreakpointSpec spec;
+    spec.type = BRK_IO;
+    spec.access = BRK_IO_OUT;
+    spec.address = 0x00FE;
+    spec.portMask = 0x00FF;
+    std::string error;
+    const uint16_t id = _emulator->GetBreakpointManager()->AddBreakpoint(spec, error);
+    ASSERT_NE(id, BRK_INVALID) << error;
+
+    _adapter->resume();
+    PauseEvent ev{};
+    ASSERT_TRUE(waitForEvent(ev));
+    EXPECT_EQ(ev.reason, dzrp::BreakReason::OTHER);
+    EXPECT_EQ(ev.address, PROGRAM_START + 5) << "the PC after the OUT";
+    EXPECT_EQ(_adapter->stopText(), "Breakpoint " + std::to_string(id) + ": port_out #01FE");
+    _emulator->GetBreakpointManager()->RemoveBreakpointByID(id);
+}

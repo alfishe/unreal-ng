@@ -6,6 +6,7 @@
 
 #include "3rdparty/blip_buf/blip_buf.h"
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/breakpoints/chipregister.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/cpu/core.h"
@@ -315,6 +316,8 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
         FillChannelTap(static_cast<int>(ch), static_cast<size_t>(static_cast<uint64_t>(currentTState) * _sampleRate /
                                                                   CPU_CLOCK_RATE));
     _dacValue[static_cast<int>(ch)] = value;
+    if (_context && _context->chipRegisterWatch) [[unlikely]]
+        ReportChipRegisterWrite(_context, SoundChipKind::Dac, 0, static_cast<uint16_t>(ch), value);
     _writtenThisFrame[static_cast<int>(ch)] = true;
     _staleFrameCount[static_cast<int>(ch)] = 0;
 

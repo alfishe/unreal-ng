@@ -54,8 +54,9 @@ public:
         DirectRun = 0,
         TtdReplay,
         Turbo,
+        Unpaced,
     };
-    static constexpr size_t kHostHoldReasons = 3;
+    static constexpr size_t kHostHoldReasons = 4;
 
     /// region <Fields>
 protected:
@@ -431,9 +432,11 @@ public:
     ///    run_to_*, step, step_n...), on whatever thread runs it
     ///  - TtdReplay: TimeTravelManager, EnterReplayMode .. ExitReplayMode (seek, replay, history browsing)
     ///  - Turbo: Core, EnableTurboMode .. DisableTurboMode (one hold per turbo span)
+    ///  - Unpaced: ScriptCallbackManager, while frame and sync callbacks of the unpaced policy keep the frames over
+    ///    their period (the machine runs slower than real time; its sound would break up)
     /// The guard releases exactly what it took, once (destructor, Release, or move-assign over it).
     /// (HostHoldReason: declared at the top of the class)
-    /// "direct_run" / "ttd_replay" / "turbo" (the audio mixer state's keys)
+    /// "direct_run" / "ttd_replay" / "turbo" / "unpaced" (the audio mixer state's keys)
     static const char* HostHoldReasonName(HostHoldReason reason);
 
     class HostOutputHold
@@ -473,9 +476,10 @@ public:
     /// Holds dropped by reconcileHostOutputHolds since creation (each one a holder that never gave it back)
     uint64_t hostOutputStaleHoldsCleared() const { return _hostStaleHoldsCleared.load(std::memory_order_relaxed); }
     /// Drops every hold whose reason is not in effect right now - a direct run on some thread, a TTD replay,
-    /// turbo mode - and returns how many it dropped (logged as a warning: a holder leaked it). Emulator::Resume
-    /// calls it, so a resumed machine is always heard unless something really is holding it. Any thread
-    int reconcileHostOutputHolds(bool directRunActive, bool ttdReplayActive, bool turboActive);
+    /// turbo mode, unpaced script hooks - and returns how many it dropped (logged as a warning: a holder leaked it).
+    /// Emulator::Resume calls it, so a resumed machine is always heard unless something really is holding it. Any
+    /// thread
+    int reconcileHostOutputHolds(bool directRunActive, bool ttdReplayActive, bool turboActive, bool unpacedActive);
 
     /// Emulated frames handed to the host audio callback / of those, with any non-zero sample / withheld by a hold
     uint64_t hostFramesDelivered() const { return _hostFramesDelivered.load(std::memory_order_relaxed); }

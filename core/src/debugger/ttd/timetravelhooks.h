@@ -16,6 +16,8 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "ttdphyspage.h"
 
@@ -168,6 +170,17 @@ public:
     /// End without a source: nothing was edited (a trap declined)
     virtual void BeginToolEdit() = 0;
     virtual void EndToolEdit(const char* source) = 0;
+    /// Whether a recording keeps a logic callback's writes (RecordScriptEdit): the engine does, TTD v1 does not
+    virtual bool RecordsScriptEdits() const { return false; }
+    /// A logic callback's writes, just made at an instruction boundary (ScriptCallbackManager::ApplyEdits): the bytes
+    /// in @p pokes (address, byte) written through the CPU's view, in order, and with @p cpu the registers it set.
+    /// A recording keeps them as an edit there that a replay applies (the callback never runs on replay)
+    virtual void RecordScriptEdit(const char* source, const std::vector<std::pair<uint16_t, uint8_t>>& pokes, bool cpu)
+    {
+        (void)source;
+        (void)pokes;
+        (void)cpu;
+    }
     /// A device was swapped for another one (the General Sound card): every device of @p oldType leaves, @p device
     /// comes in under its own key
     virtual void UpdatePeripheral(TTDDeviceType oldType, TTDSerializable* device) = 0;

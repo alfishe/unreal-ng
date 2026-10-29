@@ -323,6 +323,17 @@ haptics:
     - { on: jump, play: tick, target: handle.high }
 ```
 
+An event can take `if:`, a condition in the
+[breakpoint condition language](../../features/conditional-breakpoints.md): a breakpoint probe (`exec`, `read`,
+`port-in`, `port-out`, `write` with `each_write`) checks it at the access, any other source at the frame end. `x@prev`
+is x at the previous check ([haptics.md §5](haptics.md)):
+
+```yaml
+events:
+  shot:     { probe: exec, address: "0x8A10", if: "A != 0" }
+  lostlife: { probe: value, address: "0x767F", if: "M(#767F) < M(#767F)@prev" }
+```
+
 ### 7.2 Play profile: a Next MD6 game, two pads
 
 ```yaml

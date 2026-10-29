@@ -449,6 +449,10 @@ public:
     void OnReti();
     /// Some on-chip source is under service (the chain blocks the board's lower-priority /INT devices)
     bool AnyUnderService() const;
+    /// The source the last acknowledge put under service and the one the last RETI ended (debuggers): 0-3 CTC
+    /// channel 0-3, 4-5 SIO A / B receive, 6-7 PIO A / B; -1 none
+    int LastAcknowledgedSource() const { return _lastAcknowledged; }
+    int LastRetiredSource() const { return _lastRetired; }
     /// endregion </Daisy chain>
 
     /// The watchdog: running and its timeout clock (for tests and debuggers; at the current system clock rate)
@@ -502,6 +506,8 @@ public:
 
 private:
     uint32_t _version = 0;
+    int8_t _lastAcknowledged = -1;
+    int8_t _lastRetired = -1;
     /// One daisy-chain source: device 0 CTC (channels 0-3), 1 SIO (A Rx, B Rx), 2 PIO (A, B)
     struct Source
     {
@@ -516,6 +522,7 @@ private:
     bool Ius(Source s) const;
     void SetIus(Source s, bool value);
     uint8_t Vector(Source s) const;
+    static int8_t Code(Source s) { return static_cast<int8_t>(s.device == 0 ? s.index : s.device == 1 ? 4 + s.index : 6 + s.index); }
     void ClearIpOnAcknowledge(Source s);
     /// Sources in priority order (#F4); returns the count
     int Order(Source* out) const;

@@ -1,10 +1,16 @@
 #include "controllermanager.h"
 
+#ifdef ENABLE_CONTROLLERS
+#include "haptics/hapticprofile.h"
+#endif
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/breakpoints/breakpointcondition.h"
+#include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
@@ -36,6 +42,22 @@ namespace controllers
 
 namespace
 {
+#ifdef ENABLE_CONTROLLERS
+/// A profile's `if:` checked when it is read: the language and the trigger's operands. A name that is not a register
+/// or a variable may be a label of the machine the profile is armed on: that check waits for the machine
+bool CheckHapticCondition(const std::string& text, uint8_t trigger, std::string& error)
+{
+    std::string why;
+    if (BreakpointConditionProgram::Compile(text, trigger, nullptr, why))
+        return true;
+    if (why.rfind("unknown name", 0) == 0)
+        return true;
+    error = why;
+    return false;
+}
+[[maybe_unused]] const bool kHapticConditionCheck = (SetHapticConditionCheck(&CheckHapticCondition), true);
+#endif
+
 /// v3: the host key overlay (8 half-rows) after the connectors
 constexpr uint8_t kControllersTTDVersion = 3;
 constexpr size_t kHostKeyRows = 8;
@@ -670,15 +692,57 @@ void ControllerManager::AttachHapticFeed(const std::shared_ptr<IHapticFeed>& fee
     if (_context->pSoundManager != nullptr && !taps.empty())
         _context->pSoundManager->setHapticTaps(taps);
     const std::vector<HapticProbe> probes = feed->Probes();
+    std::vector<std::string> probeErrors;
     if (!probes.empty())
     {
         if (!_hapticProbes)
             _hapticProbes = std::make_unique<HapticProbes>(_context);
-        _hapticProbes->Arm(probes);
+        _hapticProbes->Arm(probes, &probeErrors);
     }
+    std::vector<std::string> conditions = feed->FrameConditions();
+    if (conditions.size() > HapticFrame::kMaxConditions)
+        conditions.resize(HapticFrame::kMaxConditions);
+    std::vector<std::string> conditionErrors(conditions.size());
+    BreakpointConditionContext dryRun;
+    const bool machine = _context->pCore != nullptr && _context->pMemory != nullptr;
+    if (machine)
+    {
+        dryRun.cpu = _context->pCore->GetZ80();
+        dryRun.memory = _context->pMemory;
+        dryRun.state = &_context->emulatorState;
+    }
+    const LabelManager* labels =
+        _context->pDebugManager != nullptr ? _context->pDebugManager->GetLabelManager() : nullptr;
+    for (size_t index = 0; index < conditions.size(); index++)
+    {
+        // At the frame end: no access, so no access operands (trigger 0)
+        std::string error;
+        _hapticConditions.push_back(BreakpointConditionProgram::Compile(conditions[index], 0, labels, error,
+                                                                        BreakpointConditionDialect::Unreal,
+                                                                        machine ? &dryRun : nullptr));
+        if (!_hapticConditions.back())
+            conditionErrors[index] = "condition: " + error;
+    }
+    _hapticConditionEvents.assign(_hapticConditions.size(), -1);
     const std::vector<GameEventInfo> events = feed->GameEvents();
     _gameEventsOn = !events.empty();
     _gameEvents.Define(events, feed->GameEventsProfile());
+    _gameEventNames.clear();
+    for (const GameEventInfo& event : events)
+        _gameEventNames.push_back(event.name);
+    for (size_t index = 0; index < events.size(); index++)
+    {
+        const GameEventInfo& event = events[index];
+        if (event.frameCondition >= 0 && static_cast<size_t>(event.frameCondition) < _hapticConditionEvents.size())
+        {
+            _hapticConditionEvents[static_cast<size_t>(event.frameCondition)] = static_cast<int>(index);
+            if (!conditionErrors[static_cast<size_t>(event.frameCondition)].empty())
+                _gameEvents.SetConditionError(index, conditionErrors[static_cast<size_t>(event.frameCondition)]);
+        }
+        else if (event.probe >= 0 && static_cast<size_t>(event.probe) < probeErrors.size() &&
+                 !probeErrors[static_cast<size_t>(event.probe)].empty())
+            _gameEvents.SetConditionError(index, probeErrors[static_cast<size_t>(event.probe)]);
+    }
     if (_hapticHeld.load(std::memory_order_acquire))
         feed->OnHapticHold(true);
 }
@@ -691,6 +755,8 @@ void ControllerManager::DetachHapticFeed()
     if (_hapticProbes)
         _hapticProbes->Disarm();
     _hapticWatches.clear();
+    _hapticConditions.clear();
+    _hapticConditionEvents.clear();
     if (_gameEventsOn)
         _gameEvents.Clear();
     _gameEventsOn = false;
@@ -768,13 +834,46 @@ void ControllerManager::FeedHaptics(uint64_t frame)
         sound->takeHapticTaps();
     if (_hapticProbes && _hapticProbes->Armed())
         _hapticProbes->TakeFrame(summary);
+    if (!_hapticConditions.empty())
+        EvaluateHapticConditions(summary);
     feed->OnHapticFrame(summary);
     if (_gameEventsOn)
     {
         GameEventFrame events;
         events.frame = frame;
         if (feed->TakeGameEvents(events))
+        {
             _gameEvents.Record(events);
+            ScriptCallbackManager* callbacks = _context->pDebugManager ? _context->pDebugManager->GetScriptCallbacks() : nullptr;
+            if (callbacks && callbacks->WantsGameEvents())
+                callbacks->OnGameEvents(frame, events.fired, _gameEventNames, events.value.data());
+        }
+    }
+}
+
+void ControllerManager::EvaluateHapticConditions(HapticFrame& summary)
+{
+    BreakpointConditionContext context;
+    context.cpu = _context->pCore != nullptr ? _context->pCore->GetZ80() : nullptr;
+    context.memory = _context->pMemory;
+    context.state = &_context->emulatorState;
+    summary.conditionCount = static_cast<unsigned>(_hapticConditions.size());
+    for (size_t index = 0; index < _hapticConditions.size(); index++)
+    {
+        if (!_hapticConditions[index])
+            continue;
+        std::string why;
+        const BreakpointConditionResult result = _hapticConditions[index]->Evaluate(context, &why);
+        if (result == BreakpointConditionResult::True)
+            summary.conditionsHeld |= 1u << index;
+        else if (result == BreakpointConditionResult::Error)
+        {
+            // As a breakpoint's (conditional-breakpoints.md): marked once, never holds again until the profile is set
+            _hapticConditions[index].reset();
+            if (_hapticConditionEvents[index] >= 0)
+                _gameEvents.SetConditionError(static_cast<size_t>(_hapticConditionEvents[index]),
+                                              why + " (frame " + std::to_string(summary.frame) + ")");
+        }
     }
 }
 

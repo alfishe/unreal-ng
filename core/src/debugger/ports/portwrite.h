@@ -27,6 +27,11 @@ struct Result
 /// Write `value` to `port` through the machine's decoder, as a tool edit named `source` ("webapi", "lua", ...)
 Result Write(Emulator* emulator, uint16_t port, uint8_t value, const char* source);
 
+/// A debugger's port read through the machine's decoder (DeZog's CMD_READ_PORT): what a CPU IN returns, with its
+/// side effects (a status read clears what it clears), no breakpoint, the CPU's clock unchanged, recorded by TTD as a
+/// tool edit. `value` holds the byte when ok
+Result Read(Emulator* emulator, uint16_t port, uint8_t& value, const char* source);
+
 /// The port and the value as text ("0x13AF", "#13AF", "13AFh", "5039"; the value up to 255); false with the reason
 bool Parse(const std::string& portText, const std::string& valueText, uint16_t& port, uint8_t& value,
            std::string& error);

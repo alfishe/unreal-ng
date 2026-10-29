@@ -113,6 +113,8 @@ public:
     /// The raster tact the last finished instruction ended at (0 at the frame start): up to here a screen drawn
     /// after every instruction has drawn
     uint32_t StepEndRaster() const { return _stepEndRaster; }
+    /// While EmulatorContext::beamWatch: the raster tacts [from, to) the step just passed (platform-debugging P6)
+    std::function<void(uint32_t from, uint32_t to)> onBeam;
     /// A reset or a loaded state replaced TsConfState: the step end is where the engine's accounting stands (a state is taken
     /// between instructions, where the two are the same)
     void NoteStateApplied();

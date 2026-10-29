@@ -5,6 +5,7 @@
 #include "common/dumphelper.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
+#include "debugger/targets/gscardtarget.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulator.h"
@@ -1182,6 +1183,9 @@ void WD1793::processWD93Command(uint8_t value)
         // Register call in a collection
         _collector->recordCommandStart(*this, value);
 
+        if (_context->machineEventWatch) [[unlikely]]
+            GSReportHostEvent(_context, GSCardEvent::FdcCommand, value, _trackRegister << 8 | _sectorRegister);
+
         // Notify observers
         for (auto* obs : _observers)
         {
@@ -2049,6 +2053,9 @@ void WD1793::endCommand()
 
     // Notify collector about command completion
     _collector->recordCommandEnd(*this);
+
+    if (_context->machineEventWatch) [[unlikely]]
+        GSReportHostEvent(_context, GSCardEvent::FdcDone, _statusRegister, _commandRegister);
 
     // Clear FIFO
     std::queue<FSMEvent> emptyQueue;

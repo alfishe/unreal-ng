@@ -57,6 +57,8 @@ public:
         /// The card's ZX-bus carries the host's memory cycles (false through the Sprinter's ISA ZX-bus adapter, which
         /// passes I/O only): without them the module never sees a host access and the overlay is not installed
         virtual bool zxHostMemoryBus() const { return true; }
+        /// A host write reached the card's RAM at `offset`. For a debugger
+        virtual void zxRamWritten(uint32_t offset, uint8_t value) { (void)offset; (void)value; }
     };
 
     // Timing, card clocks (neogs-zxdma-design.md §2.4; estimates from the Verilog)

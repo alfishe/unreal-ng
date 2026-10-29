@@ -123,15 +123,17 @@ verifies. Per-frame `peak` and `active` (`activeRecently`) are the quick
 
 The mixer report also says what the host audio output got. A run that is not
 paced to real time holds it: the speakers get nothing while every device keeps
-computing its samples (captures and recordings still get them). Three things
+computing its samples (captures and recordings still get them). Four things
 hold it, each for exactly its own span: a direct run (`run_frames`,
-`run_tstates`, `step`... - `direct_run`), a TTD seek or replay (`ttd_replay`)
-and turbo mode (`turbo`). None of them touches the user's master mute.
+`run_tstates`, `step`... - `direct_run`), a TTD seek or replay (`ttd_replay`),
+turbo mode (`turbo`) and script hooks of the `unpaced` policy that keep the
+frames over their period (`unpaced`, [script callbacks](../../docs/features/script-callbacks.md)).
+None of them touches the user's master mute.
 
 | Field | Meaning |
 |:--|:--|
 | `held` | `true` while any hold is active |
-| `holders` | active holds by reason: `direct_run`, `ttd_replay`, `turbo` |
+| `holders` | active holds by reason: `direct_run`, `ttd_replay`, `turbo`, `unpaced` |
 | `holds_taken` | holds ever taken, by reason |
 | `stale_holds_cleared` | holds a `resume` found without their reason and dropped (a leak; stays `0`) |
 | `frames_delivered` / `frames_audible` / `frames_held` | emulated frames given to the speakers / of those, not silent / withheld |
