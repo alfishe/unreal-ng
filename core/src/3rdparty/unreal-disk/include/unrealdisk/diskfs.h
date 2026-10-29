@@ -33,7 +33,7 @@ class DiskImage;
 struct DiskFsVolume
 {
     std::string id;  ///< the name to pick it: "trdos", "plus3", "isdos", "fat" (a floppy, a superfloppy), "p1".."p4"
-                     ///< (an MBR partition), "cpm" (an ATM CP/M floppy), "mb02", "mdos", "cpm-<cylinder>" (an ATM CP/M
+                     ///< (an MBR partition), "cpm" (an ATM or Profi CP/M floppy), "mb02", "mdos", "cpm-<cylinder>" (an ATM CP/M
                      ///< hard disk partition), "isdos-<cylinder>" (an iS-DOS device on a hard disk), "mdos-<slot>"
                      ///< (an MDOS3 virtual disk; "mdos-p<partition>-<slot>" with two #49 partitions or more), "mb02-<n>"
                      ///< (the BS-DOS 309 floppy @n of a #47 partition)

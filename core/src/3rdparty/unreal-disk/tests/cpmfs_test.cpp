@@ -15,6 +15,7 @@
 #include "unrealdisk/blockdevice.h"
 #include "unrealdisk/diskfs.h"
 #include "unrealdisk/floppyformats.h"
+#include "unrealdisk/loaders/loader_pro.h"
 
 using namespace unrealdisk;
 using unrealdisk::testing::TestDataPath;
@@ -490,4 +491,86 @@ TEST(CpmFs_Test, HardDiskPartitionWritten)
     // Nothing past the partition changed
     EXPECT_TRUE(std::equal(disk.begin(), disk.begin() + kCylinder, hdd.Data().begin()));
     EXPECT_TRUE(std::equal(disk.begin() + 3 * kCylinder, disk.end(), hdd.Data().begin() + 3 * kCylinder));
+}
+
+TEST(CpmFs_Test, ProfiFloppyFromAProDumpReadsTheSystemTrackSector)
+{
+    // A .pro dump: BOOT.COM in block 2 = bytes 4096-6143, the fifth sector of track 0 (ID 9 on a Profi disk) and the
+    // first of track 1 (cylinder 0 side 1)
+    std::vector<uint8_t> dump(80 * 2 * 5 * 1024, 0xE5);
+    PutEntry(dump.data(), "BOOT    COM", 16, {2});
+    const std::vector<uint8_t> boot = Pattern(2048, 3);
+    std::copy(boot.begin(), boot.end(), dump.begin() + 4096);
+
+    LoaderPRO loader({}, "");
+    std::vector<std::string> warnings;
+    std::unique_ptr<DiskImage> disk(loader.parse(dump.data(), dump.size(), warnings));
+    ASSERT_NE(disk, nullptr);
+    EXPECT_NE(disk->getTrackForCylinderAndSide(0, 0)->findSector(9), nullptr);
+    EXPECT_EQ(disk->getTrackForCylinderAndSide(0, 0)->findSector(5), nullptr);
+    EXPECT_NE(disk->getTrackForCylinderAndSide(0, 1)->findSector(5), nullptr);
+
+    DiskFs fs(*disk);
+    ASSERT_EQ(fs.Volumes().size(), 1u);
+    EXPECT_EQ(fs.Volumes()[0].system, "Profi CP/M");
+    EXPECT_EQ(fs.Volumes()[0].freeBytes, (400 - 2 - 1) * 2048);
+    EXPECT_EQ(ReadFile(fs, "", "BOOT.COM"), boot);
+
+    // A write goes through the sector of ID 9 too; the dump comes back with the new file and BOOT.COM in place
+    std::string error;
+    const std::vector<uint8_t> note = Pattern(3000, 9);
+    ASSERT_TRUE(fs.Write("", "NOTE.TXT", note, {}, error)) << error;
+    std::vector<uint8_t> saved;
+    ASSERT_TRUE(loader.serialize(disk.get(), saved, warnings));
+    ASSERT_EQ(saved.size(), dump.size());
+    EXPECT_TRUE(std::equal(boot.begin(), boot.end(), saved.begin() + 4096));
+    std::unique_ptr<DiskImage> back(loader.parse(saved.data(), saved.size(), warnings));
+    ASSERT_NE(back, nullptr);
+    DiskFs again(*back);
+    std::vector<uint8_t> read = ReadFile(again, "", "NOTE.TXT");
+    ASSERT_EQ(read.size(), 3072u);  // Whole records, padded with #1A
+    EXPECT_TRUE(std::equal(note.begin(), note.end(), read.begin()));
+    EXPECT_EQ(ReadFile(again, "", "BOOT.COM"), boot);
+}
+
+TEST(CpmFs_Test, EmptyProfiFloppyIsAVolumeOnlyWithTheSystemTrack)
+{
+    // FORMAT.COM's empty disk: the system track marks it
+    const std::vector<uint8_t> dump(80 * 2 * 5 * 1024, 0xE5);
+    LoaderPRO loader({}, "");
+    std::vector<std::string> warnings;
+    std::unique_ptr<DiskImage> marked(loader.parse(dump.data(), dump.size(), warnings));
+    ASSERT_NE(marked, nullptr);
+    DiskFs fs(*marked);
+    ASSERT_EQ(fs.Volumes().size(), 1u);
+    EXPECT_EQ(fs.Volumes()[0].system, "Profi CP/M");
+    EXPECT_EQ(fs.Volumes()[0].freeBytes, (400 - 2) * 2048);
+
+    // The same five 1024-byte sectors, 1..5 on track 0 too: nothing says CP/M
+    DiskImage plain(80, 2);
+    for (uint8_t cylinder = 0; cylinder < 80; cylinder++)
+        for (uint8_t side = 0; side < 2; side++)
+            plain.getTrackForCylinderAndSide(cylinder, side)->formatTrack(cylinder, side, LoaderPRO::trackSpec());
+    EXPECT_TRUE(DiskFs(plain).Volumes().empty());
+}
+
+TEST(CpmFs_Test, KlugCpmFloppyHasItsDirectoryAfterTwoSystemCylinders)
+{
+    // Klug CP/M 2.3: the directory at cylinder 2 (byte 20480), 390 blocks; the system tracks hold no directory
+    std::vector<uint8_t> dump(82 * 2 * 5 * 1024, 0xE5);
+    constexpr size_t kDirectory = 4 * 5 * 1024;
+    std::fill(dump.begin(), dump.begin() + kDirectory, 0x00);
+    PutEntry(dump.data() + kDirectory, "PIP     COM", 16, {389});
+    const std::vector<uint8_t> pip = Pattern(2048, 5);
+    std::copy(pip.begin(), pip.end(), dump.begin() + kDirectory + 389 * 2048);
+
+    LoaderPRO loader({}, "");
+    std::vector<std::string> warnings;
+    std::unique_ptr<DiskImage> disk(loader.parse(dump.data(), dump.size(), warnings));
+    ASSERT_NE(disk, nullptr);
+    DiskFs fs(*disk);
+    ASSERT_EQ(fs.Volumes().size(), 1u);
+    EXPECT_EQ(fs.Volumes()[0].system, "Klug CP/M");
+    EXPECT_EQ(fs.Volumes()[0].freeBytes, (390 - 2 - 1) * 2048);
+    EXPECT_EQ(ReadFile(fs, "", "PIP.COM"), pip);
 }

@@ -391,10 +391,12 @@ public:
     bool Output(const HostDeviceId& device, const StepsOut& out) override
     {
         std::lock_guard lock(_mutex);
+        // Kept first: a Dial asleep (no writer) when the context changed gets them when it wakes; the router sends a
+        // feel once
+        _dialSteps[device] = out;
         SurfaceDialWriter* writer = WriterLocked(device);
         if (writer == nullptr)
             return false;
-        _dialSteps[device] = out;
         writer->Steps(out);
         return true;
     }

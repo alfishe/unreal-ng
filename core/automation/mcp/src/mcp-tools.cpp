@@ -956,7 +956,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
     registry.Register(
         "load_software",
         "Load software into the emulator by auto-detecting the file type: snapshots (.sna .snx .z80 .szx), TS-Conf programs (.spg, switches the machine to model TSL: the answer's emulator_id is then the new one), RZX input recordings (.rzx, played on the machine the recording needs), tapes (.tap .tzx .spc .sta .ltp .zxt), "
-        "disk images (.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima .mb2 .mbd .d40 .d80). The machine must be created first (target:'auto' "
+        "disk images (.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima .mb2 .mbd .d40 .d80 .pro). The machine must be created first (target:'auto' "
         "handles that). If the path exists locally on the MCP host, the file is uploaded to the emulator "
         "automatically; otherwise, the path is passed to the emulator for direct loading.",
         std::move(schema),
@@ -974,7 +974,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             {
                 done(ToolResult::Error("Cannot determine file type of '" + path +
                                             "'. Supported: .sna .snx .z80 .szx .spg (snapshot), .rzx (input recording), .tap .tzx .spc .sta .ltp .zxt (tape), "
-                                            ".trd .scl .fdi .udi .dsk .td0 .mgt .img .ima .mb2 .mbd .d40 .d80 (disk)"));
+                                            ".trd .scl .fdi .udi .dsk .td0 .mgt .img .ima .mb2 .mbd .d40 .d80 .pro (disk)"));
                 return;
             }
             std::string ext = path.substr(dot + 1);
@@ -985,12 +985,12 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             bool isTape = std::find(tapeExtensions.begin(), tapeExtensions.end(), ext) != tapeExtensions.end();
             bool isDisk = ext == "trd" || ext == "scl" || ext == "fdi" || ext == "udi" || ext == "dsk" ||
                           ext == "td0" || ext == "mgt" || ext == "img" || ext == "ima" ||
-                          ext == "mb2" || ext == "mbd" || ext == "d40" || ext == "d80";
+                          ext == "mb2" || ext == "mbd" || ext == "d40" || ext == "d80" || ext == "pro";
             if (!isSnapshot && !isTape && !isDisk)
             {
                 done(ToolResult::Error("Unsupported file type '." + ext +
                                             "'. Supported: .sna .snx .z80 .szx .spg (snapshot), .rzx (input recording), .tap .tzx .spc .sta .ltp .zxt (tape), "
-                                            ".trd .scl .fdi .udi .dsk .td0 .mgt .img .ima .mb2 .mbd .d40 .d80 (disk)"));
+                                            ".trd .scl .fdi .udi .dsk .td0 .mgt .img .ima .mb2 .mbd .d40 .d80 .pro (disk)"));
                 return;
             }
 
