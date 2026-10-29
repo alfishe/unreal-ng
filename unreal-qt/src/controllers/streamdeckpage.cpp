@@ -93,6 +93,8 @@ QString StateText(const StateNode& status)
                                                                       0, 'f', 1);
     if (state == QLatin1String("failed"))
         return QObject::tr("Failed: trying again in %1 s").arg(Text(status.find("retry_in_ms")).toInt() / 1000);
+    if (state == QLatin1String("missing"))
+        return QObject::tr("Not in this build: no unreal-streamdeck beside unreal-qt");
     if (state == QLatin1String("foreign"))
         return QObject::tr("Another emulator's daemon uses the port");
     if (state == QLatin1String("detached"))

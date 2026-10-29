@@ -746,10 +746,16 @@ void Runtime::ApplyNav(const json& r)
         onSwitchScenario(r.value("file", ""));
     else if (to == "context")
     {
-        // the nearest menu declaring it: the current path (innermost first), below the current menu, then anywhere
+        // the nearest menu declaring it: the current menu when its path already has that context (a menu without
+        // one under it, as a new instance's default finds the deck), the current path (innermost first), below the
+        // current menu, then anywhere
         const std::string ctx = r.value("context", "");
         const Node* target = nullptr;
         const auto& stack = _nav.Stack();
+        const auto declaring =
+            std::find_if(stack.rbegin(), stack.rend(), [](const Node* n) { return !n->context.empty(); });
+        if (!ctx.empty() && declaring != stack.rend() && (*declaring)->context == ctx)
+            target = &_nav.Current();
         for (auto it = stack.rbegin(); it != stack.rend() && !target; ++it)
             if ((*it)->context == ctx)
                 target = *it;
@@ -1151,7 +1157,8 @@ ValueShown Runtime::ShownLocked(const FaceValue& v) const
 json Runtime::PageLocked() const
 {
     json page = DescribePage(_s, _nav, _m, _page, OnStates());
-    // value faces: what each key shows now ({readout, text, level})
+    // value faces: what each key shows now ({readout, text, level}); `flash` while an activity flash lights it
+    const std::int64_t now = NowMs();
     if (page.contains("keys"))
         for (auto& e : page["keys"])
         {
@@ -1160,6 +1167,8 @@ json Runtime::PageLocked() const
                                                                               : nullptr;
             if (!n || k == _page.backKey)
                 continue;
+            if (const auto flash = _flashUntil.find(k); flash != _flashUntil.end() && now < flash->second)
+                e["flash"] = true;
             const Face& f = IsOn(*n) && n->faceOn ? *n->faceOn : n->face;
             if (!f.value)
                 continue;
