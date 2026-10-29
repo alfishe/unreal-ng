@@ -661,10 +661,10 @@ void ScriptCallbackManager::Account(uint32_t id, uint32_t us, bool failed, const
             recent.erase(std::remove_if(recent.begin(), recent.end(),
                                         [frame](uint64_t at) { return at + kOverrunWindow < frame; }),
                          recent.end());
-            const bool far = static_cast<uint64_t>(us) > static_cast<uint64_t>(entry.spec.budgetUs) * kOverrunFactor;
-            if (!far && recent.size() < kOverrunsToSuspend)
+            const bool tooLong = static_cast<uint64_t>(us) > static_cast<uint64_t>(entry.spec.budgetUs) * kOverrunFactor;
+            if (!tooLong && recent.size() < kOverrunsToSuspend)
                 return;
-            entry.reason = far ? "one call took " + std::to_string(us) + " us (budget " +
+            entry.reason = tooLong ? "one call took " + std::to_string(us) + " us (budget " +
                                      std::to_string(entry.spec.budgetUs) + ")"
                                : std::to_string(recent.size()) + " calls over " + std::to_string(entry.spec.budgetUs) +
                                      " us within " + std::to_string(kOverrunWindow) + " frames";

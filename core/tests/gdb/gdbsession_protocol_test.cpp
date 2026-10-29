@@ -454,8 +454,6 @@ TEST_F(GdbSessionProtocol_Test, ForwardRunFromThePastGoesLive)
     EXPECT_EQ(Request("M8100,1:00"), "OK") << "live after ttd stop";
 }
 
-#endif  // _WIN32
-
 /// monitor mmu: the eight 8K slots of a 128K machine (ROM halves, the 16K pages' halves); no NextREG file
 TEST_F(GdbSessionProtocol_Test, MonitorMmuShowsTheEightKSlots)
 {
@@ -490,3 +488,5 @@ TEST_F(GdbSessionProtocolNext_Test, MonitorNextregReadsTheBoard)
     std::snprintf(slot, sizeof(slot), "  2 4000-5fff: RAM 8K page %02x", mmu2);
     EXPECT_NE(Monitor("mmu").find(slot), std::string::npos) << slot;
 }
+
+#endif  // _WIN32
