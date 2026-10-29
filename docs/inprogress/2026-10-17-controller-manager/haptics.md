@@ -635,7 +635,7 @@ have the speed as a `value` probe on the low motor (`engine`):
 | `builtin/game/super-hang-on-{beginner,junior,senior,expert}` | 4 archive.org snapshots (each build has its own addresses) | speed; crash → `explosion`; off-road and overtakes not mapped |
 | `builtin/game/jet-bike-simulator` | tape (48K) | speed; `hit` → `thump`; laps not mapped |
 | `builtin/game/hard-drivin` | snapshot | speed `#965B`; exec `#F5E1` (wreck) → `explosion`; value `#951E` (off the road) → `rumble-strip` |
-| `builtin/game/overlander` | snapshot | speed `#F019`; exec `#7297` (crash) → `explosion`, `#5FE3` (shot) → `shot`; kills and pickups not mapped |
+| `builtin/game/overlander` | snapshot | speed `#F019`; exec `#7297` (crash) → `explosion`, `#5FE3` (shot) → `shot`; exec `#7524` (kill reward) → `pickup` |
 | `builtin/game/badlands` | snapshot | speed `#E5F3`; write `#E5FF` raised (hit) → `hit`; exec `#B877` (missile) → `shot`; the drones take no hit path |
 | `builtin/game/test-drive-ii` | snapshot | speed `#F058`; exec `#88C7` (traffic collision) → `explosion`; cliff and police not mapped |
 | `builtin/game/pole-position` | snapshot | speed `#9802`; exec `#9A24` (crash) → `explosion` |
