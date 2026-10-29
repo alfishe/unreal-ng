@@ -10,7 +10,7 @@
 # in the same frame, the replay text came after; it is the only run of that block in a 1500-frame recording).
 # The off-road state is the flag byte #951E (255 while the car is off the road: #9E45 sets it in the frame loop, the road check
 # #ECBC clears it); the "OFF ROAD n" countdown is the BCD byte #951F (#A413 steps it down, 9 to 0, then the game ends the run).
-# Known limits: the plain object hits (the speed drops 101 -> 3 without a replay) are not mapped yet.
+# The speed drops 101 -> 3 without a replay are the stop on the grass (the same off-road state), not object hits.
 schema: 1
 kind: play
 id: builtin/game/hard-drivin
