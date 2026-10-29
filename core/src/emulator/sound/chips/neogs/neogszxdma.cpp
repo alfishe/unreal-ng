@@ -131,7 +131,10 @@ void NeoGSZxDma::complete()
     if (_pending == Pending::Read)
         _readLatch = cell;
     else
+    {
         cell = _pendingData;
+        _host.zxRamWritten(static_cast<uint32_t>(_pendingAddress % _mem.ramSize()), _pendingData);
+    }
     _dma.advanceAddress(NeoGSDma::ZX, 1); // the address moves at the grant (dma_zx.v:110-111)
     _lastDoneAt = _pendingDone;
     _pending = Pending::None;

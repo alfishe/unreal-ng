@@ -10,7 +10,10 @@
 # byte #880E), run when a bike hits the shore or a buoy: the speed fell 54 to 32 in the same frames. The routine is shared with
 # the computer bikes (15 runs in 25 s with no key pressed), so the probe watches the player's flag #8821 going 0 to 1 instead of
 # the routine. Checked in real time (menu, then 20 s with no key, then D held with A / S alternating 3 s each):
-# 1 `hit` with no key (the start), 7 `hit` with the keys, speed value 76 at the top (level 1.0). Known limits: no lap or buoy event yet.
+# 1 `hit` with no key (the start), 7 `hit` with the keys, speed value 76 at the top (level 1.0). The buoy and lap counters sit in the same
+# bike record (#83C0: ix+#24 counts the buoys passed, 1 to 5; #83CA..#83D2: at 5 it resets to 0 and ix+#25 counts the laps; the three computer
+# bikes at the record stride #2B showed 5 buoys and one lap each every 25 s), so for the player #881F going up is a buoy and #8820 going up a lap (the first lap step is the start line crossing at the race start;
+# checked in real time: 2 buoys, 1 lap, 51 hits in 33 s of random A / S).
 schema: 1
 kind: play
 id: builtin/game/jet-bike-simulator
@@ -33,6 +36,10 @@ haptics:
   sources:
     speed: { probe: value, address: "0x880D", scale: 3.4 }
     hit:   { probe: write, address: "0x8821", when: increased }
+    buoy:  { probe: write, address: "0x881F", when: increased }
+    lap:   { probe: write, address: "0x8820", when: increased }
   rules:
     - { on: speed, play: engine, target: handle.low }
     - { on: hit, play: thump }
+    - { on: buoy, play: tick }
+    - { on: lap, play: pickup }

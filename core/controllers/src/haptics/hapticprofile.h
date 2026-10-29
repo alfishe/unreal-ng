@@ -77,6 +77,11 @@ struct HapticSource
     float riseDb = 12.0f;
     float withinMs = 30.0f;
     float floor = 0.05f;  ///< onset: the level must reach it (0..1 of full scale)
+    /// `if:` (the core condition language, docs/features/conditional-breakpoints.md): a breakpoint probe counts a hit
+    /// only when it holds at the access (with its access operands); any other source fires only when it holds at the
+    /// frame end. `when:` keeps its meaning beside it; an `each_write` probe's byte before is then the one of the
+    /// last write the condition held for. Empty: none
+    std::string condition;
 
     bool IsEvent() const
     {
@@ -104,6 +109,9 @@ struct HapticSource
     }
     /// The breakpoint probe this source arms (IsBreakpointProbe)
     HapticProbe Probe() const;
+    /// Where `if:` is checked, as the access operands it may use (BreakpointConditionTrigger: BRK_COND_EXEC for an
+    /// exec probe, ..., 0 at the frame end)
+    uint8_t ConditionTrigger() const;
 };
 
 /// Where an effect plays: the abstract targets of §6.1, ORed
@@ -151,6 +159,12 @@ struct HapticProfile
 
 /// The `haptics` section -> its sources and rules; false with the reason, which names the place
 bool ParseHapticProfile(const JsonValue& section, HapticProfile& out, std::string& error);
+
+/// Checks an `if:` text for a source whose condition takes the access operands @p trigger (ConditionTrigger): false
+/// with the reason. The core installs it (this library does not link the condition engine); none installed: every
+/// text passes here and the machine checks it when the profile is armed
+using HapticConditionCheck = bool (*)(const std::string& text, uint8_t trigger, std::string& error);
+void SetHapticConditionCheck(HapticConditionCheck check);
 
 /// The built-in effect library (haptics.md §6.2): peak levels on the handle motors, a length, an envelope; false for an
 /// unknown id

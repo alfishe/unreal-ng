@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Stream Deck integration acceptance (docs/inprogress/2026-10-19-streamdeck-integration/requirements.md §8, ACC-1 ..
-ACC-7), live: a rig of its own (an offscreen unreal-qt with its own HOME, ports and daemon lock, the daemon its
+ACC-7, and testing.md §3.2's host conformance as `host`), live: a rig of its own (an offscreen unreal-qt with its own HOME, ports and daemon lock, the daemon its
 supervisor starts, Stream Deck Studio offscreen as an own Stream Deck + XL and as mirrors) and checks that drive it
 through the WebAPI, the daemon's and the studio's automation. Nothing of the user's is touched: not their settings,
 their pairing, their deck or their running daemon.
@@ -12,6 +12,7 @@ mirrors of ACC-4 without a real deck, the platform packages of ACC-5 without --p
 
     acceptance.py --build cmake-build-agent-release            # the hardware-free checks
     acceptance.py --build ... --only acc2,acc6                  # some of them
+    acceptance.py --build ... --only host                       # the host conformance (testing.md §3.2)
     acceptance.py --build ... --scrub-seconds 10                # a shorter ACC-1 (the criterion is 60 s)
     acceptance.py --build ... --keep                            # leave the rig running (prints its ports)
     acceptance.py --only none --live                            # the manual review rig: visible unreal-qt, real deck
@@ -193,6 +194,20 @@ class Rig:
         expect(status == 200, 'the supervisor takes the rig settings', body)
         wait(lambda: self.health().get('ok'), 'the supervised daemon answers', 20, 0.2)
 
+    def kill_qt(self):
+        """unreal-qt gone at once, as a crash leaves it (SIGKILL; TerminateProcess on Windows)"""
+        self.qt_process.kill()
+        self.qt_process.wait(10)
+
+    def restart_qt(self):
+        """unreal-qt again with the same environment and ports; its machine created as start() does"""
+        self.qt_process = subprocess.Popen([self.qt] + self.platform(), env=self.env(), stdout=self.log('unreal-qt'),
+                                           stderr=subprocess.STDOUT)
+        self.processes.append(self.qt_process)
+        self.session = Session(f'http://127.0.0.1:{self.mcp}/mcp', 'PENTAGON')
+        wait(lambda: self.session.rpc('ping', timeout=2) is not None, 'the restarted unreal-qt answers on MCP', 40, 0.3)
+        self.machine()
+
     def machine(self, model='PENTAGON'):
         s = self.session
         listing = s.call('emulator_manage', {'action': 'list'}, ok=False)
@@ -278,7 +293,10 @@ class Rig:
     daemon_pid = None
 
     def health(self):
-        status, body = http(self.daemon, 'GET', '/api/v1/health', timeout=2)
+        try:
+            status, body = http(self.daemon, 'GET', '/api/v1/health', timeout=2)
+        except (OSError, urllib.error.URLError):  # the daemon gone (ACC-6 kills it)
+            return {}
         if status == 200 and isinstance(body, dict):
             self.daemon_pid = body.get('pid', self.daemon_pid)
             return body
@@ -496,8 +514,8 @@ def acc1_surface_dial(rig, emulator):
     rig.live_again(emulator)
     expect(rests >= 10, 'at least 10 rests', rests)
     expect(daemon_requests <= 0, 'the daemon sent no HTTP request to the host while scrubbing', daemon_requests)
-    return [f'Surface Dial ({dials[0].get("name")}): {rests} rests in {SCRUB_SECONDS} s, the strip agreed within '
-            f'{worst * 1000:.0f} ms of the rest at worst; {sum(e.get('merged', 1) for e in seeks)} ttd.seek_by in the feed from {", ".join(sources)}; '
+    return [f'Surface Dial ({names()[0][0]}): {rests} rests in {SCRUB_SECONDS} s, the strip agreed within '
+            f'{worst * 1000:.0f} ms of the rest at worst; {sum(e.get("merged", 1) for e in seeks)} ttd.seek_by in the feed from {", ".join(sources)}; '
             f'host REST requests {after - before - 1}, all {mine} the script\'s own']
 
 
@@ -565,8 +583,9 @@ def acc3_targets(rig):
         target = wait(lambda: shows(first), 'the deck targets the front view\'s instance', 2, 0.02)
         status, body = rig.host('PUT', '/api/v1/surfaces/views/v1', {'activate': True})
         expect(status == 200, 'the main window to the front', body)
-        main_active = followed(rig)
-        expect(main_active != first, 'the main window shows the other instance', main_active)
+        # the activation reaches the followed target on the GUI thread: a moment after the answer
+        main_active = wait(lambda: (lambda f: f != first and f)(followed(rig)),
+                           'the main window shows the other instance', 2, 0.02)
         other = wait(lambda: shows(main_active), 'focus moves: the deck follows', 2, 0.02)
         notes = [f'follow: #{target["index"]} {target["model"]} -> #{other["index"]} {other["model"]} with the focus']
         # the pin: the deck's surface session in TargetState (targeting.md §4), pinned to the first instance
@@ -665,6 +684,80 @@ def acc4_viewers(rig):
     return notes
 
 
+def key_face(rig, at):
+    """The page state's entry of the key at (row, col)"""
+    return next(k for k in rig.deck_state()['page']['keys'] if (k.get('row'), k.get('col')) == at)
+
+
+def paused(rig, emulator):
+    return rig.readouts(['run.state'], emulator)['run.state'].get('state') == 'paused'
+
+
+@check('host')
+def host_conformance(rig):
+    """testing.md §3.2 on a hardware-free rig: paired by token and joined, the root page reaches a viewer; a press on
+    the viewer pauses the instance and the face follows run.state; a pause from the WebAPI turns the face and flashes
+    the key; unreal-qt killed, the daemon shows the reconnect state, and restarted, the deck is on the same page.
+    Steps 4-6 (the strip follows the cursor, contexts both ways, focus and pin) are ACC-1, ACC-2 and ACC-3"""
+    emulator = followed(rig)
+    rig.navigate()
+    notes = []
+    # 1. paired by token (the companion.json `unreal-streamdeck pair` leaves, the token unreal-qt was started with),
+    # the surface session up, the viewer joined; the root page rendered into the viewer's bytes
+    health = rig.health()
+    expect(health.get('pairing', {}).get('paired') and health.get('surface') == 'connected',
+           'the daemon is paired and its surface session connected', health.get('pairing'))
+    expect(rig.path() == ['Home'], 'the deck on its root page', rig.path())
+    status, png = http(rig.input, 'GET', '/api/v1/screenshot?area=lcd', raw=True)
+    expect(status == 200 and png[:8] == b'\x89PNG\r\n\x1a\n' and len(png) > 4096,
+           'the viewer shows the root page (its LCD screenshot)', f'{status}, {len(png)} bytes')
+    notes.append(f'paired, joined; the viewer\'s LCD {len(png)} bytes')
+    pause = HOME_PAUSE
+    expect(key_face(rig, pause).get('action') == 'run.pause_toggle', 'home\'s first key is run.pause_toggle',
+           key_face(rig, pause))
+    if paused(rig, emulator):
+        rig.action('run.resume', emulator=emulator)
+    wait(lambda: not key_face(rig, pause).get('on'), 'the pause key shows running', 2, 0.02)
+    # 2. pause on the viewer: the instance pauses, the face follows run.state
+    rig.key(*HOME_PAUSE)
+    wait(lambda: paused(rig, emulator), 'the viewer\'s press pauses the instance', 2, 0.02)
+    wait(lambda: key_face(rig, pause).get('on'), 'the face shows paused', 2, 0.02)
+    rig.key(*HOME_PAUSE)
+    wait(lambda: not paused(rig, emulator), 'a second press resumes it', 2, 0.02)
+    wait(lambda: not key_face(rig, pause).get('on'), 'the face shows running again', 2, 0.02)
+    notes.append('viewer press: paused, the face followed run.state, and back')
+    # 3. pause from the WebAPI: the face turns and the key flashes (the host's activity, 200 ms on the deck)
+    started = time.monotonic()
+    rig.action('run.pause_toggle', emulator=emulator)
+    wait(lambda: key_face(rig, pause).get('flash'), 'the WebAPI\'s pause flashes the deck\'s key', 1, 0.01)
+    flashed = time.monotonic() - started
+    wait(lambda: key_face(rig, pause).get('on'), 'the face shows the WebAPI\'s pause', 2, 0.02)
+    rig.action('run.pause_toggle', emulator=emulator)
+    wait(lambda: not key_face(rig, pause).get('on'), 'the face shows running again', 2, 0.02)
+    notes.append(f'WebAPI pause: the face turned, the key flashed {flashed * 1000:.0f} ms after the request')
+    # 7. unreal-qt killed: the daemon (alive on the viewer's lease) shows the reconnect state; restarted, the same page
+    rig.navigate('time')
+    page = rig.path()
+    expect(page[-1] == 'Time', 'the deck on the Time menu', page)
+    rig.kill_qt()
+    killed = time.monotonic()
+    wait(lambda: rig.health().get('surface') == 'disconnected' and not rig.deck_state()['surface'].get('live'),
+         'the daemon shows the reconnect state', 5, 0.05)
+    noticed = time.monotonic() - killed
+    expect(rig.path() == page, 'the deck stays on its page while the host is gone', rig.path())
+    rig.restart_qt()
+    restarted = time.monotonic()
+    wait(lambda: rig.health().get('surface') == 'connected' and rig.deck_state()['surface'].get('live'),
+         'the daemon reconnects to the restarted host', 20, 0.1)
+    back = time.monotonic() - restarted
+    expect(rig.path() == page, 'the deck on the same page after the reconnect', rig.path())
+    rig.navigate()
+    notes.append(f'host killed: reconnect state in {noticed * 1000:.0f} ms; restarted: live again in {back:.1f} s on '
+                 f'{" > ".join(page)}')
+    notes.append('steps 4-6: ACC-1, ACC-2, ACC-3')
+    return notes
+
+
 ABSOLUTE = re.compile(r'(^|[\s:"\'\[,])(/(Users|home|Volumes|tmp|var|opt|private)/|~/|[A-Za-z]:[\\/]|file://)')
 FORBIDDEN = re.compile(r'kind:\s*(shell|open|keys|webapi)\b|"kind":\s*"(shell|open|keys|webapi)"')
 
@@ -741,7 +834,7 @@ def acc6_daemon_killed(rig):
     time.sleep(1.0)
     old = rig.health().get('pid')
     expect(old, 'the daemon\'s pid')
-    os.kill(old, signal.SIGKILL)
+    os.kill(old, getattr(signal, 'SIGKILL', signal.SIGTERM))  # Windows: SIGTERM is TerminateProcess, as hard
     killed = time.monotonic()
     time.sleep(0.2)
     stop.set()

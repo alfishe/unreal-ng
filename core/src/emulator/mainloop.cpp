@@ -16,6 +16,7 @@
 #include "debugger/joystick/debugjoystickmanager.h"
 #include "emulator/io/controllers/controllermanager.h"
 #include "debugger/mouse/debugmousemanager.h"
+#include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
@@ -845,6 +846,18 @@ void MainLoop::OnFrameEnd()
         {
             // Log error but don't crash - message center failure shouldn't stop emulation
             MLOGERROR("MessageCenter post failed: %s", e.what());
+        }
+    }
+
+    // Script hooks (frame callbacks, the hooks' time and the unpaced state): not in a throwaway TTD replay pass
+    if (_context->pDebugManager && !_context->ttdReplayActive)
+    {
+        ScriptCallbackManager* callbacks = _context->pDebugManager->GetScriptCallbacks();
+        if (callbacks != nullptr && callbacks->WantsFrameEnd())
+        {
+            const auto now = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch());
+            callbacks->OnFrameEnd(static_cast<uint64_t>(now.count()), _context->config.frame_duration_us);
         }
     }
 

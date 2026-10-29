@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "debugger/breakpoints/chipregister.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -211,6 +212,8 @@ void FullerBoxCard::portDeviceOutMethod(uint16_t port, uint8_t value)
         case kPortData & 0xE0:
             AdvanceTo(Now());  // the generators run with the old value up to the write
             _chip->writeCurrentRegister(value);
+            if (_context && _context->chipRegisterWatch) [[unlikely]]
+                ReportChipRegisterWrite(_context, SoundChipKind::Ay, 0, _chip->getCurrentRegisterIndex(), value);
             break;
         default:
             break;

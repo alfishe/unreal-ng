@@ -470,6 +470,10 @@ public:
     ///         is not in a restorable state (Recording / Detached).
     bool RestoreCheckpointForTesting(size_t idx);
 
+    /// @brief The memory work of the last checkpoint restore: inside a KnownMemoryScope only the written and the
+    /// changed pieces are decoded
+    const TTDRestoreStats& LastMemoryRestoreStats() const { return _lastMemoryRestore; }
+
     // -----------------------------------------------------------------------
     // Silent replay mode (control thread; emulator must be paused)
     // -----------------------------------------------------------------------
@@ -528,6 +532,25 @@ public:
 
     private:
         TimeTravelController* _manager;
+    };
+
+    /// @brief A run of replays that only the replay executes between (a verb's frame loop, a seek and its
+    /// picture): inside it a checkpoint restore trusts what the previous restore left in memory, apart from the
+    /// pieces the trackers marked since (_engineMemoryKnown). Nests; the outermost end forgets
+    class KnownMemoryScope
+    {
+    public:
+        explicit KnownMemoryScope(TimeTravelController& manager) : _manager(manager) { ++_manager._knownMemoryDepth; }
+        ~KnownMemoryScope()
+        {
+            if (--_manager._knownMemoryDepth == 0)
+                _manager._engineMemoryKnown = false;
+        }
+        KnownMemoryScope(const KnownMemoryScope&) = delete;
+        KnownMemoryScope& operator=(const KnownMemoryScope&) = delete;
+
+    private:
+        TimeTravelController& _manager;
     };
 
     /// @brief Query the replay-mode flag. Reads `_context->ttdReplayActive`.
@@ -802,6 +825,14 @@ public:
     /// replay applies (no barrier)
     void BeginToolEdit() override;
     void EndToolEdit(const char* source) override;
+    /// A logic callback's writes (ScriptCallbackManager::ApplyEdits): an edit with only those bytes and, with @p cpu,
+    /// the CPU, which the engine's replay applies at the same boundary
+    bool RecordsScriptEdits() const override { return true; }
+    void RecordScriptEdit(const char* source, const std::vector<std::pair<uint16_t, uint8_t>>& pokes,
+                          bool cpu) override;
+    /// A card hook's writes (GSCardTarget): one edit of kind-10 records at the main CPU's position; the replay hands
+    /// them to the card's target a frame at a time (ServiceInput), since the card runs behind the main CPU
+    void RecordCardEdits(const char* source, const std::vector<TTDCardEdit>& edits) override;
 
     /// The bytes of the tool edit recorded as v1 marker @p markerIndex (empty: none)
     const std::unordered_map<size_t, std::vector<uint8_t>>& ToolEditPayloads() const { return _toolEditPayloads; }
@@ -1485,6 +1516,11 @@ private:
     /// @param cp Checkpoint to apply. Read-only; no refs are taken or released.
     void RestoreCheckpoint(const TTDCheckpoint& cp);
 
+    /// @brief The pieces a replay may have written since the engine last restored memory: the RAM pages and the
+    /// device pieces their trackers marked (taken and cleared), every piece of a region no tracker watches. Valid
+    /// only while _engineMemoryKnown holds
+    TTDWrittenFn TakeWrittenSinceRestore();
+
 
     /// @brief Internal seek implementation without the Recording-state guard.
     ///
@@ -1854,6 +1890,8 @@ private:
     std::unordered_map<size_t, std::vector<uint8_t>> _toolEditPayloads;   ///< v1 marker index -> edit bytes
     /// Apply a tool edit's bytes (a replay crossing it)
     void ApplyToolEdit(const std::vector<uint8_t>& payload);
+    /// The replay's card edits of frame @p frame to the card targets (those of an earlier frame leave)
+    void DeliverCardEdits(uint64_t frame);
     /// The live machine's memory regions as the engine sees them: machine RAM, then each region source's
     std::vector<TTDRegionDesc> LiveRegions() const;
     uint64_t _shadowLastStart = 0;         ///< the last captured frame's start in machine time
@@ -1863,6 +1901,16 @@ private:
     uint64_t _shadowMediaStamp = 0;        ///< IMediaHistory::VersionStamp at the last capture
     bool _shadowMediaKnown = false;        ///< _shadowMediaStamp is valid for this session
     bool _shadowRescan = false;   ///< live memory may differ from the engine's delta base: hand it every piece
+    /// Live memory holds what the engine's last restore wrote, apart from the writes the trackers marked since:
+    /// set by a restore inside a KnownMemoryScope, cleared when the scope ends or anything else may write memory
+    /// (the live state put back, a tool edit). A restore then decodes only the written and changed pieces
+    bool _engineMemoryKnown = false;
+    int _knownMemoryDepth = 0;   ///< open KnownMemoryScopes
+    TTDRestoreStats _lastMemoryRestore;
+    std::vector<uint8_t> _writtenRamPages;            ///< TakeWrittenSinceRestore: per RAM page
+    std::vector<std::vector<uint8_t>> _writtenPieces; ///< TakeWrittenSinceRestore: per engine region, per piece
+    std::vector<uint16_t> _writtenPages;              ///< TakeWrittenSinceRestore: the dirty tracker's pages
+    std::vector<uint32_t> _writtenScratch;
     /// Hand this capture to the shadow engine
     bool FeedShadow(const TTDCheckpoint& out, bool baseline);
     /// Per registry entry: its index in the shadow engine's device table, -1 when it has none (no state). The
@@ -1966,6 +2014,7 @@ private:
     /// recorded history (armed by a navigation restore, see ArmInputPlayback)
     size_t _inputCursor = 0;
     size_t _engineEventCursor = 0;          ///< the replay engine's event log (SetReplaySource)
+    uint64_t _cardEditFrame = UINT64_MAX;    ///< the frame whose card edits the card targets hold (replay)
     uint64_t _replayRomSignature = 0;       ///< this machine's ROM set (SetReplaySource)
     TTDRestoreResult _lastEngineCheck;      ///< LastEngineCheck
     /// Settings and media of the replay engine's checkpoint @p index against

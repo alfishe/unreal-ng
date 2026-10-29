@@ -321,6 +321,7 @@ private:
         bool muted;
     };
 
+    EmulatorContext* _context = nullptr;  // the chip register breakpoints (ReportChipRegisterWrite)
     MultiSoundCardConfig _config;
 
     MultiSoundLogic _logic;

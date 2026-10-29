@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "debugger/breakpoints/breakpointcondition.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -614,4 +615,72 @@ TEST_F(NextRegBreakpointMachine_Test, AMoveThatIsDueComesBeforeTheProgramsOwnWri
     EXPECT_EQ(events[events.size() - 2].value, kByteFromCopper);
     EXPECT_EQ(events.back().source, NextRegSource::NextReg);
     EXPECT_EQ(events.back().value, kByteFromCpu);
+}
+
+// platform-debugging P4: a condition on a NextREG breakpoint sees the byte written (VAL) and the register before it
+// (NR(x)); on the Next the machine answers the MMU slots, the registers, the beam, the copper and the speed
+TEST_F(NextRegBreakpointMachine_Test, AConditionReadsTheBoardsRegistersSlotsBeamAndSpeed)
+{
+    ASSERT_NE(_transparencyAtStart, kByteA);
+    BreakpointSpec change = NrSpec(kRegGlobalTransparency, BRK_IO_OUT);
+    change.condition = "VAL != NR(#14)";
+    const uint16_t id = Add(change);
+    Board().WriteNextReg(kRegGlobalTransparency, _transparencyAtStart);
+    EXPECT_EQ(Last(), BRK_INVALID) << "the byte it holds";
+    Board().WriteNextReg(kRegGlobalTransparency, kByteA);
+    EXPECT_EQ(Last(), id) << "a change";
+    _manager->ClearLastTriggeredBreakpoint();
+    Out(kPortRegSelect, kRegGlobalTransparency);
+    Out(kPortRegData, kByteA);
+    EXPECT_EQ(Last(), BRK_INVALID) << "the same byte again, through #253B";
+    const BreakpointSnapshot bp = _manager->GetBreakpointById(id);
+    ASSERT_NE(bp, nullptr);
+    EXPECT_EQ(bp->matchCount, 3u);
+    EXPECT_EQ(bp->hitCount, 1u);
+
+    ASSERT_EQ(_context->pConditionMachine, static_cast<const IBreakpointConditionMachine*>(_ports));
+    constexpr uint8_t kPage = 0x21;  // an 8K RAM page: the upper half of 16K page #10
+    constexpr unsigned kLine = 5;
+    constexpr unsigned kHc = 100;
+    Board().WriteNextReg(NextBoard::kRegMmu0 + 7, kPage);
+    Board().WriteNextReg(kRegCpuSpeed, 3);  // 28 MHz: eight times the base clock
+    CopperList({Wait(kLine, 0)}, 1);
+    _beamClock = At(kLine, kHc);
+    BreakpointConditionContext x;
+    x.cpu = _context->pCore->GetZ80();
+    x.memory = _context->pMemory;
+    x.state = &_context->emulatorState;
+    x.machine = _context->pConditionMachine;
+    auto holds = [&](const std::string& text) {
+        std::string error;
+        BreakpointConditionPtr program = BreakpointConditionProgram::Compile(text, BRK_COND_ANY, nullptr, error);
+        EXPECT_TRUE(program) << text << ": " << error;
+        std::string why;
+        const BreakpointConditionResult result = program ? program->Evaluate(x, &why) : BreakpointConditionResult::Error;
+        EXPECT_NE(result, BreakpointConditionResult::Error) << text << ": " << why;
+        return result == BreakpointConditionResult::True;
+    };
+    EXPECT_TRUE(holds("MMU7 == 21 && NR(57) == 21 && MMU0 == 0FF && NR(50) == 0FF && MMU2 == 0A"))
+        << "slot 7 shows the upper half of page #10";
+    EXPECT_TRUE(holds("CPUSPEED == 8"));
+    EXPECT_TRUE(holds("VC == 5 && HC == 100d"));
+    EXPECT_TRUE(holds("CPC == " + std::to_string(Board().Copper().Pc()) + "d"));
+}
+
+// A machine without a NEXTREG file refuses NR(x) when the breakpoint is set, with the reason
+TEST(NextRegBreakpointManager_Test, AConditionOnAMachineWithoutTheOperandIsRefusedWhenSet)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EXPECT_EQ(emulator->GetContext()->pConditionMachine, nullptr);
+    BreakpointManager* manager = emulator->GetBreakpointManager();
+    BreakpointSpec spec;
+    spec.address = 0x8000;
+    spec.condition = "NR(7) == 0";
+    std::string error;
+    EXPECT_EQ(manager->AddBreakpoint(spec, error), BRK_INVALID);
+    EXPECT_NE(error.find("no NR here"), std::string::npos) << error;
+    spec.condition = "MMU7 == 1 && CPUSPEED == 1";
+    EXPECT_NE(manager->AddBreakpoint(spec, error), BRK_INVALID) << error;
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }

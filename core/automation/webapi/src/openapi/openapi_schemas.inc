@@ -238,6 +238,60 @@
     schemas["BreakpointsListResponse"]["properties"]["breakpoints"]["items"]["$ref"] =
         "#/components/schemas/BreakpointInfo";
 
+    // Script callbacks (callbacks_api.cpp): the fields of Lua's callbacks()
+    {
+        Json::Value& cb = schemas["ScriptCallback"];
+        cb["type"] = "object";
+        cb["description"] = "A Lua / Python callback and its statistics (absent fields: as in the Lua table)";
+        const char* integers[] = {"id", "breakpoint", "budget_us", "ring", "pending", "hits", "dropped", "calls",
+                                  "errors", "overruns", "total_us", "max_us", "p99_us", "last_overrun_frame",
+                                  "last_overrun_us", "aborted", "instructions"};
+        for (const char* name : integers)
+            cb["properties"][name]["type"] = "integer";
+        const char* strings[] = {"on", "mode", "role", "owner", "label", "target", "event", "policy", "state",
+                                 "reason", "last_error"};
+        for (const char* name : strings)
+            cb["properties"][name]["type"] = "string";
+        for (const char* name : {"tap", "breakpoint", "game_event"})
+            cb["properties"]["on"]["enum"].append(name);
+        for (const char* name : {"suspend", "disable", "ignore", "unpaced"})
+            cb["properties"]["policy"]["enum"].append(name);
+        for (const char* name : {"active", "suspended", "disabled"})
+            cb["properties"]["state"]["enum"].append(name);
+        for (const char* name : {"deferred", "frame", "sync"})
+            cb["properties"]["mode"]["enum"].append(name);
+        cb["properties"]["mode"]["description"] = "deferred: the script's thread; frame / sync: the hook state on the "
+                                                  "emulation thread, at the frame end / inside the access";
+        for (const char* name : {"view", "logic"})
+            cb["properties"]["role"]["enum"].append(name);
+        cb["properties"]["role"]["description"] = "Frame and sync: view (writes only with no time travel session) or "
+                                                  "logic (writes at the next instruction boundary, recorded by time "
+                                                  "travel and replayed without the call)";
+        cb["properties"]["aborted"]["description"] = "Frame and sync: calls stopped by the instruction budget";
+        cb["properties"]["instructions"]["description"] = "Frame and sync: the instruction budget of a call";
+        cb["properties"]["target"]["description"] = "What it is called on: \"tap write #5C78 if MDT == 0\", \"breakpoint 3\", \"event died\"";
+        cb["properties"]["reason"]["description"] = "Why it was suspended or disabled";
+        cb["properties"]["breakpoint"]["description"] = "The tap's hidden breakpoint, or the breakpoint whose stops it follows";
+
+        Json::Value& list = schemas["ScriptCallbackList"];
+        list["type"] = "object";
+        list["properties"]["count"]["type"] = "integer";
+        Json::Value& hooks = list["properties"]["hooks"];
+        hooks["type"] = "object";
+        hooks["description"] = "Once there are frame or sync callbacks: the hooks' time per frame and the unpaced state";
+        hooks["properties"]["unpaced"]["type"] = "boolean";
+        for (const char* name : {"unpaced_spans", "last_frame_us", "max_frame_us", "frames_over_share", "frame_share_percent"})
+            hooks["properties"][name]["type"] = "integer";
+        list["properties"]["callbacks"]["type"] = "array";
+        list["properties"]["callbacks"]["items"]["$ref"] = "#/components/schemas/ScriptCallback";
+
+        Json::Value& result = schemas["ScriptCallbackResult"];
+        result["type"] = "object";
+        result["properties"]["status"]["type"] = "string";
+        result["properties"]["message"]["type"] = "string";
+        result["properties"]["callback"]["$ref"] = "#/components/schemas/ScriptCallback";
+    }
+
     // Memory Breakpoint Info
     schemas["MemoryBreakpointInfo"]["type"] = "object";
     schemas["MemoryBreakpointInfo"]["description"] = "Memory breakpoint (execute/read/write)";
@@ -249,6 +303,12 @@
     schemas["MemoryBreakpointInfo"]["properties"]["read"]["type"] = "boolean";
     schemas["MemoryBreakpointInfo"]["properties"]["write"]["type"] = "boolean";
     schemas["MemoryBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["MemoryBreakpointInfo"]["properties"]["condition"]["type"] = "string";
+    schemas["MemoryBreakpointInfo"]["properties"]["condition"]["description"] = "The condition in canonical (Unreal) form, when one is set";
+    schemas["MemoryBreakpointInfo"]["properties"]["match_count"]["type"] = "integer";
+    schemas["MemoryBreakpointInfo"]["properties"]["match_count"]["description"] = "With a condition: every match; hit_count counts those whose condition held";
+    schemas["MemoryBreakpointInfo"]["properties"]["condition_error"]["type"] = "string";
+    schemas["MemoryBreakpointInfo"]["properties"]["condition_error"]["description"] = "Set when the condition failed to evaluate: the breakpoint is skipped (never stops) until enabled again or given a new condition";
     schemas["MemoryBreakpointInfo"]["properties"]["note"]["type"] = "string";
     schemas["MemoryBreakpointInfo"]["properties"]["group"]["type"] = "string";
 
@@ -263,6 +323,12 @@
     schemas["PortBreakpointInfo"]["properties"]["in"]["type"] = "boolean";
     schemas["PortBreakpointInfo"]["properties"]["out"]["type"] = "boolean";
     schemas["PortBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["PortBreakpointInfo"]["properties"]["condition"]["type"] = "string";
+    schemas["PortBreakpointInfo"]["properties"]["condition"]["description"] = "The condition in canonical (Unreal) form, when one is set";
+    schemas["PortBreakpointInfo"]["properties"]["match_count"]["type"] = "integer";
+    schemas["PortBreakpointInfo"]["properties"]["match_count"]["description"] = "With a condition: every match; hit_count counts those whose condition held";
+    schemas["PortBreakpointInfo"]["properties"]["condition_error"]["type"] = "string";
+    schemas["PortBreakpointInfo"]["properties"]["condition_error"]["description"] = "Set when the condition failed to evaluate: the breakpoint is skipped (never stops) until enabled again or given a new condition";
     schemas["PortBreakpointInfo"]["properties"]["note"]["type"] = "string";
     schemas["PortBreakpointInfo"]["properties"]["group"]["type"] = "string";
 
@@ -438,14 +504,21 @@
         "The N of the hit policy (1 or more); alone it means hit_mode 'equal'";
     schemas["AddBreakpointRequest"]["properties"]["page"]["type"] = "object";
     schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["type"] = "string";
-    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("ram");
-    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("rom");
-    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("cache");
+    for (const char* kind : {"ram", "rom", "cache", "vram", "divmmc", "divmmcrom", "mfrom", "mfram"})
+        schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append(kind);
     schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["page"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["page"]["description"] =
         "Optional for execution / read / write: {kind, page} as in the debugger protocol (the text form 'ram32' is "
-        "accepted too). A physical breakpoint: it fires on that page at offset address & #3FFF through whatever slot "
+        "accepted too; the ZX Next's DivMMC and Multiface: {kind: divmmc, page: 0-15}, divmmcrom, mfrom, mfram). A physical breakpoint: it fires on that page at offset address & #3FFF through whatever slot "
         "shows the page (slot_only: only through the slot of address); 400 for a page the machine does not have";
+    schemas["AddBreakpointRequest"]["properties"]["condition"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["condition"]["description"] =
+        "Memory and port breakpoints: stop only when this expression holds (Unreal language: registers, flags, "
+        "M(addr), W(addr), access operands RD WR VAL PORT, FRAME, PG0-3, labels; numbers hex unless written 123d). "
+        "Compiled and checked against the trigger here: 400 with the reason and its column";
+    schemas["AddBreakpointRequest"]["properties"]["condition_dialect"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["condition_dialect"]["description"] =
+        "unreal (default) or c (C precedence, decimal numbers); the canonical form shown back is always Unreal";
     schemas["AddBreakpointRequest"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["note"]["description"] = "Optional annotation";
     schemas["AddBreakpointRequest"]["properties"]["group"]["type"] = "string";
@@ -468,6 +541,8 @@
     schemas["AddBreakpointResponse"]["properties"]["hit_mode"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["hit_target"]["type"] = "integer";
     schemas["AddBreakpointResponse"]["properties"]["hit_count"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["condition"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["match_count"]["type"] = "integer";
     schemas["AddBreakpointResponse"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["group"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["message"]["type"] = "string";

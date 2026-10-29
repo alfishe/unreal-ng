@@ -11,6 +11,7 @@
 #include "debugger/pchistory/pchistory.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
 #include "debugger/ttd/timetravelhooks.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -1086,6 +1087,10 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
     // the machine state AT T (a seek target, a pause) does not include it yet
     if ((work & EmulatorContext::kStepWorkTtdInput) && _context->pTimeTravelHooks)
         _context->pTimeTravelHooks->ServiceInput();
+    // A logic callback's writes (ScriptCallbackManager::ApplyEdits) land here, after the input: the boundary after
+    // the access that ran it, where a replay applies the recorded edit too
+    if ((work & EmulatorContext::kStepWorkScriptEdits) && _context->pDebugManager) [[unlikely]]
+        _context->pDebugManager->GetScriptCallbacks()->ApplyEdits();
 
     StepResult result;
 

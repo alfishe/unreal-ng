@@ -183,6 +183,17 @@ Built (2026-10-23):
   writes and OUTs in order (`probeEvents`, the first 64; for a write, the byte before and after).
 - **A write undone within one frame.** `write` with `each_write` sees every write, so a decrease followed by the
   restore in the same frame fires. A frame-end watch never sees it.
+- **Conditions (`if:`, 2026-10-26).** Any source can take `if:`, a condition in the core language
+  ([conditional-breakpoints.md](../../features/conditional-breakpoints.md)).
+  - On a breakpoint probe it is the tap's condition, checked at the access with its operands (`MDT`, `VAL`, `PORT`):
+    `{probe: write, address: 0x5f20, each_write: true, if: "MDT < M(#5F21)"}`. A hit it rejects is not counted.
+  - On any other source it is checked at the frame end, on the registers and memory there (no access operands); the
+    source fires only when it holds. A gated source still reads its byte and runs its filters.
+  - `x@prev` is x at the previous check: `if: "M(#5F20) < M(#5F20)@prev"`.
+  - The profile is checked when it is read (the language, the operands of the source's kind) and again when it is
+    armed on a machine (the labels). A condition the machine refuses or that fails at run time never fires; its event
+    shows the reason in `condition_error` (`game.events`).
+  - An `each_write` probe's byte before is then the byte of the last write the condition held for.
 - **Port probes.** `port-in` / `port-out` take `port` and `port_mask`. `port-out` can also take `value` / `mask` on the
   written byte: `{probe: port-out, port: 0xFE, port_mask: 0x01, value: 2, mask: 7}` is a red border.
 - **Cost.** Measured in §12.
@@ -613,6 +624,22 @@ and prove a game's triggers: [the game-haptics recipe](../../../.recipe/input/ga
 | `builtin/game/aliens-neoplasma-2` | ANP2.nex v1.6.1 (a Next NEX from the SD card; the v1.6 demo has its own document) | exec page 5 #29D3 (jump) → `tick` on the high motor; #29F4 (landing) → `knock` on the low motor; the energy byte #7F70 (page 5 #3F70) decreased → `hit`; reaching 0 (every death: bullet, gas, water, fall) → `life-lost`; exec page 2 #37AA (an enemy bullet kills the hero, found in a TTD recording of the owner: the energy goes 5 → 0 from #B7AE, past #B27D and #B1C2) → `impact`, a hard front on every actuator (both triggers too). #B1C2 (water) stays an event only |
 
 Each profile also binds the pad: the game's keys on the d-pad, the left stick and the face buttons.
+
+Racing games (2026-10-28 / 29), each found by TTD on a recorded run and checked in real time through
+`/monitor/game.events`; the images are in `software/games/haptics/racing/` (README with hash and source). All of them
+have the speed as a `value` probe on the low motor (`engine`):
+
+| Profile | Image | Events |
+|:--|:--|:--|
+| `builtin/game/turbo-esprit` | tape (Erbe) | speed `#75F7`; exec `#F57F` (fire) → `shot`, `#EC94` (crash) → `hit`, `#A08C` (penalty) → `tick` |
+| `builtin/game/super-hang-on-{beginner,junior,senior,expert}` | 4 archive.org snapshots (each build has its own addresses) | speed; crash → `explosion`; off-road and overtakes not mapped |
+| `builtin/game/jet-bike-simulator` | tape (48K) | speed; `hit` → `thump`; write `#881F` (buoy) → `tick`, `#8820` (lap) → `pickup` |
+| `builtin/game/hard-drivin` | snapshot | speed `#965B`; exec `#F5E1` (wreck) → `explosion`; value `#951E` (off the road) → `rumble-strip` |
+| `builtin/game/overlander` | snapshot | speed `#F019`; exec `#7297` (crash) → `explosion`, `#5FE3` (shot) → `shot`; exec `#7524` (kill reward) → `pickup` |
+| `builtin/game/badlands` | snapshot | speed `#E5F3`; write `#E5FF` raised (hit) → `hit`; exec `#B877` (missile) → `shot`; the drones take no hit path |
+| `builtin/game/test-drive-ii` | snapshot | speed `#F058`; exec `#88C7` (traffic collision) → `explosion`; cliff and police not mapped |
+| `builtin/game/pole-position` | snapshot | speed `#9802`; exec `#9A24` (crash) → `explosion` |
+| `builtin/game/cisco-heat` | snapshot | speed `#5BB3`; exec `#9BE6` (grass) → `rumble-strip`, `#9137` (crash sound set-up) → `explosion` |
 
 - Matching by content signature: `match.signatures` (indexed as `sig:` keys) already parses next to `file_sha256`;
   once `swsignature` gives a release's content signature, a document lists it there and the hash lists can go.

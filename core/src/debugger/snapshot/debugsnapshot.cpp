@@ -234,7 +234,7 @@ const char* BankKind(MemoryBankModeEnum mode)
     }
 }
 
-/// Why it stopped last: {reason, breakpoint_id, address}
+/// Why it stopped last: {reason, cpu, breakpoint_id, address, cpu_pc (a card CPU's stop)}
 StateNode PauseNode(Emulator* emulator)
 {
     const Emulator::DebugStop stop = emulator->LastStop();
@@ -242,8 +242,11 @@ StateNode PauseNode(Emulator* emulator)
     pause["reason"] = std::string(StopReason(stop.reason));
     if (stop.reason == Emulator::DebugStop::Reason::Breakpoint)
     {
+        pause["cpu"] = std::string(DebugCpuName(stop.breakpoint.cpu));
         pause["breakpoint_id"] = static_cast<int>(stop.breakpoint.breakpointId);
         pause["address"] = static_cast<int>(stop.breakpoint.address);
+        if (stop.breakpoint.cpu != DebugCpuId::Main)
+            pause["cpu_pc"] = static_cast<int>(stop.breakpoint.cpuPc);
     }
     return pause;
 }

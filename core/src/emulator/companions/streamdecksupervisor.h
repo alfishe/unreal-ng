@@ -136,6 +136,7 @@ public:
     static constexpr int64_t kStartTimeoutMs = 10000;
     static constexpr int64_t kStopGraceMs = 2000;  ///< after POST /api/v1/quit, then terminate
     static constexpr int64_t kGiveUpMs = 60000;
+    static constexpr int64_t kMissingCheckMs = 5000;  ///< no binary: how often a daemon started elsewhere is looked for
     static constexpr int64_t kStableMs = 30000;    ///< running this long: the crash count starts again
     static constexpr int64_t kDeckCheckMs = 1000;
     static constexpr int64_t kQuickExitMs = 5000;  ///< a clean end sooner than this counts as a failed start
@@ -209,6 +210,7 @@ private:
         Backoff,
         Failed,
         Stopped,
+        Missing,  ///< no daemon binary (a build without the companion): no countdown, a running one still adopted
     };
     static const char* StateName(State state);
 

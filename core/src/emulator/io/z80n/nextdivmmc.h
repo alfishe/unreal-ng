@@ -38,6 +38,10 @@ public:
 
     /// The journal (automation-gaps-2026-10-11.md, P2). `fillClock` sets frame, T and PC of an event, `fillCall` the esxDOS call of an entry at
     /// #0008 (the byte after the RST and the registers; the DivMMC does not know the CPU)
+    /// The machine's event watch (EmulatorContext::machineEventWatch) and its listener: while it is set every event
+    /// the journal would record goes to `onWatchedEvent` too, the journal on or off
+    const bool* eventWatch = nullptr;
+    std::function<void(const NextDivMmcEvent&)> onWatchedEvent;
     NextDivMmcJournal& Journal() { return _journal; }
     const NextDivMmcJournal& Journal() const { return _journal; }
     std::function<void(NextDivMmcEvent&)> fillClock;

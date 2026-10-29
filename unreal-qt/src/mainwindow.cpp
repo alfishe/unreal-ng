@@ -2554,7 +2554,7 @@ void MainWindow::updateUnsavedMediaMark()
 bool MainWindow::confirmUnsavedMedia()
 {
     EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
-    if (!context || !context->pMediaManager)
+    if (!context || !context->pMediaManager || _unattendedClose)
         return true;
     const ClosePrompt prompt = ClosePromptFor(context->pMediaManager->Unsaved());
     if (!prompt.ask)

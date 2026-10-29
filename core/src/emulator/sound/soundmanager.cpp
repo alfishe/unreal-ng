@@ -386,6 +386,8 @@ const char* SoundManager::HostHoldReasonName(HostHoldReason reason)
             return "ttd_replay";
         case HostHoldReason::Turbo:
             return "turbo";
+        case HostHoldReason::Unpaced:
+            return "unpaced";
     }
     return "unknown";
 }
@@ -456,9 +458,10 @@ bool SoundManager::isHostOutputHeld() const
     return false;
 }
 
-int SoundManager::reconcileHostOutputHolds(bool directRunActive, bool ttdReplayActive, bool turboActive)
+int SoundManager::reconcileHostOutputHolds(bool directRunActive, bool ttdReplayActive, bool turboActive,
+                                           bool unpacedActive)
 {
-    const bool active[kHostHoldReasons] = {directRunActive, ttdReplayActive, turboActive};
+    const bool active[kHostHoldReasons] = {directRunActive, ttdReplayActive, turboActive, unpacedActive};
     int dropped = 0;
     for (size_t i = 0; i < kHostHoldReasons; i++)
     {
@@ -2423,6 +2426,10 @@ bool SoundManager::switchGeneralSoundCardNow(GSTypeKind target, GSCardImplementa
     if (_context->pSlotManager)
         _context->pSlotManager->FollowGeneralSoundSwitch(target);
 
+    // The card CPU debugger's hooks go to the new card (after the handoff above ran it)
+    if (_context->pDebugManager)
+        _context->pDebugManager->OnGeneralSoundCardCreated();
+
     LOGINFO("SoundManager: General Sound personality switched %s -> %s%s", from, to,
             hadModule ? " (module upload replayed)" : "");
     return portsRegistered;
@@ -2527,6 +2534,8 @@ bool SoundManager::attachToPorts()
                 generalSoundDeviceName().c_str());
         delete _gs;
         _gs = nullptr;
+        if (_context->pDebugManager)
+            _context->pDebugManager->OnGeneralSoundCardCreated();  // the hooks' card is gone
         _devices.erase(std::remove_if(_devices.begin(), _devices.end(),
                                       [](const AudioDeviceInfo& d) {
                                           return d.type == AudioSourceType::GeneralSound ||

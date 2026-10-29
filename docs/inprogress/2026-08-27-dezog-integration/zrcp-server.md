@@ -105,7 +105,7 @@ PC=8000 SP=ff00 AF=1234 BC=beef HL=dead DE=cafe IX=1111 IY=2222 AF'=3333 BC'=444
 | `hard-reset-cpu` | `log> ` ack (no-op + log) |
 | `enter-cpu-step` | empty (first call opens the session + TTD recording) |
 | `load <path>` / `smartload <path>` | `log> ` ack (loading stays in unreal-ng) |
-| `get-current-machine` | `ZX Spectrum 128K` / `ZX Spectrum 48K` (client matches `includes("128k"/"48k")` case-insensitively; all banked models incl. Pentagon report 128K — documented approximation) |
+| `get-current-machine` | `ZX Spectrum 128K` / `ZX Spectrum 48K` (client matches `includes("128k"/"48k")` case-insensitively; all banked models incl. Pentagon report 128K — documented approximation). The ZX Next is `ZX Spectrum Next` (ZEsarUX's name): DeZog then takes eight 8K slots, `MMU=` gives eight words (RAM the 8K bank, ROM `0x8000 \| rom * 2 + half`) and `get-memory-pages` eight tokens (`O<rom * 2 + half>` / `A<bank>`), as ZEsarUX on tbblue |
 | `clear-membreakpoints` | empty |
 | `enable-breakpoints` / `disable-breakpoints` | empty |
 | `disable-breakpoint <id>` / `enable-breakpoint <id>` | empty (unknown ids tolerated — DeZog clears its whole 100-slot table on connect) |

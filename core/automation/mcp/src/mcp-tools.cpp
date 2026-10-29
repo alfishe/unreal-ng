@@ -30,6 +30,8 @@
 #include "mcp-signature.h"
 #include "mcp-tool-utils.h"
 
+#include "../../../src/debugger/callbacks/callbacktext.h"  // the callback line every plane prints (header only)
+
 #include <algorithm>
 #include <cctype>
 #include <cinttypes>
@@ -1192,6 +1194,47 @@ void RegisterLoadSoftware(ToolRegistry& registry)
 namespace
 {
 
+/// callback_text's reader over the WebAPI's JSON of one callback (GET /callbacks)
+struct CallbackJsonReader
+{
+    const Json::Value& value;
+
+    std::string Text(const char* key) const
+    {
+        return value[key].isString() ? value[key].asString() : std::string();
+    }
+    int64_t Number(const char* key) const
+    {
+        if (value[key].isBool())
+            return value[key].asBool() ? 1 : 0;
+        return value[key].isNumeric() ? value[key].asInt64() : 0;
+    }
+    bool Has(const char* key) const
+    {
+        return value.isMember(key);
+    }
+};
+
+std::string FormatCallbackLine(const Json::Value& callback)
+{
+    return callback_text::FormatLine(CallbackJsonReader{callback});
+}
+
+/// "Script callbacks: N" and a line per callback, as the CLI's `callback list`
+std::string FormatCallbackList(const Json::Value& list)
+{
+    const Json::Value& items = list["callbacks"];
+    std::string text = callback_text::ListHeader(items.isArray() ? items.size() : 0);
+    if (list.isMember("hooks"))
+        text += "\n" + callback_text::FormatHooks(CallbackJsonReader{list["hooks"]});
+    if (items.isArray())
+        for (const Json::Value& callback : items)
+            text += "\n" + FormatCallbackLine(callback);
+    if (!items.isArray() || items.empty())
+        text += " (a Lua or Python script registers them: on_tap, on_breakpoint, on_game_event)";
+    return text;
+}
+
 void RegisterControlExecution(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -1201,7 +1244,8 @@ void RegisterControlExecution(ToolRegistry& registry)
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "run_to_scanline", "run_scanlines", "run_to_pixel",
                                "run_until_pc", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
-                               "bp_list", "bp_reset_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note",
+                               "bp_list", "bp_reset_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note", "bp_condition",
+                               "callbacks", "callback_resume", "callback_remove", "callback_policy",
                                "set_register", "port_out", "wait", "take_control", "release_control"})
     {
         schema["properties"]["action"]["enum"].append(action);
@@ -1210,7 +1254,9 @@ void RegisterControlExecution(ToolRegistry& registry)
         "Execution primitive. Stepping/running actions return the new register state. bp_* actions manage breakpoints "
         "(bp_add switches the breakpoints feature on). run_frame / run_frames / run_tstates / run_to_interrupt skip "
         "breakpoints: to stop at one, resume and then wait. run_to_scanline / run_scanlines / run_to_pixel skip them too; "
-        "run_until_pc skips them unless breakpoints=true (run to a cursor). pace: the paced run (pace_op).";
+        "run_until_pc skips them unless breakpoints=true (run to a cursor). pace: the paced run (pace_op). callbacks / "
+        "callback_resume / callback_remove / callback_policy list and manage the Lua / Python script callbacks "
+        "(callback_id, policy); a callback is registered only from a script.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["count"]["type"] = "integer";
@@ -1255,10 +1301,35 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["type"]["default"] = "execution";
     schema["properties"]["type"]["description"] = "Breakpoint type for bp_add: execution, read, write, port_in, port_out, nextreg_write, nextreg_read, "
         "nextreg (address = the ZX Next register number, address_end a range; see doors / value / value_mask), "
-        "beam (address = line of the copper's counter, hc = pixel clock), copper (address = copper list index, address_end a range: "
+        "beam (address = line of the copper's counter, hc = pixel clock; TS-Conf: the raster line 0..319, hc the CPU tact 0..223), copper (address = copper list index, address_end a range: "
         "stops when the copper completes that instruction), keyboard (key, on: stops on the first keyboard read that sees the key "
         "go down / up), magic_ed_ff / magic_dd_01 (ZX Next: stops after the CPU ran that magic "
-        "opcode - a NOP on the hardware, other emulators' debug trap; no address)";
+        "opcode - a NOP on the hardware, other emulators' debug trap; no address), event (a sound card's protocol "
+        "event, see event; no address), chipreg (a sound chip's register write by the main CPU: chip, address = the "
+        "register, address_end a range, unit, value / value_mask the byte)";
+    schema["properties"]["chip"]["type"] = "string";
+    schema["properties"]["chip"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* chip : {"ay", "fm", "saa", "opl4", "opl4wave", "dac", "cbl"})
+        schema["properties"]["chip"]["enum"].append(chip);
+    schema["properties"]["chip"]["description"] =
+        "For bp_add of chipreg: ay (AY / YM2149 and a YM2203's SSG, registers 0-15), fm (YM2203 FM, #10-#FF), saa "
+        "(SAA1099, 0-#1F), opl4 (MoonSound FM, bank 1 as #100-#1FF), opl4wave (0-#FF), dac (Covox / SounDrive: the "
+        "channel 0-3), cbl (the Sprinter's Covox Blaster: 0 the data, 1 the control)";
+    schema["properties"]["unit"]["type"] = "integer";
+    schema["properties"]["unit"]["description"] =
+        "For bp_add of chipreg: one chip of the kind (TurboSound / TS-FM 0-1, the Next's AYs 0-2); absent: any";
+    schema["properties"]["cpu"]["type"] = "string";
+    schema["properties"]["cpu"]["description"] =
+        "For bp_*: whose breakpoints, main (default), gs (the CPU of the General Sound / NeoGS card: execution, read, "
+        "write, port and card events; a gs stop parks the machine, wait reports the card instruction) or ms (the "
+        "General Sound on a MultiSound card, the same way)";
+    schema["properties"]["event"]["type"] = "string";
+    schema["properties"]["event"]["description"] =
+        "For bp_add of event: int, nmi, reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, "
+        "dma_start, dma_done, gscfg0 (cpu gs; the last five from the card's hardware, the DMA ones and gscfg0 NeoGS "
+        "only), host_command, host_data, host_reply (cpu main: the host's access to #B3 / #BB), the ZX Next's machine "
+        "events cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done, tsdma_start, tsdma_done, pld_read, pld_write, pld_event, fdc_command, fdc_done (cpu main); value / value_mask filter the byte (the DAC byte, GSCFG0, the DMA module "
+        "0 ZX / 1 SD / 2 MP3, the interrupt or NMI source, the esxDOS call)";
     schema["properties"]["hc"]["type"] = "integer";
     schema["properties"]["hc"]["description"] = "For bp_add of beam: the pixel clock in the row (0..511, default 0)";
     schema["properties"]["address_end"]["oneOf"][0]["type"] = "integer";
@@ -1284,17 +1355,40 @@ void RegisterControlExecution(ToolRegistry& registry)
         "counted (bp_list shows hit_count)";
     schema["properties"]["page"]["type"] = "string";
     schema["properties"]["page"]["description"] =
-        "Optional for bp_add of execution / read / write: 'ram32', 'rom3', 'cache0' or (read / write) 'vram1' (the "
-        "Sprinter's video RAM page, the address its offset) - a physical breakpoint on that "
+        "Optional for bp_add of execution / read / write: 'ram32', 'rom3', 'cache0', 'bank8k33' (an 8K RAM bank), the ZX "
+        "Next's 'divmmcrom', 'divmmc0'..'divmmc15' (its 8K RAM banks), 'mfrom', 'mfram' (the Multiface), or (read / "
+        "write) 'vram1' (the Sprinter's video RAM page, the address its offset) - a physical breakpoint on that "
         "page at offset address & #3FFF, through whatever slot shows the page (slot_only: only through the slot of "
         "address)";
+    schema["properties"]["condition"]["type"] = "string";
+    schema["properties"]["condition"]["description"] =
+        "Optional for bp_add of execution / read / write / port_in / port_out, and for bp_condition ('' clears): stop "
+        "only when this holds. Unreal language: registers (A, HL, IX, SP, A', I, R, IFF1), flags (Z, NZ, CY), M(addr) "
+        "byte, W(addr) word, the access (RD, WR, VAL, PORT, ADDR), FRAME, T, PG0-PG3, labels; == != < > <= >= && || "
+        "! & | ^ ~ + - * / % << >>; comparisons bind tighter than & | ^; numbers hex unless written 123d ('0D' is "
+        "decimal 0: write #0D). Refused with the reason and its column; hit policies count only the hits where it "
+        "holds (bp_list: hits = condition true, matched = every match)";
+    schema["properties"]["condition_dialect"]["type"] = "string";
+    schema["properties"]["condition_dialect"]["description"] =
+        "Optional with condition: unreal (default) or c (C precedence, decimal numbers)";
     schema["properties"]["note"]["type"] = "string";
     schema["properties"]["note"]["description"] = "Optional annotation for bp_add";
     schema["properties"]["group"]["type"] = "string";
     schema["properties"]["group"]["description"] = "Optional group for bp_add (created on use; default 'default')";
     schema["properties"]["bp_id"]["type"] = "string";
     schema["properties"]["bp_id"]["description"] =
-        "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits/bp_group_set/bp_note (bp_reset_hits without it: all)";
+        "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits/bp_group_set/bp_note/bp_condition (bp_reset_hits "
+        "without it: all)";
+    schema["properties"]["callback_id"]["type"] = "integer";
+    schema["properties"]["callback_id"]["description"] =
+        "Script callback id for callback_resume / callback_remove / callback_policy (the callbacks list shows them)";
+    schema["properties"]["policy"]["type"] = "string";
+    schema["properties"]["policy"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* policy : {"suspend", "disable", "ignore", "unpaced"})
+        schema["properties"]["policy"]["enum"].append(policy);
+    schema["properties"]["policy"]["description"] =
+        "For callback_policy: what happens over the budget - suspend (default: suspended after 3 calls over it within "
+        "50 frames or one over 10 times it, until callback_resume), disable (its tap removed), ignore (counted only)";
     schema["properties"]["select"]["type"] = "string";
     schema["properties"]["select"]["description"] =
         "Instead of bp_id, for bp_remove/bp_enable/bp_disable/bp_toggle: all, a kind (exec, read, write, mem, port, in, out, "
@@ -1324,9 +1418,13 @@ void RegisterControlExecution(ToolRegistry& registry)
         "run_tstates, run_to_interrupt, run_to_scanline, run_scanlines, run_to_pixel (the first paper pixel), "
         "run_until_pc (until PC = pc), pace (run at a pace: 25 / 5 / 1 fps, a frame, lines or an instruction per "
         "interval). Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list/"
-        "bp_reset_hits; bp_add takes ranges, physical pages, port masks, hit policies and keyboard keys; bp_remove / "
-        "bp_enable / bp_disable / bp_toggle take a bp_id or a select: all, a kind, group:<name>; bp_groups lists the "
-        "groups, bp_group_set / bp_note change a breakpoint's group / note). set_register writes a CPU register (name, "
+        "bp_reset_hits; bp_add takes ranges, physical pages, port masks, hit policies, conditions and keyboard keys; "
+        "bp_remove / bp_enable / bp_disable / bp_toggle take a bp_id or a select: all, a kind, group:<name>; bp_groups "
+        "lists the groups, bp_group_set / bp_note / bp_condition change a breakpoint's group / note / condition). "
+        "callbacks lists the script callbacks (Lua on_tap / on_breakpoint / on_game_event, Python emu.on_*) with their "
+        "state and statistics; callback_resume (a suspended one, fresh statistics), callback_remove and "
+        "callback_policy (suspend, disable, ignore; unpaced for frame and sync hooks) manage one by callback_id. "
+        "set_register writes a CPU register (name, "
         "value). "
         "port_out writes a port through the machine's decoder like a CPU OUT (paging, TS-Conf registers, AY, border), "
         "without breakpoints or device waits, as a TTD tool edit; it works paused or running. "
@@ -1348,6 +1446,8 @@ void RegisterControlExecution(ToolRegistry& registry)
                     return;
                 }
                 const std::string& id = idOrError;
+                // bp_*: the CPU whose breakpoints (the routes' ?cpu=)
+                const std::string cpuQuery = args.isMember("cpu") ? "?cpu=" + args["cpu"].asString() : std::string();
 
                 // Automation session (execution arbiter design §6a)
                 if (action == "take_control")
@@ -1467,7 +1567,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                 if (action == "bp_list")
                 {
                     // One line per breakpoint in the text: "#1 0x0038 X hits 3"
-                    ForwardCall("GET", Endpoint(id, "/breakpoints"), nullptr, caller, "", [id, done](ToolResult result) {
+                    ForwardCall("GET", Endpoint(id, "/breakpoints" + cpuQuery), nullptr, caller, "", [id, done](ToolResult result) {
                         if (result.isError)
                         {
                             done(std::move(result));
@@ -1475,16 +1575,29 @@ void RegisterControlExecution(ToolRegistry& registry)
                         }
                         const Json::Value& list = result.structured["breakpoints"];
                         std::ostringstream out;
-                        out << "Breakpoints of " << id << ": " << list.size();
+                        out << "Breakpoints of " << id;
+                        if (result.structured["cpu"].isString() && result.structured["cpu"].asString() != "main")
+                            out << " (" << result.structured["cpu"].asString() << " CPU)";
+                        out << ": " << list.size();
                         for (const Json::Value& bp : list)
                         {
                             out << "\n#" << bp["id"].asUInt() << " "
                                 << (bp["type"].asString() == "port" ? "port " : bp["type"].asString() == "nextreg" ? "NR " : bp["type"].asString() == "beam" ? "beam line "
-                                    : bp["type"].asString() == "copper" ? "copper #" : bp["type"].asString() == "magic" ? "magic " : "")
-                                << Hex16(bp["address"].asUInt()) << " "
+                                    : bp["type"].asString() == "copper" ? "copper #" : bp["type"].asString() == "magic" ? "magic " : "");
+                            if (bp["type"].asString() == "event")
+                                out << "event " << bp["event"].asString();
+                            else if (bp["type"].asString() == "chipreg")
+                                out << "chip " << bp["chip"].asString() << " reg " << Hex16(bp["address"].asUInt());
+                            else
+                                out << Hex16(bp["address"].asUInt());
+                            out << " "
                                 << (bp["execute"].asBool() ? "X" : "") << (bp["read"].asBool() ? "R" : "")
                                 << (bp["write"].asBool() ? "W" : "")
                                 << " hits " << bp["hit_count"].asUInt();
+                            if (bp["condition"].isString())
+                                out << " matched " << bp["match_count"].asUInt() << " if " << bp["condition"].asString();
+                            if (bp["condition_error"].isString())
+                                out << " [condition failed: " << bp["condition_error"].asString() << "]";
                             if (!bp["active"].asBool())
                                 out << " off";
                             if (bp["hit_mode"].isString() && bp["hit_mode"].asString() != "always")
@@ -1504,22 +1617,23 @@ void RegisterControlExecution(ToolRegistry& registry)
                     Json::Value body(Json::objectValue);
                     if (args.isMember("bp_id"))
                         body["id"] = args["bp_id"];
-                    ForwardCall("POST", Endpoint(id, "/breakpoints/hits/reset"), &body, caller,
+                    ForwardCall("POST", Endpoint(id, "/breakpoints/hits/reset" + cpuQuery), &body, caller,
                                 args.isMember("bp_id") ? "Hit counter reset" : "All hit counters reset", done);
                     return;
                 }
                 if (action == "bp_clear")
                 {
-                    ForwardCall("DELETE", Endpoint(id, "/breakpoints"), nullptr, caller, "Cleared all breakpoints on " + id, done);
+                    ForwardCall("DELETE", Endpoint(id, "/breakpoints" + cpuQuery), nullptr, caller, "Cleared all breakpoints on " + id, done);
                     return;
                 }
                 if (action == "bp_add")
                 {
                     const bool magic = args.isMember("type") && args["type"].asString().rfind("magic_", 0) == 0;
-                    const bool keyboard = args.isMember("type") && args["type"].asString() == "keyboard";
+                    const bool keyboard = args.isMember("type") && (args["type"].asString() == "keyboard" ||
+                                                                    args["type"].asString() == "event");
                     if (!magic && !keyboard && !args.isMember("address"))
                     {
-                        done(ToolResult::Error("bp_add requires 'address' (not for magic_ed_ff / magic_dd_01 / keyboard)"));
+                        done(ToolResult::Error("bp_add requires 'address' (not for magic_ed_ff / magic_dd_01 / keyboard / event)"));
                         return;
                     }
                     Json::Value body;
@@ -1527,18 +1641,24 @@ void RegisterControlExecution(ToolRegistry& registry)
                         body["address"] = args["address"];
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
                     for (const char* key : {"address_end", "page", "slot_only", "port_mask", "hits", "hit_mode", "hit_target",
-                                            "note", "group", "doors", "value", "value_mask", "hc", "key", "on"})
+                                            "note", "group", "doors", "value", "value_mask", "hc", "key", "on",
+                                            "condition", "condition_dialect", "event", "chip", "unit"})
                         if (args.isMember(key))
                             body[key] = args[key];
                     // A breakpoint never fires while the breakpoints feature is off, and the add itself says nothing:
                     // switch the feature on (it switches debug mode on too) and say so
-                    ForwardCall("POST", Endpoint(id, "/breakpoints"), &body, caller, "Breakpoint added on " + id,
+                    ForwardCall("POST", Endpoint(id, "/breakpoints" + cpuQuery), &body, caller, "Breakpoint added on " + id,
                                 [id, &caller, done](ToolResult added) {
                         if (added.isError)
                         {
                             done(std::move(added));
                             return;
                         }
+                        // An agent may see only the text: the id and the condition as it was understood
+                        if (added.structured["id"].isUInt() || added.structured["id"].isInt())
+                            added.text += ": #" + std::to_string(added.structured["id"].asUInt());
+                        if (added.structured["condition"].isString())
+                            added.text += " if " + added.structured["condition"].asString();
                         auto result = std::make_shared<ToolResult>(std::move(added));
                         caller.Call("GET", Endpoint(id, "/feature/breakpoints"), nullptr,
                                     [id, &caller, done, result](int status, Json::Value feature) {
@@ -1583,10 +1703,17 @@ void RegisterControlExecution(ToolRegistry& registry)
                                 response.get("state", "").asString();
                         if (pause.get("reason", "none").asString() == "breakpoint")
                         {
-                            char where[48];
+                            char where[80];
                             std::snprintf(where, sizeof(where), " at breakpoint #%u (%04X)", pause.get("breakpoint_id", 0).asUInt(),
                                           pause.get("address", 0).asUInt());
                             text += where;
+                            // A card CPU's breakpoint: whose, and the card instruction of the access
+                            if (pause.isMember("cpu_pc"))
+                            {
+                                std::snprintf(where, sizeof(where), " of the %s CPU, its instruction at %04X",
+                                              pause.get("cpu", "").asString().c_str(), pause["cpu_pc"].asUInt());
+                                text += where;
+                            }
                         }
                         else if (pause.get("reason", "none").asString() != "none")
                             text += " (last stop: " + pause.get("reason", "").asString() + ")";
@@ -1626,14 +1753,14 @@ void RegisterControlExecution(ToolRegistry& registry)
                     body["select"] = args.isMember("select") ? args["select"].asString() : std::string("all");
                     if (action == "bp_remove")
                     {
-                        ForwardCall("POST", Endpoint(id, "/breakpoints/remove"), &body, caller, "Breakpoints removed", done);
+                        ForwardCall("POST", Endpoint(id, "/breakpoints/remove" + cpuQuery), &body, caller, "Breakpoints removed", done);
                         return;
                     }
                     if (action == "bp_toggle")
                         body["active"] = "toggle";
                     else
                         body["active"] = action == "bp_enable";
-                    ForwardCall("PUT", Endpoint(id, "/breakpoints/active"), &body, caller,
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/active" + cpuQuery), &body, caller,
                                 action == "bp_toggle" ? "Breakpoints toggled"
                                 : action == "bp_enable" ? "Breakpoints enabled" : "Breakpoints disabled", done);
                     return;
@@ -1643,21 +1770,82 @@ void RegisterControlExecution(ToolRegistry& registry)
                     Json::Value body;
                     body["select"] = args["bp_id"].asString();
                     body["active"] = "toggle";
-                    ForwardCall("PUT", Endpoint(id, "/breakpoints/active"), &body, caller, "Breakpoint toggled", done);
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/active" + cpuQuery), &body, caller, "Breakpoint toggled", done);
                     return;
                 }
                 if (action == "bp_groups")
                 {
-                    ForwardCall("GET", Endpoint(id, "/breakpoints/groups"), nullptr, caller, "", [done](ToolResult result) {
+                    ForwardCall("GET", Endpoint(id, "/breakpoints/groups" + cpuQuery), nullptr, caller, "", [done](ToolResult result) {
                         if (!result.isError)
                         {
                             std::ostringstream out;
-                            out << "Breakpoint groups: " << result.structured["groups"].size();
+                            out << "Breakpoint groups";
+                            if (result.structured["cpu"].asString() != "main")
+                                out << " (" << result.structured["cpu"].asString() << " CPU)";
+                            out << ": " << result.structured["groups"].size();
                             for (const Json::Value& group : result.structured["groups"])
                                 out << "\n" << group["name"].asString() << ": " << group["active"].asUInt() << " of "
                                     << group["total"].asUInt() << " on";
                             result.text = out.str();
                         }
+                        done(std::move(result));
+                    });
+                    return;
+                }
+                if (action == "callbacks")
+                {
+                    // One line per callback in the text (an agent may see only the text): state, policy, statistics
+                    ForwardCall("GET", Endpoint(id, "/callbacks"), nullptr, caller, "", [done](ToolResult result) {
+                        if (!result.isError)
+                            result.text = FormatCallbackList(result.structured);
+                        done(std::move(result));
+                    });
+                    return;
+                }
+                if (action == "callback_resume" || action == "callback_remove" || action == "callback_policy")
+                {
+                    if (!args.isMember("callback_id") || (action == "callback_policy" && !args.isMember("policy")))
+                    {
+                        done(ToolResult::Error(action + (action == "callback_policy" ? " requires 'callback_id' and 'policy'"
+                                                                                      : " requires 'callback_id'")));
+                        return;
+                    }
+                    const std::string path = Endpoint(id, "/callbacks/" + args["callback_id"].asString()) +
+                                             (action == "callback_resume" ? "/resume"
+                                              : action == "callback_policy" ? "/policy" : "");
+                    Json::Value body(Json::objectValue);
+                    if (action == "callback_policy")
+                        body["policy"] = args["policy"].asString();
+                    const char* method = action == "callback_resume" ? "POST" : action == "callback_policy" ? "PUT" : "DELETE";
+                    ForwardCall(method, path, action == "callback_remove" ? nullptr : &body, caller, "",
+                                [done](ToolResult result) {
+                        if (!result.isError)
+                        {
+                            result.text = result.structured["message"].asString();
+                            if (result.structured["callback"].isObject())
+                                result.text += ": " + FormatCallbackLine(result.structured["callback"]);
+                        }
+                        done(std::move(result));
+                    });
+                    return;
+                }
+                if (action == "bp_condition")
+                {
+                    if (!args.isMember("bp_id") || !args.isMember("condition"))
+                    {
+                        done(ToolResult::Error("bp_condition requires 'bp_id' and 'condition' ('' clears it)"));
+                        return;
+                    }
+                    Json::Value body;
+                    body["condition"] = args["condition"].asString();
+                    if (args.isMember("condition_dialect"))
+                        body["dialect"] = args["condition_dialect"].asString();
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/" + args["bp_id"].asString() + "/condition" + cpuQuery), &body,
+                                caller, "", [done](ToolResult result) {
+                        if (!result.isError)
+                            result.text = result.structured["condition"].isString()
+                                              ? "Condition set: " + result.structured["condition"].asString()
+                                              : std::string("Condition cleared");
                         done(std::move(result));
                     });
                     return;
@@ -1672,7 +1860,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                     }
                     Json::Value body;
                     body[field] = args[field].asString();
-                    ForwardCall("PUT", Endpoint(id, "/breakpoints/" + args["bp_id"].asString() + "/" + field), &body, caller,
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/" + args["bp_id"].asString() + "/" + field + cpuQuery), &body, caller,
                                 action == "bp_note" ? "Note set" : "Group set", done);
                     return;
                 }
@@ -1714,11 +1902,11 @@ void RegisterControlExecution(ToolRegistry& registry)
                     std::string bpId = args["bp_id"].asString();
                     if (action == "bp_remove")
                     {
-                        ForwardCall("DELETE", Endpoint(id, "/breakpoints/" + bpId), nullptr, caller, "Breakpoint removed", done);
+                        ForwardCall("DELETE", Endpoint(id, "/breakpoints/" + bpId + cpuQuery), nullptr, caller, "Breakpoint removed", done);
                     }
                     else
                     {
-                        ForwardCall("PUT", Endpoint(id, "/breakpoints/" + bpId + (action == "bp_enable" ? "/enable" : "/disable")),
+                        ForwardCall("PUT", Endpoint(id, "/breakpoints/" + bpId + (action == "bp_enable" ? "/enable" : "/disable") + cpuQuery),
                                     nullptr, caller, action == "bp_enable" ? "Breakpoint enabled" : "Breakpoint disabled", done);
                     }
                     return;

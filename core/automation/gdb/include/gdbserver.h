@@ -2,20 +2,23 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 
 #include <common/uuid.h>
-#include <3rdparty/message-center/eventqueue.h>
 
 class GDBSession;
 class GDBPacketReader;
 class Emulator;
 class EmulatorContext;
+class BreakpointManager;
 
 /// @brief GDB RSP server managing TCP connections and client sessions
 ///
@@ -65,23 +68,28 @@ private:
     std::unique_ptr<std::thread> _acceptThread;
 
     mutable std::mutex _sessionsMutex;
-    std::unordered_map<int, std::unique_ptr<GDBSession>> _sessions;
+    // Shared with the session's own thread (handleClient): stop() wakes it, the thread ends it and closes the socket
+    std::unordered_map<int, std::shared_ptr<GDBSession>> _sessions;
 };
 
 /// @brief A single GDB client session
 ///
 /// Handles packet I/O, dispatch, and emulator state for one connected client.
 /// Implements run-control claim per TDD §3.3.
-class GDBSession : public Observer
+///
+/// One thread (run()) reads the socket, answers the packets and watches a running target: while a `c` runs it keeps
+/// reading, so a 0x03 interrupts it; the stop reply goes out when the machine stops
+class GDBSession
 {
 public:
     GDBSession(int socket, bool noAckMode = false);
     ~GDBSession();
 
-    /// @brief Run the session (blocking, called from dedicated thread)
+    /// @brief Run the session (blocking, called from dedicated thread). Ends when the client detaches, the socket
+    /// closes or stop() is called; then removes this session's breakpoints and releases run control
     void run();
 
-    /// @brief Stop the session
+    /// @brief Stop the session: run() ends within one poll quantum (any thread)
     void stop();
 
     /// @brief Check if session is active
@@ -93,11 +101,19 @@ public:
     /// @brief Set auto-attach mode
     void setAutoAttach(bool enable) { _autoAttach = enable; }
 
+    /// A handler's reply that sends nothing now: a `c` whose stop reply comes when the machine stops
+    static constexpr const char* kDeferredReply = "\x7f_DEFERRED_";
+
 private:
     // Packet I/O
     bool sendPacket(const std::string& data);
     bool sendRaw(const std::string& data);
-    std::string receivePacket();
+    /// Waits up to @p timeoutMs for bytes and feeds them all: complete packets (acked) and interrupts ("\x03") go to
+    /// _incoming in arrival order. False when the socket closed
+    bool pumpInput(int timeoutMs);
+    void feedByte(char c);
+    /// The client's packet loop is over: this session's breakpoints go, run control is released
+    void endSession();
 
     // Packet handlers
     std::string handlePacket(const std::string& packet);
@@ -113,11 +129,17 @@ private:
     std::string handleReadRegister(const std::string& params);
     std::string handleWriteRegister(const std::string& params);
     std::string handleReadMemory(const std::string& params);
-    std::string handleWriteMemory(const std::string& params);
+    /// M (hex data) or X (binary data, '}' escapes)
+    std::string handleWriteMemory(const std::string& params, bool binary);
+    /// The physical view 0x01PPAAAA names a RAM page this machine has (config ramsize)
+    bool hasRamPage(uint64_t address) const;
 
     // Breakpoints
     std::string handleSetBreakpoint(const std::string& params);
     std::string handleRemoveBreakpoint(const std::string& params);
+    // Removes this session's Z0 / Z1 breakpoint at the address (when another owner's was adopted, only the record);
+    // false when the session set none there
+    bool forgetExecutionBreakpoint(BreakpointManager& breakpoints, uint16_t address);
 
     // Execution control
     std::string handleContinue();
@@ -126,22 +148,28 @@ private:
     bool RefuseAfterTakeBack(const std::string& packet);
     std::string handleStep();
     std::string handleInterrupt();
+    /// A `c` in flight: the machine stopped (or the user took control back) - its stop reply, else empty
+    std::string pollRunningStop();
+    /// The stop reply for the machine's last stop (Emulator::LastStop): gdb's own breakpoint or watchpoint by its id
+    std::string classifyStop();
+    /// The machine stands in recorded history (TTD detached): a forward run cuts the history there and goes on live
+    /// (time-travel TDD §8.3). False with a console message when the cut is refused
+    bool inHistory() const;
+    bool leaveHistory();
+    /// gdb's breakpoints need the debug mode and the breakpoints feature (unreal-qt starts with both off)
+    void ensureDebugEnabled();
+    /// Removes every breakpoint and watchpoint this session set (only its own ids)
+    void forgetAllBreakpoints();
 
     // Reverse execution (TTD)
     std::string handleBackwardStep();
     std::string handleBackwardContinue();
 
-    // Stop reason
-    std::string formatStopReply();
-
     // Instance management
+    /// Binds the session to the instance (the attach's pause, run control when @p claim)
+    void attachTo(const std::shared_ptr<Emulator>& emulator, const std::string& instanceId, bool claim);
     std::string handleAttach(const std::string& pid);
     std::string handleDetach();
-
-    // State change notification callback (Observer interface)
-    void onEmulatorStateChange(int id, Message* message);
-    void subscribeToStateChanges();
-    void unsubscribeFromStateChanges();
 
     int _socket = -1;
     std::atomic<bool> _active{true};
@@ -150,6 +178,20 @@ private:
 
     std::string _attachedInstanceId;
     std::unique_ptr<GDBPacketReader> _reader;
+    /// Packets and interrupts read but not handled yet (the socket is read in chunks)
+    std::deque<std::string> _incoming;
+
+    // This session's execution breakpoints (Z0 / Z1) by address: a conditional one has no address key in the
+    // manager, and a repeated Z0 replaces the conditions. All of them unshared: never another surface's
+    struct OwnBreakpoint
+    {
+        uint16_t id = 0;
+        bool hardware = false;   // Z1: its stop reply says hwbreak
+    };
+    std::unordered_map<uint16_t, OwnBreakpoint> _executionBreakpoints;
+    // This session's watchpoints by (Z type, address, length): one unshared core breakpoint each (a range for a
+    // length over 1, read | write for Z4)
+    std::map<std::tuple<uint8_t, uint16_t, uint32_t>, uint16_t> _watchpoints;
 
     // Attached emulator
     std::shared_ptr<Emulator> _emulator;
@@ -158,24 +200,17 @@ private:
     // Run-control claim (TDD §3.3)
     unreal::UUID _sessionUuid;  // Generated at session start, used for claim ownership
 
-    // Async state change notification (1A.7.3)
-    std::atomic<bool> _waitingForStop{false};    // True when client sent 'c' and we're waiting
-    std::atomic<bool> _externalStopPending{false}; // True when external pause notification received
-    std::string _attachedEmulatorUuid;           // UUID string for notification filtering
-    bool _subscribedToStateChanges = false;
+    // A `c` in flight (its stop reply pending) and whether gdb's 0x03 asked it to stop
+    bool _running = false;
+    bool _interruptRequested = false;
+    // gdb stopped the machine (attach, interrupt, a stop of its own run): a detach lets it run again. Not after a
+    // stop somebody else made (an external pause)
+    bool _resumeOnDetach = false;
+    // The history cut of a forward run from the past is told on the console once
+    bool _cutWarned = false;
 
-    // Stop reason tracking
-    enum class StopReason
-    {
-        None,
-        Breakpoint,
-        Watchpoint,
-        Step,
-        Interrupt,
-        Attached
-    };
-    StopReason _lastStopReason = StopReason::Attached;
-    uint16_t _lastWatchAddress = 0;
+    // Stop reason tracking: the reply `?` repeats
+    std::string _lastStopReply = "T05thread:01;";
 
     // Client compatibility quirk flags (TDD §4.7.1, §4.2.2)
     struct ClientQuirks

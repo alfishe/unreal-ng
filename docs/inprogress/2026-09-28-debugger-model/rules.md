@@ -286,9 +286,15 @@ The Unreal language (U §10.2), kept as it is and extended:
   - at least N.
 
   Each has a Reset.
-- **A condition that fails to evaluate stops the machine** and puts the
-  breakpoint in an error state, with the reason. It is never silently false
-  (Spectaculator).
+- **A condition that fails to evaluate never stops the machine** (owner
+  2026-10-26, replacing "stops the machine" of Spectaculator): the breakpoint
+  is marked with the reason, the frame and the PC, is skipped from then on and
+  every plane is told. It is never silently false. Validation when the
+  condition is set (the parse, every operand against the trigger and the
+  machine, a dry run) refuses the obvious mistakes.
+- **Built (phase 1, 2026-10-26):** the improved form on memory and port
+  breakpoints, the Unreal order canonical, `matchCount` beside `hitCount`
+  ([conditional breakpoints](../../features/conditional-breakpoints.md)).
 - **Access-variable aliases** (ZXSpin): `RADDR` = `RD`, `WADDR` = `WR`,
   `RPORT` = `IN`, `WPORT` = `OUT`, `VALUE` = `VAL` / `MDT`, and `RWWORD` (the
   16-bit value of a word access). With them, one execution-condition engine
