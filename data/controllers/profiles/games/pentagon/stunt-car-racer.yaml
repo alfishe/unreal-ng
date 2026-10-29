@@ -1,0 +1,38 @@
+# Stunt Car Racer (Micro Style / Geoff Crammond 1989, Pete Cooke's 128K conversion), the 128K tape. Menus: S up, X down, Space
+# takes the line ("Default Keys OPSX Space": O left, P right, S accelerates, X brakes, Space boosts). A race starts with the
+# car dropped from the crane. Haptics (haptics.md §13 H5), found with TTD on a recorded Practise run (the Roller Coaster):
+# #8FA3 is the first instruction of the wreck routine in the fixed RAM page, run once when the car is wrecked (the cloud
+# of dust on the screen, the crane lifts the car back a moment later); the other rare code of the run is the airborne
+# handling (#A680.. in the page at #C000, #8680..) whose first and last frames are the take-off and the touch-down, but a
+# plain exec probe cannot tell them apart yet. The AY writes of the sound driver are timers of the driver, not events.
+# Checked in real time (the 128K tzx, Practise on the Roller Coaster, 60 s: S held, boost taps, two steers, two jumps): 0 fires
+# during the drive, 1 `wreck` at the crash, and the final screenshot shows the car back on the crane. Known limits: only the
+# 128K tzx was played (the 128K TAP is listed by its hash, not played); no landing or engine haptics yet.
+schema: 1
+kind: play
+id: builtin/game/stunt-car-racer
+label: Stunt Car Racer
+match:
+  machines: [PENTAGON, 128K]
+  file_sha256:
+    - "9eea91a484da49a089599f04c4e901b611d5763d3de17b087bafd8ac545d2a55"
+    - "20da8fb2fc6687d9f0bf53a7cd4c725da12763abcbd1535caefc85875ff48fde"
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    dpad.up:      { key: S }
+    dpad.down:    { key: X }
+    rt.click:     { key: S, label: Accelerate }
+    lt.click:     { key: X, label: Brake }
+    south:        { key: SPACE, label: Boost }
+    menu:         { key: SPACE, label: Select }
+haptics:
+  sources:
+    wreck: { probe: exec, address: "0x8FA3" }
+  rules:
+    - { on: wreck, play: explosion, scale: 0.8 }

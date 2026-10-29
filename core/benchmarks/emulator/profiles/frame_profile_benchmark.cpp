@@ -11,6 +11,9 @@
 ///   BareTurbo          ShipTurbo + screenhq, soundhq, sound, hud, debugmode off
 ///   ShipTurboDebugHud  ShipTurbo + debugmode, breakpoints, hud on                         a debugging session
 ///   WorstNormal        shipped config + debugmode, memorytracking, calltrace, TTD recording, 1x
+///   TtdRecordNormal    shipped config + a TTD recording (debugmode, timetravel), 1x
+///   TtdRecordSoundOff  TtdRecordNormal with the sound feature off (a headless automation instance)
+///   TtdRecordSoundLQ   TtdRecordNormal with soundhq off
 ///   NoCardsTurbo       AY in the AY socket, no bus cards, turbo                           (slot trees only)
 ///   Only<Card>Turbo    NoCardsTurbo + one card (neogs, gs, moonsound, soundrive; tsfm in the AY socket)
 ///   MaxTurbo           NoCardsTurbo + everything BareTurbo switches off
@@ -69,7 +72,16 @@ enum class RunProfile
     OnlyCardTurbo,
     OnlyCardNormal,  ///< as OnlyCardTurbo at 1x: the card renders its sound
     MaxTurbo,
+    TtdRecordNormal,
+    TtdRecordSoundOff,
+    TtdRecordSoundLQ,
 };
+
+bool RecordsTtd(RunProfile profile)
+{
+    return profile == RunProfile::WorstNormal || profile == RunProfile::TtdRecordNormal ||
+           profile == RunProfile::TtdRecordSoundOff || profile == RunProfile::TtdRecordSoundLQ;
+}
 
 bool ReplacesCards(RunProfile profile)
 {
@@ -173,11 +185,18 @@ void RunFrameProfile(benchmark::State& state, const char* model, RunProfile prof
     for (int i = 0; i < workload.settleFrames; i++)
         mainLoop->RunFramePublic();
 
-    if (profile == RunProfile::WorstNormal)
+    if (profile == RunProfile::TtdRecordSoundOff)
+        SetFeature(context, Features::kSoundGeneration, false);
+    if (profile == RunProfile::TtdRecordSoundLQ)
+        SetFeature(context, Features::kSoundHQ, false);
+    if (RecordsTtd(profile))
     {
         SetFeature(context, Features::kDebugMode, true);
-        SetFeature(context, Features::kMemoryTracking, true);
-        SetFeature(context, Features::kCallTrace, true);
+        if (profile == RunProfile::WorstNormal)
+        {
+            SetFeature(context, Features::kMemoryTracking, true);
+            SetFeature(context, Features::kCallTrace, true);
+        }
         SetFeature(context, Features::kTimeTravel, true);
         context->pMemory->UpdateFeatureCache();
 
@@ -204,8 +223,7 @@ void RunFrameProfile(benchmark::State& state, const char* model, RunProfile prof
         context->pMemory->UpdateFeatureCache();
     }
 
-    const bool turbo =
-        profile != RunProfile::ShipNormal && profile != RunProfile::WorstNormal && profile != RunProfile::OnlyCardNormal;
+    const bool turbo = profile != RunProfile::ShipNormal && !RecordsTtd(profile) && profile != RunProfile::OnlyCardNormal;
     if (turbo)
         context->pCore->EnableTurboMode();
 
@@ -244,6 +262,9 @@ FRAME_PROFILE(Pentagon_ShipTurbo, "PENTAGON", RunProfile::ShipTurbo);
 FRAME_PROFILE(Pentagon_BareTurbo, "PENTAGON", RunProfile::BareTurbo);
 FRAME_PROFILE(Pentagon_ShipTurboDebugHud, "PENTAGON", RunProfile::ShipTurboDebugHud);
 FRAME_PROFILE(Pentagon_WorstNormal, "PENTAGON", RunProfile::WorstNormal);
+FRAME_PROFILE(Pentagon_TtdRecordNormal, "PENTAGON", RunProfile::TtdRecordNormal);
+FRAME_PROFILE(Pentagon_TtdRecordSoundOff, "PENTAGON", RunProfile::TtdRecordSoundOff);
+FRAME_PROFILE(Pentagon_TtdRecordSoundLQ, "PENTAGON", RunProfile::TtdRecordSoundLQ);
 FRAME_PROFILE(48K_ShipTurbo, "48K", RunProfile::ShipTurbo);
 FRAME_PROFILE(128K_ShipTurbo, "128K", RunProfile::ShipTurbo);
 FRAME_PROFILE(Scorpion_ShipTurbo, "SCORPION", RunProfile::ShipTurbo);
@@ -287,4 +308,13 @@ FRAME_PROFILE(Next_BareTurbo, "NEXT", RunProfile::BareTurbo);
 // Heavy machines running a program: TSU sprites over tiles (the TS-Conf SDK example)
 FRAME_PROFILE_WORKLOAD(TSConf_Sprites_ShipNormal, "TSL", RunProfile::ShipNormal, "machines/tsconf/spg/sprites.spg", 50);
 FRAME_PROFILE_WORKLOAD(TSConf_Sprites_ShipTurbo, "TSL", RunProfile::ShipTurbo, "machines/tsconf/spg/sprites.spg", 50);
+
+// A TurboSound FM tune (both chips, FM and SSG) under a TTD recording: what each host sound setting costs
+FRAME_PROFILE_WORKLOAD(Pentagon_TsfmTune_ShipNormal, "PENTAGON", RunProfile::ShipNormal, "sound/tsfm/tech_support.sna", 50);
+FRAME_PROFILE_WORKLOAD(Pentagon_TsfmTune_TtdRecordNormal, "PENTAGON", RunProfile::TtdRecordNormal,
+                       "sound/tsfm/tech_support.sna", 50);
+FRAME_PROFILE_WORKLOAD(Pentagon_TsfmTune_TtdRecordSoundOff, "PENTAGON", RunProfile::TtdRecordSoundOff,
+                       "sound/tsfm/tech_support.sna", 50);
+FRAME_PROFILE_WORKLOAD(Pentagon_TsfmTune_TtdRecordSoundLQ, "PENTAGON", RunProfile::TtdRecordSoundLQ,
+                       "sound/tsfm/tech_support.sna", 50);
 #endif

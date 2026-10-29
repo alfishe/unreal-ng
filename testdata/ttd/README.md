@@ -154,8 +154,10 @@ machine or on what ran before:
   would pick that up.
 - **Core audio rate 44100 Hz, `soundhq` and `screenhq` on.** Without this, the
   app follows the host's audio device (often 48 kHz). SSG tick scheduling
-  depends on the output rate and the decimator mode, so a replay is exact
-  only with the same rate and mode as the recording. `TTD_Corpus_Test` runs
+  depends on the output rate, so a replay is exact only with the recording's
+  rate. The decimator mode (`soundhq`) and the sound feature are pinned to the
+  recording's while a replay runs (TurboSound FM board byte bits 4 and 6), so
+  those matter only for what the fixture sounds like. `TTD_Corpus_Test` runs
   with these same settings.
 - **The classic GS card in the GS slot.** The corpus was recorded while the
   shipped PENTAGON config had `GSType=Z80`; the shipped configs fit NeoGS

@@ -13,9 +13,8 @@ namespace
 {
 constexpr uint32_t kEntry = 32;
 constexpr uint32_t kExtent = 16384;
-/// The ATM CP/M floppy: cylinder 0 (two tracks of 16 x 256 bytes) reserved
+/// The ATM CP/M floppy: cylinder 0 (two tracks of 16 x 256 bytes) reserved, the directory after it
 constexpr uint64_t kFloppyDirectory = 0x2000;
-constexpr uint32_t kFloppyTrack = 16 * 256;
 
 std::string Trimmed(const uint8_t* bytes, size_t n)
 {
@@ -94,32 +93,41 @@ CpmGeometry AtmCpmChannel::Geometry() const
     return g;
 }
 
-CpmFileSystem CpmFileSystem::AtmFloppy(DiskImage& image)
+namespace
 {
-    CpmGeometry geometry;
-    geometry.blocks = 316;
-    geometry.entries = 128;
+/// A CP/M floppy on a disk image: logical track t is cylinder t / 2, side t % 2, its sectors 1..perTrack of
+/// `sectorSize` bytes found by number; the directory `directory` bytes in. A write changes the sector in the image
+/// (its CRC and the track's dirty flag follow). `lastAlias`: the ID the last sector of track 0 may carry instead of
+/// perTrack (0: none)
+CpmFileSystem FloppyCpm(DiskImage& image, CpmGeometry geometry, uint64_t directory, uint32_t sectorSize, uint32_t perTrack,
+                        uint8_t lastAlias = 0)
+{
     DiskImage* disk = &image;
-    // The 256-byte sector holding byte `at` of the image and its track
-    auto locate = [disk](uint64_t at, DiskImage::Track*& t) -> DiskImage::Sector* {
-        const uint64_t track = at / kFloppyTrack;
+    const uint64_t trackBytes = static_cast<uint64_t>(sectorSize) * perTrack;
+    // The sector holding byte `at` of the disk and its track
+    auto locate = [disk, trackBytes, sectorSize, perTrack, lastAlias](uint64_t at,
+                                                                      DiskImage::Track*& t) -> DiskImage::Sector* {
+        const uint64_t track = at / trackBytes;
         if (track / 2 > 0xFF)
             return nullptr;
         t = disk->getTrackForCylinderAndSide(static_cast<uint8_t>(track / 2), static_cast<uint8_t>(track % 2));
-        DiskImage::Sector* s = t ? t->findSector(static_cast<uint8_t>(at % kFloppyTrack / 256 + 1)) : nullptr;
-        return s && s->data && s->dataSize >= 256 ? s : nullptr;
+        const uint8_t number = static_cast<uint8_t>(at % trackBytes / sectorSize + 1);
+        DiskImage::Sector* s = t ? t->findSector(number) : nullptr;
+        if (!s && t && lastAlias != 0 && track == 0 && number == perTrack)
+            s = t->findSector(lastAlias);
+        return s && s->data && s->dataSize >= sectorSize ? s : nullptr;
     };
     CpmFileSystem fs(
-        [locate](uint64_t offset, uint8_t* dst, uint32_t size) {
-            uint64_t at = kFloppyDirectory + offset;
+        [locate, directory, sectorSize](uint64_t offset, uint8_t* dst, uint32_t size) {
+            uint64_t at = directory + offset;
             while (size > 0)
             {
                 DiskImage::Track* t = nullptr;
                 const DiskImage::Sector* s = locate(at, t);
                 if (!s)
                     return false;
-                const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(256 - at % 256));
-                std::memcpy(dst, s->data + at % 256, n);
+                const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(sectorSize - at % sectorSize));
+                std::memcpy(dst, s->data + at % sectorSize, n);
                 dst += n;
                 at += n;
                 size -= n;
@@ -127,20 +135,19 @@ CpmFileSystem CpmFileSystem::AtmFloppy(DiskImage& image)
             return true;
         },
         geometry);
-    // A write changes the sector in the image (its CRC and the track's dirty flag follow)
-    fs.SetWriter([locate](uint64_t offset, const uint8_t* src, uint32_t size) {
-        uint64_t at = kFloppyDirectory + offset;
+    fs.SetWriter([locate, directory, sectorSize](uint64_t offset, const uint8_t* src, uint32_t size) {
+        uint64_t at = directory + offset;
+        std::vector<uint8_t> sector(sectorSize);
         while (size > 0)
         {
             DiskImage::Track* t = nullptr;
             const DiskImage::Sector* s = locate(at, t);
             if (!s)
                 return false;
-            uint8_t sector[256];
-            std::memcpy(sector, s->data, 256);
-            const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(256 - at % 256));
-            std::memcpy(sector + at % 256, src, n);
-            t->writeSectorData(static_cast<uint8_t>(at % kFloppyTrack / 256), sector, 256);
+            std::memcpy(sector.data(), s->data, sectorSize);
+            const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(sectorSize - at % sectorSize));
+            std::memcpy(sector.data() + at % sectorSize, src, n);
+            t->writeSectorData(static_cast<uint8_t>(s->number() - 1), sector.data(), sectorSize);
             src += n;
             at += n;
             size -= n;
@@ -148,6 +155,34 @@ CpmFileSystem CpmFileSystem::AtmFloppy(DiskImage& image)
         return true;
     });
     return fs;
+}
+}  // namespace
+
+CpmFileSystem CpmFileSystem::AtmFloppy(DiskImage& image)
+{
+    CpmGeometry geometry;
+    geometry.blocks = 316;
+    geometry.entries = 128;
+    return FloppyCpm(image, geometry, kFloppyDirectory, 256, 16);
+}
+
+CpmFileSystem CpmFileSystem::ProfiFloppy(DiskImage& image)
+{
+    // DOSBIO.DRV's DPB: SPT 40, BSH 4, EXM 0, DSM 399, DRM 127, AL0 #C0, OFF 0. FORMAT.COM's system track (its
+    // default type) numbers the sectors 1, 2, 3, 4, 9: sector 9 stands for the fifth.
+    CpmGeometry geometry;
+    geometry.blocks = 400;
+    geometry.entries = 128;
+    return FloppyCpm(image, geometry, 0, 1024, 5, 9);
+}
+
+CpmFileSystem CpmFileSystem::KlugFloppy(DiskImage& image)
+{
+    // The BIOS's DPB (KLUGCPM.TD0, system track at #C3F): SPT 40, BSH 4, EXM 0, DSM 389, DRM 127, AL0 #C0, OFF 4
+    CpmGeometry geometry;
+    geometry.blocks = 390;
+    geometry.entries = 128;
+    return FloppyCpm(image, geometry, 4 * 5 * 1024, 1024, 5, 9);
 }
 
 bool CpmFileSystem::ParseAtmConfig(const uint8_t* sector, std::vector<AtmCpmChannel>& out)
@@ -260,7 +295,7 @@ uint32_t CpmFileSystem::Pointer(const uint8_t* e, uint32_t k) const
     return _geometry.Wide() ? (e[16 + 2 * k] | e[17 + 2 * k] << 8) : e[16 + k];
 }
 
-bool CpmFileSystem::IsCpm(std::string* why) const
+bool CpmFileSystem::IsCpm(std::string* why, bool empty) const
 {
     auto fail = [why](const std::string& reason) {
         if (why)
@@ -304,7 +339,7 @@ bool CpmFileSystem::IsCpm(std::string* why) const
         }
         files++;
     }
-    return files > 0 ? true : fail("no file");
+    return files > 0 || empty ? true : fail("no file");
 }
 
 bool CpmFileSystem::List(std::vector<CpmFile>& out, std::string& error) const

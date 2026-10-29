@@ -360,6 +360,8 @@ protected:
 
     /// Per-frame cache: turbo mode with audio not requested and no recording in progress
     bool _synthesisSuppressed = false;
+    /// Per-frame cache: no generator synthesises this frame (suppressed above or the sound feature off)
+    bool _generationOff = false;
 
     /// A gap in the chains' stream (sound off, turbo without audio): the next
     /// frame with audio resets every character chain first, so no delay line or
@@ -491,6 +493,11 @@ public:
     void setTurboLowQualityOverride(bool enabled);
     bool isTurboLowQualityOverride() const { return _turboLowQualityOverride.load(std::memory_order_relaxed); }
 
+    /// TTD pins the TurboSound device's render path while the machine is bound to a timeline (recording, replay,
+    /// Detached), taking the host's mode at each frame start while it records: ITurboSoundDevice::setTtdRenderPinned
+    bool ttdPinsTurboSoundRender() const;
+    bool ttdRecordsTurboSoundRender() const;
+
     /// Effective DSP quality: the user's `soundhq` feature unless turbo overrides it
     bool isHQActive() const
     {
@@ -502,6 +509,9 @@ public:
     /// level state is still tracked so program-visible behaviour is unchanged.
     /// Evaluated once per frame in handleFrameStart.
     bool isSynthesisSuppressed() const { return _synthesisSuppressed; }
+    /// True while the generators synthesise nothing this frame (isSynthesisSuppressed or the sound feature off),
+    /// as handleFrameStart told them: the render mode a TTD recording holds (render.sound_generation)
+    bool isGenerationOff() const { return _generationOff; }
 
     /// TTD restore of a device that carries its own copy of the sample phase
     /// (same units as _sampleAccumulator - SoundChip_TurboSoundFM restores it
