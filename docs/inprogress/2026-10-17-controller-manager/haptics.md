@@ -625,6 +625,22 @@ and prove a game's triggers: [the game-haptics recipe](../../../.recipe/input/ga
 
 Each profile also binds the pad: the game's keys on the d-pad, the left stick and the face buttons.
 
+Racing games (2026-10-28 / 29), each found by TTD on a recorded run and checked in real time through
+`/monitor/game.events`; the images are in `software/games/haptics/racing/` (README with hash and source). All of them
+have the speed as a `value` probe on the low motor (`engine`):
+
+| Profile | Image | Events |
+|:--|:--|:--|
+| `builtin/game/turbo-esprit` | tape (Erbe) | speed `#75F7`; exec `#F57F` (fire) → `shot`, `#EC94` (crash) → `hit`, `#A08C` (penalty) → `tick` |
+| `builtin/game/super-hang-on-{beginner,junior,senior,expert}` | 4 archive.org snapshots (each build has its own addresses) | speed; crash → `explosion`; off-road and overtakes not mapped |
+| `builtin/game/jet-bike-simulator` | tape (48K) | speed; `hit` → `thump`; laps not mapped |
+| `builtin/game/hard-drivin` | snapshot | speed `#965B`; exec `#F5E1` (wreck) → `explosion`; value `#951E` (off the road) → `rumble-strip` |
+| `builtin/game/overlander` | snapshot | speed `#F019`; exec `#7297` (crash) → `explosion`, `#5FE3` (shot) → `shot`; kills and pickups not mapped |
+| `builtin/game/badlands` | snapshot | speed `#E5F3`; write `#E5FF` raised (hit) → `hit`; exec `#B877` (missile) → `shot`; the drones take no hit path |
+| `builtin/game/test-drive-ii` | snapshot | speed `#F058`; exec `#88C7` (traffic collision) → `explosion`; cliff and police not mapped |
+| `builtin/game/pole-position` | snapshot | speed `#9802`; exec `#9A24` (crash) → `explosion` |
+| `builtin/game/cisco-heat` | snapshot | speed `#5BB3`; exec `#9BE6` (grass) → `rumble-strip`, `#9137` (crash sound set-up) → `explosion` |
+
 - Matching by content signature: `match.signatures` (indexed as `sig:` keys) already parses next to `file_sha256`;
   once `swsignature` gives a release's content signature, a document lists it there and the hash lists can go.
 - The tests do not use the games (they are not in the repository; Dizzy X is, and `DizzyXJumpsAndLandsOnce` plays it). A test program on a Pentagon calls each address
