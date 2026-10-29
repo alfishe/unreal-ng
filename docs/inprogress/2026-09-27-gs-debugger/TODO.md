@@ -41,7 +41,8 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
 - [x] Card taps for script callbacks (`cpu = "gs"`): memory, ports and card events (`event = "int"`, ...), the card's
   registers in the hit, `peek` / `reg` of the card in a hook; Lua and Python `on_tap`, `cpu` in the lists.
 - [x] A sync hook on a card read or port in returns the byte the card CPU sees (`BreakpointManager::
-  HandleReplaceableRead` / `HandleReplaceablePortIn`); kept while time travel records or browses.
+  HandleReplaceableRead` / `HandleReplaceablePortIn`); refused while time travel records or browses (the hook gets
+  an error and the card reads the real byte: a replay could not repeat the substitution).
 - [x] Tests: `LuaGSCardHook_Test` (gs105a's `IN A,(4)` takes the hook's byte), live `test_gs_debugger.py` (Python).
   Docs: [script-callbacks.md](../../features/script-callbacks.md#the-sound-cards-cpu).
 - [x] Callbacks named after the events (X13, 2026-10-27): `gs_on_command`, `gs_on_data`, `gs_on_reply`, `gs_on_int`,
