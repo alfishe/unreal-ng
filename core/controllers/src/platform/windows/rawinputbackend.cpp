@@ -506,11 +506,14 @@ private:
         std::atomic<bool> heard{false};  ///< a report came (backend thread; read under _mutex)
     };
     static constexpr UINT kRegistrations = 5;
+    /// A device read from its HID interface, not Raw Input: the Surface Dial, or a control surface of the database
+    /// (DeviceDatabase::SurfaceProducts) whose collection is not a pad's, decoded by its HID map
     struct Dial
     {
         HostDeviceId id;
         std::wstring path;  ///< case-folded: the removal notice may spell it otherwise
         std::unique_ptr<SurfaceDial> dial;
+        std::unique_ptr<HidPad> hid;  ///< a control surface (no dial)
         std::unique_ptr<SurfaceDialWriter> writer;
         HANDLE read = INVALID_HANDLE_VALUE;  ///< overlapped
         HANDLE event = nullptr;
@@ -559,7 +562,8 @@ private:
             started.set_value("RegisterRawInputDevices: " + std::to_string(error));
             return;
         }
-        // The Dial's collection is not one Raw Input is registered for: HID interface arrivals tell about it
+        // The Dial's collection and the control surfaces' are not ones Raw Input is registered for: HID interface
+        // arrivals tell about them
         GUID hidGuid;
         HidD_GetHidGuid(&hidGuid);
         DEV_BROADCAST_DEVICEINTERFACE_W filter{};
@@ -997,25 +1001,49 @@ private:
         WinHandle query(OpenHid(path, 0));
         if (!query.Valid())
             return;
+        HIDD_ATTRIBUTES attributes{};
+        attributes.Size = sizeof(attributes);
+        if (!HidD_GetAttributes(query.handle, &attributes))
+            return;
+        const std::shared_ptr<const DeviceDatabase> database = DeviceDatabase::Active();
+        const auto surfaces = database->SurfaceProducts();
+        const bool surface = !SurfaceDial::Handles(attributes.VendorID, attributes.ProductID) &&
+                             std::find(surfaces.begin(), surfaces.end(),
+                                       std::pair{attributes.VendorID, attributes.ProductID}) != surfaces.end();
         PHIDP_PREPARSED_DATA preparsed = nullptr;
         if (!HidD_GetPreparsedData(query.handle, &preparsed))
             return;
         HIDP_CAPS caps{};
         HidDescriptor descriptor;
         const bool collection = HidP_GetCaps(preparsed, &caps) == HIDP_STATUS_SUCCESS &&
-                                WinRawInputRole(caps.UsagePage, caps.Usage, Utf8(path)) == WinHidRole::Dial;
+                                (surface || WinRawInputRole(caps.UsagePage, caps.Usage, Utf8(path)) == WinHidRole::Dial);
         const bool described = collection && DescriptorFromPreparsed(preparsed, caps.Usage, descriptor, caps);
         HidD_FreePreparsedData(preparsed);
         if (!collection)
             return;
-        HIDD_ATTRIBUTES attributes{};
-        attributes.Size = sizeof(attributes);
-        if (!HidD_GetAttributes(query.handle, &attributes))
-            return;
+
+        const std::string name = HidString(query.handle, HidD_GetProductString);
+        const std::string serial = HidString(query.handle, HidD_GetSerialNumberString);
+        const WinHidPath where = ParseWinHidPath(Utf8(path));
+        DeviceIdentity identity;
+        identity.bus = where.bus;
+        identity.vendor = attributes.VendorID;
+        identity.product = attributes.ProductID;
+        identity.version = attributes.VersionNumber;
+        identity.name = name;
+        identity.backend = Name();
+        const DeviceMatch match = database->Lookup(identity);
 
         auto dial = std::make_unique<Dial>();
         if (SurfaceDial::Handles(attributes.VendorID, attributes.ProductID))
             dial->dial = std::make_unique<SurfaceDial>();
+        else if (surface && described)
+        {
+            // One interface may hold several collections: those with nothing of the map are not this surface
+            dial->hid = std::make_unique<HidPad>(descriptor, HidLayoutFor(match));
+            if (dial->hid->Empty())
+                return;
+        }
         else if (described && SurfaceDial::Matches(descriptor))
             dial->dial = std::make_unique<SurfaceDial>(descriptor);
         else
@@ -1034,7 +1062,8 @@ private:
         }
         dial->path = folded;
         dial->buffer.resize(std::max<size_t>(caps.InputReportByteLength, 2));
-        auto writer = std::make_shared<WinHandle>(OpenHid(path, GENERIC_READ | GENERIC_WRITE));
+        auto writer = dial->dial ? std::make_shared<WinHandle>(OpenHid(path, GENERIC_READ | GENERIC_WRITE))
+                                 : std::make_shared<WinHandle>(INVALID_HANDLE_VALUE);
         if (writer->Valid())
         {
             const size_t featureLength = caps.FeatureReportByteLength;
@@ -1056,17 +1085,6 @@ private:
                 });
         }
 
-        const std::string name = HidString(query.handle, HidD_GetProductString);
-        const std::string serial = HidString(query.handle, HidD_GetSerialNumberString);
-        const WinHidPath where = ParseWinHidPath(Utf8(path));
-        DeviceIdentity identity;
-        identity.bus = where.bus;
-        identity.vendor = attributes.VendorID;
-        identity.product = attributes.ProductID;
-        identity.version = attributes.VersionNumber;
-        identity.name = name;
-        identity.backend = Name();
-        const DeviceMatch match = DeviceDatabase::Active()->Lookup(identity);
         const std::string id = WinDeviceId(where.bus, attributes.VendorID, attributes.ProductID,
                                            attributes.VersionNumber, serial, Utf8(path));
         HostDeviceInfo host;
@@ -1117,9 +1135,13 @@ private:
             return;
         }
         const HostDeviceId& id = dial.id;
-        dial.dial->Decode(dial.buffer.data(), got, [this, &id](const std::string& control, float value) {
+        const auto sink = [this, &id](const std::string& control, float value) {
             _sink->OnControl({id, control, value, 0});
-        });
+        };
+        if (dial.dial)
+            dial.dial->Decode(dial.buffer.data(), got, sink);
+        else
+            dial.hid->Decode(dial.buffer.data(), got, sink);
         if (!IssueRead(dial))
             DropDial(&dial);
     }
@@ -1164,7 +1186,8 @@ private:
         {
             std::lock_guard lock(_mutex);
             for (const auto& dial : _dials)
-                dials.push_back(dial.get());  // only this thread erases
+                if (dial->dial)
+                    dials.push_back(dial.get());  // only this thread erases
         }
         for (Dial* dial : dials)
         {

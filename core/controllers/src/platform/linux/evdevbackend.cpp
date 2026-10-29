@@ -176,6 +176,7 @@ struct Device
     /// (LinuxGenericButton / LinuxGenericAxis) as HidPad names them on the other OSes
     bool generic = false;
     bool dial = false;  ///< a Surface Dial (hid-generic): REL_DIAL is `knob`, BTN_0 `push`, BTN_TOUCH `touch`
+    bool surface = false;  ///< a control surface of the database: every control from hidraw (LinuxPadFacts::surface)
     DialTouch hand;     ///< the Dial's `touch`, sooner than its sensor
     bool sensor = false;
     bool pushed = false;
@@ -877,9 +878,15 @@ private:
         const bool pad = TestBit(keys, BTN_GAMEPAD) || (!joystick && PadKeys(keys));
         // The Surface Dial by its id, or a device of its kind: a dial and a button
         const std::vector<unsigned long> relative = Bits(fd, EV_REL, REL_MAX);
-        const bool dial = !pad && !joystick && TestBit(relative, REL_DIAL) &&
+        // A control surface of the database by its id, whatever hid-input made of it (the ShuttlePRO: a dial and
+        // buttons, so it would pass for a Dial): read through hidraw (LinuxPadFacts::surface)
+        const auto surfaces = DeviceDatabase::Active()->SurfaceProducts();
+        const bool surface = !SurfaceDial::Handles(ident.vendor, ident.product) &&
+                             std::find(surfaces.begin(), surfaces.end(), std::pair{ident.vendor, ident.product}) !=
+                                 surfaces.end();
+        const bool dial = !surface && !pad && !joystick && TestBit(relative, REL_DIAL) &&
                           (SurfaceDial::Handles(ident.vendor, ident.product) || TestBit(keys, BTN_0));
-        if (!pad && !joystick && !dial)
+        if (!pad && !joystick && !dial && !surface)
         {
             close(fd);
             return;
@@ -901,8 +908,9 @@ private:
         device->node = node;
         device->event = event;
         device->hidLayout = HidLayoutFor(match);
-        device->pad = pad;
+        device->pad = pad && !surface;
         device->dial = dial;
+        device->surface = surface;
         device->bluetooth = bluetooth;
         // The HID device (none for xpad's USB interface and for uinput devices such as joycond's): its driver
         const std::string hidDir = HidDeviceDir(kSysDir, event);
@@ -925,7 +933,7 @@ private:
         device->analogTriggers =
             (device->driver == LinuxHidDriver::PlayStation || device->driver == LinuxHidDriver::Sony) &&
             TestBit(axes, ABS_Z) && TestBit(axes, ABS_RZ);
-        device->generic = !hidDir.empty() && LinuxHidUsageNamed(device->driver) && !dial;
+        device->generic = !hidDir.empty() && LinuxHidUsageNamed(device->driver) && !dial && !surface;
         if (IsJoyConKind(device->kind))
             device->joyCon = IsLeftJoyConKind(device->kind) ? 1 : 2;
         device->rumble = writable && TestBit(Bits(fd, EV_FF, FF_MAX), FF_RUMBLE);
@@ -968,6 +976,7 @@ private:
         facts.evdevRumble = device->rumble;
         facts.edgeButtons = TestBit(keys, BTN_TRIGGER_HAPPY3);
         facts.hidExtras = !match.hid.bits.empty();  // consumer usages come as KEY_* (LinuxGenericButton)
+        facts.surface = surface;
         device->use = hidDir.empty() && device->kind == LinuxPadKind::JoycondCombined ? HidrawUse::None
                                                                                       : HidrawUseFor(facts);
         if (device->use != HidrawUse::None)
@@ -1173,7 +1182,7 @@ private:
         {
             for (const HidrawUse use : kUses)
                 if (HasUse(device.use, use))
-                    Unavailable(device, use, HidrawUnavailable(use, {}, 0, {}, device.info.family));
+                    Unavailable(device, use, HidrawUnavailable(use, {}, 0, {}, device.info.family, device.surface));
             return;
         }
         device.hidrawNode = found.node;
@@ -1204,7 +1213,8 @@ private:
     void OpenFailed(Device& device, HidrawUse use, const std::string& node)
     {
         const int error = errno;
-        Unavailable(device, use, HidrawUnavailable(use, node, error, std::strerror(error), device.info.family));
+        Unavailable(device, use,
+                    HidrawUnavailable(use, node, error, std::strerror(error), device.info.family, device.surface));
     }
 
     /// HidrawUse::Output: the Dial's writer (it reads feature report 1 back, so read-write where it may)
@@ -1773,6 +1783,8 @@ private:
 
     void Event(Device& device, const input_event& event)
     {
+        if (device.surface)
+            return;  // its controls are the hidraw reports' (LinuxPadFacts::surface)
         const std::string& id = device.info.id;
         if (device.dial)
         {
