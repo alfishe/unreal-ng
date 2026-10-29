@@ -70,6 +70,8 @@ const Descriptions& DescriptionTable()
         {"run.pace_next", "A finer pace: one step down the ladder (25 fps .. 1 instruction)."},
         {"run.pace_prev", "A coarser pace: one step up the ladder (towards full speed)."},
         {"run.pace_by", "Walk the pace ladder by a dial's delta."},
+        {"run.pace_shuttle_faster", "A coarser pace by a spring-loaded ring's turn (level): one preset per step further from the centre; the return changes nothing."},
+        {"run.pace_shuttle_slower", "A finer pace by a spring-loaded ring's turn (level): one preset per step further from the centre; the return changes nothing."},
         {"run.pace_toggle", "Run at the pace, or stop it; at full speed pause or continue the machine."},
         {"run.pace_stop", "Stop the paced run; the machine stays paused."},
         {"run.pace_step", "Run one step of the chosen pace (a frame, N scanlines, an instruction)."},

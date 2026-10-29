@@ -36,6 +36,8 @@ constexpr FixedControl kFixed[] = {
     {"mouse.x4", ControlType::Button},     {"mouse.x5", ControlType::Button},     {"pointer.x", ControlType::Pointer},
     {"pointer.y", ControlType::Pointer},   {"knob", ControlType::Encoder},        {"push", ControlType::Button},
     {"touch", ControlType::Button},
+    // A jog-shuttle (the Contour ShuttlePRO): the inner wheel's steps, the spring-loaded outer ring's turn each way
+    {"jog", ControlType::Encoder},         {"shuttle.left", ControlType::Trigger}, {"shuttle.right", ControlType::Trigger},
     // Two trackpads (the Steam Deck): position while touched (0 when not), the finger, the press, the pressure
     {"ltouchpad.x", ControlType::Axis},    {"ltouchpad.y", ControlType::Axis},    {"ltouchpad.touch", ControlType::Button},
     {"ltouchpad.click", ControlType::Button}, {"ltouchpad.pressure", ControlType::Trigger},
