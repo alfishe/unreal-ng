@@ -525,6 +525,10 @@ public:
     /// Undo a debugger-forced window: back to the page it had before the first force
     void RevertDebuggerBankOverride(uint8_t bank);
 
+    /// Whether memory breakpoints are checked now ('breakpoints' on in debug mode, or a tap's hold): the CPU's
+    /// accesses follow it, and so do the other bus masters' (the Next's and TS-Conf's DMA, the Sprinter's accelerator)
+    bool BreakpointsActive() const { return _feature_breakpoints_enabled; }
+
     bool IsBank0ROM();
     uint16_t GetROMPage();
     uint16_t GetRAMPageForBank0();

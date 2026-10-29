@@ -44,6 +44,7 @@ protected:
         _ports = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder);
         ASSERT_NE(_ports, nullptr);
         _manager = _emulator->GetBreakpointManager();
+        _emulator->GetFeatureManager()->setFeature(Features::kBreakpoints, true);
         _emulator->DebugOn();
     }
     void TearDown() override
@@ -105,6 +106,21 @@ TEST_F(NextMachineEvents_Test, TheDmasWriteHitsTheWatchpointOfItsAddress)
     EXPECT_STREQ(BreakpointHitKindName(stop.breakpoint.kind), "dma_write");
     EXPECT_EQ(stop.breakpoint.address, kDestination + 3);
     EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(kDestination + 3), 0xAA) << "the byte is written first";
+}
+
+// 'breakpoints' off: the DMA's accesses are not checked, as the CPU's are not
+TEST_F(NextMachineEvents_Test, BreakpointsOffTheDmaDoesNotStop)
+{
+    LoadDmaFill();
+    BreakpointSpec spec;
+    spec.access = BRK_MEM_WRITE;
+    spec.address = kDestination + 3;
+    const uint16_t id = Add(spec);
+    _emulator->GetFeatureManager()->setFeature(Features::kBreakpoints, false);
+    _emulator->RunNFrames(1, false);
+    EXPECT_NE(_emulator->LastStop().reason, Emulator::DebugStop::Reason::Breakpoint);
+    EXPECT_EQ(Hits(id), 0u);
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(kDestination + kLength - 1), 0xAA) << "the fill ran";
 }
 
 // A read watchpoint on the source sees every DMA read of it; the program's own memory is not touched
@@ -200,8 +216,6 @@ TEST_F(NextMachineEvents_Test, AnNmiRequestIsACpuNmiOfItsSource)
 // not on another bank that shares the address
 TEST_F(NextMachineEvents_Test, TheDivMmcsRamBankIsAPageByItsName)
 {
-    _emulator->GetFeatureManager()->setFeature(Features::kBreakpoints, true);
-    _emulator->DebugOn();
     // LD A,#83 : OUT (#E3),A (CONMEM, bank 3) : LD A,#5A : LD (#2005),A : JR $
     const uint8_t program[] = {0xF3, 0x3E, 0x83, 0xD3, 0xE3, 0x3E, 0x5A, 0x32, 0x05, 0x20, 0x18, 0xFE};
     for (size_t i = 0; i < sizeof(program); i++)

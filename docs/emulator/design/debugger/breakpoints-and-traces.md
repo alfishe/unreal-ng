@@ -211,7 +211,10 @@ whatever port pair, latch order or board the program reaches it through.
 - **What is not a program's write.** A snapshot load, a reset or a tool's access (`toolAccessActive`) writes the
   registers without the port path and is not reported; nor is a write during a time travel replay.
 - **The stop.** The access is `chip_register`, the address the register (`BreakpointHitKind::ChipRegister`).
-- **Not yet.** Taps (script callbacks) on chip registers.
+- **Taps.** A script callback taps the same writes without stopping: `on_tap({chip = "ay", reg = 7})` (Lua),
+  `emu.on_tap(fn, "chipreg", 7, chip="ay")` (Python), with `to`, `unit`, `value` / `vmask` and a condition. A tap
+  hears the writes out of the debug mode too; the hit's `kind` is `chip_register`, `address` the register, `value` the
+  byte, `arg` the unit, `event` the chip ([script callbacks](../../../features/script-callbacks.md#machine-events-and-chip-registers)).
 
 | Plane | Chip register breakpoint |
 | :--- | :--- |
@@ -225,7 +228,7 @@ whatever port pair, latch order or board the program reaches it through.
 ### The ZX Next's machine (platform-debugging P5)
 
 - **DMA.** The zxnDMA drives the CPU's address bus, so its memory reads and writes go through the main CPU's
-  watchpoints on CPU addresses and on pages (`wp 0xE000 w`, `wp 0x0005 w --page bank8k33`), in debug mode. The stop's
+  watchpoints on CPU addresses and on pages (`wp 0xE000 w`, `wp 0x0005 w --page bank8k33`), in debug mode with `breakpoints` on, as for the CPU. The stop's
   access is `dma_write` or `dma_read`, its address the CPU address. In the emulator's own run the machine parks after
   the DMA's byte, mid-transfer; a direct step ends after its instruction, the transfer going on (each byte counted).
   The DMA's port cycles are port accesses: port breakpoints see them as `port_out` / `port_in`.
@@ -237,7 +240,7 @@ whatever port pair, latch order or board the program reaches it through.
   detail the return address; the DivMMC entry at #0008 or the esxDOS mode's trap), `zxndma_start`, `zxndma_done`
   (1 the end of the block, 0 disabled or reset).
 - **Cost.** The machine tells its events only while `EmulatorContext::machineEventWatch` is set (an active event
-  breakpoint on the main CPU); the DMA checks the CPU's debug mode once per byte.
+  breakpoint on the main CPU); the DMA checks the CPU's debug mode once per byte (and the `breakpoints` feature on the way to the manager).
 - **DivMMC and Multiface pages.** Their memory sits in the system area of the Next's SRAM (ROM pages 0-15), and a
   page breakpoint names it by its device: `divmmcrom` (the DivMMC's 8K ROM, ROM page 4), `divmmc0`..`divmmc15` (its
   8K RAM banks, the halves of ROM pages 8-15), `mfrom` and `mfram` (the Multiface's 8K ROM and RAM, the halves of
@@ -246,14 +249,17 @@ whatever port pair, latch order or board the program reaches it through.
   `{kind: divmmc, page: 3}` or `{kind: divmmcrom}`. Other machines refuse them. A write to a read-only view (the
   DivMMC ROM, bank 3 under MAPRAM, the Multiface ROM) still hits a write watchpoint on that page: the CPU wrote
   there, the memory kept its byte.
-- **Not yet.** Taps (script callbacks) on machine events.
+- **Taps.** A script callback taps the machine's events without stopping (every machine's: these, TS-Conf's,
+  the Sprinter's, the floppy controller's): `on_tap({event = "cpu_int", value = 11})` (Lua),
+  `emu.on_tap(fn, "event", event="cpu_int", value=11)` (Python). A tap hears them out of the debug mode too; the hit's
+  `kind` is `machine_event`, `value` the event's byte, `arg` its detail ([script callbacks](../../../features/script-callbacks.md#machine-events-and-chip-registers)).
 
 ### TS-Conf (platform-debugging P6)
 
 - **DMA.** The TS-Conf DMA works on physical RAM (word addresses, no CPU address), so only the watchpoints tied to a
   page see it: `wp 0x0005 w --page ram20` stops on the DMA's write of physical #50005. Reads of the source (and the
   blitters' reads of the destination) hit read watchpoints on the page. The stop's access is `dma_write` /
-  `dma_read`, its address the offset in the 16 KB page. Checked once per byte while the CPU is in debug mode. CRAM,
+  `dma_read`, its address the offset in the 16 KB page. Checked once per byte while the CPU is in debug mode with `breakpoints` on, as the CPU's accesses are. CRAM,
   SFILE, SPI and IDE are not RAM: their side of a transfer has no watchpoint.
 - **FMaps.** A write into the register part of the FMaps window (+#400+n) is `OUT (n << 8 | #AF)`: a port breakpoint
   on that port stops on it (`bport 0x0FAF o` sees `LD (#C40F),A` with FMaps at #C000) as on the OUT.
@@ -268,7 +274,7 @@ whatever port pair, latch order or board the program reaches it through.
 
 - **Accelerator.** The CPU's own access is the first one of a block operation; the PLD repeats it (`LD C,C` fill,
   `LD L,L` copy, the vertical modes, `LD H,H` double). The repeats go through the main CPU's watchpoints on the CPU
-  address and on the page its window shows, in debug mode: the stop's access is `accel_write` / `accel_read`, its
+  address and on the page its window shows, in debug mode with `breakpoints` on: the stop's access is `accel_write` / `accel_read`, its
   address the CPU address. The operation runs to its end; the machine parks after the byte (a direct step ends
   after the instruction).
 - **Z84C15.** `cpu_int` names the source of the chip's daisy chain, then the board: 0-3 CTC 0-3, 4-5 SIO A / B,

@@ -2,8 +2,8 @@
 
 A Lua or Python script can ask to be called when something happens in the machine:
 
-- a **tap**: a memory access or a port access, with an optional [condition](conditional-breakpoints.md). A tap
-  never stops the machine;
+- a **tap**: a memory access or a port access, with an optional [condition](conditional-breakpoints.md), a
+  machine event or a sound chip's register write. A tap never stops the machine;
 - a **breakpoint stop**: an existing breakpoint stops the machine (it still stops);
 - a **game event** of the controller profile (`game.events`, [haptics](../inprogress/2026-10-17-controller-manager/haptics.md)) fires on a frame.
 
@@ -23,6 +23,7 @@ Task recipe: [.recipe/analysis/script-callbacks.md](../../.recipe/analysis/scrip
 - [Frame and sync modes: the hook state](#frame-and-sync-modes-the-hook-state)
 - [The hit](#the-hit)
 - [The sound card's CPU](#the-sound-cards-cpu)
+- [Machine events and chip registers](#machine-events-and-chip-registers)
 - [Lua](#lua)
 - [Python](#python)
 - [Remote planes: list and manage](#remote-planes-list-and-manage)
@@ -147,10 +148,10 @@ The function gets one argument: the hit, a table (Lua) or a dict (Python).
 | `address` | the memory address or the port; 0 for a game event |
 | `value` | the byte read, written, input or output; a game event's value; absent (Lua) / `None` (Python) at an exec tap or a stop |
 | `breakpoint` | the id of the tap or of the breakpoint |
-| `kind` | `exec`, `read`, `write`, `port_in`, `port_out`, `card_event` (a sound card event), `stop` (a breakpoint stop) or `event` (a game event) |
-| `event` | the game event's or the card event's name (game event and card event callbacks only) |
+| `kind` | `exec`, `read`, `write`, `port_in`, `port_out`, `card_event` (a sound card event), `machine_event` (the main CPU's event), `chip_register` (a sound chip's register write), `stop` (a breakpoint stop) or `event` (a game event) |
+| `event` | the game event's, the card event's or the machine event's name; the chip's of a chip register tap (absent for the others) |
 | `cpu` | `main`, or `gs` / `ms` for a tap of a sound card's CPU (then `pc` and `regs` are the card's; `ms` the MultiSound's General Sound) |
-| `arg` | a card event's detail: the DAC channel of `dac_fetch`, the clock in MHz of `clock_change`, 1 (finished) or 0 (aborted) of `dma_done`; absent (Lua) / not in the dict (Python) otherwise |
+| `arg` | an event's detail: the DAC channel of `dac_fetch`, the clock in MHz of `clock_change`, 1 (finished) or 0 (aborted) of `dma_done`, the IM2 vector of `cpu_int`, track << 8 \| sector of `fdc_command`, ...; a chip register write's unit; absent (Lua) / not in the dict (Python) otherwise |
 | `regs` | `af bc de hl af_ bc_ de_ hl_ ix iy sp pc i r a f` at the hit |
 
 The hit is a snapshot taken when it happened. Live state read inside the function (`memory`, `get_registers`) is the
@@ -196,6 +197,34 @@ emu.gs_on_clock_change(lambda hit: print("card clock", hit["arg"], "MHz"))
 emu.gs_on_dma_done(lambda hit: print("DMA", hit["value"], "finished" if hit["arg"] else "aborted"))
 ```
 
+## Machine events and chip registers
+
+A main CPU tap also hears the machine's events and the sound chips' register writes, the same ones the event and
+chip register breakpoints stop on ([breakpoints-and-traces](../emulator/design/debugger/breakpoints-and-traces.md#9-sound-chip-registers)):
+
+- **Machine events**: `cpu_int`, `cpu_reti`, `cpu_nmi`, `cpu_retn`, `machine_reset`, `divmmc_map`, `divmmc_unmap`,
+  `esxdos_call`, `zxndma_start`, `zxndma_done`, `tsdma_start`, `tsdma_done`, `pld_read`, `pld_write`, `pld_event`,
+  `fdc_command`, `fdc_done`, and the host side of the General Sound mailbox (`host_command`, `host_data`,
+  `host_reply`). An event name picks its side: these are the main CPU's, the card's events (`int`, `page`, ...) the
+  card CPU's. `value` / `vmask` keep the hits whose byte matches. No condition.
+- **Chip registers**: `chip` (`ay`, `fm`, `saa`, `opl4`, `opl4wave`, `dac`, `cbl`), `reg` (Python: the address) and
+  `to` for a range, `unit` for one chip of the kind, `value` / `vmask`, and a condition.
+- A tap hears them **out of the debug mode** too: the machine reports them while a tap or a breakpoint watches. Out
+  of the debug mode only the taps hear them, the breakpoints neither count nor stop.
+
+```lua
+-- Count the Next's ULA interrupts; note each Read Sector's track and sector
+on_tap({event = "cpu_int", value = 11}, function(hit) ints = (ints or 0) + 1 end)
+on_tap({event = "fdc_command", value = 0x80, vmask = 0xE0}, function(hit) print(hit.arg >> 8, hit.arg & 0xFF) end)
+-- The AY mixer as the program sets it, on any chip of a TurboSound
+on_tap({chip = "ay", reg = 7}, [[return function(hit) shared_set("mixer" .. hit.arg, hit.value) end]], {mode = "sync"})
+```
+
+```python
+emu.on_tap(lambda hit: print("sector", hit["arg"] & 0xFF), "event", event="fdc_command", value=0x80, vmask=0xE0)
+emu.on_tap(lambda hit: print("AY", hit["address"], hit["value"]), "chipreg", 0, to=13, chip="ay", unit=0)
+```
+
 ## Lua
 
 ```lua
@@ -206,6 +235,8 @@ id, err = on_tap({exec = 0xC000, page = "ram3"}, fn)         -- page: as for bre
 id, err = on_tap({read = 0x8000, ["if"] = "a==7", dialect = "c"}, fn)
 id, err = on_tap({read = 0x4000, cpu = "gs"}, fn)              -- the sound card CPU's read of #4000
 id, err = on_tap({event = "card_reply"}, fn)                   -- a card event (cpu "gs" by default)
+id, err = on_tap({event = "cpu_int", value = 11}, fn)          -- a machine event (the main CPU's); value=, vmask=
+id, err = on_tap({chip = "ay", reg = 7, unit = 0}, fn)         -- a sound chip's register; to=, value=, vmask=, ["if"]=
 
 -- A stop of breakpoint 3 (it still stops), a game event of the profile
 id, err = on_breakpoint(3, function(hit) print("stop at", hit.pc) end)
@@ -243,6 +274,8 @@ id = emu.on_tap(lambda hit: print(hit["value"]), "write", 0x5C78, condition="MDT
 id = emu.on_tap(fn, "port_out", 0xFE, mask=0x00FF)    # kind: exec, read, write, port_in, port_out; to=, page=, dialect=
 id = emu.on_tap(fn, "read", 0x4000, cpu="gs")         # the sound card CPU's read
 id = emu.on_tap(fn, "event", event="int")             # a card event (cpu "gs" by default)
+id = emu.on_tap(fn, "event", event="cpu_int", value=11)  # a machine event (the main CPU's); value=, vmask=
+id = emu.on_tap(fn, "chipreg", 7, chip="ay", unit=0)  # a sound chip's register; to=, value=, vmask=, condition=
 id = emu.on_breakpoint(fn, 3)
 id = emu.on_game_event(fn, "died")
 id = emu.on_tap(fn, "write", 0x9000, policy="ignore", budget_us=500, ring=1024, label="score")

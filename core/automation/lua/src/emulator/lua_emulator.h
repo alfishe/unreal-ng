@@ -7993,9 +7993,11 @@ public:
 
         // Script callbacks (docs/features/script-callbacks.md): a function runs deferred, on this Lua thread, with a
         // snapshot of the hit; a string is a chunk for the hook state (frame or sync mode, on the emulation thread).
-        // on_tap({exec|read|write|port_in|port_out = addr, to=, page=, mask=, ["if"]=, dialect=, cpu=} | {event=, cpu=},
-        // fn_or_chunk [, options]). cpu "gs": the sound card CPU's; a sync chunk on its read / port_in may return the byte
-        // the card sees
+        // on_tap({exec|read|write|port_in|port_out = addr, to=, page=, mask=, ["if"]=, dialect=, cpu=} |
+        // {event=, value=, vmask=, cpu=} | {chip=, reg=, to=, unit=, value=, vmask=, ["if"]=, dialect=}, fn_or_chunk
+        // [, options]). cpu "gs": the sound card CPU's; a sync chunk on its read / port_in may return the byte the card
+        // sees. An event is the card's (cpu "gs" by default) or the machine's (the main CPU's); chip a sound chip's
+        // register written by the main CPU
         lua.set_function("on_tap", [this](const sol::table& where, const sol::object& fn,
                                           sol::optional<sol::table> options) -> std::tuple<int, sol::optional<std::string>> {
             CallbackSpec spec;
@@ -8007,18 +8009,55 @@ public:
             const std::string cpu = where.get<sol::optional<std::string>>("cpu").value_or("");
             if (!DebugManager::ParseCpuName(cpu, spec.cpu))
                 return {-1, std::string("cpu must be 'main', 'gs' or 'ms'")};
-            // A card event (the sound card's CPU): no address
-            if (auto event = where.get<sol::optional<std::string>>("event"))
+            // An event's or a register's byte: value= the bits to match, vmask= which (0xFF with value alone)
+            const sol::optional<int32_t> value = where["value"];
+            const sol::optional<int32_t> vmask = where["vmask"];
+            if (value)
+            {
+                spec.tap.nrValue = static_cast<uint8_t>(*value);
+                spec.tap.nrMask = 0xFF;
+            }
+            if (vmask)
+                spec.tap.nrMask = static_cast<uint8_t>(*vmask);
+            const sol::optional<std::string> event = where["event"];
+            const sol::optional<std::string> chip = where["chip"];
+            if ((value || vmask) && !event && !chip)
+                return {-1, std::string("value and vmask apply to event and chip taps")};
+            // An event: no address. The machine's are the main CPU's, the card's its CPU's
+            if (event)
             {
                 GSCardEvent kind = GSCardEvent::Count;
-                if (!ParseGSCardEvent(event->c_str(), kind) || GSCardEventIsHostSide(kind))
-                    return {-1, "event must be a card event (int, nmi, reset, page, card_command, card_data, "
-                                "card_reply, dac_fetch, clock_change, dma_start, dma_done, gscfg0), not '" + *event + "'"};
+                if (!ParseGSCardEvent(event->c_str(), kind))
+                    return {-1, "unknown event '" + *event + "'"};
                 if (cpu.empty())
-                    spec.cpu = DebugCpuId::GS;
+                    spec.cpu = GSCardEventIsHostSide(kind) ? DebugCpuId::Main : DebugCpuId::GS;
                 spec.tap.type = BRK_EVENT;
                 spec.tap.access = 0;
                 spec.tap.address = static_cast<uint16_t>(kind);
+                return RegisterCallback(spec, fn, options);
+            }
+            // A sound chip's register the main CPU wrote
+            if (chip)
+            {
+                SoundChipKind chipKind = SoundChipKind::Count;
+                if (!ParseSoundChipKind(chip->c_str(), chipKind))
+                    return {-1, "chip must be ay, fm, saa, opl4, opl4wave, dac or cbl, not '" + *chip + "'"};
+                spec.tap.type = BRK_CHIPREG;
+                spec.tap.access = 0;
+                spec.tap.chip = static_cast<uint8_t>(chipKind);
+                spec.tap.address = static_cast<uint16_t>(where.get<sol::optional<int32_t>>("reg").value_or(0));
+                if (auto to = where.get<sol::optional<int32_t>>("to"))
+                {
+                    spec.tap.hasEnd = true;
+                    spec.tap.addressEnd = static_cast<uint16_t>(*to);
+                }
+                if (auto unit = where.get<sol::optional<int32_t>>("unit"))
+                    spec.tap.chipUnit = static_cast<uint8_t>(*unit);
+                spec.tap.condition = where.get<sol::optional<std::string>>("if").value_or(
+                    where.get<sol::optional<std::string>>("condition").value_or(""));
+                if (!BreakpointConditionProgram::ParseDialect(
+                        where.get<sol::optional<std::string>>("dialect").value_or(""), spec.tap.conditionDialect))
+                    return {-1, std::string("dialect must be 'unreal' or 'c'")};
                 return RegisterCallback(spec, fn, options);
             }
             int kinds = 0;
@@ -8031,8 +8070,8 @@ public:
                     spec.tap.address = static_cast<uint16_t>(*address);
                 }
             if (kinds != 1)
-                return {-1, std::string("one of exec, read, write, port_in, port_out names the address (or event a "
-                                        "card event)")};
+                return {-1, std::string("one of exec, read, write, port_in, port_out names the address (or event an "
+                                        "event, chip a sound chip)")};
             spec.tap.condition = where.get<sol::optional<std::string>>("if").value_or(
                 where.get<sol::optional<std::string>>("condition").value_or(""));
             if (!BreakpointConditionProgram::ParseDialect(where.get<sol::optional<std::string>>("dialect").value_or(""),

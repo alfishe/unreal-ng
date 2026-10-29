@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/breakpoints/chipregister.h"
 #include "debugger/callbacks/scripthookhost.h"
 #include "debugger/debugmanager.h"
 #include "debugger/targets/gscardtarget.h"
@@ -92,6 +93,13 @@ std::string TapTarget(const BreakpointSpec& tap)
     std::string text;
     if (tap.type == BRK_EVENT)
         text = std::string("event ") + GSCardEventName(static_cast<GSCardEvent>(tap.address));
+    else if (tap.type == BRK_CHIPREG)
+    {
+        text = std::string("chip ") + SoundChipKindName(static_cast<SoundChipKind>(tap.chip));
+        if (tap.chipUnit != kSoundChipAnyUnit)
+            text += " unit " + std::to_string(tap.chipUnit);
+        text += " reg " + Hex(tap.address);
+    }
     else if (tap.type == BRK_IO)
         text = std::string(tap.access & BRK_IO_IN ? "in" : "") + (tap.access & BRK_IO_OUT ? "out" : "") + " " + Hex(tap.address);
     else
@@ -142,6 +150,8 @@ const char* CallbackHitKindName(uint8_t kind)
         case BRK_TAP_PORT_IN: return "port_in";
         case BRK_TAP_PORT_OUT: return "port_out";
         case BRK_TAP_EVENT: return "card_event";
+        case BRK_TAP_MACHINE_EVENT: return "machine_event";
+        case BRK_TAP_CHIPREG: return "chip_register";
         case CallbackHit::kKindStop: return "stop";
         case CallbackHit::kKindEvent: return "event";
         default: return "exec";
@@ -286,8 +296,11 @@ uint32_t ScriptCallbackManager::Register(const CallbackSpec& spec, std::string& 
     if (!card)
         entry->spec.cpu = DebugCpuId::Main;
     BreakpointManager* breakpoints = Breakpoints(card ? spec.cpu : DebugCpuId::Main);
-    if (card && spec.tap.type == BRK_EVENT)
-        entry->spec.event = GSCardEventName(static_cast<GSCardEvent>(spec.tap.address));  // the hit's `event`
+    // The hit's `event`: the event's name, the chip's
+    if (spec.tap.type == BRK_EVENT)
+        entry->spec.event = GSCardEventName(static_cast<GSCardEvent>(spec.tap.address));
+    else if (spec.tap.type == BRK_CHIPREG)
+        entry->spec.event = SoundChipKindName(static_cast<SoundChipKind>(spec.tap.chip));
     size_t slot = kMaxCallbacks;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -305,10 +318,18 @@ uint32_t ScriptCallbackManager::Register(const CallbackSpec& spec, std::string& 
         switch (spec.trigger)
         {
             case CallbackTrigger::Tap:
-                if (spec.tap.type != BRK_MEMORY && spec.tap.type != BRK_IO && !(card && spec.tap.type == BRK_EVENT))
+                if (spec.tap.type != BRK_MEMORY && spec.tap.type != BRK_IO && spec.tap.type != BRK_EVENT &&
+                    !(!card && spec.tap.type == BRK_CHIPREG))
                 {
                     error = card ? "a card tap callback watches memory, ports or card events"
-                                 : "a tap callback watches memory or ports";
+                                 : "a tap callback watches memory, ports, machine events or chip registers";
+                    return 0;
+                }
+                if (spec.tap.type == BRK_EVENT &&
+                    GSCardEventIsHostSide(static_cast<GSCardEvent>(spec.tap.address)) == card)
+                {
+                    error = card ? "a card tap callback watches the card's events (int, nmi, reset, page, ...)"
+                                 : "a main CPU tap callback watches the machine's events (cpu_int, fdc_command, ...)";
                     return 0;
                 }
                 if (breakpoints == nullptr)

@@ -1389,7 +1389,8 @@ void PortDecoder_Next::StepDma()
 
 void PortDecoder_Next::ReportDmaAccess(bool write, uint16_t address, uint8_t value)
 {
-    if (!_context->pDebugManager || !_context->pEmulator)
+    // The CPU's rule: 'breakpoints' off (a typed BASIC line, a step over's run) is off for the DMA too
+    if (!_context->pDebugManager || !_context->pEmulator || !_context->pMemory->BreakpointsActive())
         return;
     BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
     const uint16_t id = write ? brk.HandleMemoryWrite(address, value) : brk.HandleMemoryRead(address, value);

@@ -201,7 +201,10 @@ enum BreakpointTapKind : uint8_t
     BRK_TAP_WRITE,
     BRK_TAP_PORT_IN,
     BRK_TAP_PORT_OUT,
-    BRK_TAP_EVENT  // a General Sound event (BRK_EVENT): `address` the GSCardEvent, `value` its byte
+    BRK_TAP_EVENT,          // a sound card event (BRK_EVENT on the card's CPU): `address` the GSCardEvent, `value` its byte
+    BRK_TAP_MACHINE_EVENT,  // the main CPU's event (BRK_EVENT): `address` the GSCardEvent, `value` its byte
+    BRK_TAP_CHIPREG         // a sound chip's register write (BRK_CHIPREG): `address` the register, `value` the byte,
+                            // `arg` the chip's unit
 };
 
 /// One hit of a tap
@@ -281,6 +284,8 @@ struct BreakpointHotState
     uint8_t hasKeyboard = 0;      // 1 if any active keyboard breakpoint exists
     uint8_t hasEvent = 0;         // 1 if any active General Sound event breakpoint exists
     uint8_t hasChipReg = 0;       // 1 if any active chip register breakpoint exists (EmulatorContext::chipRegisterWatch)
+    uint8_t hasEventTap = 0;      // 1 if one of the event breakpoints is a tap
+    uint8_t hasChipRegTap = 0;    // 1 if one of the chip register breakpoints is a tap
     // 1 if the copper's work must be watched as it happens: a beam or copper-instruction breakpoint, or a NextREG write breakpoint that
     // takes the copper's door. Off: the copper is caught up with the beam once per line, as always (no cost)
     uint8_t copperWatch = 0;
@@ -780,15 +785,19 @@ public:
     /// The copper completed the instruction at list index `pc`: the copper-instruction breakpoint that stops, or BRK_INVALID
     /// The CPU completed an instruction whose opcode word is `opcodeWord`: the magic breakpoint that stops, or BRK_INVALID
     /// A General Sound event (BRK_EVENT): `value` the byte it carries (0 when none)
-    uint16_t HandleEvent(GSCardEvent kind, uint8_t value, int arg = -1)
+    /// `stops` false (the main CPU out of the debug mode): only the taps hear it, no breakpoint counts or stops
+    uint16_t HandleEvent(GSCardEvent kind, uint8_t value, int arg = -1, bool stops = true)
     {
-        return _hotState.hasEvent ? ResolveEvent(kind, value, arg) : BRK_INVALID;
+        return _hotState.hasEvent ? ResolveEvent(kind, value, arg, stops) : BRK_INVALID;
     }
-    /// A sound chip's register write (BRK_CHIPREG): the breakpoint that stops, or BRK_INVALID
-    uint16_t HandleChipRegister(SoundChipKind kind, uint8_t unit, uint16_t reg, uint8_t value)
+    /// A sound chip's register write (BRK_CHIPREG): the breakpoint that stops, or BRK_INVALID. `stops` as for events
+    uint16_t HandleChipRegister(SoundChipKind kind, uint8_t unit, uint16_t reg, uint8_t value, bool stops = true)
     {
-        return _hotState.hasChipReg ? ResolveChipRegister(kind, unit, reg, value) : BRK_INVALID;
+        return _hotState.hasChipReg ? ResolveChipRegister(kind, unit, reg, value, stops) : BRK_INVALID;
     }
+    /// An event or chip register tap is armed: the main CPU reports them out of the debug mode too
+    bool HasEventTaps() const { return _hotState.hasEventTap != 0; }
+    bool HasChipRegisterTaps() const { return _hotState.hasChipRegTap != 0; }
     uint16_t HandleMagic(uint16_t opcodeWord)
     {
         return _hotState.hasMagic ? ResolveMagic(opcodeWord) : BRK_INVALID;
@@ -844,8 +853,8 @@ protected:
     uint16_t ResolveNextReg(int direction, uint8_t reg, uint8_t value, uint8_t door);
     uint16_t ResolveCopperPc(uint16_t pc);
     uint16_t ResolveMagic(uint16_t opcodeWord);
-    uint16_t ResolveEvent(GSCardEvent kind, uint8_t value, int arg);
-    uint16_t ResolveChipRegister(SoundChipKind kind, uint8_t unit, uint16_t reg, uint8_t value);
+    uint16_t ResolveEvent(GSCardEvent kind, uint8_t value, int arg, bool stops);
+    uint16_t ResolveChipRegister(SoundChipKind kind, uint8_t unit, uint16_t reg, uint8_t value, bool stops);
     uint16_t ResolveKeyboard(uint8_t selectedRows, const uint8_t rows[8]);
     uint16_t ResolveBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed);
     /// Walks one candidate set: counts every candidate that matches, returns the first that stops (or

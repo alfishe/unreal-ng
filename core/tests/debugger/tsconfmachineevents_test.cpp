@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -47,6 +48,7 @@ protected:
         _ports = dynamic_cast<PortDecoder_TSConf*>(_context->pPortDecoder);
         ASSERT_NE(_ports, nullptr);
         _manager = _emulator->GetBreakpointManager();
+        _emulator->GetFeatureManager()->setFeature(Features::kBreakpoints, true);
         _emulator->DebugOn();
     }
     void TearDown() override
@@ -132,6 +134,18 @@ TEST_F(TsConfMachineEvents_Test, TheDmasWriteHitsTheWatchpointOfItsPage)
     EXPECT_EQ(stop.breakpoint.kind, BreakpointHitKind::DmaWrite);
     EXPECT_EQ(stop.breakpoint.address, 5);
     EXPECT_EQ(Ram(kDestination + 5), 0x85) << "the byte is written first";
+}
+
+// 'breakpoints' off: the DMA's accesses are not checked, as the CPU's are not
+TEST_F(TsConfMachineEvents_Test, BreakpointsOffTheDmaDoesNotStop)
+{
+    LoadDmaCopy();
+    const uint16_t id = AddPageWatch(BRK_MEM_WRITE, kDestinationPage, 5);
+    _emulator->GetFeatureManager()->setFeature(Features::kBreakpoints, false);
+    _emulator->RunNFrames(1, false);
+    EXPECT_NE(_emulator->LastStop().reason, Emulator::DebugStop::Reason::Breakpoint);
+    EXPECT_EQ(Hits(id), 0u);
+    EXPECT_EQ(Ram(kDestination + 5), 0x85) << "the copy ran";
 }
 
 // A read watchpoint on the source page sees the DMA's read; the CPU's own reads of the address do not reach it

@@ -1189,7 +1189,8 @@ void PortDecoder_TSConf::FmWindow::onWrite(uint16_t addr, uint8_t value, [[maybe
 
 void PortDecoder_TSConf::ReportDmaAccess(bool write, uint32_t byteAddress, uint8_t value)
 {
-    if (!_context->pDebugManager || !_context->pEmulator)
+    // The CPU's rule: 'breakpoints' off (a typed BASIC line, a step over's run) is off for the DMA too
+    if (!_context->pDebugManager || !_context->pEmulator || !_context->pMemory->BreakpointsActive())
         return;
     BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
     const uint8_t page = static_cast<uint8_t>(byteAddress >> 14);

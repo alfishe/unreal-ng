@@ -83,7 +83,8 @@ struct CallbackSpec
 {
     CallbackTrigger trigger = CallbackTrigger::Tap;
     BreakpointSpec tap;          ///< Tap: memory or port, its condition included (owner and tap fields are set here);
-                                 ///< on the card CPU also a card event (BRK_EVENT)
+                                 ///< also an event (BRK_EVENT: the card's on its CPU, the machine's on the main one)
+                                 ///< and on the main CPU a chip register write (BRK_CHIPREG)
     DebugCpuId cpu = DebugCpuId::Main;  ///< Tap: whose breakpoints (the sound card's: no condition)
     uint16_t breakpointId = 0;   ///< Breakpoint
     std::string event;           ///< GameEvent: the event's name
@@ -110,7 +111,8 @@ struct CallbackHit
     uint16_t af = 0, bc = 0, de = 0, hl = 0, af2 = 0, bc2 = 0, de2 = 0, hl2 = 0, ix = 0, iy = 0, sp = 0, pc = 0;
     uint8_t i = 0, r = 0;
     uint8_t cpu = 0;            ///< DebugCpuId: the registers are this CPU's
-    int32_t arg = -1;           ///< a card event's detail (the DAC channel, the clock in MHz, the DMA end), else -1
+    int32_t arg = -1;           ///< an event's detail (the DAC channel, the clock in MHz, the DMA end), a chip
+                                ///< register write's unit, else -1
 
     static constexpr uint8_t kKindStop = 0x80;
     static constexpr uint8_t kKindEvent = 0x81;

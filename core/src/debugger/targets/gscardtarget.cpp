@@ -233,9 +233,14 @@ void GSCardTarget::onBusMasterWrite(uint8_t master, uint8_t ramPage, uint16_t of
 void GSReportHostEvent(EmulatorContext* context, GSCardEvent kind, uint8_t value, int arg)
 {
     DebugManager* debug = context ? context->pDebugManager : nullptr;
-    if (!debug || !context->pEmulator || !context->pCore || !context->pCore->GetZ80()->isDebugMode)
+    if (!debug || !context->pEmulator || !context->pCore)
         return;
-    const uint16_t id = debug->GetBreakpointsManager()->HandleEvent(kind, value, arg);
+    // Out of the debug mode only the taps hear it (a tap never needs the debug mode)
+    BreakpointManager* breakpoints = debug->GetBreakpointsManager();
+    const bool stops = context->pCore->GetZ80()->isDebugMode;
+    if (!stops && !breakpoints->HasEventTaps())
+        return;
+    const uint16_t id = breakpoints->HandleEvent(kind, value, arg, stops);
     if (id != BRK_INVALID) [[unlikely]]
         context->pEmulator->OnBreakpointHit(id, static_cast<uint16_t>(kind), BreakpointHitKind::Event);
 }

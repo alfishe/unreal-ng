@@ -1205,7 +1205,8 @@ emu.bp_status()                     # the last hit, see below; 'hit_count', and 
 
 ### Script Callbacks
 
-Called back on a tap (a memory or port access, with an optional condition; never stops the machine), on a
+Called back on a tap (a memory or port access, with an optional condition, a machine event or a sound chip's
+register write; never stops the machine), on a
 breakpoint's stop, or on a game event of the controller profile. The function runs on the Python thread under the
 GIL, from a ring of hits with a register snapshot each (deferred mode). Full reference:
 [docs/features/script-callbacks.md](../../../features/script-callbacks.md).
@@ -1214,6 +1215,8 @@ GIL, from a ring of hits with a register snapshot each (deferred mode). Full ref
 id = emu.on_tap(lambda hit: print(hit["value"], hit["regs"]["hl"]), "write", 0x5C78, condition="MDT < 5",
                 label="lives")      # kind: exec, read, write, port_in, port_out; to=, page=, mask=, dialect=;
                                     # policy= (suspend | disable | ignore), budget_us=, ring=; ValueError when refused
+id = emu.on_tap(fn, "event", event="fdc_command", value=0x80, vmask=0xE0)  # a machine event; hit["arg"] the detail
+id = emu.on_tap(fn, "chipreg", 7, chip="ay")  # a sound chip's register write; to=, unit=, value=, vmask=, condition=
 id = emu.on_breakpoint(fn, 3)       # breakpoint 3 still stops
 id = emu.on_game_event(fn, "died")  # hit["event"], hit["value"]
 emu.callbacks()                     # [{id, on, owner, label, target, policy, state, reason, hits, dropped, calls, ...}]

@@ -308,7 +308,7 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
     {
         if (spec.chip >= static_cast<uint8_t>(SoundChipKind::Count))
         {
-            error = "unknown sound chip: ay, fm, saa, opl4, opl4wave or dac";
+            error = "unknown sound chip: ay, fm, saa, opl4, opl4wave, dac or cbl";
             return BRK_INVALID;
         }
         const SoundChipKind chip = static_cast<SoundChipKind>(spec.chip);
@@ -527,11 +527,13 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
     d->hidden = spec.hidden;
     if (spec.tapSink != BRK_NO_TAP)
     {
-        // Card events only on the card's CPU: the host's are reported by the main CPU's stop path
-        if (spec.type != BRK_MEMORY && spec.type != BRK_IO && !(spec.type == BRK_EVENT && _target))
+        // The card's CPU: its memory, ports and events; the main CPU's also its events and the chips' registers
+        if (spec.type != BRK_MEMORY && spec.type != BRK_IO && spec.type != BRK_EVENT &&
+            !(spec.type == BRK_CHIPREG && !_target))
         {
             delete d;
-            error = _target ? "a tap watches memory, ports or card events" : "a tap watches memory or ports";
+            error = _target ? "a tap watches memory, ports or card events"
+                            : "a tap watches memory, ports, machine events or chip registers";
             return BRK_INVALID;
         }
         d->tapSink = spec.tapSink;
@@ -2562,7 +2564,7 @@ uint16_t BreakpointManager::ResolveMagic(uint16_t opcodeWord)
     return result;
 }
 
-uint16_t BreakpointManager::ResolveEvent(GSCardEvent kind, uint8_t value, int arg)
+uint16_t BreakpointManager::ResolveEvent(GSCardEvent kind, uint8_t value, int arg, bool stops)
 {
     if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
         return BRK_INVALID;
@@ -2571,6 +2573,8 @@ uint16_t BreakpointManager::ResolveEvent(GSCardEvent kind, uint8_t value, int ar
     {
         if (!bp || !bp->active || bp->type != BRK_EVENT || bp->z80address != static_cast<uint16_t>(kind) ||
             (value & bp->nrMask) != (bp->nrValue & bp->nrMask))
+            continue;
+        if (!stops && bp->tapSink == BRK_NO_TAP)
             continue;
         if (!HitStops(*bp))
             continue;
@@ -2585,7 +2589,7 @@ uint16_t BreakpointManager::ResolveEvent(GSCardEvent kind, uint8_t value, int ar
                 hit.address = static_cast<uint16_t>(kind);
                 hit.value = value;
                 hit.arg = arg;
-                hit.kind = BRK_TAP_EVENT;
+                hit.kind = _target ? BRK_TAP_EVENT : BRK_TAP_MACHINE_EVENT;
                 sink->OnTap(hit);
             }
             continue;
@@ -2598,7 +2602,8 @@ uint16_t BreakpointManager::ResolveEvent(GSCardEvent kind, uint8_t value, int ar
     return result;
 }
 
-uint16_t BreakpointManager::ResolveChipRegister(SoundChipKind kind, uint8_t unit, uint16_t reg, uint8_t value)
+uint16_t BreakpointManager::ResolveChipRegister(SoundChipKind kind, uint8_t unit, uint16_t reg, uint8_t value,
+                                                bool stops)
 {
     if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
         return BRK_INVALID;
@@ -2609,9 +2614,29 @@ uint16_t BreakpointManager::ResolveChipRegister(SoundChipKind kind, uint8_t unit
             (bp->chipUnit != kSoundChipAnyUnit && bp->chipUnit != unit) || reg < bp->z80address ||
             reg > bp->EndAddress() || (value & bp->nrMask) != (bp->nrValue & bp->nrMask))
             continue;
+        if (!stops && bp->tapSink == BRK_NO_TAP)
+            continue;
         if (bp->condition && !ConditionHolds(*bp, BRK_TAP_PORT_OUT, reg, value))
             continue;
-        if (HitStops(*bp) && result == BRK_INVALID)
+        if (!HitStops(*bp))
+            continue;
+        // A tap never stops: its sink is told
+        if (bp->tapSink != BRK_NO_TAP)
+        {
+            if (IBreakpointTapSink* sink = _tapSinks[bp->tapSink])
+            {
+                BreakpointTapHit hit;
+                hit.cookie = bp->tapCookie;
+                hit.breakpointID = bp->breakpointID;
+                hit.address = reg;
+                hit.value = value;
+                hit.arg = unit;
+                hit.kind = BRK_TAP_CHIPREG;
+                sink->OnTap(hit);
+            }
+            continue;
+        }
+        if (result == BRK_INVALID)
             result = bp->breakpointID;
     }
     if (result != BRK_INVALID)
@@ -2794,7 +2819,9 @@ bool BreakpointManager::ConditionHolds(BreakpointDescriptor& bp, BreakpointTapKi
             x.access.portOut = address;
             x.access.portValue = known;
             break;
-        case BRK_TAP_EVENT: break;  // events take no condition
+        case BRK_TAP_EVENT:
+        case BRK_TAP_MACHINE_EVENT: break;  // events take no condition
+        case BRK_TAP_CHIPREG: break;        // a chip register's condition comes as its OUT (BRK_TAP_PORT_OUT)
     }
     x.hits = bp.hitCount;
     std::string why;
@@ -3133,11 +3160,15 @@ void BreakpointManager::RebuildFilters()
         if (bp->type == BRK_EVENT)
         {
             _hotState.hasEvent = 1;
+            if (bp->tapSink != BRK_NO_TAP)
+                _hotState.hasEventTap = 1;
             continue;
         }
         if (bp->type == BRK_CHIPREG)
         {
             _hotState.hasChipReg = 1;
+            if (bp->tapSink != BRK_NO_TAP)
+                _hotState.hasChipRegTap = 1;
             continue;
         }
         if (bp->type == BRK_KEYBOARD)

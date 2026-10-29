@@ -1772,6 +1772,8 @@ Full reference:
 id, err = on_tap({write = 0x5C78, ["if"] = "MDT < 5"}, function(hit)
     print(hit.frame, hit.pc, hit.value, hit.regs.hl)
 end, {label = "lives"})                      -- options: policy (suspend | disable | ignore), budget_us, ring, label
+id, err = on_tap({event = "fdc_command", value = 0x80, vmask = 0xE0}, fn)  -- a machine event; hit.arg the detail
+id, err = on_tap({chip = "ay", reg = 7}, fn)  -- a sound chip's register write; to=, unit=, value=, vmask=, ["if"]=
 id, err = on_breakpoint(3, function(hit) print("stop at", hit.pc) end)  -- the breakpoint still stops
 id, err = on_game_event("died", function(hit) print(hit.event, hit.value) end)
 
