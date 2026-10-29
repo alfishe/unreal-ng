@@ -215,6 +215,26 @@
       "match": [ { "bus": "bt", "vid": "045e", "pid": ["091b"] } ],
       "layout": "generic", "images": "surface-dial", "glyphs": "surface-dial",
       "controls": ["knob", "push", "touch"] },
+    { "id": "shuttle-pro-v2", "name": "ShuttlePRO v2", "vendor": "Contour Design", "player": false,
+      "role": "debugger-remote",
+      "match": [ { "bus": "usb", "vid": "0b33", "pid": ["0030"] } ],
+      "layout": "generic", "images": "shuttle-pro-v2", "glyphs": "shuttle",
+      "hid": {"application": "any",
+              "usages": [ {"usage": "01:38", "control": "shuttle", "read": "split", "min": -7, "max": 7},
+                          {"usage": "01:37", "control": "jog", "read": "counter"} ],
+              "buttons": ["button.1", "button.2", "button.3", "button.4", "button.5", "button.6", "button.7", "button.8", "button.9", "button.10", "button.11", "button.12", "button.13"],
+              "bits": [ {"report": 0, "byte": 4, "bit": 5, "control": "button.14"},
+                        {"report": 0, "byte": 4, "bit": 6, "control": "button.15"} ]},
+      "controls": ["jog", "shuttle.left", "shuttle.right", "button.1", "button.2", "button.3", "button.4", "button.5", "button.6", "button.7", "button.8", "button.9", "button.10", "button.11", "button.12", "button.13", "button.14", "button.15"] },
+    { "id": "shuttle-xpress", "name": "ShuttleXpress", "vendor": "Contour Design", "player": false,
+      "role": "debugger-remote",
+      "match": [ { "bus": "usb", "vid": "0b33", "pid": ["0020"] } ],
+      "layout": "generic", "glyphs": "shuttle",
+      "hid": {"application": "any",
+              "usages": [ {"usage": "01:38", "control": "shuttle", "read": "split", "min": -7, "max": 7},
+                          {"usage": "01:37", "control": "jog", "read": "counter"} ],
+              "buttons": ["button.1", "button.2", "button.3", "button.4", "button.5", "button.6", "button.7", "button.8", "button.9", "button.10", "button.11", "button.12", "button.13"]},
+      "controls": ["jog", "shuttle.left", "shuttle.right", "button.5", "button.6", "button.7", "button.8", "button.9"] },
 
     { "id": "steam-deck", "name": "Steam Deck", "vendor": "Valve",
       "match": [ { "bus": "usb", "vid": "28de", "pid": ["1205"], "backend": "hidraw" } ],
@@ -382,6 +402,8 @@
       "misc.1": "···", "lb": "L1", "rb": "R1", "lt": "L2", "rt": "R2", "paddle.p1": "R4", "paddle.p2": "R5",
       "paddle.p3": "L4", "paddle.p4": "L5", "ltouchpad.click": "Left trackpad", "rtouchpad.click": "Right trackpad"
     },
-    "surface-dial": { "knob": "Turn", "push": "Press", "touch": "Touch" }
+    "surface-dial": { "knob": "Turn", "push": "Press", "touch": "Touch" },
+    "shuttle": { "jog": "Jog", "shuttle.left": "Shuttle left", "shuttle.right": "Shuttle right",
+                 "button.1": "K1", "button.2": "K2", "button.3": "K3", "button.4": "K4", "button.5": "K5", "button.6": "K6", "button.7": "K7", "button.8": "K8", "button.9": "K9", "button.10": "K10", "button.11": "K11", "button.12": "K12", "button.13": "K13", "button.14": "K14", "button.15": "K15" }
   }
 }

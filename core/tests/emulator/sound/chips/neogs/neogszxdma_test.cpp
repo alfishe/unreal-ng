@@ -64,6 +64,8 @@ struct ZxHost : NeoGSZxDma::Host
     void zxReschedule() override {}
     void zxLateStart(int64_t units) override { late.push_back(units); }
     void zxTrace(bool, uint32_t, uint8_t) override {}
+    std::vector<std::pair<uint32_t, uint8_t>> written;  // what a debugger's page watchpoints see
+    void zxRamWritten(uint32_t offset, uint8_t value) override { written.emplace_back(offset, value); }
 };
 
 struct Fixture
@@ -257,6 +259,8 @@ TEST(NeoGSZxDma, WritesLandInCardRamAtTheGrant)
     for (int i = 0; i < 4; i++)
         EXPECT_EQ(f.mem.ram()[0x030000 + i], 0x10 + i);
     EXPECT_EQ(f.dma.address(NeoGSDma::ZX), 0x030004u);
+    ASSERT_EQ(f.host.written.size(), 4u) << "each byte, for the page watchpoints";
+    EXPECT_EQ(f.host.written[3], std::make_pair(0x030003u, uint8_t{0x13}));
 }
 
 TEST(NeoGSZxDma, BackToBackReadsOnAFastHostWaitExactly)

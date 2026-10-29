@@ -1,4 +1,4 @@
-# POC 039: where the in-place TTD replay spends its time. Configure with -DBUILD_TTD_INPLACE_PROFILE_POC=ON, then
+# POC 040: where the in-place TTD replay spends its time. Configure with -DBUILD_TTD_INPLACE_PROFILE_POC=ON, then
 # tools/build/build.sh ttd-inplace-profile. Not part of the emulator.
 add_executable(ttd-inplace-profile inplaceprofile.cpp)
 target_link_libraries(ttd-inplace-profile PRIVATE unrealng::core)

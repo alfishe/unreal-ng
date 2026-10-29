@@ -39,6 +39,7 @@
 #include "emulator/sound/cardaudio.h"
 
 class EmulatorContext;
+class GeneralSoundCard;
 namespace ttd
 {
 class ITTDRegionSource;
@@ -110,6 +111,13 @@ public:
     virtual bool MidiPanic()
     {
         return false;
+    }
+
+    /// The General Sound the card carries (the MultiSound's): the debugger's `ms` CPU (gs-debugger design §3.1);
+    /// nullptr for a card without one
+    virtual GeneralSoundCard* DebugGeneralSound()
+    {
+        return nullptr;
     }
 
     /// Frames and audio: ICardAudio (emulator/sound/cardaudio.h)

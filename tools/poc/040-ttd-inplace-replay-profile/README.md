@@ -1,4 +1,4 @@
-# 039 — ttd-inplace-replay-profile
+# 040 — ttd-inplace-replay-profile
 
 Feature: [docs/inprogress/2026-10-28-ttd-analysis-feedback](../../../docs/inprogress/2026-10-28-ttd-analysis-feedback/README.md)
 (before planning phase 2). Follows [POC 038](../038-ttd-replay-query-engine/README.md).
@@ -134,7 +134,7 @@ the live state save and restore.
 
 ## Follow-up: is it debug mode or the HALT idle? (2026-10-28)
 
-A temporary core patch (not kept; an environment variable `UNREAL_POC039_TTD_LITE`) recorded in three levels:
+A temporary core patch (not kept; an environment variable `UNREAL_POC040_TTD_LITE`) recorded in three levels:
 
 - **0** today: TTD switches debug mode on;
 - **1** TTD without debug mode: the debug memory path (dirty pages, coverage, write journal) stays, the CPU's

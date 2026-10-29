@@ -372,10 +372,10 @@ if (BUILD_TTD_REPLAY_POC AND TARGET unrealng::core)
 	add_subdirectory(tools/poc/038-ttd-replay-query-engine/cpp)
 endif ()
 
-# POC 039 (TTD in-place replay profile): where today's in-place replay spends its time; needs the core
-option(BUILD_TTD_INPLACE_PROFILE_POC "Build POC 039 ttd-inplace-profile (tools/poc/039-ttd-inplace-replay-profile)" OFF)
+# POC 040 (TTD in-place replay profile): where today's in-place replay spends its time; needs the core
+option(BUILD_TTD_INPLACE_PROFILE_POC "Build POC 040 ttd-inplace-profile (tools/poc/040-ttd-inplace-replay-profile)" OFF)
 if (BUILD_TTD_INPLACE_PROFILE_POC AND TARGET unrealng::core)
-	add_subdirectory(tools/poc/039-ttd-inplace-replay-profile/cpp)
+	add_subdirectory(tools/poc/040-ttd-inplace-replay-profile/cpp)
 endif ()
 
 # Steam Deck client experiments (SDL3), built on their own: the other PoCs are not needed

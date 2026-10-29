@@ -48,6 +48,23 @@ float Normalized(int32_t value, const HidField& field, bool centred)
 }
 }  // namespace
 
+bool HidReadFromName(const std::string& name, HidRead& out)
+{
+    static const std::pair<const char*, HidRead> kNames[] = {
+        {"button", HidRead::Button}, {"axis", HidRead::Axis},       {"trigger", HidRead::Trigger},
+        {"split", HidRead::Split},   {"encoder", HidRead::Encoder}, {"counter", HidRead::Counter},
+    };
+    for (const auto& [text, read] : kNames)
+    {
+        if (name == text)
+        {
+            out = read;
+            return true;
+        }
+    }
+    return false;
+}
+
 HidLayout HidLayoutFor(const std::string& layout)
 {
     HidLayout out;
@@ -94,6 +111,8 @@ HidLayout HidLayoutFor(const DeviceMatch& match)
     layout.consumer = map.consumer;
     for (const DeviceMatch::HidMap::Bit& bit : map.bits)
         layout.bits.push_back({bit.report, bit.byte, bit.bit, bit.control});
+    layout.usages = map.usages;
+    layout.anyApplication = map.anyApplication;
     return layout;
 }
 
@@ -103,11 +122,28 @@ HidPad::HidPad(const HidDescriptor& descriptor, const HidLayout& layout) : _hasR
     unsigned hats = 0;
     for (const HidField& field : descriptor.fields)
     {
-        if (field.application != 0x04 && field.application != 0x05 && field.application != 0x08)
+        if (!layout.anyApplication && field.application != 0x04 && field.application != 0x05 &&
+            field.application != 0x08)
             continue;
         Slot slot;
         slot.field = field;
-        if (field.usagePage == kButtonPage && field.usage >= 1)
+        slot.scale = field;
+        const auto own = std::find_if(layout.usages.begin(), layout.usages.end(), [&field](const HidUsage& usage) {
+            return usage.page == field.usagePage && usage.usage == field.usage;
+        });
+        if (own != layout.usages.end())
+        {
+            static const Kind kKinds[] = {Kind::Button, Kind::Axis,    Kind::Trigger,
+                                          Kind::Split,  Kind::Encoder, Kind::Counter};
+            slot.kind = kKinds[static_cast<size_t>(own->read)];
+            slot.control = own->control;
+            if (own->range)
+            {
+                slot.scale.logicalMin = own->min;
+                slot.scale.logicalMax = own->max;
+            }
+        }
+        else if (field.usagePage == kButtonPage && field.usage >= 1)
         {
             const size_t index = field.usage - 1u;
             slot.control = index < layout.buttons.size() && !layout.buttons[index].empty()
@@ -194,6 +230,7 @@ HidPad::HidPad(const HidDescriptor& descriptor, const HidLayout& layout) : _hasR
         slot.field.bitSize = 1;
         slot.field.usagePage = kButtonPage;
         slot.field.logicalMax = 1;
+        slot.scale = slot.field;
         slot.control = bit.control;
         _slots.push_back(std::move(slot));
     }
@@ -222,6 +259,11 @@ std::vector<std::string> HidPad::Controls() const
             const bool x = slot.control == "dpad.x";
             out.push_back(x ? "dpad.left" : "dpad.up");
             out.push_back(x ? "dpad.right" : "dpad.down");
+        }
+        else if (slot.kind == Kind::Split)
+        {
+            out.push_back(slot.control + ".left");
+            out.push_back(slot.control + ".right");
         }
         else if (slot.kind != Kind::Profile)
             out.push_back(slot.control);
@@ -254,6 +296,28 @@ void HidPad::Decode(const uint8_t* report, size_t size, const ControlSink& sink)
             _profile = static_cast<uint8_t>(value);
             continue;
         }
+        if (slot.kind == Kind::Encoder)
+        {
+            // Each report is a count of its own: the same value twice is two turns
+            if (value != 0)
+                Emit(slot.control, static_cast<float>(value));
+            continue;
+        }
+        if (slot.kind == Kind::Counter)
+        {
+            // The change since the last report, the shorter way round the wrap; the first report is the baseline
+            const int64_t span = slot.field.bitSize >= 32 ? 0 : int64_t{1} << slot.field.bitSize;
+            int64_t steps = static_cast<int64_t>(value) - before;
+            if (span != 0)
+            {
+                steps = ((steps % span) + span) % span;
+                if (steps >= span / 2)
+                    steps -= span;
+            }
+            if (!first && steps != 0)
+                Emit(slot.control, static_cast<float>(steps));
+            continue;
+        }
         if (slot.kind == Kind::Paddles)
         {
             havePaddles = true;
@@ -270,13 +334,13 @@ void HidPad::Decode(const uint8_t* report, size_t size, const ControlSink& sink)
                     Emit(slot.control, value != 0 ? 1.0f : 0.0f);
                 break;
             case Kind::Axis:
-                Emit(slot.control, Normalized(value, slot.field, true));
+                Emit(slot.control, Normalized(value, slot.scale, true));
                 break;
             case Kind::AxisDpad:
             {
                 // Past half way is pressed: the two directions of the axis, each sent when it changes
                 auto side = [&slot](int32_t raw) {
-                    const float v = Normalized(raw, slot.field, true);
+                    const float v = Normalized(raw, slot.scale, true);
                     return v <= -0.5f ? -1 : (v >= 0.5f ? 1 : 0);
                 };
                 const int was = first ? 0 : side(before);
@@ -292,8 +356,19 @@ void HidPad::Decode(const uint8_t* report, size_t size, const ControlSink& sink)
                 break;
             }
             case Kind::Trigger:
-                Emit(slot.control, Normalized(value, slot.field, false));
+                Emit(slot.control, Normalized(value, slot.scale, false));
                 break;
+            case Kind::Split:
+            {
+                // Two triggers from the centre out; each sent when it changes
+                const float was = first ? 0.0f : Normalized(before, slot.scale, true);
+                const float now = Normalized(value, slot.scale, true);
+                if (std::max(-was, 0.0f) != std::max(-now, 0.0f) || first)
+                    Emit(slot.control + ".left", std::max(-now, 0.0f));
+                if (std::max(was, 0.0f) != std::max(now, 0.0f) || first)
+                    Emit(slot.control + ".right", std::max(now, 0.0f));
+                break;
+            }
             case Kind::Hat:
             {
                 const uint8_t was = first ? 0 : HatBits(before, slot.field);

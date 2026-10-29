@@ -75,9 +75,30 @@ The model is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
 
 ### Running Scripts
 
-#### From Command Line
+#### From Command Line (the headless runner)
 ```bash
-unreal-emulator --lua-script macro.lua
+unreal-qt --headless --script check.lua --exit-on-script [snapshot.sna]
+echo $?    # the script's exit code
+```
+
+- `--script <file>` runs the file once the Lua interpreter and the emulator are up (a file to open on the command
+  line is opened first; without one the runner starts the Machine menu's machine, as Start does). The window's sole
+  emulator becomes the selected one, the one the script acts on. Its `print` goes to stdout. The script runs on the interpreter's thread; deferred
+  callbacks run when it calls `callbacks_run()`.
+- `--exit-on-script` quits when the script ends. The exit code is the chunk's result: an integer as is, `true` 0,
+  `false` 1, nothing 0; an error (also a missing file, or an interpreter that did not start within 30 s) is 1, with
+  the message on stderr. Return the code; `os.exit` ends the process without the emulator's shutdown.
+- `--headless` uses the offscreen platform (no windows; an explicit `QT_QPA_PLATFORM` wins) and mutes the emulator
+  (the mixer's master) before the script runs.
+
+```lua
+-- check.lua: all four DAC channels of the General Sound play within 100 frames
+gs_on_dac_fetch([[return function(hit) shared_set("ch" .. hit.arg, true) end]], {mode = "sync"})
+run_frames(100)
+for ch = 0, 3 do
+    if not shared_get("ch" .. ch) then print("channel " .. ch .. " silent"); return 1 end
+end
+return 0
 ```
 
 #### From CLI Interface
@@ -800,10 +821,25 @@ id = bp_nextreg_write(0x40, {to=0x44, doors="copper", value=0x01, vmask=0x03, hi
 id = bp_magic("ed_ff")         -- ZX Next: stop after the magic opcode ED FF (or "dd_01") ran
 id = bp_beam(99, {hc=255})     -- ZX Next: the beam passes line 99 (the copper's counter) at pixel clock 255
 id = bp_copper(12, {to=14})    -- ZX Next: the copper completes list instruction 12..14
+id = bp(0x0038, {cpu="gs"})    -- the sound card CPU's (General Sound / NeoGS); bp_remove(id, "gs"), bp_list("gs") ...
+                               -- cpu="ms": the MultiSound card's General Sound, the same way
+id, why = bp_event("card_command", {value=0x23})  -- a GS protocol event: int, nmi, reset, page, card_command, card_data,
+                               -- card_reply, dac_fetch, clock_change, dma_start, dma_done, gscfg0 (the card's), host_command,
+                               -- host_data, host_reply and the ZX Next's machine events (cpu_int, cpu_nmi, esxdos_call,
+                               -- divmmc_map, zxndma_start, ...: the main CPU's); cpu= defaults to the side
+id = gs_on_dac_fetch(fn, {mode="sync"})  -- a card event callback (hit.arg its detail); also gs_on_command, gs_on_data,
+                               -- gs_on_reply, gs_on_int, gs_on_nmi, gs_on_page, gs_on_clock_change, gs_on_dma_start,
+                               -- gs_on_dma_done, gs_on_gscfg0, gs_on_port_in(port, fn), gs_on_port_out(port, fn); {cpu="ms"} the
+                               -- MultiSound's
+id, why = bp_chipreg("ay", 7, {value=0x3F, vmask=0x3F})  -- a sound chip register write by the main CPU: ay, fm,
+                               -- saa, opl4, opl4wave, dac, cbl; to= a range end, unit= one chip of the kind
 bp_reset_hits(id)              -- hit counter back to 0 (no id: all)
 bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)
 bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id
+id, why = bp_write(0x5C78, {condition = "VAL == 0"})  -- a condition (any bp / bp_read / bp_write / bp_port_*; dialect = "c");
+                               -- refused: -1 and the reason
+ok, why = bp_condition(id, "VAL == 80")  -- change it ("" clears): true, or false and the reason (the old one stays)
 bp_group(id, "game")           -- group, created on use; switched on / off together (CLI bpgroup)
 id = bp_key("space")           -- keyboard: the first keyboard read that sees SPACE go down; {on="release"|"both", hits=, group=, note=}; "any"
 bp_select("group:game", "disable")  -- a selection (all, an id, a kind, group:<name>): enable | disable | toggle | remove
@@ -816,6 +852,7 @@ analyzer_list(); analyzer_enable("trdos"); analyzer_disable("trdos"); analyzer_a
 n = bp_count()
 print(bp_list())               -- the text table: range "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
 st = bp_status()               -- the last hit: {valid, id, type, address, access, active, note, group, hit_count, page = {kind, page}}
+                               -- with a condition also condition, match_count (every match), condition_error
 ```
 
 ### Analyzer Management
@@ -1722,42 +1759,42 @@ disassemble(cpu:get_pc(), 16)
 
 ## Event Callbacks
 
-### Supported Events
+A script is called back on a tap (a memory or port access, with an optional condition; it never stops the machine),
+on a breakpoint's stop, or on a game event of the controller profile. The emulation thread notes each hit with a
+snapshot of the registers; the function runs later on this interpreter's thread (deferred mode). A string instead
+of a function is a chunk (Lua source that returns the function) for the emulator's hook state: it runs on the
+emulation thread inside the access (`mode = "sync"`) or at the frame end (`"frame"`), with an instruction budget.
+Full reference:
+[docs/features/script-callbacks.md](../../../features/script-callbacks.md).
 
 ```lua
--- Frame rendered
-emu:set_frame_callback(function()
-    -- Called every frame
-end)
+-- One of exec, read, write, port_in, port_out names the address; to=, page=, mask=, ["if"]=, dialect=
+id, err = on_tap({write = 0x5C78, ["if"] = "MDT < 5"}, function(hit)
+    print(hit.frame, hit.pc, hit.value, hit.regs.hl)
+end, {label = "lives"})                      -- options: policy (suspend | disable | ignore), budget_us, ring, label
+id, err = on_tap({event = "fdc_command", value = 0x80, vmask = 0xE0}, fn)  -- a machine event; hit.arg the detail
+id, err = on_tap({chip = "ay", reg = 7}, fn)  -- a sound chip's register write; to=, unit=, value=, vmask=, ["if"]=
+id, err = on_breakpoint(3, function(hit) print("stop at", hit.pc) end)  -- the breakpoint still stops
+id, err = on_game_event("died", function(hit) print(hit.event, hit.value) end)
 
--- Breakpoint hit
-emu:set_breakpoint_callback(function(bp_id, address)
-    -- Called when breakpoint triggers
-end)
+for _, cb in ipairs(callbacks()) do          -- id, on, owner, label, target, policy, state, reason, stats
+    print(cb.id, cb.target, cb.state, cb.hits, cb.calls, cb.max_us)
+end
+callback_resume(id)                          -- a suspended callback again, statistics reset
+callback_policy(id, "ignore")
+callback_remove(id)
+callbacks_run()                              -- run the waiting hits now (a script looping without returning)
 
--- State changed
-emu:set_state_callback(function(old_state, new_state)
-    print("State: " .. old_state .. " -> " .. new_state)
-end)
-
--- Memory written
-emu:set_memory_write_callback(function(address, value)
-    print(string.format("Write: [0x%04X] = 0x%02X", address, value))
-end)
+-- The hook state: peek, peek16, poke, reg, set_reg, frame, tstate, shared_get, shared_set
+id, err = on_tap({write = 0x5C78}, [[return function(hit) shared_set("lives", hit.value) end]],
+                 {mode = "sync", instructions = 5000})  -- policy may also be "unpaced"
+-- role "logic": the writes land at the next instruction boundary and TTD records them (a replay applies them)
+id, err = on_tap({write = 0x5C78}, [[return function(hit) poke(0x5C78, 5) end]], {mode = "sync", role = "logic"})
+print(shared_get("lives"))                   -- values shared with the hooks: nil, boolean, number, string
+callback_hooks()                             -- {unpaced, unpaced_spans, last_frame_us, max_frame_us, frames_over_share}
 ```
 
-### Callback Management
-
-```lua
--- Register callback
-callback_id = emu:register_callback("frame", my_function)
-
--- Unregister callback
-emu:unregister_callback(callback_id)
-
--- Clear all callbacks
-emu:clear_callbacks()
-```
+A registration returns the id, or `-1` and the reason. The callbacks go when the interpreter stops.
 
 ## Lua Standard Library
 

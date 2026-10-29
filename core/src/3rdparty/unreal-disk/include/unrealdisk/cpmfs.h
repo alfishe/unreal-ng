@@ -109,6 +109,14 @@ public:
     /// The ATM CP/M floppy layout on a disk image (no check: IsCpm tells)
     static CpmFileSystem AtmFloppy(DiskImage& image);
 
+    /// The Profi MicroDOS floppy layout (80 x 2 x 5 x 1024, the directory from cylinder 0, 128 entries, 400
+    /// blocks) on a disk image (no check: IsCpm tells)
+    static CpmFileSystem ProfiFloppy(DiskImage& image);
+
+    /// Klug CP/M 2.3's layout of the same disk (two system cylinders, the directory from cylinder 2, 128 entries,
+    /// 390 blocks) on a disk image (no check: IsCpm tells)
+    static CpmFileSystem KlugFloppy(DiskImage& image);
+
     /// The ASSIGN records of a hard disk's sector 0 (512 bytes); false when it holds no configuration record
     static bool ParseAtmConfig(const uint8_t* sector, std::vector<AtmCpmChannel>& out);
 
@@ -128,6 +136,12 @@ public:
 
     /// The blocks no entry uses (the directory's taken)
     bool FreeBlocks(uint32_t& out) const;
+    /// The highest block an entry uses (the directory's last when none does)
+    bool LastUsedBlock(uint32_t& out) const;
+
+    /// The `count` directory entries at `bytes` are free or read as IsCpm wants them (their blocks not looked at),
+    /// one of them a file with a name: a sector that may start a directory
+    static bool LooksLikeDirectory(const uint8_t* bytes, uint32_t count);
 
     /// Writes go through `writer`; without one the volume is read only
     void SetWriter(ByteWriter writer)

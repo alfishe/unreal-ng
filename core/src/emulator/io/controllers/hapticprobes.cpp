@@ -35,9 +35,11 @@ uint8_t HapticProbes::ReadByte(const HapticProbe& probe) const
     return page != nullptr ? page[probe.address & 0x3FFF] : 0;
 }
 
-void HapticProbes::Arm(const std::vector<HapticProbe>& probes)
+void HapticProbes::Arm(const std::vector<HapticProbe>& probes, std::vector<std::string>* errors)
 {
     Disarm();
+    if (errors != nullptr)
+        errors->assign(std::min<size_t>(probes.size(), HapticFrame::kMaxProbes), std::string());
     BreakpointManager* breakpoints = Breakpoints();
     if (breakpoints == nullptr || probes.empty())
         return;
@@ -50,13 +52,33 @@ void HapticProbes::Arm(const std::vector<HapticProbe>& probes)
     for (size_t index = 0; index < _probes.size(); index++)
     {
         const HapticProbe& probe = _probes[index];
+        const bool port = probe.kind == HapticProbeKind::PortIn || probe.kind == HapticProbeKind::PortOut;
+        BreakpointConditionPtr condition;
+        if (!probe.condition.empty())
+        {
+            const uint8_t access = probe.kind == HapticProbeKind::PortIn    ? BRK_IO_IN
+                                   : probe.kind == HapticProbeKind::PortOut ? BRK_IO_OUT
+                                   : probe.kind == HapticProbeKind::Exec    ? BRK_MEM_EXECUTE
+                                   : probe.kind == HapticProbeKind::Read    ? BRK_MEM_READ
+                                                                            : BRK_MEM_WRITE;
+            std::string error;
+            condition = breakpoints->CompileCondition(port ? BRK_IO : BRK_MEMORY, access, probe.condition,
+                                                      BreakpointConditionDialect::Unreal, error);
+            if (!condition)
+            {
+                if (errors != nullptr)
+                    (*errors)[index] = error;
+                continue;
+            }
+        }
         auto* descriptor = new BreakpointDescriptor();
+        descriptor->condition = std::move(condition);
         descriptor->hidden = true;
         descriptor->owner = kOwner;
         descriptor->note = "haptic probe";
         descriptor->tapSink = _sink;
         descriptor->tapCookie = static_cast<uint32_t>(index);
-        if (probe.kind == HapticProbeKind::PortIn || probe.kind == HapticProbeKind::PortOut)
+        if (port)
         {
             descriptor->type = BRK_IO;
             descriptor->ioType = probe.kind == HapticProbeKind::PortIn ? BRK_IO_IN : BRK_IO_OUT;

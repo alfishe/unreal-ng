@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "debugger/targets/gscardtarget.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 
@@ -238,9 +239,13 @@ uint8_t TsConfInterrupts::AcknowledgeInterrupt(uint32_t t)
         {
             _ts.intPending &= static_cast<uint8_t>(~kPriority[sel].bit);
             _ts.intSel = sel;
+            if (_context->machineEventWatch) [[unlikely]]
+                GSReportHostEvent(_context, GSCardEvent::CpuInt, sel, kPriority[sel].vector);
             return kPriority[sel].vector;
         }
     }
+    if (_context->machineEventWatch) [[unlikely]]
+        GSReportHostEvent(_context, GSCardEvent::CpuInt, 0xFE, kPriority[_ts.intSel & 0x03].vector);
     return kPriority[_ts.intSel & 0x03].vector;  // nothing left: int_sel keeps its last source (no else branch)
 }
 

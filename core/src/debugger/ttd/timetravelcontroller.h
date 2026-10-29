@@ -825,6 +825,11 @@ public:
     /// replay applies (no barrier)
     void BeginToolEdit() override;
     void EndToolEdit(const char* source) override;
+    /// A logic callback's writes (ScriptCallbackManager::ApplyEdits): an edit with only those bytes and, with @p cpu,
+    /// the CPU, which the engine's replay applies at the same boundary
+    bool RecordsScriptEdits() const override { return true; }
+    void RecordScriptEdit(const char* source, const std::vector<std::pair<uint16_t, uint8_t>>& pokes,
+                          bool cpu) override;
 
     /// The bytes of the tool edit recorded as v1 marker @p markerIndex (empty: none)
     const std::unordered_map<size_t, std::vector<uint8_t>>& ToolEditPayloads() const { return _toolEditPayloads; }

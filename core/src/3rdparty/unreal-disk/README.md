@@ -12,7 +12,7 @@ verbs use it, and so do the tools (`zxdisk` here, the unreal-asm tools `zxasm`, 
 | Part | Header | What |
 |---|---|---|
 | model | `unrealdisk/diskimage.h`, `fdc.h`, `flux/` | `DiskImage`: cylinders, sides, tracks with their sectors (ID fields, data, CRC), the raw MFM / FM stream, weak bits, dirty tracking |
-| format drivers | `unrealdisk/loaders/loader_*.h` | TRD, SCL, FDI, UDI, TD0, DSK / EDSK, MGT (+D), raw PC floppy (720K / 1.44M), MB-02 (.mb2 / .mbd), MDOS (Didaktik .d40 / .d80), HFE, SCP, hobeta: `loadImage` / `writeImage(path)`, and `parse` / `serialize` on bytes where the format has them |
+| format drivers | `unrealdisk/loaders/loader_*.h` | TRD, SCL, FDI, UDI, TD0, DSK / EDSK, MGT (+D), raw PC floppy (720K / 1.44M), MB-02 (.mb2 / .mbd), MDOS (Didaktik .d40 / .d80), Profi CP/M (.pro), HFE, SCP, hobeta: `loadImage` / `writeImage(path)`, and `parse` / `serialize` on bytes where the format has them |
 | registry | `unrealdisk/floppyformats.h` | `Probe` / `ProbeData` (marks, then sizes, then the extension), `Load` / `LoadData`, `Save` (the format the path names, with a lossless UDI fallback), `CreateBlank` |
 | TR-DOS | `unrealdisk/trdoscatalog.h`, `trdosfs.h` | `TrdosCatalog` reads the catalog; `TrdosFileSystem` lists, reads, writes and deletes files on any image with TR-DOS tracks |
 | +3DOS | `unrealdisk/plus3fs.h` | `Plus3FileSystem` lists, reads, writes and deletes files on a +3DOS (CP/M 2.2 layout) disk: the geometry from the disk's first sector, else the +3 standard; the +3DOS header read and written |

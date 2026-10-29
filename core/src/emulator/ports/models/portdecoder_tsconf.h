@@ -263,6 +263,9 @@ private:
     void ApplyIdeStall();
     void ApplyExternalIoStall(uint16_t port, PortArm arm);
     void InstallInterrupts();
+    /// platform-debugging P6: the DMA's RAM bytes against the page watchpoints, the beam against the beam breakpoints
+    void ReportDmaAccess(bool write, uint32_t byteAddress, uint8_t value);
+    void WatchBeam(uint32_t from, uint32_t to);
     void RefreshFmWindow();
     void ApplyClock();
     void ApplyVideoPage();

@@ -2555,7 +2555,10 @@ TTDPortSearchResult TimeTravelController::SearchPortEvents(const TTDPortQuery& q
 // CPU (TTDCpuState), 5 the chipset latches (TTDChipsetState; its counters are
 // the machine time and stay as they are, the paging is decoded from it), 6 the
 // CPU time the edit spent (a fast loader's trap: u32, Z80::tt units), 7 the
-// debugger-forced RAM windows 1/2 (TTDBankOverrides; applied after the banks)
+// debugger-forced RAM windows 1/2 (TTDBankOverrides; applied after the banks),
+// 8 a device state by its table index, 9 bytes written through the CPU's view
+// (a logic callback: index = the first address, written in order as a tool's
+// poke writes them; the replay reaches the same paging, so they land alike)
 namespace
 {
 enum : uint8_t
@@ -2568,6 +2571,7 @@ enum : uint8_t
     kEditClock = 6,
     kEditBanks = 7,
     kEditDeviceStateAt = 8,   ///< a device state by its index in the session's device table (D23; kind 3: by v1 id)
+    kEditCpuBytes = 9,        ///< bytes through the CPU's view (RecordScriptEdit)
 };
 void PutEditRecord(std::vector<uint8_t>& out, uint8_t kind, uint16_t id, uint32_t index, const uint8_t* bytes,
                    uint32_t length)
@@ -2686,6 +2690,46 @@ void TimeTravelController::EndToolEdit(const char* source)
         _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
 }
 
+void TimeTravelController::RecordScriptEdit(const char* source, const std::vector<std::pair<uint16_t, uint8_t>>& pokes,
+                                            bool cpu)
+{
+    if (_state != TTDSessionState::Recording || !_context)
+        return;
+    // Only what the callback wrote: the replay reaches this boundary with the machine as it was, so the same writes
+    // leave it as the callback did. Runs of consecutive addresses go as one record
+    std::vector<uint8_t> payload;
+    std::vector<uint8_t> run;
+    uint16_t runStart = 0;
+    auto flush = [&]() {
+        if (!run.empty())
+            PutEditRecord(payload, kEditCpuBytes, 0, runStart, run.data(), static_cast<uint32_t>(run.size()));
+        run.clear();
+    };
+    for (const auto& [address, value] : pokes)
+    {
+        if (run.empty() || address != static_cast<uint16_t>(runStart + run.size()) || address == 0)
+        {
+            flush();
+            runStart = address;
+        }
+        run.push_back(value);
+    }
+    flush();
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (cpu && z80)
+    {
+        const TTDCpuState state = CaptureCpuState(*static_cast<const Z80State*>(z80));
+        PutEditRecord(payload, kEditCpu, 0, 0, reinterpret_cast<const uint8_t*>(&state), sizeof(state));
+    }
+    if (payload.empty())
+        return;
+    const size_t before = _externalEvents.Size();
+    RecordExternalEventAt(TTDExternalEventKind::DebuggerEdit, source,
+                          {_context->emulatorState.frame_counter, TInFrameNow()});
+    if (_externalEvents.Size() > before)
+        _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
+}
+
 void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
 {
     _engineMemoryKnown = false;   // the edit writes memory past the trackers
@@ -2739,6 +2783,11 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
             chipset.t_states = st.t_states;           // the machine time is not part of an edit
             chipset.frame_counter = st.frame_counter;
             RestoreChipsetState(chipset, &st);
+        }
+        else if (kind == kEditCpuBytes && _memory)
+        {
+            for (uint32_t k = 0; k < length; ++k)
+                _memory->ToolWriteToZ80Memory(static_cast<uint16_t>(index + k), bytes[k]);
         }
         else if (kind == kEditBanks && length == sizeof(TTDBankOverrides))
         {

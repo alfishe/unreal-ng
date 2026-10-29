@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "common/modulelogger.h"
+#include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/config.h"
@@ -2131,6 +2132,11 @@ bool SlotManager::BuildCards()
             }
         }
     }
+    // A card's own General Sound (the MultiSound's): its debug hooks follow the new card
+    if (DebugManager* debug = _context->pDebugManager)
+    {
+        debug->OnSlotCardsChanged();
+    }
     return true;
 }
 
@@ -2154,7 +2160,13 @@ void SlotManager::ReleaseCards()
         decoder->BindSlotSignals(nullptr);
         decoder->SetSlotKempstonJoystick(false);
     }
+    const bool hadCards = !_cards.empty();
     _cards.clear();
+    // The hooks forget the card that is gone
+    if (DebugManager* debug = _context != nullptr ? _context->pDebugManager : nullptr; debug != nullptr && hadCards)
+    {
+        debug->OnSlotCardsChanged();
+    }
 }
 
 ICard* SlotManager::FindCard(const std::string& slot) const

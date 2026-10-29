@@ -31,6 +31,7 @@ PatternCategoryMap FileManager::_extensions =
     { "mbd", SupportedFileCategoriesEnum::FileDisk },
     { "d40", SupportedFileCategoriesEnum::FileDisk },
     { "d80", SupportedFileCategoriesEnum::FileDisk },
+    { "pro", SupportedFileCategoriesEnum::FileDisk },
 
     { "gz", SupportedFileCategoriesEnum::FileArchive },
     { "tar", SupportedFileCategoriesEnum::FileArchive },

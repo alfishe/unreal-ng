@@ -1,0 +1,37 @@
+# Super Hang-On, part 1 (Beginner) of the Electric Dreams ZX release (Sega 1987), the archive.org Z80 snapshot
+# "Super_Hang_On_Part_1_Beginner_1986_Electric_Dreams_Software.z80" (it starts on the "Today's best racers" screen; in the options
+# screen 1 takes the keyboard and SPACE (fire) starts the race). Keyboard (checked by holding each key and watching the bike and the speed
+# readout): Q accelerates, A brakes, O steers left, P steers right; A also toggles "attribute inks" in the options screen.
+# The four parts are separate builds, so the addresses differ per part (this profile is for part 1 only). Haptics
+# (haptics.md §13 H5), found with TTD on a recorded run of part 1 and carried over to the other parts by the code shape: the
+# speed is the byte #B6CC (the HUD shows ten times it: 9 at the 90 km cruise, about 23 at full throttle, 0 after a crash),
+# #B4C5 is the head of the stop routine (xor a; ld (speed),a ...), run once per crash (the bike falls and the wreck lies on the road;
+# it also runs when the time is out: GAME OVER stops the bike the same way). Checked in real time on all four parts (Q held 5 s,
+# then O / P held until it fires): speed value 23 at full throttle (level 0.99), 9 at the cruise, 1 `crash` per run.
+# Known limits: a crash cannot be told from the time-out by the probe; no off-road, overtake or checkpoint event yet.
+schema: 1
+kind: play
+id: builtin/game/super-hang-on-beginner
+label: Super Hang-On (Beginner)
+match:
+  machines: [PENTAGON, 128K, 48K]
+  file_sha256: ["5e3fb1ab728d12fb17bc7a41641a0ed2475806548a38b3db7889da37dfc093d4"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    rt.click:     { key: Q, label: Accelerate }
+    lt.click:     { key: A, label: Brake }
+    south:        { key: SPACE, label: Start }
+    east:         { key: "1", label: Keyboard }
+haptics:
+  sources:
+    speed: { probe: value, address: "0xB6CC", scale: 11 }
+    crash: { probe: exec, address: "0xB4C5" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: crash, play: explosion, scale: 0.9 }

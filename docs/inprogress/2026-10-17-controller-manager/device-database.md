@@ -115,6 +115,19 @@ Rules:
   `bits` (`{"report": 1, "byte": 9, "bit": 4, "control": "misc.2"}`: a vendor bit outside the descriptor, the byte
   counted after the report id). The maps of the shipped families are read off SDL_GameControllerDB's Mac OS X lines
   ([POC 033 inventory §4](../../../tools/poc/033-vector-controller-pictures/inventory.md#4-how-the-button-maps-were-read)).
+  Two more make a device with no driver of its own work from data alone (the ShuttlePRO,
+  [control surfaces devices.md §4](../2026-10-18-control-surfaces/devices.md#4-contour-shuttlepro-v2-and-shuttlexpress)):
+  `usages` (`{"usage": "01:37", "control": "jog", "read": "counter"}`: a field by page and usage in hex, read before
+  the generic mapping as `button`, `axis` (centred, -1..1), `trigger` (0..1), `split` (centred, two triggers
+  `<control>.left` / `.right`), `encoder` (a relative count, every non-zero report) or `counter` (an absolute count
+  that wraps at its bit size: the change since the last report, the first report the baseline); `min` / `max` replace
+  a descriptor's wrong range for the scaling, the read keeps its sign) and `"application": "any"` (the fields of any
+  application collection, not only a joystick's, pad's or multi-axis controller's: a Consumer Control's).
+- **A family with `"player": false` is a control surface**: it takes no player connector, and the backends open its
+  VID:PIDs by id (`DeviceDatabase::SurfaceProducts`) whatever its collections are: IOHID adds a product matching,
+  Raw Input opens its HID interface as the Dial's (overlapped reads), the evdev backend reads it through hidraw and
+  ignores its evdev node (hid-input drops the zero of a relative usage). A family the user adds is matched at the
+  next start.
 - **`controls` lists what the device has.** The dialog draws only those controls, and a profile binding to a control
   the device lacks is shown greyed out ([research-other-emulators.md X-8](research-other-emulators.md#5-pitfalls)).
 

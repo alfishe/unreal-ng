@@ -3,8 +3,9 @@
 Goal: mount a disk image into a floppy drive (A-D), know it mounted, and read its
 catalog without touching TR-DOS.
 
-Supported container formats: `.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima`, the flux images `.hfe` and `.scp`, and Hobeta single files (`.$b .$c .$d .$#`). A `.img` / `.ima` of
-737 280 or 1 474 560 bytes is a raw PC floppy (720 KB / 1.44 MB); an 819 200-byte `.img` is MGT.
+Supported container formats: `.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima .mb2 .mbd .d40 .d80 .pro`, the flux images `.hfe` and `.scp`, and Hobeta single files (`.$b .$c .$d .$#`). A `.img` / `.ima` of
+737 280 or 1 474 560 bytes is a raw PC floppy (720 KB / 1.44 MB); an 819 200-byte `.img` is MGT, an 819 200-byte `.pro` a Profi CP/M
+dump ([pro.md](../../docs/file-formats/disk-images/pro.md)).
 
 Related: [use-media-slots.md](use-media-slots.md) (every slot, folders, swaps with
 save/export/discard — the `media` tool), [autostart-disk.md](../run/autostart-disk.md) (boot it too),
@@ -65,7 +66,7 @@ Drive names: `A`-`D` (or `0`-`3`). Add `"autostart": true` **only for drive A** 
 Same endpoint, multipart form instead of JSON; the emulator saves the file
 into its uploads area and mounts it. The MCP `load_software` tool does this
 automatically when the path exists locally. Upload by bytes takes only the
-extensions `.trd .scl .fdi .udi .td0 .img .ima .dsk .mgt` (disks), `.sna .z80 .szx .sp .snp .rzx`
+extensions `.trd .scl .fdi .udi .td0 .img .ima .dsk .mgt .mb2 .mbd .d40 .d80 .pro` (disks), `.sna .z80 .szx .sp .snp .rzx`
 (snapshots) and `.tap .tzx .csw .wav` (tapes); any other extension is rejected
 with "Unrecognized file extension". `.hfe` and `.scp` (and Hobeta) are not in
 that list and `load_software` does not accept `.hfe` / `.scp` at all: insert

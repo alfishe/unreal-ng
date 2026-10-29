@@ -10,6 +10,9 @@
 
 #include <cstring>
 
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
+#include "debugger/targets/gscardtarget.h"
 #include "debugger/ttd/atm/ttdevoavrvolatile.h"
 #include "debugger/ttd/atm/ttdevoflash.h"
 #include "debugger/ttd/atm/ttdevomouse.h"
@@ -26,6 +29,7 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/tsconf/screentsconf.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulator.h"
 #include "emulator/memory/tsconf/tsconfmemory.h"
 #include "emulator/platforms/tsconf/tsconfcraminit.h"
 #include "emulator/platforms/tsconf/tsconfmemoryregions.h"
@@ -46,6 +50,12 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     // master ([V] top.v:1168-1189); a guest write is a TTD replay barrier (the
     // media manager's rule)
     _zc.SetDevice(&_sdCard);
+    _dma.eventWatch = &_context->machineEventWatch;
+    _dma.onActivity = [this](bool started, uint8_t value) {
+        GSReportHostEvent(_context, started ? GSCardEvent::TsDmaStart : GSCardEvent::TsDmaDone, value);
+    };
+    _dma.onAccess = [this](bool write, uint32_t byteAddress, uint8_t value) { ReportDmaAccess(write, byteAddress, value); };
+    _engine.onBeam = [this](uint32_t from, uint32_t to) { WatchBeam(from, to); };
     _dma.SetSpi([this](bool read, uint8_t out) -> uint8_t {
         // The bus analyzer sees the DMA's bytes as the DMA's
         const bool tap = _spiTap.Active();
@@ -339,6 +349,8 @@ void PortDecoder_TSConf::ApplyState()
     _cramVersion++;  // a reset or a state load replaced CRAM
     if (_memory)
         _dma.Attach(_memory->RAMBase(), &GetIdeAdapter(), _memory);
+    if (_context->pCore && _context->pCore->GetZ80())
+        _dma.busWatch = &_context->pCore->GetZ80()->isDebugMode;
     // The VDAC builds are XTR_FEAT builds: they have DMA BLT2 (hardware-spec §0.1)
     _dma.SetBlt2Built(TsConfDma::kBuildHasBlt2 || _context->config.ts_vdac != 0);
     InstallInterrupts();
@@ -1162,9 +1174,45 @@ void PortDecoder_TSConf::FmWindow::onWrite(uint16_t addr, uint8_t value, [[maybe
     }
     else
     {
-        // 0x400-0x4FF: +0x400+n is OUT (n << 8 | #AF)
+        // 0x400-0x4FF: +0x400+n is OUT (n << 8 | #AF): a port breakpoint on that port sees it
+        EmulatorContext* context = _owner._context;
+        if (context->pDebugManager && context->pEmulator && context->pCore->GetZ80()->isDebugMode) [[unlikely]]
+        {
+            const uint16_t port = static_cast<uint16_t>((offset & 0xFF) << 8 | 0xAF);
+            const uint16_t id = context->pDebugManager->GetBreakpointsManager()->HandlePortOut(port, value);
+            if (id != BRK_INVALID)
+                context->pEmulator->OnBreakpointHit(id, port, BreakpointHitKind::PortOut);
+        }
         _owner.WriteRegister(static_cast<uint8_t>(offset), value);
     }
+}
+
+void PortDecoder_TSConf::ReportDmaAccess(bool write, uint32_t byteAddress, uint8_t value)
+{
+    // The CPU's rule: 'breakpoints' off (a typed BASIC line, a step over's run) is off for the DMA too
+    if (!_context->pDebugManager || !_context->pEmulator || !_context->pMemory->BreakpointsActive())
+        return;
+    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+    const uint8_t page = static_cast<uint8_t>(byteAddress >> 14);
+    const uint16_t offset = static_cast<uint16_t>(byteAddress & 0x3FFF);
+    const uint16_t id = write ? brk.HandlePageWrite(BANK_RAM, page, offset, value) : brk.HandlePageRead(BANK_RAM, page, offset, value);
+    if (id != BRK_INVALID) [[unlikely]]
+        _context->pEmulator->OnBreakpointHit(id, offset, write ? BreakpointHitKind::DmaWrite : BreakpointHitKind::DmaRead);
+}
+
+/// A beam breakpoint's place on TS-Conf: line 0..319 of the raster, hc the CPU tact in the line (0..223, 3.5 MHz)
+void PortDecoder_TSConf::WatchBeam(uint32_t from, uint32_t to)
+{
+    if (!_context->pDebugManager || !_context->pEmulator)
+        return;
+    const uint16_t id = _context->pDebugManager->GetBreakpointsManager()->HandleBeam([&](uint16_t line, uint16_t hc) {
+        if (line >= TsConfEngine::kLines || hc >= TsConfEngine::kLineTacts)
+            return false;
+        const uint32_t at = static_cast<uint32_t>(line) * TsConfEngine::kLineTacts + hc;
+        return at >= from && at < to;
+    });
+    if (id != BRK_INVALID)
+        _context->pEmulator->OnBreakpointHit(id, 0, BreakpointHitKind::Beam);
 }
 
 void PortDecoder_TSConf::CommitTableWord(bool cram, uint8_t index, uint16_t word)

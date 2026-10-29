@@ -69,7 +69,8 @@ Three ways, from cheapest (a worked example on MASM 2.0, from the data to the co
    the first read starts the history). On a 48K, a write breakpoint on `FRAMES` (`#5C78`) stops with pchist
    `[62, 61, 58, 57]`: `#003E` is `LD (FRAMES),HL` in the ROM's interrupt handler. Resume and wait again for the
    next writer; `hit_count` in `GET /breakpoints` tells how often it fired. Each hit stops the machine; there is
-   no log-only mode yet.
+   no log-only mode yet. To stop only on the write you look for, give it a condition (`"condition":"VAL == 0"`:
+   [conditional-breakpoints.md](conditional-breakpoints.md)).
 2. **Back in time, the last write.** With a TTD recording running, `POST /ttd/find-last
    {"addr":"0x5C3A","access":"write"}` returns the last write before the current point with its `pc`, `value`,
    `frame` and `phys_page`; repeat with `before` to walk further back. Without a recording the answer is just
@@ -90,7 +91,8 @@ Comparing two dumps on the host finds *what* changed; one of the three above fin
   breakpoint wait needs a free-running machine (`resume`) or `steps`.
 - **Memory and port breakpoints need the `breakpoints` feature**: `PUT /feature/breakpoints {"enabled":true}`
   (it switches debug mode on too). `PUT /debugmode` alone does not: the breakpoint is accepted, listed as
-  active, and never fires (`hit_count` stays 0).
+  active, and never fires (`hit_count` stays 0). While the feature is on, an active breakpoint keeps the debug path
+  on by itself: switching `debugmode` off (a hidden Qt debugger does) no longer silences it.
 - **Disk loading and breakpoints in TR-DOS**: with `fastdisk` on (the default) the sector transfer at `#3FEC` is done
   in one step, without the `INI` loop: a `port_in #7F` breakpoint and the port trace see no data bytes. Turn it off
   for that: `PUT /feature/fastdisk {"enabled":false}` ([port-trace.md](port-trace.md#pitfalls)).

@@ -1,5 +1,5 @@
 /// @file inplaceprofile.cpp
-/// @brief POC 039 (tools/poc/039-ttd-inplace-replay-profile/README.md): where today's in-place TTD replay spends its
+/// @brief POC 040 (tools/poc/040-ttd-inplace-replay-profile/README.md): where today's in-place TTD replay spends its
 /// time, step by step, and what a recording costs (frame time, capture, session size). Workloads W1-W3 of POC 038.
 ///
 ///   ttd-inplace-profile --workload w1 --frames 3000 [--repeat 3] [--loop STEP --seconds S]
@@ -249,7 +249,7 @@ RecordCost Record(Instance& s, const std::string& workload, unsigned frames, boo
 
 bool MakeSession(Session& session, const std::string& workload, unsigned frames, bool journal, RecordCost* cost)
 {
-    if (!session.s.Make(journal ? "poc039-journal" : "poc039-source", ModelOf(workload), true))
+    if (!session.s.Make(journal ? "poc040-journal" : "poc040-source", ModelOf(workload), true))
         return false;
     if (!SetUpWorkload(session.s, workload))
         return false;
@@ -502,26 +502,26 @@ int main(int argc, char** argv)
         for (unsigned r = 0; r < o.repeat; ++r)
         {
             Instance a;
-            if (!a.Make("poc039-plain", ModelOf(o.workload), false) || !SetUpWorkload(a, o.workload))
+            if (!a.Make("poc040-plain", ModelOf(o.workload), false) || !SetUpWorkload(a, o.workload))
                 return 1;
             const RecordCost ca = Record(a, o.workload, o.frames, false, false);
             plain.push_back(ca.frameUs);
             hashes[0] = ca.endHash;
             Instance d;
-            if (!d.Make("poc039-debug", ModelOf(o.workload), false, true) || !SetUpWorkload(d, o.workload))
+            if (!d.Make("poc040-debug", ModelOf(o.workload), false, true) || !SetUpWorkload(d, o.workload))
                 return 1;
             const RecordCost cd = Record(d, o.workload, o.frames, false, false);
             debug.push_back(cd.frameUs);
             hashes[1] = cd.endHash;
             Instance b;
-            if (!b.Make("poc039-rec", ModelOf(o.workload), true) || !SetUpWorkload(b, o.workload))
+            if (!b.Make("poc040-rec", ModelOf(o.workload), true) || !SetUpWorkload(b, o.workload))
                 return 1;
             const RecordCost cb = Record(b, o.workload, o.frames, true, false);
             rec.push_back(cb.frameUs);
             hashes[2] = cb.endHash;
             recCapture.push_back(cb.captureUs);
             Instance c;
-            if (!c.Make("poc039-recj", ModelOf(o.workload), true) || !SetUpWorkload(c, o.workload))
+            if (!c.Make("poc040-recj", ModelOf(o.workload), true) || !SetUpWorkload(c, o.workload))
                 return 1;
             const RecordCost cc = Record(c, o.workload, o.frames, true, true);
             journal.push_back(cc.frameUs);
@@ -545,7 +545,7 @@ int main(int argc, char** argv)
         while (MsSince(start) < o.seconds * 1000.0)
         {
             Instance a;
-            if (!a.Make("poc039-loop", ModelOf(o.workload), o.loop == "record") || !SetUpWorkload(a, o.workload))
+            if (!a.Make("poc040-loop", ModelOf(o.workload), o.loop == "record") || !SetUpWorkload(a, o.workload))
                 return 1;
             Record(a, o.workload, o.frames, o.loop == "record", false);
         }

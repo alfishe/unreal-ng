@@ -74,6 +74,12 @@ ProfileHaptics::ProfileHaptics(HapticProfile profile, std::string name, HapticMi
             state.probe = static_cast<int>(_probes.size());
             _probes.push_back(source.Probe());
         }
+        else if (!source.IsBreakpointProbe() && !source.condition.empty() &&
+                 _frameConditions.size() < HapticFrame::kMaxConditions)
+        {
+            state.condition = static_cast<int>(_frameConditions.size());
+            _frameConditions.push_back(source.condition);
+        }
         if (source.IsStream())
         {
             auto found = std::find(_streams.begin(), _streams.end(), source.stream);
@@ -104,6 +110,11 @@ std::vector<HapticStream> ProfileHaptics::Streams() const
 std::vector<HapticProbe> ProfileHaptics::Probes() const
 {
     return _probes;
+}
+
+std::vector<std::string> ProfileHaptics::FrameConditions() const
+{
+    return _frameConditions;
 }
 
 void ProfileHaptics::OnHapticHold(bool held)
@@ -239,7 +250,14 @@ void ProfileHaptics::OnHapticFrame(const HapticFrame& frame)
     std::vector<float>& levels = _frameLevels;
     levels.assign(_profile.sources.size(), 0.0f);
     for (size_t index = 0; index < _profile.sources.size(); index++)
+    {
+        // Evaluated first: a gated source still learns its byte and runs its filters
         levels[index] = Evaluate(_profile.sources[index], _states[index], frame);
+        const int condition = _states[index].condition;
+        if (condition >= 0 && (static_cast<unsigned>(condition) >= frame.conditionCount ||
+                               !((frame.conditionsHeld >> condition) & 1u)))
+            levels[index] = 0;
+    }
     _frameReady = true;
     {
         std::lock_guard<std::mutex> lock(_levelsMutex);
@@ -299,8 +317,20 @@ void ProfileHaptics::OnHapticFrame(const HapticFrame& frame)
 std::vector<GameEventInfo> ProfileHaptics::GameEvents() const
 {
     std::vector<GameEventInfo> events;
-    for (const HapticSource& source : _profile.sources)
-        events.push_back({source.name, !source.IsEvent()});
+    for (size_t index = 0; index < _profile.sources.size(); index++)
+    {
+        const HapticSource& source = _profile.sources[index];
+        GameEventInfo info;
+        info.name = source.name;
+        info.level = !source.IsEvent();
+        info.condition = source.condition;
+        if (!source.condition.empty())
+        {
+            info.probe = _states[index].probe;
+            info.frameCondition = _states[index].condition;
+        }
+        events.push_back(std::move(info));
+    }
     return events;
 }
 

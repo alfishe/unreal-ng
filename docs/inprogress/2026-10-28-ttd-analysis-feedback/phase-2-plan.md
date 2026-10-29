@@ -3,7 +3,7 @@
 Owner decision 2026-10-28. Phase 2 makes window questions fast on the user's own machine; the clone pool of
 POC 038 is deferred. Facts behind the plan:
 [POC 038](../../../tools/poc/038-ttd-replay-query-engine/README.md) (clones: exact, 0.22 ms a frame, linear to 16)
-and [POC 039](../../../tools/poc/039-ttd-inplace-replay-profile/README.md) (where today's in-place replay spends its
+and [POC 040](../../../tools/poc/040-ttd-inplace-replay-profile/README.md) (where today's in-place replay spends its
 time, and what a recording costs).
 
 ## Why no clone pool now
@@ -28,7 +28,7 @@ Next steps if measurements on real agent questions ask for it, in this order:
 
 Order: B, C, D, with E along the way and at the end.
 
-### B. In-place replay (POC 039 causes 1-4, 6)
+### B. In-place replay (POC 040 causes 1-4, 6)
 
 | # | Change | Measured today | Expected |
 |---|--------|----------------|----------|
@@ -39,7 +39,7 @@ Order: B, C, D, with E along the way and at the end.
 | B5 | Input playback wakes at the next event's time, not at every instruction (an atomic "pending" flag for live input instead of three mutex lock/unlocks a step) | W3 replay 805 µs against 352 in debug mode | about 352 µs |
 | B6 | The session publish (`GetSessionInfo`, `GetHeapBreakdown`) not after every operation of a verb | ~6 % of the samples, ~0.25-0.65 ms a call with the live state save/restore | once per call |
 
-Proof: today's verb answers unchanged (unit tests on W1-W3 shapes), POC 039 rerun before and after, the TTD
+Proof: today's verb answers unchanged (unit tests on W1-W3 shapes), POC 040 rerun before and after, the TTD
 corpus tests, A/B benchmarks of seek and the verbs.
 
 Status:
@@ -47,7 +47,7 @@ Status:
 - B1 done (uncommitted). A `KnownMemoryScope` spans the frame loops of find-last, find (`all`, `changes_only`), the
   M1 enumeration (reverse-continue) and the write journal build. Inside it a restore trusts what the previous one
   left, apart from the pieces the trackers marked since. The live state put back, a tool edit and the scope's end
-  forget it. Test: `ttdincrementalrestore_test.cpp` (memory equal to full restores, fewer pieces decoded). POC 039
+  forget it. Test: `ttdincrementalrestore_test.cpp` (memory equal to full restores, fewer pieces decoded). POC 040
   rerun (thread CPU time, loaded host, about ±20 %): W1 writes-all 1101 → 356 µs a frame, changes-all 1174 → 421;
   W2 writes-all 30 → 20.
 - B2 (uncommitted). The internal seeks (memory-at, the frame cache, a resume) already never composed; only the
@@ -62,7 +62,7 @@ Status:
 
 ### C. HALT idle while TTD records and replays
 
-POC 039 follow-up: a recording that may idle through HALT is exact (2998 of 2998 frames on W1-W3) and costs 39 %
+POC 040 follow-up: a recording that may idle through HALT is exact (2998 of 2998 frames on W1-W3) and costs 39 %
 less on a game that halts (W2: 930 → 568-591 µs a frame; the recording overhead +108 % → +27 %).
 
 | # | Change |

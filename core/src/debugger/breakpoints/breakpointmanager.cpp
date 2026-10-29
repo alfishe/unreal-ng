@@ -1,9 +1,12 @@
 #include "breakpointmanager.h"
 
 #include "debugger/ttd/ttdphyspage.h"
+#include "debugger/debugmanager.h"
+#include "debugger/labels/labelmanager.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <optional>
@@ -20,6 +23,7 @@
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/targets/debugtarget.h"
 #include "stdafx.h"
 
 /// Every change of the set (see the class comment): the CPU held - the main loop parked at an instruction boundary,
@@ -45,11 +49,35 @@ private:
 
 /// @brief Constructs a new Breakpoint Manager with the given emulator context
 /// @param context Pointer to the emulator context
+/// The breakpoint types a condition applies to: memory and ports, and the main CPU's machine breakpoints (the Next's
+/// NEXTREG, copper, beam and magic opcodes, the sound chips' registers; platform-debugging P4)
+static bool TakesCondition(BreakpointTypeEnum type)
+{
+    switch (type)
+    {
+        case BRK_MEMORY:
+        case BRK_IO:
+        case BRK_NEXTREG:
+        case BRK_COPPER:
+        case BRK_BEAM:
+        case BRK_MAGIC:
+        case BRK_CHIPREG: return true;
+        default: return false;
+    }
+}
+static constexpr const char* kConditionTypes =
+    "a condition applies to memory, port, NextREG, copper, beam, magic and chip register breakpoints";
+
 BreakpointManager::BreakpointManager(EmulatorContext* context)
 {
     _context = context;
     _logger = _context->pModuleLogger;
     _candidateSets.assign(1, {});  // set 0: no candidates
+}
+
+BreakpointManager::BreakpointManager(EmulatorContext* context, IDebugTarget* target) : BreakpointManager(context)
+{
+    _target = target;
 }
 
 /// @brief Destroys the Breakpoint Manager and cleans up all breakpoints
@@ -160,6 +188,8 @@ uint16_t BreakpointManager::AddBreakpointAdopting(BreakpointDescriptor* descript
         case BRK_BEAM:
         case BRK_COPPER:
         case BRK_MAGIC:
+        case BRK_EVENT:
+        case BRK_CHIPREG:
             result = AddNextRegBreakpoint(descriptor);
             break;
         case BRK_KEYBOARD:
@@ -192,9 +222,44 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         error = "the range ends before it starts";
         return BRK_INVALID;
     }
-    if (spec.type != BRK_NEXTREG && (spec.nrMask != 0 || spec.nrDoors != BRK_NR_DOOR_ALL))
+    if (spec.nextSystemPage && (_target || !_context || _context->config.mem_model != MM_NEXT))
     {
-        error = "doors and a value apply to NextREG breakpoints";
+        error = "the DivMMC and Multiface pages (divmmcrom, divmmcN, mfrom, mfram) are the ZX Next's";
+        return BRK_INVALID;
+    }
+    if (spec.bank8k != 0xFFFF && spec.pageOffset == 0xFFFF) [[unlikely]]
+    {
+        // An 8K bank: its 16K page, the offset its half plus the address's place in its 8K slot
+        if ((spec.address >> 13) != (end >> 13))
+        {
+            error = "a range on an 8K bank stays inside one 8K slot";
+            return BRK_INVALID;
+        }
+        BreakpointSpec page = spec;
+        page.pageOffset = static_cast<uint16_t>(((spec.bank8k & 1) << 13) | (spec.address & 0x1FFF));
+        page.bank8k = 0xFFFF;
+        return AddBreakpoint(page, error);
+    }
+    if (spec.type != BRK_NEXTREG && (spec.nrDoors != BRK_NR_DOOR_ALL ||
+                                     (spec.nrMask != 0 && spec.type != BRK_EVENT && spec.type != BRK_CHIPREG)))
+    {
+        error = "doors and a value apply to NextREG breakpoints (a value to event and chip register breakpoints too)";
+        return BRK_INVALID;
+    }
+    if (spec.type != BRK_CHIPREG && (spec.chip != 0 || spec.chipUnit != kSoundChipAnyUnit))
+    {
+        error = "a chip and a unit apply to chip register breakpoints";
+        return BRK_INVALID;
+    }
+    // Another CPU (a card): its memory, its ports and its events; the main CPU takes the host side of the events
+    if (_target && spec.type != BRK_MEMORY && spec.type != BRK_IO && spec.type != BRK_EVENT)
+    {
+        error = std::string("a ") + _target->Name() + " breakpoint watches memory, ports or card events";
+        return BRK_INVALID;
+    }
+    if (_target && spec.spacePage != 0xFFFF)
+    {
+        error = std::string("the ") + _target->Name() + " CPU has no other memory space";
         return BRK_INVALID;
     }
     if (spec.type == BRK_MAGIC)
@@ -218,6 +283,46 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
     if (spec.type == BRK_MAGIC)
     {
         // validated above
+    }
+    else if (spec.type == BRK_EVENT)
+    {
+        if (spec.address >= static_cast<uint16_t>(GSCardEvent::Count))
+        {
+            error = "unknown event kind";
+            return BRK_INVALID;
+        }
+        if (spec.hasEnd || spec.hasPage || spec.slotOnly || spec.spacePage != 0xFFFF || spec.portMask != 0xFFFF)
+        {
+            error = "an event breakpoint takes the kind and a value only";
+            return BRK_INVALID;
+        }
+        const bool host = GSCardEventIsHostSide(static_cast<GSCardEvent>(spec.address));
+        if (host == (_target != nullptr))
+        {
+            error = host ? "the host side of the mailbox is the main CPU's: set it without a card CPU"
+                         : "a card event is the card CPU's: set it on the gs CPU";
+            return BRK_INVALID;
+        }
+    }
+    else if (spec.type == BRK_CHIPREG)
+    {
+        if (spec.chip >= static_cast<uint8_t>(SoundChipKind::Count))
+        {
+            error = "unknown sound chip: ay, fm, saa, opl4, opl4wave, dac or cbl";
+            return BRK_INVALID;
+        }
+        const SoundChipKind chip = static_cast<SoundChipKind>(spec.chip);
+        if (end > SoundChipLastRegister(chip))
+        {
+            error = std::string("a ") + SoundChipKindName(chip) + " register is 0.." +
+                    std::to_string(SoundChipLastRegister(chip));
+            return BRK_INVALID;
+        }
+        if (spec.hasPage || spec.slotOnly || spec.spacePage != 0xFFFF || spec.portMask != 0xFFFF)
+        {
+            error = "a chip register breakpoint takes a chip, a unit, registers and a value";
+            return BRK_INVALID;
+        }
     }
     else if (spec.type == BRK_BEAM || spec.type == BRK_COPPER)
     {
@@ -296,14 +401,28 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         {
             if (!HasPage(spec.page, spec.pageType))
             {
-                error = std::string("this machine has no page ") + PageKindName(spec.pageType) + std::to_string(spec.page);
+                error = std::string(_target ? "this CPU has no page " : "this machine has no page ") +
+                        PageKindName(spec.pageType) + std::to_string(spec.page);
                 return BRK_INVALID;
             }
-            if ((spec.address >> 14) != (end >> 14))
+            if (spec.pageOffset != 0xFFFF)
+            {
+                if (static_cast<uint32_t>(spec.pageOffset) + (end - spec.address) > 0x3FFF)
+                {
+                    error = "a range on a page stays inside one 16K page";
+                    return BRK_INVALID;
+                }
+            }
+            else if ((spec.address >> 14) != (end >> 14))
             {
                 error = "a range on a page stays inside one 16K page (its offsets come from the address)";
                 return BRK_INVALID;
             }
+        }
+        else if (spec.pageOffset != 0xFFFF)
+        {
+            error = "an offset in the page applies to a breakpoint on a page";
+            return BRK_INVALID;
         }
         else if (spec.slotOnly)
         {
@@ -354,9 +473,22 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         error = "a hit policy needs a target of 1 or more";
         return BRK_INVALID;
     }
+    BreakpointConditionPtr condition;
+    if (!spec.condition.empty())
+    {
+        if (!TakesCondition(spec.type) || spec.spacePage != 0xFFFF)
+        {
+            error = kConditionTypes;
+            return BRK_INVALID;
+        }
+        condition = CompileCondition(spec.type, spec.access, spec.condition, spec.conditionDialect, error);
+        if (!condition)
+            return BRK_INVALID;
+    }
 
     ChangeScope change(*this);
     auto* d = new BreakpointDescriptor();
+    d->condition = condition;
     d->type = spec.type;
     if (spec.type == BRK_MEMORY)
         d->memoryType = spec.access;
@@ -373,12 +505,16 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         d->page = spec.page;
         d->pageType = spec.pageType;
         d->slotOnly = spec.slotOnly;
+        d->bankOffset = spec.pageOffset;
     }
     d->spacePage = spec.spacePage;
+    d->nextSystemPage = spec.nextSystemPage;
     d->portMask = spec.portMask;
     d->nrDoors = spec.nrDoors;
     d->nrValue = spec.nrValue;
     d->nrMask = spec.nrMask;
+    d->chip = spec.chip;
+    d->chipUnit = spec.chipUnit;
     d->beamHc = spec.beamHc;
     d->hitMode = spec.hitMode;
     d->hitTarget = spec.hitMode == BRK_HIT_ALWAYS ? 0 : spec.hitTarget;
@@ -387,6 +523,22 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         d->group = spec.group;
     if (!spec.owner.empty())
         d->owner = spec.owner;
+    d->shared = spec.shared;
+    d->hidden = spec.hidden;
+    if (spec.tapSink != BRK_NO_TAP)
+    {
+        // The card's CPU: its memory, ports and events; the main CPU's also its events and the chips' registers
+        if (spec.type != BRK_MEMORY && spec.type != BRK_IO && spec.type != BRK_EVENT &&
+            !(spec.type == BRK_CHIPREG && !_target))
+        {
+            delete d;
+            error = _target ? "a tap watches memory, ports or card events"
+                            : "a tap watches memory, ports, machine events or chip registers";
+            return BRK_INVALID;
+        }
+        d->tapSink = spec.tapSink;
+        d->tapCookie = spec.tapCookie;
+    }
 
     bool adopted = false;
     const uint16_t id = AddBreakpointAdopting(d, adopted);
@@ -575,6 +727,7 @@ bool BreakpointManager::ResetHitCount(uint16_t breakpointID)
     if (it == _breakpointMapByID.end())
         return false;
     it->second->hitCount = 0;
+    it->second->matchCount = 0;
     return true;
 }
 
@@ -583,7 +736,142 @@ void BreakpointManager::ResetAllHitCounts()
     ChangeScope change(*this);
     for (auto& [id, bp] : _breakpointMapByID)
         if (bp)
+        {
             bp->hitCount = 0;
+            bp->matchCount = 0;
+        }
+}
+
+/// The accesses a condition's trigger supplies (breakpointcondition.h) for a breakpoint watching `access`. A NextREG
+/// breakpoint is a port access of its register (PORT / ADDR the register, VAL the value written), a chip register
+/// breakpoint a port write; copper, beam and magic breakpoints supply no access
+static uint8_t ConditionTriggerOf(BreakpointTypeEnum type, uint8_t access)
+{
+    uint8_t trigger = 0;
+    if (type == BRK_NEXTREG)
+        return static_cast<uint8_t>(((access & BRK_IO_IN) ? BRK_COND_PORT_IN : 0) |
+                                    ((access & BRK_IO_OUT) ? BRK_COND_PORT_OUT : 0));
+    if (type == BRK_CHIPREG)
+        return BRK_COND_PORT_OUT;
+    if (type == BRK_COPPER || type == BRK_BEAM || type == BRK_MAGIC)
+        return BRK_COND_EXEC;
+    if (type == BRK_MEMORY)
+    {
+        if (access & BRK_MEM_EXECUTE)
+            trigger |= BRK_COND_EXEC;
+        if (access & BRK_MEM_READ)
+            trigger |= BRK_COND_READ;
+        if (access & BRK_MEM_WRITE)
+            trigger |= BRK_COND_WRITE;
+    }
+    else if (type == BRK_IO)
+    {
+        if (access & BRK_IO_IN)
+            trigger |= BRK_COND_PORT_IN;
+        if (access & BRK_IO_OUT)
+            trigger |= BRK_COND_PORT_OUT;
+    }
+    return trigger;
+}
+
+BreakpointConditionPtr BreakpointManager::CompileCondition(BreakpointTypeEnum type, uint8_t access,
+                                                           const std::string& text, BreakpointConditionDialect dialect,
+                                                           std::string& error) const
+{
+    if (_target)
+    {
+        // Another CPU: its registers and memory, the machine's frame; no labels (they name the main CPU's
+        // addresses). The dry run needs the CPU: without one now the text and the trigger are checked only
+        BreakpointConditionContext dryRun;
+        Z80Registers registers{};
+        const bool cpu = _target->Registers(registers);
+        dryRun.cpu = &registers;
+        dryRun.target = _target;
+        dryRun.state = _context ? &_context->emulatorState : nullptr;
+        BreakpointConditionPtr program =
+            BreakpointConditionProgram::Compile(text, ConditionTriggerOf(type, access) | BRK_COND_TARGET, nullptr,
+                                                error, dialect, cpu ? &dryRun : nullptr);
+        if (!program)
+            error = "condition: " + error;
+        return program;
+    }
+    const LabelManager* labels =
+        _context && _context->pDebugManager ? _context->pDebugManager->GetLabelManager() : nullptr;
+    // The dry run needs a machine: a manager without one (unit tests) checks the text and the trigger only
+    BreakpointConditionContext dryRun;
+    const bool machine = _context && _context->pCore && _context->pMemory;
+    if (machine)
+    {
+        dryRun.cpu = _context->pCore->GetZ80();
+        dryRun.memory = _context->pMemory;
+        dryRun.state = &_context->emulatorState;
+        dryRun.machine = _context->pConditionMachine;
+    }
+    BreakpointConditionPtr program = BreakpointConditionProgram::Compile(text, ConditionTriggerOf(type, access), labels,
+                                                                         error, dialect, machine ? &dryRun : nullptr);
+    if (!program)
+        error = "condition: " + error;
+    return program;
+}
+
+bool BreakpointManager::SetBreakpointCondition(uint16_t breakpointID, const std::string& text, std::string& error,
+                                               BreakpointConditionDialect dialect)
+{
+    BreakpointConditionPtr condition;
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        auto it = _breakpointMapByID.find(breakpointID);
+        if (it == _breakpointMapByID.end())
+        {
+            error = "no breakpoint " + std::to_string(breakpointID);
+            return false;
+        }
+        const BreakpointDescriptor& bp = *it->second;
+        if (!text.empty())
+        {
+            if (!TakesCondition(bp.type) || bp.spacePage != 0xFFFF)
+            {
+                error = kConditionTypes;
+                return false;
+            }
+            condition = CompileCondition(bp.type, bp.type == BRK_MEMORY ? bp.memoryType : bp.ioType, text, dialect, error);
+            if (!condition)
+                return false;
+        }
+    }
+    ChangeScope change(*this);
+    auto it = _breakpointMapByID.find(breakpointID);
+    if (it == _breakpointMapByID.end())
+    {
+        error = "no breakpoint " + std::to_string(breakpointID);
+        return false;
+    }
+    BreakpointDescriptor* bp = it->second;
+    // A conditional breakpoint is never the plain one an equal request adopts: out of the key maps
+    if (condition)
+    {
+        if (bp->type == BRK_MEMORY)
+        {
+            auto key = _breakpointMapByAddress.find(bp->keyAddress);
+            if (key != _breakpointMapByAddress.end() && key->second == bp)
+                _breakpointMapByAddress.erase(key);
+            bp->keyAddress = 0xFFFF'FFFF;
+        }
+        else if (bp->type == BRK_IO)
+        {
+            auto key = _breakpointMapByPort.find(bp->z80address);
+            if (key != _breakpointMapByPort.end() && key->second == bp)
+                _breakpointMapByPort.erase(key);
+        }
+    }
+    // The matches so far were all hits: a new condition counts on from there
+    if (condition && !bp->condition)
+        bp->matchCount = bp->hitCount;
+    bp->condition = condition;
+    bp->conditionFailed = 0;
+    bp->conditionError[0] = '\0';
+    NotifyBreakpointsChanged();
+    return true;
 }
 
 /// @brief Removes a breakpoint using its descriptor
@@ -703,6 +991,10 @@ BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreak
     info.group = bp->group;
     info.page = PageSpecName(*bp);
     info.hitCount = bp->hitCount;
+    info.matchCount = bp->condition ? bp->matchCount : bp->hitCount;
+    if (bp->condition)
+        info.condition = bp->condition->Canonical();
+    info.conditionError = bp->conditionError;
     if (bp->spacePage != 0xFFFF)
     {
         info.pageKind = "vram";
@@ -737,6 +1029,12 @@ BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreak
             break;
         case BRK_MAGIC:
             info.type = "magic";
+            break;
+        case BRK_EVENT:
+            info.type = "event";
+            break;
+        case BRK_CHIPREG:
+            info.type = "chipreg";
             break;
         default:
             info.type = "unknown";
@@ -1088,6 +1386,54 @@ bool BreakpointManager::ParsePageInto(const std::string& text, BreakpointSpec& s
 {
     std::string lower = text;
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (lower.rfind("bank8k", 0) == 0)
+    {
+        // An 8K RAM bank: bank8kN, N decimal, 0x / # / $ hex
+        std::string number = lower.substr(6);
+        int base = 10;
+        if (number.rfind("0x", 0) == 0)
+            number = number.substr(2), base = 16;
+        else if (!number.empty() && (number[0] == '#' || number[0] == '$'))
+            number = number.substr(1), base = 16;
+        char* end = nullptr;
+        const unsigned long value = number.empty() ? 512 : std::strtoul(number.c_str(), &end, base);
+        if (number.empty() || *end != '\0' || value > 0x1FF)
+        {
+            error = "an 8K bank is bank8k0..bank8k511 (half of a 16K RAM page), got '" + text + "'";
+            return false;
+        }
+        spec.page = static_cast<uint8_t>(value >> 1);
+        spec.pageType = BANK_RAM;
+        spec.bank8k = static_cast<uint16_t>(value);
+        spec.hasPage = true;
+        return true;
+    }
+    // The ZX Next's system area (nextmemory.h): the DivMMC ROM the first 8K of ROM page 4, its RAM bank b half
+    // b & 1 of ROM page 8 + b / 2, the Multiface's ROM and RAM the two halves of ROM page 5
+    auto system = [&](uint8_t page, uint16_t half) {
+        spec.page = page;
+        spec.pageType = BANK_ROM;
+        spec.bank8k = half;
+        spec.hasPage = true;
+        spec.nextSystemPage = true;
+        return true;
+    };
+    if (lower == "divmmcrom")
+        return system(4, 0);
+    if (lower == "mfrom" || lower == "mfram")
+        return system(5, lower == "mfram" ? 1 : 0);
+    if (lower.rfind("divmmc", 0) == 0)
+    {
+        const std::string number = lower.substr(6);
+        char* end = nullptr;
+        const unsigned long value = number.empty() ? 99 : std::strtoul(number.c_str(), &end, 10);
+        if (number.empty() || *end != '\0' || value > 15)
+        {
+            error = "a DivMMC page is divmmcrom or its RAM banks divmmc0..divmmc15 (8 KB each), got '" + text + "'";
+            return false;
+        }
+        return system(static_cast<uint8_t>(8 + value / 2), static_cast<uint16_t>(value & 1));
+    }
     if (lower.rfind("vram", 0) == 0)
     {
         const std::string number = lower.substr(4);
@@ -1103,7 +1449,8 @@ bool BreakpointManager::ParsePageInto(const std::string& text, BreakpointSpec& s
     }
     if (!ParsePageSpec(text, spec.page, spec.pageType, error))
     {
-        error += " (or vram0..vram15, the Sprinter's video RAM)";
+        error += " (or bank8kN, an 8K RAM bank; vram0..vram15, the Sprinter's video RAM; divmmcrom, divmmc0..15, mfrom, "
+                 "mfram, the ZX Next's DivMMC and Multiface)";
         return false;
     }
     spec.hasPage = true;
@@ -1179,11 +1526,22 @@ std::string BreakpointManager::PageSpecName(const BreakpointDescriptor& breakpoi
         return "vram" + std::to_string(breakpoint.spacePage - ttd::kVramPageBase);
     if (breakpoint.matchType != BRK_MATCH_BANK_ADDR)
         return {};
+    if (breakpoint.nextSystemPage)
+    {
+        const unsigned half = breakpoint.PageOffset() >> 13;
+        if (breakpoint.page == 4)
+            return "divmmcrom";
+        if (breakpoint.page == 5)
+            return half ? "mfram" : "mfrom";
+        return "divmmc" + std::to_string((breakpoint.page - 8) * 2 + half);
+    }
     return std::string(PageKindName(breakpoint.pageType)) + std::to_string(breakpoint.page);
 }
 
 bool BreakpointManager::HasPage(uint8_t page, MemoryBankModeEnum pageType) const
 {
+    if (_target)
+        return page < _target->PageCount(pageType);
     switch (pageType)
     {
         case BANK_RAM:
@@ -1280,6 +1638,12 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
             case BRK_MAGIC:
                 typeStr = "Magic";
                 break;
+            case BRK_EVENT:
+                typeStr = "Event";
+                break;
+            case BRK_CHIPREG:
+                typeStr = "ChipReg";
+                break;
             default:
                 typeStr = "Unknown";
                 break;
@@ -1293,6 +1657,12 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
             oss << std::setw(8) << std::left << ("#" + std::to_string(bp->z80address));
         else if (bp->type == BRK_MAGIC)
             oss << std::setw(8) << std::left << (bp->z80address == BRK_MAGIC_ED_FF ? "ED FF" : "DD 01");
+        else if (bp->type == BRK_EVENT)
+            oss << std::setw(8) << std::left << GSCardEventName(static_cast<GSCardEvent>(bp->z80address));
+        else if (bp->type == BRK_CHIPREG)
+            oss << std::setw(8) << std::left
+                << (std::string(SoundChipKindName(static_cast<SoundChipKind>(bp->chip))) + " " +
+                    StringHelper::Format("#%X", bp->z80address));
         else if (bp->type == BRK_KEYBOARD)
             oss << std::setw(8) << std::left
                 << (bp->z80address == BRK_KEY_ANY ? std::string("any key")
@@ -1374,10 +1744,16 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
                     << static_cast<unsigned>(bp->nrValue & bp->nrMask) << " mask 0x" << std::setw(2)
                     << static_cast<unsigned>(bp->nrMask) << std::setfill(' ') << std::dec;
         }
+        if (bp->condition)
+            oss << " if " << bp->condition->Canonical();
+        if (bp->conditionFailed)
+            oss << " [condition failed: " << bp->conditionError << "]";
         if (bp->hitMode != BRK_HIT_ALWAYS)
             oss << " hits " << HitSpecName(*bp);
         if (bp->hitCount)
             oss << " (hit " << std::dec << bp->hitCount << "x)";
+        if (bp->condition && bp->matchCount != bp->hitCount)
+            oss << " (matched " << std::dec << bp->matchCount << "x)";
 
         // Format note if available
         if (!bp->note.empty())
@@ -1439,6 +1815,8 @@ bool BreakpointManager::ActivateBreakpoint(uint16_t breakpointID)
     {
         BreakpointDescriptor* bp = _breakpointMapByID[breakpointID];
         bp->active = true;
+        bp->conditionFailed = 0;  // enabled again: the condition gets another try
+        bp->conditionError[0] = '\0';
         RebuildFilters();
         return true;
     }
@@ -1733,6 +2111,12 @@ BreakpointManager::BreakpointSummary BreakpointManager::GetSummary() const
                 break;
             case BRK_MAGIC:
                 summary.magic++;
+                break;
+            case BRK_EVENT:
+                summary.event++;
+                break;
+            case BRK_CHIPREG:
+                summary.chipreg++;
                 break;
         }
         BreakpointSummary::Group& group = groups[bp->group];
@@ -2035,7 +2419,7 @@ void BreakpointManager::RemovePortBreakpointsByType(uint8_t ioType)
 /// region <Runtime methods>
 
 /// The out-of-line half of HandlePCChange / HandleMemoryRead / HandleMemoryWrite: the filter said "maybe"
-uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address)
+uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address, int value)
 {
     // TTD silent-replay suppression (parent TDD 8.2 + Appendix C): the replay re-executes known history
     if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
@@ -2050,24 +2434,39 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address)
 
     uint16_t result = BRK_INVALID;
     if (!_cpuHeads[kind].empty())
-        result = WalkCandidates(_cpuHeads[kind][address], -1, result, static_cast<BreakpointTapKind>(kind), address);
+        result = WalkCandidates(_cpuHeads[kind][address], -1, result, static_cast<BreakpointTapKind>(kind), address, value);
 
     // Physical breakpoints: the page the slot shows now, from the memory model (no remap tracking needed:
     // the filter does not depend on the mapping, design §5.2)
-    if (_hasPageSlices[kind] && _context && _context->pMemory)
+    if (_hasPageSlices[kind] && (_target || (_context && _context->pMemory)))
     {
-        const MemoryPageDescriptor where = _context->pMemory->MapZ80AddressToPhysicalPage(address);
+        const MemoryPageDescriptor where =
+            _target ? _target->MapAddress(address) : _context->pMemory->MapZ80AddressToPhysicalPage(address);
         if (where.mode == BANK_ROM || where.mode == BANK_RAM || where.mode == BANK_CACHE)
         {
             const size_t pageId = (static_cast<size_t>(where.mode) << 8) | where.page;
             if (pageId < kPageIds && _pageSlices[kind][pageId])
-                result = WalkCandidates(_pageSlices[kind][pageId]->heads[address & 0x3FFF], address >> 14, result,
-                                        static_cast<BreakpointTapKind>(kind), address);
+                result = WalkCandidates(_pageSlices[kind][pageId]->heads[where.addressInPage & 0x3FFF], where.slotShift,
+                                        result, static_cast<BreakpointTapKind>(kind), address, value);
         }
     }
 
     if (result != BRK_INVALID)
         _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);  // Track for automation API queries
+    return result;
+}
+
+uint16_t BreakpointManager::ResolvePage(int kind, MemoryBankModeEnum mode, uint8_t page, uint16_t offset, int value)
+{
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+        return BRK_INVALID;
+    const size_t pageId = (static_cast<size_t>(mode) << 8) | page;
+    if (pageId >= kPageIds || !_pageSlices[kind][pageId])
+        return BRK_INVALID;
+    const uint16_t result = WalkCandidates(_pageSlices[kind][pageId]->heads[offset & 0x3FFF], -1, BRK_INVALID,
+                                           static_cast<BreakpointTapKind>(kind), offset & 0x3FFF, value);
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
     return result;
 }
 
@@ -2136,6 +2535,8 @@ uint16_t BreakpointManager::ResolveCopperPc(uint16_t pc)
     {
         if (!bp || !bp->active || bp->type != BRK_COPPER || pc < bp->z80address || pc > bp->EndAddress())
             continue;
+        if (bp->condition && !ConditionHolds(*bp, BRK_TAP_EXEC, pc, -1))
+            continue;
         if (HitStops(*bp) && result == BRK_INVALID)
             result = bp->breakpointID;
     }
@@ -2153,7 +2554,89 @@ uint16_t BreakpointManager::ResolveMagic(uint16_t opcodeWord)
     {
         if (!bp || !bp->active || bp->type != BRK_MAGIC || bp->z80address != opcodeWord)
             continue;
+        if (bp->condition && !ConditionHolds(*bp, BRK_TAP_EXEC, opcodeWord, -1))
+            continue;
         if (HitStops(*bp) && result == BRK_INVALID)
+            result = bp->breakpointID;
+    }
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
+    return result;
+}
+
+uint16_t BreakpointManager::ResolveEvent(GSCardEvent kind, uint8_t value, int arg, bool stops)
+{
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+        return BRK_INVALID;
+    uint16_t result = BRK_INVALID;
+    for (const auto& [id, bp] : _breakpointMapByID)
+    {
+        if (!bp || !bp->active || bp->type != BRK_EVENT || bp->z80address != static_cast<uint16_t>(kind) ||
+            (value & bp->nrMask) != (bp->nrValue & bp->nrMask))
+            continue;
+        if (!stops && bp->tapSink == BRK_NO_TAP)
+            continue;
+        if (!HitStops(*bp))
+            continue;
+        // A tap never stops: its sink is told
+        if (bp->tapSink != BRK_NO_TAP)
+        {
+            if (IBreakpointTapSink* sink = _tapSinks[bp->tapSink])
+            {
+                BreakpointTapHit hit;
+                hit.cookie = bp->tapCookie;
+                hit.breakpointID = bp->breakpointID;
+                hit.address = static_cast<uint16_t>(kind);
+                hit.value = value;
+                hit.arg = arg;
+                hit.kind = _target ? BRK_TAP_EVENT : BRK_TAP_MACHINE_EVENT;
+                sink->OnTap(hit);
+            }
+            continue;
+        }
+        if (result == BRK_INVALID)
+            result = bp->breakpointID;
+    }
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
+    return result;
+}
+
+uint16_t BreakpointManager::ResolveChipRegister(SoundChipKind kind, uint8_t unit, uint16_t reg, uint8_t value,
+                                                bool stops)
+{
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+        return BRK_INVALID;
+    uint16_t result = BRK_INVALID;
+    for (const auto& [id, bp] : _breakpointMapByID)
+    {
+        if (!bp || !bp->active || bp->type != BRK_CHIPREG || bp->chip != static_cast<uint8_t>(kind) ||
+            (bp->chipUnit != kSoundChipAnyUnit && bp->chipUnit != unit) || reg < bp->z80address ||
+            reg > bp->EndAddress() || (value & bp->nrMask) != (bp->nrValue & bp->nrMask))
+            continue;
+        if (!stops && bp->tapSink == BRK_NO_TAP)
+            continue;
+        if (bp->condition && !ConditionHolds(*bp, BRK_TAP_PORT_OUT, reg, value))
+            continue;
+        if (!HitStops(*bp))
+            continue;
+        // A tap never stops: its sink is told
+        if (bp->tapSink != BRK_NO_TAP)
+        {
+            if (IBreakpointTapSink* sink = _tapSinks[bp->tapSink])
+            {
+                BreakpointTapHit hit;
+                hit.cookie = bp->tapCookie;
+                hit.breakpointID = bp->breakpointID;
+                hit.address = reg;
+                hit.value = value;
+                hit.arg = unit;
+                hit.kind = BRK_TAP_CHIPREG;
+                sink->OnTap(hit);
+            }
+            continue;
+        }
+        if (result == BRK_INVALID)
             result = bp->breakpointID;
     }
     if (result != BRK_INVALID)
@@ -2213,6 +2696,8 @@ uint16_t BreakpointManager::ResolveBeam(const std::function<bool(uint16_t line, 
     {
         if (!bp || !bp->active || bp->type != BRK_BEAM || !crossed(bp->z80address, bp->beamHc))
             continue;
+        if (bp->condition && !ConditionHolds(*bp, BRK_TAP_EXEC, bp->z80address, -1))
+            continue;
         if (HitStops(*bp) && result == BRK_INVALID)
             result = bp->breakpointID;
     }
@@ -2235,6 +2720,9 @@ uint16_t BreakpointManager::ResolveNextReg(int direction, uint8_t reg, uint8_t v
             continue;
         if ((value & bp->nrMask) != (bp->nrValue & bp->nrMask))
             continue;
+        if (bp->condition &&
+            !ConditionHolds(*bp, direction == BRK_NR_READ ? BRK_TAP_PORT_IN : BRK_TAP_PORT_OUT, reg, value))
+            continue;
         if (HitStops(*bp) && result == BRK_INVALID)
             result = bp->breakpointID;
     }
@@ -2243,7 +2731,7 @@ uint16_t BreakpointManager::ResolveNextReg(int direction, uint8_t reg, uint8_t v
     return result;
 }
 
-uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t first, BreakpointTapKind kind,
+uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slotShift, uint16_t first, BreakpointTapKind kind,
                                            uint16_t address, int value)
 {
     if (set == 0 || set >= _candidateSets.size())
@@ -2251,9 +2739,14 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t firs
     for (BreakpointDescriptor* bp : _candidateSets[set])
     {
         // A slot-only physical breakpoint fires only through the slot it was set in
-        if (bp->slotOnly && slot >= 0 && slot != (bp->z80address >> 14))
+        if (bp->slotOnly && slotShift >= 0 && (address >> slotShift) != (bp->z80address >> slotShift))
             continue;
-        // Every matching access counts; the policy decides whether it stops, or for a tap whether its sink is told
+        // Every matching access counts as a match; a condition then decides whether it is a hit (a failed one no
+        // longer matches), and the policy whether the hit stops, or for a tap whether its sink is told. Without a
+        // condition every match is a hit: only hitCount is kept (the snapshot reports it as both)
+        if (bp->condition) [[unlikely]]
+            if (!ConditionHolds(*bp, kind, address, value))
+                continue;
         const uint32_t n = ++bp->hitCount;
         bool stop = true;
         switch (bp->hitMode)
@@ -2275,6 +2768,8 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t firs
                     hit.address = address;
                     hit.value = value;
                     hit.kind = kind;
+                    if (kind == BRK_TAP_READ || kind == BRK_TAP_PORT_IN)
+                        hit.replace = _replace;
                     sink->OnTap(hit);
                 }
             continue;
@@ -2283,6 +2778,74 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t firs
             first = bp->breakpointID;
     }
     return first;
+}
+
+bool BreakpointManager::ConditionHolds(BreakpointDescriptor& bp, BreakpointTapKind kind, uint16_t address, int value)
+{
+    if (bp.conditionFailed)
+        return false;
+    ++bp.matchCount;
+    BreakpointConditionContext x;
+    Z80Registers target{};
+    if (_target)
+    {
+        // Another CPU's breakpoint (rare, in that CPU's debug loop): its registers copied per evaluation
+        if (_target->Registers(target))
+            x.cpu = &target;
+        x.target = _target;
+        x.state = _context ? &_context->emulatorState : nullptr;
+    }
+    else if (_context)
+    {
+        x.cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+        x.memory = _context->pMemory;
+        x.state = &_context->emulatorState;
+        x.machine = _context->pConditionMachine;
+    }
+    const uint32_t known = value >= 0 ? static_cast<uint32_t>(value) : BreakpointConditionAccess::kNone;
+    switch (kind)
+    {
+        case BRK_TAP_EXEC: break;
+        case BRK_TAP_READ:
+            x.access.readAddress = address;
+            x.access.memoryValue = known;
+            break;
+        case BRK_TAP_WRITE:
+            x.access.writeAddress = address;
+            x.access.memoryValue = known;
+            break;
+        case BRK_TAP_PORT_IN: x.access.portIn = address; break;
+        case BRK_TAP_PORT_OUT:
+            x.access.portOut = address;
+            x.access.portValue = known;
+            break;
+        case BRK_TAP_EVENT:
+        case BRK_TAP_MACHINE_EVENT: break;  // events take no condition
+        case BRK_TAP_CHIPREG: break;        // a chip register's condition comes as its OUT (BRK_TAP_PORT_OUT)
+    }
+    x.hits = bp.hitCount;
+    std::string why;
+    switch (bp.condition->Evaluate(x, &why))
+    {
+        case BreakpointConditionResult::True: return true;
+        case BreakpointConditionResult::False: return false;
+        case BreakpointConditionResult::Error: break;
+    }
+
+    // Marked once, never stopped on (conditions-and-callbacks.md §8.6): the reason with where it happened, and one
+    // breakpoints_changed so every surface sees the state
+    const uint16_t pc = x.cpu ? x.cpu->pc : 0;
+    const unsigned long long frame = x.state ? static_cast<unsigned long long>(x.state->frame_counter) : 0;
+    std::snprintf(bp.conditionError, sizeof(bp.conditionError), "%s (frame %llu, PC #%04X)", why.c_str(), frame, pc);
+    bp.conditionFailed = 1;
+    _revision.fetch_add(1, std::memory_order_relaxed);
+    if (_context && _context->pEmulator)
+    {
+        auto* payload = new BreakpointsChangedPayload(_context->pEmulator->GetId());
+        payload->ids = {bp.breakpointID};
+        MessageCenter::DefaultMessageCenter().Post(NC_BREAKPOINTS_CHANGED, payload, true);
+    }
+    return false;
 }
 
 bool BreakpointManager::CoversMemory(const BreakpointDescriptor& bp, uint16_t address, const MemoryPageDescriptor& page)
@@ -2294,10 +2857,10 @@ bool BreakpointManager::CoversMemory(const BreakpointDescriptor& bp, uint16_t ad
     // Physical: the page, the offsets, and for slot-only the slot
     if (page.mode != bp.pageType || page.page != bp.page)
         return false;
-    if (bp.slotOnly && (address >> 14) != (bp.z80address >> 14))
+    if (bp.slotOnly && (address >> page.slotShift) != (bp.z80address >> page.slotShift))
         return false;
-    const uint16_t offset = address & 0x3FFF;
-    return offset >= (bp.z80address & 0x3FFF) && offset <= (bp.EndAddress() & 0x3FFF);
+    const uint16_t offset = page.addressInPage & 0x3FFF;
+    return offset >= bp.PageOffset() && offset <= bp.PageOffsetEnd();
 }
 
 // endregion </Runtime methods>
@@ -2335,11 +2898,12 @@ uint16_t BreakpointManager::GenerateNewBreakpointID()
 /// breakpoint, nor a user's adopt it)
 static bool IsPlainMemory(const BreakpointDescriptor& d)
 {
-    return !d.isRange && !d.slotOnly && d.hitMode == BRK_HIT_ALWAYS && d.tapSink == BRK_NO_TAP;
+    return d.shared && !d.isRange && !d.slotOnly && d.bankOffset == 0xFFFF && d.hitMode == BRK_HIT_ALWAYS &&
+           d.tapSink == BRK_NO_TAP && !d.condition;
 }
 static bool IsPlainPort(const BreakpointDescriptor& d)
 {
-    return d.portMask == 0xFFFF && d.hitMode == BRK_HIT_ALWAYS && d.tapSink == BRK_NO_TAP;
+    return d.shared && d.portMask == 0xFFFF && d.hitMode == BRK_HIT_ALWAYS && d.tapSink == BRK_NO_TAP && !d.condition;
 }
 
 uint16_t BreakpointManager::AddMemoryBreakpoint(BreakpointDescriptor* descriptor)
@@ -2441,6 +3005,8 @@ uint16_t BreakpointManager::AddKeyboardBreakpoint(BreakpointDescriptor* descript
 
 BreakpointDescriptor* BreakpointManager::FindAddressBreakpoint(uint16_t address)
 {
+    if (_target)
+        return FindAddressBreakpoint(address, _target->MapAddress(address));
     Memory& memory = *_context->pMemory;
     return FindAddressBreakpoint(address, memory.MapZ80AddressToPhysicalPage(address));
 }
@@ -2491,6 +3057,9 @@ void BreakpointManager::RebuildFilters()
 
     _hotState = BreakpointHotState{};
     _candidateSets.assign(1, {});
+    // The slot size the physical breakpoints' CPU addresses follow (16K; the Next's MMU: 8K)
+    const uint32_t slotShift = !_target && _context && _context->pMemory ? _context->pMemory->PhysicalSlotShift() : 14;
+    const uint32_t slotMask = (1u << slotShift) - 1;
     std::map<std::vector<BreakpointDescriptor*>, uint32_t> interned;
     auto intern = [&](const std::vector<BreakpointDescriptor*>& set) -> uint32_t {
         if (set.empty())
@@ -2558,6 +3127,10 @@ void BreakpointManager::RebuildFilters()
     {
         if (!bp || !bp->active)
             continue;
+        if (bp->tapSink == BRK_NO_TAP)
+            demand.stop = true;
+        else if (bp->type != BRK_MEMORY)
+            demand.other = true;
         if (bp->type == BRK_IO)
         {
             for (int d = 0; d < 2; d++)
@@ -2582,6 +3155,20 @@ void BreakpointManager::RebuildFilters()
         if (bp->type == BRK_MAGIC)
         {
             _hotState.hasMagic = 1;
+            continue;
+        }
+        if (bp->type == BRK_EVENT)
+        {
+            _hotState.hasEvent = 1;
+            if (bp->tapSink != BRK_NO_TAP)
+                _hotState.hasEventTap = 1;
+            continue;
+        }
+        if (bp->type == BRK_CHIPREG)
+        {
+            _hotState.hasChipReg = 1;
+            if (bp->tapSink != BRK_NO_TAP)
+                _hotState.hasChipRegTap = 1;
             continue;
         }
         if (bp->type == BRK_KEYBOARD)
@@ -2634,20 +3221,22 @@ void BreakpointManager::RebuildFilters()
             const size_t pageId = (static_cast<size_t>(bp->pageType) << 8) | bp->page;
             if (pageId >= kPageIds)
                 continue;
-            const uint32_t from = bp->z80address & 0x3FFF;
-            const uint32_t to = bp->EndAddress() & 0x3FFF;
+            const uint32_t from = bp->PageOffset();
+            const uint32_t to = bp->PageOffsetEnd();
             pages[k][pageId].push_back({from, to, bp});
+            // The CPU addresses the offsets may show at: every slot (of the model's slot size), or the breakpoint's
             for (uint32_t offset = from; offset <= to; offset++)
             {
+                const uint32_t inSlot = offset & slotMask;
                 if (bp->slotOnly)
                 {
-                    const uint32_t a = (bp->z80address & 0xC000) | offset;
+                    const uint32_t a = (bp->z80address & ~slotMask & 0xFFFF) | inSlot;
                     _hotState.memoryFilter[k][a >> 6] |= 1ull << (a & 63);
                 }
                 else
-                    for (uint32_t slot = 0; slot < 4; slot++)
+                    for (uint32_t slot = 0; slot < (0x10000u >> slotShift); slot++)
                     {
-                        const uint32_t a = (slot << 14) | offset;
+                        const uint32_t a = (slot << slotShift) | inSlot;
                         _hotState.memoryFilter[k][a >> 6] |= 1ull << (a & 63);
                     }
             }
@@ -2684,6 +3273,14 @@ void BreakpointManager::RebuildFilters()
             _portHeads[d][port] = intern(set);
     }
 
+    // The chips report their register writes only while the main CPU has a chip register breakpoint
+    if (!_target && _context)
+    {
+        _context->chipRegisterWatch = _hotState.hasChipReg != 0;
+        _context->machineEventWatch = _hotState.hasEvent != 0;
+        _context->beamWatch = _hotState.hasBeam != 0;
+    }
+
     ApplyTapDemand(demand);
 
     // Every mutation of the set ends here: tell the surfaces
@@ -2697,6 +3294,12 @@ void BreakpointManager::ApplyTapDemand(const BreakpointTapDemand& demand)
     if (demand == _tapDemand)
         return;
     _tapDemand = demand;
+    // Another CPU's breakpoints: its own hooks, never the main CPU's switches
+    if (_target)
+    {
+        _target->OnBreakpointDemand(demand);
+        return;
+    }
     if (_context == nullptr || _context->pCore == nullptr)
         return;
     _context->pCore->GetZ80()->execTapHold = demand.exec;
@@ -2705,7 +3308,10 @@ void BreakpointManager::ApplyTapDemand(const BreakpointTapDemand& demand)
     if (memory != nullptr)
         memory->SetWriteTapDemand(hooked, &_hotState);
     if (_context->pFeatureManager != nullptr)
+    {
         _context->pFeatureManager->setTapDebugHold(demand.read || (demand.write && !hooked));
+        _context->pFeatureManager->setBreakpointDebugHold(demand.stop);
+    }
 }
 
 uint8_t BreakpointManager::RegisterTapSink(IBreakpointTapSink* sink)
@@ -2774,6 +3380,7 @@ std::string BreakpointManager::PublishedFields(const BreakpointDescriptor& bp)
            std::to_string(bp.page) + "|" + std::to_string(bp.pageType) + "|" + (bp.active ? "1" : "0") + "|" +
            std::to_string(bp.EndAddress()) + "|" + (bp.slotOnly ? "s" : "-") + "|" + std::to_string(bp.portMask) + "|" +
            std::to_string(bp.hitMode) + "|" + std::to_string(bp.hitTarget) + "|" +
+           (bp.condition ? bp.condition->Canonical() : std::string()) + "|" + (bp.conditionFailed ? "f" : "-") + "|" +
            bp.owner + "|" + bp.group + "|" + bp.note;
 }
 
@@ -2787,6 +3394,8 @@ void BreakpointManager::NotifyBreakpointsChanged()
     if (ids.empty())
         return;
     auto* payload = new BreakpointsChangedPayload(_context->pEmulator->GetId());
+    if (_target)
+        payload->cpu = _target->Name();
     payload->ids = std::move(ids);
     MessageCenter::DefaultMessageCenter().Post(NC_BREAKPOINTS_CHANGED, payload, true);
 }

@@ -19,7 +19,8 @@ enum class ControlType : uint8_t
     Trigger,  ///< 0 .. 1
     Delta,    ///< a mouse count per event (mouse.dx, mouse.dy, mouse.wheel)
     Pointer,  ///< an absolute screen position (pointer.x, pointer.y)
-    Encoder,  ///< a rotary encoder: signed detents since the last event (a Surface Dial's `knob`); not a mouse delta
+    Encoder,  ///< a rotary encoder: signed detents since the last event (a Surface Dial's `knob`, a jog wheel's `jog`);
+              ///< not a mouse delta
 };
 
 /// What a control name means
@@ -52,7 +53,8 @@ enum KeyModifier : uint8_t
 std::string KeyControl(const std::string& key, uint8_t modifiers);
 
 /// The fixed control names (for "did you mean" lists): face, D-pad, shoulders, sticks, system, extras, motion, mouse,
-/// the control surfaces' `knob` (encoder), `push` and `touch` (the hand on the knob)
+/// the control surfaces' `knob` (encoder), `push` and `touch` (the hand on the knob), a jog-shuttle's `jog` (encoder)
+/// and `shuttle.left` / `shuttle.right` (the ring's turn each way, 0..1)
 const std::vector<std::string>& KnownControls();
 
 /// The stick a name stands for as a whole (`lstick`, `rstick`, a trackpad `ltouchpad`, `rtouchpad`), for a binding of

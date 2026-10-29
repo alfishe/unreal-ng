@@ -1,0 +1,37 @@
+# Cisco Heat (Image Works 1991), the 128K Z80 snapshot "Cisco_Heat_1991_Image_Works_128K.z80" (archive.org zx_*): it sits on
+# "PRESS FIRE TO START", SPACE starts the stage (the keys are the game's own, no menu in the snapshot). The IM2 interrupt
+# (#9D73) scans the keyboard into the matrix copy at #5BCD (8 rows, port order 7FFE .. FEFE), the main loop turns the rows into
+# flags: O and P steer (row DFFE, #9DC7: O calls #8A0C, P calls #8A17), ENTER brakes (the only key that changed the speed in a
+# branch test from the same cruise state: 164 -> 136 in 60 frames); the throttle is automatic. Haptics (haptics.md §13 H5),
+# found with TTD on recorded runs, reading the HUD digits against RAM (the branch method: seek, resume, press): the speed is the
+# byte #5BB3 in mph (the HUD shows it one frame later; 103 in LOW gear, up to about 175 in HIGH; #5BB4 is the same value / 8);
+# the writers are #ACD1 (accelerate), #8AD7 (drag, -1), #8F87 (the HIGH -> LOW slow-down, -10 .. -2 per tick) and #9BEC, the
+# surface limit: when the player is faster than the limit of the tile under the car (ix+#0C, 88 mph on the grass) the speed is
+# cut to the limit, so #9BE6 runs on every scrape of the grass.
+# Checked in real time (SPACE, then 42 s of random O / P): the speed level follows the car (100 to 159 mph seen), 9 `offroad` on
+# the grass. Known limits: no hit on a traffic car found (none occurred in the recordings),
+# no siren or pickup events.
+schema: 1
+kind: play
+id: builtin/game/cisco-heat
+label: Cisco Heat
+match:
+  machines: [128K, PENTAGON]
+  file_sha256: ["295bdf7d8a2b5ed18e62b298a8145a66c2441280602c9fe73bd05cb953b3913b"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    lt.click:     { key: ENTER, label: Brake }
+    menu:         { key: SPACE, label: Start }
+haptics:
+  sources:
+    speed:   { probe: value, address: "0x5BB3", scale: 1.45 }
+    offroad: { probe: exec, address: "0x9BE6" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: offroad, play: rumble-strip }

@@ -37,6 +37,8 @@ public:
     std::vector<HapticWatch> Watches() const override;
     std::vector<HapticStream> Streams() const override;
     std::vector<HapticProbe> Probes() const override;
+    /// The `if:` of every source that is not a breakpoint probe: such a source fires only when it holds
+    std::vector<std::string> FrameConditions() const override;
     /// A replay or seek: the game effects on the targets stop now, frames are ignored until the hold ends
     void OnHapticHold(bool held) override;
     /// Every source is a game event (the profile's `events:` and `haptics.sources`), with or without a device
@@ -59,6 +61,7 @@ private:
         int watch = -1;  ///< the probe's index in Watches()
         int probe = -1;  ///< in Probes()
         int stream = -1; ///< in Streams()
+        int condition = -1;  ///< its `if:` in FrameConditions()
         EnvelopeFilter envelope;
         LowbandFilter lowband;
         OnsetFilter onset;
@@ -77,6 +80,7 @@ private:
     std::vector<HapticWatch> _watches;
     std::vector<HapticStream> _streams;
     std::vector<HapticProbe> _probes;
+    std::vector<std::string> _frameConditions;
     std::atomic<bool> _held{false};
     std::vector<State> _states;  ///< per source
     std::vector<float> _frameLevels;  ///< per source, the last frame's (emulator thread)

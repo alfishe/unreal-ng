@@ -1,0 +1,39 @@
+# Hard Drivin' (Domark / Atari Games 1989), the 128K Z80 snapshot "Hard_Drivin_1989_Domark_128K.z80" (archive.org zx_*): it
+# opens on the title; SPACE shows the options, 1 = KEYBOARD (the control menu also lists Kempston, Fuller, Interface 2, cursor),
+# L / R = drive on the left / right, then the track map and Q starts the countdown. The game scans the whole keyboard into the
+# matrix copy at #C5B6 (#C5AB reads the ports); keyboard play: Q accelerates, A brakes, O / P steer, SPACE centres the steering,
+# 0 aborts the replay / the off-road state ("TURN KEY TO START" is the engine-off state after a wreck or leaving the road).
+# Haptics (haptics.md §13 H5), found with TTD on a recorded run (RAM of all 8 pages sampled every 15 frames, bytes that climb
+# while Q is held, coast down on release and go negative under A): the speed is the signed byte #965B (0 to 139 at the end of
+# a 4 s full throttle, up to about 200 at the top, the shadow copy at #A9A0 is the same value one buffer later). The wreck is
+# #F5E1, the head of the INSTANT REPLAY set-up beside the speed writer #F56D (it runs once per wreck: the speed fell 229 -> 14
+# in the same frame, the replay text came after; it is the only run of that block in a 1500-frame recording).
+# Known limits: the off-road state ("OFF ROAD n") and the plain object hits (the speed drops 101 -> 3 without a replay) are not
+# mapped yet.
+schema: 1
+kind: play
+id: builtin/game/hard-drivin
+label: Hard Drivin'
+match:
+  machines: [PENTAGON, 128K]
+  file_sha256: ["46aa1d0f2ea842390dadc885492f6d528d8d5eb0491fc918179462c86cdccd4d"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    rt.click:     { key: Q, label: Accelerate }
+    lt.click:     { key: A, label: Brake }
+    south:        { key: SPACE, label: Centre }
+    east:         { key: "0", label: Reset }
+    menu:         { key: "1", label: Select }
+haptics:
+  sources:
+    speed: { probe: value, address: "0x965B", scale: 1.25 }
+    crash: { probe: exec, address: "0xF5E1" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: crash, play: explosion, scale: 0.9 }

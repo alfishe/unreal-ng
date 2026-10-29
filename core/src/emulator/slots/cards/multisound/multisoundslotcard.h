@@ -74,6 +74,8 @@ public:
     void TtdFingerprint(std::vector<std::pair<std::string, uint64_t>>& out) const override;
     /// A session recorded with another MIDI bank is refused (the synthesizer's blob names its bank)
     bool TtdSessionMatches(const ttd::TTDDeviceStates& states, std::string& why) const override;
+    /// The card's General Sound: the debugger's `ms` CPU
+    GeneralSoundCard* DebugGeneralSound() override;
     /// endregion </ICard>
 
     MultiSoundCard& Card()

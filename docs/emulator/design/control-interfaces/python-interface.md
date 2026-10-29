@@ -69,6 +69,10 @@ python->start();
 python->executePython("print('Hello from embedded Python!')");
 ```
 
+Code sent to the interpreter (`POST /api/v1/python/exec`, the CLI `python` command) runs in `__main__`: its functions
+and callbacks see its top-level names, and the names stay for the next call, as in the Lua console. Its `print`
+output comes back with the answer.
+
 ### Machine Identity and Lifecycle
 The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
@@ -1165,10 +1169,24 @@ id = emu.bp_nextreg_write(0x40, to=0x44, doors="copper", value=0x01, vmask=0x03,
 id = emu.bp_magic("ed_ff")         # ZX Next: stop after the magic opcode ED FF (or "dd_01") ran
 id = emu.bp_beam(99, hc=255)        # ZX Next: the beam passes line 99 (the copper's counter) at pixel clock 255
 id = emu.bp_copper(12, to=14)       # ZX Next: the copper completes list instruction 12..14
+id = emu.bp(0x0038, cpu="gs")       # the sound card CPU's (General Sound / NeoGS); bp_remove(id, cpu="gs"), bp_list(cpu="gs") ...
+                                    # cpu="ms": the MultiSound card's General Sound, the same way
+id = emu.bp_event("card_command", value=0x23)  # a GS event (int, nmi, reset, page, card_*, dac_fetch, clock_change,
+                                    # dma_start, dma_done, gscfg0, host_*; the ZX Next's cpu_int, cpu_nmi,
+                                    # esxdos_call, divmmc_map, zxndma_start, ...: the main CPU's);
+                                    # cpu= defaults to the kind's side; ValueError with the reason when refused
+id = emu.bp_chipreg("ay", 7, value=0x3F, vmask=0x3F)  # a sound chip register write by the main CPU (ay, fm, saa,
+                                    # opl4, opl4wave, dac, cbl); end= a range end, unit= one chip of the kind
+id = emu.gs_on_dma_done(fn)          # a card event callback (hit["arg"] its detail); also gs_on_command, gs_on_data,
+                                    # gs_on_reply, gs_on_int, gs_on_nmi, gs_on_page, gs_on_dac_fetch, gs_on_clock_change,
+                                    # gs_on_dma_start, gs_on_gscfg0, gs_on_port_in(port, fn), gs_on_port_out(port, fn); cpu="ms"
 emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
+id = emu.bp_write(0x5C78, condition="VAL == 0")  # a condition (bp / bp_read / bp_write / bp_port_*; dialect="c");
+                                    # ValueError with the reason when it does not compile
+emu.bp_condition(id, "VAL == 80")   # change it ("" clears): True; False for an unknown id; ValueError for a bad text
 emu.bp_group(id, "game")            # group, created on use; switched on / off together (CLI bpgroup)
 id = emu.bp_key("space")            # keyboard: the first keyboard read that sees SPACE go down; on="release" / "both",
                                     # key="any"; hits=, group=, note=
@@ -1181,7 +1199,34 @@ emu.trace("opcode", "start")        # profilers and traces (tracecontrol): opcod
 emu.trace("audio", "start", seconds=2, source="ay1")  # resume | pause_toggle | clear | status -> {name, state, can_pause}
 emu.bp_count()
 print(emu.bp_list())                # the text table: "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
-emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one
+emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one;
+                                    # with a condition also 'condition', 'match_count', 'condition_error'
+```
+
+### Script Callbacks
+
+Called back on a tap (a memory or port access, with an optional condition, a machine event or a sound chip's
+register write; never stops the machine), on a
+breakpoint's stop, or on a game event of the controller profile. The function runs on the Python thread under the
+GIL, from a ring of hits with a register snapshot each (deferred mode). Full reference:
+[docs/features/script-callbacks.md](../../../features/script-callbacks.md).
+
+```python
+id = emu.on_tap(lambda hit: print(hit["value"], hit["regs"]["hl"]), "write", 0x5C78, condition="MDT < 5",
+                label="lives")      # kind: exec, read, write, port_in, port_out; to=, page=, mask=, dialect=;
+                                    # policy= (suspend | disable | ignore), budget_us=, ring=; ValueError when refused
+id = emu.on_tap(fn, "event", event="fdc_command", value=0x80, vmask=0xE0)  # a machine event; hit["arg"] the detail
+id = emu.on_tap(fn, "chipreg", 7, chip="ay")  # a sound chip's register write; to=, unit=, value=, vmask=, condition=
+id = emu.on_breakpoint(fn, 3)       # breakpoint 3 still stops
+id = emu.on_game_event(fn, "died")  # hit["event"], hit["value"]
+emu.callbacks()                     # [{id, on, owner, label, target, policy, state, reason, hits, dropped, calls, ...}]
+emu.callback_resume(id); emu.callback_policy(id, "ignore"); emu.callback_remove(id)
+ue.callbacks_run()                  # run the waiting hits now (a script looping on the Python thread)
+# A str instead of fn: Lua source for the emulator's hook state (mode="frame" by default, or "sync"; instructions=)
+id = emu.on_tap("return function(hit) shared_set('lives', hit.value) end", "write", 0x5C78, mode="sync")
+# role="logic": the hook's poke / set_reg land at the next instruction boundary, recorded by TTD and replayed
+id = emu.on_tap("return function(hit) poke(0x5C78, 5) end", "write", 0x5C78, mode="sync", role="logic")
+emu.shared_get("lives"); emu.shared_set("limit", 3); emu.callback_hooks()
 ```
 
 ### DebugManager Class

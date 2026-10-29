@@ -1,5 +1,6 @@
 #include "automation-lua.h"
 #include "emulator/lua_emulator.h"
+#include "hooks/luahookhost.h"
 
 #include <chrono>
 #include <thread>
@@ -13,6 +14,8 @@
 void AutomationLua::start()
 {
     stop();
+    // Frame and sync script callbacks run in a Lua hook state of each emulator (docs/features/script-callbacks.md)
+    SetScriptHookHostFactory(&LuaHookHost::Create);
 
     _stopThread = false;
     _initialized = false;
@@ -99,16 +102,15 @@ bool AutomationLua::executeCode(const std::string& code, std::string& errorMessa
             sol::function tostring_func = lua["tostring"];
 
             // Override print function to capture output
-            lua["print"] = [&output, tostring_func](sol::object a, sol::object b, sol::object c, sol::object d, sol::object e) {
-                std::vector<sol::object> args = {a, b, c, d, e};
+            // Every argument as Lua's print shows it, nil included
+            lua["print"] = [&output, tostring_func](sol::variadic_args args) {
                 bool first = true;
-                for (auto& arg : args) {
-                    if (arg == sol::lua_nil) break; // Stop at nil arguments
+                for (auto arg : args) {
                     if (!first) {
                         output += "\t"; // Lua's default print separator
                     }
                     first = false;
-                    output += tostring_func(arg);
+                    output += tostring_func(sol::object(arg)).get<std::string>();
                 }
                 output += "\n"; // Lua's default print newline
             };
@@ -149,6 +151,56 @@ bool AutomationLua::executeFile(const std::string& path, std::string& errorMessa
     // File loading will be implemented in CLI handler with FileHelper
     // This method receives already-read file content
     return executeCode(path, errorMessage, capturedOutput);
+}
+
+int AutomationLua::runFile(const std::string& path, std::string& errorMessage)
+{
+    if (!ready())
+    {
+        errorMessage = "Lua interpreter not initialized";
+        return 1;
+    }
+
+    try
+    {
+        return dispatchSync([&path, &errorMessage](sol::state& lua) -> int {
+            // Protected, as executeCode: the script's error comes back as a result
+            const sol::protected_function_result result = lua.safe_script_file(path, sol::script_pass_on_error);
+            if (!result.valid())
+            {
+                const sol::error error = result;
+                errorMessage = error.what();
+                return 1;
+            }
+            if (result.return_count() == 0)
+                return 0;
+            const sol::object value = result.get<sol::object>(0);
+            switch (value.get_type())
+            {
+                case sol::type::number:
+                    return static_cast<int>(value.as<double>());
+                case sol::type::boolean:
+                    return value.as<bool>() ? 0 : 1;
+                case sol::type::lua_nil:
+                    return 0;
+                default:
+                    errorMessage = "the script returned a " + std::string(sol::type_name(lua.lua_state(), value.get_type())) +
+                                   ", not an exit code";
+                    return 1;
+            }
+        });
+    }
+    catch (const std::exception& e)
+    {
+        errorMessage = std::string("C++ error: ") + e.what();
+        return 1;
+    }
+}
+
+bool AutomationLua::ready()
+{
+    std::lock_guard<std::mutex> lock(_initMutex);
+    return _thread && _initialized && _lua;
 }
 
 std::string AutomationLua::getStatusString() const
@@ -228,6 +280,14 @@ void AutomationLua::threadFunc(AutomationLua* lua)
     // causes a SIGSEGV on the first call.
     lua->_luaEmulator->setLuaState(lua->_lua);
     lua->_luaEmulator->registerType(*lua->_lua);
+    // A callback's ring went from empty to not empty: the loop below runs the callbacks
+    lua->_luaEmulator->SetCallbackWake([lua]() {
+        {
+            std::lock_guard<std::mutex> lock(lua->_queueMutex);
+            lua->_callbacksPending = true;
+        }
+        lua->_queueCV.notify_one();
+    });
     
     // Signal that initialization is complete
     {
@@ -247,7 +307,7 @@ void AutomationLua::threadFunc(AutomationLua* lua)
             
             // Wait for tasks or timeout
             lua->_queueCV.wait_for(lock, std::chrono::milliseconds(100), [lua]() {
-                return !lua->_taskQueue.empty() || lua->_stopThread;
+                return !lua->_taskQueue.empty() || lua->_callbacksPending || lua->_stopThread;
             });
             
             // Process all pending tasks
@@ -261,8 +321,20 @@ void AutomationLua::threadFunc(AutomationLua* lua)
                 
                 lock.lock();
             }
+
+            // Script callbacks: the functions run here, between the tasks, never on the emulation thread
+            if (lua->_callbacksPending)
+            {
+                lua->_callbacksPending = false;
+                lock.unlock();
+                const bool more = lua->_luaEmulator->DrainCallbacks();
+                lock.lock();
+                if (more)
+                    lua->_callbacksPending = true;
+            }
         }
     }
 
+    lua->_luaEmulator->ForgetCallbacks();
     lua->onFinish();
 }

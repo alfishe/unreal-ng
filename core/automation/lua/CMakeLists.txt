@@ -43,6 +43,7 @@ set(SOL2_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/sol2/sol2-3.5.0/single/inc
 #------------------------------------------------------------------------------
 set(AUTOMATION_LUA_SOURCES
     src/automation-lua.cpp
+    src/hooks/luahookhost.cpp
     # NOTE: automation-main.cpp is excluded because it contains a main() function
     # which conflicts when linking with other executables like unreal-qt
 )
@@ -50,6 +51,7 @@ set(AUTOMATION_LUA_SOURCES
 set(AUTOMATION_LUA_HEADERS
     src/automation-lua.h
     src/emulator/lua_emulator.h
+    src/hooks/luahookhost.h
 )
 
 #------------------------------------------------------------------------------

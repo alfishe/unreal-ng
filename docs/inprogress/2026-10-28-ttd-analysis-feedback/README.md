@@ -9,7 +9,7 @@ Order (owner, 2026-10-28):
 1. **Phase 1:** query fixes 1-6 below, full tests, regression check, land on master and push.
 2. **Phase 2:** a replay query engine ("replay a window with observers, collect every hit"). This phase starts
    only after phase 1 has landed. It needs a POC in `tools/poc/`, A/B benchmarks and a quality check.
-   Plan (owner, 2026-10-28, after POCs 038 and 039): [phase-2-plan.md](phase-2-plan.md). Fast in-place replay,
+   Plan (owner, 2026-10-28, after POCs 038 and 040): [phase-2-plan.md](phase-2-plan.md). Fast in-place replay,
    HALT idle while TTD records, the round-2 feedback; the clone pool is deferred.
 
 No phase 1 change touches the recording hot path. Every change is opt-in or fixes a wrong value, so existing

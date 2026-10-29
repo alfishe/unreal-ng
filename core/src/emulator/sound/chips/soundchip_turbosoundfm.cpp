@@ -6,7 +6,9 @@
 #include <limits>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/breakpoints/chipregister.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
@@ -671,6 +673,12 @@ void SoundChip_TurboSoundFM::portDeviceOutMethod(uint16_t port, uint8_t value)
             // of this T-state) or FM register (allowed while muted); both
             // set busy
             _pair.writeData(_board.chip, value);
+            if (_context && _context->chipRegisterWatch) [[unlikely]]
+            {
+                const uint8_t reg = _pair.chip(_board.chip)->address;
+                ReportChipRegisterWrite(_context, reg < 0x10 ? SoundChipKind::Ay : SoundChipKind::Fm,
+                                        static_cast<uint8_t>(_board.chip), reg, value);
+            }
             break;
 
         default:
