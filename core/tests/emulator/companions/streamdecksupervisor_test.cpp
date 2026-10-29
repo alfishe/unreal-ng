@@ -214,13 +214,14 @@ protected:
     }
     void TearDown() override { _sup.Detach(); }
 
-    void Attach(Mode mode, int decks = 1)
+    void Attach(Mode mode, int decks = 1,
+                const std::string& binary = "/app/UnrealNG.app/Contents/MacOS/unreal-streamdeck")
     {
         _decks = decks;
         Host host;
         host.webapiPort = 8090;
         host.ownPid = kOwnPid;
-        host.defaultBinary = "/app/UnrealNG.app/Contents/MacOS/unreal-streamdeck";
+        host.defaultBinary = binary;
         host.logFile = "/tmp/daemon.log";
         host.decksAttached = [this] { return _decks; };
         Settings settings;
@@ -577,6 +578,35 @@ TEST_F(StreamDeckSupervisor_Test, AMissingBinaryFailsWithTheReasonAndTriesAgainL
     _world.launchFails = false;
     At(Supervisor::kGiveUpMs);
     EXPECT_EQ(_world.starts.size(), 2u);
+}
+
+TEST_F(StreamDeckSupervisor_Test, NoBinaryIsMissingWithoutACountdownAndABinarySettingStartsIt)
+{
+    Attach(Mode::Always, 1, "");  // a build without the companion: nothing beside unreal-qt
+    At(0);
+    EXPECT_EQ(State(), "missing");
+    EXPECT_NE(Str(_sup.Status(), "error").find("-DUNREAL_STREAMDECK=ON"), std::string::npos);
+    EXPECT_EQ(_sup.Status().find("retry_in_ms"), nullptr) << "no countdown: nothing to wait for";
+    EXPECT_TRUE(_world.starts.empty());
+    // a daemon started elsewhere (the studio) is still adopted
+    _world.up = true;
+    At(Supervisor::kMissingCheckMs);
+    EXPECT_EQ(State(), "adopted");
+    // it goes (three failed health checks): missing again
+    _world.up = false;
+    int64_t now = Supervisor::kMissingCheckMs;
+    while (State() != "missing" && now < Supervisor::kMissingCheckMs + 4 * Supervisor::kHealthEveryMs)
+        At(now += Supervisor::kStepMs);
+    EXPECT_EQ(State(), "missing");
+    EXPECT_TRUE(_world.starts.empty());
+    // the binary named: started at the next step, not after the check period
+    std::string error;
+    StateNode changes = StateNode::Object();
+    changes["binary"] = "/opt/sd/unreal-streamdeck";
+    ASSERT_TRUE(_sup.Update(changes, error));
+    At(now += Supervisor::kStepMs);
+    ASSERT_EQ(_world.starts.size(), 1u);
+    EXPECT_EQ(_world.starts[0].path, "/opt/sd/unreal-streamdeck");
 }
 
 TEST_F(StreamDeckSupervisor_Test, AStartThatFindsOneRunningEndsAndTheRunningOneIsAdopted)

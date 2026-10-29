@@ -134,7 +134,8 @@ json Example()
               "press": { "kind": "action", "id": "run.pause_toggle" } } ],
             "items": [
               { "id": "ttd.timecode", "type": "menu", "title": "Time code", "context": "ttd.timecode", "at": [1, 1],
-                "items": [] } ] }
+                "items": [] } ] },
+          { "id": "media", "type": "menu", "title": "Media", "at": [1, 3], "items": [] }
         ] } })");
 }
 }  // namespace
@@ -522,6 +523,20 @@ void TestScenarioV2()
         rt.OnContext("unknown");
         rt.Step(0);
         CHECK(rt.State()["page"]["menu"] == "home");
+        // a menu without a context of its own has its path's: the same context keeps the deck there (a restarted
+        // host's default), another one moves it
+        rt.Navigate(json{{"to", "node"}, {"node", "media"}});
+        rt.Step(0);
+        host->calls.clear();
+        rt.OnContext("play");
+        rt.Step(0);
+        CHECK(rt.State()["page"]["menu"] == "media" && host->calls.empty());
+        rt.OnContext("ttd");
+        rt.Step(0);
+        CHECK(rt.State()["page"]["menu"] == "ttd");
+        rt.OnContext("play");
+        rt.Step(0);
+        CHECK(rt.State()["page"]["menu"] == "home" && host->calls.empty());
         // a dial's hold-less press and turn go as calls; the turn carries delta + rate and the curve's params
         host->calls.clear();
         rt.Navigate(json{{"to", "node"}, {"node", "ttd"}});
@@ -539,9 +554,12 @@ void TestScenarioV2()
         rt.ShowActivity("ttd.seek_by");
         rt.Step(0);
         CHECK(rt.GetStats().keyWrites == before);
+        CHECK(!pageKey("run").contains("flash"));
         rt.ShowActivity("run.pause_toggle");
         rt.Step(0);
         CHECK(rt.GetStats().keyWrites == before + 1);
+        // the page state names the lit key while its flash lasts (the host conformance reads it)
+        CHECK(pageKey("run")["flash"] == true);
     }
 
     // ---- the generator's fixture output (tools/tests/fixture.deck.json, from fixture.spec.json): valid v2 with no
