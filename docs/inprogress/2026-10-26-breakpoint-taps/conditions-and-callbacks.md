@@ -288,7 +288,8 @@ what it built.
    taps): `on_tap` with `cpu = "gs"` on the card's memory, ports and card events, the card's registers in the hit,
    `peek` / `reg` of the card in a hook. A sync hook on a card read or port in may return the byte the card CPU sees
    (`BreakpointManager::HandleReplaceableRead` / `HandleReplaceablePortIn`); while TTD records or is browsed the byte
-   is kept and the call counts an error. A card hook does not write the card (`poke` / `set_reg` raise). Public page:
+   is kept and the call counts an error. Since 2026-10-29 (Q3) a card hook writes the card (`poke` / `set_reg` at
+   the card's next boundary) and a `logic` one is recorded by TTD (gs-debugger design §8A.7). Public page:
    [script-callbacks.md](../../features/script-callbacks.md#the-sound-cards-cpu).
 
 ### 9.1 Documentation per phase

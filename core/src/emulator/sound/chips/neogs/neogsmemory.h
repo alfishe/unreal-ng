@@ -85,6 +85,17 @@ public:
     /// Debugger/automation view: no side effects, flash shown as its array
     uint8_t peek(uint16_t addr) const;
     void poke(uint16_t addr, uint8_t value);
+    /// A script's write as the CPU's would land in RAM; a flash or write-protected window keeps its byte (false)
+    bool writeRam(uint16_t addr, uint8_t value)
+    {
+        uint8_t* p = _writePtr[addr >> 14];
+        if (!p)
+            return false;
+        p[addr & (PAGE_SIZE - 1)] = value;
+        if (_ramTracker)
+            _ramTracker->Mark(static_cast<size_t>(p - _ram.data()) + (addr & (PAGE_SIZE - 1)));
+        return true;
+    }
 
     /// Physical location of a CPU address: flash or RAM, byte offset
     bool isFlash(int window) const { return _windowFlash[window & 3]; }

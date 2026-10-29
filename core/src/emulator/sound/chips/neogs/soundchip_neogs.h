@@ -146,6 +146,10 @@ public:
     uint32_t cardPageCount(CardPage::Kind kind) const override;
     bool cardRegisters(Z80CpuRegisters& out) const override;
     int64_t cardTime() const override { return _runner.now(); }
+    int64_t cardFrameTime() const override { return _runner.now() - _frameStartTicks; }
+    bool inFrameEndCatchUp() const override { return _frameEndCatchUp; }
+    bool pokeCardMemory(uint16_t addr, uint8_t value) override { return _cpu && _mem.writeRam(addr, value); }
+    bool setCardRegisters(const Z80CpuRegisters& regs) override;
     double cardUnitsPerSecond() const override { return TICKS_PER_SECOND; }
 
     const GSActivityCounters& getActivityCounters() const override { return _activityCounters; }
@@ -554,6 +558,7 @@ private:
     // Host frame bases
     uint64_t _frameStartZxTacts = 0;
     int64_t _frameStartTicks = 0;
+    bool _frameEndCatchUp = false;  // inside handleFrameEnd's run (a card hook's edit names the frame)
     int64_t _frameTicks = 0;
 
     // Audio

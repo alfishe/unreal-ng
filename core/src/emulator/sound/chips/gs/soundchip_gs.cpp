@@ -401,7 +401,9 @@ void SoundChip_GeneralSound::handleFrameEnd(size_t expectedSamples)
         return;
 
     // Catch-up: run the GS CPU to the end of the ZX frame
+    _frameEndCatchUp = true;
     runTo(_frameStartGsCycles + _frameGsCycles);
+    _frameEndCatchUp = false;
 
     // Actual samples for this frame - must match what SoundManager mixes
     // (accumulator count preferred, local rounding as fallback)
@@ -1113,6 +1115,25 @@ bool SoundChip_GeneralSound::cardRegisters(Z80CpuRegisters& out) const
     if (!_cpu)
         return false;
     Z80CpuGetRegisters(_cpu, &out);
+    return true;
+}
+
+bool SoundChip_GeneralSound::pokeCardMemory(uint16_t addr, uint8_t value)
+{
+    uint8_t* bank = _bankW[(addr >> 14) & 3];
+    if (!_cpu || !bank)
+        return false;
+    bank[addr & (PAGE_SIZE - 1)] = value;
+    if (_ramTrackerArmed)
+        _ramTrackerArmed->Mark(static_cast<size_t>(bank - _ram.data()) + (addr & (PAGE_SIZE - 1)));
+    return true;
+}
+
+bool SoundChip_GeneralSound::setCardRegisters(const Z80CpuRegisters& regs)
+{
+    if (!_cpu)
+        return false;
+    Z80CpuSetRegisters(_cpu, &regs);
     return true;
 }
 

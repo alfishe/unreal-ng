@@ -74,6 +74,8 @@
 #include "emulator/sound/soundmanager.h"                 // SoundManager
 #include "stdafx.h"
 #include "debugger/ttd/ttdsessionport.h"
+#include "debugger/debugmanager.h"
+#include "debugger/targets/gscardtarget.h"
 
 // Static assertion: the .ttd v1 format assumes a little-endian host. Every
 // multi-byte field in the header / cpu_state / chipset_state is written in
@@ -1774,13 +1776,24 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
     // --- Every region (machine RAM, device memories), then the devices, then the
     // banks the restored latches select ---
     const PerfClock::time_point memoryStart = PerfClock::now();
-    _engine->ForgetMemory();
+    // Inside a run of replays the engine knows what its last restore left in memory: only the pieces written
+    // since and those whose version differs are decoded. Anything else starts from nothing known
+    const bool memoryKnown = _engineMemoryKnown && _knownMemoryDepth > 0;
+    const TTDWrittenFn written = memoryKnown ? TakeWrittenSinceRestore() : TTDWrittenFn{};
+    if (!memoryKnown)
+    {
+        _engine->ForgetMemory();
+        (void)TakeWrittenSinceRestore();   // the marks so far are covered by forgetting: start counting here
+    }
     CheckEngineCheckpoint(size_t(engineIndex), false);
     SetMediaToCheckpoint(size_t(engineIndex));
-    const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex));
+    const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex), written, &_lastMemoryRestore);
+    _engineMemoryKnown = _knownMemoryDepth > 0 && memory.Ok();
     const PerfClock::time_point devicesStart = PerfClock::now();
     const TTDRestoreResult devices =
         _engine->RestoreDevices(size_t(engineIndex), TTDRestoreContext{engineCp->position.frame, 0, true});
+    if (_engineMemoryKnown)
+        (void)TakeWrittenSinceRestore();   // marks the restore itself made (a device loading its state) hold the checkpoint
     if (!memory.Ok() || devices.status != TTDRestoreStatus::Exact)
         MLOGWARNING("TimeTravelController::RestoreCheckpoint — engine restore of frame %llu: %s%s%s",
                     static_cast<unsigned long long>(cp.time.frame), memory.message.c_str(),
@@ -1797,6 +1810,60 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
     _perf.lastRestoreMemoryNs = elapsedNs(memoryStart, devicesStart);
     _perf.lastRestoreDevicesNs = elapsedNs(devicesStart, devicesEnd);
     _perf.lastRestoreScreenNs = elapsedNs(devicesEnd, PerfClock::now());
+}
+
+TTDWrittenFn TimeTravelController::TakeWrittenSinceRestore()
+{
+    // A device that tracks writes its own way (MoonSound's wave memory) moves them into its trackers first
+    for (ITTDRegionSource* source : _peripherals.RegionSources())
+        source->TTDBeforeCapture();
+
+    _writtenPages.clear();
+    if (_dirtyTracker)
+        _dirtyTracker->CollectAndClear(_writtenPages);
+    _writtenRamPages.assign(_modelRamPages, 0);
+    for (const uint16_t page : _writtenPages)
+        if (page < _writtenRamPages.size())
+            _writtenRamPages[page] = 1;
+
+    // Per engine region: its tracker (matched by the live memory it watches); a region no tracker watches counts
+    // as written whole
+    const std::vector<TTDRegionDesc>& regions = _engine->Regions();
+    const uint8_t* ram = _memory ? _memory->RAMPageAddress(0) : nullptr;
+    _writtenPieces.resize(regions.size());
+    for (size_t r = 0; r < regions.size(); ++r)
+    {
+        std::vector<uint8_t>& marks = _writtenPieces[r];
+        const TTDRegionDesc& desc = regions[r];
+        if (desc.memory && desc.memory == ram)
+        {
+            marks.clear();   // machine RAM: by page
+            continue;
+        }
+        const TTDDeviceRegion* watched = nullptr;
+        for (const TTDDeviceRegion& d : _shadowDeviceRegions)
+            if (desc.memory && d.desc.memory == desc.memory && d.tracker && !d.compareEachCapture)
+                watched = &d;
+        marks.assign(desc.pieces, watched ? 0 : 1);
+        if (!watched)
+            continue;
+        _writtenScratch.clear();
+        watched->tracker->CollectAndClear(_writtenScratch);
+        for (const uint32_t p : _writtenScratch)
+            if (p < marks.size())
+                marks[p] = 1;
+    }
+    return [this](uint32_t region, uint32_t piece) {
+        if (region >= _writtenPieces.size())
+            return true;
+        const std::vector<uint8_t>& marks = _writtenPieces[region];
+        if (marks.empty())
+        {
+            const size_t page = piece / 4;   // machine RAM: 16 KB pages of four pieces
+            return page >= _writtenRamPages.size() || _writtenRamPages[page] != 0;
+        }
+        return piece >= marks.size() || marks[piece] != 0;
+    };
 }
 
 void TimeTravelController::ResyncScreenState()
@@ -2205,6 +2272,36 @@ void TimeTravelController::ApplyLiveInput(TTDInputEvent ev, const TTDNetInput* n
     ApplyInputEvent(ev, InputDevicesOf(_context), net ? &applied : nullptr, payload);
 }
 
+// The records of a tool edit's payload (BeginToolEdit / EndToolEdit, RecordScriptEdit, RecordCardEdits)
+namespace
+{
+enum : uint8_t
+{
+    kEditRamPage = 1,
+    kEditRegionPiece = 2,
+    kEditDeviceState = 3,
+    kEditCpu = 4,
+    kEditChipset = 5,
+    kEditClock = 6,
+    kEditBanks = 7,
+    kEditDeviceStateAt = 8,   ///< a device state by its index in the session's device table (D23; kind 3: by v1 id)
+    kEditCpuBytes = 9,        ///< bytes through the CPU's view (RecordScriptEdit)
+    kEditCardEdit = 10,       ///< a card hook's write (RecordCardEdits): id cpu | kind << 8, index the address,
+                              ///< bytes the frame (8), the card time (8), the edit's bytes
+};
+void PutEditRecord(std::vector<uint8_t>& out, uint8_t kind, uint16_t id, uint32_t index, const uint8_t* bytes,
+                   uint32_t length)
+{
+    const size_t at = out.size();
+    out.resize(at + 11 + length);
+    out[at] = kind;
+    std::memcpy(out.data() + at + 1, &id, 2);
+    std::memcpy(out.data() + at + 3, &index, 4);
+    std::memcpy(out.data() + at + 7, &length, 4);
+    std::memcpy(out.data() + at + 11, bytes, length);
+}
+}  // namespace
+
 void TimeTravelController::ServiceInput()
 {
     if (!_context)
@@ -2226,13 +2323,18 @@ void TimeTravelController::ServiceInput()
         const TTDTimePoint now = InputEventTimeNow(_context);
         TTDMachineTime start = 0;
         const TTDEventLog& log = _replayEngine->Events();
+        if (now.frame != _cardEditFrame)
+            DeliverCardEdits(now.frame);
         if (_replayEngine->Frames().Start(now.frame, start))
             while (_engineEventCursor < log.Count() && log.At(_engineEventCursor).machineTime <= start + now.tInFrame)
             {
                 const TTDEvent& ev = log.At(_engineEventCursor++);
                 if (ev.kind == TTDEventKind::DebuggerEdit && TTDEventLog::RoleOf(ev) == TTDEventRole::Input)
                 {
-                    ApplyToolEdit(_replayEngine->Payloads().Bytes(ev.payload));
+                    // A card's edits went to its target at the frame's start (DeliverCardEdits)
+                    const std::vector<uint8_t>& payload = _replayEngine->Payloads().Bytes(ev.payload);
+                    if (payload.empty() || payload[0] != kEditCardEdit)
+                        ApplyToolEdit(payload);
                     continue;
                 }
                 if (!IsInputKind(ev.kind))
@@ -2349,6 +2451,7 @@ void TimeTravelController::ArmInputPlayback()
         _engineEventCursor = _replayEngine->Events().CursorAt(start + now.tInFrame);
         _inputPlaybackArmed = _engineEventCursor < _replayEngine->Events().Count();
     }
+    _cardEditFrame = UINT64_MAX;
     UpdateInputWorkFlag();
 }
 
@@ -2356,6 +2459,8 @@ void TimeTravelController::DisarmInputPlayback()
 {
     _inputPlaybackArmed = false;
     _inputCursor = 0;
+    if (_cardEditFrame != UINT64_MAX)
+        DeliverCardEdits(UINT64_MAX);
     UpdateInputWorkFlag();
 }
 
@@ -2494,32 +2599,6 @@ TTDPortSearchResult TimeTravelController::SearchPortEvents(const TTDPortQuery& q
 // 8 a device state by its table index, 9 bytes written through the CPU's view
 // (a logic callback: index = the first address, written in order as a tool's
 // poke writes them; the replay reaches the same paging, so they land alike)
-namespace
-{
-enum : uint8_t
-{
-    kEditRamPage = 1,
-    kEditRegionPiece = 2,
-    kEditDeviceState = 3,
-    kEditCpu = 4,
-    kEditChipset = 5,
-    kEditClock = 6,
-    kEditBanks = 7,
-    kEditDeviceStateAt = 8,   ///< a device state by its index in the session's device table (D23; kind 3: by v1 id)
-    kEditCpuBytes = 9,        ///< bytes through the CPU's view (RecordScriptEdit)
-};
-void PutEditRecord(std::vector<uint8_t>& out, uint8_t kind, uint16_t id, uint32_t index, const uint8_t* bytes,
-                   uint32_t length)
-{
-    const size_t at = out.size();
-    out.resize(at + 11 + length);
-    out[at] = kind;
-    std::memcpy(out.data() + at + 1, &id, 2);
-    std::memcpy(out.data() + at + 3, &index, 4);
-    std::memcpy(out.data() + at + 7, &length, 4);
-    std::memcpy(out.data() + at + 11, bytes, length);
-}
-}  // namespace
 
 void TimeTravelController::BeginToolEdit()
 {
@@ -2665,8 +2744,89 @@ void TimeTravelController::RecordScriptEdit(const char* source, const std::vecto
         _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
 }
 
+void TimeTravelController::RecordCardEdits(const char* source, const std::vector<TTDCardEdit>& edits)
+{
+    if (_state != TTDSessionState::Recording || !_context || edits.empty())
+        return;
+    std::vector<uint8_t> payload;
+    std::vector<uint8_t> bytes;
+    for (const TTDCardEdit& edit : edits)
+    {
+        bytes.resize(16 + edit.bytes.size());
+        std::memcpy(bytes.data(), &edit.frame, 8);
+        std::memcpy(bytes.data() + 8, &edit.at, 8);
+        if (!edit.bytes.empty())
+            std::memcpy(bytes.data() + 16, edit.bytes.data(), edit.bytes.size());
+        PutEditRecord(payload, kEditCardEdit, static_cast<uint16_t>(edit.cpu | (edit.kind << 8)), edit.address,
+                      bytes.data(), static_cast<uint32_t>(bytes.size()));
+    }
+    const size_t before = _externalEvents.Size();
+    RecordExternalEventAt(TTDExternalEventKind::DebuggerEdit, source,
+                          {_context->emulatorState.frame_counter, TInFrameNow()});
+    if (_externalEvents.Size() > before)
+        _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
+}
+
+void TimeTravelController::DeliverCardEdits(uint64_t frame)
+{
+    _cardEditFrame = frame;
+    DebugManager* debug = _context ? _context->pDebugManager : nullptr;
+    if (!debug)
+        return;
+    GSCardTarget* targets[] = {debug->GetCardTarget(DebugCpuId::GS), debug->GetCardTarget(DebugCpuId::MultiSoundGS)};
+    for (GSCardTarget* target : targets)
+        if (target)
+            target->ClearReplayEdits();
+    // The frame's edits sit at the main CPU's positions in it, the frame-end catch-up's just past its end: two
+    // frames of events from the cursor on hold them all
+    TTDMachineTime start = 0;
+    if (frame != UINT64_MAX && _replayEngine && _replayEngine->Frames().Start(frame, start))
+    {
+        const TTDEventLog& log = _replayEngine->Events();
+        const TTDMachineTime end = start + 2 * static_cast<TTDMachineTime>(FrameSpan());
+        for (size_t i = _engineEventCursor; i < log.Count() && log.At(i).machineTime < end; ++i)
+        {
+            const TTDEvent& ev = log.At(i);
+            if (ev.kind != TTDEventKind::DebuggerEdit || TTDEventLog::RoleOf(ev) != TTDEventRole::Input)
+                continue;
+            const std::vector<uint8_t>& payload = _replayEngine->Payloads().Bytes(ev.payload);
+            size_t at = 0;
+            while (at + 11 + 16 <= payload.size() && payload[at] == kEditCardEdit)
+            {
+                uint16_t id = 0;
+                uint32_t index = 0, length = 0;
+                std::memcpy(&id, payload.data() + at + 1, 2);
+                std::memcpy(&index, payload.data() + at + 3, 4);
+                std::memcpy(&length, payload.data() + at + 7, 4);
+                const uint8_t* bytes = payload.data() + at + 11;
+                at += 11 + length;
+                if (at > payload.size() || length < 16)
+                    break;
+                TTDCardEdit edit;
+                edit.cpu = static_cast<uint8_t>(id & 0xFF);
+                edit.kind = static_cast<TTDCardEdit::Kind>(id >> 8);
+                std::memcpy(&edit.frame, bytes, 8);
+                std::memcpy(&edit.at, bytes + 8, 8);
+                edit.address = static_cast<uint16_t>(index);
+                edit.bytes.assign(bytes + 16, bytes + length);
+                if (edit.frame != frame)
+                    continue;
+                if (GSCardTarget* target = debug->GetCardTarget(static_cast<DebugCpuId>(edit.cpu)))
+                {
+                    _engineMemoryKnown = false;   // the target writes the card's memory past the trackers
+                    target->AddReplayEdit(std::move(edit));
+                }
+            }
+        }
+    }
+    for (GSCardTarget* target : targets)
+        if (target)
+            target->CommitReplayEdits();
+}
+
 void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
 {
+    _engineMemoryKnown = false;   // the edit writes memory past the trackers
     std::vector<TTDRegionDesc> regions = LiveRegions();
     TTDBankOverrides banks;
     bool haveBanks = false;
@@ -2986,6 +3146,8 @@ void TimeTravelController::PauseRecordingForBrowsing()
 bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* outResult)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    // The picture's restore (the frame before) follows the seek's: it decodes only what differs
+    const KnownMemoryScope knownMemory{*this};
     // Each new Detached window starts with a clean auto-pause signal.
     // The flag is set by OnFrameBoundary when execution runs past
     // SessionEndPosition(); clearing here means callers can poll
@@ -4770,6 +4932,7 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
                                                           const TTDJournalBuildProgress& progress)
 {
     TTDJournalBuildResult r;
+    const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
     if (!_context)
     {
         r.error = "no machine";
@@ -4953,6 +5116,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
                                   TTDSearchWindow* outWindow)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Read};
+    const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
     // ------------------------------------------------------------------
     // Guards — same shape as SeekTo.
     // ------------------------------------------------------------------
@@ -5233,6 +5397,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
     // Replays checkpoints and puts the machine back: an operation that changes it
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     TTDFindResult result;
+    const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
 
     // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
@@ -5714,6 +5879,7 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
                                       TTDExternalEvent* outBlockingMarkerStorage)
 {
     EnumerateResult result;
+    const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
     if (outBlockingMarkerStorage)
         *outBlockingMarkerStorage = TTDExternalEvent{};
 
@@ -6473,6 +6639,7 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
 
 void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
 {
+    _engineMemoryKnown = false;   // the caller's memory comes back behind the engine
     Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
 
     // Mirror RestoreCheckpoint's ordering (TDD §8.1): CPU, chipset,

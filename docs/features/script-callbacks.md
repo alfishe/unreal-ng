@@ -167,12 +167,17 @@ address is the offset in the page). The card runs its debug loop while such a ta
 armed; a condition is refused.
 
 - `pc` and `regs` in the hit are the card's; `frame` and `t` stay the machine's.
-- In a card hook `peek` reads the card's memory and `reg` its registers. A card hook does not write the card:
-  `poke` and `set_reg` raise.
+- In a card hook `peek` reads the card's memory and `reg` its registers; `poke` writes the card's memory as its CPU
+  would (a ROM window keeps its byte) and `set_reg` its CPU's registers. Both are made at the card's next instruction
+  boundary, for either role.
 - **A read's byte (fault injection).** A sync hook on the card's `read` or `port_in` may return a byte (0..255):
   the card's CPU sees it instead of the one it read. Returning nothing (or a non-integer) keeps the byte. Another
-  number is an error. Frame and deferred callbacks cannot change it. While a time travel session records or is
-  browsed the byte is kept and the call counts an error: a replay could not repeat it.
+  number is an error. Frame and deferred callbacks cannot change it.
+- **Time travel.** The rules of the main CPU hold: a `view` hook writes nothing (and keeps the read's byte) while a
+  session records or is browsed, the call counts an error. A `logic` hook writes while a session records, and the
+  track keeps its writes and the read's byte as inputs placed by the card's own time in the frame: a replay makes
+  them at the same instruction of the card without running the hook. A browsed session takes no writes; a seek and
+  a resume start a new branch, whose recording keeps the writes made from there on.
 
 ```lua
 -- The card sees "no command" in its status port while the hook says so
@@ -389,7 +394,7 @@ id.
 ## Limits of this version
 
 - Only a card read's byte can be replaced; the main CPU's reads cannot.
-- A card tap takes no condition; a card hook does not write the card.
+- A card tap takes no condition.
 - One hook state per emulator for every script: two scripts' hooks share its globals.
 - No script manifest yet: callbacks are registered one call at a time.
 - Only Lua and Python register callbacks; CLI, REST, WebSocket and MCP list and manage them
