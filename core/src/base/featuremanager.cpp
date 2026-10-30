@@ -131,6 +131,18 @@ bool FeatureManager::tapDebugHold() const
     return _tapDebugHold;
 }
 
+bool FeatureManager::debugCaptureOn() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    for (const char* id : {Features::kCallTrace, Features::kMemoryTracking, Features::kOpcodeProfiler})
+    {
+        auto it = _features.find(id);
+        if (it != _features.end() && it->second.enabled)
+            return true;
+    }
+    return false;
+}
+
 void FeatureManager::setBreakpointDebugHold(bool on)
 {
     {

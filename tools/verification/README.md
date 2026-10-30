@@ -35,6 +35,11 @@ application).
 
 ---
 
+### Analysis drafts (`analysis/`)
+
+[`analysis/score_draft.py`](analysis/README.md): scores a SkoolKit ctl / skool draft against a reference disassembly
+(byte categories, code entries, graphics regions, record fields) with no agent, for the analysis-layers work.
+
 ### Disk images (`disk/`)
 
 [`disk/`](disk/README.md): disk images that do not load or boot.

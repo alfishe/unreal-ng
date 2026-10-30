@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <utility>
+#include <vector>
 #include <string>
 
 #include "mcp-dispatcher.h"
@@ -253,13 +254,13 @@ TEST_F(McpDispatcher_Test, UnknownMethod_IsMethodNotFound)
 // tools/list and tools/call
 // ===========================================================================
 
-TEST_F(McpDispatcher_Test, ToolsList_ContainsAllTwentyFiveTools)
+TEST_F(McpDispatcher_Test, ToolsList_ContainsAllTwentySixTools)
 {
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/list"));
 
     const Json::Value& tools = response["result"]["tools"];
     ASSERT_TRUE(tools.isArray());
-    EXPECT_EQ(tools.size(), 25u);
+    EXPECT_EQ(tools.size(), 26u);
 
     const char* expected[] = {"emulator_manage",  "load_software",     "control_execution", "inspect_state",
                               "type_input",       "mouse_input",       "joystick_input",    "time_travel",       "manage_symbols",    "asm_source",
@@ -267,7 +268,7 @@ TEST_F(McpDispatcher_Test, ToolsList_ContainsAllTwentyFiveTools)
                               "debug_code",       "analyze_performance", "capture_media",  "search_api",
                               "invoke_api",       "media",             "rzx_playback",      "memory_access",     "bus_analyzer",
                               "companion_manage", "controllers",       "actions",           "streamdeck",
-                              "audio_mixer"};
+                              "audio_mixer",      "analysis"};
     for (const char* name : expected)
     {
         bool found = false;
@@ -304,6 +305,29 @@ TEST_F(McpDispatcher_Test, ToolsCall_RoutesThroughToolHandlerWithDualContent)
     EXPECT_FALSE(response["result"]["content"][0]["text"].asString().empty());
     EXPECT_TRUE(response["result"].isMember("structuredContent"));
     EXPECT_FALSE(response["result"].isMember("isError"));
+}
+
+// The observer sees every call of a known tool with its action (the host counts them: host.clients.mcp.tools)
+TEST_F(McpDispatcher_Test, ToolsCall_ObserverSeesToolAndAction)
+{
+    std::vector<std::pair<std::string, std::string>> seen;
+    _dispatcher->SetToolCallObserver(
+        [&seen](const std::string& tool, const std::string& action) { seen.emplace_back(tool, action); });
+
+    Json::Value params;
+    params["name"] = "analysis";
+    params["arguments"]["action"] = "status";
+    DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    Json::Value noAction;
+    noAction["name"] = "search_api";
+    DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", noAction));
+    Json::Value unknown;
+    unknown["name"] = "no_such_tool";
+    DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", unknown));
+
+    ASSERT_EQ(seen.size(), 2u) << "an unknown tool is not counted";
+    EXPECT_EQ(seen[0], std::make_pair(std::string("analysis"), std::string("status")));
+    EXPECT_EQ(seen[1], std::make_pair(std::string("search_api"), std::string()));
 }
 
 // By default content[] holds the human-readable text only; response_format "json" adds the structuredContent

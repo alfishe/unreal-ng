@@ -1995,6 +1995,48 @@ emu.listing_step_line()              # run until the source line changes (~2 s b
 emu.listing_run_to_line(120)         # run to first code byte of line 120 (~10 s budget)
 ```
 
+### Analysis layers
+
+The L0 access facts, the L1 build and the L2 structure of the [analysis layers](../../analysis/analysis-layers.md) through the shared
+core handler (`analysis::Execute`): the answer is a dict of its fields plus `text` (the CLI's lines); a refusal is
+`{"ok": False, "error": <why>}`.
+
+```python
+emu.analysis("start")                                  # level facts, mode z80, a fresh session
+emu.analysis("start", level="counters", mode="physical")
+emu.analysis("status")                                 # {state, level, mode, frame, facts {...}, text}
+r = emu.analysis("explain", address="$80BC")           # or address=0x80BC, a label name
+print(r["text"]); r["kinds"], r["last_writer"], r["written"]
+emu.analysis("explain", address=0xC000, page="ram:3")  # physical mode: the page
+emu.analysis("stop")                                   # the facts stay readable
+
+# L1: record, build from the recording (a job), then routine fact sheets
+emu.analysis("start", record=True)                     # also a TTD recording
+emu.run_frames(500)
+job = emu.analysis("build", wait=20000)                # {job, state, bundle, progress, ready, text}; frames=, path=
+sheet = emu.analysis("explain", address=0x0038)        # L1 ready: {what: "routine", routine {...}, text: the sheet}
+emu.analysis("explain", address=0x0038, what="byte")   # the L0 byte facts as before
+emu.analysis("cancel")                                 # a running build; refused when none runs
+
+# L2 (made by the build): the detectors' claims and the draft
+q = emu.analysis("query", kind="records", range="8000-83FF", limit=20)  # {kind, range, regions [...], count, truncated, text}
+emu.analysis("query", kind="conflicts")                # pairs {a, b} of clashing claims
+ctl = emu.analysis("export", format="ctl")["content"]  # the control file in the answer
+emu.analysis("export", format="skool", path="game.skool", ranges="5900-59FF,8000-FFFF", width=8)
+g = emu.analysis("gallery", kind="sprite")             # the graphics found: {regions [...], count, truncated, text}
+png = emu.analysis("gallery", address=0x8200, scale=4)["png"]  # one drawn: base64 PNG; width, height, frames
+emu.analysis("gallery", address="$8200", path="sprite.png")    # or written to a file
+
+# L3 (the review): findings register, review queue, experiments on muted clones, directed coverage
+emu.analysis("findings", kind="bug")                   # {count, total, by_kind, by_status, findings [...], text}
+emu.analysis("findings", format="markdown", path="re/findings.md")
+item = emu.analysis("review")                          # the next item: {item, sheet, sheet_bytes, queue, text}
+emu.analysis("review", op="resolve", id=item["item"]["id"], verdict="ok", label="MainLoop", title="The main loop")
+emu.analysis("experiment", finding="F12", spec={"poke": {"$8100": 5}, "frames": 50,
+             "watch": [{"pc": "$8130", "as": "rare"}], "expect": {"rare": "reached"}})  # a dict or a list of dicts
+emu.analysis("cover", budget=32)                       # {candidates, tried, flipped, new_code, branches [...], text}
+```
+
 ### Enumerations
 
 ```python

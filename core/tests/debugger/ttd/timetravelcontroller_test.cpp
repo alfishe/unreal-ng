@@ -37,6 +37,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/memoryaccesstracker.h"
 #include "loaders/snapshot/machinestatetransfer.h"
 #include "emulator/coordinator/ports.h"
 #include "emulator/media/mediamanager.h"
@@ -1085,6 +1086,31 @@ TEST_F(TimeTravelController_Test, AMachineChangeEndsTheSession)
     EXPECT_TRUE(_controller->IsRecording()) << "the black box records again";
     _b->RunNFrames(2, /*skipBreakpoints=*/true);
     EXPECT_LE(_controller->GetCheckpointCount(), 3u) << "a new session, not the old one";
+}
+
+/// A recording that switched debug mode on gives it back when it stops, but not while a debug feature switched on
+/// meanwhile still needs it: an analysis session that started memory tracking during a black box session kept losing
+/// its counters when a reset or a snapshot load ended that session (the tracker frees them with debug mode off)
+TEST_F(TimeTravelController_Test, StopKeepsDebugModeAnotherFeatureNeeds)
+{
+    FeatureManager* features = _b->GetFeatureManager();
+    MemoryAccessTracker& tracker = _b->GetMemory()->GetAccessTracker();
+    ASSERT_TRUE(features->setFeature(Features::kDebugMode, false));
+    ASSERT_TRUE(_controller->StartRecording());
+    ASSERT_TRUE(features->isEnabled(Features::kDebugMode)) << "the recording needs it";
+
+    ASSERT_TRUE(features->setFeature(Features::kMemoryTracking, true));
+    ASSERT_NE(tracker.Z80CountersView().reads, nullptr) << "tracking allocated its counters";
+    _controller->StopRecording();
+    EXPECT_TRUE(features->isEnabled(Features::kDebugMode)) << "memory tracking still needs debug mode";
+    EXPECT_NE(tracker.Z80CountersView().reads, nullptr) << "the counters survive the stop";
+
+    // Nothing else needs it: the next stop gives debug mode back as before
+    ASSERT_TRUE(features->setFeature(Features::kMemoryTracking, false));
+    ASSERT_TRUE(features->setFeature(Features::kDebugMode, false));
+    ASSERT_TRUE(_controller->StartRecording());
+    _controller->StopRecording();
+    EXPECT_FALSE(features->isEnabled(Features::kDebugMode)) << "the recording's features restored";
 }
 
 /// Step 3 (D29): the black box records without holding the machine at real

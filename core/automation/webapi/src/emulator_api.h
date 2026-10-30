@@ -251,6 +251,22 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getCoverageGaps, "/api/v1/emulator/{id}/coverage/gaps", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::exportCoverage, "/api/v1/emulator/{id}/coverage/export", drogon::Post);
 
+    // Analysis layers through analysis::Execute (implementation: api/analysis_api.cpp; L0 facts P1, L1 build P2)
+    ADD_METHOD_TO(EmulatorAPI::analysisStart, "/api/v1/emulator/{id}/analysis/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::analysisStop, "/api/v1/emulator/{id}/analysis/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::analysisBuild, "/api/v1/emulator/{id}/analysis/build", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::analysisCancel, "/api/v1/emulator/{id}/analysis/cancel", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::analysisStatus, "/api/v1/emulator/{id}/analysis/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::analysisExplain, "/api/v1/emulator/{id}/analysis/explain", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::analysisQuery, "/api/v1/emulator/{id}/analysis/query", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::analysisExport, "/api/v1/emulator/{id}/analysis/export", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::analysisGallery, "/api/v1/emulator/{id}/analysis/gallery", drogon::Post);
+    // L3 (P5): the findings register, the review queue, experiments, directed coverage
+    ADD_METHOD_TO(EmulatorAPI::analysisFindings, "/api/v1/emulator/{id}/analysis/findings", drogon::Get, drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::analysisReview, "/api/v1/emulator/{id}/analysis/review", drogon::Get, drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::analysisExperiment, "/api/v1/emulator/{id}/analysis/experiment", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::analysisCover, "/api/v1/emulator/{id}/analysis/cover", drogon::Post);
+
     // AY register-write log (MCP automation)
     ADD_METHOD_TO(EmulatorAPI::ayLog, "/api/v1/emulator/{id}/ay/log", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getAYLog, "/api/v1/emulator/{id}/ay/log", drogon::Get);
@@ -1162,6 +1178,41 @@ public:
     /// @brief POST /api/v1/emulator/{id}/coverage/export - body: {"format":"skoolkit-map","start","end","path","merge"}
     void exportCoverage(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    // Analysis layers (api/analysis_api.cpp): POST start {level, mode, record} / stop / build {frames, path, wait} /
+    // cancel, GET status / explain?address=&page=&what=
+    void analysisStart(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    void analysisStop(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void analysisStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    void analysisBuild(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    void analysisCancel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    void analysisExplain(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
+    // L2 (P3): GET query?kind=&range=&limit=, POST export {format, path, ranges, width}
+    void analysisQuery(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    void analysisExport(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    // L2 (P4): POST gallery {address, kind, scale, path, limit}: the graphics regions, one as a PNG
+    void analysisGallery(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
+    // L3 (P5): GET|POST findings {op, kind, status, range, limit, format, path, claim, evidence, by, title},
+    // GET|POST review {op, id, verdict, label, title, comment, by, experiment, ranges, limit},
+    // POST experiment {spec (an object or an array), path, parallel, finding}, POST cover {budget, per_branch, frames,
+    // parallel, limit, ranges}
+    void analysisFindings(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
+    void analysisReview(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    void analysisExperiment(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void analysisCover(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
 
     /// @brief POST /api/v1/emulator/{id}/ay/log — body: {"action":"start|stop|clear", "capacity":4096}
     void ayLog(const drogon::HttpRequestPtr& req,
