@@ -6275,7 +6275,8 @@ namespace PythonBindings
             }, "When did the program ...: search the port journals for an event (key, ear, ay-read, ay-write, "
                "ay-select, border, beeper, in, out) with an optional argument (a key name, an AY register) and "
                "options (limit, newest, from, to, port, port_mask, value, value_mask, match, trigger, ay_register; "
-               "file= searches a .ttd on disk without loading it)",
+               "file= searches a .ttd on disk without loading it; context= each hit's registers and stack_top at "
+               "its instruction, replayed, default on except while recording); keyboard reads carry rows and keys",
                py::arg("event"), py::arg("arg") = py::none())
 
             .def("ttd_find_last", [](Emulator& self, py::object addrObj,

@@ -392,6 +392,9 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "    options: limit=N newest=true from=F[:T] to=F[:T] match=any|equals|any-clear|any-set" << NEWLINE;
     ss << "             trigger=every|rising|change stream_mask=M ay_register=R" << NEWLINE;
     ss << "             file=<path.ttd>  search a saved session without loading it" << NEWLINE;
+    ss << "             context=true|false  each hit's HL DE BC SP and (SP) at its instruction, replayed" << NEWLINE;
+    ss << "                      (default on; off while a recording runs, true pauses it; not with file=)" << NEWLINE;
+    ss << "    a keyboard read shows the half-rows it selects (rows) and the keys it saw down" << NEWLINE;
     ss << "  ttd step-instruction <back|fwd>  Step one instruction (aliases: si-back, si-forward)" << NEWLINE;
     ss << NEWLINE;
     ss << "Phase 4 — Reverse Execution:" << NEWLINE;
@@ -1197,6 +1200,26 @@ void CLIProcessor::HandleTTDPortEvents(const ClientSession& session, EmulatorCon
            << h.find("port")->i << "  value #" << std::setw(2) << h.find("value")->i << std::dec << std::setfill(' ');
         if (const StateNode* r = h.find("ay_register"))
             ss << "  R" << r->i;
+        if (const StateNode* rows = h.find("rows"))
+        {
+            ss << "  rows #" << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << rows->i << std::dec
+               << std::setfill(' ');
+            std::string keys;
+            for (const StateNode& k : h.find("keys")->items)
+                keys += (keys.empty() ? "" : "+") + k.s;
+            if (!keys.empty())
+                ss << "  keys " << keys;
+        }
+        if (const StateNode* regs = h.find("registers"))
+        {
+            ss << std::hex << std::uppercase << std::setfill('0');
+            for (const char* name : {"hl", "de", "bc", "sp"})
+                ss << "  " << static_cast<char>(std::toupper(name[0])) << static_cast<char>(std::toupper(name[1]))
+                   << " #" << std::setw(4) << regs->find(name)->i;
+            ss << "  (SP) #" << std::setw(4) << h.find("stack_top")->i << std::dec << std::setfill(' ');
+        }
+        else if (const StateNode* err = h.find("context_error"))
+            ss << "  (no context: " << err->s << ")";
         ss << NEWLINE;
     }
     session.SendResponse(ss.str());

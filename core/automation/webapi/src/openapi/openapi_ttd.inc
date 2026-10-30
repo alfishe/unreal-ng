@@ -701,7 +701,10 @@
         "alone), 'ear' (the program saw the tape signal change), 'ay-read' / "
         "'ay-write' [register] (the register selection is followed through the OUT "
         "journal), 'ay-select', 'border', 'beeper', or 'in' / 'out' narrowed with the "
-        "raw filters. Nothing is replayed: it answers the same on a loaded .ttd file. "
+        "raw filters. The search replays nothing: it answers the same on a loaded .ttd file. A read of the ULA "
+        "names the half-rows it selected and the keys it saw down; with 'context' (default on, off while a "
+        "recording runs) each hit carries the registers at its instruction and the word at SP (the caller), replayed "
+        "with the machine put back. "
         "409 when the session has no port journal (TSConf, ZX Next, NeoGS, a file "
         "without it), or when a long run keeps a running recording's CPU busy (pause and ask again). With 'file' it searches a .ttd on "
         "disk instead, without loading it (400 when the file cannot be read or has no journals).";

@@ -617,6 +617,11 @@ public:
     /// file or one without port journals
     TTDPortSearchResult SearchPortEventsInFile(const std::string& path, const TTDPortQuery& q);
 
+    /// @brief The machine at each access of `hits` (port-events' context, phase 2 D5): the registers at the M1
+    /// of the IN / OUT instruction (before it ran) and the word at SP then. Replays to each access and puts the
+    /// machine back verbatim, as ReadCpuView does; a running recording pauses for browsing. One entry per hit
+    std::vector<TTDPortContext> PortAccessContexts(const std::vector<TTDPortHit>& hits);
+
     // -----------------------------------------------------------------------
     // Input ownership: live input vs the recorded journal
     // -----------------------------------------------------------------------

@@ -1387,7 +1387,9 @@ TTDReply TTDControlBackend<S>::BookmarkDelete(const TTDRequest& request)
 // "When did the program ..." over the session's port journals (ttdportsearch.h): no
 // replay, works on a loaded file. event + arg build the query; every other option
 // is a port query option (ApplyPortQueryOption checks the name); file: a .ttd on
-// disk, searched without loading it (the session is untouched)
+// disk, searched without loading it (the session is untouched). context (D5): each
+// hit's registers and stack top at its instruction, replayed (the controller; on by
+// default except for a file and a running recording, which it would pause)
 template <class S>
 TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
 {
@@ -1406,16 +1408,31 @@ TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, err);
     for (const auto& [name, value] : request.options)
     {
-        if (name == "event" || name == "arg" || name == "file")
+        if (name == "event" || name == "arg" || name == "file" || name == "context")
             continue;
         if (!ApplyPortQueryOption(q, name, value, err))
             return Fail(TTDControlError::BadRequest, err);
     }
 
     const std::string* file = Option(request, "file");
+    const std::string* contextText = Option(request, "context");
+    bool context = false;
+    if (contextText && !ParseBool(*contextText, context))
+        return Fail(TTDControlError::BadRequest, "Invalid context: '" + *contextText + "' (expected true or false)");
+    if (!contextText)
+        context = std::is_same<S, TimeTravelController>::value && !file && !_manager->IsRecording();
+    else if (context && file)
+        return Fail(TTDControlError::BadRequest, "context replays the session: it cannot read a file on disk");
+    else if (context && !std::is_same<S, TimeTravelController>::value)
+        return Fail(TTDControlError::NotAvailable, "context needs the time travel controller (backend engine)");
+
     const TTDPortSearchResult result = file ? _manager->SearchPortEventsInFile(*file, q) : _manager->SearchPortEvents(q);
     if (!result.ok)
         return Fail(file ? TTDControlError::BadRequest : TTDControlError::Conflict, result.error);
+    std::vector<TTDPortContext> contexts;
+    if constexpr (std::is_same<S, TimeTravelController>::value)
+        if (context)
+            contexts = _manager->PortAccessContexts(result.hits);
 
     TTDReply reply;
     reply.body["event"] = *event;
@@ -1423,9 +1440,11 @@ TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
     reply.body["count"] = static_cast<uint64_t>(result.hits.size());
     reply.body["truncated"] = result.truncated;
     reply.body["scanned"] = static_cast<uint64_t>(result.scanned);
+    reply.body["context"] = context;
     StateNode hits = StateNode::Array();
-    for (const TTDPortHit& h : result.hits)
+    for (size_t i = 0; i < result.hits.size(); ++i)
     {
+        const TTDPortHit& h = result.hits[i];
         StateNode hit = StateNode::Object();
         hit["index"] = static_cast<uint64_t>(h.index);
         hit["frame"] = h.record.frame;
@@ -1435,6 +1454,36 @@ TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
         hit["pc"] = static_cast<unsigned>(h.record.pc);
         if (h.ayRegister >= 0)
             hit["ay_register"] = h.ayRegister;
+        // A read of the ULA: the half-rows its address selects, the keys it saw down (one half-row only)
+        if (q.direction == TTDPortJournal::Direction::Read && (h.record.port & 1) == 0)
+        {
+            hit["rows"] = static_cast<unsigned>(KeyboardRowsRead(h.record.port));
+            StateNode keys = StateNode::Array();
+            for (const std::string& key : KeysSeenDown(h.record.port, h.record.value))
+                keys.push(StateNode(key));
+            hit["keys"] = keys;
+        }
+        if (i < contexts.size())
+        {
+            const TTDPortContext& c = contexts[i];
+            if (c.ok)
+            {
+                StateNode regs = StateNode::Object();
+                regs["af"] = static_cast<unsigned>(c.cpu.af);
+                regs["bc"] = static_cast<unsigned>(c.cpu.bc);
+                regs["de"] = static_cast<unsigned>(c.cpu.de);
+                regs["hl"] = static_cast<unsigned>(c.cpu.hl);
+                regs["ix"] = static_cast<unsigned>(c.cpu.ix);
+                regs["iy"] = static_cast<unsigned>(c.cpu.iy);
+                regs["sp"] = static_cast<unsigned>(c.cpu.sp);
+                hit["registers"] = regs;
+                hit["stack_top"] = static_cast<unsigned>(c.stackTop);
+            }
+            else
+            {
+                hit["context_error"] = c.error;
+            }
+        }
         hits.push(hit);
     }
     reply.body["hits"] = hits;

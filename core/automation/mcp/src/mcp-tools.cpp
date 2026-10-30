@@ -5338,7 +5338,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "'port_events' answers 'when did the program ...' from the port journals without replay (also while recording: "
         "it holds the CPU for the search; works on a loaded file): event 'key' (saw a key down; event_arg a key name such as 'a', "
         "'enter', 'space'), 'ear' (saw the tape signal change), 'ay-read' / 'ay-write' / 'ay-select' (event_arg an AY "
-        "register), 'border', 'beeper', 'in' / 'out' (narrow with port / port_mask / value / value_mask). "
+        "register), 'border', 'beeper', 'in' / 'out' (narrow with port / port_mask / value / value_mask). A keyboard "
+        "read names the half-rows it selected (rows) and the keys it saw down (keys, one half-row only); each hit "
+        "carries the registers at its IN / OUT instruction and the word at SP (stack_top: the caller's return address "
+        "when the routine pushed nothing), replayed with the machine put back - on by default, except on a running "
+        "recording (context=true pauses it) and for a file. "
         "'resume' continues recording from the current (or given) point and DISCARDS the history after it; it needs the "
         "machine positioned in history (seek or step first - it fails right after 'stop'). "
         "Files: 'dump' / 'load' a .ttd session (path on the emulator's machine; load needs the same machine model, ROM "
@@ -5499,6 +5503,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["stream_mask"]["type"] = "string";
     schema["properties"]["stream_mask"]["description"] =
         "port_events: address bits that separate streams for rising/change (0xFFFF every port, 0x0001 the ULA)";
+    schema["properties"]["context"]["type"] = "boolean";
+    schema["properties"]["context"]["description"] =
+        "port_events: each hit's registers and stack_top at its instruction (replayed; default on, off while a "
+        "recording runs - true pauses it; not with file)";
     schema["properties"]["file"]["type"] = "string";
     schema["properties"]["file"]["description"] =
         "port_events: a .ttd file on the emulator's machine to search instead of the current session - it is not "
@@ -5794,7 +5802,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     (*body)["to"] = args["to_frame"];
                 // The rest go through verbatim: the WebAPI checks them
                 for (const char* field : {"limit", "newest", "port", "port_mask", "value", "value_mask", "match",
-                                          "trigger", "stream_mask", "ay_register", "file"})
+                                          "trigger", "stream_mask", "ay_register", "file", "context"})
                 {
                     if (args.isMember(field))
                         (*body)[field] = args[field];
@@ -6165,6 +6173,24 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                 << " port " << Hex16(h["port"].asUInt()) << " value " << h["value"].asUInt();
                             if (h.isMember("ay_register"))
                                 out << " (R" << h["ay_register"].asInt() << ")";
+                            if (h.isMember("rows"))
+                            {
+                                out << " rows " << Hex8(h["rows"].asUInt());
+                                std::string keys;
+                                for (const Json::Value& k : h["keys"])
+                                    keys += (keys.empty() ? "" : "+") + k.asString();
+                                if (!keys.empty())
+                                    out << " keys " << keys;
+                            }
+                            if (h.isMember("registers"))
+                            {
+                                const Json::Value& r = h["registers"];
+                                out << " | HL " << Hex16(r["hl"].asUInt()) << " DE " << Hex16(r["de"].asUInt()) << " BC "
+                                    << Hex16(r["bc"].asUInt()) << " A " << Hex8(r["af"].asUInt() >> 8) << " SP "
+                                    << Hex16(r["sp"].asUInt()) << " (SP) " << Hex16(h["stack_top"].asUInt());
+                            }
+                            else if (h.isMember("context_error"))
+                                out << " | no context: " << h["context_error"].asString();
                         }
                         if (hits.size() > shown)
                             out << "\n  ... " << (hits.size() - shown) << " more in the structured result";

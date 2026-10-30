@@ -2623,6 +2623,72 @@ TTDPortSearchResult TimeTravelController::SearchPortEvents(const TTDPortQuery& q
     return ttd::SearchPortEvents(_engine->BusReads(), _engine->BusWrites(), q);
 }
 
+std::vector<TTDPortContext> TimeTravelController::PortAccessContexts(const std::vector<TTDPortHit>& hits)
+{
+    std::vector<TTDPortContext> contexts(hits.size());
+    if (hits.empty())
+        return contexts;
+    // Replays and puts the machine back: an operation that changes it
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    if (_state == TTDSessionState::Recording)
+        PauseRecordingForBrowsing();
+    Memory* memory = _context ? _context->pMemory : nullptr;
+    Z80* z80 = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (_timeline.empty() || !memory || !z80 || !_context->pEmulator)
+    {
+        for (TTDPortContext& c : contexts)
+            c.error = "no recorded history";
+        return contexts;
+    }
+
+    // For each access its instruction's M1: the last one at its PC among those just before it (an IN / OUT
+    // instruction is far shorter than the window). The enumeration replays under its own replay mode, so the
+    // seeks and reads follow in one replay of their own; the machine is put back verbatim at the end
+    const TTDSessionState stateBefore = _state;
+    SaveLiveState(_liveSnapshot);
+    const uint64_t window = std::max<uint64_t>(256, FrameSpan() / 16);
+    std::vector<TTDM1Record> m1s;
+    TTDExternalEvent barrier;
+    std::vector<std::optional<uint64_t>> m1At(hits.size());
+    for (size_t i = 0; i < hits.size(); ++i)
+    {
+        const TTDPortRecord& record = hits[i].record;
+        const uint64_t accessT = GlobalT(TTDTimePoint{record.frame, record.tInFrame});
+        const EnumerateResult found =
+            EnumerateM1InRange(accessT > window ? accessT - window : 0, accessT + 1, m1s, &barrier);
+        for (const TTDM1Record& m1 : m1s)
+            if (m1.pc == record.pc && m1.globalT <= accessT)
+                m1At[i] = m1.globalT;
+        if (!m1At[i])
+            contexts[i].error = found.barrier ? "a replay barrier (" + std::string(barrier.reason) + ") at frame " +
+                                                    std::to_string(barrier.time.frame) + " stands before the access"
+                                              : "the instruction's M1 was not found before the access";
+    }
+    ReplayModeScope replay(*this);
+    for (size_t i = 0; i < hits.size(); ++i)
+    {
+        if (!m1At[i])
+            continue;
+        TTDPortContext& c = contexts[i];
+        const TTDTimePoint at = TimePointAt(*m1At[i]);
+        TTDSeekResult seek;
+        if (!SeekToInternal(at, &seek) || !seek.reached || !(seek.arrivedAt == at))
+        {
+            c.error = "the replay could not reach the instruction";
+            continue;
+        }
+        c.at = at;
+        c.cpu = CaptureCpuState(*static_cast<const Z80State*>(z80));
+        c.stackTop = static_cast<uint16_t>(memory->DirectReadFromZ80Memory(c.cpu.sp) |
+                                           memory->DirectReadFromZ80Memory(static_cast<uint16_t>(c.cpu.sp + 1)) << 8);
+        c.ok = true;
+    }
+    RestoreLiveState(_liveSnapshot);
+    replay.Exit();
+    SetState(stateBefore);
+    return contexts;
+}
+
 // ---------------------------------------------------------------------------
 // External-event markers (Phase 2 Item 6; parent TDD §5.1)
 // ---------------------------------------------------------------------------

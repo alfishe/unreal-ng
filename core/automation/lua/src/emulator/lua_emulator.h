@@ -5994,7 +5994,8 @@ public:
         // "out"; arg: a key name or an AY register; options: a table of
         // ttd::ApplyPortQueryOption names (limit, newest, from, to, port,
         // port_mask, value, value_mask, match, trigger, ay_register; file = a
-        // .ttd path searched without loading it)
+        // .ttd path searched without loading it; context = each hit's
+        // registers at its instruction, default on except while recording)
         lua.set_function("ttd_port_events", [this](sol::this_state ts, const std::string& event, sol::object argObj,
                                                      sol::object optionsObj) -> sol::object {
             std::map<std::string, std::string> options{{"event", event}};

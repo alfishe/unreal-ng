@@ -420,10 +420,13 @@ void EmulatorAPI::loadTTD(const HttpRequestPtr& req,
 ///         "newest", "from", "to" ("F" or "F:T"), "port", "port_mask",
 ///         "value", "value_mask", "match", "trigger", "ay_register";
 ///         "file": a .ttd path on the emulator's machine - searched without
-///         loading it, the current session is not touched }
+///         loading it, the current session is not touched; "context": each
+///         hit's registers at its instruction, replayed (default on, off while
+///         a recording runs) }
 /// Response: { "event", "direction": "in"|"out", "count", "truncated",
-///             "scanned", "hits": [ { "index", "frame", "tinframe", "port",
-///             "value", "pc", "ay_register"? } ] }
+///             "scanned", "context", "hits": [ { "index", "frame", "tinframe",
+///             "port", "value", "pc", "ay_register"?, "rows"?, "keys"?,
+///             "registers"?, "stack_top"?, "context_error"? } ] }
 void EmulatorAPI::portEventsTTD(const HttpRequestPtr& req,
                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const

@@ -302,7 +302,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: appli
   `in`, `out`; `arg` (MCP: `event_arg`) is the key name or AY register. `in`/`out` narrow with `port` /
   `port_mask` / `value` / `value_mask`; `newest` returns the last hits first. The reply has `event`,
   `direction`, `count`, `truncated`, `scanned` and `hits[]` (`index`, `frame`, `tinframe`, `port`, `value`,
-  `pc`, plus `ay_register` for AY events).
+  `pc`, plus `ay_register` for AY events). A keyboard read adds `rows` (the half-rows selected) and `keys` (the
+  keys it saw down, one half-row only). `context` (default on, off while a recording runs; `true` pauses it) adds
+  `registers` (`af` `bc` `de` `hl` `ix` `iy` `sp`) at the IN / OUT instruction and `stack_top` (the word at SP:
+  the caller's return address when the key routine pushed nothing) - replayed, the machine put back.
 - `export-clip` takes `from`, `to` (frames), `path` (an absolute directory, as seen by the emulator process) and
   optional `chunk` (frames per chunk). It is synchronous, pauses the emulator, and is refused while recording.
   The same export on the other surfaces: MCP `time_travel` action `export_clip` (`from_frame`, `to_frame`,

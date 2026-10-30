@@ -150,6 +150,16 @@ during a black box, which the core allows. Tests: `TimeTravelController_Test.AnE
 (an AY tone, a trap in turbo, seeks equal the live states), `TapeLoading_Integration_Test.TTDRoundTripAcrossFastLoad`
 (LOAD "" recorded in turbo, every frame's seek equals the run), the black box's fast disk hold.
 
+D5 done. A port-events hit now says who read: a ULA read carries `rows` (the half-rows its address selects) and
+`keys` (the keys it saw down, by the names `key` takes; one half-row only, a several-row read's 0 bit could be any
+of their keys), from the record; `context` (default on; off while a recording runs, `true` pauses it; refused for a
+file; v1 has none) adds `registers` (af bc de hl ix iy sp) at the IN / OUT instruction's M1 and `stack_top`, the
+word at SP - the caller of a key routine that pushed nothing. The journals are unchanged (recording stays as it
+was): `TimeTravelController::PortAccessContexts` finds each hit's M1 (the last at its PC in a window before it),
+seeks there under one replay and puts the machine back verbatim. Test:
+`TTDControllerPortJournals_Test.PortEventsCarryTheCallersRegisters` (a CALLed key routine: SP, A, the return
+address, HL counting the calls, the machine unmoved), `TTDPortSearch_Test.KeyboardRowsAndKeysOfARead`.
+
 ### E. Checks
 
 - `tools/build/test.sh`, zero warnings; gcc, MSVC and MinGW before landing.
