@@ -164,6 +164,11 @@ std::string WindowDisplaySummary(const Json::Value& s)
             ")";
     if (s.get("blending_weights", "").asString() == "exponential" && s.isMember("blending_decay"))
         line += ", decay " + NumberText(s["blending_decay"].asDouble());
+    if (s.isMember("smooth_motion"))
+    {
+        const std::string smooth = s["smooth_motion"].asString();
+        line += ", smooth motion " + smooth + (smooth == "off" ? "" : " (" + s.get("effects_device", "").asString() + ")");
+    }
     if (s.isMember("fullscreen"))
     {
         const int scale = s.get("scale", 0).asInt();
@@ -179,6 +184,34 @@ std::string WindowDisplaySummary(const Json::Value& s)
                     (s.get("osd_keyboard_style", "").asString().empty() ? "" : ", " + s["osd_keyboard_style"].asString()) +
                     ")";
         line += std::string(", next layers ") + (s.get("next_layers", false).asBool() ? "on" : "off");
+    }
+    // How the frames reach the screen
+    const Json::Value& present = s["present"];
+    if (present.isObject())
+    {
+        const Json::Value& refresh = present["refresh_hz"];
+        line += "\npresent: " + present.get("presenter", "").asString() + ", " +
+                NumberText(refresh.get("max", 0.0).asDouble()) + " Hz" +
+                (present.get("fixed_display", true).asBool() ? " fixed" : " range from " + NumberText(refresh.get("min", 0.0).asDouble()));
+        if (present.get("presented", 0).asUInt64() > 0)
+        {
+            const Json::Value& error = present["error_ms"];
+            line += ", " + std::to_string(present["presented"].asUInt64()) + " presented, " +
+                    std::to_string(present.get("dropped", 0).asUInt64()) + " dropped, " +
+                    std::to_string(present.get("late", 0).asUInt64()) + " a refresh late, lead " +
+                    NumberText(std::round(present.get("lead_ms", 0.0).asDouble() * 10) / 10) + " ms, error p50 " +
+                    NumberText(std::round(error.get("p50", 0.0).asDouble() * 100) / 100) + " p99 " +
+                    NumberText(std::round(error.get("p99", 0.0).asDouble() * 100) / 100) + " ms";
+        }
+        const Json::Value& smooth = present["smooth"];
+        const std::string mode = smooth.get("mode", "off").asString();
+        line += "; smooth motion in effect " + mode;
+        if (mode != "off")
+            line += std::string(smooth.get("game", false).asBool() ? " + game cadence" : "") + " on " +
+                    smooth.get("device", "").asString() + ": " + std::to_string(smooth.get("renders", 0).asUInt64()) +
+                    " renders, " + std::to_string(smooth.get("blended", 0).asUInt64()) + " blended, " +
+                    std::to_string(smooth.get("interpolated", 0).asUInt64()) + " interpolated, " +
+                    std::to_string(smooth.get("held_flicker", 0).asUInt64()) + " with flicker held";
     }
     // The words the setters take: an agent may see only this text
     for (const char* list : {"crt_profiles", "hud_themes", "osd_keyboard_pictures", "osd_keyboard_styles"})
@@ -395,6 +428,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "window_display_set: any of gpu (bool), crt (bool), crt_profile (one of the window's crt_profiles: "
         "none, basic, ...; other than none switches CRT on), blending (bool, temporal blending / gigascreen "
         "smoothing), blending_frames (2..5), blending_weights (equal, exponential), blending_decay (0.1..0.9), "
+        "smooth_motion (off, blend, interpolate: the shown instance's picture between two frames on a fixed display), "
+        "effects_device (gpu, cpu), "
         "fullscreen (bool), scale (1..4), toolbar, status_bar, hud (bool), hud_theme (one of hud_themes), "
         "hud_notices ({id: bool}, ids from window_display), osd_keyboard (bool), osd_keyboard_picture (one of "
         "osd_keyboard_pictures), osd_keyboard_style (photo, schematic, hybrid: the hybrid shows what a combination key "
@@ -404,8 +439,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     for (const char* flag : {"gpu", "crt", "blending", "fullscreen", "toolbar", "status_bar", "hud", "osd_keyboard",
                              "next_layers"})
         schema["properties"]["display"]["properties"][flag]["type"] = "boolean";
-    for (const char* word : {"crt_profile", "blending_weights", "hud_theme", "osd_keyboard_picture", "osd_keyboard_style",
-                             "next_layers_mode"})
+    for (const char* word : {"crt_profile", "blending_weights", "smooth_motion", "effects_device", "hud_theme",
+                             "osd_keyboard_picture", "osd_keyboard_style", "next_layers_mode"})
         schema["properties"]["display"]["properties"][word]["type"] = "string";
     schema["properties"]["display"]["properties"]["blending_frames"]["type"] = "integer";
     schema["properties"]["display"]["properties"]["scale"]["type"] = "integer";

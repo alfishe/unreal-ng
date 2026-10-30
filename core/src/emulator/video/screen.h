@@ -1183,8 +1183,11 @@ public:
     bool CopyFrameAt(int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFrameInfo* info, uint8_t* nextDst = nullptr);
 
     /// Any thread: the oldest timed frame latched after `afterSerial` (0 = the oldest held), for presenting each
-    /// frame once at its target. @return false when there is none yet
-    bool CopyNextFrame(uint64_t afterSerial, uint8_t* dst, size_t dstSize, PresentFrameInfo* info);
+    /// frame once at its target. A temporal effect's frames come once it wrote them. `markShown` false: a read ahead
+    /// (smooth motion keeps the frames to come), what is on screen stays CopyFrameAt's.
+    /// @return false when there is none yet
+    bool CopyNextFrame(uint64_t afterSerial, uint8_t* dst, size_t dstSize, PresentFrameInfo* info,
+                       bool markShown = true);
 
     /// Emulation side, when the machine stops (a pause, the end of a direct run): nothing plays, nothing to keep in
     /// step with. Every latched frame is due at once (a temporal effect's look-ahead still applies), so a reader

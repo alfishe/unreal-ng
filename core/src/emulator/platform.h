@@ -660,6 +660,12 @@ struct CONFIG
 	/// Lip-sync trim in milliseconds ([VIDEO] LipSyncOffsetMs, -200..200): added to every frame's target time, the
 	/// time its sound is heard (frame presenter design, section 3). Positive = the picture later
 	int lipSyncOffsetMs = 0;
+	/// The picture between two frames on a fixed display ([VIDEO] SmoothMotion: off | blend | interpolate; a
+	/// smoothmotion::Mode). Off: the frame due (frame presenter design, sections 4.3-4.5)
+	uint8_t smoothMotion = 0;
+	/// Where the screen's effects run ([VIDEO] EffectsDevice: gpu | cpu): the GPU screen's passes, or the CPU reference
+	/// (the same bits). The software screen is always the CPU
+	bool effectsOnCpu = false;
 
 	struct
 	{

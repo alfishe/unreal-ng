@@ -66,6 +66,9 @@ struct ResolvedProfiles
     std::vector<std::pair<std::string, std::string>> gameMatches;
     /// Why `haptics` came from where it did (H-3): "game profile <id> (<how>)", "<id> (machine default)", empty
     std::string hapticsReason;
+    /// The `video` section of the most specific play profile that has one (whole, not merged), and its id
+    JsonValue video;
+    std::string videoProfile;
 };
 
 /// How a game profile matches @p context (D7: manual, then signature, then file hash, then the fuzzy file set); empty

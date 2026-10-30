@@ -1,0 +1,8 @@
+; Scene 3 of smoothtest.a80 (see there)
+                DEFINE SCENE 3
+                DEFINE NAME "cadence"
+                DEFINE FILE_SNA "smooth-cadence.sna"
+                DEFINE FILE_TAP "smooth-cadence.tap"
+                DEFINE FILE_TRD "smooth-cadence.trd"
+                DEFINE TRD_CODE "cadence.C"
+                include "smoothtest.a80"

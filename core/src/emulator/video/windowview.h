@@ -12,8 +12,9 @@
 
 /// @file windowview.h
 /// @brief The picture as a GUI window draws it, for the automation surfaces (screenshot source "window"), and the
-/// window's display settings (GPU acceleration, CRT effects and their parameters, temporal blending, full screen and
-/// scale, toolbar / status bar, HUD, on-screen keyboard, the ZX Next layers window).
+/// window's display settings (GPU acceleration, CRT effects and their parameters, temporal blending, smooth motion and
+/// the frame presenter's timing, full screen and scale, toolbar / status bar, HUD, on-screen keyboard, the ZX Next
+/// layers window).
 ///
 /// The framebuffer and a screenshot say what the machine shows; how a front end puts that on the host display (the
 /// shape it stretches the picture to, the letterbox, the CRT shader, the HUD) only the front end knows. The core has
@@ -33,6 +34,38 @@ struct WindowViewGrab
     std::string backend;        ///< how the window draws: "gpu" / "software"
 };
 
+/// How the window's frames reach the screen (frame presenter design, docs/inprogress/2026-10-26-frame-presenter): the
+/// presenter's on-screen timing over its last presents (ms) and smooth motion's counters since it started
+struct WindowPresentStats
+{
+    std::string presenter;     ///< "metal", "dxgi" (native present-at-time), "gl" (the window's own swap), "software"
+    bool fixedDisplay = true;  ///< a fixed refresh (min = max); false: VRR / ProMotion range
+    double minRefreshHz = 0.0;
+    double maxRefreshHz = 0.0;
+    uint64_t presented = 0;  ///< native presenter only (0 otherwise), as NativePresenter::Stats
+    uint64_t shown = 0;
+    uint64_t dropped = 0;
+    uint64_t late = 0;        ///< shown more than a refresh after their time
+    double leadMs = 0.0;      ///< the adaptive lead in effect
+    double errorP50Ms = 0.0;  ///< screen time minus the time asked for
+    double errorP99Ms = 0.0;
+    double errorMaxMs = 0.0;
+    double gpuWaitP50Ms = 0.0;  ///< the wait for GL's draw before the native pass
+    double gpuWaitMaxMs = 0.0;
+
+    std::string smooth = "off";  ///< smooth motion in effect: off / blend / interpolate (off with temporal blending)
+    std::string smoothDevice;    ///< where its steps run: "gpu" / "cpu" ("" while off)
+    bool game = false;           ///< a game profile's `video:` cadence applies
+    uint64_t frames = 0;         ///< smooth motion's counters (SmoothMotion::Stats)
+    uint64_t pictures = 0;
+    uint64_t renders = 0;
+    uint64_t blended = 0;
+    uint64_t interpolated = 0;
+    uint64_t motionFields = 0;
+    uint64_t onDevice = 0;
+    uint64_t heldFlicker = 0;
+};
+
 /// How a window draws the picture: its display settings as the View menu shows them
 struct WindowDisplaySettings
 {
@@ -47,6 +80,9 @@ struct WindowDisplaySettings
     std::string blendingWeights;           ///< "equal" / "exponential"
     double blendingDecay = 0.5;            ///< exponential weights: each older frame's share of the newer one, 0.1..0.9
     std::string emulatorId;                ///< the instance the window shows ("" = none)
+    std::string smoothMotion = "off";      ///< [VIDEO] SmoothMotion of the shown instance: off / blend / interpolate
+    std::string effectsDevice = "gpu";     ///< [VIDEO] EffectsDevice of the shown instance: gpu / cpu
+    WindowPresentStats present;            ///< read with the settings (Get), not published
 
     bool fullscreen = false;               ///< the window fills the display
     int scale = 0;                         ///< the whole zoom the window was fitted to, 1..4; 0 = none (resized by hand)
@@ -79,6 +115,8 @@ struct WindowDisplayChange
     std::optional<int> blendingFrames;
     std::optional<std::string> blendingWeights;
     std::optional<double> blendingDecay;
+    std::optional<std::string> smoothMotion;
+    std::optional<std::string> effectsDevice;
     std::optional<bool> fullscreen;
     std::optional<int> scale;
     std::optional<bool> toolbar;
@@ -96,7 +134,7 @@ struct WindowDisplayChange
     bool Empty() const
     {
         return !gpu && !crt && !crtProfile && !blending && !blendingFrames && !blendingWeights && !blendingDecay &&
-               !fullscreen && !scale && !toolbar && !statusBar && !hud && !hudTheme && hudNotices.empty() &&
+               !smoothMotion && !effectsDevice && !fullscreen && !scale && !toolbar && !statusBar && !hud && !hudTheme && hudNotices.empty() &&
                !osdKeyboard && !osdKeyboardPicture && !osdKeyboardStyle && !nextLayers && !nextLayersMode && nextLayersShown.empty();
     }
 };

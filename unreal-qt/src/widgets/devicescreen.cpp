@@ -4,6 +4,7 @@
 #include "crtrenderer.h"
 
 #include <QDebug>
+#include <QScreen>
 #include <QTimer>
 #include <QFocusEvent>
 #include <QKeyEvent>
@@ -80,6 +81,7 @@ void DeviceScreen::detach()
             devicePixels = nullptr;
         }
         _frameSource = nullptr;
+        _nextFrameSource = nullptr;
     }
     _latchedFrame = QImage();
 
@@ -95,6 +97,37 @@ void DeviceScreen::detach()
     update();
 }
 
+void DeviceScreen::setFrameSource(ScreenFrames source)
+{
+    smoothmotion::Mode mode = source.smooth;
+    const QByteArray forced = qgetenv("UNREAL_SMOOTH_MOTION");
+    if (!forced.isEmpty() && !smoothmotion::ParseMode(forced.constData(), mode))
+        qWarning() << "DeviceScreen: UNREAL_SMOOTH_MOTION=" << forced << "is not off | blend | interpolate";
+    {
+        std::lock_guard<std::mutex> lock(_frameSourceMutex);
+        _frameSource = std::move(source.at);
+        _nextFrameSource = std::move(source.next);
+    }
+    _smooth.Reset();
+    _smooth.SetMode(mode);
+    _smoothShown = {};
+}
+
+WindowPresentStats DeviceScreen::presentStats() const
+{
+    WindowPresentStats out;
+    out.presenter = "software";
+    const QScreen* display = screen();
+    out.minRefreshHz = out.maxRefreshHz = display ? display->refreshRate() : 0.0;
+    FillSmoothStats(_smooth, smoothActive(), false, out);
+    return out;
+}
+
+bool DeviceScreen::smoothActive() const
+{
+    return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled;
+}
+
 void DeviceScreen::clearFrameSource()
 {
     // Runs on the MessageCenter worker inside the pre-free drain window:
@@ -102,6 +135,7 @@ void DeviceScreen::clearFrameSource()
     // touches only owned memory. No Qt calls here (cross-thread safe).
     std::lock_guard<std::mutex> lock(_frameSourceMutex);
     _frameSource = nullptr;
+    _nextFrameSource = nullptr;
     if (devicePixels)
     {
         delete devicePixels;
@@ -168,11 +202,33 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
             _frameSource(now, _latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes()), &info))
         {
             drawImage = &_latchedFrame;
-            // The next frame is due later than this paint: a repaint at its time (frames by time, no vsync here)
+            const bool smooth = smoothActive();
+            if (smooth)
+            {
+                // Each frame once, in order (the screen holds a few)
+                if (_nextFrame.size() != _latchedFrame.size())
+                    _nextFrame = QImage(_latchedFrame.size(), QImage::Format_RGBX8888);
+                for (size_t k = 0; k < smoothmotion::SmoothMotion::kFrames; k++)
+                {
+                    PresentFrameInfo next;
+                    if (!_nextFrameSource(_smooth.LastSerial(), _nextFrame.bits(),
+                                          static_cast<size_t>(_nextFrame.sizeInBytes()), &next) ||
+                        next.serial == 0)
+                        break;
+                    _smooth.Push(next.serial, next.targetNs, reinterpret_cast<const uint32_t*>(_nextFrame.constBits()),
+                                 _nextFrame.width(), _nextFrame.height());
+                }
+            }
+            // The next frame is due later than this paint: a repaint at its time (frames by time, no vsync here).
+            // Smooth motion: a repaint a refresh on, the picture moves in between
             if (info.nextSerial != 0 && !_repaintScheduled)
             {
                 _repaintScheduled = true;
-                const int64_t waitMs = std::clamp<int64_t>((info.nextTargetNs - now + 999'999) / 1'000'000, 1, 100);
+                const QScreen* display = screen();
+                const double hz = display && display->refreshRate() >= 20.0 ? display->refreshRate() : 60.0;
+                const int64_t waitMs =
+                    smooth ? std::max<int64_t>(1, static_cast<int64_t>(1000.0 / hz))
+                           : std::clamp<int64_t>((info.nextTargetNs - now + 999'999) / 1'000'000, 1, 100);
                 QTimer::singleShot(static_cast<int>(waitMs), this, [this] {
                     _repaintScheduled = false;
                     refresh();
@@ -191,6 +247,24 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
 
     if (!drawImage || drawImage->isNull())
         return;
+
+    // Smooth motion: the picture for now, drawn again only when it is another one
+    if (drawImage == &_latchedFrame && smoothActive() && _smooth.Width() == drawImage->width() &&
+        _smooth.Height() == drawImage->height())
+    {
+        const smoothmotion::SmoothMotion::Result plan = _smooth.Plan(SteadyNowNs());
+        if (_smoothFrame.size() != drawImage->size())
+        {
+            _smoothFrame = QImage(drawImage->size(), QImage::Format_RGBX8888);
+            _smoothShown = {};
+        }
+        if (plan.kind != smoothmotion::SmoothMotion::Kind::None &&
+            (plan == _smoothShown || _smooth.Draw(plan, reinterpret_cast<uint32_t*>(_smoothFrame.bits()))))
+        {
+            _smoothShown = plan;
+            drawImage = &_smoothFrame;
+        }
+    }
 
     // Temporal blending: push frame to history and use blended result
     if (_temporalEnabled)

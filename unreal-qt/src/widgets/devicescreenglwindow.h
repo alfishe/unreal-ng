@@ -28,6 +28,7 @@
 #include "framehistory.h"
 #include "framesource.h"
 #include "slangpresetrunner.h"
+#include "smoothmotiongpu.h"
 
 class Emulator;
 class NativePresenter;
@@ -61,15 +62,17 @@ public:
     void detach();
 
     /// The frames by time: every refresh draws the frame due when it reaches the screen. While frames come, the
-    /// window repaints on every refresh (requestUpdate), and stops once nothing is pending
-    void setFrameSource(FrameSourceFn frameSource)
-    {
-        {
-            std::lock_guard<std::mutex> lock(_frameSourceMutex);
-            _frameSource = std::move(frameSource);
-        }
-        _uploadedSerial = 0;
-    }
+    /// window repaints on every refresh (requestUpdate), and stops once nothing is pending. With smooth motion
+    /// (ScreenFrames::smooth, UNREAL_SMOOTH_MOTION overrides it) and the frames in order, a fixed display gets a
+    /// picture for each of its refreshes (smoothmotion.h)
+    void setFrameSource(ScreenFrames source);
+    void setFrameSource(FrameSourceFn frameSource) { setFrameSource(ScreenFrames{std::move(frameSource)}); }
+    /// The game's picture cadence from its profile (nullptr: none): with Mode::Interpolate, the steps between the
+    /// game's own pictures
+    void setGameVideo(const smoothmotion::GameVideo* game) { _smooth.SetGame(game); }
+    /// The smooth motion in effect (Off without frames in order)
+    smoothmotion::Mode smoothMotion() const { return smoothActive() ? _smooth.GetMode() : smoothmotion::Mode::Off; }
+    const smoothmotion::SmoothMotion::Stats& smoothMotionStats() const { return _smooth.GetStats(); }
 
     /// Thread-safe cut of every paint path into the emulator's framebuffer
     /// (the tear-free provider captures raw Screen*/EmulatorContext* pointers,
@@ -81,6 +84,8 @@ public:
     bool nativePresent() const { return _native; }
     /// The presenter and its on-screen timing, one line (empty without the native presenter)
     QString presenterStatus() const;
+    /// The presenter's on-screen timing and smooth motion's counters, for the automation
+    WindowPresentStats presentStats() const;
 
     /// The context exists and the GL objects are made (the first paint)
     bool isValid() const { return _context && _glInitialized; }
@@ -193,8 +198,13 @@ private:
     void renderNative(bool force);
     /// Native way: the timer for the next frame (its target - lead), or a poll while frames may come
     void scheduleNative();
-    /// The frame due at `hostNs` into _texture, if it is not there yet
-    void updateTexture(int64_t hostNs);
+    /// The frame due at `hostNs` into _texture, if it is not there yet. Smooth motion: the picture for `hostNs` when
+    /// `atRefresh` (a refresh of a fixed display), else for the due frame's own target (VRR: each frame at its time)
+    void updateTexture(int64_t hostNs, bool atRefresh = true);
+    /// Smooth motion on: a mode set, the frames in order, no temporal blending
+    bool smoothActive() const;
+    /// Under _frameSourceMutex: the frames latched since the last one into _smooth
+    void feedSmooth();
     /// When the refresh being drawn reaches the screen: one refresh after now (the swap waits for the vblank)
     int64_t refreshTargetNs() const;
     int64_t refreshPeriodNs() const;  ///< the display's refresh (60 Hz when it does not say)
@@ -217,7 +227,8 @@ private:
     QImage* _devicePixels = nullptr;
     QImage _latchedFrame;
     FrameSourceFn _frameSource;
-    mutable std::mutex _frameSourceMutex;  // Guards _frameSource + _devicePixels across threads
+    NextFrameSourceFn _nextFrameSource;
+    mutable std::mutex _frameSourceMutex;  // Guards _frameSource, _nextFrameSource + _devicePixels across threads
     PresentFrameInfo _shownInfo;           ///< the frame in _latchedFrame
     uint64_t _uploadedSerial = 0;          ///< its serial in _texture (0: none, or a source without serials)
     int _idleRefreshes = 0;                ///< refreshes in a row with no new frame and none pending
@@ -263,6 +274,19 @@ private:
     std::unique_ptr<SlangPresetRunner> _slangRunner;  ///< the chosen preset, loaded (its GL objects need the context)
     QString _slangPresetName;
     std::map<QString, float> _slangOverrides;  ///< the values set on _slangPresetName, applied after every load
+
+    // Smooth motion (GUI thread): the frames in order, the picture of the refresh drawn
+    smoothmotion::SmoothMotion _smooth;
+    SmoothMotionGPU _smoothGpu;  ///< its device unless ScreenFrames::onCpu / UNREAL_EFFECTS_DEVICE=cpu
+    bool _smoothOnGpu = true;
+    bool _smoothGpuFailed = false;  ///< create() failed once: the CPU from then on
+    QImage _nextFrame;    ///< a frame from _nextFrameSource on its way into _smooth
+    QImage _smoothFrame;  ///< the picture in _texture
+    smoothmotion::SmoothMotion::Result _smoothShown;  ///< what _smoothFrame is made of
+    bool _smoothUsed = false;     ///< the last updateTexture's picture was smooth motion's
+    bool _smoothChanged = false;  ///< and another one than before
+    int64_t _smoothRefreshNs = 0;  ///< native way on a refresh grid: the refresh drawn for (0: no grid)
+    int64_t _smoothPeriodNs = 0;
 
     FrameHistory _frameHistory;
     QImage _blendedFrame;

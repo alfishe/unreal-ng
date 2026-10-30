@@ -510,6 +510,11 @@ private:
     void startZXPoly(const QString& filePath, const QString& model = QString());
     void releaseZXPolyGroup();
     bool attachScreenToZXPolyDisplay();
+    /// The resolved game profile's `video:` section into the screen's smooth motion (mapping-and-profiles.md §7.7)
+    void applyGameVideo();
+    /// The shown instance's frames handed to the screen again: its [VIDEO] SmoothMotion / EffectsDevice changed (the
+    /// automation's smooth_motion, effects_device). A ZX-Poly master's group display has no timed frames: left alone
+    void refreshFrameSource();
     bool _switchingModel = false;  // True while model switch is in progress (prevents notification handler interference)
 
     QPoint _lastCursorPos;

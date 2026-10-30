@@ -199,11 +199,30 @@ void DeviceScreenGLWindow::renderNative(bool force)
     const uint64_t uploads = _frameSerial;
     const uint64_t shownSerial = _uploadedSerial;
     const int64_t lead = presentLeadNs();
-    updateTexture(now + lead);
+    // Smooth motion on a fixed display: the picture of the first refresh a lead away, drawn now, presented half a
+    // refresh before it (shown at the first refresh after the time asked for)
+    const bool smooth = smoothActive();
+    int64_t refreshNs = 0;
+    int64_t periodNs = 0;
+    _smoothRefreshNs = 0;
+    if (smooth && _presenter->RefreshGrid(refreshNs, periodNs))
+    {
+        const int64_t ahead = now + lead - refreshNs;
+        _smoothRefreshNs = refreshNs + (ahead > 0 ? (ahead + periodNs - 1) / periodNs : 0) * periodNs;
+        _smoothPeriodNs = periodNs;
+        updateTexture(_smoothRefreshNs, true);
+    }
+    else
+    {
+        updateTexture(now + lead, false);
+    }
     // New: another serial (or a source without serials uploaded). refresh() marks the texture on every latch, so the
     // frame on screen is uploaded again when the wake comes before the next one is due: presenting that again would
-    // start an extra refresh on a VRR display (Windows: 10 % of the frames moved by up to a scan-out)
-    const bool newFrame = _frameSerial != uploads && (_uploadedSerial == 0 || _uploadedSerial != shownSerial);
+    // start an extra refresh on a VRR display (Windows: 10 % of the frames moved by up to a scan-out). Smooth motion:
+    // another picture
+    const bool newFrame = smooth && _smoothUsed
+                              ? _smoothChanged
+                              : _frameSerial != uploads && (_uploadedSerial == 0 || _uploadedSerial != shownSerial);
     // Occluded: the system would drop every present; the texture keeps up, the GPU rests
     if ((newFrame || force) && _presenter->IsVisible())
     {
@@ -217,7 +236,9 @@ void DeviceScreenGLWindow::renderNative(bool force)
             }
             paintGL();
             // A forced repaint of the frame on screen goes at once; a new frame at its target
-            const int64_t at = newFrame && _shownInfo.targetNs > 0 ? _shownInfo.targetNs : 0;
+            int64_t at = newFrame && _shownInfo.targetNs > 0 ? _shownInfo.targetNs : 0;
+            if (newFrame && _smoothRefreshNs != 0)
+                at = _smoothRefreshNs - _smoothPeriodNs / 2;
             _presenter->PresentFrame(at, {_shownInfo.serial, _shownInfo.latchNs, _presentPlannedNs, now});
         }
     }
@@ -227,6 +248,17 @@ void DeviceScreenGLWindow::renderNative(bool force)
     {
         _statusLogNs = now;
         qInfo().noquote() << "DeviceScreenGLWindow:" << presenterStatus();
+        if (smoothActive())
+        {
+            const smoothmotion::SmoothMotion::Stats& st = _smooth.GetStats();
+            qInfo("DeviceScreenGLWindow: smooth motion %s%s on %s: %llu frames, %llu game pictures, %llu renders "
+                  "(%llu blended, %llu interpolated), %llu motion fields, %llu steps on the GPU",
+                  smoothmotion::ModeName(_smooth.GetMode()), _smooth.HasGame() ? " + game" : "",
+                  _smooth.GetDevice() ? "GPU" : "CPU", static_cast<unsigned long long>(st.frames),
+                  static_cast<unsigned long long>(st.pictures), static_cast<unsigned long long>(st.renders),
+                  static_cast<unsigned long long>(st.blended), static_cast<unsigned long long>(st.interpolated),
+                  static_cast<unsigned long long>(st.estimates), static_cast<unsigned long long>(st.onDevice));
+        }
     }
     scheduleNative();
 }
@@ -237,7 +269,15 @@ void DeviceScreenGLWindow::scheduleNative()
         return;
     const int64_t now = SteadyNowNs();
     int64_t wakeNs = 0;
-    if (_shownInfo.nextSerial != 0 && _shownInfo.nextSerial != _uploadedSerial && _shownInfo.nextTargetNs > 0)
+    const int idleLimit = std::max(15, static_cast<int>(1e9 / static_cast<double>(refreshPeriodNs()) / 4.0));
+    if (_smoothRefreshNs != 0)
+    {
+        // Smooth motion on a fixed display: the next refresh's picture, while frames come
+        if (_idleRefreshes > idleLimit)
+            return;
+        wakeNs = _smoothRefreshNs + _smoothPeriodNs - presentLeadNs();
+    }
+    else if (_shownInfo.nextSerial != 0 && _shownInfo.nextSerial != _uploadedSerial && _shownInfo.nextTargetNs > 0)
     {
         wakeNs = _shownInfo.nextTargetNs - presentLeadNs();  // the next frame is known: wake for it
     }
@@ -245,7 +285,6 @@ void DeviceScreenGLWindow::scheduleNative()
     {
         // Nothing timed after the frame on screen: poll a refresh while frames may come, stop after a quarter second
         // idle (a paused machine); the next latch starts it again (refresh)
-        const int idleLimit = std::max(15, static_cast<int>(1e9 / static_cast<double>(refreshPeriodNs()) / 4.0));
         if (_idleRefreshes > idleLimit)
             return;
         wakeNs = now + refreshPeriodNs();
@@ -261,6 +300,41 @@ QString DeviceScreenGLWindow::presenterStatus() const
     if (_presenter)
         return QString::fromStdString(_presenter->Describe());
     return {};
+}
+
+WindowPresentStats DeviceScreenGLWindow::presentStats() const
+{
+    WindowPresentStats out;
+    if (_presenter)
+    {
+#ifdef __APPLE__
+        out.presenter = "metal";
+#else
+        out.presenter = "dxgi";
+#endif
+        const NativePresenter::Stats s = _presenter->GetStats();
+        out.minRefreshHz = s.minRefreshHz;
+        out.maxRefreshHz = s.maxRefreshHz;
+        out.presented = s.presented;
+        out.shown = s.shown;
+        out.dropped = s.dropped;
+        out.late = s.late;
+        out.leadMs = s.leadMs;
+        out.errorP50Ms = s.errorP50;
+        out.errorP99Ms = s.errorP99;
+        out.errorMaxMs = s.errorMax;
+        out.gpuWaitP50Ms = s.gpuWaitP50;
+        out.gpuWaitMaxMs = s.gpuWaitMax;
+    }
+    else
+    {
+        out.presenter = "gl";
+        const QScreen* display = screen();
+        out.minRefreshHz = out.maxRefreshHz = display ? display->refreshRate() : 0.0;
+    }
+    out.fixedDisplay = out.maxRefreshHz - out.minRefreshHz <= out.minRefreshHz * 0.01;
+    FillSmoothStats(_smooth, smoothActive(), _smoothOnGpu && _smoothGpu.isCreated(), out);
+    return out;
 }
 
 void DeviceScreenGLWindow::setupVSync()
@@ -351,6 +425,7 @@ DeviceScreenGLWindow::~DeviceScreenGLWindow()
     delete _factorTexture;
     delete _composeShader;
     _modelGpu.destroy();
+    _smoothGpu.destroy();
     delete _customShader;
     if (_slangRunner)
         _slangRunner->release();
@@ -386,12 +461,59 @@ void DeviceScreenGLWindow::detach()
             _devicePixels = nullptr;
         }
         _frameSource = nullptr;
+        _nextFrameSource = nullptr;
     }
     _latchedFrame = QImage();
     _emulator.reset();
     _frameHistory.clear();
 
     update();
+}
+
+void DeviceScreenGLWindow::setFrameSource(ScreenFrames source)
+{
+    smoothmotion::Mode mode = source.smooth;
+    const QByteArray forced = qgetenv("UNREAL_SMOOTH_MOTION");
+    if (!forced.isEmpty() && !smoothmotion::ParseMode(forced.constData(), mode))
+        qWarning() << "DeviceScreenGLWindow: UNREAL_SMOOTH_MOTION=" << forced << "is not off | blend | interpolate";
+    {
+        std::lock_guard<std::mutex> lock(_frameSourceMutex);
+        _frameSource = std::move(source.at);
+        _nextFrameSource = std::move(source.next);
+    }
+    // UNREAL_EFFECTS_DEVICE overrides [VIDEO] EffectsDevice
+    _smoothOnGpu = !source.onCpu;
+    const QByteArray device = qgetenv("UNREAL_EFFECTS_DEVICE").toLower();
+    if (device == "cpu" || device == "gpu")
+        _smoothOnGpu = device == "gpu";
+    else if (!device.isEmpty())
+        qWarning() << "DeviceScreenGLWindow: UNREAL_EFFECTS_DEVICE=" << device << "is not gpu | cpu";
+    _smooth.Reset();
+    _smooth.SetMode(mode);
+    _smoothShown = {};
+    _uploadedSerial = 0;
+}
+
+bool DeviceScreenGLWindow::smoothActive() const
+{
+    return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled;
+}
+
+void DeviceScreenGLWindow::feedSmooth()
+{
+    if (_nextFrame.size() != _latchedFrame.size())
+        _nextFrame = QImage(_latchedFrame.size(), QImage::Format_RGBA8888);
+    // Each frame once, in order. The screen holds a few: a backlog past them is gone anyway
+    for (size_t k = 0; k < smoothmotion::SmoothMotion::kFrames; k++)
+    {
+        PresentFrameInfo next;
+        if (!_nextFrameSource(_smooth.LastSerial(), _nextFrame.bits(), static_cast<size_t>(_nextFrame.sizeInBytes()),
+                              &next) ||
+            next.serial == 0)
+            break;
+        _smooth.Push(next.serial, next.targetNs, reinterpret_cast<const uint32_t*>(_nextFrame.constBits()),
+                     _nextFrame.width(), _nextFrame.height());
+    }
 }
 
 void DeviceScreenGLWindow::clearFrameSource()
@@ -401,6 +523,7 @@ void DeviceScreenGLWindow::clearFrameSource()
     // touches only owned memory. No Qt calls here (cross-thread safe).
     std::lock_guard<std::mutex> lock(_frameSourceMutex);
     _frameSource = nullptr;
+    _nextFrameSource = nullptr;
     if (_devicePixels)
     {
         delete _devicePixels;
@@ -823,7 +946,7 @@ QImage DeviceScreenGLWindow::renderWindowImage(bool hud, int pictureHeight)
     return image;
 }
 
-void DeviceScreenGLWindow::updateTexture(int64_t hostNs)
+void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
 {
     // The source is asked on every refresh (the frame due changes with the time), the legacy buffer only when a frame
     // came. Selection under the frame-source mutex (see clearFrameSource): the legacy fallback deep-copies so
@@ -845,6 +968,8 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs)
             else
                 _idleRefreshes++;
             _shownInfo = info;
+            if (smoothActive())
+                feedSmooth();
         }
         // A frame source is installed: never fall back to _devicePixels. It wraps the emulator's framebuffer, which
         // is freed and reallocated when the guest switches video mode (Profi 352x288 <-> 512x240 hi-res, ATM, AlCo)
@@ -867,11 +992,42 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs)
 
     if (!sourceImage || sourceImage->isNull())
         return;
+
+    // Smooth motion: the picture for the time, drawn again only when it is another one
+    _smoothChanged = false;
+    _smoothUsed = false;
+    QImage* smoothImage = nullptr;
+    if (sourceImage == &_latchedFrame && smoothActive() && _smooth.Width() == sourceImage->width() &&
+        _smooth.Height() == sourceImage->height())
+    {
+        // The GPU passes in this context (current: updateTexture draws), made on the first use
+        if (_smoothOnGpu && !_smoothGpu.isCreated() && !_smoothGpuFailed && !_smoothGpu.create())
+        {
+            _smoothGpuFailed = true;
+            qWarning() << "DeviceScreenGLWindow: smooth motion on the CPU, the GPU passes failed:" << _smoothGpu.log();
+        }
+        _smooth.SetDevice(_smoothOnGpu && _smoothGpu.isCreated() ? &_smoothGpu : nullptr);
+        const smoothmotion::SmoothMotion::Result plan = _smooth.Plan(atRefresh ? hostNs : _shownInfo.targetNs);
+        if (plan.kind != smoothmotion::SmoothMotion::Kind::None)
+        {
+            _smoothUsed = true;
+            if (plan == _smoothShown && !forced && _texture->isCreated())
+                return;
+            if (_smoothFrame.size() != sourceImage->size())
+                _smoothFrame = QImage(sourceImage->size(), QImage::Format_RGBA8888);
+            if (plan == _smoothShown || _smooth.Draw(plan, reinterpret_cast<uint32_t*>(_smoothFrame.bits())))
+            {
+                _smoothChanged = !(plan == _smoothShown);
+                _smoothShown = plan;
+                smoothImage = &_smoothFrame;
+            }
+        }
+    }
     // The frame is in the texture already (a viewport change forces the upload, it does not repeat the frame)
-    if (!newFrame && !forced && _texture->isCreated())
+    if (!smoothImage && !newFrame && !forced && _texture->isCreated())
         return;
 
-    QImage* uploadImage = sourceImage;
+    QImage* uploadImage = smoothImage ? smoothImage : sourceImage;
 
     if (_temporalEnabled)
     {

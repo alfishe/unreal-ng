@@ -28,7 +28,9 @@
         get["description"] =
             "How the GUI window draws the picture: backend (gpu / software), gpu_available, gpu, crt, crt_profile and "
             "the crt_profiles offered, blending (temporal blending, gigascreen smoothing), blending_frames, "
-            "blending_weights, blending_decay, the emulator the window shows, fullscreen, scale, toolbar, status_bar, "
+            "blending_weights, blending_decay, smooth motion (smooth_motion, effects_device: the shown instance's "
+            "[VIDEO] settings), present (the frame presenter's on-screen timing and smooth motion's counters), the "
+            "emulator the window shows, fullscreen, scale, toolbar, status_bar, "
             "the HUD (hud, hud_theme, hud_themes, hud_notices), the on-screen keyboard (osd_keyboard, "
             "osd_keyboard_picture, osd_keyboard_pictures, osd_keyboard_style, osd_keyboard_styles) and the ZX Next layers window (next_layers, "
             "next_layers_mode, next_layers_shown). The settings are the window's, whichever instance it shows, and "
@@ -61,6 +63,10 @@
             field("blending_frames", "integer", "Frames blended, 2..5");
             field("blending_weights", "string", "equal or exponential (newer frames stronger)");
             field("blending_decay", "number", "Exponential weights: each older frame's share of the newer one, 0.1..0.9");
+            field("smooth_motion", "string",
+                  "off, blend or interpolate: the shown instance's smooth motion until it restarts ([VIDEO] "
+                  "SmoothMotion keeps the default)");
+            field("effects_device", "string", "gpu or cpu: where smooth motion's steps run (the same bits)");
             field("fullscreen", "boolean", "Full screen on / off (follows after the window system's transition)");
             field("scale", "integer", "Fit the window to the picture at 1..4x (leaves full screen)");
             field("toolbar", "boolean", "View > Toolbar");

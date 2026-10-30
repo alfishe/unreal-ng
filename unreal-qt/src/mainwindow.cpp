@@ -1,4 +1,7 @@
 #include "mainwindow.h"
+#ifdef ENABLE_CONTROLLERS
+#include "profiles/videoprofile.h"
+#endif
 #include <emulator/video/displaygeometry.h>
 #include "loaders/snapshot/snapshotlauncher.h"
 #include "loaders/snapshot/snapshotpipeline.h"
@@ -176,10 +179,18 @@ QString buildFilterGroup(const QString& label, const QStringList& exts)
 }
 
 // The screen's frames by time for the screen widget, and the video presentation latency readout (EMA 1/8, half of
-// the realtime A/V offset): when the frame reaches the screen minus its latch
-FrameSourceFn TimedFrameSource(Screen* screen, EmulatorContext* context)
+// the realtime A/V offset): when the frame reaches the screen minus its latch. The frames in order for smooth motion
+// ([VIDEO] SmoothMotion)
+ScreenFrames TimedFrameSource(Screen* screen, EmulatorContext* context)
 {
-    return [screen, context](int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFrameInfo* info) {
+    ScreenFrames source;
+    source.next = [screen, context](uint64_t afterSerial, uint8_t* dst, size_t dstSize, PresentFrameInfo* info) {
+        return context && screen->CopyNextFrame(afterSerial, dst, dstSize, info, false);
+    };
+    if (context && context->config.smoothMotion <= static_cast<uint8_t>(smoothmotion::Mode::Interpolate))
+        source.smooth = static_cast<smoothmotion::Mode>(context->config.smoothMotion);
+    source.onCpu = context && context->config.effectsOnCpu;
+    source.at = [screen, context](int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFrameInfo* info) {
         PresentFrameInfo shown;
         if (!context || !screen->CopyFrameAt(hostNs, dst, dstSize, &shown))
             return false;
@@ -196,6 +207,7 @@ FrameSourceFn TimedFrameSource(Screen* screen, EmulatorContext* context)
         }
         return true;
     };
+    return source;
 }
 }  // namespace
 
@@ -427,6 +439,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _controllersDialog->setActions(&_guiActions->Registry());
     connect(_hostControllers, &HostControllers::actionTriggered, this,
             [this](const HostActionEvent& event) { _guiActions->Trigger(event); });
+    connect(_hostControllers, &HostControllers::gameVideoChanged, this, &MainWindow::applyGameVideo);
     // The debugger closed: a debug.* context the GUI set returns to the default
     connect(debuggerWindow, &DebuggerWindow::visibilityChanged, _hostControllers, &HostControllers::OnDebuggerVisible);
     // The breakpoint list's "Add as Haptic Probe": a source of the loaded game's user profile (haptics.md §7)
@@ -2819,6 +2832,58 @@ bool MainWindow::attachScreenToZXPolyDisplay()
         return group->CopyDisplay(dst, dstSize);
     });
     return true;
+}
+
+void MainWindow::refreshFrameSource()
+{
+    if (!_screenWrapper || !_emulator)
+        return;
+    EmulatorContext* context = _emulator->GetContext();  // lifetime-ok: held by _emulator
+    if (!context || !context->pScreen)
+        return;
+    if (ZXPolyGroup* group = _emulatorManager->GetZXPolyGroup(_emulator->GetId()); group && group->GetMaster() == _emulator)
+        return;
+    _screenWrapper->setFrameSource(TimedFrameSource(context->pScreen, context));
+}
+
+void MainWindow::applyGameVideo()
+{
+    if (!_screenWrapper)
+        return;
+#ifdef ENABLE_CONTROLLERS
+    const controllers::ResolvedProfiles& resolved = _hostControllers->Resolved();
+    controllers::VideoProfile video;
+    std::string error;
+    if (resolved.video.IsNull() || !controllers::ParseVideoProfile(resolved.video, nullptr, video, error))
+    {
+        if (!error.empty())
+            qWarning("video: %s: %s", resolved.videoProfile.c_str(), error.c_str());
+        _screenWrapper->setGameVideo(nullptr);
+        return;
+    }
+    if (EmulatorContext* context = _hostControllers->BoundContext(); context && context->pScreen)
+    {
+        const FramebufferDescriptor& fb = context->pScreen->GetFramebufferDescriptor();
+        if (!controllers::VideoProfileFits(video, fb.width, fb.height, error))
+        {
+            qWarning("video: %s: %s", resolved.videoProfile.c_str(), error.c_str());
+            _screenWrapper->setGameVideo(nullptr);
+            return;
+        }
+    }
+    smoothmotion::GameVideo game;
+    game.picturePeriod = static_cast<int>(video.picturePeriod);
+    smoothmotion::ParseGameMode(video.smooth.c_str(), game.mode);
+    const auto rect = [](const controllers::VideoProfile::Rect& r) { return smoothmotion::Rect{r[0], r[1], r[2], r[3]}; };
+    game.window = rect(video.window);
+    for (const controllers::VideoProfile::Rect& r : video.exclude)
+        game.exclude.push_back(rect(r));
+    qInfo("video: %s: picture every %d frames, %s", resolved.videoProfile.c_str(), game.picturePeriod,
+          smoothmotion::GameModeName(game.mode));
+    _screenWrapper->setGameVideo(&game);
+#else
+    _screenWrapper->setGameVideo(nullptr);
+#endif
 }
 
 void MainWindow::startZXPoly(const QString& filePath, const QString& requestedModel)

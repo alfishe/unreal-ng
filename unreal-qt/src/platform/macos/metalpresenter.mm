@@ -24,6 +24,8 @@
 #include <string>
 #include <vector>
 
+#include "platform/presentlead.h"
+
 namespace
 {
 /// The drawable's pixels from the IOSurface, rows turned over (GL counts them from the bottom). Sizes match: read, not
@@ -60,6 +62,8 @@ int64_t SecondsToNs(CFTimeInterval s)
 constexpr size_t kStatsWindow = 600;
 /// IOSurfaces in the ring: one being drawn, one waiting for its time, one on screen
 constexpr size_t kSlots = 3;
+/// The adaptive lead's first margin over a refresh (LeadNs: presentDrawable:atTime: wants the drawable a refresh ahead)
+constexpr int64_t kLeadStartNs = 6'000'000;
 }  // namespace
 
 struct MetalPresenter::Impl
@@ -96,6 +100,8 @@ struct MetalPresenter::Impl
     std::atomic<uint64_t> presented{0};
     std::atomic<uint64_t> shown{0};
     std::atomic<uint64_t> dropped{0};
+    std::atomic<int64_t> lastPresentedNs{0};  // the newest presentedTime: a refresh of the display
+    PresentLead lead{kLeadStartNs};  // LeadNs: a refresh and this margin
     FILE* trace = nullptr;  // UNREAL_PRESENT_TRACE: one line per present (see environment-variables.md)
     std::string dumpPath;   // UNREAL_PRESENT_DUMP: a drawable as shown, a PPM (from the 200th present, again once deleted)
     std::shared_ptr<std::atomic<bool>> dumpBusy = std::make_shared<std::atomic<bool>>(false);
@@ -420,6 +426,9 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
               return;
           }
           impl->shown.fetch_add(1, std::memory_order_relaxed);
+          impl->lastPresentedNs.store(SecondsToNs(t), std::memory_order_relaxed);
+          // The lead from the frame's own time: a window that handed it over late was late too
+          impl->lead.Shown(SecondsToNs(t) - (atNs > 0 ? atNs : asked));
           std::lock_guard<std::mutex> lock(impl->statsMutex);
           impl->AddSample(impl->errors, impl->errorNext, static_cast<double>(SecondsToNs(t) - asked) / 1e6);
         }];
@@ -435,10 +444,29 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
     p.AddSample(p.drawableWaits, p.drawableWaitNext, static_cast<double>(drawableWaitNs) / 1e6);
 }
 
+int64_t MetalPresenter::LeadNs(int64_t refreshPeriodNs) const
+{
+    return refreshPeriodNs + _impl->lead.Margin(refreshPeriodNs);
+}
+
 bool MetalPresenter::IsVisible() const
 {
     NSWindow* window = _impl->view.window;
     return window && (window.occlusionState & NSWindowOcclusionStateVisible) != 0;
+}
+
+bool MetalPresenter::RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const
+{
+    const int64_t last = _impl->lastPresentedNs.load(std::memory_order_relaxed);
+    NSScreen* screen = _impl->view.window.screen ?: [NSScreen mainScreen];
+    const CFTimeInterval shortest = screen.minimumRefreshInterval;
+    const CFTimeInterval longest = screen.maximumRefreshInterval;
+    // A refresh range (ProMotion, adaptive sync) shows each present at its time
+    if (last == 0 || shortest <= 0 || longest - shortest > shortest * 0.01)
+        return false;
+    refreshNs = last;
+    periodNs = SecondsToNs(shortest);
+    return periodNs > 0;
 }
 
 MetalPresenter::Stats MetalPresenter::GetStats() const
@@ -448,6 +476,8 @@ MetalPresenter::Stats MetalPresenter::GetStats() const
     s.presented = p.presented.load(std::memory_order_relaxed);
     s.shown = p.shown.load(std::memory_order_relaxed);
     s.dropped = p.dropped.load(std::memory_order_relaxed);
+    s.late = p.lead.Late();
+    s.leadMs = static_cast<double>(p.lead.PeriodNs() + p.lead.MarginNs()) / 1e6;
     std::vector<double> errors, waits, drawableWaits;
     {
         std::lock_guard<std::mutex> lock(p.statsMutex);
@@ -489,12 +519,14 @@ MetalPresenter::Stats MetalPresenter::GetStats() const
 std::string MetalPresenter::Describe() const
 {
     const Stats s = GetStats();
-    char line[320];
+    char line[384];
     std::snprintf(line, sizeof(line),
-                  "Metal present-at-time: %llu presented, %llu shown, %llu dropped; error p50 %.2f p99 %.2f max %.2f ms; "
+                  "Metal present-at-time: %llu presented, %llu shown, %llu dropped, %llu a refresh late (lead %.1f ms); "
+                  "error p50 %.2f p99 %.2f max %.2f ms; "
                   "GL wait p50 %.2f max %.2f ms; drawable wait p50 %.2f max %.2f ms; display %.1f-%.1f Hz%s%s",
                   static_cast<unsigned long long>(s.presented), static_cast<unsigned long long>(s.shown),
-                  static_cast<unsigned long long>(s.dropped), s.errorP50, s.errorP99, s.errorMax, s.gpuWaitP50,
+                  static_cast<unsigned long long>(s.dropped), static_cast<unsigned long long>(s.late), s.leadMs,
+                  s.errorP50, s.errorP99, s.errorMax, s.gpuWaitP50,
                   s.gpuWaitMax, s.drawableWaitP50, s.drawableWaitMax, s.minRefreshHz, s.maxRefreshHz,
                   s.maxRefreshHz - s.minRefreshHz > 1.0 ? " (VRR)" : " (fixed)", s.visible ? "" : "; occluded");
     return line;

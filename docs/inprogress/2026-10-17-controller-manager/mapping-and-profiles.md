@@ -478,9 +478,14 @@ video:
 - The section applies only with `[VIDEO] SmoothMotion = interpolate`; the owner's switch stays the global one.
 - Validation: `picture_period` 1..16, `window` inside the largest framebuffer of the profile's machines, `exclude`
   inside `window`, `picture_ready.on` an existing event. A profile without `video:` is unchanged.
-- Drafting: the profile tool captures frames through the WebAPI (`run_frame` + `capture/framebuffer`), measures the
-  period and the changing area (POC 038 `capture.py`, `interp cadence-eval`) and writes the section; the mode is
-  chosen by watching the 60 Hz comparison.
+- Drafting: `tools/smoothmotion/capture.py` captures frames of the game in play through the WebAPI (`run_frame` +
+  `capture/framebuffer`); `tools/smoothmotion/draft-video-profile.py` measures the period (the median distance
+  between pictures, a burst of changed frames one picture), the window (the 8x8 blocks that change on the game's
+  beat) and the exclusions (blocks redrawn off the beat on at least half of the pictures, a status row drawn a frame
+  later) and prints the section with the evidence. Capture play, not an idle screen: an idle scene's changes cover
+  part of the play area only (then the window is set from the picture). The mode is chosen by watching the 60 Hz
+  comparison (`smoothmotion-eval render`). The built-in examples: `games/pentagon/darkwing-duck.yaml`,
+  `games/spectrum/thundercats.yaml`, `games/spectrum/garfield.yaml`.
 
 ## 8. Defaults out of the box
 

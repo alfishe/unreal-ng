@@ -24,6 +24,8 @@ public:
         uint64_t presented = 0;  ///< presents since the start
         uint64_t shown = 0;      ///< reached the screen
         uint64_t dropped = 0;    ///< never on screen (replaced, or the system dropped it)
+        uint64_t late = 0;       ///< shown more than a refresh after the time asked for (a refresh late)
+        double leadMs = 0.0;     ///< the lead in effect (LeadNs at the last refresh period asked)
         uint32_t window = 0;     ///< presents the percentiles cover
         double errorP50 = 0.0;   ///< screen time minus the time asked for
         double errorP99 = 0.0;
@@ -62,6 +64,9 @@ public:
     virtual bool IsVisible() const = 0;
     /// How long before a frame's target the window draws it and hands it over
     virtual int64_t LeadNs(int64_t refreshPeriodNs) const = 0;
+    /// A fixed display's refreshes (steady clock, ns): a recent one and the period. Smooth motion draws a picture
+    /// for each of them. false: none seen yet, or the display follows the presents (VRR: every frame at its own time)
+    virtual bool RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const = 0;
 
     virtual Stats GetStats() const = 0;
     /// One line for the log

@@ -759,6 +759,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeamshapes.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodelgpu.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodelgpu.h"
+        # Smooth motion's GPU passes: the CPU reference's pictures bit for bit (skips without a 3.3 core context)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/smoothmotiongpu_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/smoothmotiongpu.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/smoothmotiongpu.h"
         # The libretro presets of data/shaders/crt on the slang runner (GPU: skips without a 3.3 core context)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/slangpresetrunner_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/slangpresetrunner.cpp"

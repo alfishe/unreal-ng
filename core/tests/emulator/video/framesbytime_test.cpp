@@ -147,6 +147,26 @@ TEST_F(FramesByTime_Test, NextFrameInOrder)
     EXPECT_FALSE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info)) << "all taken";
 }
 
+/// Smooth motion reads the frames ahead of the screen: what is on screen stays the frame CopyFrameAt served
+TEST_F(FramesByTime_Test, NextFrameReadAheadLeavesTheShownFrame)
+{
+    for (int k = 0; k < 4; k++)
+        LatchAndStamp();
+    std::vector<uint8_t> out(_size);
+    PresentFrameInfo info;
+    ASSERT_TRUE(_screen->CopyFrameAt(Target(0), out.data(), out.size(), &info));
+    uint64_t serial = 0;
+    for (int k = 0; k < 4; k++)
+    {
+        ASSERT_TRUE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false));
+        serial = info.serial;
+    }
+    EXPECT_EQ(_screen->GetShownDelayFrames(), 3u) << "frame 0 still on screen, 3 newer";
+    // Presenting each frame once marks it shown
+    ASSERT_TRUE(_screen->CopyNextFrame(serial - 1, out.data(), out.size(), &info));
+    EXPECT_EQ(_screen->GetShownDelayFrames(), 0u) << "the newest on screen";
+}
+
 /// With the sound on a device, a frame's target is when its last sample is heard
 TEST_F(FramesByTime_Test, AudioClockTimesTheFrames)
 {

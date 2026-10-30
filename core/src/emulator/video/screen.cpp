@@ -1611,7 +1611,7 @@ bool Screen::CopyFrameAt(int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFr
     return true;
 }
 
-bool Screen::CopyNextFrame(uint64_t afterSerial, uint8_t* dst, size_t dstSize, PresentFrameInfo* info)
+bool Screen::CopyNextFrame(uint64_t afterSerial, uint8_t* dst, size_t dstSize, PresentFrameInfo* info, bool markShown)
 {
     if (dst == nullptr)
         return false;
@@ -1619,14 +1619,19 @@ bool Screen::CopyNextFrame(uint64_t afterSerial, uint8_t* dst, size_t dstSize, P
     if (dstSize < _presentBufferSize)
         return false;
     size_t indices[PRESENT_SLOTS];
-    const size_t count = EligibleSlotsLocked(indices);
+    size_t count = EligibleSlotsLocked(indices);
+    // A temporal effect's newest frames are not written yet (see ChooseSlotLocked)
+    const size_t temporal = _temporalDelayFrames.load(std::memory_order_acquire);
+    if (temporal > 0 && !IsExternalPictureActive())
+        count = count > temporal ? count - temporal : 0;
     for (size_t k = 0; k < count; k++)
     {
         const size_t index = indices[k];
         if (_presentSlotSerial[index] <= afterSerial || SlotTargetLocked(index) == INT64_MAX)
             continue;
         VideoUtils::CopyFrameBuffer(dst, _presentSlots[index], _presentBufferSize);
-        MarkShownLocked(index);
+        if (markShown)
+            MarkShownLocked(index);
         if (info)
         {
             *info = PresentFrameInfo{};

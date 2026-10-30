@@ -13,6 +13,7 @@
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/atm/atmgeometry.h"
+#include "emulator/video/smoothmotion.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/comportspec.h"
 #include "emulator/io/serial/hayesmodempeer.h"
@@ -1079,6 +1080,29 @@ bool Config::ParseConfig(IniFile& inimanager)
 						"[VIDEO] LipSyncOffsetMs trims it");
 		const long lipSync = inimanager.GetLongValue(video, "LipSyncOffsetMs", 0);
 		config.lipSyncOffsetMs = (lipSync >= -200 && lipSync <= 200) ? (int)lipSync : 0;
+	}
+	// Smooth motion on a fixed display: off (default) | blend | interpolate. Unknown values warn and keep off
+	{
+		config.smoothMotion = static_cast<uint8_t>(smoothmotion::Mode::Off);
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(video, "SmoothMotion", nullptr), line, sizeof line);
+		smoothmotion::Mode mode = smoothmotion::Mode::Off;
+		if (line[0] != '\0' && !smoothmotion::ParseMode(line, mode))
+			MLOGWARNING("Config: unsupported [VIDEO] SmoothMotion='%s', using off", line);
+		config.smoothMotion = static_cast<uint8_t>(mode);
+	}
+	// The screen's effects on the GPU (default) or the CPU
+	{
+		config.effectsOnCpu = false;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(video, "EffectsDevice", nullptr), line, sizeof line);
+		const auto is = [&line](const char* name) {
+			return StringHelper::CompareCaseInsensitive(line, name, strlen(name)) == 0 && line[strlen(name)] == '\0';
+		};
+		if (is("cpu"))
+			config.effectsOnCpu = true;
+		else if (line[0] != '\0' && !is("gpu"))
+			MLOGWARNING("Config: unsupported [VIDEO] EffectsDevice='%s', using gpu", line);
 	}
 
 	// Media set: [MEDIA] + legacy keys; relative paths are relative to the config file

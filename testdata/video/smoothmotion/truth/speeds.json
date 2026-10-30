@@ -1,0 +1,114 @@
+{
+ "scene": "speeds",
+ "note": "rect in paper pixels; position step16/16 px every period frames; balls wrap after 192 px",
+ "paper": [
+  48,
+  48
+ ],
+ "regions": [
+  {
+   "name": "v.5",
+   "rect": [
+    44,
+    4,
+    256,
+    20
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 8,
+   "period": 1
+  },
+  {
+   "name": "v1",
+   "rect": [
+    44,
+    28,
+    256,
+    44
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 16,
+   "period": 1
+  },
+  {
+   "name": "v1.5",
+   "rect": [
+    44,
+    52,
+    256,
+    68
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 24,
+   "period": 1
+  },
+  {
+   "name": "v2",
+   "rect": [
+    44,
+    76,
+    256,
+    92
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 32,
+   "period": 1
+  },
+  {
+   "name": "v3",
+   "rect": [
+    44,
+    100,
+    256,
+    116
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 48,
+   "period": 1
+  },
+  {
+   "name": "v4",
+   "rect": [
+    44,
+    124,
+    256,
+    140
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 64,
+   "period": 1
+  },
+  {
+   "name": "v6",
+   "rect": [
+    44,
+    148,
+    256,
+    164
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 96,
+   "period": 1
+  },
+  {
+   "name": "v8",
+   "rect": [
+    44,
+    172,
+    256,
+    188
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 128,
+   "period": 1
+  }
+ ]
+}

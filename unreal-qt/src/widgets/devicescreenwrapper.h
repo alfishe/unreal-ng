@@ -67,8 +67,12 @@ public:
     /// @brief Request screen refresh
     void refresh();
 
-    /// @brief Set the frame source: the frame due at a time, tear-free (framesource.h)
-    void setFrameSource(FrameSourceFn fn);
+    /// @brief Set the frame source: the frame due at a time, tear-free, and the frames in order for smooth motion
+    /// (framesource.h)
+    void setFrameSource(ScreenFrames source);
+    void setFrameSource(FrameSourceFn fn) { setFrameSource(ScreenFrames{std::move(fn)}); }
+    /// @brief The game's picture cadence from its profile (nullptr: none), kept across frame sources
+    void setGameVideo(const smoothmotion::GameVideo* game);
 
     /// @brief Thread-safe cut of the frame source and legacy live-buffer path.
     /// Safe to call from the MessageCenter worker while an emulator instance
@@ -167,6 +171,9 @@ public:
     QString customShader() const;
     /// @brief Get list of available custom shaders
     static std::vector<QString> availableShaders();
+
+    /// The presenter's on-screen timing and smooth motion's counters (the automation's `present`)
+    WindowPresentStats presentStats() const;
 
     /// @brief Enable/disable temporal blending (gigascreen smoothing)
     void setTemporalBlendingEnabled(bool enabled);

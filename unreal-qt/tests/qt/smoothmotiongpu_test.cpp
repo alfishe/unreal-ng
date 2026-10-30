@@ -1,0 +1,194 @@
+/// @file smoothmotiongpu_test.cpp
+/// @brief Smooth motion's GPU passes (SmoothMotionGPU) against the CPU reference (core smoothmotion.h): the same motion
+/// field block for block, the same blend, interpolation, extrapolation and masked composition bit for bit, and the
+/// engine on the GPU device the same pictures as on the CPU.
+/// The test needs an OpenGL 3.3 core context: the offscreen platform has none on macOS (UNREAL_QT_TEST_PLATFORM=cocoa),
+/// it skips without one.
+
+#include <gtest/gtest.h>
+
+#include <QOffscreenSurface>
+#include <QOpenGLContext>
+#include <cstdint>
+#include <vector>
+
+#include "emulator/video/smoothmotion.h"
+#include "widgets/smoothmotiongpu.h"
+
+using namespace smoothmotion;
+
+namespace
+{
+/// A pseudo-random opaque colour per (x, y): no two neighbourhoods alike
+uint32_t PatternAt(int x, int y)
+{
+    uint32_t h = static_cast<uint32_t>(x) * 0x9E3779B1u ^ static_cast<uint32_t>(y) * 0x85EBCA77u;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    return h | 0xFF000000u;
+}
+
+struct Image
+{
+    int width;
+    int height;
+    std::vector<uint32_t> pixels;
+    Image(int w, int h) : width(w), height(h), pixels(static_cast<size_t>(w) * h) {}
+    uint32_t& At(int x, int y) { return pixels[static_cast<size_t>(y) * width + x]; }
+    Picture View() const { return {width, height, pixels.data()}; }
+};
+
+/// A band scrolled by (dx, dy) over a still background, a sprite at (sx, sy), a line that changes unrelated
+Image Scene(int width, int height, int dx, int dy, int sx, int sy, int noise)
+{
+    Image img(width, height);
+    for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+            img.At(x, y) = y >= 16 && y < 48 ? PatternAt(x + dx, y + dy) : PatternAt(x + 5000, y + 5000) & 0xFF3F3F3Fu;
+    for (int y = 0; y < 12; y++)
+        for (int x = 0; x < 12; x++)
+            if (sx + x < width && sy + y < height)
+                img.At(sx + x, sy + y) = PatternAt(x + 9000, y + 9000);
+    for (int x = 0; x < width; x++)
+        img.At(x, height - 3) = PatternAt(x, noise);
+    return img;
+}
+
+class GLContext
+{
+public:
+    bool create()
+    {
+        QSurfaceFormat format;
+        format.setRenderableType(QSurfaceFormat::OpenGL);
+        format.setVersion(3, 3);
+        format.setProfile(QSurfaceFormat::CoreProfile);
+        _context.setFormat(format);
+        if (!_context.create() || _context.isOpenGLES() || _context.format().version() < qMakePair(3, 3))
+            return false;
+        _surface.setFormat(_context.format());
+        _surface.create();
+        return _context.makeCurrent(&_surface);
+    }
+
+private:
+    QOpenGLContext _context;
+    QOffscreenSurface _surface;
+};
+
+/// The first pixel where two pictures differ, or -1
+long FirstDifference(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b)
+{
+    for (size_t i = 0; i < a.size() && i < b.size(); i++)
+        if (a[i] != b[i])
+            return static_cast<long>(i);
+    return a.size() == b.size() ? -1 : static_cast<long>(std::min(a.size(), b.size()));
+}
+}  // namespace
+
+TEST(SmoothMotionGPU_Test, TheGpuStepsAreTheCpuSteps)
+{
+    GLContext context;
+    if (!context.create())
+        GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
+    SmoothMotionGPU gpu;
+    ASSERT_TRUE(gpu.create()) << gpu.log().toStdString();
+
+    // An odd size (a partial block row and column), motion along both axes, both ranges
+    struct Case
+    {
+        int width, height, dx, dy, range;
+    };
+    const Case cases[] = {{100, 70, 4, 0, MotionField::kRangeFrames},
+                          {100, 70, -3, 2, MotionField::kRangeFrames},
+                          {96, 64, 12, -6, MotionField::kRangePictures}};
+    for (const Case& c : cases)
+    {
+        SCOPED_TRACE(testing::Message() << c.width << "x" << c.height << " by " << c.dx << "," << c.dy);
+        const Image a = Scene(c.width, c.height, 0, 0, 20, 50, 1);
+        const Image b = Scene(c.width, c.height, c.dx, c.dy, 20 + c.dx, 50 - c.dy, 2);
+
+        MotionField cpuField, gpuField;
+        cpuField.Estimate(a.View(), b.View(), c.range);
+        ASSERT_TRUE(gpu.Estimate(a.View(), b.View(), c.range, gpuField)) << gpu.log().toStdString();
+        ASSERT_EQ(gpuField.BlocksWide(), cpuField.BlocksWide());
+        ASSERT_EQ(gpuField.BlocksHigh(), cpuField.BlocksHigh());
+        for (int j = 0; j < cpuField.BlocksHigh(); j++)
+            for (int i = 0; i < cpuField.BlocksWide(); i++)
+            {
+                EXPECT_EQ(gpuField.At(i, j).matched, cpuField.At(i, j).matched) << "block " << i << "," << j;
+                EXPECT_EQ(gpuField.At(i, j).v, cpuField.At(i, j).v) << "block " << i << "," << j;
+            }
+        EXPECT_EQ(gpuField.Common(), cpuField.Common());
+        EXPECT_GT(cpuField.GetStats().moved, 0) << "the scene moves";
+
+        // Blend, interpolation, extrapolation; and composition inside a mask over what stays
+        for (int w : {0, 77, 128, 200, 256, 300, 512})
+        {
+            Image cpu(c.width, c.height), out(c.width, c.height);
+            if (w <= kOne)
+            {
+                Blend(a.View(), b.View(), w, cpu.pixels.data());
+                ASSERT_TRUE(gpu.Blend(a.View(), b.View(), w, out.pixels.data()));
+                EXPECT_EQ(FirstDifference(out.pixels, cpu.pixels), -1) << "blend at " << w;
+            }
+            cpuField.Compose(a.View(), b.View(), w, cpu.pixels.data());
+            ASSERT_TRUE(gpu.Compose(cpuField, a.View(), b.View(), w, out.pixels.data(), nullptr));
+            EXPECT_EQ(FirstDifference(out.pixels, cpu.pixels), -1) << "compose at " << w;
+
+            std::vector<uint8_t> mask(cpu.pixels.size(), 0);
+            for (int y = 8; y < c.height - 8; y++)
+                for (int x = 4; x < c.width - 10; x++)
+                    mask[static_cast<size_t>(y) * c.width + x] = 1;
+            cpu.pixels = a.pixels;
+            out.pixels = a.pixels;
+            cpuField.Compose(a.View(), b.View(), w, cpu.pixels.data(), mask.data());
+            ASSERT_TRUE(gpu.Compose(cpuField, a.View(), b.View(), w, out.pixels.data(), mask.data()));
+            EXPECT_EQ(FirstDifference(out.pixels, cpu.pixels), -1) << "masked compose at " << w;
+        }
+    }
+    gpu.destroy();
+}
+
+TEST(SmoothMotionGPU_Test, TheEngineOnTheGpuShowsTheCpuPictures)
+{
+    GLContext context;
+    if (!context.create())
+        GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
+    SmoothMotionGPU gpu;
+    ASSERT_TRUE(gpu.create()) << gpu.log().toStdString();
+
+    constexpr int64_t kPeriod = 20'000'000;
+    SmoothMotion cpu, onGpu;
+    onGpu.SetDevice(&gpu);
+    GameVideo game;
+    game.picturePeriod = 2;
+    game.mode = GameMode::Carry;
+    game.window = {0, 0, 96, 56};
+    for (SmoothMotion* engine : {&cpu, &onGpu})
+    {
+        engine->SetMode(Mode::Interpolate);
+        for (int f = 0; f < 6; f++)
+        {
+            const Image img = Scene(96, 64, f * 3, 0, 10 + f * 2, 50, f);
+            engine->Push(static_cast<uint64_t>(f + 1), 1000 * kPeriod + f * kPeriod, img.pixels.data(), 96, 64);
+        }
+    }
+    Image a(96, 64), b(96, 64);
+    for (bool withGame : {false, true})
+    {
+        cpu.SetGame(withGame ? &game : nullptr);
+        onGpu.SetGame(withGame ? &game : nullptr);
+        for (int64_t t = 1000 * kPeriod; t < 1006 * kPeriod; t += kPeriod / 3)
+        {
+            const SmoothMotion::Result rc = cpu.Render(t, a.pixels.data());
+            const SmoothMotion::Result rg = onGpu.Render(t, b.pixels.data());
+            EXPECT_EQ(rg, rc) << "t " << t;
+            EXPECT_EQ(FirstDifference(b.pixels, a.pixels), -1) << "t " << t << (withGame ? " (game)" : "");
+        }
+    }
+    EXPECT_GT(onGpu.GetStats().onDevice, 0u);
+    EXPECT_EQ(cpu.GetStats().onDevice, 0u);
+    gpu.destroy();
+}

@@ -503,6 +503,11 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
                 resolved.connectors[connector] = plan;
             if (!profile.players.empty())
                 resolved.players = profile.players;
+            if (profile.kind == ProfileKind::Play && !profile.video.IsNull())
+            {
+                resolved.video = profile.video;
+                resolved.videoProfile = profile.id;
+            }
             if (profile.kind == ProfileKind::Play && !profile.haptics.IsNull())
             {
                 resolved.haptics = profile.haptics;
@@ -694,6 +699,8 @@ JsonValue ProfileStore::ToJson(const Profile& profile)
     root.Set("layers", layers);
     if (!profile.haptics.IsNull())
         root.Set("haptics", profile.haptics);
+    if (!profile.video.IsNull())
+        root.Set("video", profile.video);
     return root;
 }
 

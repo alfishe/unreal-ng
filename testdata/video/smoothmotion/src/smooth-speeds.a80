@@ -1,0 +1,8 @@
+; Scene 1 of smoothtest.a80 (see there)
+                DEFINE SCENE 1
+                DEFINE NAME "speeds"
+                DEFINE FILE_SNA "smooth-speeds.sna"
+                DEFINE FILE_TAP "smooth-speeds.tap"
+                DEFINE FILE_TRD "smooth-speeds.trd"
+                DEFINE TRD_CODE "speeds.C"
+                include "smoothtest.a80"

@@ -178,20 +178,35 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     for (const auto& member : report.members)
         keys += member.first + " ";
     EXPECT_EQ(keys, "backend gpu_available gpu crt crt_profile crt_profiles blending blending_frames blending_weights "
-                    "blending_decay emulator fullscreen scale toolbar status_bar hud hud_theme hud_themes hud_notices "
+                    "blending_decay smooth_motion effects_device present emulator fullscreen scale toolbar status_bar hud hud_theme hud_themes hud_notices "
                     "osd_keyboard osd_keyboard_picture osd_keyboard_pictures osd_keyboard_style osd_keyboard_styles next_layers "
                     "next_layers_mode "
                     "next_layers_shown ");
 
     EXPECT_EQ(WindowDisplay::Summary(fake.settings),
-              "gpu off (unavailable), crt basic, blending off (4 frames, equal), scale free, hud off");
+              "gpu off (unavailable), crt basic, blending off (4 frames, equal), smooth motion off, scale free, hud off");
     fake.settings.blendingWeights = "exponential";
     fake.settings.blendingDecay = 0.3;
     fake.settings.scale = 2;
     fake.settings.hud = true;
     fake.settings.hudTheme = "retro_zx";
+    fake.settings.smoothMotion = "interpolate";
     EXPECT_EQ(WindowDisplay::Summary(fake.settings),
-              "gpu off (unavailable), crt basic, blending off (4 frames, exponential 0.3), scale 2x, hud on (retro_zx)");
+              "gpu off (unavailable), crt basic, blending off (4 frames, exponential 0.3), smooth motion interpolate "
+              "(gpu), scale 2x, hud on (retro_zx)");
+
+    // The presenter's timing and smooth motion's counters
+    fake.settings.present.presenter = "metal";
+    fake.settings.present.late = 3;
+    fake.settings.present.smooth = "interpolate";
+    fake.settings.present.heldFlicker = 7;
+    StateNode full = WindowDisplay::Report(fake.settings);
+    const StateNode& present = full["present"];
+    ASSERT_NE(present.find("smooth"), nullptr);
+    EXPECT_EQ(present.find("presenter")->s, "metal");
+    EXPECT_EQ(present.find("late")->i, 3);
+    EXPECT_EQ(present.find("smooth")->find("mode")->s, "interpolate");
+    EXPECT_EQ(present.find("smooth")->find("held_flicker")->i, 7);
 }
 
 TEST(WindowDisplay_Test, TheWindowsOtherWordsMakeAChange)
@@ -235,6 +250,20 @@ TEST(WindowDisplay_Test, TheWindowsOtherWordsMakeAChange)
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "next_layers_mode", "stacked", error));
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "next_layer.copper", "on", error));
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "hud_notice.ram-page", "maybe", error));
+}
+
+TEST(WindowDisplay_Test, SmoothMotionWords)
+{
+    WindowDisplayChange change;
+    std::string error;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "smooth_motion", "Interpolate", error)) << error;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "effects_device", "CPU", error)) << error;
+    EXPECT_EQ(change.smoothMotion, "interpolate");
+    EXPECT_EQ(change.effectsDevice, "cpu");
+    EXPECT_FALSE(change.Empty());
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "smooth_motion", "motion", error));
+    EXPECT_NE(error.find("off, blend or interpolate"), std::string::npos) << error;
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "effects_device", "npu", error));
 }
 
 TEST(WindowDisplay_Test, NumbersInWordsIgnoreTheLocale)

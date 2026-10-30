@@ -46,11 +46,15 @@ public:
     /// When set, paintEvent pulls the frame due now (Screen::CopyFrameAt) into an owned backing image via this
     /// callback instead of reading the emulator's live framebuffer, which the emulation thread overwrites
     /// concurrently and causes mid-frame tearing. A frame due later gets its own repaint
-    void setFrameSource(FrameSourceFn frameSource)
-    {
-        std::lock_guard<std::mutex> lock(_frameSourceMutex);
-        _frameSource = std::move(frameSource);
-    }
+    /// Smooth motion (ScreenFrames::smooth, UNREAL_SMOOTH_MOTION overrides it) with the frames in order: a repaint every
+    /// refresh while frames come, each with the picture for its time (smoothmotion.h, the CPU reference)
+    void setFrameSource(ScreenFrames source);
+    void setFrameSource(FrameSourceFn frameSource) { setFrameSource(ScreenFrames{std::move(frameSource)}); }
+    /// The game's picture cadence from its profile (nullptr: none): with Mode::Interpolate, the steps between the
+    /// game's own pictures
+    void setGameVideo(const smoothmotion::GameVideo* game) { _smooth.SetGame(game); }
+    /// Smooth motion's counters for the automation (presenter "software", the CPU reference)
+    WindowPresentStats presentStats() const;
 
     /// Thread-safe cut of every paint path into the emulator's framebuffer
     /// (the tear-free provider captures raw Screen*/EmulatorContext* pointers,
@@ -159,8 +163,16 @@ private:
     QImage* devicePixels = nullptr;
     QImage _latchedFrame;           // Owned backing store filled via _frameSource
     FrameSourceFn _frameSource;     // Tear-free frame provider (empty = legacy live-buffer path)
+    NextFrameSourceFn _nextFrameSource;  // The frames in order, for smooth motion
     bool _repaintScheduled = false; // a repaint waits for the next frame's target
-    mutable std::mutex _frameSourceMutex;  // Guards _frameSource + devicePixels across threads
+    mutable std::mutex _frameSourceMutex;  // Guards _frameSource, _nextFrameSource + devicePixels across threads
+
+    // Smooth motion (GUI thread)
+    bool smoothActive() const;
+    smoothmotion::SmoothMotion _smooth;
+    QImage _nextFrame;    // a frame on its way into _smooth
+    QImage _smoothFrame;  // the picture drawn
+    smoothmotion::SmoothMotion::Result _smoothShown;  // what _smoothFrame is made of
 
     static constexpr float kNativeRatio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
     float ratio = kNativeRatio;  // the shape the picture is drawn in (init)

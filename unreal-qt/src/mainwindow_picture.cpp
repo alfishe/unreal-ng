@@ -103,6 +103,14 @@ WindowDisplaySettings MainWindow::windowDisplaySettings() const
     s.blendingWeights = _screenWrapper->temporalWeightMode() == 1 ? "exponential" : "equal";
     s.blendingDecay = Shown(_screenWrapper->temporalDecay());
     s.emulatorId = _emulator ? _emulator->GetId() : std::string();
+    const EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: held by _emulator
+    if (context)
+    {
+        const auto mode = static_cast<smoothmotion::Mode>(context->config.smoothMotion);
+        s.smoothMotion = smoothmotion::ModeName(mode);
+        s.effectsDevice = context->config.effectsOnCpu ? "cpu" : "gpu";
+    }
+    s.present = _screenWrapper->presentStats();
 
     s.fullscreen = isFullScreen();
     // A whole zoom while the window is fitted to the picture; resized by hand, maximized or full screen: none
@@ -184,6 +192,17 @@ void MainWindow::applyWindowDisplay(const WindowDisplayChange& change)
     {
         _menuManager->setTemporalBlendingChecked(*change.blending);
         handleTemporalBlendingToggled(*change.blending);
+    }
+    // Smooth motion is the shown instance's [VIDEO] setting: its frames go to the screen again with it
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: held by _emulator
+    if ((change.smoothMotion || change.effectsDevice) && context)
+    {
+        smoothmotion::Mode mode = smoothmotion::Mode::Off;
+        if (change.smoothMotion && smoothmotion::ParseMode(change.smoothMotion->c_str(), mode))
+            context->config.smoothMotion = static_cast<uint8_t>(mode);
+        if (change.effectsDevice)
+            context->config.effectsOnCpu = *change.effectsDevice == "cpu";
+        refreshFrameSource();
     }
     // An open Temporal Effects dialog shows what automation set
     if (change.blending || change.blendingFrames || change.blendingWeights || change.blendingDecay)

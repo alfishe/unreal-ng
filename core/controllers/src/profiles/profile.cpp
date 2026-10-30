@@ -7,6 +7,7 @@
 #include "haptics/hapticprofile.h"
 #include "haptics/surfacehaptics.h"
 #include "match.h"  // core/swsignature: header-only, no core symbols
+#include "profiles/videoprofile.h"
 #include "profiles/yaml.h"
 
 namespace controllers
@@ -24,7 +25,7 @@ const char* const kOptionFields[] = {"turbo",        "on",           "off",   "c
                                      "curve"};
 const char* const kProfileFields[] = {"schema",  "kind",    "id",     "label",     "match",  "applies_to", "extends",
                                       "connectors", "players", "options", "layers", "layer_key", "haptics",
-                                      "events"};
+                                      "events", "video"};
 
 template <size_t N>
 bool OneOf(const char* const (&names)[N], const std::string& name)
@@ -651,6 +652,25 @@ bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
                                                : !ParseHapticProfile(*haptics, game, error))
             return false;
         profile.haptics = *haptics;
+    }
+    if (const JsonValue* video = root.Find("video"))
+    {
+        // The game's picture cadence (§7.7): a play profile's, its picture_ready one of its events
+        if (profile.kind != ProfileKind::Play)
+        {
+            error = "'video' belongs to a play profile";
+            return false;
+        }
+        // The events are kept as haptics.sources (above), where a dumped profile writes them back
+        std::vector<std::string> events;
+        if (const JsonValue* sources = profile.haptics.IsObject() ? profile.haptics.Find("sources") : nullptr;
+            sources != nullptr && sources->IsObject())
+            for (const auto& [name, spec] : sources->GetMembers())
+                events.push_back(name);
+        VideoProfile parsed;
+        if (!ParseVideoProfile(*video, &events, parsed, error))
+            return false;
+        profile.video = *video;
     }
     if (const JsonValue* layers = root.Find("layers"))
     {

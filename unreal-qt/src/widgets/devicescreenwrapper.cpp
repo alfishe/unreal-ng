@@ -289,12 +289,20 @@ bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error
     return true;
 }
 
-void DeviceScreenWrapper::setFrameSource(FrameSourceFn fn)
+void DeviceScreenWrapper::setFrameSource(ScreenFrames source)
 {
     if (_useGPU && _gpuWindow)
-        _gpuWindow->setFrameSource(fn);
+        _gpuWindow->setFrameSource(std::move(source));
     else if (_software)
-        _software->setFrameSource(fn);
+        _software->setFrameSource(std::move(source));
+}
+
+void DeviceScreenWrapper::setGameVideo(const smoothmotion::GameVideo* game)
+{
+    if (_gpuWindow)
+        _gpuWindow->setGameVideo(game);
+    if (_software)
+        _software->setGameVideo(game);
 }
 
 void DeviceScreenWrapper::clearFrameSource()
@@ -527,6 +535,15 @@ void DeviceScreenWrapper::setTemporalBlendingEnabled(bool enabled)
         _gpuWindow->setTemporalBlendingEnabled(enabled);
     else if (_software)
         _software->setTemporalBlendingEnabled(enabled);
+}
+
+WindowPresentStats DeviceScreenWrapper::presentStats() const
+{
+    if (_useGPU && _gpuWindow)
+        return _gpuWindow->presentStats();
+    if (_software)
+        return _software->presentStats();
+    return {};
 }
 
 bool DeviceScreenWrapper::temporalBlendingEnabled() const

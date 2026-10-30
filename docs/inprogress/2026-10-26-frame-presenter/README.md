@@ -266,6 +266,12 @@ has at the refresh's time: the scroller moves 4 x w pixels, not two half-bright 
   frame, so about once per frame pair). The audio delay (section 3) leaves 30+ ms for it.
 - **Not ZX DLSS.** ZX DLSS (`TemporalEffects`) reconstructs gigascreen pictures inside the core's present slots. This
   stage works on whatever the slots hold, after it, and never writes back.
+- **Flicker is not motion** (found on the live demo: a gigascreen dot ring, blue and magenta frames in turn,
+  interpolated into a strobe). Alternating frames are the temporal effects' (ZX DLSS, the blending), which have their
+  own algorithms (owner). Blend and Interpolate leave them alone: an 8x8 block where at least 3/4 of the pixels
+  changing from A to B went the same way two frames before (A B A B over four frames) shows the frame due, and a
+  pair that differs in nothing else is shown as the frame. A single pixel turning back is no evidence: a thin stroke
+  of a scroller does that now and then (a per-pixel rule held those and broke the scroll).
 - **Measured in [POC 038](../../../tools/poc/038-motion-interpolation/conclusions.md):** on scrollers and moving
   pictures 1/2 to 1/6 of the blend's error, 52-90 % of the changed pixels exact; full-screen effects fall back to the
   blend; 1.3-2.3 ms p50 per frame pair on one core without SIMD. Most games draw every 2nd-5th frame and gain
@@ -336,6 +342,11 @@ run that was not:
 8. **Measure what the screen did, in production too.** The same feedback that verified the POC counts frames outside
    the beat pattern, late frames, dropped presents and the screen-to-sound offset. The counts go to the automation
    planes (section 6.4), so a regression is visible, not felt.
+9. **Measure what the filters show.** The smoothing modes (sections 4.3-4.5) are judged on their pictures by
+   [tools/verification/smoothmotion](../../../tools/verification/smoothmotion/README.md): position error, jerk, ghost
+   and tear per moving region against the ideal trajectory, on synthetic Z80 scenes with known motion
+   ([testdata/video/smoothmotion](../../../testdata/video/smoothmotion/README.md)) and on game captures, with gates and
+   a baseline.
 
 ## 6. Architecture
 
@@ -420,6 +431,11 @@ classDiagram
     48.8 Hz): lead 6 ms showed 65 % of the frames a refresh late (on-screen error p50 19.5 ms against the target);
     18 ms 4-15 % (by load); 23 ms 2 %, error p50 8.1 ms, which is the wait for the next vsync on a fixed display
     (uniform 0-16.7 ms). Frames latch 60-75 ms before their target, so the lead costs nothing.
+  - **The margin follows the load.** It starts at 6 ms over a refresh; each present shown a refresh late (more than
+    a refresh and 1 ms after the time asked for: the first vsync it can make is less than a refresh away) adds 1 ms, up to 12 ms, and 600 presents on time in a row take 1 ms
+    back, down to 4 ms. Late counts from the frame's own time: a window that handed it over after it was late too.
+    The DXGI presenter adapts the same way (`platform/presentlead.h`) from 8 ms with no refresh on top: its own thread
+    presents at the time. `UNREAL_PRESENT_LEAD_MS` fixes it. `UNREAL_PRESENT_LOG` shows the late count and the lead.
   - The rest of the late tail is the GL fence wait on a busy GPU (p50 0.7 ms, up to 11 ms with other GPU work).
     `nextDrawable` waits under 0.1 ms. The system rounds a present to the nearest vsync: 2-3 % of the frames show
     up to 0.5 ms before their target.
@@ -450,7 +466,7 @@ directly: the screen time minus the frame's target.
 - `[VIDEO] SmoothMotion = off | blend | interpolate` (sections 4.3, 4.4), default off. A VRR display ignores it:
   there every frame is shown for its own period. With `interpolate`, a game whose profile has a `video:` section gets
   its cadence mode (section 4.5).
-- `[VIDEO] EffectsDevice = auto | gpu | cpu` (section 6.5), default `auto`.
+- `[VIDEO] EffectsDevice = gpu | cpu` (section 6.5), default `gpu`; `UNREAL_EFFECTS_DEVICE` overrides it.
 - `[VIDEO] LipSyncOffsetMs = 0`. It replaces `AVSyncDelayFrames`, whose job the audio clock now does; the old key is
   read once and dropped.
 - Per the automation-planes guidelines, every plane gets the same:
@@ -459,6 +475,17 @@ directly: the screen time minus the frame's target.
     emulated), frames shown outside the beat pattern, late, dropped, the screen-to-sound offset p50 / p99;
   - WebSocket: a topic for policy changes (VRR fell back, the clock switched).
   - Reads never touch the emulation thread: the presenter publishes `PresentStats` once a second.
+- **As built (phase 6).** The window's display settings (`emulator/video/windowdisplay.h`, the one validation every
+  plane shares) carry `smooth_motion` (off / blend / interpolate) and `effects_device` (gpu / cpu): the shown
+  instance's `[VIDEO]` values, set at run time until it restarts. The report adds `present`: the presenter (metal,
+  dxgi, gl, software), the display's refresh range, the native presenter's presented / shown / dropped / late counts,
+  the adaptive lead, the timing error p50 / p99 / max and the GL wait over its last 600 presents, and smooth motion's
+  mode in effect, device and counters (renders, blended, interpolated, motion fields, steps on the device, renders
+  with flicker held). CLI `video window`, REST and WebSocket `/video/window`, Lua and Python `window_display()`, MCP
+  `window_display` (a `present:` line in the text) take them through the same words. Read with the settings on the
+  GUI thread, never from the emulation thread. Not yet: `PresentPolicy` is still `UNREAL_PRESENT_POLICY` only, and
+  `LipSyncOffsetMs` is read from the config only (the emulation thread reads it per latch: a run-time setter needs
+  it atomic).
 
 ### 6.5 Every effect on the GPU and on the CPU
 
@@ -469,7 +496,17 @@ Owner: blend, interpolation and the cadence modes run on the GPU and on the CPU,
   clang, gcc, MSVC and MinGW. The GPU path implements the same steps per presenter: Metal compute (macOS, iOS), D3D11
   compute (Windows), GL fragment passes (the GL fallback, Linux), later Vulkan. A test renders the POC 038 sequences
   on both and requires identical output.
-- **Modes.** `EffectsDevice = auto` takes the GPU where the presenter has one and the CPU otherwise (a software
+- **As built (phase 5).** The GL renders on every platform (section 6.2), so there is one GPU implementation:
+  `SmoothMotionGPU` (`unreal-qt/src/widgets/smoothmotiongpu.cpp`), GL 3.3 core fragment passes over integer textures
+  (RGBA8UI frames, RGBA32I motion field, R8UI mask). No compute: macOS stops at GL 4.1. The block search and the two
+  refinement passes run per block on the GPU; the votes between the passes (a few hundred blocks) are counted on the
+  CPU from the field read back, with the reference's own code. The picture comes back into memory
+  (`RGBA_INTEGER` / `UNSIGNED_INT`): the CRT composition grades the shown frame on the CPU. The engine
+  (`smoothmotion::SmoothMotion`) takes a `Device`; a step the device refuses runs on the CPU, so a GPU that fails to
+  build its passes costs nothing but the speed. unreal-qt-tests `SmoothMotionGPU_Test` require the same field, blend,
+  interpolation, extrapolation and masked composition bit for bit, and the engine's pictures on the GPU equal the
+  CPU's (it needs a GL 3.3 core context: `UNREAL_QT_TEST_PLATFORM=cocoa` on macOS, it skips without one).
+- **Modes.** `EffectsDevice = gpu` takes the GPU where the presenter has one and the CPU otherwise (a software
   GL, a headless or offscreen instance, the video recording); `gpu` / `cpu` force it. The CPU path runs on the
   presenter's thread for the screen, and serves the readers that have no GPU (screenshots, recording, the video
   wall, WebAPI captures) with the same picture the screen shows.
@@ -545,8 +582,32 @@ Each phase lands on its own with tests and docs.
    - the game profile's `video:` section (section 4.5): parser, validation, the drafting tool, profiles for the
      test games (Darkwing Duck, Thundercats, Garfield).
    POC 038 measured the interpolation and the cadence modes (done).
+
+   On the branch:
+   - `core/src/emulator/video/smoothmotion.{h,cpp}`: blend, the motion field (a nearest-first search per 8x8 block,
+     then two refinement passes over the zero vector, the 4 most voted vectors and the 8 neighbours), the per-pixel
+     composition (own, zero, the 4 and 4 diagonal neighbours' vectors, the 2 most common; the best 3x3 agreement
+     wins, else the blend, or B when extrapolating), the engine (`Plan(t)` names the picture, `Draw` draws it; Off,
+     Blend, Interpolate; a game's `cadence` / `carry` with its window and excluded regions as a mask). Integer only;
+     `SmoothMotion_Test.SameBitsOnEveryCompiler` pins the hashes.
+   - `Screen::CopyNextFrame(after, ..., markShown = false)` reads the frames to come without moving the shown frame.
+   - The GPU screen keeps the next frames in the engine and draws one picture per refresh of the display's grid
+     (`NativePresenter::RefreshGrid`: Metal from the last `presentedTime` and the screen's refresh interval, DXGI
+     from the last vblank and the median interval; none under VRR), presented half a refresh before the refresh.
+     Without a grid (VRR, or none yet) it draws at the due frame's own target: cadence and carry still apply there,
+     a game's step is smoothed under VRR too. The software screen draws per paint at the screen's refresh rate.
+   - `[VIDEO] SmoothMotion`, `[VIDEO] EffectsDevice`, `UNREAL_SMOOTH_MOTION`, `UNREAL_EFFECTS_DEVICE`.
+   - The profile's `video:` section (`core/controllers/src/profiles/videoprofile.{h,cpp}`): play profiles only, the
+     most specific one wins whole; `HostControllers::gameVideoChanged` hands it to the screen, checked against the
+     framebuffer size. `picture_ready` is parsed and checked against the profile's events; the engine still finds a
+     game's pictures by the frames that changed.
+   - The drafting tool (`tools/smoothmotion/capture.py`, `draft-video-profile.py`) and the profiles of Darkwing Duck
+     (period 5, the lives row excluded), Thundercats (4) and Garfield (3).
+   - Flickering blocks held as the frame due (section 4.4); the adaptive lead shared by the Metal and DXGI presenters
+     (`platform/presentlead.h`), late measured from the frame's own time.
 6. **Automation planes.** Settings and `PresentStats` on CLI, Python, Lua, MCP, REST and WebSocket; docs chain per the
-   guidelines.
+   guidelines. On the branch: `smooth_motion`, `effects_device` and the `present` report (section 6.4); not yet the
+   policy and the lip-sync offset.
 7. Later:
    - a Vulkan / Wayland presenter;
    - the iOS host (section 9) moves to `FrameClock` and the Metal presenter;

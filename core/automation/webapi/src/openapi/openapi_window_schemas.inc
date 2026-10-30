@@ -19,6 +19,33 @@
         field("blending_weights", "string", "equal or exponential");
         field("emulator", "string", "The emulator the window shows, \"\" when none");
         field("blending_decay", "number", "Exponential weights: each older frame's share of the newer one, 0.1..0.9");
+        field("smooth_motion", "string",
+              "The shown instance's [VIDEO] SmoothMotion: off, blend or interpolate (the picture between two frames on a "
+              "fixed display)");
+        field("effects_device", "string", "The shown instance's [VIDEO] EffectsDevice: gpu or cpu (the same bits)");
+        {
+            Json::Value& p = s["properties"]["present"];
+            p["type"] = "object";
+            p["description"] =
+                "How the frames reach the screen: the presenter's on-screen timing over its last 600 presents (native "
+                "presenters only) and smooth motion's counters since the screen started";
+            auto pf = [&p](const char* name, const char* type, const char* description) {
+                p["properties"][name]["type"] = type;
+                p["properties"][name]["description"] = description;
+            };
+            pf("presenter", "string", "metal, dxgi (present at the frame's time), gl (the window's own swap), software");
+            pf("fixed_display", "boolean", "A fixed refresh rate (false: VRR / ProMotion range)");
+            pf("refresh_hz", "object", "{min, max}: the display's refresh range");
+            for (const char* count : {"presented", "shown", "dropped", "late"})
+                pf(count, "integer", "Presents since the start: handed over, on screen, never on screen, a refresh late");
+            pf("lead_ms", "number", "The adaptive lead: how long before its time a frame is drawn and handed over");
+            pf("error_ms", "object", "{p50, p99, max}: screen time minus the time asked for");
+            pf("gpu_wait_ms", "object", "{p50, max}: the wait for GL's draw before the native pass");
+            pf("smooth", "object",
+               "{mode (in effect: off with temporal blending or without timed frames), device (gpu / cpu), game (a "
+               "game profile's cadence applies), frames, pictures, renders, blended, interpolated, motion_fields, "
+               "on_device, held_flicker}");
+        }
         field("fullscreen", "boolean", "The window fills the display");
         field("scale", "integer", "The whole zoom the window is fitted to, 1..4; 0 when resized by hand, maximized or full screen");
         field("toolbar", "boolean", "View > Toolbar");

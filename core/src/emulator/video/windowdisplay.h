@@ -1,7 +1,8 @@
 #pragma once
 
 /// @file windowdisplay.h
-/// @brief The GUI window's display settings (GPU acceleration, CRT effects and profile, temporal blending, full screen,
+/// @brief The GUI window's display settings (GPU acceleration, CRT effects and profile, temporal blending, smooth motion
+/// and the frame presenter's timing, full screen,
 /// scale, toolbar / status bar, HUD with its theme and notices, on-screen keyboard and its picture, the ZX Next layers
 /// window) and the active CRT profile's parameters, shared by every automation surface: CLI `video window`, WebAPI
 /// /video/window and /video/window/crt_params, Lua / Python window_display() / window_display_set() /
@@ -13,6 +14,7 @@
 /// Validation lives here, so every surface refuses the same words with the same message; the provider only applies.
 
 #include <emulator/state/statenode.h>
+#include <emulator/video/smoothmotion.h>
 #include <emulator/video/windowview.h>
 
 #include <algorithm>
@@ -27,7 +29,8 @@ namespace WindowDisplay
 {
 /// The settings a change can name, in the order every surface lists them
 inline constexpr const char* kKeys =
-    "gpu, crt, crt_profile, blending, blending_frames, blending_weights, blending_decay, fullscreen, scale, toolbar, "
+    "gpu, crt, crt_profile, blending, blending_frames, blending_weights, blending_decay, smooth_motion, effects_device, "
+    "fullscreen, scale, toolbar, "
     "status_bar, hud, hud_theme, hud_notice.<id>, osd_keyboard, osd_keyboard_picture, osd_keyboard_style, next_layers, next_layers_mode, "
     "next_layer.<ula|layer2|tilemap|sprites>";
 
@@ -240,6 +243,28 @@ inline bool ApplyWord(WindowDisplayChange& change, const std::string& key, const
         change.blendingDecay = decay;
         return true;
     }
+    if (k == "smooth_motion")
+    {
+        smoothmotion::Mode mode = smoothmotion::Mode::Off;
+        if (!smoothmotion::ParseMode(value.c_str(), mode))
+        {
+            error = "'smooth_motion' takes off, blend or interpolate, not '" + value + "'";
+            return false;
+        }
+        change.smoothMotion = smoothmotion::ModeName(mode);
+        return true;
+    }
+    if (k == "effects_device")
+    {
+        const std::string device = Lower(value);
+        if (device != "gpu" && device != "cpu")
+        {
+            error = "'effects_device' takes gpu or cpu, not '" + value + "'";
+            return false;
+        }
+        change.effectsDevice = device;
+        return true;
+    }
     if (k == "fullscreen")
         return flag(change.fullscreen);
     if (k == "scale")
@@ -393,8 +418,51 @@ inline Result Set(const WindowDisplayChange& change)
     return r;
 }
 
+/// The frame presenter's part of the report: presenter, fixed_display, refresh_hz {min, max}, presented, shown, dropped,
+/// late, lead_ms, error_ms {p50, p99, max}, gpu_wait_ms {p50, max}, smooth {mode, device, game, frames, pictures,
+/// renders, blended, interpolated, motion_fields, on_device, held_flicker}
+inline StateNode PresentReport(const WindowPresentStats& p)
+{
+    StateNode node = StateNode::Object();
+    node["presenter"] = p.presenter;
+    node["fixed_display"] = p.fixedDisplay;
+    StateNode refresh = StateNode::Object();
+    refresh["min"] = p.minRefreshHz;
+    refresh["max"] = p.maxRefreshHz;
+    node["refresh_hz"] = refresh;
+    node["presented"] = p.presented;
+    node["shown"] = p.shown;
+    node["dropped"] = p.dropped;
+    node["late"] = p.late;
+    node["lead_ms"] = p.leadMs;
+    StateNode error = StateNode::Object();
+    error["p50"] = p.errorP50Ms;
+    error["p99"] = p.errorP99Ms;
+    error["max"] = p.errorMaxMs;
+    node["error_ms"] = error;
+    StateNode wait = StateNode::Object();
+    wait["p50"] = p.gpuWaitP50Ms;
+    wait["max"] = p.gpuWaitMaxMs;
+    node["gpu_wait_ms"] = wait;
+    StateNode smooth = StateNode::Object();
+    smooth["mode"] = p.smooth;
+    smooth["device"] = p.smoothDevice;
+    smooth["game"] = p.game;
+    smooth["frames"] = p.frames;
+    smooth["pictures"] = p.pictures;
+    smooth["renders"] = p.renders;
+    smooth["blended"] = p.blended;
+    smooth["interpolated"] = p.interpolated;
+    smooth["motion_fields"] = p.motionFields;
+    smooth["on_device"] = p.onDevice;
+    smooth["held_flicker"] = p.heldFlicker;
+    node["smooth"] = smooth;
+    return node;
+}
+
 /// The report every surface returns: backend, gpu_available, gpu, crt, crt_profile, crt_profiles[], blending,
-/// blending_frames, blending_weights, emulator (the instance the window shows, "" = none)
+/// blending_frames, blending_weights, smooth_motion, effects_device, present (PresentReport), emulator (the instance
+/// the window shows, "" = none)
 inline StateNode Report(const WindowDisplaySettings& s)
 {
     StateNode node = StateNode::Object();
@@ -411,6 +479,9 @@ inline StateNode Report(const WindowDisplaySettings& s)
     node["blending_frames"] = s.blendingFrames;
     node["blending_weights"] = s.blendingWeights;
     node["blending_decay"] = s.blendingDecay;
+    node["smooth_motion"] = s.smoothMotion;
+    node["effects_device"] = s.effectsDevice;
+    node["present"] = PresentReport(s.present);
     node["emulator"] = s.emulatorId;
     node["fullscreen"] = s.fullscreen;
     node["scale"] = s.scale;
@@ -464,6 +535,7 @@ inline std::string Summary(const WindowDisplaySettings& s)
     line += std::string(", blending ") + (s.blending ? "on" : "off") + " (" + std::to_string(s.blendingFrames) +
             " frames, " + s.blendingWeights + (s.blendingWeights == "exponential" ? " " + NumberWord(s.blendingDecay) : "") +
             ")";
+    line += ", smooth motion " + s.smoothMotion + (s.smoothMotion == "off" ? "" : " (" + s.effectsDevice + ")");
     line += s.fullscreen ? ", full screen" : (s.scale > 0 ? ", scale " + std::to_string(s.scale) + "x" : ", scale free");
     line += std::string(", hud ") + (s.hud ? "on" : "off") + (s.hudTheme.empty() ? "" : " (" + s.hudTheme + ")");
     if (s.osdKeyboard)

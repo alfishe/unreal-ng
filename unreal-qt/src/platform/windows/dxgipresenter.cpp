@@ -44,6 +44,7 @@
 #include <vector>
 
 #include "common/timehelper.h"
+#include "platform/presentlead.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -123,6 +124,8 @@ constexpr size_t kSlots = 3;
 constexpr int64_t kPresentCostNs = 300'000;
 /// Vblank intervals kept for the VRR check
 constexpr size_t kVBlankWindow = 120;
+/// The adaptive lead's first margin (LeadNs): the wake's slack (~1.5 ms), the draw and the copy into the back buffer
+constexpr int64_t kLeadStartNs = 8'000'000;
 
 double Percentile(std::vector<double> v, double q)
 {
@@ -372,11 +375,34 @@ public:
         return occluded == 0 || SteadyNs() - occluded > 500'000'000;
     }
 
-    /// The presenter thread presents at the time itself; the window draws a little before: the wake's slack (~1.5 ms),
-    /// the draw and the copy into the back buffer
-    int64_t LeadNs(int64_t /*refreshPeriodNs*/) const override
+    /// The presenter thread presents at the time itself; the window draws a margin before, adapted to the load
+    /// (PresentLead: from 8 ms, 4 to 12 ms)
+    int64_t LeadNs(int64_t refreshPeriodNs) const override
     {
-        return 8'000'000;
+        return _lead.Margin(refreshPeriodNs);
+    }
+
+    /// The vblank thread's last vblank and their interval (the monitor's rate before there are enough of them);
+    /// false while presenting for VRR
+    bool RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const override
+    {
+        const int64_t last = _lastVBlankNs.load(std::memory_order_relaxed);
+        if (last == 0 || _vrr)
+            return false;
+        double periodMs = 0.0;
+        {
+            std::lock_guard<std::mutex> lock(_statsMutex);
+            if (_vblankIntervals.size() >= kVBlankWindow / 2)
+                periodMs = Percentile(_vblankIntervals, 0.50);
+        }
+        const double hz = _refreshHz;
+        if (periodMs <= 0.0 && hz > 0.0)
+            periodMs = 1000.0 / hz;
+        if (periodMs <= 0.0)
+            return false;
+        refreshNs = last;
+        periodNs = static_cast<int64_t>(periodMs * 1e6);
+        return true;
     }
 
     Stats GetStats() const override
@@ -392,6 +418,8 @@ public:
             s.shown = _shown;
             s.dropped = _dropped;
         }
+        s.late = _lead.Late();
+        s.leadMs = static_cast<double>(_lead.MarginNs()) / 1e6;
         s.window = static_cast<uint32_t>(errors.size());
         s.errorP50 = Percentile(errors, 0.50);
         s.errorP99 = Percentile(errors, 0.99);
@@ -417,10 +445,11 @@ public:
             vblankError = _vblankError;
         }
         const char* mode = _vrr ? "VRR, Present(0, ALLOW_TEARING) at the time" : "vsync, Present(0) at the time";
-        char line[400];
+        char line[480];
         std::snprintf(
             line, sizeof line,
-            "DXGI %s (policy %s, tearing %s%s): %llu presented, %llu shown, %llu dropped; error p50 %.2f p99 "
+            "DXGI %s (policy %s, tearing %s%s): %llu presented, %llu shown, %llu dropped, %llu a refresh late (lead "
+            "%.1f ms); error p50 %.2f p99 "
             "%.2f max %.2f ms; GL unlock p50 %.2f max %.2f ms; back buffer wait p50 %.2f max %.2f ms; display "
             "%.0f Hz, vblank interval p50 %.2f ms (%s)%s%s",
             mode,
@@ -429,7 +458,7 @@ public:
                                      : "vsync",
             _tearing ? "supported" : "not supported", vrrNote.empty() ? "" : (", " + vrrNote).c_str(),
             static_cast<unsigned long long>(s.presented), static_cast<unsigned long long>(s.shown),
-            static_cast<unsigned long long>(s.dropped), s.errorP50, s.errorP99, s.errorMax, s.gpuWaitP50, s.gpuWaitMax,
+            static_cast<unsigned long long>(s.dropped), static_cast<unsigned long long>(s.late), s.leadMs, s.errorP50, s.errorP99, s.errorMax, s.gpuWaitP50, s.gpuWaitMax,
             s.drawableWaitP50, s.drawableWaitMax, _refreshHz.load(), vblankP50,
             _panelFollows ? "the panel follows the frames" : "a fixed grid",
             vblankError.empty() ? "" : ("; " + vblankError).c_str(), s.visible ? "" : "; occluded");
@@ -759,6 +788,7 @@ private:
                     _vblankIntervals.erase(_vblankIntervals.begin());
             }
             last = v;
+            _lastVBlankNs.store(v, std::memory_order_relaxed);
             // The presents before this vblank: the newest is on screen from it, the others were replaced
             size_t before = 0;
             while (before < _pending.size() && _pending[before].submittedNs < v)
@@ -777,6 +807,8 @@ private:
                 {
                     _shown++;
                     AddSample(_errors, _errorNext, static_cast<double>(screen - p.askedNs) / 1e6);
+                    // The lead from the frame's own time: a window that handed it over late was late too
+                    _lead.Shown(screen - (p.atNs > 0 ? p.atNs : p.askedNs));
                 }
                 else
                 {
@@ -837,9 +869,11 @@ private:
     std::atomic<bool> _stop{false};
     std::thread _presentThread;
     std::atomic<bool> _vblankStop{false};
+    std::atomic<int64_t> _lastVBlankNs{0};  // the newest vblank (RefreshGrid)
     std::thread _vblankThread;
     std::string _vblankError;  // _statsMutex
     std::atomic<int64_t> _occludedNs{0};
+    mutable PresentLead _lead{kLeadStartNs};
 
     mutable std::mutex _statsMutex;
     std::deque<Pending> _pending;
