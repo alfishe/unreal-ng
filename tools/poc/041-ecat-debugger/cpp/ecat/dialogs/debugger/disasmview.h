@@ -118,6 +118,8 @@ private:
     int x_bytes() const;
     int x_label() const;
     int x_text() const;
+    //The line before a column: the same place in the header and in the rows
+    int x_divider(int column_x) const;
     //The labels changed: the lines decoded again, the column measured again
     bool follow_labels();
     QString bytes_text(const DisasmBuffer::Line &l) const;

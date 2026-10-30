@@ -195,8 +195,7 @@ void MemoryView::update_scrollbar()
     sb->setPageStep(rows());
     sb->setValue((int)(m_top / LINE_BYTES));
     QScrollBar * hb = horizontalScrollBar();
-    //Room for a window's label after the characters
-    const int width = x_chars() + m_cw * ((int)LINE_BYTES + 2) + (m_windows.empty() ? 0 : m_cw * 36);
+    const int width = x_chars() + m_cw * ((int)LINE_BYTES + 2);
     hb->setRange(0, std::max(0, width - viewport()->width()));
     hb->setPageStep(viewport()->width());
 }
@@ -367,13 +366,11 @@ void MemoryView::paintEvent(QPaintEvent *event)
             p.drawText(x, y + base_y, QString::fromStdString(e->translate_char(m_src.read(a) & 0xFF)));
         }
 
-        //A window of the paged space starts at the line: a line over it and
-        //the page after the characters
-        const QString start = window_start(line);
-        if (!start.isEmpty()) {
+        //A window of the paged space starts at the line: a line over it (the
+        //strip above names the page)
+        if (!window_start(line).isEmpty()) {
             p.setPen(c.dim);
             p.drawLine(0, y, viewport()->width(), y);
-            p.drawText(dx + x_chars() + m_cw * ((int)LINE_BYTES + 2), y + base_y, start);
         }
     }
 }

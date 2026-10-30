@@ -109,9 +109,10 @@ void DisasmView::sync_header()
 {
     if (m_header == nullptr) return;
     m_syncing = true;
-    m_header->resizeSection(0, x_address());
-    m_header->resizeSection(1, x_bytes() - x_address());
-    m_header->resizeSection(2, x_label() - x_bytes());
+    //A section ends on the divider before the next column, where the rows draw their line
+    m_header->resizeSection(0, x_divider(x_address()));
+    m_header->resizeSection(1, x_divider(x_bytes()) - x_divider(x_address()));
+    m_header->resizeSection(2, x_divider(x_label()) - x_divider(x_bytes()));
     m_header->setSectionHidden(3, m_label_px == 0);
     if (m_label_px) m_header->resizeSection(3, m_label_px);
     m_syncing = false;
@@ -137,10 +138,11 @@ int DisasmView::bytes_chars() const
 }
 
 int DisasmView::x_marks() const   { return ARROW_LANES * LANE_WIDTH + 14; }
-int DisasmView::x_address() const { return x_marks() + m_cw * 2; }
+int DisasmView::x_address() const { return x_marks() + m_cw * 2 + m_cw / 2; }
 int DisasmView::x_bytes() const   { return x_address() + m_cw * (format_address(0).size() + 2); }
 int DisasmView::x_label() const   { return x_bytes() + m_cw * (bytes_chars() + 1) + m_cw / 2; }
 int DisasmView::x_text() const    { return x_label() + m_label_px; }
+int DisasmView::x_divider(int column_x) const { return column_x - m_cw / 2; }
 
 bool DisasmView::follow_labels()
 {
@@ -644,13 +646,15 @@ void DisasmView::paintEvent(QPaintEvent *event)
         }
     }
 
-    //Thin lines between the address, the bytes and the instruction
+    //Thin lines before every column, under the header's section edges (a section paints its edge on its last
+    //pixel)
     p.setPen(c.separator);
-    const int x1 = x_bytes() - m_cw;
-    const int x2 = x_text() - m_cw;
-    p.drawLine(x1, 0, x1, h);
-    p.drawLine(x2, 0, x2, h);
-    if (m_label_chars) p.drawLine(x_label() - m_cw, 0, x_label() - m_cw, h);
+    std::vector<int> columns = {x_address(), x_bytes(), x_text()};
+    if (m_label_chars) columns.push_back(x_label());
+    for (const int column : columns) {
+        const int x = x_divider(column) - 1;
+        p.drawLine(x, 0, x, h);
+    }
 
     //Every move of the cursor ends in a repaint: that is where it is told
     const unsigned int cur = cursor_address();
