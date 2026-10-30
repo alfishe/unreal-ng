@@ -727,7 +727,7 @@ void TimeTravelController::EngageRecordingLock()
                  static_cast<unsigned>(_savedHostSpeedMultiplier));
     }
 
-    // Turbo mode off, turbo mode / fast tape / turbo tape / fast disk refused
+    // The FeatureManager gate: fast disk held; the engine keeps turbo mode and the tape shortcuts (RecordsShortcuts)
     if (_context->pFeatureManager)
         _context->pFeatureManager->onTtdRecordingStarted();
 

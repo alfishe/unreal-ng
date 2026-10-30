@@ -181,6 +181,30 @@ bool FeatureManager::isTtdTimelineBound() const
            _context->pTimeTravelHooks->GetState() == ttd::TTDSessionState::Detached;
 }
 
+bool FeatureManager::ttdRecordsShortcuts() const
+{
+    return _context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->RecordsShortcuts();
+}
+
+bool FeatureManager::ttdLocksTurboMode() const
+{
+    return isTtdRecordingActive() && !ttdRecordsShortcuts();
+}
+
+bool FeatureManager::ttdLocksFastLoader(const std::string& id) const
+{
+    // Fast disk also compresses the WD1793's timing outside its trap (WD1793::isFastDiskArmed): no edit records
+    // that, a replay with it off would run another FDC. Held for every recording, a black box too
+    if (id == Features::kFastDisk)
+        return isTtdTimelineBound() || (_context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->IsRecording());
+    if (!isTtdTimelineBound())
+        return false;
+    // The engine records the tape trap as an edit, and turbo tape only takes the pacing away: the live head of a
+    // recording keeps them, a replay applies the edits instead (and the machine sitting in history keeps them off
+    // until it records again)
+    return !(ttdRecordsShortcuts() && _context->pTimeTravelHooks->IsRecording() && !_context->ttdReplayActive);
+}
+
 void FeatureManager::onTtdRecordingStarted()
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
@@ -419,13 +443,13 @@ std::string FeatureManager::refusalReason(const std::string& idOrAlias, bool ena
         return "Cannot enable " + id + " while an RZX recording plays: it changes what the guest code does, so the "
                "playback would leave the recorded path. Stop the playback first.";
     }
-    if ((id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape) && isTtdTimelineBound())
+    if ((id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape) && ttdLocksFastLoader(id))
     {
         return "Cannot enable " + id + " while TTD is recording or replaying history: it changes what the guest "
                "code does, so the replay would no longer match the recording. Stop the recording, or leave the "
                "history, first.";
     }
-    if (id == Features::kTurboMode && isTtdRecordingActive())
+    if (id == Features::kTurboMode && ttdLocksTurboMode())
     {
         return "Cannot enable turbo mode while TTD is recording: a recording must show the code running at real "
                "speed. Stop the recording first.";
@@ -444,9 +468,9 @@ bool FeatureManager::isMaskedByTtd(const std::string& id) const
     // Shortcuts read as OFF for the whole timeline binding (recording, replay, Detached);
     // turbo mode only while recording
     if (id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape)
-        return isTtdTimelineBound() || isRzxPlaying();
+        return ttdLocksFastLoader(id) || isRzxPlaying();
     if (id == Features::kTurboMode)
-        return isTtdRecordingActive();
+        return ttdLocksTurboMode();
     return false;
 }
 
@@ -468,7 +492,7 @@ void FeatureManager::syncTurboModeWithTtdState()
     // Recording forces turbo off regardless of the stored desired state; the
     // desired state itself is left untouched so it can be restored verbatim
     // once recording stops (same masking approach as isEnabled() above).
-    if (isTtdRecordingActive())
+    if (ttdLocksTurboMode())
         wantsTurbo = false;
 
     if (_context->pCore->IsTurboMode() != wantsTurbo)

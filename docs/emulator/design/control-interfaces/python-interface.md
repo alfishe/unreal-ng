@@ -1023,7 +1023,7 @@ print(emu.feature_get("turbotape"))    # True
 emu.feature_set("turbomode", True)     # turbo mode (same switch as `setting speed unlimited`)
 ```
 
-`feature_list()` and `feature_get()` report the state in effect. Time-travel debugging holds some features off: `turbomode` while a recording runs, and `fasttape`, `turbotape`, `fastdisk` while a recording runs, history is replayed, or the machine sits in history. A held feature reads as `False`, and `feature_set(name, True)` on it returns `False`. The full list of features, aliases and defaults: [command-interface.md §5](./command-interface.md#5-feature-management--configuration).
+`feature_list()` and `feature_get()` report the state in effect. Time-travel debugging holds some features off: `fastdisk` while a recording runs, history is replayed, or the machine sits in history; `fasttape`, `turbotape` while history is replayed or the machine sits in history (the engine's recording keeps them, and turbo mode); with `backend: v1` also `turbomode`, `fasttape`, `turbotape` while it records. A held feature reads as `False`, and `feature_set(name, True)` on it returns `False`. The full list of features, aliases and defaults: [command-interface.md §5](./command-interface.md#5-feature-management--configuration).
 
 ### Speed and Turbo
 

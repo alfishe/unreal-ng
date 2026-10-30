@@ -2227,7 +2227,9 @@ std::string FormatTtdStatus(const Json::Value& status)
     }
     if (state == "recording")
     {
-        out << " - speed held at 1x, turbo and fast tape/disk off until stop";
+        out << (status["backend"].asString() == "v1" ? " - speed held at 1x, turbo and fast tape/disk off until stop"
+                                                     : " - speed held at 1x and fast disk off until stop (turbo and "
+                                                       "fast tape stay: a tape loads in turbo)");
     }
     else if (state == "detached")
     {
@@ -5371,7 +5373,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["black_box"]["type"] = "boolean";
     schema["properties"]["black_box"]["description"] =
         "start: record as the black box (the engine): keep the last 'minutes'; turbo and a host speed above 1x stay "
-        "free (the recording stops before them, history kept). Default false: an explicit recording, which holds 1x";
+        "free (the recording stops before them, history kept). Default false: an explicit recording, which holds 1x "
+        "and records through turbo";
     schema["properties"]["minutes"]["type"] = "integer";
     schema["properties"]["minutes"]["minimum"] = 1;
     schema["properties"]["minutes"]["maximum"] = 1440;
@@ -5549,10 +5552,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Time-travel debugging (TTD): record execution, then move backward and forward through it. Typical flow: "
         "'start' -> run the program (control_execution) -> 'stop' -> 'find_last' / 'reverse_continue' / 'seek' / step "
         "actions to inspect the past (inspect_state shows the machine at that point) -> 'resume' to continue live from "
-        "there. While recording, the host speed is held at 1x and turbo / fast tape / fast disk are off; a tape or disk "
-        "load and a ROM reload are refused while recording and wipe a stopped session's history; a snapshot load is part "
-        "of the recording (the engine; v1 refuses it); seek / step / find_last while recording pause it (the engine); "
-        "reset stops the recording and keeps it. Also: agent bookmarks and coverage index queries.",
+        "there. While recording, the host speed is held at 1x and fast disk is off; turbo, turbo tape and fast tape stay "
+        "on (a tape from zero loads in turbo inside the recording; v1 holds them off). A tape or disk load while "
+        "recording is an event of the recording, and wipes a stopped session's history; a reset or a snapshot load "
+        "ends the session and keeps its history; a ROM reload or model switch ends it and drops it (v1 refuses all of "
+        "these while recording); seek / step / find_last while recording pause it (the engine). Also: agent bookmarks and coverage index queries.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
@@ -5824,7 +5828,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                     "recording stops before them, history kept). Run the program now "
                                     "(control_execution), then 'stop' to browse the history.";
                         else
-                            text += "). Host speed is held at 1x and turbo / fast tape / fast disk are off until 'stop'. "
+                            text += "). Host speed is held at 1x and fast disk is off until 'stop'; turbo and fast "
+                                    "tape stay (a tape loads in turbo). "
                                     "Run the program now (control_execution), then 'stop' to browse the history.";
                         return text;
                     }, done);

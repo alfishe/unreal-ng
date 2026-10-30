@@ -283,13 +283,14 @@ public:
     void StopForFeatureChange(const char* feature) override;
     bool LocksAcceleration() const override { return !_blackBox; }
     std::string SpeedLock() const override;
+    bool RecordsShortcuts() const override { return true; }
     void OnAccelerationChanging(bool accelerating) override;
 
     /// @brief The black box (Phase 5, Step 3; D29): a recording that keeps the
     /// last @p minutes and never holds the machine at real speed - before an
     /// acceleration (host speed above 1x, turbo mode, turbo tape's warp) it
     /// stops, its history kept, and once nothing accelerates a new session
-    /// starts. The fast loaders' traps are recorded edits. Real-time clocks still run on emulated time. Applies to
+    /// starts. The tape trap is a recorded edit; fast disk is held (its FDC timing is no edit). Real-time clocks still run on emulated time. Applies to
     /// the next StartRecording; off: an explicit recording (the lock)
     void SetBlackBox(bool on, uint32_t minutes = 5);
     /// The recording session as a refusal names it: "#3, started at frame 1200" (the instance's recordings

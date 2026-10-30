@@ -136,6 +136,20 @@ D3 done: memory-at `space: cpu` without `frame` (or at the machine's own frame p
 now: `live: true`, the mapping and banks as they are, no recording needed. A frame past the history otherwise answers
 409 naming the history's end and the machine's frame.
 
+D4 done. The cause: the acceleration lock held turbo mode, turbo tape and fast tape off for the whole recording
+(fast tape is on by default), so a tape loaded at the real tape speed. Turbo only takes the host's pacing away (the
+frames are the same) and the tape trap was already a recorded edit (the black box's D29 path), so the engine's
+recording now keeps all three (`ITimeTravelHooks::RecordsShortcuts`; v1 keeps its lock); the host speed stays at 1x.
+Fast disk stays held, and is now held for the black box too: besides its trap it compresses the WD1793's timing,
+which no edit records, and a DSS floppy boot recorded by a black box with it on replayed another FDC (frame 78, the
+BetaDisk and WD1793 context blobs) - a bug the black box had since D29. Measured (unreal-qt offscreen, Pentagon,
+`LOAD ""` from the prompt inside a recording): DIZZY_X_SAN-SAN.tap (348 s of tape, headerless blocks the trap
+cannot take) 352 s at the old 1x, 15.3 s in turbo; turbo records about 1500 frames a second. The Qt menu now asks
+the core (`refusalReason`, `CanSetSpeedMultiplier`) instead of repeating the rule; it also offered no host speed
+during a black box, which the core allows. Tests: `TimeTravelController_Test.AnExplicitRecordingKeepsTurboAndTheTapeShortcuts`
+(an AY tone, a trap in turbo, seeks equal the live states), `TapeLoading_Integration_Test.TTDRoundTripAcrossFastLoad`
+(LOAD "" recorded in turbo, every frame's seek equals the run), the black box's fast disk hold.
+
 ### E. Checks
 
 - `tools/build/test.sh`, zero warnings; gcc, MSVC and MinGW before landing.
