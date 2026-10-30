@@ -115,7 +115,9 @@ TEST_F(AutomationLua_Test, RunFileAnswersTheScriptsExitCode)
         EXPECT_EQ(_lua.runFile(file.string(), message), c.exitCode) << c.code;
         EXPECT_NE(message.find(c.message), std::string::npos) << c.code << ": " << message;
         if (!*c.message)
+        {
             EXPECT_TRUE(message.empty()) << c.code << ": " << message;
+        }
     }
     std::string message;
     EXPECT_EQ(_lua.runFile((dir / "absent.lua").string(), message), 1);

@@ -2103,7 +2103,13 @@ void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
         }
     }
 
-    if (fromTstate >= maxFrameDuration || toTstate >= maxFrameDuration)
+    // A step that ends far past the frame end (the TS-Conf arbiter holding the CPU while DMA owns the bus, a long
+    // wait) still had the beam draw the frame's tail: draw up to the end, not nothing (the renderers stop at their
+    // own frame end)
+    if (fromTstate < maxFrameDuration && toTstate >= maxFrameDuration)
+        toTstate = maxFrameDuration - 1;
+
+    if (fromTstate >= maxFrameDuration)
     {
         MLOGERROR("Screen::DrawPeriod - Incorrect fromTstate: %d and/or toTstate: %d. MAX_FRAME_DURATION: %d. Skipping period.",
                   fromTstate, toTstate, maxFrameDuration);

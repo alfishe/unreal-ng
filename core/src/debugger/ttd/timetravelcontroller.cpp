@@ -92,6 +92,29 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
 
 namespace
 {
+/// A restore puts the machine together piece by piece: a device's load writes its ports (a border colour, a video
+/// mode) while the CPU clock already stands at the checkpoint and the draw cursor still where the caller left it, so
+/// the screen would draw a period backwards or past the frame. Nothing is drawn until the restore resyncs the cursor
+class ScreenDrawHold
+{
+public:
+    explicit ScreenDrawHold(Screen* screen) : _screen(screen), _was(screen && screen->IsTurboRenderSkip())
+    {
+        if (_screen)
+            _screen->SetTurboRenderSkip(true);
+    }
+    ~ScreenDrawHold()
+    {
+        if (_screen)
+            _screen->SetTurboRenderSkip(_was);
+    }
+    ScreenDrawHold(const ScreenDrawHold&) = delete;
+    ScreenDrawHold& operator=(const ScreenDrawHold&) = delete;
+
+private:
+    Screen* _screen;
+    bool _was;
+};
 } // anonymous namespace
 
 namespace ttd {
@@ -1750,6 +1773,8 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
                     static_cast<unsigned long long>(cp.time.frame));
         return;
     }
+
+    const ScreenDrawHold drawHold(_context->pScreen);
 
     // --- CPU registers (TDD §8.1 step 2a). Host-side fields (MemIf pointers,
     // trace cursors, isDebugMode, prev_pc/m1_pc/last_branch/nextpc) are kept ---
@@ -6836,6 +6861,7 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
 {
     _engineMemoryKnown = false;   // the caller's memory comes back behind the engine
     Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
+    const ScreenDrawHold drawHold(_context ? _context->pScreen : nullptr);
 
     // Mirror RestoreCheckpoint's ordering (TDD §8.1): CPU, chipset,
     // peripherals, bank rebuild, RAM, screen resync. Peripherals MUST
@@ -7221,7 +7247,8 @@ TTDCoverageRareResult TimeTravelController::QueryCoverageRare(
         const std::vector<uint64_t>& frames = seen[key].frames;
         TTDCoverageRareBlock* last = blocks.empty() ? nullptr : &blocks.back();
         const uint16_t offset = static_cast<uint16_t>(key & 0x3FFF);
-        if (last && last->pageField == (key >> 14) && offset - last->offsetTo <= gap && last->frames == frames)
+        if (last && last->pageField == (key >> 14) && static_cast<uint32_t>(offset - last->offsetTo) <= gap &&
+            last->frames == frames)
         {
             last->offsetTo = offset;
             last->keys++;

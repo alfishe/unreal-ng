@@ -184,9 +184,13 @@ protected:
                 EXPECT_EQ(found.hits[i].oldValue, expected[i].oldValue) << i;
             }
             if (addr == 0x8101)
+            {
                 EXPECT_EQ(found.hits.size(), 1u) << "set to 5 on every pass: it changed once";
+            }
             if (addr == 0x8103)
+            {
                 EXPECT_GT(found.hits.size(), 20u) << "it flips every 16 passes";
+            }
         }
     }
 };
@@ -324,7 +328,9 @@ TEST_F(TTDAnalysisQueries_Test, CoverageRareBlocksHoldTheScansFrames)
         const ttd::TTDCoverageRareBlock& b = all.blocks[i];
         SCOPED_TRACE(i);
         if (i > 0)
+        {
             EXPECT_LE(all.blocks[i - 1].frames.size(), b.frames.size()) << "rarest first";
+        }
         const ttd::PhysPage page = b.pageField == ttd::kCoverageNoPageField ? ttd::kPhysPageNone : ttd::PhysPage(b.pageField);
         EXPECT_EQ(Scan(b.offsetFrom, page, 10000).frames, b.frames);
         EXPECT_EQ(Scan(b.offsetTo, page, 10000).frames, b.frames);

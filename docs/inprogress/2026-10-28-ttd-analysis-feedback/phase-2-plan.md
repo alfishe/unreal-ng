@@ -164,5 +164,23 @@ address, HL counting the calls, the machine unmoved), `TTDPortSearch_Test.Keyboa
 
 - `tools/build/test.sh`, zero warnings; gcc, MSVC and MinGW before landing.
 - MCP: `tools/verification/mcp/run_all.py --launch` for every changed tool.
-- The TTD corpus test with the baseline interval, every model (POC 038 proposal step 1).
+- The TTD corpus test with the baseline interval, every model (POC 038 proposal step 1). **Done 2026-10-30:**
+  `TimeTravelControllerCorpus_Test.TheBaselineIntervalReplaysExactlyOnEveryModel` seeks to the baseline checkpoint
+  (inside its frame) and to the first frame checkpoint, runs each to the next frame boundary and compares CPU,
+  chipset, every device and every RAM page with the recorded checkpoint. 16 models in the long tier (48K, 128K, +2,
+  +2A, +3, Pentagon, Scorpion, Prof. Scorpion, ATM 7.10, ATM 4.50, ATM 3, Profi, Profi 3, TS-Conf, TS-Conf VDAC2,
+  Sprinter; under 1 s), 48K, Pentagon and Sprinter in the quick tier. It found three defects, all fixed:
+  - **Board devices behind their clock in the checkpoint.** `MainLoop::CompleteFrame` let the port decoder's lazy
+    devices (the ATM Turbo 2+ and Profi keyboard controllers, a COM peer, flash timers) catch up to the frame end
+    after the TTD frame boundary, so a checkpoint held them one frame behind: the same machine, not the same bytes.
+    `pPortDecoder->OnFrameEnd()` now runs before the checkpoint.
+  - **A restore drew while the machine was half assembled.** A device load writes its ports (the border, a video
+    mode) with the CPU clock already at the checkpoint and the draw cursor still at the caller's position, so the
+    screen drew backwards (Pentagon-class border compensation) and logged errors. The restores hold drawing until
+    they resync the cursor.
+  - **A step far past the frame end dropped the frame's tail.** `Screen::DrawPeriod` skipped a period ending more
+    than 100 T after the frame end (the TS-Conf arbiter holding the CPU while DMA owns the bus): up to ~45 lines of
+    the bottom were left undrawn. It now draws to the end.
+  - Not a defect: a Profi ROM leaves hi-res inside the frame, and the clock change rescales the frame, so the test
+    runs to the frame boundary, not a T-state count taken at the seek.
 - A/B benchmarks for every hot-path change (C, B5).
