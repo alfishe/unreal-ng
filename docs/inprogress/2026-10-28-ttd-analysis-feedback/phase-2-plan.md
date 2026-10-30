@@ -122,9 +122,65 @@ debug work costs nothing measurable, and such a path saves part of 41-60 µs a f
 | D4 | loading a tape from zero takes minutes | measure first (turbo with TTD, the tape's warp while recording), then fix the cause |
 | D5 | port-events: the port value is not enough | each event carries the caller's PC, HL and the port mask of the read |
 
+D1 done: `coverage-rare` (CLI `ttd coverage rare`, `GET /ttd/coverage/rare`, Lua `ttd_coverage_rare`, Python
+`ttd_coverage_rare`, MCP `time_travel coverage_rare`). One pass over the range's coverage keys counts each key's
+frames and keeps the frames of the keys seen in at most `max_frames` of them (default 1, at most 1000); neighbouring
+keys of one page with the same frames join into a block (gaps up to 4 bytes for executed code, 1 otherwise), the
+rarest first, cut at `limit`. A block names its page and offsets, and its Z80 addresses when the page was mapped in
+exactly one window at its first frame (the checkpoint's CPU windows). Frames not indexed yet are counted, not guessed.
+
+D2 done: `first_per_pc` on reverse-continue (`--first-per-pc`, MCP `reverse_continue`): each listed PC's newest hit
+in the window, the search stops once every PC has one; `pcs_without_hit` names the others. v1 refuses it.
+
+D3 done: memory-at `space: cpu` without `frame` (or at the machine's own frame past the history) reads the machine
+now: `live: true`, the mapping and banks as they are, no recording needed. A frame past the history otherwise answers
+409 naming the history's end and the machine's frame.
+
+D4 done. The cause: the acceleration lock held turbo mode, turbo tape and fast tape off for the whole recording
+(fast tape is on by default), so a tape loaded at the real tape speed. Turbo only takes the host's pacing away (the
+frames are the same) and the tape trap was already a recorded edit (the black box's D29 path), so the engine's
+recording now keeps all three (`ITimeTravelHooks::RecordsShortcuts`; v1 keeps its lock); the host speed stays at 1x.
+Fast disk stays held, and is now held for the black box too: besides its trap it compresses the WD1793's timing,
+which no edit records, and a DSS floppy boot recorded by a black box with it on replayed another FDC (frame 78, the
+BetaDisk and WD1793 context blobs) - a bug the black box had since D29. Measured (unreal-qt offscreen, Pentagon,
+`LOAD ""` from the prompt inside a recording): DIZZY_X_SAN-SAN.tap (348 s of tape, headerless blocks the trap
+cannot take) 352 s at the old 1x, 15.3 s in turbo; turbo records about 1500 frames a second. The Qt menu now asks
+the core (`refusalReason`, `CanSetSpeedMultiplier`) instead of repeating the rule; it also offered no host speed
+during a black box, which the core allows. Tests: `TimeTravelController_Test.AnExplicitRecordingKeepsTurboAndTheTapeShortcuts`
+(an AY tone, a trap in turbo, seeks equal the live states), `TapeLoading_Integration_Test.TTDRoundTripAcrossFastLoad`
+(LOAD "" recorded in turbo, every frame's seek equals the run), the black box's fast disk hold.
+
+D5 done. A port-events hit now says who read: a ULA read carries `rows` (the half-rows its address selects) and
+`keys` (the keys it saw down, by the names `key` takes; one half-row only, a several-row read's 0 bit could be any
+of their keys), from the record; `context` (default on; off while a recording runs, `true` pauses it; refused for a
+file; v1 has none) adds `registers` (af bc de hl ix iy sp) at the IN / OUT instruction's M1 and `stack_top`, the
+word at SP - the caller of a key routine that pushed nothing. The journals are unchanged (recording stays as it
+was): `TimeTravelController::PortAccessContexts` finds each hit's M1 (the last at its PC in a window before it),
+seeks there under one replay and puts the machine back verbatim. Test:
+`TTDControllerPortJournals_Test.PortEventsCarryTheCallersRegisters` (a CALLed key routine: SP, A, the return
+address, HL counting the calls, the machine unmoved), `TTDPortSearch_Test.KeyboardRowsAndKeysOfARead`.
+
 ### E. Checks
 
 - `tools/build/test.sh`, zero warnings; gcc, MSVC and MinGW before landing.
 - MCP: `tools/verification/mcp/run_all.py --launch` for every changed tool.
-- The TTD corpus test with the baseline interval, every model (POC 038 proposal step 1).
+- The TTD corpus test with the baseline interval, every model (POC 038 proposal step 1). **Done 2026-10-30:**
+  `TimeTravelControllerCorpus_Test.TheBaselineIntervalReplaysExactlyOnEveryModel` seeks to the baseline checkpoint
+  (inside its frame) and to the first frame checkpoint, runs each to the next frame boundary and compares CPU,
+  chipset, every device and every RAM page with the recorded checkpoint. 16 models in the long tier (48K, 128K, +2,
+  +2A, +3, Pentagon, Scorpion, Prof. Scorpion, ATM 7.10, ATM 4.50, ATM 3, Profi, Profi 3, TS-Conf, TS-Conf VDAC2,
+  Sprinter; under 1 s), 48K, Pentagon and Sprinter in the quick tier. It found three defects, all fixed:
+  - **Board devices behind their clock in the checkpoint.** `MainLoop::CompleteFrame` let the port decoder's lazy
+    devices (the ATM Turbo 2+ and Profi keyboard controllers, a COM peer, flash timers) catch up to the frame end
+    after the TTD frame boundary, so a checkpoint held them one frame behind: the same machine, not the same bytes.
+    `pPortDecoder->OnFrameEnd()` now runs before the checkpoint.
+  - **A restore drew while the machine was half assembled.** A device load writes its ports (the border, a video
+    mode) with the CPU clock already at the checkpoint and the draw cursor still at the caller's position, so the
+    screen drew backwards (Pentagon-class border compensation) and logged errors. The restores hold drawing until
+    they resync the cursor.
+  - **A step far past the frame end dropped the frame's tail.** `Screen::DrawPeriod` skipped a period ending more
+    than 100 T after the frame end (the TS-Conf arbiter holding the CPU while DMA owns the bus): up to ~45 lines of
+    the bottom were left undrawn. It now draws to the end.
+  - Not a defect: a Profi ROM leaves hi-res inside the frame, and the clock change rescales the frame, so the test
+    runs to the frame boundary, not a T-state count taken at the seek.
 - A/B benchmarks for every hot-path change (C, B5).

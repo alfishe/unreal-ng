@@ -9,6 +9,7 @@
 #include <functional>
 #include <fstream>
 #include <optional>
+#include <set>
 #include <type_traits>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -365,10 +366,12 @@ private:
     TTDReply ReverseContinue(const TTDRequest& request);
     TTDReply CoverageProbe(const TTDRequest& request);
     TTDReply CoverageScan(const TTDRequest& request);
+    TTDReply CoverageRare(const TTDRequest& request);
     TTDReply CoverageSummary(const TTDRequest& request);
     TTDReply MemoryAt(const TTDRequest& request);
     /// memory-at space cpu: Z80 addresses through the mapping at that point (the controller's ReadCpuView)
-    TTDReply MemoryAtCpu(uint64_t frame, uint32_t tin, uint64_t offset, uint64_t length);
+    /// @p frame absent: the machine as it stands now
+    TTDReply MemoryAtCpu(std::optional<uint64_t> frame, uint32_t tin, uint64_t offset, uint64_t length);
     TTDReply MemoryDiff(const TTDRequest& request);
     /// The engine's region a memory name means (a region name or alias, "ram", "ramN"), the byte offset of the
     /// name's start in it, and the checkpoint at or before `frame`. Empty: all good; otherwise the reply to send
@@ -455,7 +458,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "status", "start", "stop", "invalidate", "history-limit", "journal", "journal-build", "journal-build-cancel",
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-delete",
-        "port-events", "find-last", "reverse-continue", "coverage-probe", "coverage-scan", "coverage-summary",
+        "port-events", "find-last", "reverse-continue", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
         "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
     return verbs;
 }
@@ -477,10 +480,13 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"port-events", {"*"}},
         {"find-last", {"addr", "addr_from", "addr_to", "access", "value", "pc_from", "pc_to", "phys_page", "space",
                        "before_frame", "before_tin", "before", "changes_only", "all", "limit", "from_frame"}},
-        {"reverse-continue", {"pcs", "phys_page", "all", "limit", "before_frame", "before_tin", "before", "from_frame"}},
+        {"reverse-continue", {"pcs", "phys_page", "all", "first_per_pc", "limit", "before_frame", "before_tin", "before",
+                              "from_frame"}},
         {"coverage-probe", {"frame", "kind", "addr_from", "addr_to", "phys_page", "space"}},
         {"coverage-scan", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "space", "limit",
                            "order", "ranges"}},
+        {"coverage-rare", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "space",
+                           "max_frames", "limit"}},
         {"memory-at", {"space", "offset", "length", "frame", "tinframe"}},
         {"memory-diff", {"space", "from_frame", "to_frame", "limit"}},
         {"coverage-summary", {"from_frame", "to_frame", "kind", "bucket_size", "limit"}},
@@ -538,6 +544,8 @@ TTDReply TTDControlBackend<S>::Execute(const std::string& verb, const TTDRequest
         return CoverageProbe(request);
     if (verb == "coverage-scan")
         return CoverageScan(request);
+    if (verb == "coverage-rare")
+        return CoverageRare(request);
     if (verb == "coverage-summary")
         return CoverageSummary(request);
     // A file on disk is described without any instance
@@ -1379,7 +1387,9 @@ TTDReply TTDControlBackend<S>::BookmarkDelete(const TTDRequest& request)
 // "When did the program ..." over the session's port journals (ttdportsearch.h): no
 // replay, works on a loaded file. event + arg build the query; every other option
 // is a port query option (ApplyPortQueryOption checks the name); file: a .ttd on
-// disk, searched without loading it (the session is untouched)
+// disk, searched without loading it (the session is untouched). context (D5): each
+// hit's registers and stack top at its instruction, replayed (the controller; on by
+// default except for a file and a running recording, which it would pause)
 template <class S>
 TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
 {
@@ -1398,16 +1408,31 @@ TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, err);
     for (const auto& [name, value] : request.options)
     {
-        if (name == "event" || name == "arg" || name == "file")
+        if (name == "event" || name == "arg" || name == "file" || name == "context")
             continue;
         if (!ApplyPortQueryOption(q, name, value, err))
             return Fail(TTDControlError::BadRequest, err);
     }
 
     const std::string* file = Option(request, "file");
+    const std::string* contextText = Option(request, "context");
+    bool context = false;
+    if (contextText && !ParseBool(*contextText, context))
+        return Fail(TTDControlError::BadRequest, "Invalid context: '" + *contextText + "' (expected true or false)");
+    if (!contextText)
+        context = std::is_same<S, TimeTravelController>::value && !file && !_manager->IsRecording();
+    else if (context && file)
+        return Fail(TTDControlError::BadRequest, "context replays the session: it cannot read a file on disk");
+    else if (context && !std::is_same<S, TimeTravelController>::value)
+        return Fail(TTDControlError::NotAvailable, "context needs the time travel controller (backend engine)");
+
     const TTDPortSearchResult result = file ? _manager->SearchPortEventsInFile(*file, q) : _manager->SearchPortEvents(q);
     if (!result.ok)
         return Fail(file ? TTDControlError::BadRequest : TTDControlError::Conflict, result.error);
+    std::vector<TTDPortContext> contexts;
+    if constexpr (std::is_same<S, TimeTravelController>::value)
+        if (context)
+            contexts = _manager->PortAccessContexts(result.hits);
 
     TTDReply reply;
     reply.body["event"] = *event;
@@ -1415,9 +1440,11 @@ TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
     reply.body["count"] = static_cast<uint64_t>(result.hits.size());
     reply.body["truncated"] = result.truncated;
     reply.body["scanned"] = static_cast<uint64_t>(result.scanned);
+    reply.body["context"] = context;
     StateNode hits = StateNode::Array();
-    for (const TTDPortHit& h : result.hits)
+    for (size_t i = 0; i < result.hits.size(); ++i)
     {
+        const TTDPortHit& h = result.hits[i];
         StateNode hit = StateNode::Object();
         hit["index"] = static_cast<uint64_t>(h.index);
         hit["frame"] = h.record.frame;
@@ -1427,6 +1454,36 @@ TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
         hit["pc"] = static_cast<unsigned>(h.record.pc);
         if (h.ayRegister >= 0)
             hit["ay_register"] = h.ayRegister;
+        // A read of the ULA: the half-rows its address selects, the keys it saw down (one half-row only)
+        if (q.direction == TTDPortJournal::Direction::Read && (h.record.port & 1) == 0)
+        {
+            hit["rows"] = static_cast<unsigned>(KeyboardRowsRead(h.record.port));
+            StateNode keys = StateNode::Array();
+            for (const std::string& key : KeysSeenDown(h.record.port, h.record.value))
+                keys.push(StateNode(key));
+            hit["keys"] = keys;
+        }
+        if (i < contexts.size())
+        {
+            const TTDPortContext& c = contexts[i];
+            if (c.ok)
+            {
+                StateNode regs = StateNode::Object();
+                regs["af"] = static_cast<unsigned>(c.cpu.af);
+                regs["bc"] = static_cast<unsigned>(c.cpu.bc);
+                regs["de"] = static_cast<unsigned>(c.cpu.de);
+                regs["hl"] = static_cast<unsigned>(c.cpu.hl);
+                regs["ix"] = static_cast<unsigned>(c.cpu.ix);
+                regs["iy"] = static_cast<unsigned>(c.cpu.iy);
+                regs["sp"] = static_cast<unsigned>(c.cpu.sp);
+                hit["registers"] = regs;
+                hit["stack_top"] = static_cast<unsigned>(c.stackTop);
+            }
+            else
+            {
+                hit["context_error"] = c.error;
+            }
+        }
         hits.push(hit);
     }
     reply.body["hits"] = hits;
@@ -1732,6 +1789,9 @@ TTDReply TTDControlBackend<S>::ReverseContinue(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, "Invalid phys_page: '" + *t + "' (expected 0..255 or rom)");
     if (std::string err = FlagOption(request, "all", query.all); !err.empty())
         return Fail(TTDControlError::BadRequest, err);
+    // first_per_pc: the list as all, each PC's newest hit only
+    if (std::string err = FlagOption(request, "first_per_pc", query.firstPerPc); !err.empty())
+        return Fail(TTDControlError::BadRequest, err);
     if (std::string err = HitLimit(request, query.limit); !err.empty())
         return Fail(TTDControlError::BadRequest, err);
     if (std::string err = SearchBounds(request, query.beforeGlobalT, query.fromFrame); !err.empty())
@@ -1745,18 +1805,19 @@ TTDReply TTDControlBackend<S>::ReverseContinue(const TTDRequest& request)
         r = _manager->ReverseContinue(query);
     else
     {
-        if (query.physPage || query.all || query.beforeGlobalT != UINT64_MAX || query.fromFrame)
+        if (query.physPage || query.all || query.firstPerPc || query.beforeGlobalT != UINT64_MAX || query.fromFrame)
             return Fail(TTDControlError::NotAvailable,
-                        "phys_page, all and the bounds need the time travel controller (backend engine)");
+                        "phys_page, all, first_per_pc and the bounds need the time travel controller (backend engine)");
         r = _manager->ReverseContinue(query.pcs);
     }
-    if (!query.all)
+    const bool list = query.all || query.firstPerPc;
+    if (!list)
         NotifyFrameRefresh();
 
     TTDReply reply;
     reply.body["matched"] = r.matched;
     reply.body["pc"] = static_cast<unsigned>(r.pc);
-    if (query.all)
+    if (list)
     {
         // The hits, newest first; the machine stays where it stood
         StateNode hits = StateNode::Array();
@@ -1772,6 +1833,17 @@ TTDReply TTDControlBackend<S>::ReverseContinue(const TTDRequest& request)
         }
         reply.body["hits"] = hits;
         reply.body["count"] = static_cast<uint64_t>(r.hits.size());
+        // first_per_pc: the PCs with no hit in the searched window
+        if (query.firstPerPc)
+        {
+            std::set<uint16_t> missing(query.pcs.begin(), query.pcs.end());
+            for (const TTDReverseHit& h : r.hits)
+                missing.erase(h.pc);
+            StateNode none = StateNode::Array();
+            for (uint16_t pc : missing)
+                none.push(static_cast<unsigned>(pc));
+            reply.body["pcs_without_hit"] = none;
+        }
         reply.body["truncated"] = r.truncated;
         // The next page: pass it back as `before` (at or before), the oldest hit excluded
         if (r.truncated && !r.hits.empty())
@@ -2029,6 +2101,96 @@ TTDReply TTDControlBackend<S>::CoverageScan(const TTDRequest& request)
             frames.push(f);
         reply.body["frames"] = frames;
     }
+    return reply;
+}
+
+template <class S>
+TTDReply TTDControlBackend<S>::CoverageRare(const TTDRequest& request)
+{
+    TTDCoverageKind kind = TTDCoverageKind::Executed;
+    uint16_t addrFrom = 0;
+    uint16_t addrTo = 0xFFFF;
+    std::optional<PhysPage> page;
+    const TTDSessionInfo session = _manager ? _manager->ReadSessionInfo() : TTDSessionInfo{};
+    uint64_t fromFrame = session.sessionStartFrame;
+    uint64_t toFrame = session.currentEndFrame;
+    size_t limit = 200;
+    TTDMemorySpace space = TTDMemorySpace::Ram;
+    std::string err = CoverageWindow(request, fromFrame, toFrame, limit);
+    if (err.empty())
+        err = CoverageRange(request, kind, addrFrom, addrTo, page, space);
+    uint64_t maxFrames = 1;
+    if (const std::string* t = Option(request, "max_frames");
+        err.empty() && t && (!ParseU64(*t, maxFrames) || maxFrames == 0 || maxFrames > TimeTravelController::kCoverageRareMaxFrames))
+        err = "Invalid max_frames: '" + *t + "' (expected 1.." + std::to_string(TimeTravelController::kCoverageRareMaxFrames) + ")";
+    if (err.empty() && limit > TimeTravelController::kCoverageScanLimitMax)
+        err = "Invalid limit: at most " + std::to_string(TimeTravelController::kCoverageScanLimitMax);
+    if (!err.empty())
+        return Fail(TTDControlError::BadRequest, err);
+
+    TTDCoverageRareResult res;
+    if constexpr (std::is_same<S, TimeTravelController>::value)
+    {
+        if (_manager)
+            res = _manager->QueryCoverageRare(fromFrame, toFrame, kind, addrFrom, addrTo, page,
+                                              static_cast<uint32_t>(maxFrames), limit);
+    }
+    else
+        return Fail(TTDControlError::NotAvailable, "coverage-rare needs the time travel controller (backend engine)");
+
+    TTDReply reply;
+    reply.body["kind"] = TTDCoverageKindToString(kind);
+    reply.body["addr_from"] = Hex4(addrFrom);
+    reply.body["addr_to"] = Hex4(addrTo);
+    AddCoverageSpace(reply.body, space, page, addrFrom, addrTo);
+    if (space == TTDMemorySpace::Ram && page == kPhysPageNone)
+        reply.body["phys_page"] = "rom";
+    reply.body["max_frames"] = res.maxFrames;
+    reply.body["scanned_frames"] = res.scannedFrames;
+    reply.body["unindexed_frames"] = res.unindexedFrames;
+    reply.body["distinct_keys"] = res.distinctKeys;
+    reply.body["rare_keys"] = res.rareKeys;
+    reply.body["rare_blocks"] = res.rareBlocks;
+    reply.body["truncated"] = res.truncated;
+    reply.body["index_available"] = res.indexAvailable;
+    if (res.indexAvailable)
+    {
+        reply.body["covered_from"] = res.coveredFrom;
+        reply.body["covered_to"] = res.coveredTo;
+    }
+    StateNode blocks = StateNode::Array();
+    for (const TTDCoverageRareBlock& b : res.blocks)
+    {
+        StateNode block = StateNode::Object();
+        // The page as the queries take it: a RAM page, rom (the no-page bucket), or the space and its offsets
+        if (b.pageField == kCoverageNoPageField)
+            block["phys_page"] = "rom";
+        else if (b.pageField < kCoverageNoPageField)
+            block["phys_page"] = b.pageField;
+        else
+        {
+            char text[16];
+            block["space"] = SpaceName(SpaceOfPage(static_cast<PhysPage>(b.pageField)));
+            std::snprintf(text, sizeof text, "0x%05X",
+                          static_cast<unsigned>(SpaceOffset(static_cast<PhysPage>(b.pageField), b.offsetFrom)));
+            block["offset_from"] = text;
+        }
+        block["page_offset_from"] = Hex4(b.offsetFrom);
+        block["page_offset_to"] = Hex4(b.offsetTo);
+        if (b.z80From)
+        {
+            block["addr_from"] = Hex4(*b.z80From);
+            block["addr_to"] = Hex4(static_cast<uint16_t>(*b.z80From + (b.offsetTo - b.offsetFrom)));
+        }
+        block["keys"] = b.keys;
+        block["frame_count"] = static_cast<uint64_t>(b.frames.size());
+        StateNode frames = StateNode::Array();
+        for (uint64_t f : b.frames)
+            frames.push(f);
+        block["frames"] = frames;
+        blocks.push(block);
+    }
+    reply.body["blocks"] = blocks;
     return reply;
 }
 
@@ -2450,9 +2612,15 @@ TTDReply TTDControlBackend<S>::MemoryAt(const TTDRequest& request)
     uint64_t frame = 0;
     uint64_t offset = 0;
     uint64_t length = 256;
-    if (!space || !frameText)
+    if (!space)
         return Fail(TTDControlError::BadRequest, "memory-at needs space and frame (offset, length optional)");
-    if (!ParseU64(*frameText, frame))
+    std::string lower = *space;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    // Space cpu without a frame: the machine now, no history needed
+    if (!frameText && lower != "cpu")
+        return Fail(TTDControlError::BadRequest,
+                    "memory-at needs space and frame (offset, length optional); space cpu without frame reads the machine now");
+    if (frameText && !ParseU64(*frameText, frame))
         return Fail(TTDControlError::BadRequest, "Invalid frame: '" + *frameText + "'");
     if (const std::string* t = Option(request, "offset"); t && !ParseUpTo(*t, 0xFFFFFFFFull, offset))
         return Fail(TTDControlError::BadRequest, "Invalid offset: '" + *t + "'");
@@ -2468,10 +2636,9 @@ TTDReply TTDControlBackend<S>::MemoryAt(const TTDRequest& request)
         if (TTDReply refusal; RefuseWhileRecording(refusal, true))
             return refusal;
         PauseAndConfirm();
-        std::string lower = *space;
-        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (lower == "cpu")
-            return MemoryAtCpu(frame, static_cast<uint32_t>(tin), offset, length);
+            return MemoryAtCpu(frameText ? std::optional<uint64_t>(frame) : std::nullopt, static_cast<uint32_t>(tin),
+                               offset, length);
         uint32_t region = 0;
         uint32_t base = 0;
         size_t index = 0;
@@ -2567,7 +2734,7 @@ TTDReply TTDControlBackend<S>::MemoryAt(const TTDRequest& request)
 }
 
 template <class S>
-TTDReply TTDControlBackend<S>::MemoryAtCpu(uint64_t frame, uint32_t tin, uint64_t offset, uint64_t length)
+TTDReply TTDControlBackend<S>::MemoryAtCpu(std::optional<uint64_t> frame, uint32_t tin, uint64_t offset, uint64_t length)
 {
     if constexpr (!std::is_same<S, TimeTravelController>::value)
     {
@@ -2580,17 +2747,54 @@ TTDReply TTDControlBackend<S>::MemoryAtCpu(uint64_t frame, uint32_t tin, uint64_
             return Fail(TTDControlError::BadRequest, "space cpu: offset is a Z80 address 0..65535");
         if (offset + length > 0x10000)
             return Fail(TTDControlError::BadRequest, "space cpu: the bytes end at 0xFFFF (offset + length at most 65536)");
-        const TTDCpuView view = _manager->ReadCpuView({frame, tin}, static_cast<uint16_t>(offset), static_cast<size_t>(length));
+        // The machine now: no frame, or its own frame past the recorded history (a stopped recording the machine
+        // ran on from, or none at all). Read as it stands, through its mapping
+        const TTDTimePoint now = _manager->CurrentPosition();
+        const bool recorded = _manager->GetCheckpointCount() > 0 && frame &&
+                              !(_manager->SessionEndPosition() < TTDTimePoint{*frame, tin});
+        const bool live = !frame || (!recorded && *frame == now.frame);
+        TTDCpuView view;
+        if (live)
+        {
+            Memory* memory = _context ? _context->pMemory : nullptr;
+            if (!memory)
+                return Fail(TTDControlError::NotAvailable, "space cpu: no memory");
+            view.at = now;
+            view.bytes.resize(static_cast<size_t>(length));
+            for (size_t i = 0; i < view.bytes.size(); ++i)
+                view.bytes[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(offset + i));
+            for (uint8_t w = 0; w < 4; ++w)
+            {
+                const MemoryPageDescriptor page = memory->MapZ80AddressToPhysicalPage(static_cast<uint16_t>(w * 0x4000));
+                view.windows[w].kind = static_cast<uint8_t>(page.mode);
+                view.windows[w].page = page.page;
+                view.windows[w].name = memory->GetCurrentBankName(w);
+            }
+            view.ok = true;
+        }
+        else
+            view = _manager->ReadCpuView({*frame, tin}, static_cast<uint16_t>(offset), static_cast<size_t>(length));
         if (!view.ok)
-            return Fail(TTDControlError::Conflict, "space cpu: " + view.error);
+        {
+            const TTDTimePoint end = _manager->SessionEndPosition();
+            std::string where = _manager->GetCheckpointCount() == 0
+                                    ? std::string(" (no recorded history)")
+                                    : " (history: frames up to " + std::to_string(end.frame) + ")";
+            return Fail(TTDControlError::Conflict, "space cpu: " + view.error + where + "; the machine stands at frame " +
+                                                       std::to_string(now.frame) + ": without frame it is read now");
+        }
         TTDReply reply;
         reply.body["space"] = "cpu";
         reply.body["offset"] = offset;
         reply.body["length"] = static_cast<uint64_t>(view.bytes.size());
-        reply.body["frame"] = frame;
-        reply.body["tinframe"] = static_cast<uint64_t>(tin);
+        reply.body["frame"] = frame ? *frame : view.at.frame;
+        reply.body["tinframe"] = static_cast<uint64_t>(frame ? tin : view.at.tInFrame);
         reply.body["at_frame"] = view.at.frame;
-        reply.body["exact"] = true;
+        // live: the machine now (at_tinframe where it stands); exact: the bytes are those of the asked point
+        reply.body["live"] = live;
+        if (live)
+            reply.body["at_tinframe"] = static_cast<uint64_t>(view.at.tInFrame);
+        reply.body["exact"] = !live || !frame || tin == view.at.tInFrame;
         // The mapping the bytes were read through: each 16 KB window's ROM / RAM / cache page
         StateNode banks = StateNode::Array();
         static const char* const kKinds[] = {"rom", "ram", "cache"};

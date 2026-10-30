@@ -277,5 +277,10 @@ public:
     /// stopped) runs at the 1x it was recorded at - another multiplier would drop it (frame timing is part of the
     /// determinism contract), so the speed control is refused, not the history. A black box refuses nothing
     virtual std::string SpeedLock() const { return {}; }
+    /// Whether a recording that locks acceleration still keeps turbo mode, turbo tape and fast tape (phase 2, D4):
+    /// turbo only takes the host's pacing away (the machine's frames are the same), and the tape trap is a recorded
+    /// edit a replay applies. The host speed stays at 1x; fast disk stays held (its compressed FDC timing is no
+    /// edit). v1: no, it locks them all
+    virtual bool RecordsShortcuts() const { return false; }
 };
 }  // namespace ttd

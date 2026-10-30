@@ -211,8 +211,9 @@ public:
     /// @brief True while the machine is bound to a TTD timeline: recording, replaying
     /// history (seek/step) or positioned in it (Detached). Features that change what
     /// the guest code does (fasttape, turbotape, fastdisk) are off for all of it, or a
-    /// replay would diverge from what was recorded. Pacing-only acceleration (turbo
-    /// mode, speed) is locked by isTtdRecordingActive() alone.
+    /// replay would diverge from what was recorded - except fasttape and turbotape in the
+    /// engine's recording at its live head, which records the tape trap as an edit. Pacing-only acceleration (turbo
+    /// mode, speed) is locked by isTtdRecordingActive() alone (the engine keeps turbo).
     bool isTtdTimelineBound() const;
     /// @brief True while an RZX recording plays: fasttape, turbotape and fastdisk
     /// read as off (they change the CPU path the recording follows)
@@ -252,6 +253,14 @@ private:
     /// True when TTD or an RZX playback forces this feature off (see isTtdTimelineBound /
     /// isTtdRecordingActive / isRzxPlaying)
     bool isMaskedByTtd(const std::string& id) const;
+    /// The TTD backend keeps turbo mode and the fast loaders in a recording (ITimeTravelHooks::RecordsShortcuts)
+    bool ttdRecordsShortcuts() const;
+    /// Turbo mode is held off: a recording that locks acceleration and does not keep it (v1)
+    bool ttdLocksTurboMode() const;
+    /// Fast tape, turbo tape or fast disk (@p id) is held off: bound to a timeline, except fast tape and turbo tape
+    /// in the engine's recording at its live head (the tape trap is a recorded edit there); fast disk also while a
+    /// black box records
+    bool ttdLocksFastLoader(const std::string& id) const;
 
     /// Find a feature by id or alias. Caller must hold _mutex.
     FeatureInfo* findFeature(const std::string& idOrAlias);

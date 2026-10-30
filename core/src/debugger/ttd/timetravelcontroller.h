@@ -283,13 +283,14 @@ public:
     void StopForFeatureChange(const char* feature) override;
     bool LocksAcceleration() const override { return !_blackBox; }
     std::string SpeedLock() const override;
+    bool RecordsShortcuts() const override { return true; }
     void OnAccelerationChanging(bool accelerating) override;
 
     /// @brief The black box (Phase 5, Step 3; D29): a recording that keeps the
     /// last @p minutes and never holds the machine at real speed - before an
     /// acceleration (host speed above 1x, turbo mode, turbo tape's warp) it
     /// stops, its history kept, and once nothing accelerates a new session
-    /// starts. The fast loaders' traps are recorded edits. Real-time clocks still run on emulated time. Applies to
+    /// starts. The tape trap is a recorded edit; fast disk is held (its FDC timing is no edit). Real-time clocks still run on emulated time. Applies to
     /// the next StartRecording; off: an explicit recording (the lock)
     void SetBlackBox(bool on, uint32_t minutes = 5);
     /// The recording session as a refusal names it: "#3, started at frame 1200" (the instance's recordings
@@ -615,6 +616,11 @@ public:
     /// - the journals do not need them. Fails with a reason for an unreadable
     /// file or one without port journals
     TTDPortSearchResult SearchPortEventsInFile(const std::string& path, const TTDPortQuery& q);
+
+    /// @brief The machine at each access of `hits` (port-events' context, phase 2 D5): the registers at the M1
+    /// of the IN / OUT instruction (before it ran) and the word at SP then. Replays to each access and puts the
+    /// machine back verbatim, as ReadCpuView does; a running recording pauses for browsing. One entry per hit
+    std::vector<TTDPortContext> PortAccessContexts(const std::vector<TTDPortHit>& hits);
 
     // -----------------------------------------------------------------------
     // Input ownership: live input vs the recorded journal
@@ -1234,6 +1240,25 @@ public:
 
     /// Most items a coverage scan list returns (frames or runs)
     static constexpr size_t kCoverageScanLimitMax = 10000;
+
+    /// @brief The keys of [fromFrame, toFrame] touched in at most @p maxFrames frames, as blocks (D1 of
+    /// docs/inprogress/2026-10-28-ttd-analysis-feedback/phase-2-plan.md): one pass over the index, no replay.
+    ///
+    /// A block joins neighbouring keys of one page (executed: up to 4 bytes apart, an instruction's length;
+    /// written and read: adjacent) touched in the same frames. The range and page filter as in QueryCoverageScan.
+    /// The list keeps the first `limit` blocks, rarest first; the counts cover the whole window.
+    TTDCoverageRareResult QueryCoverageRare(
+        uint64_t fromFrame,
+        uint64_t toFrame,
+        TTDCoverageKind kind,
+        uint16_t addrFrom,
+        uint16_t addrTo,
+        std::optional<PhysPage> physPage = std::nullopt,
+        uint32_t maxFrames = 1,
+        size_t limit = 200) const;
+
+    /// Most frames a key may have to count as rare
+    static constexpr uint32_t kCoverageRareMaxFrames = 1000;
 
     /// @brief Activity heatmap over [fromFrame, toFrame] (TD-7 §3.1.3).
     TTDCoverageSummaryResult QueryCoverageSummary(

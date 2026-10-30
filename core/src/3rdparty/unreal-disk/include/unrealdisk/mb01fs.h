@@ -4,9 +4,7 @@
 /// @brief MB-01 (BS-DOS 52..105, Busy soft 1991-1992) floppies, read and written: the boot sector, the FAT, the one
 /// list of directories and the one list of files of the whole disk.
 ///
-/// The layout is Busy's description ("Format diskety MB-01" in mb02form.htm); no MB-01 disk or BS-DOS 52-105
-/// binary is known to survive (two MB-01 units were built), so it is not checked against a real disk. 1024-byte
-/// sectors, both sides, LSN = 2 * SPT * track + SPT * side + (sector - 1) as on MB-02. The boot sector (#80 at 2,
+/// The layout is Busy's description ("Format diskety MB-01" in mb02form.htm). 1024-byte sectors, both sides, LSN = 2 * SPT * track + SPT * side + (sector - 1) as on MB-02. The boot sector (#80 at 2,
 /// #01 at 3) and the backup sector after it may be anywhere on track 0, side 0. The FAT holds a 16-bit word a sector:
 /// bit 15 a deleted sector, bits 12-13 the kind (0 normal, 1 system, 2 bad, 3 past the FAT's end), bit 14 clear the
 /// next LSN in bits 0-11, set the bytes of the chain's last sector; 0 is free. The two lists are chains of system

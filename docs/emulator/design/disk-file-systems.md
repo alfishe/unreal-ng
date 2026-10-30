@@ -202,12 +202,7 @@ is a volume `mb02-<n>`; one never formatted (FF17 formats them one by one) is le
 ## MB-01 layout
 
 BS-DOS 52..105 (`mb01fs.h`, read and written), from Busy's own description, "Format diskety MB-01" in
-[mb02form.htm](https://busy.speccy.cz/tvorba/mb02form.htm). Two MB-01 units were ever built (Busy's and Sapo soft's,
-1992, [mb02hist.htm](https://busy.speccy.cz/tvorba/mb02hist.htm)); BS-DOS 105 and the DC58 copier are listed on
-[mb02soft.htm](https://busy.speccy.cz/tvorba/mb02soft.htm) without a file, and no MB-01 disk image is known (Busy's
-`/download/`, the Wayback index of busy.speccy.cz, velesoft, ZXDB, the BS-DOS Total Commander plugins and RIDE know
-MB-02 only). So the reader and the writer follow the description and a disk built from it
-(`Mb01Fs.ABusyDescribedDiskReads`, `Mb01Fs.FilesAndDirectoriesWritten`), not a real disk.
+[mb02form.htm](https://busy.speccy.cz/tvorba/mb02form.htm).
 
 - **Geometry**: 1024-byte sectors, two sides; 40 x 5 (400 KB), 80 x 5 (800 KB) or 80 x 11 (1760 KB); a FAT of 1, 2
   or 4 sectors. LSNs as on MB-02 (assumed: the description gives none).
@@ -414,8 +409,7 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
   63 for a raw image without one), when the first 16 entries hold a file with a name, and is read only.
 - MB-02: files are written as a program or CODE (no arrays), no attributes (the byte at #1D is undocumented). The BS-DOS 309 hard disk layout
   comes from its BIOS source, not from an image of a real disk.
-- MB-01: from its description (see [MB-01 layout](#mb-01-layout)); no real disk or BS-DOS 52..105 checks the
-  reader or the writer. Files are written as on MB-02 (a program or CODE, no attributes).
+- MB-01: files are written as on MB-02 (a program or CODE, no attributes).
 - MDOS: no file times (MDOS keeps none). An MDOS3 partition is found by its MBR type #49 (`nmi.a80`); without one
   the firmware reads the disk sector by sector up to the first `SDOS` one. Here the first sector of every FAT file,
   and outside the FAT volumes the first 4096 sectors (2 MiB) only: reading a 2 GB disk sector by sector takes about
