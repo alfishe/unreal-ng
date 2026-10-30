@@ -145,7 +145,6 @@ namespace {
     std::mutex g_captureMutex;
     std::vector<CapturedDiskEvent> g_insertedDisks;
     std::vector<CapturedDiskEvent> g_ejectedDisks;
-    bool g_observersRegistered = false;
 
     void onDiskInserted(int id, Message* msg)
     {
@@ -229,14 +228,13 @@ protected:
         // Ensure MessageCenter is running
         MessageCenter::DefaultMessageCenter(true);
         
-        // Register observers once for entire test suite
-        if (!g_observersRegistered)
-        {
-            MessageCenter& mc = MessageCenter::DefaultMessageCenter();
-            mc.AddObserver(NC_FDD_DISK_INSERTED, &onDiskInserted);
-            mc.AddObserver(NC_FDD_DISK_EJECTED, &onDiskEjected);
-            g_observersRegistered = true;
-        }
+        // Another suite (or a previous --gtest_repeat pass) may have disposed the center, taking the observers
+        // with it: remove-then-add leaves exactly one registration on whichever center is live now
+        MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+        mc.RemoveObserver(NC_FDD_DISK_INSERTED, &onDiskInserted);
+        mc.RemoveObserver(NC_FDD_DISK_EJECTED, &onDiskEjected);
+        mc.AddObserver(NC_FDD_DISK_INSERTED, &onDiskInserted);
+        mc.AddObserver(NC_FDD_DISK_EJECTED, &onDiskEjected);
     }
     
     static bool WaitForCondition(const std::function<bool()>& condition, int timeoutMs = 2000)

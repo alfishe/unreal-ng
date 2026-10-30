@@ -27,6 +27,16 @@ protected:
                 }
             }
         #endif
+        #ifdef _WIN32
+            // AbsolutePath resolves existing paths through the final-path API, which reports the drive
+            // letter upper-case; a working directory started as "c:\" must expect the same.
+            if (path.size() >= 2 && path[1] == ':' && std::isalpha(static_cast<unsigned char>(path[0])))
+            {
+                std::string normalized = path;
+                normalized[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(path[0])));
+                return normalized;
+            }
+        #endif
         return path;
     }
 

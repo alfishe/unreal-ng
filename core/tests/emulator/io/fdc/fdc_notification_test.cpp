@@ -58,7 +58,6 @@ namespace
     // empty emulatorId string in test-parallel runs).
     std::mutex g_captureMutex;
     std::vector<CapturedFdcState> g_capturedFdcStates;
-    bool g_observersRegistered = false;
 
     void onFdcStateChanged(int id, Message* message)
     {
@@ -173,13 +172,11 @@ protected:
         // Ensure MessageCenter is running
         MessageCenter::DefaultMessageCenter(true);
 
-        // Register observers once for entire test suite
-        if (!g_observersRegistered)
-        {
-            MessageCenter& mc = MessageCenter::DefaultMessageCenter();
-            mc.AddObserver(NC_FDC_STATE_CHANGED, &onFdcStateChanged);
-            g_observersRegistered = true;
-        }
+        // Another suite (or a previous --gtest_repeat pass) may have disposed the center, taking the observers
+        // with it: remove-then-add leaves exactly one registration on whichever center is live now
+        MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+        mc.RemoveObserver(NC_FDC_STATE_CHANGED, &onFdcStateChanged);
+        mc.AddObserver(NC_FDC_STATE_CHANGED, &onFdcStateChanged);
     }
 
     static bool WaitForCondition(const std::function<bool()>& condition, int timeoutMs = 2000)
