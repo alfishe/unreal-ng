@@ -148,7 +148,7 @@ docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
     [ "${NOASLR:-}" = 1 ] && RUN=(setarch "$(uname -m)" -R)
     # TARGET may name several targets (the --streamdeck default): word splitting intended
     KEEP=()
-    [ "$STREAMDECK" = 1 ] && KEEP=(-- -k 0)   # every failing file at once
+    KEEP=(-- -k 0)   # every failing file at once: a gcc check should list all errors, not the first one
     ${RUN[@]+"${RUN[@]}"} cmake --build "$BUILDDIR" --target $TARGET -j "$JOBS" ${KEEP[@]+"${KEEP[@]}"}
     if [ "$RUNTESTS" = 1 ] && [ "$STREAMDECK" = 1 ]; then
       cd "$BUILDDIR/bin"

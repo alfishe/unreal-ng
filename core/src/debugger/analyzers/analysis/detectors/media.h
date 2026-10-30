@@ -53,7 +53,7 @@ struct DisplayInfo
     std::vector<uint8_t> map;  ///< 0x10000 entries: kNotDisplay, kPixels, kAttributes
     std::vector<DisplayCopy> copies;
 
-    uint8_t At(uint32_t z80) const { return z80 <= 0xFFFF ? map[z80] : kNotDisplay; }
+    uint8_t At(uint32_t z80) const { return z80 <= 0xFFFF ? map[z80] : static_cast<uint8_t>(kNotDisplay); }
 };
 
 DisplayInfo FindDisplay(const DetectorContext& context);
