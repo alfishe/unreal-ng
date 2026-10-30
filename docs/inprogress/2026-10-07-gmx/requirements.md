@@ -6,9 +6,10 @@
 
 | ID | Goal |
 |:--|:--|
-| G1 | `GMX` ("ZS Scorpion + GMX", 2048K) is creatable from every surface and boots the tracked `gmx.rom` to the GMX loader and the shadow monitor |
+| G1 | `GMX` ("ZS Scorpion + GMX", 2048K) is creatable from every surface and boots the tracked `gmx644.rom` to the GMX loader, the 128 menu and the shadow monitor |
 | G2 | The GMX register file (`#00 #78FD #7AFD #7CFD #7EFD #DFFD`) and its read-backs behave as the sources agree ([research-reference-consensus.md](research-reference-consensus.md)); a claim only one emulator makes is not built until a second source or a firmware trace confirms it |
-| G3 | The 640x200 16-color extended mode renders |
+| G3 | The 640x200 16-color extended mode renders, with the hardware scroller |
+| G6 | Real software written for the board runs: Edge Grinder (`testdata/machines/gmx/edgegrinder/`) and OSZ from its SD card (`testdata/machines/gmx/osz/`) |
 | G4 | `SCORPION` and `PROFSCORP` do not change: configs, snapshots, TTD recordings and tests keep working; no cost on their hot paths |
 | G5 | Automation parity: CLI, WebAPI + OpenAPI, MCP, Lua, Python and Qt know the model; each phase has a verified recipe in `.recipe/machines/gmx.md` and a TTD recording before the runs |
 
@@ -25,7 +26,7 @@ Confidence: **H** two or more sources; **M** one source and no contrary one; **O
 | ID | Requirement | Conf. | Evidence |
 |:--|:--|:--|:--|
 | R1 | Model id `GMX`, enum `MM_GMX` (exists), RAM 2048K | H | config.h |
-| R2 | ROM: one 512K image `rom/gmx.rom` (`[ROM] GMX=`), 8 planes of 64K; reset enters plane 0 (the loader) | H | MAME, PICO, page scan |
+| R2 | ROM: one 512K image, default `rom/gmx644.rom` (`[ROM] GMX=`; `gmx.rom` also loads), 8 planes of 64K; reset enters plane 0 (the loader) | H | [MAN] flash map, MAME, PICO, page scans |
 | R3 | `data/configs/gmx/` exists so `IsModelCreatable` is true; `PortDecoder::IsModelSupported(MM_GMX)` true | - | design 3 |
 | R4 | Roles per plane for the ROM page names (`GetROMPageRole`) | O | Q1 |
 
@@ -38,22 +39,22 @@ Confidence: **H** two or more sources; **M** one source and no contrary one; **O
 | R12 | `#7EFD` bits 6-4 = ROM plane unless `#00` bit 4; the legacy `#0100` plane strobe is off | H / M (Q2) | MAME, PICO, UNR |
 | R13 | `#1FFD` bit 2 = plane page 3 at `#0000` with Beta on, overriding bit 0 | H | MAME, PICO |
 | R14 | Read-backs of `#78FD`, `#7AFD`, `#7EFD` as in design 2.2 | H | UNR, MAME, PICO |
-| R15 | Magic shift readout and CPU reset on `#00` bit 3 | H | UNR, MAME, PICO |
+| R15 | Magic shift readout and CPU reset on `#00` bit 3 (RECONF) unless bit 4; RESET keeps `#00` | H | [MAN], UNR, MAME, PICO, web Unreal (Q18) |
 | R16 | `#00` bit 5 blocks the five GMX ports; `#00` stays reachable | M | MAME, PICO |
-| R17 | `#7EFD` bit 2 | O | Q3 |
-| R18 | Turbo from `#7EFD` bit 7, read back in bit 2; Scorpion Turbo+ waits | H | all |
-| R19 | `IN` strobes from `#1FFD` / `#7FFD` families set/clear turbo | O | Q5 |
+| R17 | `#7EFD` bit 2 = 1: the NMI (Magic) is ignored and the `#7FFD` lock does not act | H | [MAN], MAME, Unreal (Q3) |
+| R18 | Turbo from `#7EFD` bit 7, read back in bit 2; waits on opcode fetches from RAM only, 1.8-1.9x from RAM, 2x from ROM (Q21) | H / O | all; Q21 |
+| R19 | No `IN` turbo strobes from the `#1FFD` / `#7FFD` families | M | Unreal, pico-speccy, web Unreal; not in [MAN] (Q5) |
 | R20 | Everything else (FDC, AY, `#FE`, Kempston, mouse, SMUC, covox) as `SCORPION` / `PROFSCORP` | H | ART1 |
 
 ### 2.3 Video
 
 | ID | Requirement | Conf. | Evidence |
 |:--|:--|:--|:--|
-| R30 | Extended mode when `#7EFD` bit 3: 640x200, 80 bytes per line, pixel page `#39` / `#3B`, attribute page `+ #40`, Spectrum attribute bits | H | UNR, MAME, PICO |
-| R31 | Scroller from `#7CFD:#7AFD` | O | Q4 |
+| R30 | Extended mode when `#7EFD` bit 3: 640x200, 80 bytes per line, pixel page `#39` / `#3B`, attribute page `+ #40`, Spectrum attribute bits | H | UNR, MAME, PICO, Edge Grinder on the board (Q11, Q22) |
+| R31 | Scroller: write-only start address `(#7CFD & #3F) << 8 \| (#7AFD & #F0)` in bytes, display `(y * 80 + x + start) mod 16000` | H | [MAN], Unreal, web Unreal (Q4) |
 | R32 | Flash inverts the pixels on the Spectrum flash phase | H | UNR, MAME |
 | R33 | Border width, exact line timing in the extended mode | O | Q12 |
-| R34 | Frame, line and INT as the Scorpion; INT select option | M / O | ART1, Q13 |
+| R34 | Frame, line and INT as the Scorpion; `#00` bit 7 selects the 320-line frame with INT at the start of frame sync | H | [MAN] (Q13) |
 
 ### 2.4 State, TTD and snapshots
 
