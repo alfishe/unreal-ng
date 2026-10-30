@@ -163,6 +163,7 @@ class Rig:
         env['UNREAL_QT_VIEW_SETTINGS'] = 'off'
         env['UNREAL_RECENT_FILES'] = 'off'
         env.pop('UNREAL_STREAMDECK_SUPERVISOR', None)
+        env['UNREAL_WINDOWLESS_DEVICES'] = 'streamdeck'  # an offscreen unreal-qt starts no daemon otherwise
         if not self.live:
             env['UNREAL_STREAMDECK_USB'] = 'off'  # the daemon never opens the user's deck
         return env

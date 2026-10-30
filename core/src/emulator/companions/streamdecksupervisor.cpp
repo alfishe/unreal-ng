@@ -395,6 +395,14 @@ bool Supervisor::Update(const StateNode& changes, std::string& error)
                                  (_child || _state == State::Running);
             if (_state == State::Missing && next.binary != _settings.binary)
                 _failedUntil = 0;  // the binary named now: tried at the next step
+            if (_state == State::Foreign && next.apiPort != _settings.apiPort)
+            {
+                // another host's daemon on the old port is no reason to stay: ours on the new one
+                _state = State::Waiting;
+                _health = Health{};
+                _healthFails = 0;
+                _error.clear();
+            }
             _settings = next;
             if (restart)
                 _restart = true;  // ours takes the new ports or binary
