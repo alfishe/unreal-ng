@@ -736,17 +736,24 @@ void ScriptCallbackManager::RunHook(Entry& entry, const CallbackHit& hit, uint8_
     if (entry.state.load(std::memory_order_acquire) != CallbackState::Active || !_host)
         return;
     const bool logic = entry.spec.role == CallbackRole::Logic;
+    // A card's writes, of either role, wait for its next instruction boundary (GSCardTarget)
+    GSCardTarget* card = _context != nullptr && _context->pDebugManager != nullptr
+                             ? _context->pDebugManager->GetCardTarget(static_cast<DebugCpuId>(hit.cpu))
+                             : nullptr;
     HookEdits edits;
+    edits.view = !logic;
     const auto start = std::chrono::steady_clock::now();
-    HookCallResult result =
-        _host->Call(entry.id, hit, entry.spec.event, entry.spec.instructions, logic ? &edits : nullptr);
+    HookCallResult result = _host->Call(entry.id, hit, entry.spec.event, entry.spec.instructions,
+                                        logic || card != nullptr ? &edits : nullptr);
     const auto elapsed =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
     const auto us = static_cast<uint32_t>(std::clamp<int64_t>(elapsed, 0, 0xFFFF'FFFF));
     _frame->hookUs += us;
     if (entry.spec.policy == CallbackPolicy::Unpaced)
         _frame->unpacedUs += us;
-    // A card read's byte: the one the function returned (design §8A.7), not while time travel could not repeat it
+    // A card read's byte: the one the function returned (design §8A.7). A recording keeps a logic hook's byte as an
+    // input of the track; a replay applies the recorded one (GSCardTarget), never the hook's
+    const ttd::ITimeTravelHooks* ttd = _context != nullptr ? _context->pTimeTravelHooks : nullptr;
     if (replace != nullptr && result.ok && result.returned >= 0)
     {
         if (result.returned > 0xFF)
@@ -754,16 +761,26 @@ void ScriptCallbackManager::RunHook(Entry& entry, const CallbackHit& hit, uint8_
             result.ok = false;
             result.error = "a card read's callback returns a byte (0..255) or nothing";
         }
-        else if (const std::string refusal = EditRefusal(_context, CallbackRole::View); !refusal.empty())
+        else if (ttd != nullptr && ttd->IsReplayActive())
+        {
+            // the track's byte is the one this read sees
+        }
+        else if (const std::string refusal = EditRefusal(_context, entry.spec.role); !refusal.empty())
         {
             result.ok = false;
-            result.error = "the byte a card read sees is not replaced while time travel records or browses";
+            result.error = "the byte a card read sees: " + refusal;
         }
         else
+        {
             *replace = static_cast<uint8_t>(result.returned);
+            if (card != nullptr && ttd != nullptr && ttd->IsRecording())
+                card->RecordReadEdit(entry.id, hit.kind == BRK_TAP_PORT_IN, hit.address, *replace);
+        }
     }
     // A call that failed leaves no writes: a half-done edit would be worse than none
-    if (logic && result.ok && !edits.Empty())
+    if (card != nullptr && result.ok && !edits.Empty())
+        card->QueueHookEdits(entry.id, !logic, std::move(edits));
+    else if (logic && result.ok && !edits.Empty())
     {
         _edits.emplace_back(entry.id, std::move(edits));
         if (_context != nullptr)

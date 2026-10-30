@@ -830,6 +830,9 @@ public:
     bool RecordsScriptEdits() const override { return true; }
     void RecordScriptEdit(const char* source, const std::vector<std::pair<uint16_t, uint8_t>>& pokes,
                           bool cpu) override;
+    /// A card hook's writes (GSCardTarget): one edit of kind-10 records at the main CPU's position; the replay hands
+    /// them to the card's target a frame at a time (ServiceInput), since the card runs behind the main CPU
+    void RecordCardEdits(const char* source, const std::vector<TTDCardEdit>& edits) override;
 
     /// The bytes of the tool edit recorded as v1 marker @p markerIndex (empty: none)
     const std::unordered_map<size_t, std::vector<uint8_t>>& ToolEditPayloads() const { return _toolEditPayloads; }
@@ -1518,6 +1521,11 @@ private:
     /// only while _engineMemoryKnown holds
     TTDWrittenFn TakeWrittenSinceRestore();
 
+    /// @brief ReadCpuView at a checkpoint (a frame start the restore lands on) from the store: the four windows
+    /// the capture mapped, their pages decoded, the machine untouched. False where only a replay can tell (no
+    /// window map, a window outside the stored regions and ROM, a point past the checkpoint)
+    bool ReadCpuViewFromStore(const TTDTimePoint& at, uint16_t offset, size_t length, TTDCpuView& view);
+
 
     /// @brief Internal seek implementation without the Recording-state guard.
     ///
@@ -1887,6 +1895,8 @@ private:
     std::unordered_map<size_t, std::vector<uint8_t>> _toolEditPayloads;   ///< v1 marker index -> edit bytes
     /// Apply a tool edit's bytes (a replay crossing it)
     void ApplyToolEdit(const std::vector<uint8_t>& payload);
+    /// The replay's card edits of frame @p frame to the card targets (those of an earlier frame leave)
+    void DeliverCardEdits(uint64_t frame);
     /// The live machine's memory regions as the engine sees them: machine RAM, then each region source's
     std::vector<TTDRegionDesc> LiveRegions() const;
     uint64_t _shadowLastStart = 0;         ///< the last captured frame's start in machine time
@@ -2009,6 +2019,7 @@ private:
     /// recorded history (armed by a navigation restore, see ArmInputPlayback)
     size_t _inputCursor = 0;
     size_t _engineEventCursor = 0;          ///< the replay engine's event log (SetReplaySource)
+    uint64_t _cardEditFrame = UINT64_MAX;    ///< the frame whose card edits the card targets hold (replay)
     uint64_t _replayRomSignature = 0;       ///< this machine's ROM set (SetReplaySource)
     TTDRestoreResult _lastEngineCheck;      ///< LastEngineCheck
     /// Settings and media of the replay engine's checkpoint @p index against
@@ -2036,6 +2047,13 @@ private:
     };
     std::vector<PendingInput> _pendingInput;
     std::vector<std::function<void()>> _pendingTasks;
+    /// Either queue holds something; written under _pendingInputMutex, read without it by the per-instruction
+    /// ServiceInput, which takes the mutex only when it is set
+    std::atomic<bool> _pendingQueued{false};
+    /// The replay engine's start of the frame playback last looked up (one lookup a frame, not an instruction)
+    uint64_t _inputStartFrame = UINT64_MAX;
+    TTDMachineTime _inputFrameStart = 0;
+    bool _inputFrameKnown = false;
 
     /// Position the playback cursor at the restored machine time (events
     /// journaled at exactly that time are applied by the next instruction)

@@ -492,6 +492,43 @@ TEST_F(TTDAnalysisQueries_Test, CpuViewMatchesTheMachineAfterASeek)
     }
 }
 
+/// At a frame start the view comes from the store (the windows the capture mapped), the machine untouched; it
+/// equals the machine after a seek there in every frame, both pages bank 3 swaps between included
+TEST_F(TTDAnalysisQueries_Test, CpuViewAtAFrameStartReadsTheStore)
+{
+    ASSERT_NO_FATAL_FAILURE(Record(false));
+    Memory* memory = _context->pMemory;
+    const uint64_t first = _ttd->GetSessionInfo().sessionStartFrame;
+    const uint64_t last = _ttd->SessionEndPosition().frame;
+    std::set<unsigned> pagesSeen;
+    for (uint64_t f = first; f <= last; ++f)
+    {
+        SCOPED_TRACE(f);
+        const ttd::TTDTimePoint before = _ttd->CurrentPosition();
+        const uint64_t restoreNs = _ttd->GetPerfCounters().lastRestoreTotalNs();
+        const ttd::TTDCpuView view = _ttd->ReadCpuView({f, 0}, 0, 0x10000);
+        ASSERT_TRUE(view.ok) << view.error;
+        EXPECT_EQ(view.at, (ttd::TTDTimePoint{f, 0}));
+        EXPECT_EQ(_ttd->CurrentPosition(), before);
+        EXPECT_EQ(_ttd->GetPerfCounters().lastRestoreTotalNs(), restoreNs) << "no restore: read from the store";
+        pagesSeen.insert(view.windows[3].page);
+
+        ASSERT_TRUE(_ttd->SeekTo({f, 0}));
+        size_t differ = 0;
+        for (size_t i = 0; i < view.bytes.size(); ++i)
+            differ += view.bytes[i] != memory->DirectReadFromZ80Memory(static_cast<uint16_t>(i));
+        EXPECT_EQ(differ, 0u);
+        for (uint8_t w = 0; w < 4; ++w)
+        {
+            const MemoryPageDescriptor page = memory->MapZ80AddressToPhysicalPage(static_cast<uint16_t>(w * 0x4000));
+            EXPECT_EQ(view.windows[w].kind, static_cast<uint8_t>(page.mode)) << int(w);
+            EXPECT_EQ(view.windows[w].page, page.page) << int(w);
+            EXPECT_EQ(view.windows[w].name, memory->GetCurrentBankName(w)) << int(w);
+        }
+    }
+    EXPECT_TRUE(pagesSeen.count(1) && pagesSeen.count(3)) << "bank 3 swaps between pages 1 and 3 (page 0 before)";
+}
+
 /// The verb: Z80 addresses, at most up to 0xFFFF, the banks in the reply
 TEST_F(TTDAnalysisQueries_Test, MemoryAtCpuVerb)
 {

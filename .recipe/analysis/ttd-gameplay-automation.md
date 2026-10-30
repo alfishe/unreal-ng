@@ -73,6 +73,26 @@ experiment (`seek`, `POST /ttd/resume`, `POST /pause`, press keys, `run_frames`)
 A `value` probe reports level = value x scale / 255, so scale = 255 / max value. Z80 snapshots of many games are on
 archive.org (`zx_*` items) when a tape image is damaged.
 
+### Shortcuts that found racing-game events (2026-10-28 / 29)
+
+- **Key-tap coverage diff** (fire, jump, any button): record a stepped run, 150 frames with the button up, then 6 taps
+  (press, 4 frames, release, 30 frames). Scan 32-byte blocks with `coverage/scan` (`phys_page` 5 / 2 / 0) and keep the
+  blocks with 0 matches in the quiet window and 3 to 8 in the tap window: the match count is the tap count and the
+  first block of the run is the spawn routine (Overlander `#5FE3`, Badlands `#B877`). `reverse-continue` + `seek` +
+  `/registers` then names the actor (IX = the player's record).
+- **HUD digits against RAM**: seek to 5 frames where a counter shows 9, 8, 7, 6, 5, read all 8 pages (`memory-at`,
+  `space: ram`, `offset` 0..0x1C000 in 16 KB pieces: the call refuses 0x20000 at once) and keep the address whose byte
+  steps the same way (Hard Drivin' "OFF ROAD n": `#951F`, its flag `#951E`).
+- **Speed drop = crash?** `find-last` on the speed byte with `changes_only`, print drops over about 12 and their writer;
+  then screenshot the frames. A drop by a generic writer (a sum of vectors) is physics: look for the flag it follows
+  (a crash sets a state byte, the speed collapse comes after). Test Drive II: the drop `#88DD` is the per-car reset loop
+  after the collision flag `#FCE6` is set at `#88C7`; Cisco Heat: `#9A8F` zeroes the speed after a hit, `#9137` (sound
+  set-up, 4 runs in 3700 frames) is the clean event.
+- **128K pages**: `memory-at` with `space: ram` for the whole 128 KB, `cpu` space only for the latest recording;
+  `phys_page` 0..7 for the `#C000` window.
+- **Snapshots**: a denied or damaged tape is often on archive.org as `zx_*` `.z80`; store it in the collection with its
+  source in the README.
+
 ## 4. Turn the finding into a check
 
 - A probe (`exec` address, or `write` with `when: "=="`) goes into the game profile; `GET /monitor/game.events` returns

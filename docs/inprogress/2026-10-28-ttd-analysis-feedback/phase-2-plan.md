@@ -57,6 +57,21 @@ Status:
   2799 → 2348. Next candidate: the picture's replay of the frame
   before lands exactly on a frame-start target, so the seek's own restore and the live state save and put back
   can go (one restore and one frame); needs a machine-state equality test on every model and the barrier case.
+- B5 (uncommitted). Live input and machine tasks raise an atomic flag; the per-instruction playback takes no
+  mutex while it is clear and looks the frame start up once a frame. The step-work flag is set again when a
+  producer queued between the check and the clear (a lost wake before). W3 (input playback): continuous replay
+  891 → 477 µs a frame, exec-all 1251 → 802, writes-all 109 → 66; W1 and W2 (no input) unchanged.
+- B4 (uncommitted). A checkpoint keeps the CPU's four windows at its capture (`Memory::GetWindowMap`: offsets into
+  the memory block and modes). memory-at space cpu at a frame start, up to the CPU's overshoot, decodes the mapped
+  pages from the store (ROM read as it stands), the machine untouched; elsewhere, without a window map (a loaded
+  session) or where the windows are not what the CPU reads (the Next's 8K slots, the Sprinter's redirected
+  windows), it replays as before. POC 040 cpu-view at frame starts: W1 1372 → 22 µs, W2 1526 → 239, W3 534 → 32.
+  Test: `ttdcpuviewstore_test.cpp` on nine models (view equal to the machine after a seek; 48K, Pentagon,
+  Scorpion, Profi, ATM3, TS-Conf and +3 answer every frame start from the store).
+- B6 (uncommitted). The publish already ran once per outermost operation; its cost was the port journal's size,
+  which compressed the open block on every `GetSessionInfo`. The compressed size is now kept until the open block
+  changes. Seek W2: the publish was about 7 % of the samples, the compression half of it; seek W2 2848 → 2566 µs,
+  W3 1170 → 861 (W1 within the noise).
 - B3: little left after B1 (W1 writes-all 343 µs a frame against 272 continuous), and the verbs walk newest
   first, so there is nothing to run on from.
 
@@ -74,6 +89,15 @@ less on a game that halts (W2: 930 → 568-591 µs a frame; the recording overhe
 Proof: a test per machine family that a recording made with the idle replays stepped to every checkpoint bit for
 bit and the reverse; coverage scan, reverse-continue and find answers equal with and without the idle; the
 recording A/B on `frame_profile_benchmark` rows.
+
+Status: C1 and C2 done (uncommitted), in debug mode, with no new mode. The idle runs while no breakpoint or tap
+watches the HALT (exec) or the byte after it (read), the access tracker does not count and no M1 trace or access
+probe is armed; the debug memory interfaces count as pure under those rules. While recording, the floppy controller has to
+be asleep: awake and inert it stamps its time on every step (`WD1793::handleStepAwake`), the stamp is in its
+checkpoint state, and a replay steps (found by the CI gate on ATM3 idle: the blob differed, the behavior did not). The coverage index keeps the HALT in
+every frame (each idle stretch starts with a real fetch). POC 040, thread CPU time: W2 recording 944 → 664-686 µs a
+frame, and debug mode alone 795 → 544-547 (no TTD: 519-526); every recording replays exactly, 2998 of 2998 frames
+on W1-W3. Tests: `HaltedIdle_Test` debug mode, TTD recording (traces and coverage equal), watched HALT per step.
 
 Not in this block: a separate TTD-only memory path (a third memory interface beside fast and debug). The CPU's
 debug work costs nothing measurable, and such a path saves part of 41-60 µs a frame at most.

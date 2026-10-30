@@ -2,7 +2,7 @@
 
 /// @file diskfs.h
 /// @brief The files on any disk, one way for every file system: the volumes of a disk, a directory's entries, a
-/// file's bytes. Floppies (DiskImage): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MB-01 (read only), MDOS, FAT12
+/// file's bytes. Floppies (DiskImage): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MB-01, MDOS, FAT12
 /// (Sprinter DSS, MS-DOS 720K / 1.44M). Hard disks, SD and CF cards (BlockDevice): the FAT partitions of the MBR or a
 /// superfloppy (Estex DSS, NedoOS, any FAT12 / 16 / 32), the ATM CP/M partitions (the configuration record in sector 0,
 /// the .CDS descriptors, else a directory at a track start, read only), iS-DOS / TASiS devices: the whole disk, or runs

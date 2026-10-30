@@ -1,5 +1,6 @@
 #include "unrealdisk/mb01fs.h"
 
+#include <algorithm>
 #include <cstring>
 #include <memory>
 
@@ -41,6 +42,37 @@ constexpr uint16_t kLsn = 0x0FFF;
 constexpr uint32_t kDirEntry = 16;
 constexpr uint32_t kFileEntry = 32;
 constexpr uint8_t kMaxSpt = 22;
+constexpr uint16_t kProgramAddress = 23755;  ///< a program's body address as BS-DOS saves one (as on MB-02)
+constexpr uint16_t kListEnd = kSystem | kLast | 1024;  ///< a list's last sector
+
+void SetWord(uint8_t* p, uint32_t value)
+{
+    p[0] = static_cast<uint8_t>(value);
+    p[1] = static_cast<uint8_t>(value >> 8);
+}
+
+/// `name` in 10 bytes, blanks after it
+void PutName(uint8_t* p, const std::string& name)
+{
+    std::memset(p, ' ', 10);
+    std::memcpy(p, name.data(), std::min<size_t>(name.size(), 10));
+}
+
+bool ValidName(const std::string& name, std::string& error)
+{
+    if (name.empty() || name.size() > 10 || name.back() == ' ')
+    {
+        error = "an MB-01 name has 1-10 bytes (no blank at its end): " + name;
+        return false;
+    }
+    return true;
+}
+
+/// A file-list slot that holds no file: deleted, or neither header nor body
+bool FreeSlot(const uint8_t* e)
+{
+    return (e[5] & Mb01FileSystem::kDeleted) || !(e[5] & (Mb01FileSystem::kBody | Mb01FileSystem::kHeader));
+}
 }  // namespace
 
 Mb01FileSystem Mb01FileSystem::OnDisk(DiskImage& image)
@@ -61,7 +93,7 @@ Mb01FileSystem Mb01FileSystem::OnDisk(DiskImage& image)
             spt = s->data[15];
             bootLsn = id - 1u;
         }
-    return Mb01FileSystem(
+    Mb01FileSystem fs(
         [find, spt](uint32_t lsn, uint8_t* dst) {
             if (spt == 0 || lsn / (2 * spt) > 0xFF)
                 return false;
@@ -73,6 +105,20 @@ Mb01FileSystem Mb01FileSystem::OnDisk(DiskImage& image)
             return true;
         },
         bootLsn);
+    // A write changes the sector in the image (its CRC and the track's dirty flag follow)
+    fs.SetWriter([find, disk, spt](uint32_t lsn, const uint8_t* src) {
+        if (spt == 0 || lsn / (2 * spt) > 0xFF)
+            return false;
+        const uint32_t cylinder = lsn / (2 * spt);
+        const auto side = static_cast<uint8_t>(lsn / spt % 2);
+        const auto id = static_cast<uint8_t>(lsn % spt + 1);
+        if (!find(cylinder, side, id))
+            return false;
+        disk->getTrackForCylinderAndSide(static_cast<uint8_t>(cylinder), side)
+            ->writeSectorData(static_cast<uint8_t>(id - 1), src, kSector);
+        return true;
+    });
+    return fs;
 }
 
 bool Mb01FileSystem::Open(std::string* why)
@@ -135,6 +181,20 @@ bool Mb01FileSystem::Open(std::string* why)
     }
     if ((Fat(_bootLsn) & kKind) != kSystem || (Fat(_bootLsn + 1) & kKind) != kSystem)
         return fail("the FAT does not keep the boot and backup sectors as system ones");
+    // Where each copy lies, walked as above through the FAT now read
+    for (uint32_t copy = 0; copy < 2; copy++)
+    {
+        _fatAt[copy].clear();
+        uint32_t lsn = copy ? _boot.fat2 : _boot.fat1;
+        for (uint16_t k = 0; k < _boot.fatSectors; k++)
+        {
+            _fatAt[copy].push_back(lsn);
+            const uint16_t next = Fat(lsn);
+            lsn = 2 * static_cast<size_t>(lsn) + 1 < (k + 1u) * kSector && (next & kKind) == kSystem && !(next & kLast)
+                      ? next & kLsn
+                      : lsn + 1;
+        }
+    }
     return true;
 }
 
@@ -151,9 +211,12 @@ uint32_t Mb01FileSystem::FreeSectors() const
     return free;
 }
 
-bool Mb01FileSystem::ChainBytes(uint32_t first, std::vector<uint8_t>& out, std::string& error) const
+bool Mb01FileSystem::ChainBytes(uint32_t first, std::vector<uint8_t>& out, std::string& error,
+                                std::vector<uint32_t>* sectors) const
 {
     out.clear();
+    if (sectors)
+        sectors->clear();
     const uint32_t total = _boot.Sectors();
     uint32_t lsn = first;
     for (uint32_t count = 0;; count++)
@@ -172,6 +235,8 @@ bool Mb01FileSystem::ChainBytes(uint32_t first, std::vector<uint8_t>& out, std::
             error = "sector " + std::to_string(lsn) + " does not read";
             return false;
         }
+        if (sectors)
+            sectors->push_back(lsn);
         if (word & kLast)
         {
             const uint32_t last = word & kLsn;
@@ -266,6 +331,417 @@ bool Mb01FileSystem::Read(const Mb02File& file, std::vector<uint8_t>& data, std:
         return false;
     }
     data.resize(file.length);
+    return true;
+}
+
+bool Mb01FileSystem::Writable(std::string& error) const
+{
+    if (_writer && !_fat.empty())
+        return true;
+    error = "the MB-01 volume is read only";
+    return false;
+}
+
+void Mb01FileSystem::SetFat(uint32_t lsn, uint16_t value)
+{
+    if (2 * static_cast<size_t>(lsn) + 1 < _fat.size())
+        SetWord(_fat.data() + 2 * static_cast<size_t>(lsn), value);
+}
+
+bool Mb01FileSystem::WriteFat(std::string& error)
+{
+    for (uint16_t k = 0; k < _boot.fatSectors; k++)
+        for (const std::vector<uint32_t>& at : _fatAt)
+            if (!_writer(at[k], _fat.data() + static_cast<size_t>(k) * kSector))
+            {
+                error = "FAT sector " + std::to_string(at[k]) + " does not write";
+                return false;
+            }
+    return true;
+}
+
+bool Mb01FileSystem::WriteSystem(uint32_t lsn, const uint8_t* data, std::string& error)
+{
+    if (_writer(_bootLsn + 1, data) && _writer(lsn, data))
+        return true;
+    error = "sector " + std::to_string(lsn) + " does not write";
+    return false;
+}
+
+bool Mb01FileSystem::Allocate(uint32_t count, uint32_t last, std::vector<uint32_t>& out, std::string& error)
+{
+    out.clear();
+    // Not LSN 0: a link to it would read as a free word
+    const uint32_t end = std::min<uint32_t>(_boot.Sectors(), kLsn + 1);
+    for (uint32_t lsn = 1; lsn < end && out.size() < count; lsn++)
+        if (Fat(lsn) == 0)
+            out.push_back(lsn);
+    if (out.size() < count)
+    {
+        error =
+            "not enough free sectors: " + std::to_string(count) + " needed, " + std::to_string(out.size()) + " free";
+        return false;
+    }
+    for (size_t k = 0; k < out.size(); k++)
+        SetFat(out[k], k + 1 < out.size() ? static_cast<uint16_t>(out[k + 1]) : static_cast<uint16_t>(kLast | last));
+    return true;
+}
+
+void Mb01FileSystem::FreeChain(uint32_t first)
+{
+    // Along a normal chain while it goes on; a loop is cut after as many steps as the disk has sectors
+    uint32_t lsn = first;
+    for (uint32_t steps = 0; lsn > 0 && lsn < _boot.Sectors() && steps < _boot.Sectors(); steps++)
+    {
+        const uint16_t word = Fat(lsn);
+        if (word == 0 || (word & (kDeletedSector | kKind)))
+            break;
+        SetFat(lsn, 0);
+        if (word & kLast)
+            break;
+        lsn = word & kLsn;
+    }
+}
+
+bool Mb01FileSystem::ListBytes(uint32_t first, std::vector<uint32_t>& chain, std::vector<uint8_t>& bytes,
+                               std::string& error) const
+{
+    return ChainBytes(first, bytes, error, &chain);
+}
+
+bool Mb01FileSystem::Grow(std::vector<uint32_t>& chain, std::vector<uint8_t>& bytes, std::string& error)
+{
+    std::vector<uint32_t> added;
+    if (!Allocate(1, kSector, added, error))
+        return false;
+    SetFat(added[0], kListEnd);
+    SetFat(chain.back(), static_cast<uint16_t>(kSystem | added[0]));
+    // The old last sector is the list's in full now: its bytes past the count are zeroes
+    const bool partial = bytes.size() < chain.size() * kSector;
+    chain.push_back(added[0]);
+    bytes.resize(chain.size() * kSector, 0);
+    return (!partial || WriteAt(chain, bytes, (chain.size() - 2) * kSector, error)) &&
+           WriteAt(chain, bytes, (chain.size() - 1) * kSector, error);
+}
+
+bool Mb01FileSystem::WriteAt(const std::vector<uint32_t>& chain, const std::vector<uint8_t>& bytes, size_t at,
+                             std::string& error)
+{
+    const size_t sector = at / kSector;
+    std::vector<uint8_t> s(kSector, 0);
+    std::copy(bytes.begin() + static_cast<std::ptrdiff_t>(sector * kSector),
+              bytes.begin() + static_cast<std::ptrdiff_t>(std::min(bytes.size(), (sector + 1) * kSector)), s.begin());
+    return WriteSystem(chain[sector], s.data(), error);
+}
+
+bool Mb01FileSystem::Write(uint8_t dir, const std::string& name, const std::vector<uint8_t>& bytes,
+                           const WriteOptions& options, std::string& error)
+{
+    if (!Writable(error) || !ValidName(name, error))
+        return false;
+    std::vector<Mb02Directory> dirs;
+    if (!Directories(dirs, error))
+        return false;
+    if (std::none_of(dirs.begin(), dirs.end(), [dir](const Mb02Directory& d) { return d.number == dir; }))
+    {
+        error = "no directory " + std::to_string(dir);
+        return false;
+    }
+    if (bytes.size() > 0xFFFFFF)
+    {
+        error = "an MB-01 body holds at most 16 MB";
+        return false;
+    }
+    std::vector<uint32_t> chain;
+    std::vector<uint8_t> list;
+    if (!ListBytes(_boot.files, chain, list, error))
+        return false;
+    const std::vector<uint8_t> fat = _fat;
+    auto fail = [this, &fat]() {
+        _fat = fat;
+        return false;
+    };
+
+    // The older file of the name goes: its slot is the new one's
+    std::vector<Mb02File> files;
+    if (!List(dir, files, error))
+        return false;
+    size_t entry = list.size() / kFileEntry;
+    std::vector<size_t> older;
+    for (const Mb02File& f : files)
+        if ((f.flags & kHeader) && f.name == name)
+        {
+            if (f.flags & kBody)
+                FreeChain(f.first);
+            entry = f.entry;
+            older.push_back(f.entry);
+            list[f.entry * kFileEntry + 5] |= kDeleted;
+        }
+    for (size_t k = 0; k < list.size() / kFileEntry && entry * kFileEntry >= list.size(); k++)
+        if (FreeSlot(list.data() + k * kFileEntry))
+            entry = k;
+    if (entry * kFileEntry >= list.size() && !Grow(chain, list, error))
+        return fail();
+
+    // The body, the FAT (both copies), then the entry
+    std::vector<uint32_t> body;
+    const auto count = static_cast<uint32_t>((bytes.size() + kSector - 1) / kSector);
+    const uint32_t last = bytes.empty() ? 0 : static_cast<uint32_t>(bytes.size() - (count - 1) * size_t{kSector});
+    if (count && !Allocate(count, last, body, error))
+        return fail();
+    uint8_t s[kSector];
+    for (size_t k = 0; k < body.size(); k++)
+    {
+        std::memset(s, 0, kSector);
+        std::memcpy(s, bytes.data() + k * kSector, std::min<size_t>(kSector, bytes.size() - k * kSector));
+        if (!_writer(body[k], s))
+        {
+            error = "sector " + std::to_string(body[k]) + " does not write";
+            return fail();
+        }
+    }
+    if (!WriteFat(error))
+        return false;
+    uint8_t* e = list.data() + entry * kFileEntry;
+    std::memset(e, 0, kFileEntry);
+    e[0] = dir;
+    SetWord(e + 1, options.time);
+    SetWord(e + 3, options.date);
+    e[5] = static_cast<uint8_t>(kHeader | (bytes.empty() ? 0 : kBody) | (options.type & 0x0F));
+    PutName(e + 6, name);
+    SetWord(e + 16, static_cast<uint32_t>(bytes.size() & 0xFFFF));
+    SetWord(e + 18, options.start);
+    SetWord(e + 20, options.param2);
+    SetWord(e + 22, options.type == 0 ? kProgramAddress : options.start);
+    const auto length = static_cast<uint32_t>(bytes.size());
+    SetWord(e + 24, length);
+    e[26] = static_cast<uint8_t>(length >> 16);
+    e[27] = 0xFF;
+    SetWord(e + 30, body.empty() ? 0 : body.front());
+    if (!WriteAt(chain, list, entry * kFileEntry, error))
+        return false;
+    // Another older file of the name, in another list sector, deleted there too
+    for (const size_t at : older)
+        if (at * kFileEntry / kSector != entry * kFileEntry / kSector && !WriteAt(chain, list, at * kFileEntry, error))
+            return false;
+    return true;
+}
+
+bool Mb01FileSystem::Delete(const Mb02File& file, std::string& error)
+{
+    std::vector<uint32_t> chain;
+    std::vector<uint8_t> list;
+    if (!Writable(error) || !ListBytes(_boot.files, chain, list, error))
+        return false;
+    list[file.entry * kFileEntry + 5] |= kDeleted;
+    if (!WriteAt(chain, list, file.entry * kFileEntry, error))
+        return false;
+    if (file.flags & kBody)
+        FreeChain(file.first);
+    return WriteFat(error);
+}
+
+bool Mb01FileSystem::Rename(const Mb02File& file, uint8_t dir, const std::string& name, std::string& error)
+{
+    if (!Writable(error) || !ValidName(name, error))
+        return false;
+    if (!(file.flags & kHeader))
+    {
+        error = "a file without a header has no name";
+        return false;
+    }
+    std::vector<Mb02File> files;
+    if (!List(dir, files, error))
+        return false;
+    for (const Mb02File& f : files)
+        if ((f.flags & kHeader) && f.name == name && f.entry != file.entry)
+        {
+            error = name + " is there already";
+            return false;
+        }
+    std::vector<Mb02Directory> dirs;
+    if (!Directories(dirs, error))
+        return false;
+    if (std::none_of(dirs.begin(), dirs.end(), [dir](const Mb02Directory& d) { return d.number == dir; }))
+    {
+        error = "no directory " + std::to_string(dir);
+        return false;
+    }
+    std::vector<uint32_t> chain;
+    std::vector<uint8_t> list;
+    if (!ListBytes(_boot.files, chain, list, error))
+        return false;
+    uint8_t* e = list.data() + file.entry * kFileEntry;
+    e[0] = dir;
+    PutName(e + 6, name);
+    return WriteAt(chain, list, file.entry * kFileEntry, error);
+}
+
+bool Mb01FileSystem::SetTime(const Mb02File& file, uint16_t date, uint16_t time, std::string& error)
+{
+    std::vector<uint32_t> chain;
+    std::vector<uint8_t> list;
+    if (!Writable(error) || !ListBytes(_boot.files, chain, list, error))
+        return false;
+    SetWord(list.data() + file.entry * kFileEntry + 1, time);
+    SetWord(list.data() + file.entry * kFileEntry + 3, date);
+    return WriteAt(chain, list, file.entry * kFileEntry, error);
+}
+
+bool Mb01FileSystem::MakeDirectory(uint8_t parent, const std::string& name, uint16_t date, uint16_t time,
+                                   std::string& error)
+{
+    if (!Writable(error) || !ValidName(name, error))
+        return false;
+    std::vector<Mb02Directory> dirs;
+    if (!Directories(dirs, error))
+        return false;
+    if (std::none_of(dirs.begin(), dirs.end(), [parent](const Mb02Directory& d) { return d.number == parent; }))
+    {
+        error = "no directory " + std::to_string(parent);
+        return false;
+    }
+    for (const Mb02Directory& d : dirs)
+        if (d.number && d.parent == parent && d.name == name)
+        {
+            error = name + " is there already";
+            return false;
+        }
+    std::vector<uint32_t> chain;
+    std::vector<uint8_t> list;
+    if (!ListBytes(_boot.dirs, chain, list, error))
+        return false;
+    size_t number = 1;
+    while (number < 256 && (number + 1) * kDirEntry <= list.size() && list[number * kDirEntry + 5])
+        number++;
+    if (number == 256)
+    {
+        error = "the directory list is full (255 directories)";
+        return false;
+    }
+    const std::vector<uint8_t> fat = _fat;
+    if ((number + 1) * kDirEntry > list.size())
+    {
+        if (!Grow(chain, list, error))
+            return false;
+        if (!WriteFat(error))
+        {
+            _fat = fat;
+            return false;
+        }
+    }
+    uint8_t* e = list.data() + number * kDirEntry;
+    std::memset(e, 0, kDirEntry);
+    e[0] = parent;
+    SetWord(e + 1, time);
+    SetWord(e + 3, date);
+    e[5] = 1;
+    PutName(e + 6, name);
+    return WriteAt(chain, list, number * kDirEntry, error);
+}
+
+bool Mb01FileSystem::DeleteDirectory(uint8_t number, std::string& error)
+{
+    if (!Writable(error))
+        return false;
+    if (number == 0)
+    {
+        error = "the root directory stays";
+        return false;
+    }
+    std::vector<Mb02File> files;
+    std::vector<Mb02Directory> dirs;
+    if (!List(number, files, error) || !Directories(dirs, error))
+        return false;
+    bool children = false;
+    for (const Mb02Directory& d : dirs)
+        children = children || (d.number != number && d.parent == number);
+    if (!files.empty() || children)
+    {
+        error = "the directory is not empty";
+        return false;
+    }
+    std::vector<uint32_t> chain;
+    std::vector<uint8_t> list;
+    if (!ListBytes(_boot.dirs, chain, list, error))
+        return false;
+    std::memset(list.data() + number * kDirEntry, 0, kDirEntry);
+    return WriteAt(chain, list, number * kDirEntry, error);
+}
+
+bool Mb01FileSystem::RenameDirectory(uint8_t number, uint8_t parent, const std::string& name, std::string& error)
+{
+    if (!Writable(error) || !ValidName(name, error))
+        return false;
+    if (number == 0)
+    {
+        error = "the root directory has no name";
+        return false;
+    }
+    std::vector<Mb02Directory> dirs;
+    if (!Directories(dirs, error))
+        return false;
+    for (const Mb02Directory& d : dirs)
+        if (d.number && d.number != number && d.parent == parent && d.name == name)
+        {
+            error = name + " is there already";
+            return false;
+        }
+    // Not into itself: the new parent's ancestors do not meet the directory
+    std::vector<int> up(256, -1);
+    for (const Mb02Directory& d : dirs)
+        up[d.number] = d.number ? d.parent : -1;
+    for (int p = parent, steps = 0; p > 0 && steps < 256; p = up[p], steps++)
+        if (p == number)
+        {
+            error = "a directory does not go into itself";
+            return false;
+        }
+    std::vector<uint32_t> chain;
+    std::vector<uint8_t> list;
+    if (!ListBytes(_boot.dirs, chain, list, error))
+        return false;
+    uint8_t* e = list.data() + number * kDirEntry;
+    e[0] = parent;
+    PutName(e + 6, name);
+    return WriteAt(chain, list, number * kDirEntry, error);
+}
+
+bool Mb01FileSystem::SetDirectoryTime(uint8_t number, uint16_t date, uint16_t time, std::string& error)
+{
+    std::vector<uint32_t> chain;
+    std::vector<uint8_t> list;
+    if (!Writable(error) || !ListBytes(_boot.dirs, chain, list, error))
+        return false;
+    if (number == 0)
+    {
+        error = "the root directory has no time";
+        return false;
+    }
+    SetWord(list.data() + number * kDirEntry + 1, time);
+    SetWord(list.data() + number * kDirEntry + 3, date);
+    return WriteAt(chain, list, number * kDirEntry, error);
+}
+
+bool Mb01FileSystem::SetName(const std::string& name, std::string& error)
+{
+    if (!Writable(error))
+        return false;
+    if (name.size() > 10)
+    {
+        error = "an MB-01 disk name has at most 10 bytes";
+        return false;
+    }
+    uint8_t s[kSector];
+    if (!_reader(_bootLsn, s))
+    {
+        error = "the boot sector does not read";
+        return false;
+    }
+    PutName(s + 4, name);
+    if (!WriteSystem(_bootLsn, s, error))
+        return false;
+    _boot.name = name;
     return true;
 }
 }  // namespace unrealdisk

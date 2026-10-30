@@ -30,7 +30,7 @@
 //   hard disk image is changed in place, or copied to -o first and the copy changed
 //
 // <image>: a floppy in any format unreal-disk reads (TRD, SCL, FDI, UDI, TD0, DSK, MGT, IMG, HFE, SCP, ...) with
-// TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MB-01 (read only), MDOS or FAT12 (Sprinter DSS); else a raw hard disk
+// TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MB-01, MDOS or FAT12 (Sprinter DSS); else a raw hard disk
 // or card image (512-byte sectors): MBR or superfloppy FAT partitions (Estex DSS, NedoOS), ATM CP/M partitions (the
 // configuration record in sector 0 and the .CDS descriptors), iS-DOS devices (the whole disk or at cylinder
 // boundaries), MDOS3 virtual disks (an .md3 container, an MBR partition of type #49, slot files on a FAT16 card), the
