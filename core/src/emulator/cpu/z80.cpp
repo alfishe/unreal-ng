@@ -413,14 +413,14 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
     if ((pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad) || (pc == 0x3FEC && _context->pDiskFastLoad) ||
         (pc == DiskAutostart::COMMAND_LOOP_ENTRY && _context->pDiskAutostart) || (pc == 0x0008 && _context->pRst8Trap))
         return false;
-    // A recording captures at frame ends (a target of the idle) and its coverage is kept above. A replay plays
-    // input and journals at their own times, which the idle does not stop at yet
-    if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks; ttd && ttd->IsReplayActive())
-        return false;
+    // A recording captures at frame ends (a target of the idle) and its coverage is kept above. A replay plays its
+    // input up to the next event (RunHaltedIdle: InputIdleLimit), its port and bus journals at the reads a halted
+    // CPU does not do, and stops at a barrier through the driver's limit.
     // An awake idle floppy controller stamps its time on every step (WD1793::handleStepAwake): the same behavior,
-    // but the stamp is in its checkpoint state, and a replay steps. While recording it has to be asleep
+    // but the stamp is in its checkpoint state, which a replay compares. While TTD records or replays it has to be
+    // asleep
     if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
-        ttd && ttd->IsRecording() && _context->pBetaDisk && !_context->pBetaDisk->IsAsleep())
+        ttd && (ttd->IsRecording() || ttd->IsReplayActive()) && _context->pBetaDisk && !_context->pBetaDisk->IsAsleep())
         return false;
 
     // The peripherals MainLoop::OnCPUStep steps: the screen and the sound catch up by time; the tape writes
@@ -452,8 +452,17 @@ bool Z80::RunHaltedIdle(bool skipBreakpoints)
     const uint16_t fetch = static_cast<uint16_t>(pc + 1);  // the byte after the HALT (HaltedM1)
     const uint32_t evenM1Period = _context->config.even_M1 ? 2u : 1u;
     uint32_t busPeriod = 1;
-    constexpr uint32_t kHandledWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep;
-    if (!(source ? SourceIdle(*source) : InterruptsIdle()) || !IdleStepsInert(kHandledWork) ||
+    uint32_t handledWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep;
+    // A TTD replay's input playback: the fetches that start before its next event (ServiceInput takes it at the
+    // first boundary at or past its time, as per step)
+    uint32_t inputDue = UINT32_MAX;
+    if ((work & EmulatorContext::kStepWorkTtdInput) && _context->pTimeTravelHooks)
+    {
+        inputDue = _context->pTimeTravelHooks->InputIdleLimit();
+        if (inputDue > t)
+            handledWork |= EmulatorContext::kStepWorkTtdInput;
+    }
+    if (!(source ? SourceIdle(*source) : InterruptsIdle()) || !IdleStepsInert(handledWork) ||
         !HaltedFetchIsPure(fetch, busPeriod) || std::lcm(evenM1Period, busPeriod) > kMaxHaltedIdlePeriod)
     {
         NoteHaltedIdleRefused();
@@ -473,7 +482,7 @@ bool Z80::RunHaltedIdle(bool skipBreakpoints)
     for (;;)
     {
         // The first boundary the step loop would treat differently: the INT pulse, the frame end, the driver's limit
-        uint32_t target = std::min(idleSkipLimit, _frameLimit);
+        uint32_t target = std::min({idleSkipLimit, _frameLimit, inputDue});
         if (source)
             target = std::min(target, sourceDue);
         else if (!_intWraps && t <= _intStart)
@@ -593,11 +602,13 @@ bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
 }
 
 /// After a step with work that left the CPU halted (an accepted INT or NMI ends the HALT), outside the retry
-/// window: RunHaltedIdle when the work is only the machine's interrupt source and step hook, which it asks itself.
+/// window: RunHaltedIdle when the work is only the machine's interrupt source and step hook or TTD input, which it
+/// asks itself.
 /// Out of line: the work step keeps nothing live across OnCPUStep for it
 UNREAL_NOINLINE void Z80::RunHaltedIdleAfterWork(bool skipBreakpoints)
 {
-    constexpr uint32_t kIdleWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep;
+    constexpr uint32_t kIdleWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep |
+                                   EmulatorContext::kStepWorkTtdInput;
     if (_context->stepWork.load(std::memory_order_relaxed) & ~kIdleWork)
     {
         NoteHaltedIdleRefused();

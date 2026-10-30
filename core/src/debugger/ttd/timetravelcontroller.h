@@ -666,6 +666,7 @@ public:
     /// cheap gate: EmulatorContext::kStepWorkTtdInput in stepWork): play due journal events,
     /// then apply queued live input.
     void ServiceInput() override;
+    uint32_t InputIdleLimit() const override;
 
     /// RZX playback while recording (Phase 3, Step 2): the CPU reports each
     /// RZX frame end at the end of the step that ended it (@p rzxFrame: the

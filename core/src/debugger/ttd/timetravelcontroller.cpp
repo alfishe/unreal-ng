@@ -2432,6 +2432,29 @@ void TimeTravelController::DrainPendingLiveInput()
     }
 }
 
+uint32_t TimeTravelController::InputIdleLimit() const
+{
+    // Journal playback only: live input and the watch for a paused recording's end act at every boundary
+    if (!_context || _pendingQueued.load() || (_recordingPaused && _state == TTDSessionState::Detached))
+        return 0;
+    if (!_inputPlaybackArmed || !_replayEngine)
+        return UINT32_MAX;
+    // ServiceInput looked this frame up (its start, the card edits) at the frame's first instruction
+    const TTDTimePoint now = InputEventTimeNow(_context);
+    if (now.frame != _inputStartFrame || now.frame != _cardEditFrame || !_inputFrameKnown)
+        return 0;
+    // The next event of any kind: ServiceInput takes it at the first boundary at or past its time
+    const TTDEventLog& log = _replayEngine->Events();
+    if (_engineEventCursor >= log.Count())
+        return UINT32_MAX;
+    const TTDMachineTime due = log.At(_engineEventCursor).machineTime;
+    if (due <= _inputFrameStart + now.tInFrame)
+        return 0;
+    const uint64_t perT = std::max<uint32_t>(1, _context->emulatorState.TtdUnitsPerTState());
+    const uint64_t dueT = (due - _inputFrameStart + perT - 1) / perT;
+    return dueT < UINT32_MAX ? static_cast<uint32_t>(dueT) : UINT32_MAX;
+}
+
 void TimeTravelController::UpdateInputWorkFlag()
 {
     if (!_context)
