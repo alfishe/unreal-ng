@@ -243,6 +243,7 @@ void InputRouter::OnDeviceRemoved(const HostDeviceId& id)
             if (target.kind == TargetKind::Action && it->second.states[i].bits != 0)
                 actions.push_back({id, target.name, false});
         }
+        NoteDebugLayerLocked(it->second, true);
         _devices.erase(it);
         for (auto& [name, instance] : _instances)
         {
@@ -260,7 +261,7 @@ void InputRouter::OnControl(const ControlEvent& event)
     {
         std::lock_guard<std::mutex> lock(_mutex);
         const auto it = _devices.find(event.device);
-        if (it == _devices.end())
+        if (it == _devices.end() || _suspended)
             return;
         ControlInfo info;
         if (!ParseControl(event.control, info))
@@ -489,29 +490,6 @@ void InputRouter::SetFocus(const std::string& instance)
     Dispatch(actions);
 }
 
-void InputRouter::SetDebugFocus(bool on)
-{
-    std::vector<ActionEvent> actions;
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        if (on == _debugFocus)
-            return;
-        _debugFocus = on;
-        const uint64_t now = Now();
-        for (auto& [id, device] : _devices)
-        {
-            if (RoleLocked(id) != DeviceRole::Player)
-                continue;
-            // Other layers: what was held is released, a control held across the switch waits for its release
-            device.layers.clear();
-            device.epoch++;
-            MarkHeldStale(device.values, device.gates, kReleased);
-            EvaluateLocked(device, now, actions);
-        }
-    }
-    Dispatch(actions);
-}
-
 std::vector<std::string> InputRouter::Layers(const HostDeviceId& id) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -617,12 +595,12 @@ const SurfaceHaptics* InputRouter::SurfaceHapticsForLocked(const Device& device)
 std::string InputRouter::ContextLayerLocked(const Device& device) const
 {
     const auto context = _contexts.find(InstanceLocked(device.info.id));
-    if (context == _contexts.end() || context->second.empty())
+    if (context == _contexts.end() || context->second.name.empty())
         return {};
     std::string best;
     int length = -1;
     auto consider = [&](const std::string& layer) {
-        const int match = ContextLayerMatch(layer, context->second);
+        const int match = ContextLayerMatch(layer, context->second.name);
         if (match > length)
         {
             length = match;
@@ -641,7 +619,46 @@ std::string InputRouter::ContextLayerLocked(const Device& device) const
 bool InputRouter::RemoteLocked(const Device& device) const
 {
     const DeviceRole role = RoleLocked(device.info.id);
-    return role == DeviceRole::DebuggerRemote || (_debugFocus && role == DeviceRole::Player);
+    return role == DeviceRole::DebuggerRemote ||
+           (role == DeviceRole::Player && PlayersFollowLocked(InstanceLocked(device.info.id)));
+}
+
+bool InputRouter::FollowsIntoDebug(const std::string& context, bool set)
+{
+    const auto under = [&context](const char* root) {
+        const size_t length = std::char_traits<char>::length(root);
+        return context.compare(0, length, root) == 0 && (context.size() == length || context[length] == '.');
+    };
+    return under("debug") || (set && under("ttd"));
+}
+
+bool InputRouter::PlayersFollowLocked(const std::string& instance) const
+{
+    const auto it = _contexts.find(instance);
+    return it != _contexts.end() && FollowsIntoDebug(it->second.name, it->second.set);
+}
+
+bool InputRouter::PlayersFollow(const std::string& instance) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return PlayersFollowLocked(instance);
+}
+
+void InputRouter::NoteDebugLayerLocked(Device& device, bool gone)
+{
+    const bool up = !gone && RoleLocked(device.info.id) == DeviceRole::Player &&
+                    std::any_of(device.layers.begin(), device.layers.end(),
+                                [](const LayerEntry& entry) { return entry.name == kDebugLayer; });
+    if (up == device.debugReported)
+        return;
+    device.debugReported = up;
+    _layerQueue.push_back({device.info.id, InstanceLocked(device.info.id), up});
+}
+
+void InputRouter::SetLayerSink(LayerSink sink)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _layers = std::move(sink);
 }
 
 bool InputRouter::RaisedLocked(const Device& device, const std::string& layer) const
@@ -774,6 +791,7 @@ void InputRouter::EvaluateLocked(Device& device, uint64_t now, std::vector<Actio
     {
         device.states.clear();
         device.layers.clear();
+        NoteDebugLayerLocked(device);
         FeelLocked(device);
         return;
     }
@@ -996,6 +1014,7 @@ void InputRouter::EvaluateLocked(Device& device, uint64_t now, std::vector<Actio
         EvaluateLocked(device, now, actions);
         return;
     }
+    NoteDebugLayerLocked(device);
     FeelLocked(device);
 }
 
@@ -1189,20 +1208,58 @@ void InputRouter::Dispatch(const std::vector<ActionEvent>& actions) const
 {
     ActionSink sink;
     OutputSink outputs;
+    LayerSink layerSink;
     std::vector<std::pair<HostDeviceId, StepsOut>> feel;
+    std::vector<LayerChange> layers;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         sink = _actions;
         outputs = _outputs;
+        layerSink = _layers;
         feel.swap(_feelQueue);
+        layers.swap(_layerQueue);
+        if (_suspended)
+            feel.clear();  // kept in each device's feel: sent when the client owns the controllers again
     }
     if (outputs)
         for (const auto& [device, steps] : feel)
             outputs(device, steps);
+    if (layerSink)
+        for (const LayerChange& change : layers)
+            layerSink(change.device, change.instance, change.up);
     if (!sink)
         return;
     for (const ActionEvent& action : actions)
         sink(action);
+}
+
+void InputRouter::SetSuspended(bool suspended)
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_suspended == suspended)
+            return;
+        _suspended = suspended;
+        const uint64_t now = Now();
+        for (auto& [id, device] : _devices)
+        {
+            if (suspended)
+            {
+                device.values.clear();  // at rest: the held actions are released, a raised layer goes down
+                EvaluateLocked(device, now, actions);
+            }
+            else if (device.feelSent)
+                _feelQueue.emplace_back(id, device.feel);
+        }
+    }
+    Dispatch(actions);
+}
+
+bool InputRouter::Suspended() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _suspended;
 }
 
 void InputRouter::SetOutputSink(OutputSink sink)
@@ -1215,18 +1272,18 @@ void InputRouter::SetOutputSink(OutputSink sink)
 
 /// region <Contexts and surface feedback>
 
-void InputRouter::SetContext(const std::string& instance, const std::string& context)
+void InputRouter::SetContext(const std::string& instance, const std::string& context, bool set)
 {
     std::vector<ActionEvent> actions;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         const auto it = _contexts.find(instance);
-        if (it != _contexts.end() && it->second == context)
+        if (it != _contexts.end() && it->second.name == context && it->second.set == set)
             return;
         std::map<HostDeviceId, std::vector<std::string>> before;
         for (const auto& [id, device] : _devices)
             before[id] = ActiveLayersLocked(device);
-        _contexts[instance] = context;
+        _contexts[instance] = {context, set};
         const uint64_t now = Now();
         for (auto& [id, device] : _devices)
         {
@@ -1245,7 +1302,7 @@ std::string InputRouter::Context(const HostDeviceId& device) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
     const auto it = _contexts.find(InstanceLocked(device));
-    return it == _contexts.end() ? std::string{} : it->second;
+    return it == _contexts.end() ? std::string{} : it->second.name;
 }
 
 void InputRouter::SetSurfaceHaptics(const std::string& scope, SurfaceHaptics haptics)

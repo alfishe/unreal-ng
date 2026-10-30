@@ -107,6 +107,9 @@ Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelNam
     // EmulatorManager already calls Init() during creation
     // Force deterministic boot: 48K BASIC (RESET=BASIC) regardless of the
     // staged unreal.ini, which CMake re-copies on every build (RESET=128)
+    // An instance starts muted (the GUI or an automation plane unmutes it); the audio tests expect the host to hear it
+    if (emulator->GetContext()->pSoundManager)
+        emulator->GetContext()->pSoundManager->unmute();
     emulator->GetContext()->config.reset_rom = RM_SOS;
     emulator->Reset();
 

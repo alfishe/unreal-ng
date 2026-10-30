@@ -11,10 +11,13 @@
 #include <algorithm>
 #include <atomic>
 #include <map>
+#include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "_helpers/testwaithelper.h"
+#include "clientqueue.h"
 #include "fake/fakebackend.h"
 #include "hostinputservice.h"
 #include "router/zxkeys.h"
@@ -345,6 +348,54 @@ TEST_F(InputRouter_Test, InvalidBindingsAreRefusedWithTheReason)
     EXPECT_NE(error.find("binding 0"), std::string::npos) << error;
 }
 
+/// Another client owns the controllers: what is held is let go, events are dropped; back, a control starts at rest
+TEST_F(InputRouter_Test, Suspended_ReleasesHeldAndDropsEvents)
+{
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"south"}, "kempston:fire"), To({"north"}, ActionTarget("debug.step_into"))});
+    _router.SetRole("fake:1", DeviceRole::Player);
+    Set("fake:1", "south", 1);
+    Set("fake:1", "north", 1);
+    EXPECT_EQ(Kempston(), kFire);
+    _actions.clear();
+
+    _router.SetSuspended(true);
+    EXPECT_EQ(Kempston(), 0) << "the held fire is let go";
+    ASSERT_EQ(_actions.size(), 1u);
+    EXPECT_EQ(_actions[0].action, "debug.step_into");
+    EXPECT_FALSE(_actions[0].pressed) << "the held action is released";
+    _actions.clear();
+    Set("fake:1", "south", 0);
+    Set("fake:1", "south", 1);
+    EXPECT_TRUE(Sample().empty()) << "events are dropped";
+    EXPECT_TRUE(_actions.empty());
+
+    _router.SetSuspended(false);
+    EXPECT_TRUE(Sample().empty()) << "back: the controls start at rest";
+    Set("fake:1", "south", 1);
+    EXPECT_EQ(Kempston(), kFire);
+}
+
+TEST(ClientQueue_Test, TheLastActivatedLiveClientOwns)
+{
+    std::vector<int64_t> pids = ClientQueue::Parse("12\nbroken\n\n34\n12\n-5\n");
+    EXPECT_EQ(pids, (std::vector<int64_t>{12, 34}));
+    std::set<int64_t> alive{12, 34, 56};
+    const ClientQueue::Alive lives = [&alive](int64_t pid) { return alive.count(pid) != 0; };
+    EXPECT_EQ(ClientQueue::Owner(pids, lives), 12);
+
+    ClientQueue::Claim(pids, 34, lives);
+    EXPECT_EQ(pids, (std::vector<int64_t>{34, 12}));
+    alive.erase(34);
+    EXPECT_EQ(ClientQueue::Owner(pids, lives), 12) << "the owner died: the one active before it";
+    ClientQueue::Claim(pids, 56, lives);
+    EXPECT_EQ(pids, (std::vector<int64_t>{56, 12})) << "the dead ones are dropped";
+    ClientQueue::Leave(pids, 56);
+    EXPECT_EQ(ClientQueue::Format(pids), "12\n");
+    alive.clear();
+    EXPECT_EQ(ClientQueue::Owner(pids, lives), 0);
+}
+
 /// The service with the fake backend: devices and events reach the router, the source samples per instance
 TEST(HostInputService_Test, FakeBackendThroughTheService)
 {
@@ -530,16 +581,34 @@ TEST_F(InputRouter_Test, Layers_InertKeyAndTheDebuggerRemote)
     EXPECT_EQ(_actions[0].action, "ttd.step_back");
 }
 
-/// The debugger window has the focus: a player pad acts as a debugger remote with no layer key, a held play target
-/// is released by the switch and the switch back
-TEST_F(InputRouter_Test, DebugFocus_APlayerPadDrivesTheDebugger)
+/// Which contexts take the player devices into the debugger: `debug` and `debug.*` always, `ttd` and `ttd.*` only
+/// when somebody set them (a history alone keeps the pads in the game)
+TEST_F(InputRouter_Test, Context_FollowsIntoDebug)
+{
+    EXPECT_TRUE(InputRouter::FollowsIntoDebug("debug", false));
+    EXPECT_TRUE(InputRouter::FollowsIntoDebug("debug.memory", true));
+    EXPECT_TRUE(InputRouter::FollowsIntoDebug("ttd", true));
+    EXPECT_TRUE(InputRouter::FollowsIntoDebug("ttd.timecode", true));
+    EXPECT_FALSE(InputRouter::FollowsIntoDebug("ttd", false)) << "the default with a history";
+    EXPECT_FALSE(InputRouter::FollowsIntoDebug("play", true));
+    EXPECT_FALSE(InputRouter::FollowsIntoDebug("debugger", true)) << "a name that only starts like one";
+    EXPECT_FALSE(InputRouter::FollowsIntoDebug("", false));
+}
+
+/// A player pad follows its instance's context as the surfaces do (the debugger window, a Stream Deck page, a
+/// ctx.set): in the debugger it is a debugger remote with no layer key, the context's layer above `debug`; a held
+/// play target is released by the switch and the switch back; another instance's context leaves it alone
+TEST_F(InputRouter_Test, Context_APlayerPadFollowsItsInstanceIntoTheDebugger)
 {
     _router.OnDeviceAdded(kPad);
-    SetBindings({Bind({"south"}, "kempston:fire"), To({"south"}, ActionTarget("run.step_in"), kDebugLayer)});
+    _router.SetFocus("emu-1");
+    SetBindings({Bind({"south"}, "kempston:fire"), To({"south"}, ActionTarget("run.step_in"), kDebugLayer),
+                 To({"dpad.left"}, ActionTarget("ttd.step_back_frame"), "@ttd")});
     Set("fake:1", "south", 1);
     EXPECT_EQ(Kempston(), kFire);
 
-    _router.SetDebugFocus(true);
+    _router.SetContext("emu-1", "debug", true);
+    EXPECT_TRUE(_router.PlayersFollow("emu-1"));
     EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kDebugLayer}));
     EXPECT_EQ(Kempston(), 0) << "the switch releases the fire";
     EXPECT_TRUE(_actions.empty()) << "south held across the switch waits for its release";
@@ -550,10 +619,75 @@ TEST_F(InputRouter_Test, DebugFocus_APlayerPadDrivesTheDebugger)
     EXPECT_TRUE(Sample().empty()) << "the debug layer drives no connector";
     Set("fake:1", "south", 0);
 
-    _router.SetDebugFocus(false);
+    _router.SetContext("emu-1", "ttd", false);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kPlayLayer})) << "a history alone: the game";
+    _router.SetContext("emu-1", "ttd", true);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kDebugLayer, "@ttd"})) << "the deck's Time page";
+    _actions.clear();
+    Set("fake:1", "dpad.left", 1);
+    ASSERT_EQ(_actions.size(), 1u);
+    EXPECT_EQ(_actions[0].action, "ttd.step_back_frame");
+    Set("fake:1", "dpad.left", 0);
+
+    _router.SetContext("emu-2", "play", true);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kDebugLayer, "@ttd"})) << "another instance";
+    _router.SetContext("emu-1", "play", true);
+    EXPECT_FALSE(_router.PlayersFollow("emu-1"));
     EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kPlayLayer}));
     Set("fake:1", "south", 1);
     EXPECT_EQ(Kempston(), kFire) << "the game has the pad back";
+}
+
+/// A pad pinned to an instance follows that instance's context, not the focused one's
+TEST_F(InputRouter_Test, Context_APinnedPadFollowsItsOwnInstance)
+{
+    _router.OnDeviceAdded(kPad);
+    _router.OnDeviceAdded(kPad2);
+    _router.SetFocus("emu-1");
+    _router.SetInstanceMode("fake:2", InstanceMode::Pinned, "emu-2");
+    SetBindings({Bind({"south"}, "kempston:fire"), To({"south"}, ActionTarget("run.step_in"), kDebugLayer)});
+
+    _router.SetContext("emu-2", "debug.disasm", true);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kPlayLayer}));
+    EXPECT_EQ(_router.Layers("fake:2"), (std::vector<std::string>{kDebugLayer}));
+    _router.SetContext("emu-1", "debug", true);
+    _router.SetContext("emu-2", "play", true);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kDebugLayer}));
+    EXPECT_EQ(_router.Layers("fake:2"), (std::vector<std::string>{kPlayLayer}));
+}
+
+/// A pad's layer key tells the owner its `debug` layer went up and down (the owner sets the instance's context so
+/// the other surfaces follow the pad); once each way, and down when the pad goes with the key held
+TEST_F(InputRouter_Test, Context_TheLayerKeyReportsTheDebugLayer)
+{
+    std::vector<std::tuple<HostDeviceId, std::string, bool>> changes;
+    _router.SetLayerSink([&changes](const HostDeviceId& device, const std::string& instance, bool up) {
+        changes.emplace_back(device, instance, up);
+    });
+    _router.OnDeviceAdded(kPad);
+    _router.SetFocus("emu-1");
+    SetBindings({To({"paddle.p4"}, Layer(kDebugLayer)), To({"south"}, ActionTarget("run.step_in"), kDebugLayer),
+                 Bind({"south"}, "kempston:fire")});
+
+    Set("fake:1", "paddle.p4", 1);
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0], std::make_tuple(HostDeviceId("fake:1"), std::string("emu-1"), true));
+    // The owner's answer: the context follows the pad; the pad stays in its layer, nothing is reported again
+    _router.SetContext("emu-1", "debug", true);
+    Set("fake:1", "south", 1);
+    Set("fake:1", "south", 0);
+    EXPECT_EQ(changes.size(), 1u);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kDebugLayer}));
+
+    Set("fake:1", "paddle.p4", 0);
+    ASSERT_EQ(changes.size(), 2u);
+    EXPECT_EQ(changes[1], std::make_tuple(HostDeviceId("fake:1"), std::string("emu-1"), false));
+
+    Set("fake:1", "paddle.p4", 1);
+    ASSERT_EQ(changes.size(), 3u);
+    _router.OnDeviceRemoved("fake:1");
+    ASSERT_EQ(changes.size(), 4u);
+    EXPECT_FALSE(std::get<2>(changes[3])) << "gone with the key held: down";
 }
 
 /// An encoder's steps run an action (debug-and-ttd.md §4.4): alone, or with buttons held while it turns; a button
