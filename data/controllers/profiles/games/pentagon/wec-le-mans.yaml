@@ -1,0 +1,34 @@
+# W.E.C. Le Mans (Imagine / Konami 1988), the Hit Squad TZX "W.E.C. Le Mans (The Hit Squad).tzx" (128K tape loader: Tape Loader,
+# about 20000 frames of tape; in the menu 4 KEYBOARD, then 0 START GAME). Keys from the game's own table (#6958, five entries read by
+# the scan routine #642F): Q accelerates, P steers left, O steers right (the lateral position is the word #E8ED: 116 at the left
+# limit, 240 on the straight, 480 at the right limit; P lowers it, O raises it). Haptics (haptics.md §13 H5), found with TTD on a
+# recorded run (speed by sampling RAM against the HUD, writers by find-last): the speed is the byte #E8EB (0 to about 170, the HUD
+# shows 0.87 of it); #94F1 lowers it by 8 per 4 frames to the floor #44 while the off-road flag #E5E0 is set (the lateral position
+# left the road, recomputed every frame at #94D2). Checked in real time (Q held, no steering): the speed level follows, the off-road
+# level 0.6 comes on at the first right-hand bend (about 9 s) and stays while the car sits in the roadside. Known limits: the collisions with the
+# roadside boards and the rival cars are not events yet (only the off-road level is felt); the steering needs the speed to be up.
+schema: 1
+kind: play
+id: builtin/game/wec-le-mans
+label: W.E.C. Le Mans
+match:
+  machines: [PENTAGON, 128K]
+  file_sha256: ["01d7d0f47ba348840ec526698f3383888b1487e0ddd264a61068c4ceb45de6e1"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: P }
+    dpad.right:   { key: O }
+    lstick.left:  { key: P }
+    lstick.right: { key: O }
+    rt.click:     { key: Q, label: Accelerate }
+    menu:         { key: "0", label: Start }
+    east:         { key: "4", label: Keyboard }
+haptics:
+  sources:
+    speed:   { probe: value, address: "0xE8EB", scale: 1.4 }
+    offroad: { probe: value, address: "0xE5E0", scale: 0.6 }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: offroad, play: rumble-strip }

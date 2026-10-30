@@ -2,15 +2,15 @@
 
 The files on any disk, read the same way for every file system and from every surface: the volumes of a disk, a
 directory's entries, a file's bytes. Floppies and hard disks, SD and CF cards. Reading, writing, deleting and renaming
-files on every file system the probe finds (ATM CP/M, MB-02 and MDOS are read only); making, moving and deleting directories on FAT and
-iS-DOS.
+files on every file system the probe finds; making, moving and deleting directories on FAT, iS-DOS and
+MB-02.
 
 It all lives in **unreal-disk** (`core/src/3rdparty/unreal-disk`), the standard C++ library of disks: the emulator,
 the unreal-asm tools and `zxdisk` link it, none of them needs the emulator's core for disk files.
 
 | Layer | Where (`unrealdisk/`) | What |
 |---|---|---|
-| File systems | `trdosfs.h`, `plus3fs.h`, `isdosfs.h`, `cpmfs.h`, `mb02fs.h`, `mdosfs.h`, `fatvolumereader.h`, `fatfs.h` | TR-DOS and +3DOS, iS-DOS / TASiS over a 256-byte block reader and writer, ATM CP/M over a byte reader, MB-02 over a 1024-byte and MDOS over a 512-byte sector reader (all three read only), FAT12 / 16 / 32 on a block device (read by `FatVolumeReader`, changed by `FatFs`) |
+| File systems | `trdosfs.h`, `plus3fs.h`, `isdosfs.h`, `cpmfs.h`, `mb02fs.h`, `mb01fs.h`, `mdosfs.h`, `fatvolumereader.h`, `fatfs.h` | TR-DOS and +3DOS, iS-DOS / TASiS over a 256-byte block reader and writer, ATM CP/M and Profi CP/M over a byte reader and writer, MB-02 and MB-01 over a 1024-byte sector reader and writer, MDOS over a 512-byte sector reader and writer, FAT12 / 16 / 32 on a block device (read by `FatVolumeReader`, changed by `FatFs`) |
 | Block devices | `blockdevice.h`, `subrangedevice.h`, `floppyblockdevice.h` | a disk as 512-byte sectors (core: `IBlockDevice`), a partition window, a floppy of uniform 512-byte sectors (FAT on a Sprinter DSS or MS-DOS floppy; writable when asked) |
 | Code pages | `unicode.h` | CP866 / CP1251 names to UTF-8 (FAT short names, iS-DOS) |
 | One interface | `diskfs.h` | `DiskFs`: probes the volumes, then `List` / `Stat` / `Read` / `Write` / `Delete` / `Rename` / `MakeDirectory` / `SetAttributes` / `SetTime` / `SetLabel` by volume and path |
@@ -33,8 +33,8 @@ the label, its offset and size on the disk and the free bytes (-1 when not known
 
 | Medium | Probe (in this order) | Volume ids |
 |---|---|---|
-| Floppy | ATM CP/M (the directory at #2000); TR-DOS (the system sector 9: label at +0xF5, free sectors; an empty catalogue on an ATM CP/M disk is no volume); MDOS (`SDOS` in the boot sector, the FAT reserving LSN 0-13; it ends the probe); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); +3DOS (skipped when FAT matched); MB-02 (the boot sector, the FAT, the root in the DIRS sector; it ends the probe); iS-DOS / TASiS (the descriptor in block 0) | `cpm`, `trdos`, `mdos`, `fat`, `plus3`, `mb02`, `isdos` |
-| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them; MDOS3: the slots of each MBR partition of type #31, or of the whole device when sector 0 is a slot's info sector (an `.md3` file); iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary outside the FAT and CP/M partitions | `fat`, `p1`..`p4`, `cpm-<cylinder>`, `mdos-<slot>`, `isdos`, `isdos-<cylinder>` |
+| Floppy | Profi CP/M (1024-byte sectors, the directory from byte 0, else Klug CP/M's from cylinder 2; see [Profi CP/M layout](#profi-cpm-layout); it ends the probe); ATM CP/M (the directory at #2000); TR-DOS (the system sector 9: label at +0xF5, free sectors; an empty catalogue on an ATM CP/M disk is no volume); MDOS (`SDOS` in the boot sector, the FAT reserving LSN 0-13; it ends the probe); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); +3DOS (skipped when FAT matched); MB-02 (the boot sector, the FAT, the root in the DIRS sector; it ends the probe); MB-01 (the boot sector anywhere on track 0, side 0, the FAT; it ends the probe); iS-DOS / TASiS (the descriptor in block 0) | `cpm`, `trdos`, `mdos`, `fat`, `plus3`, `mb02`, `mb01`, `isdos` |
+| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them, last a directory at the start of a track outside the other volumes (see [ATM CP/M layout](#atm-cpm-layout)); Profi CP/M: the partitions of the table after the `ProfiHDD` header at cylinder 1 (see [Profi CP/M layout](#profi-cpm-layout)), over a FAT volume too; MDOS3: the slots of each primary MBR partition of type #49, else of the whole device from its first sector that starts with `SDOS`: the first sector of a file of any FAT volume, wherever it lies (an `.md3` file, slot files copied onto a FAT16 card), or another sector of the first 4096 (an `.md3` written to the disk whole); looked for after iS-DOS; BS-DOS 309: the floppies @1..@255 of the first primary MBR partition of type #47; iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary of the image's geometry and in the 1008 sectors (a cylinder of 16 heads of 63) after the end of every volume found, a device found adding its own end (the HDD driver places the devices one after the other, a cylinder of the geometry it was told apart); outside the other volumes | `fat`, `p1`..`p4`, `cpm-<cylinder>` (ATM and Profi CP/M), `mdos-<slot>`, `mb02-<n>`, `isdos`, `isdos-<cylinder>`, `isdos-lba<sector>` (off the image's cylinders) |
 
 A cylinder is the device's native geometry (heads x sectors), else 16 x 63 as the ATM-Turbo HDD driver lays out its
 devices (`ATM_HDD.HDD` has devices at cylinders 70, 103, ...). At most 4096 cylinders are scanned. A device found
@@ -98,20 +98,73 @@ entry, EXM 1). The size is the last extent's `(EX + 32 * S2) * 16384 + RC * 128`
   The directory is at the start cylinder past the reserved tracks; DSM is `((DBLDR - SPT * OFF) >> 4) - 1` as the
   BIOS computes it. The BIOS addresses the disk by cylinder, head and sector of the descriptor; the image maps them
   with its own geometry (16 x 63 when it has none).
+- **Hard disk without a descriptor** (a partition assigned from a floppy's `.CDS`, the record lost): the NedoPC
+  installation guide (`install_eng.zip`, atmturbo.nedopc.com) starts a partition at a cylinder (PATBEG) with SYS
+  reserved tracks before the directory, in the disk's own heads and sectors, up to 8 MB (DBLDR has 16 bits), 128 to
+  512 directory entries (FDISK makes 128). So the probe reads the first sector of every track outside the volumes
+  found: 16 entries that are free or read as below, one a file with a name, start a directory. Its size, entries and
+  block number width are not on the disk: the space up to the next volume's (or the next directory's) cylinder, 8 MB
+  at most; the most entries that read (512 down to 64); the width the BIOS gives that size, else the other. The
+  search goes on past the last block its files use (a file's bytes hold no partition). A `.CDS` of unit 0 kept on a
+  partition found so gives its partitions as the BIOS sees them (writable); one no `.CDS` describes is read only, its
+  offset that of the directory: a write could run past its unknown end. `ATM_HDD.HDD` with sector 0 cleared gives
+  its four partitions again (D: from its own `HDDD.CDS`), the probe of a 2 GB disk takes about 0.2 s.
 
-A volume is taken only when every used entry reads: user 0-15, printable name bytes (not all blank), EX <= 31, S1 0,
-RC <= 128 and every block it needs inside the volume, past the directory, used once; at least one file. Scorpion
-MOA CP/M (`testdata/machines/scorpion/cpm/`) fails it, and so does none of about 7500 TR-DOS and SCL images; all 104
-ATM CP/M floppies of the collection pass. `ATM_HDD.HDD` gives D: (cylinder 1, from the record) and E:, F:, G:
+A volume is taken only when every used entry reads: user 0-15, printable name bytes, EX <= 31, S1 0, RC <= 128 and
+every block it needs inside the volume, past the directory, used once; at least one file with a name. A file of
+eleven blanks (CP/M keeps one: five Profi floppies of `PROFI_DISK` have it, four of them read) lists as `\x20`, the
+escape of a blank: it reads, is deleted and renamed under it. Scorpion MOA CP/M (`testdata/machines/scorpion/cpm/`)
+fails it, and so does none of about 7500 TR-DOS and SCL images; all 104 ATM CP/M floppies of the collection pass.
+`ATM_HDD.HDD` gives D: (cylinder 1, from the record) and E:, F:, G:
 (cylinders 6, 22, 38, from `HDDE.CDS`..`HDDG.CDS`); its descriptors of other disks (15 heads) find no directory.
+
+## Profi CP/M layout
+
+The hard disk of the Profi's CP/M (MicroDOS 5.x, `HDD22.DRV` "Floppy & IDE Hard Disk Driver v2.20" 1995, laid out by
+`FORMATHD.COM` "Format Hard Disk for PROFI 3+"), read from those programs and checked on the 3.2 GB SPM disk
+`PROFI_3_2GB_6704_15_63.HDD` (zx-pk.ru, the "profi-extender" thread). The Profi's IDE port reads the high byte of a
+word first: a dump has the two bytes of every word swapped, all of them read and written swapped back.
+
+- **Header**: cylinder 1, head 0, sector 1, that is LBA heads x sectors (945 at 15 x 63, 256 at 16 x 16): words H,
+  S, C - 2, 0, 0, H x S, then a byte of the partition count, a byte of the active one, the word of the free
+  cylinders, `ProfiHDD` at +16. The probe looks at every LBA h x s (h <= 16, s <= 63) for a header whose H x S is it.
+- **Partition table**: sectors 2-5 of the same track, 16 entries of 32 bytes a sector (64 at most): the name (16
+  bytes, zero padded: `SYSTEM`, `DISK01`..), 0, #AA, the start cylinder, the cylinders, the size in KB, the directory
+  entries (128 to 1024 by the size; a partition is at most 8 MB). Entries without the #AA mark are no partition.
+- **Partition**: CP/M of the layout above from its start cylinder on with the directory first (no reserved tracks),
+  2 KB blocks, DSM `cylinders x H x S / 4 - 1`, DRM the entry's. The table, not the directory, makes the volume: an
+  empty partition is one. `ASSIGN C:HDD0\SYSTEM D:HDD1\DISK01` gives the CP/M drives; every partition is a volume
+  here, `cpm-<start cylinder>` labelled with its name.
+- **System**: the rest of cylinder 1 from sector 6 holds the boot code the BIOS loads (`MBOOTHDD.COM`); no volume.
+- **Floppy**: 80 cylinders x 2 sides x 5 sectors of 1024 bytes (`DOSBIO.DRV`'s DPB: SPT 40, 2 KB blocks, DSM 399,
+  DRM 127, OFF 0), logical track t on cylinder t / 2, side t % 2, the directory from byte 0. Cylinder 0 side 0
+  has the sector IDs 1, 2, 3, 4, 9 (`FORMAT.COM`'s first track type): the BIOS boots from R = 9 (BIOS 2.0 at
+  #0861, `LD (IX+3),9`), and the floppy driver reads the fifth sector of logical track 0 as R = 9 (`HDD22.DRV` at
+  #094D: the record's sector + 1, 9 instead of 5 while the track is 0), so block 2 lies in it. Not an interleave:
+  the physical order varies between disks (1 9 4 3 2, 9 4 3 2 1), the ID set does not. All 103 floppies of 5 x 1024
+  in the `PROFI_DISK` collection have it, and a disk with it is a volume even empty; 98 of them read, 5 have a damaged
+  directory (a block used twice, user #53). A `.pro` dump loads with that track and saves it back as the fifth sector
+  ([.pro](../../file-formats/disk-images/pro.md)).
+  Klug CP/M 2.3 (`KLUGCPM.TD0`, 82 cylinders) keeps its system on cylinders 0-1: the directory from cylinder 2, DSM
+  389 (its BIOS's DPB: OFF 4), read as `Klug CP/M` when the cylinder 0 directory does not pass.
+
+The BIOS does not read sector 0: the SPM disk also has an MBR with a FAT32 partition from sector 63 over the whole
+disk, its FATs written over by the CP/M partition later. Both are shown.
+
+Writing goes as the BDOS does: the data in the lowest free blocks, the last record padded with #1A (the size reads
+back in whole records), then the entries in free directory slots (EX the entry's last logical extent, RC its records,
+S1 0); an older file of the name goes free in the same directory write and its blocks are not reused for the new
+data. A path `USERn/NAME.TYP` writes to user n (1-15), a bare one to user 0; names are upper-cased. `rename` with a
+path moves the file to another user area. The written images pass `fsck.cpm` of cpmtools (a diskdef of 256-byte
+sectors, 160 tracks of 16, 2 KB blocks, 128 entries, 2 boot tracks), and its `cpmcp` reads the files back.
 
 ## MB-02 layout
 
-BS-DOS 199..308 (`mb02fs.h`; the raw `.mb2` / `.mbd` image: [MB-02 image](../../file-formats/disk-images/mb02.md)).
+BS-DOS 199..309 (`mb02fs.h`; the raw `.mb2` / `.mbd` image: [MB-02 image](../../file-formats/disk-images/mb02.md)).
 1024-byte sectors 1..SPT on two sides, addressed by LSN `2 * SPT * track + SPT * side + (sector - 1)`, one sector a
 cluster.
 
-- **Boot** (LSN 0; LSN 1 its backup): `18 xx` (JR), #02 at #03 (MB-02; #01 is the older MB-01, not read), tracks at
+- **Boot** (LSN 0; LSN 1 its backup): `18 xx` (JR), #02 at #03 (MB-02; #01 is the older MB-01, below), tracks at
   #04, SPT at #06, sides (2) at #08, sectors a cluster (1) at #0A, the DIRS sector at #0C, FAT sectors (1..4) at #0E,
   the FAT length (#400 each) at #10, FAT1 and FAT2 at #12 / #14, their sectors 2..4 as bytes at #1A..#1F (FAT1, FAT2
   in turn), #00 at #20 and #25, the format date at #21, the disk name at #26 (10 characters, the volume's `label`).
@@ -130,6 +183,69 @@ A volume is taken when the boot marks read, the FAT covers the disk and reserves
 the root. On `SYS308.MB2` (`testdata/loaders/mb02/`) the reader gives Busy's listing `SYS308.LST` (3 directories,
 59 files, 1586 free sectors) and every body of the tapes `SYSDIR.TAP` and `MBDEMO.TAP` of the same archive.
 
+Writing goes as BS-DOS does: the boot and directory sectors to LSN 1 (the backup) first, then to their place; both
+FAT copies after the data. A file is a CODE header (type 3, the name blank-padded, length, param 1 the `start`,
+param 2 #8000) with flags #B0, the body address the `start`, flag byte #FF; an empty file has flags #90 and no
+body. Sectors are taken from LSN 2 (the FAT word of LSN 0 is not a reservation on every disk). A file of the same
+name in the directory is written over in its entry; a full directory grows by a sector. `mkdir` takes the first
+free DIRS slot (1..255) and writes the new directory's sector with its header; a directory is deleted only empty,
+moved or renamed with its DIRS XOR, never into itself. The images were checked by an independent parser
+(free sectors, chains, both FATs), not by BS-DOS.
+
+**BS-DOS 309 on a hard disk** (divIDE, `bsdos309-hdd_bios.a80` of the BS-DOS collection): the first primary MBR
+partition of type #47 holds the floppies @1..@255 back to back, 2 MiB (4096 disk sectors) each, as many as the
+partition holds. BS-DOS turns an LSN into track, side and sector by the boot sector's SPT; the BIOS puts that sector
+at `((track * 2 + side) * 11 + sector - 1) * 2` of the floppy, 11 sectors a track whatever the boot sector says
+(93 x 2 x 11 fill the 2 MiB; a floppy of 11 sectors a track is the `.mb2` image as it is). Each floppy that opens
+is a volume `mb02-<n>`; one never formatted (FF17 formats them one by one) is left out.
+
+## MB-01 layout
+
+BS-DOS 52..105 (`mb01fs.h`, read and written), from Busy's own description, "Format diskety MB-01" in
+[mb02form.htm](https://busy.speccy.cz/tvorba/mb02form.htm). Two MB-01 units were ever built (Busy's and Sapo soft's,
+1992, [mb02hist.htm](https://busy.speccy.cz/tvorba/mb02hist.htm)); BS-DOS 105 and the DC58 copier are listed on
+[mb02soft.htm](https://busy.speccy.cz/tvorba/mb02soft.htm) without a file, and no MB-01 disk image is known (Busy's
+`/download/`, the Wayback index of busy.speccy.cz, velesoft, ZXDB, the BS-DOS Total Commander plugins and RIDE know
+MB-02 only). So the reader and the writer follow the description and a disk built from it
+(`Mb01Fs.ABusyDescribedDiskReads`, `Mb01Fs.FilesAndDirectoriesWritten`), not a real disk.
+
+- **Geometry**: 1024-byte sectors, two sides; 40 x 5 (400 KB), 80 x 5 (800 KB) or 80 x 11 (1760 KB); a FAT of 1, 2
+  or 4 sectors. LSNs as on MB-02 (assumed: the description gives none).
+- **Boot**: anywhere on track 0, side 0 (a bad sector there does not spoil the disk), the backup sector right after
+  it; the reader takes the first sector with #80 at 2 and #01 at 3. 0-1 a jump to the loader, 4-13 the disk name
+  (`label`), 14 tracks, 15 sectors a track, 16-19 the format time and date, 20-23 the system's address and length,
+  24 the first LSN of the directory list, 25 of the file list (one byte each: both start in the first 256 sectors),
+  26 the FAT sectors, 27-30 the first FAT1 sector, 31-34 the first FAT2 sector, 37-44 the disk's internal id.
+- **FAT**: a 16-bit word a sector. Bit 15 a deleted sector; bits 12-13 0 normal, 1 system (boot, FAT, lists), 2 bad,
+  3 past the end; bit 14 clear: bits 0-11 the next LSN, set: the bytes of the chain's last sector; 0 free. A FAT of
+  several sectors is taken along its own chain, else consecutive; FAT2 when FAT1 does not read.
+- **Directory list**: one chain of 16-byte entries for the whole disk: 0 the parent's number, 1-4 MS-DOS time and
+  date, 5 valid (0 a free slot), 6-15 the name. A directory's number is its slot; slot 0 is the root. Not only a
+  tree ("nie len stromovej"): a loop or a missing parent is listed at the root, as on MB-02.
+- **File list**: one chain of 32-byte entries: 0 the directory's number, 1-4 MS-DOS time and date, 5 the ID byte
+  (bit 7 deleted, 6 a body, 5 a header, 3-0 the type: 0 BASIC, 1 / 2 arrays, 3 bytes, 4 headerless, 5 / 6 48K /
+  128K snapshots), 6-21 the rest of the tape header (name, length, param 1, param 2), 22-23 the body address,
+  24-26 the body length (`size`), 27 the body's flag byte, 28 attributes, 30-31 the first body LSN. An entry with
+  neither a header nor a body is a free slot; a file without a header is listed as `~<entry>`.
+
+Assumed where the description is silent: little-endian fields, the time before the date (as MB-02, from the same
+author a year later), a list ending with its chain. It speaks of checksums over "every important structure" but
+gives no field for one (the free bytes 35-36 of the boot and 29 of a file entry are marked unused), and of the
+backup sector taking the boot or a list sector before its place. No disk keeps a sum to check, so none is written.
+
+Writing takes MB-02's rules (the same author's next format) where the description is silent: the boot and list
+sectors to the backup sector first, then to their place; both FAT copies, at the sectors the reader found them,
+after the data. A file is a header (the type, the name blank-padded, length, param 1 the `start`, param 2) with ID
+#63 for CODE (#60 a program, its body at 23755), the body address the `start`, flag byte #FF, the first body LSN at
+30; an empty file has ID #23 and no body. A new entry takes the first slot of the file list that holds no file (an
+older file of the name in the directory leaves its own), a full list grows by a system sector (#5400) at the end of
+its chain. A body's sectors are the free ones (word 0) from LSN 1 up (LSN 0 never: a link to it would read as a free
+word), chained by normal words, the last one #4000 + its bytes; deleting sets bit 7 of the ID byte and gives the
+sectors back as 0 (bit 15 of the FAT, a deleted sector, is not set: what BS-DOS does with one is not described).
+`mkdir` takes the first invalid slot (1..255) of the directory list (valid byte 1), growing it the same way; a
+directory is deleted only empty (its slot cleared), moved or renamed in its slot, never into itself. `rename` of a
+file changes its name and the directory byte in place.
+
 ## MDOS layout
 
 Didaktik D40 / D80, MDOS 1 / 2 and the MDOS3 virtual disks of divIDE (`mdosfs.h`; the raw `.d40` / `.d80` image:
@@ -143,29 +259,40 @@ Didaktik D40 / D80, MDOS 1 / 2 and the MDOS3 virtual disks of divIDE (`mdosfs.h`
   sector with n bytes (#E00: all 512), else the next LSN.
 - **Directory** (LSN 6-13): 128 entries of 32 bytes. #00 the type letter (`P` program, `B` bytes, `N` / `C` arrays,
   `S` snapshot, `Q` sequential; #00 and #E5 a free entry), #01 the name (10), #0B the length (24 bits with #15), #0D
-  the start, #0F the second parameter (a program's length without its variables), #11 the first LSN, #13 an
-  undocumented byte, #14 the attributes `HSPARWED` (bit 7 to bit 0). Data from LSN 14 on.
-- **MDOS3**: a partition (MBR type #31) is slots of 1693 sectors: an info sector (`SDOS`, the slot's 32-character
-  name at 4: the volume's `label`) and a 94 x 2 x 9 disk (MDOS3 enlarges the 80 cylinders of a D80). An `.md3` file
-  is such a partition alone; a slot whose info sector has no `SDOS` is empty.
+  the start, #0F the second parameter (a program's length without its variables), #11 the first LSN, #13 the flag
+  byte of a headless file (type `H`, the tape emulator's), #14 the attributes `HSPARWED` (bit 7 to bit 0). Data from LSN 14 on.
+- **MDOS3**: a partition (primary MBR entry of type #49) is slots of 1693 sectors: an info sector (`SDOS`, the slot's
+  32-character name at 4: the volume's `label`, `0` / `1` at 36 for write protection, #E5 past it) and a 94 x 2 x 9
+  disk (MDOS3 enlarges the 80 cylinders of a D80). An `.md3` file is such a partition alone; a slot whose info sector
+  has no `SDOS` is empty. With no #49 partition the firmware (`nmi.a80`) takes the whole disk from its first sector
+  that starts with `SDOS`: the how-to's card is FAT16 with 512-byte clusters whose first files, copied first onto an
+  empty volume, are the slots in a row (`0bootdisk` a whole `.md3`, then `1infosec.bin` + `1moved.d80` +
+  `1space.bin`). The volumes are numbered from that sector; with two #49 partitions or more, `mdos-p<n>-<slot>`.
 
 A volume is taken when the boot sector has the mark and a geometry of 1..94 cylinders and 1..18 sectors a track, and
 the FAT reserves LSN 0-13. A chain that loops, leaves the disk or holds fewer bytes than the length does not read. On
 `mdos3-discs1.md3` (the MDOS3 distribution, 99 slots) the 19 disks give their 860 files; two on slot 13 have short
 chains in the image itself (`TOOLS_3_27.P`, `zdrojak.B`). `testdata/loaders/mdos/` keeps its boot disk as a D80 and
-its first 3 slots.
+its first 3 slots, and a FAT16 card built per the how-to from its `my_CF_16M` files (`MdosFs.Mdos3CardOfFat16Files`).
+
+Writing: a file goes into the first free entry (type byte #00 or #E5) and the free sectors from LSN 14 up, the
+data first, then the FAT, then the entry (#E5 at 22-31, 0 at 19, `RWED` as MDOS saves a file); an older file of the
+name and type is deleted first. An empty file takes no sector: #C00 as its first LSN. A program's second parameter is
+its length (no variables), any other type's #8000 as a tape header's CODE. Deleting writes #E5 over the type byte
+and frees the chain. The 4-bit filler at the end of each FAT sector stays. A slot is written when the device takes
+writes and its info byte 36 is not `1` (MDOS3's write protection).
 
 ## Surfaces
 
 | Surface | Volumes | Directory | File | Write | Delete, rename, mkdir | Attributes, time, label |
 |---|---|---|---|---|---|---|
-| CLI | `media volumes <slot>` | `media files <slot> [dir] [--volume id] [--recursive]` | `media read <slot> <file> [--volume id] [--out path]` (a hex dump of up to 4 KiB without `--out`) | `media write <slot> <file> --in host-file \| --data base64 [--start n] [--header=false] [--volume id]` | `media delete <slot> <file> [--volume id] [--recursive]`, `media rename <slot> <file> <to> [--volume id]`, `media mkdir <slot> <dir> [--volume id] [--parents]` | `media attrib <slot> <file> [+R-H \| RA] [--time "YYYY-MM-DD HH:MM"] [--volume id]`, `media label <slot> <name> [--volume id]` |
-| REST | `GET /media/{slot}/volumes` | `GET /media/{slot}/files?path=&volume=&recursive=` | `GET /media/{slot}/read?path=&volume=&out=&raw=` (`raw=true`: `application/octet-stream`); `POST /media/{slot}/{verb}` too | `POST /media/{slot}/write` (`path`, `data` \| `in`, `start`, `header`, `volume`), or the bytes as the body (`application/octet-stream`, `?path=`) | `POST /media/{slot}/delete` (`path`, `volume`, `recursive`), `POST /media/{slot}/rename` (`path`, `to`, `volume`), `POST /media/{slot}/mkdir` (`path`, `volume`, `parents`) | `POST /media/{slot}/attrib` (`path`, `attributes`, `time`, `volume`), `POST /media/{slot}/label` (`label`, `volume`) |
+| CLI | `media volumes <slot>` | `media files <slot> [dir] [--volume id] [--recursive]` | `media read <slot> <file> [--volume id] [--out path]` (a hex dump of up to 4 KiB without `--out`) | `media write <slot> <file> --in host-file \| --data base64 [--start n] [--header=false] [--type t] [--param2 n] [--attributes RA] [--volume id]` | `media delete <slot> <file> [--volume id] [--recursive]`, `media rename <slot> <file> <to> [--volume id]`, `media mkdir <slot> <dir> [--volume id] [--parents] [--continuous] [--blocks n]` | `media attrib <slot> <file> [+R-H \| RA] [--time "YYYY-MM-DD HH:MM"] [--volume id]`, `media label <slot> <name> [--volume id]` |
+| REST | `GET /media/{slot}/volumes` | `GET /media/{slot}/files?path=&volume=&recursive=` | `GET /media/{slot}/read?path=&volume=&out=&raw=` (`raw=true`: `application/octet-stream`); `POST /media/{slot}/{verb}` too | `POST /media/{slot}/write` (`path`, `data` \| `in`, `start`, `header`, `type`, `param2`, `attributes`, `volume`), or the bytes as the body (`application/octet-stream`, `?path=`) | `POST /media/{slot}/delete` (`path`, `volume`, `recursive`), `POST /media/{slot}/rename` (`path`, `to`, `volume`), `POST /media/{slot}/mkdir` (`path`, `volume`, `parents`, `continuous`, `blocks`) | `POST /media/{slot}/attrib` (`path`, `attributes`, `time`, `volume`), `POST /media/{slot}/label` (`label`, `volume`) |
 | WebSocket | the REST routes as a `call` | | | | | |
-| MCP | `media` `volumes` | `media` `files` (`volume`, `recursive`) | `media` `read` (`volume`, `out`; the text carries base64 up to about 16 KiB) | `media` `write` (`path`, `data` or `in`, `start`, `header`, `volume`) | `media` `delete` (`path`, `volume`, `recursive`), `media` `rename` (`path`, `to`, `volume`), `media` `mkdir` (`path`, `volume`, `parents`) | `media` `attrib` (`path`, `attributes`, `time`, `volume`), `media` `label` (`label`, `volume`) |
-| Python | `emu.media_volumes(slot)` | `emu.media_files(slot, path, volume=, recursive=)` | `emu.media_read(slot, path, volume=, out=)`; `emu.media_read_bytes(slot, path, volume)` gives `bytes` | `emu.media_write(slot, path, data, start=, header=, volume=)` (`data` bytes, or `in_="host file"`) | `emu.media_delete(slot, path, volume=, recursive=)`, `emu.media_rename(slot, path, to, volume=)`, `emu.media_mkdir(slot, path, volume=, parents=)` | `emu.media_attrib(slot, path, attributes=, time=, volume=)`, `emu.media_label(slot, label, volume=)` |
-| Lua | `media_volumes(slot)` | `media_files(slot, dir, {volume=, recursive=})` | `media_read(slot, file, {volume=, out=})`; `media_read_bytes(slot, file, volume)` gives a string or nil and the reason | `media_write(slot, file, bytes, {start=, header=, volume=})` (`bytes` nil: `{["in"] = "host file"}`) | `media_delete(slot, file, {volume=, recursive=})`, `media_rename(slot, file, to, {volume=})`, `media_mkdir(slot, dir, {volume=, parents=})` | `media_attrib(slot, file, {attributes=, time=, volume=})`, `media_label(slot, label, {volume=})` |
-| C++ (analyzers) | `OpenDiskFs(medium)->Volumes()`, or `DiskFs(image)` / `DiskFs(device)` | `List(volume, path, recursive, out, error)` | `Read(volume, path, data, error)` | `Write(volume, path, data, options, error)` | `Delete(volume, path, error, recursive)`, `Rename(volume, path, to, error)`, `MakeDirectory(volume, path, parents, mtime, error)` | `SetAttributes(volume, path, letters, error)`, `SetTime(volume, path, mtime, error)`, `SetLabel(volume, label, mtime, error)` |
+| MCP | `media` `volumes` | `media` `files` (`volume`, `recursive`) | `media` `read` (`volume`, `out`; the text carries base64 up to about 16 KiB) | `media` `write` (`path`, `data` or `in`, `start`, `header`, `type`, `param2`, `attributes`, `volume`) | `media` `delete` (`path`, `volume`, `recursive`), `media` `rename` (`path`, `to`, `volume`), `media` `mkdir` (`path`, `volume`, `parents`, `continuous`, `blocks`) | `media` `attrib` (`path`, `attributes`, `time`, `volume`), `media` `label` (`label`, `volume`) |
+| Python | `emu.media_volumes(slot)` | `emu.media_files(slot, path, volume=, recursive=)` | `emu.media_read(slot, path, volume=, out=)`; `emu.media_read_bytes(slot, path, volume)` gives `bytes` | `emu.media_write(slot, path, data, start=, header=, type=, param2=, attributes=, volume=)` (`data` bytes, or `in_="host file"`) | `emu.media_delete(slot, path, volume=, recursive=)`, `emu.media_rename(slot, path, to, volume=)`, `emu.media_mkdir(slot, path, volume=, parents=, continuous=, blocks=)` | `emu.media_attrib(slot, path, attributes=, time=, volume=)`, `emu.media_label(slot, label, volume=)` |
+| Lua | `media_volumes(slot)` | `media_files(slot, dir, {volume=, recursive=})` | `media_read(slot, file, {volume=, out=})`; `media_read_bytes(slot, file, volume)` gives a string or nil and the reason | `media_write(slot, file, bytes, {start=, header=, type=, param2=, attributes=, volume=})` (`bytes` nil: `{["in"] = "host file"}`) | `media_delete(slot, file, {volume=, recursive=})`, `media_rename(slot, file, to, {volume=})`, `media_mkdir(slot, dir, {volume=, parents=, continuous=, blocks=})` | `media_attrib(slot, file, {attributes=, time=, volume=})`, `media_label(slot, label, {volume=})` |
+| C++ (analyzers) | `OpenDiskFs(medium)->Volumes()`, or `DiskFs(image)` / `DiskFs(device)` | `List(volume, path, recursive, out, error)` | `Read(volume, path, data, error)` | `Write(volume, path, data, options, error)` | `Delete(volume, path, error, recursive)`, `Rename(volume, path, to, error)`, `MakeDirectory(volume, path, parents, mtime \| DiskFsDirectoryOptions, error)` | `SetAttributes(volume, path, letters, error)`, `SetTime(volume, path, mtime, error)`, `SetLabel(volume, label, mtime, error)` |
 
 `read` answers base64 `data` up to 16 MiB; a bigger file needs `out`. An empty slot, a tape or a CD answers
 `not-supported`; a disk with no file system found or a missing file `unreadable-source`.
@@ -174,7 +301,8 @@ The media verbs read a block medium under the time-travel read tap: nothing is j
 C++ caller reads at a coherent moment (the emulator paused, parked, or on its own thread).
 
 `zxdisk` gives the same on image files: `zxdisk volumes <image>`, `zxdisk ls <image> [dir] [-r]`, `zxdisk cat <image>
-<file> [-o out]`, `zxdisk put <image> <host-file> [name] [--start n]`, `zxdisk rm <image> <file> [-r]`, `zxdisk mv <image>
+<file> [-o out]`, `zxdisk put <image> <host-file> [name] [--start n] [--type t]
+[--param2 n] [--attributes RA]`, `zxdisk rm <image> <file> [-r]`, `zxdisk mv <image>
 <file> <new-name>`, `zxdisk mkdir <image> <dir> [-p]`, `zxdisk attrib <image> <file> [+R-H|RA] [--time t]`, `zxdisk
 label <image> <name>`. The writing verbs save a floppy back (or to `-o`, its extension picking the format); a hard
 disk or card image is changed in place, or copied to `-o` first and the copy changed.
@@ -185,13 +313,18 @@ disk or card image is changed in place, or copied to `-o` first and the copy cha
 
 - **TR-DOS**: `NAME.T` (a type byte that is no letter as `\xNN`); `start` is the start field, `lengthField` false
   leaves the length 0 (as XAS saves).
-- **+3DOS**: `NAME.TYP` (1-8 characters, a type of up to 3), a +3DOS header unless `header` is false; `start` is the
-  CODE address.
+- **+3DOS**: `NAME.TYP` (1-8 characters, a type of up to 3), a +3DOS header unless `header` is false; `basicType`
+  is the header's type (0 program, 1 number array, 2 char array, 3 CODE, the default), `start` its param 1 (CODE's
+  load address, a program's autostart line), `param2` its param 2 (default: a program's length, else 32768).
 - **iS-DOS / TASiS**: a file into a catalogue (`SHELL/new.txt`), laid out as the kernel lays it out: the first free
   slot of the catalogue (it grows by 32 bytes, see below), the blocks
   first fit from block 0, continuous when one run of at most 255 blocks holds it, else segmented (a table block and up
   to 85 runs). `start` is the load address; FSUM (the checksum at +26), the date and the time are set, NEFIL counts it.
   Names: letters, digits and ``#$&+-=_\`!@%'(){|}~``, Cyrillic as CP866; at most 126 files in a catalogue.
+- **MB-02**: a file into a directory (`Games/klad`) with a tape header: `basicType` 0 (a program, its body at 23755)
+  or 3 (CODE, the default, its body at `start`), `start` param 1, `param2` param 2 as on +3DOS. Arrays are refused:
+  their body address is not known.
+- **MDOS**: `NAME.T`, the type from the name's letter (`P`, `B`, `N`, `C`); `start` param 1, `param2` param 2.
 - **FAT12 / 16 / 32**: any path of an existing directory, a long name with its 8.3 alias; the clusters checked
   against the free space first, the date and time from the host's wall clock.
 
@@ -209,7 +342,7 @@ in the file's directory; on iS-DOS and FAT a path from the root (`/top.txt`, `/G
 directory with its contents. A directory never moves into itself. On iS-DOS `device.sys`, `boot.sys`, the kernel
 file named by the descriptor and files with the delete-protect bit (status bit 7) are refused.
 
-`MakeDirectory(volume, path, parents)` makes a directory; `parents` makes the missing ones on the way (an existing
+`MakeDirectory(volume, path, parents)` makes a directory (`DiskFsDirectoryOptions`: `mtime`, iS-DOS `continuous` and `blocks`); `parents` makes the missing ones on the way (an existing
 directory is then no error, a file of that name is). TR-DOS and +3DOS have none ("the <system> volume '<id>' has no
 directories"). Per file system:
 
@@ -225,6 +358,19 @@ directories"). Per file system:
   the new parent, and the levels of it and of every catalogue below follow; refused when the deepest would pass 6.
   Names are upper-cased, the kernel compares all 11 bytes.
 
+  `continuous` makes a continuous catalogue as TASiS `mkdir.com /c` does (its help: "/с - создается непрерывный
+  подкаталог", disassembled from `SHELL/mkdir.com` of `tasis540.fdi`): the template's status gets bit 6 (#61) and
+  `$crfil` gives it one run with no segment table, +17 and +19 both its first block. `blocks` sets the size as
+  `/s<n>` does (+14 = n * 256; `mkdir.com` keeps `((n - 1) & 15) + 1`, here 1-16 or a refusal), for a segmented
+  catalogue too. Entry 0 is the same as for a segmented one. The `MY_DOCS` catalogues of `tasis540.fdi` were made
+  this way (status #61, +17 = +19, the parent's +14 768: `/c` with the default 3 blocks). With `parents` only the
+  last directory takes `continuous` and `blocks`; another file system refuses them.
+
+`basicType` (the media verbs' `type`: `program`, `numbers`, `chars`, `code` or 0-3) on any other file system is
+refused ("type 1: the <system> volume takes no header type"), as is `param2` ("keeps no header param 2") and a type or
+param 2 with `header` false. `attributes` takes the letters `SetAttributes` takes (below), checked before the write
+and set right after it: a letter the volume lacks writes nothing.
+
 ## Attributes, times, labels
 
 `SetAttributes(volume, path, letters)` takes the volume's attribute letters (`DiskFsVolume::attributes`), any case:
@@ -237,9 +383,10 @@ UTC seconds of the DOS wall clock (the media verbs' `time` takes `YYYY-MM-DD HH:
 |---|---|---|---|---|
 | FAT12 / 16 / 32 | `RHSA`: read only, hidden, system, archive | `RHSVDA` | 2-second steps, the entry's write date and time | the root's volume entry (made in a free slot, the FAT32 root grows for it; `""` deletes it) and the boot sector's copy at +43 / +71 (FAT32 also in the backup boot sector; `NO NAME` when cleared); up to 11 short-name characters, upper-cased |
 | iS-DOS / TASiS | `RWHD`: read-protect (status bit 2), write-protect (3), hidden (4), delete-protect (7) | `SRWHD` (`S` segmented) | +28 time, +30 date; a catalogue gets both in its parent's entry and its own entry 0 | the device name in block 0 at +2: 8 characters, 11 on a Chic disk with no `DSK` at +10 |
-| ATM CP/M (read only) | none | `RSA` (bit 7 of t1', t2', t3') | none | none (`label`: the drive `D:` or the `.CDS` file) |
-| MB-02 (read only) | none | none (the byte is the `attributes` field) | none (`mtime`: the entry's date) | none (`label`: the disk name) |
-| MDOS (read only) | none | `HSPARWED`: hidden, system, protected, archive, read, write, execute, delete | none | none (`label`: the disk name, an MDOS3 slot's name) |
+| ATM CP/M | `RSA`: read only, system, archive (bit 7 of t1', t2', t3'; a read-only file is not deleted, written over or renamed) | `RSA` | none | none (`label`: the drive `D:` or the `.CDS` file) |
+| MB-02 | none | none (the byte is the `attributes` field) | 2-second steps, the entry's #01 time and #03 date; a directory's in its header | the disk name at #26 of the boot sector (10 characters, blanks after it) |
+| MB-01 | none | none (the byte is the `attributes` field) | 2-second steps, the entry's 1 time and 3 date; a directory's in its slot of the directory list | the disk name at 4 of the boot sector (10 characters, blanks after it) |
+| MDOS | `HSPARWED`: hidden, system, protected, archive, read, write, execute, delete (entry +20, bit 7 to bit 0; a file without `D` is not deleted or written over) | `HSPARWED` | none | the disk name at 192 (10 bytes, zeroes after it); an MDOS3 slot's name in its info sector (32 characters, blanks after it) |
 | +3DOS | `RSA`: bit 7 of the type bytes t1', t2', t3' (read only, system, archive) | `RSA` | none | none |
 | TR-DOS | none | | none | the disk title, 8 printable ASCII characters at +#F5 of the info sector |
 
@@ -262,13 +409,18 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
 
 ## Limits
 
-- iS-DOS: a catalogue is made segmented of the standard size (as `mkdir.com`); there is no continuous one.
-- iS-DOS: files are written with no R / W / hidden bits (`attrib` sets them after).
-- ATM CP/M is read only. A hard disk partition is found only when the configuration record or a `.CDS` file on a
-  partition found names it.
-- MB-02 is read only; floppies only. The BS-DOS 309 hard disk (a #47 partition of virtual discs) is not read: no
-  image to check its layout. MB-01 (BS-DOS 52-105, #01 at #03) is not read.
-- MDOS is read only. An MDOS3 partition is found by its MBR type #31 (the MDOS3 documentation's); no real hard disk
-  image to check it, only the `.md3` container. The info sector's bytes past the name are not read.
+- ATM CP/M: no directories (USER1..USER15 are user areas, there while a file is in one). A hard disk partition no
+  configuration record or `.CDS` file names is found by its directory only at a track of the image's geometry (16 x
+  63 for a raw image without one), when the first 16 entries hold a file with a name, and is read only.
+- MB-02: files are written as a program or CODE (no arrays), no attributes (the byte at #1D is undocumented). The BS-DOS 309 hard disk layout
+  comes from its BIOS source, not from an image of a real disk.
+- MB-01: from its description (see [MB-01 layout](#mb-01-layout)); no real disk or BS-DOS 52..105 checks the
+  reader or the writer. Files are written as on MB-02 (a program or CODE, no attributes).
+- MDOS: no file times (MDOS keeps none). An MDOS3 partition is found by its MBR type #49 (`nmi.a80`); without one
+  the firmware reads the disk sector by sector up to the first `SDOS` one. Here the first sector of every FAT file,
+  and outside the FAT volumes the first 4096 sectors (2 MiB) only: reading a 2 GB disk sector by sector takes about
+  10 seconds, too slow for each look at the disk.
+- iS-DOS: the HDD driver keeps where its devices start in its own settings, not on the disk. A device is found at a
+  cylinder boundary of the image's geometry or within a cylinder (1008 sectors) after another volume's end; one placed
+  further off, past an unused gap, is not.
 - Not read: other file systems of a hard disk.
-- An iS-DOS device on a hard disk is found at a cylinder boundary only.

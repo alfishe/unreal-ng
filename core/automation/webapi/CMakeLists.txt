@@ -176,6 +176,7 @@ set(COMMON_SOURCES
     src/api/lifecycle_api.cpp
     src/api/operations_api.cpp
     src/api/session_api.cpp
+    src/api/callbacks_api.cpp
     src/api/companion_api.cpp
     src/api/settings_api.cpp
     src/api/features_api.cpp
@@ -201,6 +202,8 @@ set(COMMON_SOURCES
     src/api/snapshot_api.cpp
     src/common/upload_helper.h
     src/common/upload_helper.cpp
+    src/common/upload_sweep.h
+    src/common/upload_sweep.cpp
     src/api/interpreter_api.cpp
     src/api/interpreter_api.h
     src/api/basic_api.cpp

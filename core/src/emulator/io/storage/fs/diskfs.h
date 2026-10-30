@@ -14,6 +14,7 @@ class Medium;
 using unrealdisk::DiskFs;
 using unrealdisk::DiskFsEntry;
 using unrealdisk::DiskFsVolume;
+using unrealdisk::DiskFsDirectoryOptions;
 using unrealdisk::DiskFsWriteOptions;
 
 /// A slot's medium: a floppy, or a block medium read under the time travel read tap (nothing is journalled). Null for

@@ -157,6 +157,17 @@ public:
     bool hadAudioActivityLastFrame() const override { return _wasActive; }
     bool isCPUHalted() const override { return _cpu && Z80CpuHalted(_cpu) != 0; }
     uint16_t getCPUReg(GSCpuRegister reg) const override;
+    // Card CPU debugging (gs-debugger design §4)
+    bool setDebugHooks(IGSDebugHooks* hooks) override;
+    CardPage mapCardAddress(uint16_t addr) const override;
+    uint32_t cardPageCount(CardPage::Kind kind) const override;
+    bool cardRegisters(Z80CpuRegisters& out) const override;
+    int64_t cardTime() const override { return totalGsCycles(); }
+    double cardUnitsPerSecond() const override { return _unitsPerSecond; }
+    int64_t cardFrameTime() const override { return totalGsCycles() - _frameStartGsCycles; }
+    bool inFrameEndCatchUp() const override { return _frameEndCatchUp; }
+    bool pokeCardMemory(uint16_t addr, uint8_t value) override;
+    bool setCardRegisters(const Z80CpuRegisters& regs) override;
 
     // Coprocessor capability: this is the LLE personality
     bool hasCoprocessor() const override { return true; }
@@ -358,6 +369,13 @@ private:
     static uint8_t gsPortReadMultiSound(Z80CPU* cpu, uint16_t port, void* userData);
     static void gsPortWriteMultiSound(Z80CPU* cpu, uint16_t port, uint8_t value, void* userData);
     static uint8_t gsIntRead(Z80CPU* cpu, void* userData);
+    // The same with the debug hooks told (setDebugHooks): the access done, then reported
+    static uint8_t gsMemReadDebug(Z80CPU* cpu, uint16_t addr, int m1State, void* userData);
+    static void gsMemWriteDebug(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData);
+    static uint8_t gsPortReadDebug(Z80CPU* cpu, uint16_t port, void* userData);
+    static void gsPortWriteDebug(Z80CPU* cpu, uint16_t port, uint8_t value, void* userData);
+    /// The CPU's bus: the plain callbacks of the port rules, or the debug ones
+    void bindBus();
 
     // GS-side port handlers (ports 0x00-0x0B): classic, and the MultiSound
     // CPLD's rules (GSPortRules), bound per profile at construction
@@ -392,8 +410,15 @@ private:
 
     // Lazy sync core
     void flush();                      // run GS to the current ZX tact
+    void runToDebug(int64_t targetGsCycles);  // out of line: the debug loop's code stays away from the fast loop's
     void runTo(int64_t targetGsCycles)
     {
+        // A debugger's hooks: the debug loop (one test per run, never per instruction)
+        if (_debugHooks) [[unlikely]]
+        {
+            runToDebug(targetGsCycles);
+            return;
+        }
         // The classic timing (1 unit per cycle, INT held until accepted) runs
         // its own policy: its per-instruction path is the pre-profile one
         if (_classicTiming)
@@ -475,6 +500,7 @@ private:
     GSCardRunner<SoundChip_GeneralSound> _runner;
     int64_t _gsCyclesAbs = 0;
     int64_t _frameStartGsCycles = 0;
+    bool _frameEndCatchUp = false;  // inside handleFrameEnd's run (a card hook's edit names the frame)
     uint64_t _frameStartZxTacts = 0;
     int64_t _frameGsCycles = 0;
     bool _nmiPending = false;
@@ -492,6 +518,7 @@ private:
     GSActivityCounters _activityCounters;
     GSPortTraceRecorder _portTrace;
     IGSBusObserver* _busObserver = nullptr;
+    IGSDebugHooks* _debugHooks = nullptr;  // a card CPU debugger (setDebugHooks): the debug loop and bus
     uint32_t currentFrameNumber() const;
     void traceEvent(GSTraceSide side, uint16_t port, uint8_t value, bool isOut, uint8_t channel = 0, uint8_t extraFlags = 0);
 };

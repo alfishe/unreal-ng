@@ -282,6 +282,63 @@ TEST_F(DZRPServer_test, UnknownCommandReturnsEmptyAck)
     EXPECT_TRUE(regs.valid);
 }
 
+TEST_F(DZRPServer_test, DezogifCommandsAnswerInTheirOwnFormat)
+{
+    // SET_BREAKPOINTS / RESTORE_MEM / LOOPBACK / EXEC_ASM / INTERRUPT_ON_OFF: dezogif and CSpect commands, not
+    // advertised, still answered the way DeZog's other remotes parse them
+    init();
+    installProgram();
+
+    // SET_BREAKPOINTS: the original byte at each 3-byte long address; memory stays as it is
+    auto set = _client.command(dzrp::CommandId::CMD_SET_BREAKPOINTS, cat({u16(PROGRAM_START), {0}, u16(PROGRAM_LOOP), {0}}));
+    ASSERT_TRUE(set.valid);
+    EXPECT_EQ(set.payload, (std::vector<uint8_t>{0xF3, 0x3E}));
+    EXPECT_EQ(_adapter->readMemory(PROGRAM_START, 2), (std::vector<uint8_t>{0xF3, 0x3E}));
+
+    // RESTORE_MEM: nothing was patched, so it writes nothing (a program write since stays)
+    _adapter->writeMemory(PROGRAM_START, {0x00});
+    auto restore = _client.command(dzrp::CommandId::CMD_RESTORE_MEM, cat({u16(PROGRAM_START), {0}, {0xF3}}));
+    ASSERT_TRUE(restore.valid);
+    EXPECT_TRUE(restore.payload.empty());
+    EXPECT_EQ(_adapter->readMemory(PROGRAM_START, 1), (std::vector<uint8_t>{0x00}));
+
+    // LOOPBACK: the payload back
+    auto loop = _client.command(dzrp::CommandId::CMD_LOOPBACK, {1, 2, 3});
+    ASSERT_TRUE(loop.valid);
+    EXPECT_EQ(loop.payload, (std::vector<uint8_t>{1, 2, 3}));
+
+    // EXEC_ASM: error 1 (not supported) + F A C B E D L H
+    auto exec = _client.command(dzrp::CommandId::CMD_EXEC_ASM, {0x00});
+    ASSERT_TRUE(exec.valid);
+    ASSERT_EQ(exec.payload.size(), 9u);
+    EXPECT_EQ(exec.payload[0], 1);
+
+    // INTERRUPT_ON_OFF: IFF1 / IFF2, an empty ACK
+    auto on = _client.command(dzrp::CommandId::CMD_INTERRUPT_ON_OFF, {1});
+    ASSERT_TRUE(on.valid);
+    EXPECT_TRUE(on.payload.empty());
+    EXPECT_EQ(_emulator->GetZ80State()->iff1, 1);
+    _client.command(dzrp::CommandId::CMD_INTERRUPT_ON_OFF, {0});
+    EXPECT_EQ(_emulator->GetZ80State()->iff1, 0);
+}
+
+TEST_F(DZRPServer_test, AReadWriteWatchpointHitByAWriteNotifiesWriteWithTheBank)
+{
+    init();
+    installProgram();
+    auto add = _client.command(dzrp::CommandId::CMD_ADD_WATCHPOINT,
+                               cat({u16(WATCH_TARGET), {0}, u16(1), {static_cast<uint8_t>(dzrp::WatchAccess::READ_WRITE)}}));
+    ASSERT_TRUE(add.valid);
+    auto cont = _client.command(dzrp::CommandId::CMD_CONTINUE, std::vector<uint8_t>(11, 0));
+    ASSERT_TRUE(cont.valid);
+
+    auto ntf = _client.waitNotification();
+    ASSERT_TRUE(ntf.valid);
+    EXPECT_EQ(ntf.reason, static_cast<uint8_t>(dzrp::BreakReason::WATCHPOINT_WRITE));
+    EXPECT_EQ(ntf.address, WATCH_TARGET);
+    EXPECT_EQ(ntf.bank, 3) << "bank 2 (0x8000-0xBFFF) + 1";
+}
+
 /// endregion </Handshake / capabilities>
 
 /// region <Registers / memory over the wire>

@@ -32,6 +32,7 @@
 #include <debugger/snapshot/debugsnapshot.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/breakpoints/breakpointselection.h>
+#include <debugger/targets/debugtarget.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
@@ -152,6 +153,16 @@ Json::Value BreakpointPageJson(const BreakpointDescriptor& bp)
     if (bp.matchType != BRK_MATCH_BANK_ADDR)
         return Json::Value(Json::nullValue);
     Json::Value page;
+    if (bp.nextSystemPage)
+    {
+        // The ZX Next's DivMMC / Multiface memory: {kind: divmmc, page: bank}, or divmmcrom / mfrom / mfram alone
+        const std::string name = BreakpointManager::PageSpecName(bp);
+        const size_t digits = name.find_first_of("0123456789");
+        page["kind"] = name.substr(0, digits);
+        if (digits != std::string::npos)
+            page["page"] = std::stoi(name.substr(digits));
+        return page;
+    }
     page["kind"] = BreakpointManager::PageKindName(bp.pageType);
     page["page"] = bp.page;
     return page;
@@ -183,6 +194,26 @@ Json::Value BreakpointJson(const BreakpointDescriptor& bp)
                   : (bp.keyType & BRK_KEY_RELEASE)                               ? "release"
                                                                                  : "press";
     }
+    if (bp.type == BRK_CHIPREG)
+    {
+        j["chip"] = SoundChipKindName(static_cast<SoundChipKind>(bp.chip));
+        if (bp.chipUnit != kSoundChipAnyUnit)
+            j["unit"] = bp.chipUnit;
+        if (bp.nrMask)
+        {
+            j["value"] = bp.nrValue & bp.nrMask;
+            j["value_mask"] = bp.nrMask;
+        }
+    }
+    if (bp.type == BRK_EVENT)
+    {
+        j["event"] = GSCardEventName(static_cast<GSCardEvent>(bp.z80address));
+        if (bp.nrMask)
+        {
+            j["value"] = bp.nrValue & bp.nrMask;
+            j["value_mask"] = bp.nrMask;
+        }
+    }
     if (bp.type == BRK_NEXTREG)
     {
         j["doors"] = BreakpointManager::NextRegDoorsName(bp.nrDoors);
@@ -196,6 +227,14 @@ Json::Value BreakpointJson(const BreakpointDescriptor& bp)
     if (bp.hitMode != BRK_HIT_ALWAYS)
         j["hit_target"] = static_cast<Json::UInt>(bp.hitTarget);
     j["hit_count"] = static_cast<Json::UInt>(bp.hitCount);
+    if (bp.condition)
+    {
+        // Counted on every match; hit_count counts the matches whose condition held
+        j["condition"] = bp.condition->Canonical();
+        j["match_count"] = static_cast<Json::UInt>(bp.matchCount);
+        if (bp.conditionFailed)
+            j["condition_error"] = bp.conditionError;
+    }
     j["active"] = bp.active;
     j["note"] = bp.note;
     j["group"] = bp.group;
@@ -214,13 +253,15 @@ Json::Value StepStopJson(const Emulator& emulator)
 {
     const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
     Json::Value json;
-    json["cpu"] = "main";
+    json["cpu"] = DebugCpuName(stop.cpu);
     json["reason"] = stop.hit ? "breakpoint" : "step";
     if (stop.hit)
     {
         json["breakpoint_id"] = stop.breakpointId;
         json["address"] = stop.address;
         json["access"] = BreakpointHitKindName(stop.kind);
+        if (stop.cpu != DebugCpuId::Main)
+            json["cpu_pc"] = stop.cpuPc;
     }
     return json;
 }
@@ -775,6 +816,86 @@ void EmulatorAPI::setDebugMode(const HttpRequestPtr& req, std::function<void(con
 
 // region Breakpoints
 
+namespace
+{
+void ReplyJson(std::function<void(const HttpResponsePtr&)>& callback, const Json::Value& body, HttpStatusCode status)
+{
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(status);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+void ReplyError(std::function<void(const HttpResponsePtr&)>& callback, HttpStatusCode status, const char* error,
+                const std::string& message)
+{
+    Json::Value body;
+    body["error"] = error;
+    body["message"] = message;
+    ReplyJson(callback, body, status);
+}
+
+/// The selection of the bulk routes: "select" (all, an id, a kind, group:<name>), or "id" / "kind" / "group" alone;
+/// none: all. False after a 400 reply
+bool SelectionFromJson(const Json::Value* body, const std::string& query, BreakpointSelection& selection,
+                       std::function<void(const HttpResponsePtr&)>& callback)
+{
+    std::string error;
+    bool ok = true;
+    if (!query.empty())
+        ok = BreakpointSelection::Parse(query, selection, error);
+    else if (body != nullptr && body->isMember("select"))
+        ok = BreakpointSelection::Parse((*body)["select"].asString(), selection, error);
+    else if (body != nullptr && body->isMember("id"))
+        ok = BreakpointSelection::Parse((*body)["id"].asString(), selection, error) &&
+             (selection.GetKind() == BreakpointSelection::Kind::Id || (error = "'id': a breakpoint id", false));
+    else if (body != nullptr && body->isMember("group"))
+        selection = BreakpointSelection::Group((*body)["group"].asString());
+    else if (body != nullptr && body->isMember("kind"))
+        ok = BreakpointSelection::Parse((*body)["kind"].asString(), selection, error);
+    else
+        selection = BreakpointSelection::All();
+    if (!ok)
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", error);
+    return ok;
+}
+
+Json::Value SelectionJson(const BreakpointSelection& selection, const BreakpointManager& manager)
+{
+    Json::Value ret;
+    ret["select"] = selection.Name();
+    Json::Value ids(Json::arrayValue);
+    for (const uint16_t bpId : selection.Select(manager))
+        ids.append(bpId);
+    ret["ids"] = ids;
+    ret["selected"] = ids.size();
+    const std::optional<bool> active = selection.IsActive(manager);
+    ret["active"] = active ? Json::Value(*active) : Json::Value(Json::nullValue);
+    return ret;
+}
+
+/// The breakpoints of the CPU a route names: ?cpu= or the body's "cpu" (main, gs; none: main). Null after the reply
+BreakpointManager* ManagerOrError(const std::shared_ptr<Emulator>& emulator, const HttpRequestPtr& req,
+                                  std::function<void(const HttpResponsePtr&)>& callback)
+{
+    std::string name = req->getParameter("cpu");
+    if (name.empty())
+        if (auto json = req->getJsonObject(); json && (*json)["cpu"].isString())
+            name = (*json)["cpu"].asString();
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!DebugManager::ParseCpuName(name, cpu))
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "'cpu': main, gs or ms");
+        return nullptr;
+    }
+    EmulatorContext* ctx = emulator->GetContext();
+    BreakpointManager* bpm = ctx && ctx->pDebugManager ? ctx->pDebugManager->GetBreakpointsManager(cpu) : nullptr;
+    if (bpm == nullptr)
+        ReplyError(callback, HttpStatusCode::k500InternalServerError, "Internal Error", "Breakpoint manager not available");
+    return bpm;
+}
+}  // namespace
+
 /// @brief GET /api/v1/emulator/{id}/breakpoints
 /// @brief List all breakpoints
 void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
@@ -797,7 +918,9 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
         return;
     }
     
-    BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
+    if (!bpm)
+        return;
     
     Json::Value ret;
     Json::Value breakpointsArray(Json::arrayValue);
@@ -839,6 +962,12 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
                     break;
                 case BRK_MAGIC:
                     bpObj["type"] = "magic";
+                    break;
+                case BRK_EVENT:
+                    bpObj["type"] = "event";
+                    break;
+                case BRK_CHIPREG:
+                    bpObj["type"] = "chipreg";
                     break;
                 default:
                     bpObj["type"] = "unknown";
@@ -886,6 +1015,7 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
         }
     }
     
+    ret["cpu"] = bpm && bpm->Target() ? bpm->Target()->Name() : "main";
     ret["count"] = breakpointsArray.size();
     ret["breakpoints"] = breakpointsArray;
     
@@ -914,18 +1044,10 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
     };
 
     auto* ctx = emulator->GetContext();
-    BreakpointManager* bpm = ctx && ctx->pDebugManager ? ctx->pDebugManager->GetBreakpointsManager() : nullptr;
+    // "cpu": main (default) or gs: whose breakpoint it is
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
     if (!bpm)
-    {
-        Json::Value error;
-        error["error"] = "Internal Error";
-        error["message"] = "Breakpoint manager not available";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-        addCorsHeaders(resp);
-        callback(resp);
         return;
-    }
 
     auto json = req->getJsonObject();
     if (!json)
@@ -966,9 +1088,34 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         spec.type = BRK_MAGIC, spec.access = BRK_IO_OUT;
     else if (type == "keyboard" || type == "key")
         spec.type = BRK_KEYBOARD, spec.access = BRK_KEY_PRESS;
+    else if (type == "event")
+        spec.type = BRK_EVENT, spec.access = 0;
+    else if (type == "chipreg")
+    {
+        // A sound chip's register write ("chip": ay, fm, saa, opl4, opl4wave, dac, cbl; "address" the register,
+        // "address_end" a range, "unit" one chip of the kind; chipregister.h)
+        SoundChipKind chip = SoundChipKind::Count;
+        if (!body["chip"].isString() || !ParseSoundChipKind(body["chip"].asString().c_str(), chip))
+        {
+            badRequest("'chip': ay, fm, saa, opl4, opl4wave, dac or cbl");
+            return;
+        }
+        spec.type = BRK_CHIPREG, spec.access = 0;
+        spec.chip = static_cast<uint8_t>(chip);
+        uint32_t unit = 0;
+        if (body.isMember("unit") && !body["unit"].isNull())
+        {
+            if (!ParseJsonUInt(body["unit"], 0xFE, unit))
+            {
+                badRequest("'unit' must be 0..254 (the chip's number on its device)");
+                return;
+            }
+            spec.chipUnit = static_cast<uint8_t>(unit);
+        }
+    }
     else
     {
-        badRequest("Invalid type. Use: execution, read, write, rw, port_in, port_out, port, nextreg_write, nextreg_read, nextreg, beam, copper, magic_ed_ff, magic_dd_01, keyboard");
+        badRequest("Invalid type. Use: execution, read, write, rw, port_in, port_out, port, nextreg_write, nextreg_read, nextreg, beam, copper, magic_ed_ff, magic_dd_01, keyboard, event, chipreg");
         return;
     }
 
@@ -991,6 +1138,20 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
     {
         // The opcode is the type (ED FF / DD 01); no address
         value = type == "magic_ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01;
+    }
+    else if (spec.type == BRK_EVENT)
+    {
+        // A sound card's protocol event or a machine event by name ("event": "card_command", "host_data", "cpu_int",
+        // ...; gsdebughooks.h); the card's side on the gs CPU, the host's and the machine's on the main one; "value" /
+        // "value_mask" filter its byte
+        GSCardEvent kind = GSCardEvent::Count;
+        if (!body["event"].isString() || !ParseGSCardEvent(body["event"].asString().c_str(), kind))
+        {
+            badRequest("'event': int, nmi, reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, "
+                       "dma_start, dma_done, gscfg0 (cpu gs), host_command, host_data, host_reply, cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done, tsdma_start, tsdma_done, pld_read, pld_write, pld_event, fdc_command, fdc_done (cpu main)");
+            return;
+        }
+        value = static_cast<uint32_t>(kind);
     }
     else if (spec.type == BRK_KEYBOARD)
     {
@@ -1125,6 +1286,22 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         badRequest("'hit_mode' must be always, equal, at_least or multiple");
         return;
     }
+    // Condition: an expression in the Unreal language (condition_dialect "c": C precedence, decimal numbers)
+    if (body.isMember("condition"))
+    {
+        if (!body["condition"].isString())
+        {
+            badRequest("'condition' must be a string");
+            return;
+        }
+        spec.condition = body["condition"].asString();
+    }
+    if (body.isMember("condition_dialect") &&
+        !BreakpointConditionProgram::ParseDialect(body["condition_dialect"].asString(), spec.conditionDialect))
+    {
+        badRequest("'condition_dialect' must be unreal or c");
+        return;
+    }
     if (body.isMember("note") && body["note"].isString())
         spec.note = body["note"].asString();
     if (body.isMember("group") && body["group"].isString())
@@ -1142,6 +1319,7 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
     const BreakpointSnapshot added = bpm->GetBreakpointById(bpId);
     Json::Value ret = added ? BreakpointJson(*added) : Json::Value(Json::objectValue);
     ret["id"] = bpId;
+    ret["cpu"] = bpm->Target() ? bpm->Target()->Name() : "main";
     ret["status"] = "success";
     ret["type"] = type;
     ret["message"] = "Breakpoint added";
@@ -1159,7 +1337,9 @@ void EmulatorAPI::resetBreakpointHits(const HttpRequestPtr& req, std::function<v
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
-    BreakpointManager* bpm = emulator->GetBreakpointManager();
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
+    if (!bpm)
+        return;
     auto json = req->getJsonObject();
     Json::Value ret;
     if (bpm && json && json->isMember("id"))
@@ -1191,7 +1371,7 @@ void EmulatorAPI::resetBreakpointHits(const HttpRequestPtr& req, std::function<v
 
 /// @brief DELETE /api/v1/emulator/{id}/breakpoints
 /// @brief Clear all breakpoints
-void EmulatorAPI::clearBreakpoints(const HttpRequestPtr& /*req*/,
+void EmulatorAPI::clearBreakpoints(const HttpRequestPtr& req,
                                    std::function<void(const HttpResponsePtr&)>&& callback,
                                    const std::string& id) const
 {
@@ -1212,7 +1392,9 @@ void EmulatorAPI::clearBreakpoints(const HttpRequestPtr& /*req*/,
         return;
     }
     
-    BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
+    if (!bpm)
+        return;
     if (bpm)
     {
         // The user's breakpoints: the BASIC typer's control points and the debugger adapters' stay with their owners
@@ -1230,7 +1412,7 @@ void EmulatorAPI::clearBreakpoints(const HttpRequestPtr& /*req*/,
 
 /// @brief DELETE /api/v1/emulator/{id}/breakpoints/{bp_id}
 /// @brief Remove specific breakpoint
-void EmulatorAPI::removeBreakpoint(const HttpRequestPtr& /*req*/,
+void EmulatorAPI::removeBreakpoint(const HttpRequestPtr& req,
                                    std::function<void(const HttpResponsePtr&)>&& callback,
                                    const std::string& id, const std::string& bpIdStr) const
 {
@@ -1256,7 +1438,9 @@ void EmulatorAPI::removeBreakpoint(const HttpRequestPtr& /*req*/,
     if (!ParseJsonUInt(Json::Value(bpIdStr), 0xFFFF, parsedId))
         parsedId = BRK_INVALID;
     const uint16_t bpId = static_cast<uint16_t>(parsedId);
-    BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
+    if (!bpm)
+        return;
     bool removed = bpm ? bpm->RemoveBreakpointByID(bpId) : false;
     
     Json::Value ret;
@@ -1279,7 +1463,7 @@ void EmulatorAPI::removeBreakpoint(const HttpRequestPtr& /*req*/,
 
 /// @brief PUT /api/v1/emulator/{id}/breakpoints/{bp_id}/enable
 /// @brief Enable breakpoint
-void EmulatorAPI::enableBreakpoint(const HttpRequestPtr& /*req*/,
+void EmulatorAPI::enableBreakpoint(const HttpRequestPtr& req,
                                    std::function<void(const HttpResponsePtr&)>&& callback,
                                    const std::string& id, const std::string& bpIdStr) const
 {
@@ -1305,7 +1489,9 @@ void EmulatorAPI::enableBreakpoint(const HttpRequestPtr& /*req*/,
     if (!ParseJsonUInt(Json::Value(bpIdStr), 0xFFFF, parsedId))
         parsedId = BRK_INVALID;
     const uint16_t bpId = static_cast<uint16_t>(parsedId);
-    BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
+    if (!bpm)
+        return;
     bool success = bpm ? bpm->ActivateBreakpoint(bpId) : false;
     
     Json::Value ret;
@@ -1320,7 +1506,7 @@ void EmulatorAPI::enableBreakpoint(const HttpRequestPtr& /*req*/,
 
 /// @brief PUT /api/v1/emulator/{id}/breakpoints/{bp_id}/disable
 /// @brief Disable breakpoint
-void EmulatorAPI::disableBreakpoint(const HttpRequestPtr& /*req*/,
+void EmulatorAPI::disableBreakpoint(const HttpRequestPtr& req,
                                     std::function<void(const HttpResponsePtr&)>&& callback,
                                     const std::string& id, const std::string& bpIdStr) const
 {
@@ -1346,7 +1532,9 @@ void EmulatorAPI::disableBreakpoint(const HttpRequestPtr& /*req*/,
     if (!ParseJsonUInt(Json::Value(bpIdStr), 0xFFFF, parsedId))
         parsedId = BRK_INVALID;
     const uint16_t bpId = static_cast<uint16_t>(parsedId);
-    BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
+    if (!bpm)
+        return;
     bool success = bpm ? bpm->DeactivateBreakpoint(bpId) : false;
     
     Json::Value ret;
@@ -1361,7 +1549,7 @@ void EmulatorAPI::disableBreakpoint(const HttpRequestPtr& /*req*/,
 
 /// @brief GET /api/v1/emulator/{id}/breakpoints/status
 /// @brief Get breakpoint status including last triggered breakpoint
-void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& /*req*/,
+void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& req,
                                       std::function<void(const HttpResponsePtr&)>&& callback,
                                        const std::string& id) const
 {
@@ -1382,7 +1570,9 @@ void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& /*req*/,
         return;
     }
     
-    BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
+    if (!bpm)
+        return;
     if (!bpm)
     {
         Json::Value error;
@@ -1434,73 +1624,6 @@ void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& /*req*/,
     callback(resp);
 }
 
-namespace
-{
-void ReplyJson(std::function<void(const HttpResponsePtr&)>& callback, const Json::Value& body, HttpStatusCode status)
-{
-    auto resp = HttpResponse::newHttpJsonResponse(body);
-    resp->setStatusCode(status);
-    addCorsHeaders(resp);
-    callback(resp);
-}
-
-void ReplyError(std::function<void(const HttpResponsePtr&)>& callback, HttpStatusCode status, const char* error,
-                const std::string& message)
-{
-    Json::Value body;
-    body["error"] = error;
-    body["message"] = message;
-    ReplyJson(callback, body, status);
-}
-
-/// The selection of the bulk routes: "select" (all, an id, a kind, group:<name>), or "id" / "kind" / "group" alone;
-/// none: all. False after a 400 reply
-bool SelectionFromJson(const Json::Value* body, const std::string& query, BreakpointSelection& selection,
-                       std::function<void(const HttpResponsePtr&)>& callback)
-{
-    std::string error;
-    bool ok = true;
-    if (!query.empty())
-        ok = BreakpointSelection::Parse(query, selection, error);
-    else if (body != nullptr && body->isMember("select"))
-        ok = BreakpointSelection::Parse((*body)["select"].asString(), selection, error);
-    else if (body != nullptr && body->isMember("id"))
-        ok = BreakpointSelection::Parse((*body)["id"].asString(), selection, error) &&
-             (selection.GetKind() == BreakpointSelection::Kind::Id || (error = "'id': a breakpoint id", false));
-    else if (body != nullptr && body->isMember("group"))
-        selection = BreakpointSelection::Group((*body)["group"].asString());
-    else if (body != nullptr && body->isMember("kind"))
-        ok = BreakpointSelection::Parse((*body)["kind"].asString(), selection, error);
-    else
-        selection = BreakpointSelection::All();
-    if (!ok)
-        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", error);
-    return ok;
-}
-
-Json::Value SelectionJson(const BreakpointSelection& selection, const BreakpointManager& manager)
-{
-    Json::Value ret;
-    ret["select"] = selection.Name();
-    Json::Value ids(Json::arrayValue);
-    for (const uint16_t bpId : selection.Select(manager))
-        ids.append(bpId);
-    ret["ids"] = ids;
-    ret["selected"] = ids.size();
-    const std::optional<bool> active = selection.IsActive(manager);
-    ret["active"] = active ? Json::Value(*active) : Json::Value(Json::nullValue);
-    return ret;
-}
-
-BreakpointManager* ManagerOrError(const std::shared_ptr<Emulator>& emulator,
-                                  std::function<void(const HttpResponsePtr&)>& callback)
-{
-    BreakpointManager* bpm = emulator->GetBreakpointManager();
-    if (bpm == nullptr)
-        ReplyError(callback, HttpStatusCode::k500InternalServerError, "Internal Error", "Breakpoint manager not available");
-    return bpm;
-}
-}  // namespace
 
 /// @brief GET /api/v1/emulator/{id}/breakpoints/active?select= - whether a selection is on (null: nothing selected)
 void EmulatorAPI::getBreakpointsActive(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
@@ -1509,7 +1632,7 @@ void EmulatorAPI::getBreakpointsActive(const HttpRequestPtr& req, std::function<
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator)
         return;
-    BreakpointManager* bpm = ManagerOrError(emulator, callback);
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
     BreakpointSelection selection;
     const std::string query = req->getParameter("select");
     if (!bpm || !SelectionFromJson(nullptr, query.empty() ? std::string("all") : query, selection, callback))
@@ -1525,7 +1648,7 @@ void EmulatorAPI::setBreakpointsActive(const HttpRequestPtr& req, std::function<
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator)
         return;
-    BreakpointManager* bpm = ManagerOrError(emulator, callback);
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
     auto json = req->getJsonObject();
     BreakpointSelection selection;
     if (!bpm || !SelectionFromJson(json.get(), {}, selection, callback))
@@ -1562,7 +1685,7 @@ void EmulatorAPI::removeBreakpoints(const HttpRequestPtr& req, std::function<voi
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator)
         return;
-    BreakpointManager* bpm = ManagerOrError(emulator, callback);
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
     auto json = req->getJsonObject();
     BreakpointSelection selection;
     if (!bpm || !SelectionFromJson(json.get(), {}, selection, callback))
@@ -1588,7 +1711,7 @@ void EmulatorAPI::setBreakpointGroup(const HttpRequestPtr& req, std::function<vo
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator)
         return;
-    BreakpointManager* bpm = ManagerOrError(emulator, callback);
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
     if (!bpm)
         return;
     auto json = req->getJsonObject();
@@ -1624,7 +1747,7 @@ void EmulatorAPI::setBreakpointNote(const HttpRequestPtr& req, std::function<voi
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator)
         return;
-    BreakpointManager* bpm = ManagerOrError(emulator, callback);
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
     if (!bpm)
         return;
     auto json = req->getJsonObject();
@@ -1642,6 +1765,54 @@ void EmulatorAPI::setBreakpointNote(const HttpRequestPtr& req, std::function<voi
     if (!bpm->SetBreakpointNote(static_cast<uint16_t>(bpId), (*json)["note"].asString()))
     {
         ReplyError(callback, HttpStatusCode::k404NotFound, "Not Found", "No breakpoint " + bpIdStr);
+        return;
+    }
+    const BreakpointSnapshot bp = bpm->GetBreakpointById(static_cast<uint16_t>(bpId));
+    Json::Value ret = bp ? BreakpointJson(*bp) : Json::Value(Json::objectValue);
+    ret["status"] = "success";
+    ReplyJson(callback, ret, HttpStatusCode::k200OK);
+}
+
+/// @brief PUT /api/v1/emulator/{id}/breakpoints/{bp_id}/condition - {condition, dialect?}: the breakpoint's condition
+/// ("" clears it). A text that does not compile for the breakpoint's trigger is refused with the reason and leaves the
+/// old condition in place
+void EmulatorAPI::setBreakpointCondition(const HttpRequestPtr& req,
+                                         std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id,
+                                         const std::string& bpIdStr) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator)
+        return;
+    BreakpointManager* bpm = ManagerOrError(emulator, req, callback);
+    if (!bpm)
+        return;
+    auto json = req->getJsonObject();
+    uint32_t bpId = 0;
+    if (!ParseJsonUInt(Json::Value(bpIdStr), 0xFFFE, bpId))
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "The breakpoint id is a number");
+        return;
+    }
+    if (!json || !(*json)["condition"].isString())
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "Body: {\"condition\": \"expression\"}");
+        return;
+    }
+    BreakpointConditionDialect dialect = BreakpointConditionDialect::Unreal;
+    if (json->isMember("dialect") && !BreakpointConditionProgram::ParseDialect((*json)["dialect"].asString(), dialect))
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "'dialect' must be unreal or c");
+        return;
+    }
+    if (!bpm->GetBreakpointById(static_cast<uint16_t>(bpId)))
+    {
+        ReplyError(callback, HttpStatusCode::k404NotFound, "Not Found", "No breakpoint " + bpIdStr);
+        return;
+    }
+    std::string error;
+    if (!bpm->SetBreakpointCondition(static_cast<uint16_t>(bpId), (*json)["condition"].asString(), error, dialect))
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", error);
         return;
     }
     const BreakpointSnapshot bp = bpm->GetBreakpointById(static_cast<uint16_t>(bpId));

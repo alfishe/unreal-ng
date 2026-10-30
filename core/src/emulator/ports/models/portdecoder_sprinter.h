@@ -17,6 +17,7 @@
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
 #include "emulator/ports/models/sprinter/sprinterstatetransferhost.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/chips/gs/gsdebughooks.h"
 #include "emulator/sound/sprinter/covoxblaster.h"
 #include "emulator/video/sprinter/sprinterintsource.h"
 #include "emulator/video/sprinter/sprintervideoram.h"
@@ -166,6 +167,7 @@ public:
     /// The daisy chain took / ended an interrupt: the ISA slot report counts and journals the PIO port B ones
     void OnChipAcknowledge(uint8_t vector) override;
     void OnChipReti() override;
+    void OnBoardAcknowledge(uint8_t vector) override;
     /// When the step hook next catches the cards up (base T-states, UINT64_MAX: never): set while the PIO waits for
     /// an ISA interrupt (port B in bit mode, interrupt enabled, an IRQ bit monitored) and a card has a timed event
     uint64_t IsaLineDeadline() const { return _isaDeadline; }
@@ -344,8 +346,11 @@ private:
     void NoteModuleBeforeLoad();
     static constexpr uint8_t kNoModule = 0xFF;
 
-    /// The journal is on and the machine runs live (a TTD replay re-executes history: nothing is noted)
-    bool JournalOn() const { return _journal.Enabled() && !_context->ttdReplayActive; }
+    /// The journal is on, or an event breakpoint listens (pld_event), and the machine runs live (a TTD replay
+    /// re-executes history: nothing is noted)
+    bool JournalOn() const { return (_journal.Enabled() || _context->machineEventWatch) && !_context->ttdReplayActive; }
+    /// A machine event for the main CPU's event breakpoints (platform-debugging P7), while one listens
+    void NoteMachineEvent(GSCardEvent kind, uint8_t value, int arg = -1);
     /// Append an event at the current frame, base T and `pc`
     void JournalEvent(const char* kind, uint16_t pc, int port, int value, int previous, std::string text,
                       std::vector<std::string> details = {});
@@ -413,6 +418,13 @@ private:
     void StallCpuOnIsa(int slot);
     /// The ZX-bus adapters of [ISA] (phase I2), fitted when the decoder is built (before SoundManager attaches the GS)
     void FitZxBusAdapters();
+    void FitWildSoundCards();
+
+public:
+    void BeforeRelease() override;
+    void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override;
+
+private:
     /// The slots' IRQ / DRQ lines into PIO port B (only a change reaches the PIO: its bit-mode edge), the journal
     /// and counters of the edges and the requests they cause; then the next deadline
     void PushIsaLines();

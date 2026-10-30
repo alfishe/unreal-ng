@@ -26,6 +26,7 @@
 /// | `analysis.progress` | an instance | The `analysis build` job (analysisjobs.h): job, state (none, running, done, failed, cancelled), frames_done, frames_total, percent, error |
 /// | `analysis.ready` | an instance | The L1 the last build made: ready, job, routines, blocks, loops, instructions, frames, checked, diverged, path |
 /// | `game.events` | an instance | The game's events (gameevents.h; the play profile's `events:` / `haptics.sources`, live frames only): available, profile, frame, seq, events {<name>: {kind (event / level), fires, last_frame, level, value (the watched byte or word, else null)}} (by name: a readout path reaches one), recent [{seq, frame, name}] (the last 64 fired, oldest first) |
+/// | `debug.watches` | an instance | The memory watches (memorywatch.h) as published at the last frame's end: available, session (stopped / capturing / paused), revision, watches [{name, kind (region / port), start + length or port + mask, reads, writes, executes (regions)}] |
 ///
 /// One more verb, not a topic: `breakpoint_groups` (instance) {groups: [{name, total, active, ids}]}, also WebAPI
 /// `GET /api/v1/emulator/{id}/breakpoints/groups`, Lua / Python `bp_groups()`.

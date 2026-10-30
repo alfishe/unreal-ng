@@ -51,6 +51,7 @@ class RecordingManager;
 class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
+class IBreakpointConditionMachine;
 class MediaManager;
 class BusManager;
 class EthernetGateway;
@@ -200,6 +201,10 @@ public:
     // RST $08 handler (the Next's esxDOS mode, feature "esxdos"); nullptr while nothing serves it
     IRst8Trap* pRst8Trap = nullptr;
 
+    // The operands of breakpoint conditions only the machine answers (NR(x), HC, VC, CPC: the Next's decoder);
+    // nullptr on a machine without them
+    const IBreakpointConditionMachine* pConditionMachine = nullptr;
+
 	// Video controller parameters and logic
 	Screen* pScreen = nullptr;
 
@@ -300,6 +305,18 @@ public:
     /// plain bool; checked behind the breakpoint filters, never on a path without breakpoints
     bool toolAccessActive = false;
 
+    /// The sound chips report their register writes (ReportChipRegisterWrite): set by the main CPU's breakpoint manager
+    /// while a chip register breakpoint is active (platform-debugging P3). Read on the chips' OUT paths
+    bool chipRegisterWatch = false;
+
+    /// The machine tells its events (GSReportHostEvent: interrupts, NMI, the DivMMC automap, esxDOS calls, the DMA):
+    /// set by the main CPU's breakpoint manager while an event breakpoint is active (platform-debugging P5)
+    bool machineEventWatch = false;
+
+    /// A beam breakpoint is active on the main CPU: the machines without their own beam watch (TS-Conf's engine) look
+    /// at the raster after every step (platform-debugging P6). Set by the main CPU's breakpoint manager
+    bool beamWatch = false;
+
     /// A device that can replace the machine's picture (VDAC2's FT812) and so takes
     /// part in what a TTD position shows (ttddisplayparticipant.h); set by the device
     ttd::ITTDDisplayParticipant* pTtdDisplayParticipant = nullptr;
@@ -321,7 +338,8 @@ public:
         kStepWorkDeviceInt = 1u << 4,        ///< a device holds /INT low (Z80::SetDeviceIntLine)
         kStepWorkEngine = 1u << 5,           ///< the machine runs on its own instruction engine (Z80::SetEngine)
         kStepWorkPcHistory = 1u << 6,        ///< a debugger records the PC history (PcHistory::Arm)
-        // Next free: 1u << 7
+        kStepWorkScriptEdits = 1u << 7,      ///< a logic callback's writes wait for the boundary (ScriptCallbackManager)
+        // Next free: 1u << 8
     };
     std::atomic<uint32_t> stepWork{0};
 

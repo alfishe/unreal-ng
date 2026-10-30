@@ -91,3 +91,211 @@ The catalogue adds `dbg.register_set` (`Emulator::SetRegisterFromTool`), `mem.wr
 | `1ffd` | `#1FFD` | `#F002` | +3 paging |
 | `fffd` | `#FFFD` | `#C002` | AY register select |
 | `bffd` | `#BFFD` | `#C002` | AY data |
+
+## 6. The debug path follows the breakpoints
+
+`FeatureManager::debugModeInEffect` is true while the `debugmode` feature is on, a replay or taps hold it, or
+(`setBreakpointDebugHold`) an active stopping breakpoint exists and the `breakpoints` feature is on.
+`BreakpointManager::ApplyTapDemand` pushes that last hold at each repaint (`BreakpointTapDemand::stop`), and Memory's
+breakpoint gate follows it. So a breakpoint is never accepted and inert because `debugmode` went off (the hidden Qt
+debugger, a client); without breakpoints `debugmode` alone decides and the fast path stays.
+
+## 7. Conditions
+
+A memory or port breakpoint can carry a condition (`core/src/debugger/breakpoints/breakpointcondition.h`); the
+language is on [docs/features/conditional-breakpoints.md](../../../features/conditional-breakpoints.md), the design
+and measurements on [conditions-and-callbacks.md](../../../inprogress/2026-10-26-breakpoint-taps/conditions-and-callbacks.md).
+
+- **Compiled once.** `BreakpointConditionProgram::Compile` tokenizes, parses (the Unreal order, or the `c` dialect)
+  and emits a stack-machine program, checks every access operand against the breakpoint's trigger
+  (`BRK_COND_EXEC`/`READ`/`WRITE`/`PORT_IN`/`PORT_OUT`), resolves labels, and with a machine runs it once on the
+  current state. A refusal carries the reason and the column; nothing is added or changed. Common shapes (a register,
+  a variable or a byte against a constant) run without the stack machine and fall back to it when their context is
+  missing.
+- **Only after a match.** The filters and candidate sets of the hot path are unchanged: the condition runs in
+  `WalkCandidates` for the breakpoint that matched, with the access the hot path saw (`ResolveMemory` /
+  `ResolvePort` pass the value: the byte read or written, the OUT's byte; an IN has none). Bytes are read with
+  `DirectReadFromZ80Memory`, without side effects.
+- **The hit order.** `++matchCount`, the condition, then `++hitCount` and the hit policy on `hitCount`. A breakpoint
+  without a condition counts both. A tap with a condition tells its sink only on condition-true hits.
+- **Never shared.** A conditional breakpoint is never plain (`IsPlainMemory` / `IsPlainPort`): it is not in the key
+  maps and no request adopts it; setting a condition later moves a plain one out of them.
+- **The error mark.** An evaluation error sets `conditionFailed`, writes `conditionError` (the reason, the frame, the
+  PC), bumps the revision and posts one `NC_BREAKPOINTS_CHANGED` with the id; the breakpoint is skipped until
+  `ActivateBreakpoint` or `SetBreakpointCondition` clears the mark. The machine never stops on it.
+
+| Plane | Set | Change, clear | Read |
+| :--- | :--- | :--- | :--- |
+| CLI | `bp`, `wp`, `bport ... [--dialect c] if <cond>` | `bpcond <id> [cond]` | `bplist` |
+| Lua | `condition=`, `dialect=` in the options of `bp`, `bp_read`, `bp_write`, `bp_port_in/out` | `bp_condition(id, text[, dialect])` | `bp_status()` |
+| Python | `condition=`, `dialect=` | `emu.bp_condition(id, text, dialect)` | `emu.bp_status()` |
+| MCP | `control_execution` `bp_add` `condition`, `condition_dialect` | `bp_condition` | `bp_list` |
+| REST | `POST /breakpoints {condition, condition_dialect}` | `PUT /breakpoints/{bp_id}/condition {condition, dialect}` | `condition`, `match_count`, `condition_error` |
+| WebSocket | the REST routes as `call`s | the same | `breakpoints_changed` |
+| Catalogue | `dbg.bp_add` (condition, dialect) | - | - |
+
+## 8. The sound card CPU
+
+The General Sound / NeoGS card's Z80 has its own breakpoints (`GSCardTarget`, `core/src/debugger/targets/`, design
+on [gs-debugger §4](../../../inprogress/2026-09-27-gs-debugger/design.md)). `DebugManager::GetBreakpointsManager(cpu)`
+picks the manager: `main` (also `z80` or nothing) the machine's, `gs` (or `neogs`) the card's, `ms` (or `multisound`)
+the General Sound on a MultiSound slot card (a second `GSCardTarget`, the card found through
+`ICard::DebugGeneralSound`; `SlotManager` tells it when the cards are built or released). Everything below holds for
+both card CPUs; `--cpu ms`, `cpu="ms"`, `?cpu=ms` name the MultiSound's.
+
+- **Kinds.** Execute, memory read / write (addresses of the card's CPU, `--page romN` / `ramN` its flash / ROM and RAM
+  pages), port in / out, and the protocol events (`BRK_EVENT`). The card refuses the rest (NextREG, beam, keyboard).
+- **Conditions.** A memory or port breakpoint of the card takes a condition (§7) on the card's registers, memory and
+  pages: `IDebugTarget::Registers` (the card's register file in the `Z80Registers` layout, copied per evaluation),
+  `Peek` and `MapAddress` behind `BreakpointConditionContext::target`. The compiler gets `BRK_COND_TARGET` and refuses
+  the machine's `T`, `FD` and `DOS`; labels are not passed. See
+  [conditional-breakpoints.md](../../../features/conditional-breakpoints.md#the-sound-cards-cpu).
+- **Events.** The card's: `int`, `nmi`, `reset`, `page` (a page switch), `card_command`, `card_data` (the card read the
+  host's command / data byte), `card_reply` (it wrote its reply), and the card's hardware: `dac_fetch` (the player
+  fetched a sample; the detail is the DAC channel 0..3), `clock_change` (NeoGS GSCFG0 changed the clock; the detail is
+  the clock in MHz, the value GSCFG0), `dma_start` / `dma_done` (a NeoGS DMA module, the value its number; the detail of
+  `dma_done` is 1 for a finished block, 0 for an abort), `gscfg0` (every GSCFG0 write of the NeoGS CPU, the value the
+  byte; a reset's GSCFG0 is the `reset` event). The host's: `host_command` (#BB), `host_data` (#B3 written),
+  `host_reply` (#B3 read), on the main CPU's manager; each kind on the other CPU is refused. `value` / `vmask` filter
+  the byte.
+- **DMA writes.** A NeoGS DMA module's write to the card's RAM (ZX-DMA, a byte the host wrote; SD, a 512-byte block)
+  goes through the write watchpoints tied to that RAM page (`wp 0x2005 --page ram4 --cpu gs`), not through those on a
+  CPU address: the card CPU is off the bus. The stop's access is `dma_write`, its address the offset in the page
+  (`GSCardTarget::Stop` also keeps the module and the page). A flash write is the CPU's own: a write watchpoint on a
+  `romN` page sees it.
+- **Where it stops.** An execute breakpoint before the instruction; a watchpoint, a port or an event at the card's next
+  instruction boundary, with the PC of the instruction that did it. The machine parks (pause) inside the card's
+  catch-up; a direct step of the main CPU ends after its instruction.
+- **Cost.** The hooks are on the card only while an active card breakpoint exists; without them the card runs its
+  fast loop unchanged.
+- **Stops.** The pause, the breakpoint payload, a step's stop and `wait` carry `cpu` (`main` or `gs`) and, for a card
+  stop, `cpu_pc` (the card instruction) beside the main PC.
+
+| Plane | The CPU | Event breakpoint |
+| :--- | :--- | :--- |
+| CLI | `--cpu gs` on `bp`, `wp`, `bport`, `bplist`, `bpclear`, `bpon`, `bpoff`, `bptoggle`, `bphits`, `bpgroup`, `bpnote` | `bevent <kind> [--value V [--vmask M]] [--hits ...] [--cpu ...]` |
+| Lua | `cpu="gs"` in the options; `bp_remove`, `bp_enable`, `bp_disable`, `bp_clear`, `bp_count`, `bp_list` take it last | `bp_event(kind, {value=, vmask=, hits=, cpu=})` |
+| Python | `cpu="gs"` keyword on `bp`, `bp_read`, `bp_write`, `bp_port_*`, `bp_remove`, `bp_enable`, `bp_disable`, `bp_clear`, `bp_count`, `bp_list` | `emu.bp_event(kind, value=, vmask=, hits=, cpu=)` |
+| MCP | `control_execution` `cpu` on every `bp_*` action | `bp_add` `type` `event`, `event` |
+| REST | `?cpu=gs` or the body's `cpu` on `/breakpoints...` (400 for another name) | `POST /breakpoints {type: "event", event, value, value_mask}` |
+| WebSocket | the REST routes as `call`s; `cpu` / `cpu_pc` in `breakpoint` events | the same |
+
+The event kind's default CPU is its side (`bevent card_reply` and `bp_event("int")` go to the card). The groups'
+listing takes the CPU too (`GET /breakpoints/groups?cpu=gs`, `bp_groups("gs")`, `emu.bp_groups(cpu="gs")`, MCP
+`bp_groups` with `cpu`) and names it in the answer (`cpu`).
+
+The card's events have named callbacks too (`gs_on_command`, `gs_on_data`, `gs_on_reply`, `gs_on_int`, `gs_on_nmi`,
+`gs_on_page`, `gs_on_dac_fetch`, `gs_on_clock_change`, `gs_on_dma_start`, `gs_on_dma_done`, `gs_on_gscfg0`, `gs_on_port_in(port)`,
+`gs_on_port_out(port)` in Lua and Python): taps on the card CPU, the hit's `arg` the event's detail
+([script-callbacks.md](../../../features/script-callbacks.md#the-sound-cards-cpu)).
+
+## 9. Sound chip registers
+
+A chip register breakpoint (`BRK_CHIPREG`, `core/src/debugger/breakpoints/chipregister.h`) stops the main CPU after
+its OUT wrote a sound chip's register: the chip, one unit of it or any, a register or a range, and a value filter
+(`value` / `vmask`, as for NextREG and events). It is the semantic form of a port breakpoint: `ay 7` is "the mixer",
+whatever port pair, latch order or board the program reaches it through.
+
+| Chip | Registers | Where it is reported |
+| :--- | :--- | :--- |
+| `ay` | 0-15 | AY / YM2149: the 128K's and TurboSound's (units 0-1), the Next's three (0-2), the Fuller box; the SSG of a YM2203 (TS-FM, MultiSound) |
+| `fm` | #10-#FF | the FM part of a YM2203 (TS-FM, MultiSound; units 0-1) |
+| `saa` | 0-#1F | SAA1099 (MultiSound) |
+| `opl4` | #000-#1FF | MoonSound OPL4 FM: bank 1 as #100-#1FF |
+| `opl4wave` | 0-#FF | MoonSound OPL4 wave part (while NEW2 is set) |
+| `dac` | 0-3 (the channel) | Covox / SounDrive, the MultiSound's SounDrive; the value is the sample |
+| `cbl` | 0-1 | the Sprinter's Covox Blaster: 0 the data (code #88, ports #FB / #4F: the DAC with the ring off, the ring's next entry with it on; the accelerator's copies into page #FD), 1 the control (code #89, port #4E: bit 7 the ring, 6 stereo, 5 16-bit, 4 the INT, 3-0 the rate) |
+
+- **Cost.** A chip reports only while `EmulatorContext::chipRegisterWatch` is set: the main CPU's breakpoint manager
+  sets it while an active chip register breakpoint exists. Otherwise one predictable branch per OUT to a chip.
+- **What is not a program's write.** A snapshot load, a reset or a tool's access (`toolAccessActive`) writes the
+  registers without the port path and is not reported; nor is a write during a time travel replay.
+- **The stop.** The access is `chip_register`, the address the register (`BreakpointHitKind::ChipRegister`).
+- **Taps.** A script callback taps the same writes without stopping: `on_tap({chip = "ay", reg = 7})` (Lua),
+  `emu.on_tap(fn, "chipreg", 7, chip="ay")` (Python), with `to`, `unit`, `value` / `vmask` and a condition. A tap
+  hears the writes out of the debug mode too; the hit's `kind` is `chip_register`, `address` the register, `value` the
+  byte, `arg` the unit, `event` the chip ([script callbacks](../../../features/script-callbacks.md#machine-events-and-chip-registers)).
+
+| Plane | Chip register breakpoint |
+| :--- | :--- |
+| CLI | `bchip <chip> <reg>[-<end>] [--unit N] [--value V [--vmask M]] [--hits ...] [note]` |
+| Lua | `bp_chipreg(chip, reg, {to=, unit=, value=, vmask=, hits=})` |
+| Python | `emu.bp_chipreg(chip, reg, end=, unit=, value=, vmask=, hits=)` |
+| MCP | `control_execution` `bp_add` `type` `chipreg`, `chip`, `address`, `address_end`, `unit`, `value`, `value_mask` |
+| REST | `POST /breakpoints {type: "chipreg", chip, address, address_end, unit, value, value_mask}`; the listing has `chip`, `unit` |
+| WebSocket | the REST route as a `call` |
+
+### The ZX Next's machine (platform-debugging P5)
+
+- **DMA.** The zxnDMA drives the CPU's address bus, so its memory reads and writes go through the main CPU's
+  watchpoints on CPU addresses and on pages (`wp 0xE000 w`, `wp 0x0005 w --page bank8k33`), in debug mode with `breakpoints` on, as for the CPU. The stop's
+  access is `dma_write` or `dma_read`, its address the CPU address. In the emulator's own run the machine parks after
+  the DMA's byte, mid-transfer; a direct step ends after its instruction, the transfer going on (each byte counted).
+  The DMA's port cycles are port accesses: port breakpoints see them as `port_out` / `port_in`.
+- **Events.** On the main CPU, `bevent <kind>` and its plane forms (the table above): `cpu_int` (value: the source,
+  0 line, 1-2 UART RX, 3-10 CTC 0-7, 11 ULA, 12-13 UART TX, #FE spurious; the detail the IM2 vector), `cpu_reti`,
+  `cpu_nmi` (0 M1 button, 1 drive button, 2 I/O trap, 3 other; bit 7 when the machine refused it), `cpu_retn` (0 none,
+  1 Multiface, 2 DivMMC), `machine_reset` (0 soft, 1 hard), `divmmc_map` (0 RST, 1 NMI, 2 #3Dxx, 3 ROM 3 routine; the
+  detail the fetch address), `divmmc_unmap` (1 the #1FF8 exit, 2 RETN, 3 disabled), `esxdos_call` (the call byte; the
+  detail the return address; the DivMMC entry at #0008 or the esxDOS mode's trap), `zxndma_start`, `zxndma_done`
+  (1 the end of the block, 0 disabled or reset).
+- **Cost.** The machine tells its events only while `EmulatorContext::machineEventWatch` is set (an active event
+  breakpoint on the main CPU); the DMA checks the CPU's debug mode once per byte (and the `breakpoints` feature on the way to the manager).
+- **DivMMC and Multiface pages.** Their memory sits in the system area of the Next's SRAM (ROM pages 0-15), and a
+  page breakpoint names it by its device: `divmmcrom` (the DivMMC's 8K ROM, ROM page 4), `divmmc0`..`divmmc15` (its
+  8K RAM banks, the halves of ROM pages 8-15), `mfrom` and `mfram` (the Multiface's 8K ROM and RAM, the halves of
+  ROM page 5). The address gives the offset in the 8K bank (`& #1FFF`): `wp 0x2000-0x3FFF w --page divmmc3` stops
+  on writes to bank 3 in slot 1, or in slot 0 with MAPRAM. The listing shows the same names; REST carries them as
+  `{kind: divmmc, page: 3}` or `{kind: divmmcrom}`. Other machines refuse them. A write to a read-only view (the
+  DivMMC ROM, bank 3 under MAPRAM, the Multiface ROM) still hits a write watchpoint on that page: the CPU wrote
+  there, the memory kept its byte.
+- **Taps.** A script callback taps the machine's events without stopping (every machine's: these, TS-Conf's,
+  the Sprinter's, the floppy controller's): `on_tap({event = "cpu_int", value = 11})` (Lua),
+  `emu.on_tap(fn, "event", event="cpu_int", value=11)` (Python). A tap hears them out of the debug mode too; the hit's
+  `kind` is `machine_event`, `value` the event's byte, `arg` its detail ([script callbacks](../../../features/script-callbacks.md#machine-events-and-chip-registers)).
+
+### TS-Conf (platform-debugging P6)
+
+- **DMA.** The TS-Conf DMA works on physical RAM (word addresses, no CPU address), so only the watchpoints tied to a
+  page see it: `wp 0x0005 w --page ram20` stops on the DMA's write of physical #50005. Reads of the source (and the
+  blitters' reads of the destination) hit read watchpoints on the page. The stop's access is `dma_write` /
+  `dma_read`, its address the offset in the 16 KB page. Checked once per byte while the CPU is in debug mode with `breakpoints` on, as the CPU's accesses are. CRAM,
+  SFILE, SPI and IDE are not RAM: their side of a transfer has no watchpoint.
+- **FMaps.** A write into the register part of the FMaps window (+#400+n) is `OUT (n << 8 | #AF)`: a port breakpoint
+  on that port stops on it (`bport 0x0FAF o` sees `LD (#C40F),A` with FMaps at #C000) as on the OUT.
+- **Beam.** `BRK_BEAM` works on TS-Conf: the line is 0..319 of the 320-line raster, `hc` the CPU tact in the 224-tact
+  line (3.5 MHz, whatever the turbo). The engine looks after every step while a beam breakpoint is active
+  (`EmulatorContext::beamWatch`); the stop is after the instruction that passed the place.
+- **Events.** `cpu_int` (value: int_sel, 0 frame, 1 line, 2 DMA, 3 wait port, #FE none pending; the detail the vector
+  #FF / #FD / #FB / #F9), `tsdma_start` (value: the device, DMA_CTRL bits 7 and 2-0), `tsdma_done` (1 the end with
+  the DMA INT, 0 aborted by a new DMA_CTRL).
+
+### The Sprinter (platform-debugging P7)
+
+- **Accelerator.** The CPU's own access is the first one of a block operation; the PLD repeats it (`LD C,C` fill,
+  `LD L,L` copy, the vertical modes, `LD H,H` double). The repeats go through the main CPU's watchpoints on the CPU
+  address and on the page its window shows, in debug mode with `breakpoints` on: the stop's access is `accel_write` / `accel_read`, its
+  address the CPU address. The operation runs to its end; the machine parks after the byte (a direct step ends
+  after the instruction).
+- **Z84C15.** `cpu_int` names the source of the chip's daisy chain, then the board: 0-3 CTC 0-3, 4-5 SIO A / B,
+  6-7 PIO A / B, 8 the PLD's /INT (frame, keyboard); the detail is the vector. `cpu_reti` the source whose service
+  ended (8: none on the chip).
+- **PLD codes.** `pld_read` / `pld_write` stop on a port the PLD decodes, by its internal code from the port table
+  (`bevent pld_write --value 0xC2` stops on every border write whatever port the table maps to it); the detail is the
+  port. The Z84C15's own ports have no code.
+- **Journal.** `pld_event` fires with the PLD journal's events, journal on or off: the value is the kind, in this
+  order: 0 `reset`, 1 `ctrl_alt_del`, 2 `f12`, 3 `pld_load`, 4 `pld_configured`, 5 `clock`, 6 `port_7ffd`,
+  7 `port_1ffd`, 8 `frame_lines`, 9 `all_mode`, 10 `hold`, 11 `rgmod`, 12 `cnf`, 13 `isa_stall`; the detail is the
+  event's value.
+
+### The floppy controller (platform-debugging P8)
+
+Every machine with a WD1793 (the Beta 128 interface and the boards that carry one) reports two events on the main
+CPU:
+
+- `fdc_command` when the controller accepts a command (a write to the command register while it is not busy, or a
+  Force Interrupt): the value is the command byte, the detail `track << 8 | sector` from its registers. The stop comes
+  after the CPU's OUT. `bevent fdc_command --value 0x80 --vmask 0xE0` stops on every Read Sector, so a TR-DOS boot
+  stops on its first sector read with the track and sector in the detail.
+- `fdc_done` when a command ends (BUSY cleared, INTRQ raised): the value is the status register, the detail the
+  command byte. `--value 0x10 --vmask 0x10` stops on a Record Not Found.

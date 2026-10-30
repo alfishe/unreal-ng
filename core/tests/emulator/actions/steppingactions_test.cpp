@@ -46,6 +46,15 @@ ActionValue Delta(double delta, StateNode params = StateNode::Object())
     return value;
 }
 
+ActionValue Level(double level)
+{
+    ActionValue value;
+    value.kind = ValueKind::Level;
+    value.pressed = level > 0;
+    value.level = level;
+    return value;
+}
+
 ActionValue Text(const std::string& text)
 {
     ActionValue value;
@@ -476,6 +485,33 @@ TEST_F(SteppingRun_Test, ThePixelTheListingAndThePaceActions)
     EXPECT_TRUE(PaceReadout(_emulator->GetId()).find("running")->b);
     ASSERT_TRUE(_registry->Run("run.pace_stop", Press()).ok);
     EXPECT_EQ(_registry->Toggle("run.pace_toggle"), std::optional<bool>(false));
+}
+
+/// Boot-bound (a started machine): about 20 ms
+TEST_F(SteppingRun_Test, AShuttleRingMovesThePaceFromWhereItIs)
+{
+    ASSERT_TRUE(_registry->Run("run.to_pixel", Press()).ok);
+    auto preset = [this] { return PaceReadout(_emulator->GetId()).find("preset")->s; };
+    ASSERT_TRUE(_registry->Run("run.pace_set", Press(Params({{"preset", "frame"}}))).ok);
+
+    // The ShuttlePRO's ring: 7 positions a side, level n / 7; each position further a preset
+    ASSERT_TRUE(_registry->Run("run.pace_shuttle_slower", Level(1.0 / 7)).ok);
+    EXPECT_EQ(preset(), "100lines") << "a slight turn: one preset finer than where it was, not the finest";
+    ASSERT_TRUE(_registry->Run("run.pace_shuttle_slower", Level(3.0 / 7)).ok);
+    EXPECT_EQ(preset(), "1line") << "two positions further: two presets";
+    for (const double back : {2.0 / 7, 1.0 / 7, 0.0})
+        ASSERT_TRUE(_registry->Run("run.pace_shuttle_slower", Level(back)).ok);
+    EXPECT_EQ(preset(), "1line") << "the spring's return changes nothing";
+
+    ASSERT_TRUE(_registry->Run("run.pace_shuttle_slower", Level(1.0 / 7)).ok);
+    EXPECT_EQ(preset(), "1op") << "turned again from the centre: on from where it is";
+
+    ASSERT_TRUE(_registry->Run("run.pace_shuttle_faster", Level(1.0)).ok);
+    EXPECT_EQ(preset(), "25fps") << "the full turn the other way: seven presets coarser";
+    ASSERT_TRUE(_registry->Run("run.pace_shuttle_faster", Level(0)).ok);
+    ASSERT_TRUE(_registry->Run("run.pace_shuttle_faster", Level(1.0)).ok);
+    EXPECT_EQ(preset(), "full") << "up to full speed, and no further";
+    EXPECT_FALSE(PaceReadout(_emulator->GetId()).find("running")->b);
 }
 
 /// Boot-bound (a started machine): about 20 ms

@@ -54,6 +54,8 @@ struct MemoryPageDescriptor
     MemoryBankModeEnum mode = BANK_INVALID;
     uint8_t page = 0xFF;          ///< ROM, RAM or cache (fast RAM) page; 0xFF with BANK_INVALID
     uint16_t addressInPage = 0;
+    /// A slot of the CPU address space is 1 << slotShift bytes: 16K windows, the Next's MMU 8K slots
+    uint8_t slotShift = 14;
 };
 
 // Memory interface descriptor
@@ -144,6 +146,12 @@ protected:
     bool _toolReadRedirect = false;
     /// What the CPU would read at `addr` given the mapped page's byte `normal`, side-effect free
     virtual uint8_t ToolReadRedirect([[maybe_unused]] uint16_t addr, uint8_t normal) const { return normal; }
+    /// Set by a model whose 16K windows are not what the CPU addresses (the Next's 8K MMU slots):
+    /// DirectWriteToZ80Memory then lets ToolWriteRedirect place the byte. False on every other machine
+    bool _toolWriteRedirect = false;
+    /// A tool's write of `value` at `addr` where the CPU sees it; true when done (ROM and a write-protected page
+    /// included, as DirectWriteToZ80Memory does), false: the 16K window's write applies
+    virtual bool ToolWriteRedirect([[maybe_unused]] uint16_t addr, [[maybe_unused]] uint8_t value) { return false; }
 
     /// Cached RAM page numbers per bank for TTD hot path optimization.
     /// Updated only when bank mapping changes (SetRAMPageToBank*).
@@ -182,7 +190,7 @@ protected:
     bool _writeTapDemand = false;
     const BreakpointHotState* _tapFilter = nullptr;   // the breakpoint manager's filters (SetWriteTapDemand)
     void RefreshWriteHooks();
-    void MemoryWriteTapped(uint16_t addr);
+    void MemoryWriteTapped(uint16_t addr, uint8_t value);
 
     // Feature-gate flags
     bool _feature_memorytracking_enabled = false;
@@ -517,6 +525,10 @@ public:
     /// Undo a debugger-forced window: back to the page it had before the first force
     void RevertDebuggerBankOverride(uint8_t bank);
 
+    /// Whether memory breakpoints are checked now ('breakpoints' on in debug mode, or a tap's hold): the CPU's
+    /// accesses follow it, and so do the other bus masters' (the Next's and TS-Conf's DMA, the Sprinter's accelerator)
+    bool BreakpointsActive() const { return _feature_breakpoints_enabled; }
+
     bool IsBank0ROM();
     uint16_t GetROMPage();
     uint16_t GetRAMPageForBank0();
@@ -580,8 +592,23 @@ public:
     uint8_t* MapZ80AddressToPhysicalAddress(
         uint16_t address);  // Remap address to the bank. Important! inline for this method for some reason leads to
                             // MSVC linker error (not found export function)
-    MemoryPageDescriptor MapZ80AddressToPhysicalPage(
-        uint16_t address);  // Determines current bank for Z80 address specified
+    /// The page behind a CPU address and the offset in it (16K pages; a model whose slots are smaller, the Next's
+    /// 8K MMU, answers per slot). Not the CPU's path: the breakpoint resolve and the tools
+    virtual MemoryPageDescriptor MapZ80AddressToPhysicalPage(uint16_t address);
+    /// log2 of a slot of the CPU address space: 14 (16K windows), 13 on the Next (8K MMU slots)
+    virtual uint8_t PhysicalSlotShift() const { return 14; }
+
+    /// The CPU's four 16K windows as offsets into the whole memory block and their modes, for a reader that holds
+    /// the pages' bytes elsewhere (a TTD checkpoint read from its store). False where the windows are not what the
+    /// CPU reads: a bus redirect, slots smaller than 16K
+    bool GetWindowMap(uint32_t offsets[4], uint8_t modes[4]) const;
+    /// The page a window mapping @p mode at @p offset (GetWindowMap) shows: MapZ80AddressToPhysicalPage's answer
+    /// for such a live window, addressInPage 0
+    MemoryPageDescriptor DescribeWindow(uint8_t mode, uint32_t offset);
+    /// The name GetCurrentBankName gives such a window
+    std::string WindowName(uint8_t mode, uint32_t offset);
+    /// The bytes at @p offset into the whole memory block (ROM pages a window map points at)
+    const uint8_t* BlockAt(uint32_t offset) const { return _memory + offset; }
 
     MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
     /// Window 0-3 maps ROM: the hot-path form for bus logic that tells ROM from RAM (EvoTurboOverlay)

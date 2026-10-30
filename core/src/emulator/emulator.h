@@ -25,6 +25,7 @@
 #include "corestate.h"
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "debugger/targets/debugcpuid.h"
 #include "emulator/config.h"
 #include "emulator/video/screen.h"  // For DisplayViewport
 #include "emulator/cpu/core.h"
@@ -198,6 +199,9 @@ public:
         uint16_t breakpointId = 0xFFFF;
         uint16_t address = 0;
         BreakpointHitKind kind = BreakpointHitKind::Execute;
+        /// Whose breakpoint: another CPU's (a card) stopped the machine at that CPU's instruction `cpuPc`
+        DebugCpuId cpu = DebugCpuId::Main;
+        uint16_t cpuPc = 0;
     };
 
     /// Why the emulator stopped last (the debugger snapshot's `pause`)
@@ -592,6 +596,9 @@ public:
     /// when the file is not a snapshot this emulator can read
     bool InspectSnapshot(const std::string& path, const snapshot::Options& options, StateNode& result,
                          std::string& error);
+    /// The same dry plan, as data: the file's image and the plan's report; `proceeds` = the load would go ahead
+    bool PlanSnapshot(const std::string& path, const snapshot::Options& options, snapshot::Image& image,
+                      snapshot::Report& plan, bool& proceeds, std::string& error);
     /// The snapshot pipeline's report of the last load: the commit that ran (or the refusal and why), the verdicts that
     /// led to it, the format's per-block outcomes, warnings. Read it after the load returned
     const snapshot::Report& LastSnapshotReport() const { return _lastSnapshotReport; }
@@ -758,6 +765,10 @@ public:
 
     // Controlled emulator behavior
     void RunSingleCPUCycle(bool skipBreakpoints = true);
+    /// One instruction that always executes: the execution breakpoint at PC is passed (no hit, no count) as when
+    /// stepping on from a stop on it; breakpoints and watchpoints the instruction reaches still fire (ZEsarUX's
+    /// cpu-step, a debugger's step at a breakpoint it did not stop on)
+    void StepPastBreakpointAtPc();
     /// Returns the instructions executed: fewer than asked when a breakpoint stopped the run (LastDirectStop)
     unsigned RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
     void RunFrame(bool skipBreakpoints = true);                   // Run until next frame boundary
@@ -978,6 +989,14 @@ public:
     /// execution breakpoint the emulator is stopped at does not stop the run's first instruction (stepping
     /// on from a breakpoint)
     bool OnBreakpointHit(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
+    /// A breakpoint of another CPU (`breakpoints` that CPU's, gs-debugger design §4) at that CPU's instruction
+    /// boundary: the machine pauses with both positions - the main CPU wherever it stands (inside a host port access
+    /// or at the frame end), the other at `cpuPc` - and this thread parks until Resume(). A direct run records the
+    /// stop and ends after its current instruction
+    void OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoints, uint16_t breakpointId, uint16_t address,
+                               BreakpointHitKind kind, uint16_t cpuPc);
+    /// The stop goes to the script callbacks that wait for this breakpoint (on_breakpoint), before the pause
+    void NoteBreakpointCallbacks(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
     /// The breakpoint that ended the last direct run early; hit = false when the run did all it was asked
     const BreakpointStop& LastDirectStop() const { return _directStop; }
     bool IsDestroying();  // Thread-safe check for destruction state

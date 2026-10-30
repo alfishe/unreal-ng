@@ -21,6 +21,7 @@ openapi/
 ├── openapi_assembly.inc   # In-process assembler + source listings
 ├── openapi_basic.inc      # BASIC interpreter control
 ├── openapi_breakpoints.inc # Breakpoint management
+├── openapi_callbacks.inc  # Script callbacks: list, resume, remove, policy (callbacks_api.cpp)
 ├── openapi_capture.inc    # Screen/OCR/audio/video capture
 ├── openapi_debug.inc      # Memory, registers, disassembly
 ├── openapi_pace.inc       # The paced run /run_pace (core RunPacer)

@@ -60,7 +60,11 @@
         param(name, "instance", "query", false, instanceText);
 
         Json::Value& groups = op("/api/v1/emulator/{id}/breakpoints/groups", "The breakpoint groups",
-                                 "The user breakpoints' groups (owned and hidden breakpoints are not listed), by name",
-                                 "{ok, instance, groups: [{name, total, active, ids}]}");
+                                 "The user breakpoints' groups (owned and hidden breakpoints are not listed), by name, "
+                                 "of one CPU's breakpoints",
+                                 "{ok, instance, cpu, groups: [{name, total, active, ids}]}");
         param(groups, "id", "path", true, "Emulator instance id");
+        param(groups, "cpu", "query", false,
+              "main (default), gs (the sound card CPU's) or ms (the MultiSound's General Sound); 400 for another name");
+        groups["responses"]["400"]["description"] = "Bad Request: an unknown cpu";
     }

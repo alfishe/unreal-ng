@@ -35,6 +35,7 @@
 #include "emulator/io/keyboard/keyboard.h"
 #include "portreadwatch.h"
 
+class BreakpointConditionProgram;
 class EmulatorContext;
 
 namespace controllers
@@ -238,13 +239,18 @@ private:
     std::vector<HapticWatch> _hapticWatches;   ///< the bytes _hapticFed reads (emulator thread)
     size_t _hapticStreams = 0;                 ///< the sound's haptic taps _hapticFed asked for
     std::unique_ptr<HapticProbes> _hapticProbes;  ///< its breakpoint probes (emulator thread)
+    /// Its FrameConditions, compiled on this machine; null: did not compile or failed once (never holds again)
+    std::vector<std::shared_ptr<const BreakpointConditionProgram>> _hapticConditions;
+    std::vector<int> _hapticConditionEvents;   ///< per condition, its game event (the error goes there); -1: none
     std::atomic<bool> _hapticHeld{false};      ///< replay or seek: the feed was told (UpdateHapticHold)
     std::mutex _holdMutex;                     ///< UpdateHapticHold from the control thread and the frame boundary
     GameEventLog _gameEvents;                  ///< what _hapticFed reports
     bool _gameEventsOn = false;                ///< _hapticFed defined events (emulator thread)
+    std::vector<std::string> _gameEventNames;  ///< their names, for the script callbacks (emulator thread)
     void FeedHaptics(uint64_t frame);
     void AttachHapticFeed(const std::shared_ptr<IHapticFeed>& feed);
     void DetachHapticFeed();
+    void EvaluateHapticConditions(HapticFrame& summary);
     /// Per connector: the host's last submitted sample (-1 = none yet, submit the next one whole)
     std::vector<int32_t> _lastSample;
     bool _wasOwned = false;

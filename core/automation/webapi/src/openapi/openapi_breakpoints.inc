@@ -9,7 +9,9 @@
         "Every breakpoint: id, type, address, the access flags, active, note, group; address_end for a range; page "
         "({kind, page}) and slot_only for a physical one; port_mask for a masked port; hit_mode, hit_target and the "
         "live hit_count. The user's breakpoints only: the ones the BASIC typer, the debugger adapters and steps own "
-        "are left out unless all=true (then with owner and hidden).";
+        "are left out unless all=true (then with owner and hidden). cpu=gs (a query parameter on every /breakpoints "
+        "route, or the body's cpu): the sound card CPU's breakpoints (General Sound / NeoGS); cpu=ms the MultiSound "
+        "card's General Sound; main (default) the machine's; another name is a 400.";
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][1]["name"] = "all";
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][1]["in"] = "query";
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][1]["required"] = false;
@@ -29,7 +31,14 @@
         "a memory address can be a label's name (\"Sparkles.End\": its CPU address), "
         "physical with 'page' (fires on that page through any slot that shows it; slot_only: through one slot), a port "
         "with a mask, a hit policy (hits / hit_mode + hit_target). Errors name the field: a range ending before it "
-        "starts, a page range leaving its page, a page the machine lacks, a mask on memory, a policy without a target.";
+        "starts, a page range leaving its page, a page the machine lacks, a mask on memory, a policy without a target. "
+        "type event: a General Sound protocol breakpoint, 'event' its kind (int, nmi, reset, page, card_command, "
+        "card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done, gscfg0 on cpu gs; host_command, host_data, "
+        "host_reply and the machine's cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done (ZX Next), tsdma_start, tsdma_done (TS-Conf), pld_read, pld_write, pld_event (Sprinter), fdc_command, fdc_done (WD1793) on the main CPU), value / value_mask filter the byte. type chipreg: a sound chip's register write, "
+        "'chip' ay, fm, saa, opl4, opl4wave, dac or cbl, 'address' the register (address_end a range), 'unit' one chip of "
+        "the kind, value / value_mask the byte. 'condition' applies to memory, port, nextreg, copper, beam, magic and "
+        "chipreg breakpoints. cpu gs: the card CPU's (execute, memory, port, event; conditions on its registers and "
+        "memory).";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["201"]["description"] = "Breakpoint created";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["400"]["description"] =
         "Bad address or type, a page on a port breakpoint, a malformed page or one the machine does not have, a range "
@@ -197,4 +206,25 @@
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["responses"]["200"]["description"] = "The breakpoint";
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["responses"]["400"]["description"] = "No note in the body";
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["responses"]["404"]["description"] = "No such breakpoint";
+
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["summary"] = "Set a breakpoint's condition";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["description"] =
+        "Body {condition, dialect?}: an expression in the Unreal language (dialect \"c\": C precedence, decimal numbers); \"\" clears it. Checked against the breakpoint's trigger and refused with the reason (the old condition stays). Memory and port breakpoints only. Answers the breakpoint.";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][1]["name"] = "bp_id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["condition"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["condition"]["description"] = "The condition (\"\": none)";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["dialect"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["dialect"]["description"] = "unreal (default) or c";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["responses"]["200"]["description"] = "The breakpoint";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["responses"]["400"]["description"] = "No condition in the body, or one that does not compile (the reason and its column)";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/condition"]["put"]["responses"]["404"]["description"] = "No such breakpoint";
 

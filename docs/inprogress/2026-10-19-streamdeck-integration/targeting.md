@@ -210,3 +210,10 @@ What the WebSocket hub uses, without new threads:
 | `activity` | `ActivityFeed::Instance().AddListener` (called on the actions worker: store + `queueInLoop` only) or `Since(seq, instance)` on the loop; filter `entry.session == own session` (own actions), the session's target instance, 20 per second, `dropped` |
 | `catalogue_rev` / `catalogue` op | `ActionRegistry::Instance().Revision()`; `NC_ACTION_CATALOGUE` (`ActionCatalogueChangedPayload {revision}`) |
 
+
+As built (2026-10-27, `surface-hub.cpp`): every `join` opens the session (kind `companion`, the serial, the
+companion's id) and the surface's `session` is its id, so the REST pin and the GUI's surfaces table reach the deck;
+`join.target` and the `pin` op take `"follow"`, `{"instance": id or index}` and `{"view": id or number}` (a
+scenario's `{"view": 2}` is `v2`); `target` (welcome, changes, the `pin` answer) is `TargetNode` of the session's
+target; a change is found by comparing instance, view and mode with what was sent last (every `NC_SURFACE_TARGET`,
+instance and selection change); `welcome.views` is the `views` verb's list.

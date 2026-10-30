@@ -307,6 +307,9 @@ void TestJoinReadoutsActions()
     CHECK(!client.Joined("B2"));
     auto gone = client.Executor("B2")->Run({"run.pause_toggle", nullptr, json::object()});
     CHECK(gone.notSent);  // no session: the system host's REST fallback takes it
+    // paired: its context waits for the join (the join sends it), no REST call to a host that may not listen yet
+    auto early = client.Executor("B2")->Run({"ctx.set", "ttd", json::object()});
+    CHECK(early.ok && !early.notSent);
 
     // a view the host cannot bind: the deck follows instead
     auto viewer = Sink(false);
@@ -388,6 +391,7 @@ void TestNotPaired()
     client.Act("A1", {"run.pause_toggle", nullptr, json::object()},
                [&](const scn::ActionResult& r, const json&) { done = r.notSent; });
     CHECK(done);
+    CHECK(client.Executor("A1")->Run({"ctx.set", "ttd", json::object()}).notSent);  // no join to wait for: REST
 }
 
 void TestReadoutPathsAndNeeds()

@@ -1,5 +1,6 @@
 #include "hid/drivers/surfacedial.h"
 
+#include <algorithm>
 #include <chrono>
 
 #if defined(__APPLE__) || defined(__linux__)
@@ -175,6 +176,12 @@ std::vector<uint8_t> SurfaceDial::PatternReport(HapticPattern pattern)
     return HapticReport({});
 }
 
+std::vector<uint8_t> SurfaceDial::StopReport()
+{
+    constexpr uint8_t kStop = 2;
+    return {kOutputReport, 1, kStop, 0, 0};
+}
+
 std::vector<uint8_t> SurfaceDial::FeatureReport(const StepsOut& steps, const SurfaceDialFeature& base)
 {
     constexpr uint8_t kAutoNone = 1;
@@ -205,10 +212,72 @@ std::vector<uint8_t> SurfaceDial::FeatureBytes(const SurfaceDialFeature& feature
             static_cast<uint8_t>(feature.retriggerMs >> 8)};
 }
 
+/// region <SurfaceDialPlays>
+
+namespace
+{
+constexpr uint8_t kBuzzWave = 4;
+}  // namespace
+
+uint32_t SurfaceDialPlays::PlayMs(const std::vector<uint8_t>& report) const
+{
+    if (report.size() < 5)
+        return 0;
+    const uint32_t count = report[1] > 0 ? report[1] : 1;
+    const uint32_t period = static_cast<uint32_t>(report[3] | (report[4] << 8));
+    return count * (report[2] == kBuzzWave ? _timing.buzzMs : std::max(_timing.clickMs, period));
+}
+
+uint32_t SurfaceDialPlays::Strength(const std::vector<uint8_t>& report)
+{
+    if (report.size() < 3)
+        return 0;
+    return (report[2] == kBuzzWave ? 1000u : 0u) + report[1];
+}
+
+void SurfaceDialPlays::Offer(std::vector<uint8_t> report)
+{
+    if (!_pending)
+    {
+        _pending = std::move(report);
+        return;
+    }
+    // The hand outran the Dial: one of the two never plays
+    ++_dropped;
+    _overflow = true;
+    if (Strength(report) >= Strength(*_pending))
+        _pending = std::move(report);
+}
+
+std::vector<std::vector<uint8_t>> SurfaceDialPlays::Take(uint64_t nowMs)
+{
+    std::vector<std::vector<uint8_t>> reports;
+    if (!Waiting() || nowMs < DueMs())
+        return reports;
+    if (!_pending)
+    {
+        // The buzz has played its length: the device would go on to its own cutoff
+        reports.push_back(SurfaceDial::StopReport());
+        _stopAtMs = 0;
+        return reports;
+    }
+    if (_overflow || _stopAtMs != 0)
+        reports.push_back(SurfaceDial::StopReport());
+    reports.push_back(std::move(*_pending));
+    const std::vector<uint8_t>& play = reports.back();
+    _busyUntilMs = nowMs + PlayMs(play);
+    _stopAtMs = play.size() > 2 && play[2] == kBuzzWave ? _busyUntilMs : 0;
+    _pending.reset();
+    _overflow = false;
+    return reports;
+}
+
+/// endregion </SurfaceDialPlays>
+
 /// region <SurfaceDialWriter>
 
-SurfaceDialWriter::SurfaceDialWriter(Write write, Read read)
-    : _write(std::move(write)), _read(std::move(read)), _thread([this] { Run(); })
+SurfaceDialWriter::SurfaceDialWriter(Write write, Read read, SurfaceDialPlayTiming timing)
+    : _write(std::move(write)), _read(std::move(read)), _plays(timing), _thread([this] { Run(); })
 {
 }
 
@@ -218,7 +287,7 @@ SurfaceDialWriter::~SurfaceDialWriter()
         std::lock_guard<std::mutex> lock(_mutex);
         _stopping = true;
         _steps.reset();
-        _output.reset();
+        _plays.Clear();
     }
     _wake.notify_all();
     _thread.join();
@@ -240,7 +309,7 @@ void SurfaceDialWriter::Pattern(HapticPattern pattern)
 {
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        _output = SurfaceDial::PatternReport(pattern);
+        _plays.Offer(SurfaceDial::PatternReport(pattern));
     }
     _wake.notify_all();
 }
@@ -249,7 +318,7 @@ void SurfaceDialWriter::Clicks(const HapticClicks& clicks)
 {
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        _output = SurfaceDial::HapticReport(clicks);
+        _plays.Offer(SurfaceDial::HapticReport(clicks));
     }
     _wake.notify_all();
 }
@@ -264,6 +333,12 @@ uint64_t SurfaceDialWriter::Failed() const
 {
     std::lock_guard<std::mutex> lock(_mutex);
     return _failed;
+}
+
+uint64_t SurfaceDialWriter::Dropped() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _plays.Dropped();
 }
 
 std::optional<SurfaceDialFeature> SurfaceDialWriter::Found() const
@@ -315,27 +390,37 @@ void SurfaceDialWriter::Run()
     std::unique_lock<std::mutex> lock(_mutex);
     while (true)
     {
-        _wake.wait(lock, [this] { return _stopping || _steps || _output; });
+        _wake.wait(lock, [this] { return _stopping || _steps || _plays.Waiting(); });
         if (_stopping)
             return;
         // The steps first: a pattern after a context change plays in the new feel
-        bool ok = false;
         if (_steps)
         {
             const StepsOut steps = *_steps;
             _steps.reset();
             lock.unlock();
-            ok = WriteSteps(steps);
+            const bool ok = WriteSteps(steps);
+            lock.lock();
+            ++(ok ? _written : _failed);
+            continue;
         }
-        else
+        // A play waits until the last one has played, the stop until the buzz has (SurfaceDialPlays); new steps or
+        // the end do not
+        const uint64_t nowMs = DialNowMs();
+        if (nowMs < _plays.DueMs())
         {
-            const std::vector<uint8_t> report = std::move(*_output);
-            _output.reset();
-            lock.unlock();
-            ok = _write && _write(ReportType::Output, report);
+            _wake.wait_for(lock, std::chrono::milliseconds(_plays.DueMs() - nowMs),
+                           [this] { return _stopping || _steps.has_value(); });
+            continue;
         }
+        const std::vector<std::vector<uint8_t>> reports = _plays.Take(nowMs);
+        lock.unlock();
+        uint64_t written = 0;
+        for (const std::vector<uint8_t>& report : reports)
+            written += _write && _write(ReportType::Output, report) ? 1 : 0;
         lock.lock();
-        ++(ok ? _written : _failed);
+        _written += written;
+        _failed += reports.size() - written;
     }
 }
 

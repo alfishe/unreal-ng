@@ -64,6 +64,7 @@
 #include "controllers/guiactions.h"
 #include "emulator/actions/actionregistry.h"
 #include "controllers/hostcontrollers.h"
+#include "platform/windowlesssession.h"
 #include "controllers/surfacestatusicon.h"
 #include "controllers/streamdeckpage.h"
 #include "controllers/surfacetargets.h"
@@ -323,6 +324,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     {
         QMutexLocker locker(&_audioMutex);
+        // A windowless session is heard by nobody (agents, tests): silent, the device still the clock
+        _soundManager->setSilent(!WindowlessSessionUses("sound"));
         if (_soundManager->init())
         {
             _audioInitialized = true;
@@ -1022,6 +1025,8 @@ MainWindow::~MainWindow()
     _streamDeckSupervision = nullptr;
     delete _controllersDialog;
     _controllersDialog = nullptr;
+    if (_statusBarManager)
+        _statusBarManager->setControllers(nullptr);  // its 200 ms refresh still runs until the event loop ends
     delete _hostControllers;
     _hostControllers = nullptr;
 
@@ -1399,6 +1404,8 @@ void MainWindow::closeEvent(QCloseEvent* event)
     _streamDeckSupervision = nullptr;
     delete _controllersDialog;
     _controllersDialog = nullptr;
+    if (_statusBarManager)
+        _statusBarManager->setControllers(nullptr);  // its 200 ms refresh still runs until the event loop ends
     delete _hostControllers;
     _hostControllers = nullptr;
     if (networkWindow)
@@ -2550,7 +2557,7 @@ void MainWindow::updateUnsavedMediaMark()
 bool MainWindow::confirmUnsavedMedia()
 {
     EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
-    if (!context || !context->pMediaManager)
+    if (!context || !context->pMediaManager || _unattendedClose)
         return true;
     const ClosePrompt prompt = ClosePromptFor(context->pMediaManager->Unsaved());
     if (!prompt.ask)
@@ -2933,6 +2940,7 @@ void MainWindow::openDiskDialog()
                      buildFilterGroup(tr("Raw PC Floppy Images"), {"img", "ima"}) + ";;" +
                      buildFilterGroup(tr("MB-02 Images"), {"mb2", "mbd"}) + ";;" +
                      buildFilterGroup(tr("MDOS (Didaktik) Images"), {"d40", "d80"}) + ";;" +
+                     buildFilterGroup(tr("Profi CP/M Images"), {"pro"}) + ";;" +
                      tr("All Files (*)");
 
     QString filePath = QFileDialog::getOpenFileName(this, tr("Open Disk"), _lastDirectory, filter);
@@ -4037,13 +4045,16 @@ void MainWindow::applyDebugInstrumentation(bool enabled)
 {
     if (_emulator)
     {
-        // Off keeps a capture an automation client started (an analysis session's memory tracking): it would stop
-        // and lose what it gathered
-        FeatureManager* features = _emulator->GetFeatureManager();
         if (enabled)
+        {
             _emulator->DebugOn();
-        else if (!features || !features->debugCaptureOn())
+            _debugInstrumentationByUi = true;
+        }
+        else if (_debugInstrumentationByUi)
+        {
             _emulator->DebugOff();
+            _debugInstrumentationByUi = false;
+        }
     }
 }
 
@@ -5661,7 +5672,9 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
     // 7. UI state
     updateMenuStates();
 
-    // Debug instrumentation follows the debugger window: on only while it is visible
+    // Debug instrumentation follows the debugger window: on only while it is visible. The adopted instance's own
+    // debug mode (an automation client switched it on) is not the window's to switch off
+    _debugInstrumentationByUi = false;
     applyDebugInstrumentation(debuggerWindow && debuggerWindow->isVisible());
 
     // Turbo render cap for this emulator: the display refresh rate we are on

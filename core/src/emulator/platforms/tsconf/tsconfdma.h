@@ -53,6 +53,14 @@ public:
     /// Tests: emulate a firmware build with XTR_FEAT (BLT2)
     void SetBlt2Built(bool built) { _blt2 = built; }
 
+    /// The debugger's look at the transfer (platform-debugging P6), set by the port decoder. While `*busWatch` (the
+    /// CPU's debug mode) every RAM byte the DMA reads or writes goes to `onAccess` with its physical address; while
+    /// `*eventWatch` (EmulatorContext::machineEventWatch) a transfer's start and end go to `onActivity`
+    const bool* busWatch = nullptr;
+    const bool* eventWatch = nullptr;
+    std::function<void(bool write, uint32_t byteAddress, uint8_t value)> onAccess;
+    std::function<void(bool started, uint8_t value)> onActivity;
+
     void Reset();
 
     /// region <Registers (#xxAF)>

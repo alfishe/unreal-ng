@@ -81,6 +81,11 @@ TEST(HapticProfile_Test, ParsesAndRefusesWhatItCannotDo)
         {R"({"sources": {"s": {"probe": "write", "address": 1, "word": true}}})", "on a value probe"},
         {R"({"sources": {"s": {"probe": "value", "address": "0xFFFF", "word": true}}})", "second byte"},
         {R"({"source": {}})", "unknown field"},
+        {R"({"sources": {"s": {"probe": "exec", "address": 1, "if": "A =="}}})", "'if' operand expected at column 5"},
+        {R"({"sources": {"s": {"probe": "write", "address": 1, "each_write": true, "if": "RD == 1"}}})",
+         "RD is not supplied"},
+        {R"({"sources": {"s": {"probe": "value", "address": 1, "if": "VAL == 1"}}})", "VAL is not supplied"},
+        {R"({"sources": {"s": {"probe": "value", "address": 1, "if": 7}}})", "'if'"},
     };
     for (const Bad& entry : bad)
     {

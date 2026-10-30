@@ -634,9 +634,23 @@ std::string StripLive::Key() const
                     std::to_string(dialHint) + (bannerInfo ? "i" : "e");
     if (target)
         k += target->dump();
-    if (readouts)
-        for (const auto& [name, value] : *readouts)
-            k += name + value.dump();
+    if (!readouts)
+        return k;
+    // only what RenderStrip draws (the surface pushes some 60 readouts, ttd.position at 50 Hz): the timeline's
+    // position with its frame held inside the history as DrawTimeline does, so a live machine without a history
+    // redraws nothing
+    if (const auto it = readouts->find("ttd.position"); it != readouts->end() && it->second.is_object())
+    {
+        const json& t = it->second;
+        const long long first = Num(t, "first"), end = std::max(first, Num(t, "end"));
+        k += sdb::Format("ttd{},{},{},", first, end, std::clamp(Num(t, "frame"), first, end));
+        for (const char* field : {"state", "history", "fps", "available", "paused"})
+            if (const auto f = t.find(field); f != t.end())
+                k += f->dump() + ",";
+    }
+    for (const char* name : {"ttd.marks", "run.state", "media.tape"})
+        if (const auto it = readouts->find(name); it != readouts->end())
+            k += std::string(name) + it->second.dump();
     return k;
 }
 

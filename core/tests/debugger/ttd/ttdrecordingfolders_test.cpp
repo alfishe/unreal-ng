@@ -84,6 +84,8 @@ TEST(TTDRecordingFolders_Test, ProcessIds)
     EXPECT_TRUE(platform::IsProcessAlive(platform::CurrentProcessId()));
     EXPECT_FALSE(platform::IsProcessAlive(kNoSuchProcess));
     EXPECT_FALSE(platform::IsProcessAlive(0));
+    // Above pid_t: not a process group (kill(-1, 0) would answer for every process)
+    EXPECT_FALSE(platform::IsProcessAlive(UINT32_MAX));
 }
 
 /// Crashed and older than a week: deleted. Crashed but recent, or owned by a

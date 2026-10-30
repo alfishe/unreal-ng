@@ -64,7 +64,17 @@ Local detents are feature report 1 with auto trigger 3 (`SurfaceDial::FeatureRep
   the logical range dropped silently);
 - writes the found settings back when it ends (the backend stops, the device goes): the Dial keeps its detents until it
   sleeps and must not stay clicking after the emulator quits;
-- gives the last steps again after a reconnect (the backend keeps them per device id).
+- gives the last steps again after a reconnect (the backend keeps them per device id);
+- plays one output report at a time (`SurfaceDialPlays`). The Dial takes every output report at once (each write a
+  ~30 ms BLE round trip) and plays them one after another: measured 2026-10-28, ten buzzes written in 300 ms buzzed far
+  longer than one, and a fast turn at the end of the history (an `edge` buzz each step, never rate limited) kept the
+  Dial buzzing for seconds. Output report 1 with Manual Trigger 2 (stop, `SurfaceDial::StopReport`) cut such a queue
+  off. So the next play goes when the last one has played (a click its retrigger period, 80 ms at least); meanwhile
+  one request waits, the strongest asked for (a buzz over more clicks over fewer); a request while one already waits
+  is an overflow: the weaker is dropped (`Dropped()`), and the next play goes after a stop. The buzz is continuous to
+  the device's own cutoff, longer than its 250 ms here (a turn slower than that at the end still queued buzzes): the
+  writer ends each buzz with a stop after 250 ms, or with the stop before the next play. Single steps play as before,
+  at once.
 
 Unit-tested with a fake device (`Surfaces_Test.DialWriter_*`). Live: the write and read-back of feature report 1 were
 measured with the POC 030 probe on 2026-10-18 (`01 0c 00 00 03 00 00 00` read back `01 0c 00 00 03 05 50 00`, then

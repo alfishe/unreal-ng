@@ -16,6 +16,8 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "ttdphyspage.h"
 
@@ -63,6 +65,25 @@ struct TTDCursor
                paused == other.paused;
     }
     bool operator!=(const TTDCursor& other) const { return !(*this == other); }
+};
+
+/// @brief A card hook's write of a sound card (gs-debugger design §8A.7, Q3): an input of the track that the replay
+/// hands to the card's debug target, applied when the card reaches the same time of the same frame
+struct TTDCardEdit
+{
+    enum Kind : uint8_t
+    {
+        Bytes = 0,   ///< `bytes` written from `address` on, as the card CPU's write would land
+        Cpu = 1,     ///< `bytes`: the card CPU's Z80CpuRegisters
+        Read = 2,    ///< the memory read at `address` sees `bytes[0]`
+        PortIn = 3,  ///< the port read of `address` sees `bytes[0]`
+    };
+    uint8_t cpu = 0;       ///< DebugCpuId of the card
+    Kind kind = Bytes;
+    uint64_t frame = 0;    ///< the ZX frame the card was in (its frame-end catch-up counts to that frame)
+    int64_t at = 0;        ///< GeneralSoundCard::cardFrameTime at the instruction boundary (a read: of its step)
+    uint16_t address = 0;
+    std::vector<uint8_t> bytes;
 };
 
 /// @brief Stable string identifier for a TTDSessionState.
@@ -135,6 +156,10 @@ public:
     virtual void OnMachineParking() = 0;
     /// Z80, before an instruction, only when EmulatorContext::kStepWorkTtdInput is set
     virtual void ServiceInput() = 0;
+    /// A halted CPU's idle (Z80::RunHaltedIdle) with kStepWorkTtdInput set: the CPU T-state of this frame
+    /// ServiceInput next has work at - the idle runs only the fetches that start before it. 0: ServiceInput acts at
+    /// every boundary now (live input queued, a paused recording's end watched), UINT32_MAX: not in this frame
+    virtual uint32_t InputIdleLimit() const { return 0; }
     /// The machine left the recorded timeline from outside (reset)
     virtual void OnMachineReset() = 0;
     /// Ends a recording; the history is kept. For an operation that ends the session (reset, autostart) use EndSession
@@ -168,6 +193,24 @@ public:
     /// End without a source: nothing was edited (a trap declined)
     virtual void BeginToolEdit() = 0;
     virtual void EndToolEdit(const char* source) = 0;
+    /// Whether a recording keeps a logic callback's writes (RecordScriptEdit): the engine does, TTD v1 does not
+    virtual bool RecordsScriptEdits() const { return false; }
+    /// A logic callback's writes, just made at an instruction boundary (ScriptCallbackManager::ApplyEdits): the bytes
+    /// in @p pokes (address, byte) written through the CPU's view, in order, and with @p cpu the registers it set.
+    /// A recording keeps them as an edit there that a replay applies (the callback never runs on replay)
+    virtual void RecordScriptEdit(const char* source, const std::vector<std::pair<uint16_t, uint8_t>>& pokes, bool cpu)
+    {
+        (void)source;
+        (void)pokes;
+        (void)cpu;
+    }
+    /// A card hook's writes, just made by the card's target (GSCardTarget): a recording keeps them as one edit there,
+    /// which a replay hands back to the target for the card time they name (the hook never runs on replay)
+    virtual void RecordCardEdits(const char* source, const std::vector<TTDCardEdit>& edits)
+    {
+        (void)source;
+        (void)edits;
+    }
     /// A device was swapped for another one (the General Sound card): every device of @p oldType leaves, @p device
     /// comes in under its own key
     virtual void UpdatePeripheral(TTDDeviceType oldType, TTDSerializable* device) = 0;

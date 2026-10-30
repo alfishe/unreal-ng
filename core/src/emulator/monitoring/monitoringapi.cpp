@@ -293,12 +293,14 @@ StateNode BreakpointsSummary(Emulator& emulator)
     });
 }
 
-/// Every group of the user breakpoints with its ids (the verb `breakpoint_groups`, GET .../breakpoints/groups)
-StateNode BreakpointGroups(Emulator& emulator)
+/// Every group of the user breakpoints with its ids (the verb `breakpoint_groups`, GET .../breakpoints/groups) of
+/// one CPU's manager (main, gs)
+StateNode BreakpointGroups(Emulator& emulator, DebugCpuId cpu)
 {
     EmulatorContext* context = emulator.GetContext();
-    BreakpointManager* manager = context->pDebugManager ? context->pDebugManager->GetBreakpointsManager() : nullptr;
+    BreakpointManager* manager = context->pDebugManager ? context->pDebugManager->GetBreakpointsManager(cpu) : nullptr;
     StateNode node = StateNode::Object();
+    node["cpu"] = DebugCpuName(cpu);
     StateNode& groups = node["groups"];
     groups = StateNode::Array();
     if (manager == nullptr)
@@ -543,6 +545,44 @@ StateNode BufferFill(size_t used, size_t capacity, size_t slotBytes)
 
 // How full each trace buffer is: the counters the recorders keep (atomics, a shared lock, the call trace's own lock),
 // read at most once a second (the call trace's lock is the one its writer takes per event: never at a monitor's 10 Hz)
+StateNode Watches(Emulator& emulator)
+{
+    // The totals the emulation thread published at the last frame's end (or a watch change): never the live stats
+    EmulatorContext* context = emulator.GetContext();
+    StateNode node = StateNode::Object();
+    node["available"] = context->pMemory != nullptr;
+    StateNode& list = node["watches"];
+    list = StateNode::Array();
+    if (context->pMemory == nullptr)
+        return node;
+    MemoryAccessTracker& tracker = context->pMemory->GetAccessTracker();
+    node["session"] = SessionStateName(tracker.GetMemorySessionState());
+    uint64_t revision = 0;
+    for (const PublishedWatch& watch : tracker.PublishedWatches(&revision))
+    {
+        StateNode entry = StateNode::Object();
+        entry["name"] = watch.name;
+        entry["kind"] = std::string(watch.port ? "port" : "region");
+        if (watch.port)
+        {
+            entry["port"] = static_cast<int64_t>(watch.start);
+            entry["mask"] = static_cast<int64_t>(watch.mask);
+        }
+        else
+        {
+            entry["start"] = static_cast<int64_t>(watch.start);
+            entry["length"] = static_cast<int64_t>(watch.length);
+        }
+        entry["reads"] = static_cast<int64_t>(watch.readCount);
+        entry["writes"] = static_cast<int64_t>(watch.writeCount);
+        if (!watch.port)
+            entry["executes"] = static_cast<int64_t>(watch.executeCount);
+        list.push(std::move(entry));
+    }
+    node["revision"] = static_cast<int64_t>(revision);
+    return node;
+}
+
 StateNode Buffers(Emulator& emulator)
 {
     return CachedValue("debug.buffers", emulator.GetId(), 0, 1.0, [&emulator] {
@@ -655,6 +695,12 @@ StateNode GameEvents(Emulator& emulator)
             entry["last_frame"] = static_cast<int64_t>(event.lastFrame);
             entry["level"] = std::round(static_cast<double>(event.current) * 1000.0) / 1000.0;
             entry["value"] = event.value >= 0 ? StateNode(static_cast<int64_t>(event.value)) : StateNode();
+            if (!event.condition.empty())
+            {
+                entry["condition"] = event.condition;
+                if (!event.conditionError.empty())
+                    entry["condition_error"] = event.conditionError;
+            }
         }
         StateNode& recent = node["recent"];
         recent = StateNode::Array();
@@ -745,7 +791,8 @@ const std::vector<std::string>& InstanceNames()
     static const std::vector<std::string> names = {"emulator.stats", "debug.breakpoints", "media.slots",
                                                    "recording.state", "debug.labels",     "ttd.status",
                                                    "debug.analyzers", "controllers.state", "debug.buffers",
-                                                   "game.events",     "analysis.progress", "analysis.ready"};
+                                                   "game.events",     "debug.watches",     "analysis.progress",
+                                                   "analysis.ready"};
     return names;
 }
 
@@ -795,6 +842,8 @@ StateNode ReadInstance(const std::string& name, Emulator& emulator)
         return Controllers(emulator);
     if (name == "game.events")
         return GameEvents(emulator);
+    if (name == "debug.watches")
+        return Watches(emulator);
     if (name == "analysis.progress")
         return analysis::L1Jobs::Instance().View(emulator.GetId()).ProgressNode();
     if (name == "analysis.ready")
@@ -862,8 +911,11 @@ Reply Call(std::string_view verbView, const StateNode& args)
     std::shared_ptr<Emulator> emulator = id.empty() ? nullptr : manager->GetEmulator(id);
     if (!emulator)
         return Fail(404, "Not Found", error.empty() ? "no instance" : error);
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (verb == kBreakpointGroups && !DebugManager::ParseCpuName(Text(args, "cpu"), cpu))
+        return Fail(400, "Bad Request", "cpu must be main, gs or ms");
     reply.body["instance"] = id;
-    StateNode read = verb == kBreakpointGroups ? BreakpointGroups(*emulator) : ReadInstance(verb, *emulator);
+    StateNode read = verb == kBreakpointGroups ? BreakpointGroups(*emulator, cpu) : ReadInstance(verb, *emulator);
     for (auto& [name, value] : read.members)
         reply.body[name] = std::move(value);
     return reply;

@@ -69,6 +69,10 @@ python->start();
 python->executePython("print('Hello from embedded Python!')");
 ```
 
+Code sent to the interpreter (`POST /api/v1/python/exec`, the CLI `python` command) runs in `__main__`: its functions
+and callbacks see its top-level names, and the names stay for the next call, as in the Lua console. Its `print`
+output comes back with the answer.
+
 ### Machine Identity and Lifecycle
 The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
@@ -657,6 +661,7 @@ emu.media_write("A", "PROG.C", b"\xf3\xc9", start=0x8000)  # onto any file syste
 emu.media_rename("A", "PROG.C", "GAME.C")                 # a bare name stays in its directory; "/x" moves a file or a directory (iS-DOS, FAT)
 emu.media_delete("hd", "OLD.TXT", volume="p1")
 emu.media_mkdir("hd", "GAMES/NEW", parents=True)          # a FAT directory, an iS-DOS catalogue
+emu.media_mkdir("A", "WORK", continuous=True, blocks=4)   # an iS-DOS continuous catalogue of 4 blocks
 emu.media_delete("hd", "GAMES", recursive=True)           # a directory with its contents
 emu.media_attrib("hd", "GAME.COM", attributes="+R-H", time="2026-10-26 14:30")  # FAT RHSA, iS-DOS RWHD, +3DOS RSA
 emu.media_label("hd", "WORK DISK")                         # FAT label, TR-DOS title, iS-DOS device name
@@ -1164,10 +1169,24 @@ id = emu.bp_nextreg_write(0x40, to=0x44, doors="copper", value=0x01, vmask=0x03,
 id = emu.bp_magic("ed_ff")         # ZX Next: stop after the magic opcode ED FF (or "dd_01") ran
 id = emu.bp_beam(99, hc=255)        # ZX Next: the beam passes line 99 (the copper's counter) at pixel clock 255
 id = emu.bp_copper(12, to=14)       # ZX Next: the copper completes list instruction 12..14
+id = emu.bp(0x0038, cpu="gs")       # the sound card CPU's (General Sound / NeoGS); bp_remove(id, cpu="gs"), bp_list(cpu="gs") ...
+                                    # cpu="ms": the MultiSound card's General Sound, the same way
+id = emu.bp_event("card_command", value=0x23)  # a GS event (int, nmi, reset, page, card_*, dac_fetch, clock_change,
+                                    # dma_start, dma_done, gscfg0, host_*; the ZX Next's cpu_int, cpu_nmi,
+                                    # esxdos_call, divmmc_map, zxndma_start, ...: the main CPU's);
+                                    # cpu= defaults to the kind's side; ValueError with the reason when refused
+id = emu.bp_chipreg("ay", 7, value=0x3F, vmask=0x3F)  # a sound chip register write by the main CPU (ay, fm, saa,
+                                    # opl4, opl4wave, dac, cbl); end= a range end, unit= one chip of the kind
+id = emu.gs_on_dma_done(fn)          # a card event callback (hit["arg"] its detail); also gs_on_command, gs_on_data,
+                                    # gs_on_reply, gs_on_int, gs_on_nmi, gs_on_page, gs_on_dac_fetch, gs_on_clock_change,
+                                    # gs_on_dma_start, gs_on_gscfg0, gs_on_port_in(port, fn), gs_on_port_out(port, fn); cpu="ms"
 emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
+id = emu.bp_write(0x5C78, condition="VAL == 0")  # a condition (bp / bp_read / bp_write / bp_port_*; dialect="c");
+                                    # ValueError with the reason when it does not compile
+emu.bp_condition(id, "VAL == 80")   # change it ("" clears): True; False for an unknown id; ValueError for a bad text
 emu.bp_group(id, "game")            # group, created on use; switched on / off together (CLI bpgroup)
 id = emu.bp_key("space")            # keyboard: the first keyboard read that sees SPACE go down; on="release" / "both",
                                     # key="any"; hits=, group=, note=
@@ -1180,7 +1199,34 @@ emu.trace("opcode", "start")        # profilers and traces (tracecontrol): opcod
 emu.trace("audio", "start", seconds=2, source="ay1")  # resume | pause_toggle | clear | status -> {name, state, can_pause}
 emu.bp_count()
 print(emu.bp_list())                # the text table: "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
-emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one
+emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one;
+                                    # with a condition also 'condition', 'match_count', 'condition_error'
+```
+
+### Script Callbacks
+
+Called back on a tap (a memory or port access, with an optional condition, a machine event or a sound chip's
+register write; never stops the machine), on a
+breakpoint's stop, or on a game event of the controller profile. The function runs on the Python thread under the
+GIL, from a ring of hits with a register snapshot each (deferred mode). Full reference:
+[docs/features/script-callbacks.md](../../../features/script-callbacks.md).
+
+```python
+id = emu.on_tap(lambda hit: print(hit["value"], hit["regs"]["hl"]), "write", 0x5C78, condition="MDT < 5",
+                label="lives")      # kind: exec, read, write, port_in, port_out; to=, page=, mask=, dialect=;
+                                    # policy= (suspend | disable | ignore), budget_us=, ring=; ValueError when refused
+id = emu.on_tap(fn, "event", event="fdc_command", value=0x80, vmask=0xE0)  # a machine event; hit["arg"] the detail
+id = emu.on_tap(fn, "chipreg", 7, chip="ay")  # a sound chip's register write; to=, unit=, value=, vmask=, condition=
+id = emu.on_breakpoint(fn, 3)       # breakpoint 3 still stops
+id = emu.on_game_event(fn, "died")  # hit["event"], hit["value"]
+emu.callbacks()                     # [{id, on, owner, label, target, policy, state, reason, hits, dropped, calls, ...}]
+emu.callback_resume(id); emu.callback_policy(id, "ignore"); emu.callback_remove(id)
+ue.callbacks_run()                  # run the waiting hits now (a script looping on the Python thread)
+# A str instead of fn: Lua source for the emulator's hook state (mode="frame" by default, or "sync"; instructions=)
+id = emu.on_tap("return function(hit) shared_set('lives', hit.value) end", "write", 0x5C78, mode="sync")
+# role="logic": the hook's poke / set_reg land at the next instruction boundary, recorded by TTD and replayed
+id = emu.on_tap("return function(hit) poke(0x5C78, 5) end", "write", 0x5C78, mode="sync", role="logic")
+emu.shared_get("lives"); emu.shared_set("limit", 3); emu.callback_hooks()
 ```
 
 ### DebugManager Class
@@ -1320,11 +1366,25 @@ emu.memory_profiler_clear()    # Clear all data
 status = emu.memory_profiler_status()
 # Returns: {'feature_enabled': True, 'capturing': True, 'session_state': 'capturing', 'tracking_mode': 'physical'}
 
-# Data retrieval
-pages = emu.memory_profiler_pages(limit=20)   # Get per-page access summaries
-counters = emu.memory_profiler_counters(page=5, mode='physical')  # Address-level counters
-regions = emu.memory_profiler_regions()       # Monitored region statistics
-emu.memory_profiler_save('/path/output', format='yaml')  # Save data to file
+# Per-address counters (MemoryCounters, docs/emulator/design/debugger/memory-counters.md)
+hot = emu.memory_counters(space="cpu", view="top", kinds="x", limit=16)   # hot code, heaviest first
+for address, reads, writes, executes in hot["cells"]:
+    print(f"{address:04X} r={reads} w={writes} x={executes}")
+banks = emu.memory_counters(space="phys", view="top", kinds="w")          # cell // 0x4000 = absolute page
+touched = emu.memory_counters(space="ram5", view="sparse", min=1)         # every touched cell of RAM 5
+cells = emu.memory_counters(addresses="0x5C00,0x5C08,0x8000-0x800F")      # exactly these cells
+r, w, x = emu.memory_counter(0x5C08)                                      # one cell (space="cpu")
+# Window: start=, length= (0: to the end); view="dense" gives every cell; ValueError with the reason
+
+# Watches (MemoryWatch): regions of CPU addresses and partially decoded ports, with callers / values
+emu.memory_watch_add("sysvars", 0x5C00, 0xC0, callers=True)
+emu.memory_watch_port("kempston", 0x1F, 0x00FF, values=True)   # every port with low byte 0x1F
+emu.memory_watch_port("keys", 0xFE, 0x00FF, callers=True)
+for watch in emu.memory_watches():   # [{name, kind, start/length or port/mask, reads, writes, executes, callers, values}]
+    print(watch["name"], watch["reads"], watch["writes"], watch["callers"])
+emu.memory_watch_remove("sysvars")
+emu.memory_watch_clear()
+# Session control on every plane: emu.trace("memory", "start") (also stop / pause / resume / clear / status)
 ```
 
 ### Call Trace Profiler
@@ -1397,7 +1457,7 @@ Module functions, by emulator id (default: the selected machine). A model switch
 
 `Emulator.rzx_stop()` and `Emulator.rzx_status()` act on that machine; `Emulator.snapshot_load("game.rzx")` plays a recording on it as it is.
 
-`unreal.snapshot_load(path, emulator_id="", switch_model=True)` returns `{ok, message, emulator_id, model_switched, previous_emulator_id, required_model}`: a TS-Conf program (`.spg`) on another model switches the machine to TS-Conf first (`emulator_id` is the new one). `Emulator.snapshot_load` is bound to its machine and raises `RuntimeError` for such a file instead.
+`unreal.snapshot_load(path, emulator_id="", switch_model=None, commit="")` returns `{ok, message, emulator_id, model_switched, previous_emulator_id, required_model}`: a TS-Conf program (`.spg`) on another model switches the machine to TS-Conf first unless `switch_model=False` (`emulator_id` is the new one); an `.szx` of another model, or a `.z80` / `.sna` the machine cannot hold (a 128K file on a 48K: the machine its header names), switches with `switch_model=True` and is refused otherwise ([webapi-interface.md](./webapi-interface.md) has the rule). `Emulator.snapshot_load` is bound to its machine and raises `RuntimeError` for such a file instead.
 
 ```python
 r = unreal.rzx_play("games/greenberet.rzx")          # on a 48K: switches to a 128K
@@ -1555,6 +1615,13 @@ hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 #    None only when nothing matched and no marker stopped the search.
 #    Dicts carry 'covered_from', 'covered_from_tinframe', 'covered_to',
 #    'covered_to_tinframe': the searched span (command-interface.md -> Search window).
+
+# One Z80 address on two banks: only the runs from page 3; every hit, newest first, the machine stays
+hits = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, limit=500)
+# {'hits': [{'frame': 4700, 'tinframe': 812, 't': 336899052, 'pc': 0xC000, 'phys_page': 3}, ...],
+#  'count': 500, 'truncated': True, 'next_before': 336512000, ...}
+more = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, before=hits['next_before'])
+# phys_page='rom': runs from the ROM. Bounds: before_frame= / before_tin= or before= (machine T), from_frame=
 ```
 
 **Reverse search:**
@@ -1586,8 +1653,13 @@ result = emu.ttd_find_last(
     pc_to=0x8000,
     before_frame=4823,         # search at or before this point (default: current position)
     before_tin=0,
-    phys_page=5                # 0..255: one physical RAM page (ValueError otherwise)
+    phys_page=5                # 0..255 or 'rom': one physical RAM page (ValueError otherwise)
 )
+
+# Every write that changed the byte, newest first, with the byte it replaced; the machine stays
+changes = emu.ttd_find_last(addr=0x5B00, changes_only=True, all=True, limit=500)
+# {'hits': [{'frame': 4823, 'tinframe': 14982, 't': ..., 'value': 3, 'old_value': 2, 'pc': ..., ...}, ...],
+#  'count': 41, 'truncated': False, ...}   keywords: all, changes_only, limit, before (machine T), from_frame
 
 # The Sprinter's video RAM / fast RAM: space='vram' | 'cache', the address an offset in it
 result = emu.ttd_find_last(addr=0x4805, space='vram')
@@ -1685,12 +1757,22 @@ scan = emu.ttd_coverage_scan(kind='executed', addr_from=0x0038, addr_to=0x0040,
 #  'matching_frames': 3, 'scanned_frames': 183, 'truncated': False,
 #  'covered_from': 18, 'covered_to': 197, 'index_available': True}
 
+# The newest matches first, as runs of consecutive frames; a cut list carries the cursor
+runs = emu.ttd_coverage_scan(kind='executed', addr_from=0x8200, addr_to=0x8200, phys_page=2,
+                             order='newest', ranges=True, limit=50)
+# {'ranges': [[190, 192], [180, 180], ...], 'order': 'newest', 'exact': True, 'truncated': True,
+#  'next_to_frame': 87, 'first_match': 3, 'last_match': 192, ...}
+# exact=False without phys_page: the offset matched on every page; phys_page='rom' is the ROM's bucket
+
 # The Sprinter's video RAM by its own offsets (space='vram' / 'cache': offsets inside one 16 KB page)
 scan = emu.ttd_coverage_scan(kind='written', space='vram', addr_from=0x4805, addr_to=0x4805)
 
 # A memory at a past checkpoint, and what changed between two - from the store, no seek
 at = emu.ttd_memory_at('ram5', frame=150, offset=0x1C78, length=2)   # tinframe=T: a point inside the frame (ram, vram, cache)
 # {'space': 'ram', 'offset': 89208, 'length': 2, 'frame': 150, 'at_frame': 150, 'exact': True, 'hex': '6500'}
+# ram / ramN offsets are physical. space='cpu': Z80 addresses, what the CPU saw at frame:tinframe, with the banks
+cpu = emu.ttd_memory_at('cpu', frame=150, offset=0xC000, length=16, tinframe=20000)
+# {'space': 'cpu', 'banks': [{'window': 3, 'addr': '0xC000', 'kind': 'ram', 'page': 0, 'name': 'RAM 0'}, ...], 'hex': ...}
 diff = emu.ttd_memory_diff('neogs.ram', from_frame=150, to_frame=600)
 # {'space': 'neogs.ram', 'changed_bytes': 812, 'ranges': [{'offset': 4096, 'length': 64}, ...], 'truncated': False, ...}
 

@@ -1,0 +1,33 @@
+# Pole Position (Atari / U.S. Gold 1984), the 48K Z80 snapshot "Pole_Position_1984_U.S._Gold.z80" (archive.org zx_*): it sits in
+# the attract loop, any key reaches the option page (K keyboard, Z interface 2, X Kempston, C cursor, S start), then S starts the
+# qualifying lap. Keys (the game's own scan #A3AB): O steers left, P right, A shifts the gear (Lo -> Hi, a press), Q is read too
+# (no effect found), ENTER ends. The throttle is automatic. Haptics (haptics.md §13 H5), found with TTD on recorded runs: the
+# speed is the byte #9802 = the mph readout (34 .. 55 in Lo, 77 and more in Hi; the writers #97CD up and #9795 down), #9A24 is
+# the head of the crash routine (it zeroes the speed, runs the explosion and the restart; 3 runs for the 3 wrecks of a 25 s
+# recording, the restart #9ACA writes speed 1 about 5 s later).
+# Checked in real time (35 s of random O / P / A): the speed level follows the readout (0 to 0.29), 1 `crash` for the wreck.
+# Known limits: the other cars and the overtakes are not mapped; Hi gear top speed is estimated for the level scale.
+schema: 1
+kind: play
+id: builtin/game/pole-position
+label: Pole Position
+match:
+  machines: [48K, 128K, PENTAGON]
+  file_sha256: ["34be27566ba2def959e6390e63adb6c89bf93adf0a6e3d9aa0f2433b8a45ce37"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    south:        { key: A, label: Gear }
+    menu:         { key: S, label: Start }
+haptics:
+  sources:
+    speed: { probe: value, address: "0x9802", scale: 1.3 }
+    crash: { probe: exec, address: "0x9A24" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: crash, play: explosion, scale: 0.9 }

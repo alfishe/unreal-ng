@@ -49,7 +49,10 @@ struct View
 
 uint32_t RamPageCount(EmulatorContext* context)
 {
-    return context && context->config.ramsize ? context->config.ramsize / 16 : MAX_RAM_PAGES;
+    if (!context || !context->config.ramsize)
+        return MAX_RAM_PAGES;
+    // The 16K and 48K boards number their RAM as the 128K does (5, 2, 0 at #4000, #8000, #C000)
+    return std::max<uint32_t>(context->config.ramsize / 16, 8);
 }
 
 const uint8_t* PageHost(EmulatorContext* context, MemoryBankModeEnum type, uint32_t page)

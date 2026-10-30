@@ -34,6 +34,8 @@
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/sound/chips/gs/gsmailbox.h"  // GSForwardMailbox (switch snapshots)
 #include "emulator/sound/chips/gs/gshostclock.h" // GSClassicTiming
+#include "emulator/sound/chips/gs/gsdebughooks.h"
+#include "3rdparty/unreal-z80/z80cpu.h"     // Z80CpuRegisters
 
 /// Which personality is fitted (introspection/switching; GSCardImplementation
 /// names the implementation, GSTypeKind the config input that selected it)
@@ -372,6 +374,65 @@ public:
     /// Firmware/flash description for automation ("32 KB ROM", "NeoGS flash v1.11")
     virtual std::string firmwareDescription() const { return isROMLoaded() ? "Loaded (32 KB)" : "Missing (zero-filled)"; }
     virtual uint16_t getCPUReg(GSCpuRegister) const { return 0; }
+
+    /// region <Card CPU debugging (gs-debugger design §3.1, §4)>
+    /// The card CPU runs its debug loop and debug bus callbacks while `hooks` is set, the fast ones with nullptr.
+    /// Called between two runs only (the machine's CPU held, the card on an instruction boundary). False on cards
+    /// without a CPU
+    virtual bool setDebugHooks(IGSDebugHooks* hooks)
+    {
+        (void)hooks;
+        return false;
+    }
+    /// The 16K page behind a card CPU address now (as the emulation maps it, not a table). Flash and ROM count as
+    /// ROM pages
+    struct CardPage
+    {
+        enum Kind : uint8_t { Rom = 0, Ram = 1, None = 0xFF };  // the values of MemoryBankModeEnum
+        Kind kind = None;
+        uint8_t page = 0;
+        uint16_t offset = 0;
+    };
+    virtual CardPage mapCardAddress(uint16_t addr) const
+    {
+        (void)addr;
+        return {};
+    }
+    /// 16K pages of a kind the card CPU can map (0: none, or no CPU)
+    virtual uint32_t cardPageCount(CardPage::Kind kind) const
+    {
+        (void)kind;
+        return 0;
+    }
+    /// The card CPU's full register file; false without a CPU
+    virtual bool cardRegisters(Z80CpuRegisters& out) const
+    {
+        (void)out;
+        return false;
+    }
+    /// Card time in the card's own unit and that unit's rate (classic GS: 12 MHz cycles; NeoGS: 120 MHz ticks)
+    virtual int64_t cardTime() const { return 0; }
+    virtual double cardUnitsPerSecond() const { return 0.0; }
+    /// Card time since the ZX frame's start, as the card state keeps it (TTD): a replay reaches the same value at the
+    /// same instruction of the frame
+    virtual int64_t cardFrameTime() const { return 0; }
+    /// The card runs to the ZX frame's end (handleFrameEnd): the frame counter already names the next frame
+    virtual bool inFrameEndCatchUp() const { return false; }
+    /// A script's write to card memory as the card CPU's write would land (a ROM or flash window keeps its byte):
+    /// no bus side effect (no DAC latch, no flash command). False without a CPU or on a read-only window
+    virtual bool pokeCardMemory(uint16_t addr, uint8_t value)
+    {
+        (void)addr;
+        (void)value;
+        return false;
+    }
+    /// The card CPU's full register file, set between two instructions; false without a CPU
+    virtual bool setCardRegisters(const Z80CpuRegisters& regs)
+    {
+        (void)regs;
+        return false;
+    }
+    /// endregion </Card CPU debugging>
 
     /// region <Diagnostics: activity counters + port/DAC trace>
     /// Cheap always-on counters - the first thing to check when triaging

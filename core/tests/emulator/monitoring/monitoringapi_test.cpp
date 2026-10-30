@@ -108,6 +108,17 @@ TEST_F(MonitoringApi_Test, BreakpointGroupsListEachGroupWithItsIds)
     EXPECT_EQ(groups->items[1].find("name")->s, "loader");
     EXPECT_EQ(Int(groups->items[1], "total"), 1);
     EXPECT_EQ(Int(groups->items[1], "active"), 0);
+    EXPECT_EQ(reply.body.find("cpu")->s, "main");
+
+    // One CPU's groups: the sound card CPU's are its own (none here), an unknown CPU is refused
+    StateNode card = Args();
+    card["cpu"] = "gs";
+    const monitoring::Reply gs = monitoring::Call("breakpoint_groups", card);
+    ASSERT_TRUE(gs.Ok());
+    EXPECT_EQ(gs.body.find("cpu")->s, "gs");
+    EXPECT_TRUE(gs.body.find("groups")->items.empty());
+    card["cpu"] = "z81";
+    EXPECT_EQ(monitoring::Call("breakpoint_groups", card).status, 400);
 
     // The summary follows the change (the cache is keyed by the manager's revision)
     const monitoring::Reply summary = monitoring::Call("debug.breakpoints", Args());

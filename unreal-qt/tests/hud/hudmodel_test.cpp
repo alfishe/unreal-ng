@@ -1364,3 +1364,53 @@ TEST_F(HudModel_Test, AlwaysShownElementsShowWithTheHudTurnedOff)
     model.onFeatureChanged(false);
     EXPECT_TRUE(model.snapshot()->elements.empty());
 }
+
+// The category filter is installed after the constructor has subscribed the observers, so a handler on the
+// MessageCenter worker can run while the GUI thread assigns it. Reading the std::function unlocked called a null
+// target (crash in the handler thunk, address 0x30).
+TEST_F(HudModel_Test, CategoryFilterAssignedWhileEventsAreHandled)
+{
+    constexpr int kEvents = 3000;
+    constexpr int kMinOverlap = 200;  // handler calls that ran while the setter was still assigning
+
+    HudModel model(nullptr);
+    model.onFeatureChanged(true);
+
+    std::atomic<bool> setterStarted{false};
+    std::atomic<bool> stop{false};
+    std::atomic<int> assignments{0};
+    std::atomic<int> handlerCalls{0};
+    std::atomic<int> overlapCalls{0};
+
+    // A capture too big for the small-buffer optimisation: every assignment allocates and frees the target
+    std::array<char, 64> payload{};
+    std::thread setter([&] {
+        setterStarted = true;
+        while (!stop)
+        {
+            model.setCategoryFilter([&handlerCalls, &overlapCalls, &stop, payload](const char*) {
+                (void)payload;
+                handlerCalls++;
+                if (!stop)
+                    overlapCalls++;
+                return true;
+            });
+            model.setCategoryFilter({});
+            assignments++;
+        }
+    });
+    ASSERT_TRUE(WaitForCondition([&] { return setterStarted.load(); }));
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    for (int i = 0; i < kEvents; i++)
+        mc.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(_id, (i & 1) ? StatePaused : StateRun));
+
+    // Keep assigning until the handlers have really overlapped with the setter (bounded by both sides)
+    WaitForCondition([&] { return overlapCalls.load() >= kMinOverlap || (handlerCalls.load() > 0 && assignments.load() > 100000); });
+    DrainMessageCenter(mc);
+    stop = true;
+    setter.join();
+
+    EXPECT_GT(assignments.load(), 0);
+    EXPECT_GT(overlapCalls.load(), 0) << "no handler ran while the filter was being assigned: the race did not happen";
+}

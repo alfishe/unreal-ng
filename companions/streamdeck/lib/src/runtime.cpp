@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <deque>
 
+#include "sdb/draw.h"
 #include "sdb/format.h"
 #include "sdb/iconpacks.h"
 #include "sdb/scenariorender.h"
@@ -745,10 +746,16 @@ void Runtime::ApplyNav(const json& r)
         onSwitchScenario(r.value("file", ""));
     else if (to == "context")
     {
-        // the nearest menu declaring it: the current path (innermost first), below the current menu, then anywhere
+        // the nearest menu declaring it: the current menu when its path already has that context (a menu without
+        // one under it, as a new instance's default finds the deck), the current path (innermost first), below the
+        // current menu, then anywhere
         const std::string ctx = r.value("context", "");
         const Node* target = nullptr;
         const auto& stack = _nav.Stack();
+        const auto declaring =
+            std::find_if(stack.rbegin(), stack.rend(), [](const Node* n) { return !n->context.empty(); });
+        if (!ctx.empty() && declaring != stack.rend() && (*declaring)->context == ctx)
+            target = &_nav.Current();
         for (auto it = stack.rbegin(); it != stack.rend() && !target; ++it)
             if ((*it)->context == ctx)
                 target = *it;
@@ -874,6 +881,8 @@ void Runtime::FailureBanner(const Job& j, const std::string& message)
 
 void Runtime::NoteMenu()
 {
+    if (onPathChanged)
+        onPathChanged(_s.name, _nav.Ids());
     _status.clear();  // a readout belongs to the menu that showed it
     _dialHint = StripLive::kAllDials, _dialHintUntil = NowMs() + 2000;  // a page's dial labels for a moment
     _dev.Note("menu: " + JoinPath(_page.path));
@@ -961,6 +970,34 @@ void Runtime::SetNotice(const std::string& text)
 {
     std::lock_guard l(_mu);
     _notice = text;
+}
+
+void Runtime::RestorePath(const std::vector<std::string>& ids)
+{
+    std::lock_guard l(_mu);
+    _nav.Rebind(_s, ids);
+    _page = Layout(_s, _nav, _m);
+}
+
+void Runtime::ShowStopped(const std::string& text)
+{
+    (void)_dev.ClearAllKeys();
+    if (_m.HasLcd())
+    {
+        Rgb strip(_m.lcdLogicalW, _m.lcdLogicalH, 10, 10, 14);
+        const std::string t = DisplayText(text);
+        int scale = 4;
+        while (scale > 1 && draw::TextWidth(t, scale) > strip.w - 24)
+            --scale;
+        draw::Text(strip, (strip.w - draw::TextWidth(t, scale)) / 2, (strip.h - 7 * scale) / 2, t, scale,
+                   draw::Color{150, 150, 160});
+        (void)_dev.SetLcdFull(strip, 100);
+    }
+    // A write that failed on the way (a USB timeout as the daemon ends) lost the handle: the picture waits in the
+    // transport's cache for the reopen, which only a read does. Up to 2 s for it, else the deck stays as it was
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!_dev.Connected() && std::chrono::steady_clock::now() < until)
+        (void)_dev.PollEvents(100);
 }
 
 std::string Runtime::Notice() const
@@ -1120,7 +1157,8 @@ ValueShown Runtime::ShownLocked(const FaceValue& v) const
 json Runtime::PageLocked() const
 {
     json page = DescribePage(_s, _nav, _m, _page, OnStates());
-    // value faces: what each key shows now ({readout, text, level})
+    // value faces: what each key shows now ({readout, text, level}); `flash` while an activity flash lights it
+    const std::int64_t now = NowMs();
     if (page.contains("keys"))
         for (auto& e : page["keys"])
         {
@@ -1129,6 +1167,8 @@ json Runtime::PageLocked() const
                                                                               : nullptr;
             if (!n || k == _page.backKey)
                 continue;
+            if (const auto flash = _flashUntil.find(k); flash != _flashUntil.end() && now < flash->second)
+                e["flash"] = true;
             const Face& f = IsOn(*n) && n->faceOn ? *n->faceOn : n->face;
             if (!f.value)
                 continue;

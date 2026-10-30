@@ -4,9 +4,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <memory>
 
 #include "testdata.h"
 #include "unrealdisk/blockdevice.h"
@@ -126,6 +128,91 @@ TEST(DiskFs_Test, IsdosDeviceAtACylinder)
     DiskFs whole(alone);
     ASSERT_EQ(whole.Volumes().size(), 1u);
     EXPECT_EQ(whole.Volumes()[0].id, "isdos");
+}
+
+TEST(DiskFs_Test, IsdosDevicesAnywhere)
+{
+    // Devices placed by a driver set up for another geometry: off the image's cylinders, one right after the other
+    const std::vector<uint8_t> device = Bytes("loaders/isdos/HDDNEMO.img");
+    const size_t first = 777, second = first + device.size() / 512 + 5;
+    std::vector<uint8_t> disk((second + 200) * 512 + device.size(), 0);
+    std::memcpy(disk.data() + first * 512, device.data(), device.size());
+    std::memcpy(disk.data() + second * 512, device.data(), device.size());
+    MemoryDevice hdd(disk);
+    DiskFs fs(hdd);
+    ASSERT_EQ(fs.Volumes().size(), 2u);
+    EXPECT_EQ(fs.Volumes()[0].id, "isdos-lba777");
+    EXPECT_EQ(fs.Volumes()[0].offset, first * 512);
+    EXPECT_EQ(fs.Volumes()[1].id, "isdos-lba" + std::to_string(second));
+
+    std::vector<uint8_t> data;
+    std::string error;
+    ASSERT_TRUE(fs.Read(fs.Volumes()[1].id, "HDD_NEMO/HELP/ide+5.hlp", data, error)) << error;
+    EXPECT_EQ(data.size(), 2498u);
+}
+
+TEST(DiskFs_Test, ProfiCpmPartitions)
+{
+    // A Profi disk as FORMATHD.COM lays it out, 2 heads x 16 sectors: the header at cylinder 1 (LBA 32), the table
+    // after it, SYSTEM from cylinder 2 with a file, an empty DISK01 from cylinder 6, an entry without the #AA mark
+    const size_t spc = 2 * 16;
+    std::vector<uint8_t> disk(8 * spc * 512, 0);
+    const auto word = [&](size_t at, uint32_t v) {
+        disk[at] = static_cast<uint8_t>(v);
+        disk[at + 1] = static_cast<uint8_t>(v >> 8);
+    };
+    const size_t header = spc * 512, table = header + 512;
+    word(header, 2);
+    word(header + 2, 16);
+    word(header + 4, 6);
+    word(header + 10, spc);
+    disk[header + 12] = 3;
+    disk[header + 13] = 1;
+    std::memcpy(disk.data() + header + 16, "ProfiHDD", 8);
+    const auto partition = [&](size_t n, const char* name, uint32_t start, uint32_t cylinders, bool marked) {
+        const size_t e = table + n * 32;
+        std::memcpy(disk.data() + e, name, std::strlen(name));
+        disk[e + 17] = marked ? 0xAA : 0;
+        word(e + 18, start);
+        word(e + 20, cylinders);
+        word(e + 22, static_cast<uint32_t>(cylinders * spc / 2));
+        word(e + 24, 64);
+    };
+    partition(0, "SYSTEM", 2, 4, true);
+    partition(1, "DISK01", 6, 2, true);
+    partition(2, "BROKEN", 6, 2, false);
+    std::memset(disk.data() + 2 * spc * 512, 0xE5, 2048);
+    std::memset(disk.data() + 6 * spc * 512, 0xE5, 2048);
+    uint8_t* e = disk.data() + 2 * spc * 512;
+    std::memset(e, 0, 32);
+    std::memcpy(e, "\0CONFIG  SYS", 12);
+    e[15] = 1;
+    e[16] = 1;  // block 1, the one after the directory
+    std::memcpy(disk.data() + 2 * spc * 512 + 2048, ".1\r\n\x1A", 5);
+    for (size_t i = 0; i < disk.size(); i += 2)
+        std::swap(disk[i], disk[i + 1]);  // as the Profi's IDE port stores the words
+
+    MemoryDevice hdd(disk, true);
+    DiskFs fs(hdd);
+    ASSERT_EQ(fs.Volumes().size(), 2u);
+    EXPECT_EQ(fs.Volumes()[0].id, "cpm-2");
+    EXPECT_EQ(fs.Volumes()[0].system, "Profi CP/M");
+    EXPECT_EQ(fs.Volumes()[0].label, "SYSTEM");
+    EXPECT_EQ(fs.Volumes()[0].offset, 2 * spc * 512);
+    EXPECT_EQ(fs.Volumes()[0].bytes, 4 * spc * 512);
+    EXPECT_EQ(fs.Volumes()[1].id, "cpm-6");
+    EXPECT_EQ(fs.Volumes()[1].label, "DISK01");
+    EXPECT_EQ(ReadFile(fs, "cpm-2", "CONFIG.SYS").size(), 128u);
+    EXPECT_EQ(ReadFile(fs, "cpm-2", "CONFIG.SYS")[1], '1');
+
+    // A write lands swapped like the rest: it reads back, on the empty partition too
+    const std::vector<uint8_t> text(3000, 'p');
+    std::string error;
+    ASSERT_TRUE(fs.Write("cpm-6", "NOTE.TXT", text, {}, error)) << error;
+    const std::vector<uint8_t> back = ReadFile(fs, "cpm-6", "NOTE.TXT");
+    ASSERT_EQ(back.size(), 3072u);
+    EXPECT_TRUE(std::equal(text.begin(), text.end(), back.begin()));
+    EXPECT_EQ(back[3000], 0x1A);
 }
 
 TEST(DiskFs_Test, TrdosWriteReadsBack)
@@ -270,11 +357,12 @@ TEST(DiskFs_Test, FatOnAFloppyAndAHardDisk)
         EXPECT_NE(error.find("not found"), std::string::npos) << error;
 
         // The space is back; a file larger than the free space is refused before anything changes
-        DiskFs again = fs.get() == filesystems[0].get() ? DiskFs(*floppy) : DiskFs(hdd);
-        EXPECT_EQ(again.Volumes()[0].freeBytes, free);
-        EXPECT_FALSE(again.Write("", "HUGE.BIN", std::vector<uint8_t>(static_cast<size_t>(free) + 1), {}, error));
+        auto again =
+            fs.get() == filesystems[0].get() ? std::make_unique<DiskFs>(*floppy) : std::make_unique<DiskFs>(hdd);
+        EXPECT_EQ(again->Volumes()[0].freeBytes, free);
+        EXPECT_FALSE(again->Write("", "HUGE.BIN", std::vector<uint8_t>(static_cast<size_t>(free) + 1), {}, error));
         EXPECT_NE(error.find("free"), std::string::npos) << error;
-        EXPECT_FALSE(Exists(again, "HUGE.BIN"));
+        EXPECT_FALSE(Exists(*again, "HUGE.BIN"));
     }
 }
 
@@ -296,6 +384,10 @@ TEST(DiskFs_Test, FatDirectories)
     EXPECT_FALSE(fs.MakeDirectory("", "Work", false, 0, error));
     EXPECT_NE(error.find("already"), std::string::npos) << error;
     EXPECT_FALSE(fs.MakeDirectory("", "NONE/SUB", false, 0, error));  // no parents
+    DiskFsDirectoryOptions continuous;
+    continuous.continuous = true;
+    EXPECT_FALSE(fs.MakeDirectory("", "Flat", false, continuous, error));
+    EXPECT_NE(error.find("iS-DOS"), std::string::npos) << error;
     ASSERT_TRUE(fs.MakeDirectory("", "Work/a/b/c", true, 0, error)) << error;
     ASSERT_TRUE(fs.MakeDirectory("", "Work/a/b/c", true, 0, error)) << error;  // there already: fine with parents
     ASSERT_TRUE(fs.Write("", "Work/a/b/c/deep.txt", {1, 2, 3}, {}, error)) << error;
@@ -474,4 +566,77 @@ TEST(DiskFs_Test, AttributesTimesLabels)
     EXPECT_EQ(DiskFs(*isdos).Volumes()[0].label, "MY_DISK");
     EXPECT_FALSE(is.SetLabel("", "NINECHARS", 0, error));  // a Classic name has 8
     ASSERT_TRUE(is.Delete("", "read_me.txt", error)) << error;
+}
+
+/// A write sets the header's type and param 2 where the file system keeps a tape header, and the attributes on every
+/// file system with them; what a volume does not take is refused before the disk changes
+TEST(DiskFs_Test, WriteSetsTypeParam2AndAttributes)
+{
+    std::string error;
+    DiskFsEntry entry;
+
+    // +3DOS: a program with its autostart line and its length as param 2; R at once
+    std::unique_ptr<DiskImage> plus3 = Load("loaders/dsk/plus3-blank.dsk");
+    ASSERT_NE(plus3, nullptr);
+    DiskFs p3(*plus3);
+    DiskFsWriteOptions program;
+    program.basicType = 0;
+    program.start = 10;
+    program.attributes = "R";
+    ASSERT_TRUE(p3.Write("", "RUN", std::vector<uint8_t>(120, 0x0D), program, error)) << error;
+    ASSERT_TRUE(p3.Stat("", "RUN", entry, error)) << error;
+    EXPECT_EQ(entry.Field("basicType"), 0);
+    EXPECT_EQ(entry.Field("param2"), 120);
+    EXPECT_EQ(entry.start, 10u);
+    EXPECT_NE(entry.attributes.find('R'), std::string::npos) << entry.attributes;
+    DiskFsWriteOptions array;
+    array.basicType = 2;
+    array.param2 = 0x1234;
+    ASSERT_TRUE(p3.Write("", "NAMES", {1, 2, 3}, array, error)) << error;
+    ASSERT_TRUE(p3.Stat("", "NAMES", entry, error)) << error;
+    EXPECT_EQ(entry.Field("basicType"), 2);
+    EXPECT_EQ(entry.Field("param2"), 0x1234);
+    DiskFsWriteOptions headerless = program;
+    headerless.header = false;
+    EXPECT_FALSE(p3.Write("", "BARE", {1}, headerless, error));
+    EXPECT_NE(error.find("header"), std::string::npos) << error;
+    DiskFsWriteOptions bad;
+    bad.basicType = 4;
+    EXPECT_FALSE(p3.Write("", "BAD", {1}, bad, error));
+    EXPECT_NE(error.find("CODE (3)"), std::string::npos) << error;
+    EXPECT_FALSE(p3.Stat("", "BAD", entry, error));
+
+    // FAT: the attributes exactly as given; a letter FAT does not take writes nothing
+    MemoryDevice hdd(Bytes("machines/sprinter/dss_1_62_92.img"), true);
+    DiskFs fat(hdd);
+    DiskFsWriteOptions hidden;
+    hidden.attributes = "rh";
+    ASSERT_TRUE(fat.Write("", "h.txt", {1}, hidden, error)) << error;
+    ASSERT_TRUE(fat.Stat("", "h.txt", entry, error)) << error;
+    EXPECT_EQ(entry.attributes, "RH....");
+    hidden.attributes = "+S";  // added to the archive bit FAT writes
+    ASSERT_TRUE(fat.Write("", "s.txt", {1}, hidden, error)) << error;
+    ASSERT_TRUE(fat.Stat("", "s.txt", entry, error)) << error;
+    EXPECT_EQ(entry.attributes, "..S..A");
+    hidden.attributes = "D";
+    EXPECT_FALSE(fat.Write("", "d.txt", {1}, hidden, error));
+    EXPECT_NE(error.find("RHSA"), std::string::npos) << error;
+    EXPECT_FALSE(Exists(fat, "d.txt"));
+    EXPECT_FALSE(fat.Write("", "t.txt", {1}, program, error));
+    EXPECT_NE(error.find("no header type"), std::string::npos) << error;
+
+    // TR-DOS: the type is the name's letter; no param 2, no attributes
+    auto trd = std::make_unique<DiskImage>(uint8_t{80}, uint8_t{2});
+    LoaderTRD loader({}, "");
+    ASSERT_TRUE(loader.format(trd.get()));
+    DiskFs trdos(*trd);
+    DiskFsWriteOptions param2;
+    param2.param2 = 5;
+    EXPECT_FALSE(trdos.Write("", "A.C", {1}, param2, error));
+    EXPECT_NE(error.find("param 2"), std::string::npos) << error;
+    DiskFsWriteOptions attributes;
+    attributes.attributes = "R";
+    EXPECT_FALSE(trdos.Write("", "A.C", {1}, attributes, error));
+    EXPECT_NE(error.find("no file attributes"), std::string::npos) << error;
+    EXPECT_FALSE(trdos.Stat("", "A.C", entry, error));
 }

@@ -1,11 +1,15 @@
 #include "mainwindow.h"
 #include "crashhandler/crashhandler.h"
+#include "headless/headlessscriptrunner.h"
 
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QTimer>
 #include <QFontDatabase>
 #include <QIcon>
+
+#include <memory>
+#include <string_view>
 
 #include "common/macosplatform.h"
 #include <QDebug>
@@ -109,6 +113,13 @@ int main(int argc, char *argv[])
 #ifdef Q_OS_MACOS
     MacOSPlatform::disableAutomaticFullScreenMenuItem();  // Before any menu bar exists
 #endif
+    // --headless: no windows (the offscreen platform), chosen before the application exists. An explicit
+    // QT_QPA_PLATFORM wins
+    bool headless = false;
+    for (int i = 1; i < argc; i++)
+        headless |= std::string_view(argv[i]) == "--headless";
+    if (headless && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
 #ifdef Q_OS_MACOS
     // No windows to show (agents' automation instances): not a Dock app that looks hung
@@ -134,6 +145,18 @@ int main(int argc, char *argv[])
                                          QStringLiteral("Model of the four ZX-Poly modules (e.g. PENTAGON, 128k)"),
                                          QStringLiteral("model"));
     parser.addOption(zxpolyModelOption);
+    // The headless test runner (gs-debugger requirements X13)
+    QCommandLineOption headlessOption(QStringLiteral("headless"),
+                                      QStringLiteral("No windows (the offscreen platform); the emulator muted"));
+    QCommandLineOption scriptOption(QStringLiteral("script"),
+                                    QStringLiteral("Lua script to run once the emulator is up (its print on stdout)"),
+                                    QStringLiteral("file"));
+    QCommandLineOption exitOnScriptOption(QStringLiteral("exit-on-script"),
+                                          QStringLiteral("Quit when the script ends, with its exit code (the "
+                                                         "chunk's result: an integer, true 0, false 1; an error 1)"));
+    parser.addOption(headlessOption);
+    parser.addOption(scriptOption);
+    parser.addOption(exitOnScriptOption);
     parser.process(app);
 
     // Instantiate main application window
@@ -148,8 +171,24 @@ int main(int argc, char *argv[])
         QTimer::singleShot(0, &window, [&window, file, zxpolyModel]() { window.openFromCommandLine(file, zxpolyModel); });
     }
 
+    std::unique_ptr<HeadlessScriptRunner> scriptRunner;
+    if (parser.isSet(scriptOption))
+    {
+        // A file to open brings its machine; without one the runner starts the Machine menu's
+        std::function<void()> start;
+        if (files.isEmpty())
+            start = [&window]() { window.startEmulatorIfNone(); };
+        scriptRunner = std::make_unique<HeadlessScriptRunner>(parser.value(scriptOption),
+                                                              parser.isSet(exitOnScriptOption), headless, start,
+                                                              [&window]() { window.closeUnattended(); });
+        scriptRunner->Start();
+    }
+
     // Start application main loop
     int result =  app.exec();
+    if (scriptRunner && scriptRunner->Finished() && parser.isSet(exitOnScriptOption))
+        result = scriptRunner->ExitCode();
+    scriptRunner.reset();
     StopStartupCleanup();
 
     // Unload non-system fonts

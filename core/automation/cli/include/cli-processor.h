@@ -161,8 +161,12 @@ private:
     void HandleBPActivate(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPDeactivate(const ClientSession& session, const std::vector<std::string>& args);
     void HandleKeyBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleEventBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleChipRegisterBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPToggle(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPNote(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPCondition(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleCallback(const ClientSession& session, const std::vector<std::string>& args);
     /// bpon / bpoff / bpclear / bptoggle on a selection BreakpointSelection names (a kind such as nextreg, beam, keyboard;
     /// group:<name>); false when `text` is not one (the caller answers)
     bool ApplyBreakpointSelection(const ClientSession& session, BreakpointManager& manager, const std::string& text,
@@ -346,6 +350,11 @@ private:
     // is left is the note. False with the reason in `error`
     bool ParseBreakpointArgs(const std::vector<std::string>& args, size_t addressIndex, size_t flagsFrom,
                              BreakpointSpec& spec, std::string& error) const;
+    // `--cpu main|gs|ms` anywhere in a breakpoint command: taken out of `args`, the CPU in `cpu` (main without it).
+    // False after the reply when the name is not one
+    bool TakeCpuOption(const ClientSession& session, std::vector<std::string>& args, DebugCpuId& cpu) const;
+    // The breakpoints of that CPU (a card's: gs-debugger design §3.1)
+    static BreakpointManager* BreakpointsOf(Emulator& emulator, DebugCpuId cpu);
     // Adds the breakpoint and says what was set ("Breakpoint #3 set at 0x8000 ...") or why not
     std::string AddBreakpointAndDescribe(BreakpointManager& manager, const BreakpointSpec& spec, const char* what);
 
@@ -391,6 +400,7 @@ private:
     void HandleMonitor(const ClientSession& session, const std::vector<std::string>& args);
     // ZX-MultiSound and its MIDI synthesizer (cli-processor-multisound.cpp, DeviceState::MultiSound / Midi, MidiControl)
     void HandleMultiSound(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleWildSound(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMidi(const ClientSession& session, const std::vector<std::string>& args);
     // CD audio of the ATAPI CD drives (cli-processor-cdaudio.cpp, CdAudioControl)
     void HandleCdAudio(const ClientSession& session, const std::vector<std::string>& args);

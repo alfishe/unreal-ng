@@ -391,10 +391,12 @@ public:
     bool Output(const HostDeviceId& device, const StepsOut& out) override
     {
         std::lock_guard lock(_mutex);
+        // Kept first: a Dial asleep (no writer) when the context changed gets them when it wakes; the router sends a
+        // feel once
+        _dialSteps[device] = out;
         SurfaceDialWriter* writer = WriterLocked(device);
         if (writer == nullptr)
             return false;
-        _dialSteps[device] = out;
         writer->Steps(out);
         return true;
     }
@@ -623,15 +625,19 @@ private:
         // its pattern. Opened without seizing (kIOHIDOptionsTypeNone): the system keeps its own use of them
         // Valve's devices all: the Steam Controllers' pad is a vendor-page interface (SteamPad), their keyboard and
         // mouse ("lizard mode") are dropped in OnAdded
-        CFDictionaryRef matches[] = {
+        // The database's control surfaces by id: their collections are not a pad's (the ShuttlePRO is a Consumer
+        // Control). A user family added later is matched at the next start
+        std::vector<CFDictionaryRef> matches = {
             Matching(0x04),
             Matching(0x05),
             Matching(0x08),
             Matching(0x0E),
             VendorMatching(SteamPad::kValve),
             ProductMatching(GameCubeAdapter::kNintendo, GameCubeAdapter::kAdapter)};
-        CFArrayRef matching = CFArrayCreate(kCFAllocatorDefault, reinterpret_cast<const void**>(matches),
-                                            static_cast<CFIndex>(std::size(matches)), &kCFTypeArrayCallBacks);
+        for (const auto& [vendor, product] : DeviceDatabase::Active()->SurfaceProducts())
+            matches.push_back(ProductMatching(vendor, product));
+        CFArrayRef matching = CFArrayCreate(kCFAllocatorDefault, reinterpret_cast<const void**>(matches.data()),
+                                            static_cast<CFIndex>(matches.size()), &kCFTypeArrayCallBacks);
         for (CFDictionaryRef match : matches)
             CFRelease(match);
         IOHIDManagerSetDeviceMatchingMultiple(manager, matching);

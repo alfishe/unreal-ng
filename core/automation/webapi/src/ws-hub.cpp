@@ -342,7 +342,8 @@ void WsHub::SetToken(const void* client, const std::string& token)
 bool WsHub::HandleMessage(const void* client, const Json::Value& message)
 {
     const std::string op = message.get("op", "").asString();
-    if (op != "subscribe" && op != "unsubscribe" && op != "snapshot" && op != "join" && op != "action" && op != "bye")
+    if (op != "subscribe" && op != "unsubscribe" && op != "snapshot" && op != "join" && op != "action" && op != "pin" &&
+        op != "bye")
         return false;
     WsOutbox out;
     bool subscriptions = false;
@@ -368,6 +369,8 @@ bool WsHub::HandleMessage(const void* client, const Json::Value& message)
             _surface.Join(*connection, message, out);
         else if (op == "action")
             _surface.Action(*connection, message, out);
+        else if (op == "pin")
+            _surface.Pin(*connection, message, out);
         else if (op == "bye")
             _surface.Bye(*connection, message, out);
         else
@@ -879,7 +882,6 @@ void WsHub::Refresh()
     WsOutbox out;
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        const std::string followed = FollowedInstance();
         for (auto& [client, connection] : _connections)
         {
             if (connection->closing)
@@ -895,7 +897,7 @@ void WsHub::Refresh()
                 continue;
             }
             for (auto& [id, session] : connection->surfaces)
-                _surface.Rebind(*connection, *session, followed, out);
+                (void)_surface.Rebind(*connection, *session, out);
         }
     }
     out.Flush();

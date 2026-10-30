@@ -49,6 +49,7 @@ constexpr char const* NC_ACTION_CATALOGUE = "ACTION_CATALOGUE";                 
 constexpr char const* NC_SURFACE_TARGET = "SURFACE_TARGET";                       // The followed instance, the views (focus order, active instances) or a surface session's target changed (actions::TargetState) - payload: SurfaceTargetPayload (process-wide)
 constexpr char const* NC_COMPANION_CHANGED = "COMPANION_CHANGED";                 // A companion client asked to pair, was paired, denied or revoked; a pairing expired or was cancelled - payload: CompanionChangedPayload (process-wide, no emulator id)
 constexpr char const* NC_BREAKPOINTS_CHANGED = "BREAKPOINTS_CHANGED";             // The breakpoint set changed — payload: BreakpointsChangedPayload (posted by BreakpointManager::RebuildFilters)
+constexpr char const* NC_SCRIPT_CALLBACKS_CHANGED = "SCRIPT_CALLBACKS_CHANGED";   // A script callback was added, removed, suspended, disabled, resumed or got a new policy - payload: ScriptCallbacksChangedPayload
 constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered — payload: BreakpointTriggeredPayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               // Scanline boundary reached (debug stepping only)
 
@@ -72,6 +73,7 @@ constexpr char const* NC_FEATURE_CHANGED = "FEATURE_CHANGED";                   
 constexpr char const* NC_SPEED_CHANGED = "SPEED_CHANGED";                       // Speed multiplier or turbo mode changed (payload: SpeedChangedPayload). Posted from Core after state is committed.
 constexpr char const* NC_DISK_AUTOSTART = "DISK_AUTOSTART";                       // TR-DOS disk autostart outcome or refusal (payload: DiskAutostartPayload). Posted from Emulator::AutostartDisk.
 constexpr char const* NC_FILE_LOADED = "FILE_LOADED";                           // Snapshot / tape / disk file loaded or load failed (payload: FileLoadedPayload). Posted from Emulator after the loader returns.
+constexpr char const* NC_GUEST_PROGRAM = "GUEST_PROGRAM";                       // The guest read a program file (NEX, SNX, SNA, TAP, ...) from a block medium (payload: GuestProgramPayload). Posted from the emulation thread by GuestProgramWatch; the host never loaded it, so this is the only way a game profile finds a title started inside the machine
 constexpr char const* NC_RZX_PLAYBACK = "RZX_PLAYBACK";                         // RZX playback started / finished / desync / stopped / failed (payload: RzxPlaybackPayload). Posted from RzxSession; finished and desync on the emulation thread
 constexpr char const* NC_MEDIA_INSERTED = "MEDIA_INSERTED";                     // A medium was attached to a slot (payload: MediaSlotPayload). Posted from MediaManager on the thread that applied it
 constexpr char const* NC_MEDIA_EJECTED = "MEDIA_EJECTED";                       // A medium was detached from a slot (payload: MediaSlotPayload)

@@ -5,9 +5,12 @@
 
 #include "portdecoder_sprinter.h"
 #include "sprinter/sprinterzxsnapshot.h"
+#include "debugger/breakpoints/chipregister.h"
+#include "debugger/targets/gscardtarget.h"
 #include "emulator/emulator.h"
 #include "emulator/io/sprinter/isa/cards/isabusdevicecard.h"
 #include "emulator/io/sprinter/isa/cards/isazxbusadapter.h"
+#include "emulator/io/sprinter/isa/cards/isawildsoundcard.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 
 #include <array>
@@ -138,6 +141,7 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
             MLOGWARNING("PortDecoder_Sprinter: %s", warning.c_str());
     }
     FitZxBusAdapters();
+    FitWildSoundCards();
     _isaBus.SetTracer([this](bool write, SprinterIsaBus::Space space, int slot, uint32_t address, uint8_t value) {
         TraceIsaCycle(write, space, slot, address, value);
     });
@@ -785,8 +789,21 @@ void PortDecoder_Sprinter::NotePioRequest(bool ipBefore)
                                          who.empty() ? "no ISA line: another PB bit" : who.c_str()));
 }
 
+void PortDecoder_Sprinter::OnBoardAcknowledge(uint8_t vector)
+{
+    NoteMachineEvent(GSCardEvent::CpuInt, 8, vector);
+}
+
+void PortDecoder_Sprinter::NoteMachineEvent(GSCardEvent kind, uint8_t value, int arg)
+{
+    if (_context->machineEventWatch) [[unlikely]]
+        GSReportHostEvent(_context, kind, value, arg);
+}
+
 void PortDecoder_Sprinter::OnChipAcknowledge(uint8_t vector)
 {
+    const int source = _z84.LastAcknowledgedSource();
+    NoteMachineEvent(GSCardEvent::CpuInt, source >= 0 ? static_cast<uint8_t>(source) : 0xFE, vector);
     const Z84Lib::Z84Pio::Port& b = _z84.pio.GetPort(1);
     if (!b.ius || _pioBIusSeen)
         return;
@@ -813,6 +830,8 @@ void PortDecoder_Sprinter::OnChipAcknowledge(uint8_t vector)
 
 void PortDecoder_Sprinter::OnChipReti()
 {
+    const int source = _z84.LastRetiredSource();
+    NoteMachineEvent(GSCardEvent::CpuReti, source >= 0 ? static_cast<uint8_t>(source) : 8);
     if (!_pioBIusSeen || _z84.pio.GetPort(1).ius)
         return;
     _pioBIusSeen = false;
@@ -1196,6 +1215,7 @@ uint8_t PortDecoder_Sprinter::DecodePortIn(uint16_t port, uint16_t pc)
 
         const uint8_t code = LookupCode(port, true);
         disp.internalCode = code;
+        NoteMachineEvent(GSCardEvent::PldRead, code, port);
         if (!ActiveModule().ReadCode(*this, code, port, value))
             _registry.Standard().ReadCode(*this, code, port, value);
     }
@@ -1259,6 +1279,7 @@ void PortDecoder_Sprinter::DecodePortOut(uint16_t port, uint8_t value, uint16_t 
         const uint8_t code = LookupCode(port, false);
         if (!z84Port)
             disp.internalCode = code;
+        NoteMachineEvent(GSCardEvent::PldWrite, code, port);
         if (code >= 0xC0 && code < 0xF0)
             _pld.Cell(code) = value;  // every cell is storage first
         if (!ActiveModule().WriteCode(*this, code, port, value))
@@ -1312,6 +1333,8 @@ void PortDecoder_Sprinter::OnCblPageWrite(uint16_t addr, uint8_t value)
     if (!(_activeAccelerator->State().dir & SprinterAccelerator::kDirBuffer))
         return;
     _cbl.WriteData(BaseTstate(), value, static_cast<uint8_t>(addr >> 8));
+    if (_context->chipRegisterWatch) [[unlikely]]
+        ReportChipRegisterWrite(_context, SoundChipKind::Cbl, 0, 0, value);
 }
 
 /// The standard configuration's reads (hardware-reference §4.3; MAME dcp_r)
@@ -1427,9 +1450,13 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
         case SprinterCode::Covox:
             // Port #FB / #4F: the Covox DAC, or the next ring entry (INT off: entry ~A15..A8, so OTIR fills in order)
             _cbl.WriteData(BaseTstate(), value, static_cast<uint8_t>(port >> 8));
+            if (_context->chipRegisterWatch) [[unlikely]]
+                ReportChipRegisterWrite(_context, SoundChipKind::Cbl, 0, 0, value);
             return;
         case SprinterCode::CovoxBlaster:
             _cbl.WriteControl(BaseTstate(), value);
+            if (_context->chipRegisterWatch) [[unlikely]]
+                ReportChipRegisterWrite(_context, SoundChipKind::Cbl, 0, 1, value);
             return;
 
         case SprinterCode::RomPage:
@@ -1605,9 +1632,27 @@ uint16_t PortDecoder_Sprinter::CpuPc() const
     return z80 ? z80->pc : 0;
 }
 
+/// The journal's kinds in the order pld_event numbers them (breakpoints-and-traces.md, Sprinter)
+static constexpr const char* kJournalKinds[] = {"reset", "ctrl_alt_del", "f12", "pld_load", "pld_configured",
+                                                "clock", "port_7ffd", "port_1ffd", "frame_lines", "all_mode",
+                                                "hold", "rgmod", "cnf", "isa_stall"};
+
 void PortDecoder_Sprinter::JournalEvent(const char* kind, uint16_t pc, int port, int value, int previous, std::string text,
                                         std::vector<std::string> details)
 {
+    if (_context->machineEventWatch) [[unlikely]]
+    {
+        for (size_t i = 0; i < std::size(kJournalKinds); i++)
+        {
+            if (std::strcmp(kJournalKinds[i], kind) == 0)
+            {
+                NoteMachineEvent(GSCardEvent::PldEvent, static_cast<uint8_t>(i), value);
+                break;
+            }
+        }
+    }
+    if (!_journal.Enabled())
+        return;  // only the breakpoints listened
     MachineEvent e;
     e.frame = _state->frame_counter;
     e.t = BaseTstate();
@@ -1826,6 +1871,36 @@ void PortDecoder_Sprinter::FitZxBusAdapters()
         _isaBus.Fit(n, std::make_unique<sprinterisa::IsaZxBusAdapter>(_context, this, carriesGs, why));
         if (carriesGs)
             _zxBusSlot = n;
+    }
+}
+
+void PortDecoder_Sprinter::CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out)
+{
+    // A Wild Sound's upload store (its card state rides in the SprinterIsa blob)
+    for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
+        if (auto* card = dynamic_cast<sprinterisa::IsaWildSoundCard*>(_isaBus.Card(n)))
+        {
+            card->SetRegionInstance("isa." + std::to_string(n + 1));
+            out.push_back(card);
+        }
+}
+
+void PortDecoder_Sprinter::BeforeRelease()
+{
+    // A Wild Sound's rows leave the mixer while SoundManager exists (it goes before the decoder)
+    for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
+        if (auto* card = dynamic_cast<sprinterisa::IsaWildSoundCard*>(_isaBus.Card(n)))
+            card->DetachAudio();
+}
+
+void PortDecoder_Sprinter::FitWildSoundCards()
+{
+    // Robus's ISA Wild Sound (docs/inprogress/2026-10-09-wildsound): one per configured slot, always at I/O #000 (what
+    // prosiak.exe uses; the board's address decoding is undocumented, so the slot's Base is not used)
+    for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
+    {
+        if (static_cast<sprinterisa::CardKind>(_isaBus.Configured(n).kind) == sprinterisa::CardKind::WildSound)
+            _isaBus.Fit(n, std::make_unique<sprinterisa::IsaWildSoundCard>(_context, 0));
     }
 }
 

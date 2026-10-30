@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🔧 In progress. Calls (§2) and auth (§1) are implemented (2026-10-20, `core/automation/webapi/src/api-websocket.cpp`); the topic mechanism with the state topics `run.state`, `ttd.position`, `surfaces.context` and the `surface` topic (§3) are implemented (2026-10-20, control surfaces S4, `ws-hub.*`, `surface-hub.*`); the `instances` and `debug.*` topics (§3.2, §3.3) and backpressure (§4.1) too (2026-10-21); the `surface` topic's Stream Deck additions (several surfaces per connection, `features` with `activity` and `catalogue`, the whole readout vocabulary) too (2026-10-21, SD5). Still to come: views and `pin` on the `surface` topic (`TargetState`). |
+| **Status** | 🔧 In progress. Calls (§2) and auth (§1) are implemented (2026-10-20, `core/automation/webapi/src/api-websocket.cpp`); the topic mechanism with the state topics `run.state`, `ttd.position`, `surfaces.context` and the `surface` topic (§3) are implemented (2026-10-20, control surfaces S4, `ws-hub.*`, `surface-hub.*`); the `instances` and `debug.*` topics (§3.2, §3.3) and backpressure (§4.1) too (2026-10-21); the `surface` topic's Stream Deck additions (several surfaces per connection, `features` with `activity` and `catalogue`, the whole readout vocabulary) too (2026-10-21, SD5). Views and `pin` on the `surface` topic: every `join` is a `TargetState` session (2026-10-27). |
 | **Endpoint** | `GET /api/v1/ws` (WebSocket upgrade on the WebAPI port) |
 | **Rules** | [automation-planes-guidelines.md](../../../guidelines/automation-planes-guidelines.md) |
 | **Design** | [Stream Deck integration protocol §0](../../../inprogress/2026-10-19-streamdeck-integration/protocol.md#0-transport-one-websocket) |
@@ -125,7 +125,7 @@ when their runs are done, on their own analysis instances (the socket's other ca
 | `analysis.ready` | per instance the L1 the last build made `{ready, job, routines, blocks, loops, instructions, frames, checked, diverged, path}` | none | implemented (P2, 2026-10-26) |
 | `surface` | control surfaces: opened by `join` (not by `subscribe`): `action`, `result`, `ctx`, readouts, `target`, `revoked` ([below](#31-the-surface-topic)) | per action | implemented (S4); `activity`, `catalogue`, the readout vocabulary and views: Stream Deck SD4 |
 | `instances` | the companion's live view of the instances (`hello`, `emulator`, `emulator_gone`, `snapshot`): `/api/v1/companions/events` on this socket ([§3.2](#32-the-instances-topic)) | none (a companion's own view) | implemented |
-| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
+| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
 | `host.stats` | the host process, once for the process (no `instance`): `{cpu_percent, cpu_percent_host, cores, rss_bytes, peak_rss_bytes, virtual_bytes, threads, cpu_time_s, uptime_s, …}`, sampled at most twice a second (`GET /api/v1/monitor/host.stats`, [command-interface.md §17](./command-interface.md#17-monitoring)) | none | implemented |
 | `host.clients` | the process: per plane (`rest`, `ws`, `events`, `debug_ws`, `mcp`, `cli`) `{connections, opened, requests}`, `companions`, `instances` (`GET /api/v1/monitor/host.clients`) | none | implemented |
 | `emulator.stats` | per instance the measured pace `{state, measuring, fps, nominal_fps, speed_percent, frame_time_us {avg, max}, frame_budget_percent, halted_percent, interrupts_per_frame, frame, t_states, turbo, cpu {mhz, base_mhz, multiplier, host_multiplier, hw_turbo_ratio}}`: a new value every 0.5 s while it runs (`GET /api/v1/monitor/emulator.stats`) | none | implemented |
@@ -136,7 +136,8 @@ when their runs are done, on their own analysis instances (the socket's other ca
 | `ttd.status` | per instance `{state, recording, history, frame, first, end, frames, checkpoints, memory_bytes, history_bytes, page_store_bytes, bookmarks, write_journal_records, input_events, evicted_checkpoints}`: the cursor's fields at the rate, the sizes refreshed every 2 s (`GET /api/v1/monitor/ttd.status`; the full status is `GET …/ttd/status`) | none | implemented |
 | `debug.analyzers` | per instance the profilers' session states `{opcode, memory, calltrace, coverage {available, recording, instructions}, pchist}` (`GET /api/v1/monitor/debug.analyzers`) | none | implemented |
 | `controllers.state` | per instance `{connectors [{id, kind, device, plugged, fixed}], plugged}` (`GET /api/v1/monitor/controllers.state`) | none | implemented |
-| `game.events` | per instance the game's events `{available, profile, frame, seq, events {<name>: {kind, fires, last_frame, level, value}}, recent [{seq, frame, name}]}` (`GET /api/v1/monitor/game.events`); a new value when an event fires or a watched value changes, coalesced at `max_hz`: `recent` holds the fired ones between two messages | none | implemented |
+| `game.events` | per instance the game's events `{available, profile, frame, seq, events {<name>: {kind, fires, last_frame, level, value, condition?, condition_error?}}, recent [{seq, frame, name}]}` (`GET /api/v1/monitor/game.events`); a new value when an event fires or a watched value changes, coalesced at `max_hz`: `recent` holds the fired ones between two messages | none | implemented |
+| `debug.watches` | per instance the memory watches' totals `{available, session, revision, watches [{name, kind (region / port), start + length or port + mask, reads, writes, executes (regions)}]}` (`GET /api/v1/monitor/debug.watches`); published at every frame's end and on every watch change; the callers and values are in `GET .../profiler/memory/watches` | none | implemented |
 | `debug.asm_sync` | the asm synchroniser's watch: `asm_sync_*` (the `asm_sync` topic of `/api/v1/websocket`) | none; no token needed from this host | implemented |
 
 - `subscribe` takes names or prefixes (`ttd.*`, `*`) and adds to what the connection has; `unsubscribe` removes.
@@ -175,21 +176,25 @@ The control surfaces protocol ([protocol.md](../../../inprogress/2026-10-18-cont
 
 | From the client | |
 |:--|:--|
-| `join` | `v` (≥ 1), `name`, `model`, `serial`?, `target`? (`"follow"`, default: the followed instance of `TargetState` (the front view's active instance, else the selected one, else the only one: the same as `instances` `followed` and `GET /api/v1/surfaces/target`), followed; `{"instance": id or index}`: pinned; `{"view": …}`: `not_now` until views come to the topic), `features`? (`activity`, `catalogue`; `target` is always pushed), `rid`? (echoed by `welcome` or the error). Several per connection, one per `serial` (the Stream Deck daemon joins once per deck on one socket); a second join with a serial the connection joined already: `bad_request`. |
+| `join` | `v` (≥ 1), `name`, `model`, `serial`?, `target`? (`"follow"`, default: the followed instance of `TargetState` (the front view's active instance, else the selected one, else the only one: the same as `instances` `followed` and `GET /api/v1/surfaces/target`), followed; `{"instance": id or index}`: pinned to it; `{"view": id or number}` (`"v2"` or `2`): pinned to the view, `not_now` while the host has no views, `Not Found` for an unknown one), `features`? (`activity`, `catalogue`; `target` is always pushed), `rid`? (echoed by `welcome` or the error). Several per connection, one per `serial` (the Stream Deck daemon joins once per deck on one socket); a second join with a serial the connection joined already: `bad_request`. |
 | `action` | `id`, `value`?, `rid`?, `session`?. Value by the action's kind: press `{"p": bool}` / `true` / `{"params": {…}}` (a bare number is `bad_request`, as on REST: a parameter goes by name, `set.speed` `{"params": {"value": 4}}`); delta `{"d": n, "rate": r, …params}` / a number; level `{"l": x}` / a number; text a string. The REST spellings (`pressed`, `delta`, `level`, `params`) too. Runs on the instance's actions worker with the companion as origin: the same gate as `POST /api/v1/controllers/actions/{id}` with its token. |
 | `subscribe` / `unsubscribe` | `readouts[]`, `max_hz` (1 … 50), `session`?. The names of the readout vocabulary ([Stream Deck protocol §3](../../../inprogress/2026-10-19-streamdeck-integration/protocol.md#3-readouts), `readouts.h`): `ttd.position`, `run.state`, `machine`, `media.tape`, `media.disk`, `audio.mute`, `debug.mode`, the monitoring names of the topic table (`host.stats`, `emulator.stats`, `debug.breakpoints`, …), `video.window` (the GUI window's display settings as it published them: GPU, CRT, blending, full screen, scale, HUD, keyboard, ...; `available: false` headless), `video.crt_params` (the active CRT profile's parameter values), `video.viewport` (overscan and its crop), `toggle.<id>` (every toggle of the catalogue; `toggle.feature.<name>` per feature, `toggle.set.<name>`, `toggle.hud.notice.<id>`, `toggle.view.next_layer.<name>` by name), and prefixes (`media.*`, `toggle.*`, `*`); expanded again against the instance after a rebind. |
+| `pin` | `target` (as `join`'s; absent: `"follow"`), `rid`?, `session`?: the surface pins itself or follows again; answered by `target` (with the `rid`, also when nothing moved) or an `error` (`Not Found`, `not_now`). |
 | `bye` | `session`?: with one, that surface ends and the socket stays; without, every surface of the connection ends and the socket closes. |
 
 `session` names the surface an op is for (the id its `welcome` gave); it may be left out while the connection has one
-surface (`bad_request` with several). Every message of a surface carries its `session`.
+surface (`bad_request` with several). Every message of a surface carries its `session`. Every `join` opens a
+`TargetState` session with the same id (kind `companion`, the serial, the companion's id), so
+`GET /api/v1/surfaces/sessions` and the GUI's surfaces table list the surface and
+`PUT /api/v1/surfaces/sessions/{id}/pin` pins it; the session closes with the surface (`bye`, the socket gone).
 
 | From the core | |
 |:--|:--|
-| `welcome` | `v`, `session`, `rid` (the join's), `serial`, `instance`, `context`, `scopes[]`, `target`, `readouts[]` (every name the bound instance has), `features[]` (those taken), `catalogue_rev`. |
+| `welcome` | `v`, `session`, `rid` (the join's), `serial`, `instance`, `context`, `scopes[]`, `target`, `views[]` (the host's views front first, as `GET /api/v1/surfaces/views`: `id`, `name`, `owner`, `position`, `active`, `index`), `readouts[]` (every name the bound instance has), `features[]` (those taken), `catalogue_rev`. |
 | `result` | `rid`, `ok`, `error`?, `message`?, `body` (the action's result; `ttd.seek_by` has `marks`). Only for an action with a `rid`; a failure without a `rid` is an `error`. Deltas queued behind a running one merge; every merged `rid` gets the merged result. |
 | `ctx` | `instance`, `context`, `by`: the bound instance's context changed (a `ctx.set` anywhere: `by` names the setter; the default flipping when a TTD history appears or goes: `by` `default`), and after a rebind. |
 | `readout` | `instance`, `values{}`: in full after `subscribe` and after a rebind, then only the values that changed, at most `max_hz`. |
-| `target` | `instance` (null: none), `index`, `model`, `ram_kb`, `view` (null), `mode` (`follow` / `instance`): the binding changed (the followed instance changed: a view got the focus or changed its active instance, `NC_SURFACE_TARGET`, or the selection; a pinned one went). |
+| `target` | `instance` (null: none), `index`, `model`, `ram_kb`, `view` (`{id, name}`, null: no view shows it), `mode` (`follow` / `view` / `instance`), `pin` (`follow`, `view:v2`, `instance:<id>`), `source` (how a follower found it: `view`, `selected`, `sole`, `none`): the session's target changed (`NC_SURFACE_TARGET`: a view got the focus or changed its active instance, a pin from the host or the `pin` op, a pinned instance or view gone: the pin falls back to following; the selection, instances coming and going), and as the `pin` op's answer. |
 | `activity` | With `features: ["activity"]`: an action another surface (or the GUI, a pad, a script) ran on the bound instance, as `GET /api/v1/surfaces/activity` lists it: `seq`, `instance`, `id`, `value`, `origin`, `surface` (who), `ok`, `error`?, `message`?, `t_ms`, `merged`. Never the surface's own actions (`ActionOrigin::surface`, the session that called), at most 20 a second per surface (`dropped`: how many were not sent before this one, over the rate or while the connection was congested). |
 | `catalogue` | With `features: ["catalogue"]`: `rev`, the action catalogue changed (`NC_ACTION_CATALOGUE`: the Qt client registered or dropped its GUI actions). |
 | `revoked` | The companion was revoked; the socket closes. |
@@ -236,6 +241,16 @@ DebugEventHub's events ([debugger protocol §5](../../../inprogress/2026-09-28-d
   not taken).
 - An event stream, not a value: queued per connection (256 at most), the oldest dropped first; the next event sent
   carries `"dropped": n` ([§4](#4-delivery-and-threads)).
+- `callbacks_changed` (`{id, callback}`, `{id, removed: true}`, or `{id: 0, hooks}` when the script hooks go unpaced or
+  back to real time): a Lua / Python [script callback](../../../features/script-callbacks.md)
+  was registered, resumed, re-policied, suspended or disabled over its budget (`callback` as one entry of
+  `GET /callbacks`), or removed. The routes that manage them (`GET /callbacks`, `POST /callbacks/{cb_id}/resume`,
+  `DELETE /callbacks/{cb_id}`, `PUT /callbacks/{cb_id}/policy`) are `call`s like every route. A hit is not an event:
+  the statistics are read with `GET /callbacks`.
+
+```json
+← {"t":"debug.events","op":"event","event":"callbacks_changed","id":3,"callback":{"id":3,"on":"tap","owner":"lua","label":"slow","target":"tap write #5C78","state":"suspended","reason":"3 calls over 1000 us within 50 frames",…},"seq":40,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
+```
 
 ## 4. Delivery and threads
 

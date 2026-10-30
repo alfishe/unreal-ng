@@ -144,7 +144,12 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"bpoff", &CLIProcessor::HandleBPDeactivate},     // Deactivate breakpoints
                         {"bptoggle", &CLIProcessor::HandleBPToggle},      // Toggle a selection of breakpoints
                         {"bkey", &CLIProcessor::HandleKeyBreakpoint},     // Keyboard breakpoint (the program sees a key)
+                        {"bevent", &CLIProcessor::HandleEventBreakpoint}, // General Sound protocol event breakpoint
+                        {"bchip", &CLIProcessor::HandleChipRegisterBreakpoint}, // sound chip register write breakpoint
                         {"bpnote", &CLIProcessor::HandleBPNote},          // Set a breakpoint's note
+                        {"bpcond", &CLIProcessor::HandleBPCondition},     // Set a breakpoint's condition
+                        {"callback", &CLIProcessor::HandleCallback},      // The scripts' callbacks: list, resume, remove, policy
+                        {"callbacks", &CLIProcessor::HandleCallback},     // Alias for callback (list by default)
 
                         {"open", &CLIProcessor::HandleOpen},
                         {"exit", &CLIProcessor::HandleExit},
@@ -247,6 +252,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // ZX-MultiSound card and its MIDI synthesizer
                         {"multisound", &CLIProcessor::HandleMultiSound},
+                        {"wildsound", &CLIProcessor::HandleWildSound},
                         {"midi", &CLIProcessor::HandleMidi},
 
                         // CD audio of the ATAPI CD drives
@@ -707,11 +713,16 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  bbeam <line> [--hc N] - Break when the beam passes a place (ZX Next)" << NEWLINE;
     oss << "  bmagic <edff|dd01>    - Break after the magic opcode ED FF / DD 01 ran (ZX Next)" << NEWLINE;
     oss << "  bcopper <index> - Break when the copper completes a list instruction (ZX Next)" << NEWLINE;
+    oss << "  bevent <kind> [--value V] - Break on a General Sound / NeoGS event (card_command, host_data, int, ...)" << NEWLINE;
+    oss << "  bchip <chip> <reg> [--value V] - Break on a sound chip register write (ay, fm, saa, opl4, opl4wave, dac, cbl)" << NEWLINE;
     oss << "  bplist        - List all breakpoints" << NEWLINE;
+    oss << "  --cpu gs|ms   - On bp / wp / bport / bplist / bpclear / bpon / bpoff / bptoggle / bphits / bpgroup /" << NEWLINE;
+    oss << "                  bpnote / bpcond: the sound card CPU's breakpoints, ms the MultiSound's GS (default: main)" << NEWLINE;
     oss << "  bpclear       - Clear breakpoints" << NEWLINE;
     oss << "  bpgroup <add|remove|list> <group> [bp_id] - Manage breakpoint groups" << NEWLINE;
     oss << "  bpon <all|group <name>|id <id>>        - Activate breakpoints" << NEWLINE;
     oss << "  bpoff <all|group <name>|id <id>>       - Deactivate breakpoints" << NEWLINE;
+    oss << "  callback [list|resume <id>|remove <id>|policy <id> <suspend|disable|ignore|unpaced>] - Script callbacks (Lua / Python on_tap ...)" << NEWLINE;
     oss << "  memory <hex address> [length]          - Dump memory contents" << NEWLINE;
     oss << "  debugmode <on|off>                     - Toggle debug memory mode (affects performance)" << NEWLINE;
     oss << NEWLINE;
@@ -859,6 +870,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << NEWLINE;
     oss << "ZX-MultiSound and MIDI:" << NEWLINE;
     oss << "  multisound [--full|--json] - The card: options, CPLD, YM2203 pair, SAA1099, GS, DACs, MIDI" << NEWLINE;
+    oss << "  wildsound [--json]         - Sprinter ISA Wild Sound: mode, stream, storage, track, XM player, AY" << NEWLINE;
     oss << "  midi [--json]          - MIDI line, bank, 16 parts (program, volume, notes sounding)" << NEWLINE;
     oss << "  midi panic             - Every voice of the synthesizer stops" << NEWLINE;
     oss << NEWLINE;

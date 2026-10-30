@@ -1,6 +1,10 @@
 #include "stdafx.h"
 #include "debugger/pchistory/pchistory.h"
 #include "debugger/asm/sync/asmsyncservice.h"
+#include "debugger/callbacks/scriptcallbacks.h"
+#include "debugger/targets/gscardtarget.h"
+#include "emulator/slots/card.h"
+#include "emulator/slots/slotmanager.h"
 
 #include "debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -31,6 +35,17 @@ DebugManager::DebugManager(EmulatorContext* context)
     _analyzerManager = std::make_unique<AnalyzerManager>(_context);
     _pcHistory = std::make_unique<PcHistory>(_context);
     _asmSync = std::make_unique<AsmSyncService>(_context);
+    _scriptCallbacks = std::make_unique<ScriptCallbackManager>(_context);
+    _gsTarget = std::make_unique<GSCardTarget>(_context);
+    _msTarget = std::make_unique<GSCardTarget>(_context, DebugCpuId::MultiSoundGS, [context]() -> GeneralSoundCard* {
+        SlotManager* slots = context->pSlotManager;
+        if (slots == nullptr)
+            return nullptr;
+        for (const std::unique_ptr<ICard>& card : slots->Cards())
+            if (GeneralSoundCard* gs = card->DebugGeneralSound())
+                return gs;
+        return nullptr;
+    });
     
     // Keyboard injection manager for automation
     _keyboardManager = new DebugKeyboardManager(_context);
@@ -59,12 +74,63 @@ DebugManager::DebugManager(EmulatorContext* context)
     _disassembler->SetLogger(_context->pModuleLogger);
 }
 
+BreakpointManager* DebugManager::GetBreakpointsManager(DebugCpuId cpu)
+{
+    if (IsCardCpu(cpu))
+    {
+        GSCardTarget* target = GetCardTarget(cpu);
+        return target ? target->GetBreakpointManager() : nullptr;
+    }
+    return _breakpoints;
+}
+
+GSCardTarget* DebugManager::GetCardTarget(DebugCpuId cpu)
+{
+    switch (cpu)
+    {
+        case DebugCpuId::GS:
+            return _gsTarget.get();
+        case DebugCpuId::MultiSoundGS:
+            return _msTarget.get();
+        default:
+            return nullptr;
+    }
+}
+
+bool DebugManager::ParseCpuName(const std::string& name, DebugCpuId& out)
+{
+    if (name.empty() || name == "main" || name == "z80")
+        out = DebugCpuId::Main;
+    else if (name == "gs" || name == "neogs")
+        out = DebugCpuId::GS;
+    else if (name == "ms" || name == "multisound")
+        out = DebugCpuId::MultiSoundGS;
+    else
+        return false;
+    return true;
+}
+
+void DebugManager::OnGeneralSoundCardCreated()
+{
+    if (_gsTarget)
+        _gsTarget->OnCardCreated();
+}
+
+void DebugManager::OnSlotCardsChanged()
+{
+    if (_msTarget)
+        _msTarget->OnCardCreated();
+}
+
 DebugManager::~DebugManager()
 {
     // AnalyzerManager::~AnalyzerManager() deactivates every analyzer, which releases their
     // breakpoints through BreakpointManager - so it must go before _breakpoints is deleted
     // (as a unique_ptr member it would otherwise be destroyed after this body has run).
     _asmSync.reset();   // its worker publishes into _labels: stopped first
+    _scriptCallbacks.reset();  // its taps go before the breakpoints
+    _msTarget.reset();
+    _gsTarget.reset();         // its hooks leave the card (the sound manager outlives this one)
     _commandTyper.reset();
     _analyzerManager.reset();
     _editorMonitor = nullptr;

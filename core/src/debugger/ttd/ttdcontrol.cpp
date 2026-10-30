@@ -231,6 +231,39 @@ bool ParseUpTo(const std::string& text, uint64_t max, uint64_t& out)
     return ParseU64(text, out) && out <= max;
 }
 
+/// A RAM page 0..255, or "rom": the one bucket every access without a RAM page shares (ROM, the cache)
+bool ParsePhysPage(const std::string& text, std::optional<PhysPage>& out)
+{
+    std::string t = text;
+    std::transform(t.begin(), t.end(), t.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (t == "rom")
+    {
+        out = kPhysPageNone;
+        return true;
+    }
+    uint64_t n = 0;
+    if (!ParseUpTo(text, kPhysPageMax, n))
+        return false;
+    out = static_cast<PhysPage>(n);
+    return true;
+}
+
+/// A boolean option (true / false / 1 / 0 / on / off / yes / no); absent: false. Empty: all good; otherwise the 400 text
+std::string FlagOption(const TTDRequest& request, const char* name, bool& out)
+{
+    out = false;
+    const std::string* text = Option(request, name);
+    if (text && !ParseBool(*text, out))
+        return std::string("Invalid ") + name + ": '" + *text + "' (expected true or false)";
+    return "";
+}
+
+/// A phys_page as the reply names it: the page number, or "rom" for the page-less bucket
+StateNode PhysPageNode(PhysPage page)
+{
+    return page == kPhysPageNone ? StateNode(std::string("rom")) : StateNode(static_cast<unsigned>(page));
+}
+
 /// A position in the reply body: frame and tinframe as top-level fields
 void AddPosition(StateNode& body, const TTDTimePoint& t)
 {
@@ -327,11 +360,15 @@ private:
     TTDReply BookmarkDelete(const TTDRequest& request);
     TTDReply PortEvents(const TTDRequest& request);
     TTDReply FindLast(const TTDRequest& request);
+    /// find-last's list mode and changes_only (the controller's FindAccesses): the machine stays
+    TTDReply FindAll(const TTDSearchQuery& q, const TTDFindOptions& find);
     TTDReply ReverseContinue(const TTDRequest& request);
     TTDReply CoverageProbe(const TTDRequest& request);
     TTDReply CoverageScan(const TTDRequest& request);
     TTDReply CoverageSummary(const TTDRequest& request);
     TTDReply MemoryAt(const TTDRequest& request);
+    /// memory-at space cpu: Z80 addresses through the mapping at that point (the controller's ReadCpuView)
+    TTDReply MemoryAtCpu(uint64_t frame, uint32_t tin, uint64_t offset, uint64_t length);
     TTDReply MemoryDiff(const TTDRequest& request);
     /// The engine's region a memory name means (a region name or alias, "ram", "ramN"), the byte offset of the
     /// name's start in it, and the checkpoint at or before `frame`. Empty: all good; otherwise the reply to send
@@ -341,6 +378,12 @@ private:
     TTDReply Dump(const TTDRequest& request);
     TTDReply Load(const TTDRequest& request);
     TTDReply ExportClip(const TTDRequest& request);
+
+    /// The searches' bounds: before_frame [+ before_tin] or before (machine T), at or before that point (unset:
+    /// UINT64_MAX), and from_frame. Empty: all good; otherwise the 400 text
+    std::string SearchBounds(const TTDRequest& request, uint64_t& beforeGlobalT, uint64_t& fromFrame) const;
+    /// The all mode's `limit`: 1..kReverseHitLimitMax (default 100). Empty: all good; otherwise the 400 text
+    static std::string HitLimit(const TTDRequest& request, size_t& limit);
 
     /// A verb that cannot run while a recording captures: refused (409). @p browses:
     /// the engine's controller pauses the recording for it instead (D8)
@@ -433,10 +476,11 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"bookmark-delete", {"label"}},
         {"port-events", {"*"}},
         {"find-last", {"addr", "addr_from", "addr_to", "access", "value", "pc_from", "pc_to", "phys_page", "space",
-                       "before_frame", "before_tin", "before"}},
-        {"reverse-continue", {"pcs"}},
+                       "before_frame", "before_tin", "before", "changes_only", "all", "limit", "from_frame"}},
+        {"reverse-continue", {"pcs", "phys_page", "all", "limit", "before_frame", "before_tin", "before", "from_frame"}},
         {"coverage-probe", {"frame", "kind", "addr_from", "addr_to", "phys_page", "space"}},
-        {"coverage-scan", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "space", "limit"}},
+        {"coverage-scan", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "space", "limit",
+                           "order", "ranges"}},
         {"memory-at", {"space", "offset", "length", "frame", "tinframe"}},
         {"memory-diff", {"space", "from_frame", "to_frame", "limit"}},
         {"coverage-summary", {"from_frame", "to_frame", "kind", "bucket_size", "limit"}},
@@ -1389,6 +1433,40 @@ TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
     return reply;
 }
 
+namespace
+{
+/// One find-last answer's fields: time, pc, value, page, access and where
+void AddFoundAccess(StateNode& body, const TTDSearchResult& found)
+{
+    body["frame"] = found.time.frame;
+    body["tinframe"] = static_cast<unsigned>(found.time.tInFrame);
+    body["pc"] = static_cast<unsigned>(found.pc);
+    body["value"] = static_cast<unsigned>(found.value);
+    // null = the access had no RAM page (ROM, I/O, another memory space)
+    const TTDMemorySpace foundSpace = SpaceOfPage(found.physPage);
+    body["phys_page"] = found.physPage == kPhysPageNone || foundSpace != TTDMemorySpace::Ram
+                            ? StateNode()
+                            : StateNode(static_cast<unsigned>(found.physPage));
+    body["access"] = TTDAccessTypeToString(found.access);
+    // Where: the Z80 address, or the offset in another memory space (space vram / cache)
+    body["space"] = SpaceName(foundSpace);
+    if (foundSpace == TTDMemorySpace::Ram)
+        body["addr"] = static_cast<unsigned>(found.addr);
+    else
+        body["offset"] = static_cast<unsigned>(SpaceOffset(found.physPage, found.addr));
+}
+
+/// A replay barrier that ended a search, as find-last names it
+void AddFindMarker(StateNode& body, const TTDExternalEvent& marker)
+{
+    body["blocked"] = true;
+    body["marker_frame"] = marker.time.frame;
+    body["marker_tinframe"] = static_cast<unsigned>(marker.time.tInFrame);
+    body["marker_kind"] = TTDExternalEventKindToString(marker.kind);
+    body["marker_reason"] = std::string(marker.reason);
+}
+}  // namespace
+
 template <class S>
 TTDReply TTDControlBackend<S>::FindLast(const TTDRequest& request)
 {
@@ -1488,33 +1566,35 @@ TTDReply TTDControlBackend<S>::FindLast(const TTDRequest& request)
         q.pcTo = static_cast<uint16_t>(n);
         q.hasPcFilter = true;
     }
-    // Bank-aware search: an address on a banked machine answers for one physical RAM page
+    // Bank-aware search: an address on a banked machine answers for one physical RAM page (or rom: the page-less
+    // bucket, for reads and instruction starts)
     if (const std::string* page = Option(request, "phys_page"))
     {
-        if (!ParseUpTo(*page, kPhysPageMax, n))
-            return Fail(TTDControlError::BadRequest, "Invalid phys_page (expected 0..255)");
-        q.physPage = static_cast<PhysPage>(n);
+        std::optional<PhysPage> parsed;
+        if (!ParsePhysPage(*page, parsed))
+            return Fail(TTDControlError::BadRequest, "Invalid phys_page (expected 0..255 or rom)");
+        q.physPage = *parsed;
         q.hasPhysPageFilter = true;
     }
-    // Only accesses at or before a point: a frame [+ T-state], or a raw machine time
-    if (const std::string* beforeFrame = Option(request, "before_frame"))
-    {
-        uint64_t f = 0;
-        uint64_t t = 0;
-        const std::string* beforeTin = Option(request, "before_tin");
-        if (!ParseU64(*beforeFrame, f) || (beforeTin && (!ParseU64(*beforeTin, t) || t > UINT32_MAX)))
-            return Fail(TTDControlError::BadRequest, "before_frame and before_tin must be non-negative integers");
-        q.beforeGlobalT = _manager->GlobalT({f, static_cast<uint32_t>(t)});
-    }
-    else if (const std::string* before = Option(request, "before"))
-    {
-        if (!ParseU64(*before, q.beforeGlobalT))
-            return Fail(TTDControlError::BadRequest, "before must be a non-negative integer (machine T-states)");
-    }
+    // Only accesses at or before a point: a frame [+ T-state], or a raw machine time; from_frame: not older
+    TTDFindOptions find;
+    if (std::string bounds = SearchBounds(request, q.beforeGlobalT, find.fromFrame); !bounds.empty())
+        return Fail(TTDControlError::BadRequest, bounds);
+    // all: the list newest first (up to limit); changes_only: memory writes that changed the byte
+    if (std::string flag = FlagOption(request, "all", find.all); !flag.empty())
+        return Fail(TTDControlError::BadRequest, flag);
+    if (std::string flag = FlagOption(request, "changes_only", find.changesOnly); !flag.empty())
+        return Fail(TTDControlError::BadRequest, flag);
+    if (std::string bad = HitLimit(request, find.limit); !bad.empty())
+        return Fail(TTDControlError::BadRequest, bad);
+    if (find.changesOnly && q.access != TTDAccessType::Write)
+        return Fail(TTDControlError::BadRequest, "changes_only compares a memory write with the byte it replaced: access write only");
 
     if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
     PauseAndConfirm();
+    if (find.all || find.changesOnly || find.fromFrame)
+        return FindAll(q, find);
     TTDExternalEvent marker;
     TTDSearchWindow window;
     const auto found = _manager->FindLastAccess(q, &marker, &window);
@@ -1524,38 +1604,102 @@ TTDReply TTDControlBackend<S>::FindLast(const TTDRequest& request)
     if (found)
     {
         reply.body["found"] = true;
-        reply.body["frame"] = found->time.frame;
-        reply.body["tinframe"] = static_cast<unsigned>(found->time.tInFrame);
-        reply.body["pc"] = static_cast<unsigned>(found->pc);
-        reply.body["value"] = static_cast<unsigned>(found->value);
-        // null = the access had no RAM page (ROM, I/O, another memory space)
-        const TTDMemorySpace foundSpace = SpaceOfPage(found->physPage);
-        reply.body["phys_page"] = found->physPage == kPhysPageNone || foundSpace != TTDMemorySpace::Ram
-                                      ? StateNode()
-                                      : StateNode(static_cast<unsigned>(found->physPage));
-        reply.body["access"] = TTDAccessTypeToString(found->access);
-        // Where: the Z80 address, or the offset in another memory space (space vram / cache)
-        reply.body["space"] = SpaceName(foundSpace);
-        if (foundSpace == TTDMemorySpace::Ram)
-            reply.body["addr"] = static_cast<unsigned>(found->addr);
-        else
-            reply.body["offset"] = static_cast<unsigned>(SpaceOffset(found->physPage, found->addr));
+        AddFoundAccess(reply.body, *found);
     }
     else
     {
         reply.body["found"] = false;
+        // A replay barrier stopped the search before any match
         if (marker.reason[0] != '\0')
-        {
-            // A replay barrier stopped the search before any match
-            reply.body["blocked"] = true;
-            reply.body["marker_frame"] = marker.time.frame;
-            reply.body["marker_tinframe"] = static_cast<unsigned>(marker.time.tInFrame);
-            reply.body["marker_kind"] = TTDExternalEventKindToString(marker.kind);
-            reply.body["marker_reason"] = std::string(marker.reason);
-        }
+            AddFindMarker(reply.body, marker);
     }
     AddSearchWindow(reply.body, window);
     return reply;
+}
+
+
+template <class S>
+TTDReply TTDControlBackend<S>::FindAll(const TTDSearchQuery& q, const TTDFindOptions& find)
+{
+    if constexpr (!std::is_same<S, TimeTravelController>::value)
+    {
+        (void)q, (void)find;
+        return Fail(TTDControlError::NotAvailable, "all, changes_only and from_frame need the time travel controller (backend engine)");
+    }
+    else
+    {
+        const TTDFindResult r = _manager->FindAccesses(q, find);
+        TTDReply reply;
+        reply.body["found"] = !r.hits.empty();
+        if (find.all)
+        {
+            StateNode hits = StateNode::Array();
+            for (const TTDFoundAccess& h : r.hits)
+            {
+                StateNode hit = StateNode::Object();
+                AddFoundAccess(hit, h.access);
+                hit["t"] = h.globalT;
+                if (find.changesOnly)
+                    hit["old_value"] = h.hasOldValue ? StateNode(static_cast<unsigned>(h.oldValue)) : StateNode();
+                hits.push(hit);
+            }
+            reply.body["hits"] = hits;
+            reply.body["count"] = static_cast<uint64_t>(r.hits.size());
+            reply.body["truncated"] = r.truncated;
+            // The next page: pass it back as `before` (at or before), the oldest hit excluded
+            if (r.truncated)
+                reply.body["next_before"] = r.hits.back().globalT - 1;
+        }
+        else if (!r.hits.empty())
+        {
+            const TTDFoundAccess& h = r.hits.front();
+            AddFoundAccess(reply.body, h.access);
+            reply.body["t"] = h.globalT;
+            if (find.changesOnly)
+                reply.body["old_value"] = h.hasOldValue ? StateNode(static_cast<unsigned>(h.oldValue)) : StateNode();
+        }
+        if (r.blockingMarker.reason[0] != '\0')
+            AddFindMarker(reply.body, r.blockingMarker);
+        AddSearchWindow(reply.body, r.window);
+        return reply;
+    }
+}
+
+template <class S>
+std::string TTDControlBackend<S>::SearchBounds(const TTDRequest& request, uint64_t& beforeGlobalT, uint64_t& fromFrame) const
+{
+    if (const std::string* beforeFrame = Option(request, "before_frame"))
+    {
+        uint64_t f = 0;
+        uint64_t t = 0;
+        const std::string* beforeTin = Option(request, "before_tin");
+        if (!ParseU64(*beforeFrame, f) || (beforeTin && (!ParseU64(*beforeTin, t) || t > UINT32_MAX)))
+            return "before_frame and before_tin must be non-negative integers";
+        beforeGlobalT = _manager->GlobalT({f, static_cast<uint32_t>(t)});
+    }
+    else if (const std::string* before = Option(request, "before"))
+    {
+        if (!ParseU64(*before, beforeGlobalT))
+            return "before must be a non-negative integer (machine T-states)";
+    }
+    else if (Option(request, "before_tin"))
+        return "before_tin needs before_frame";
+    if (const std::string* from = Option(request, "from_frame"); from && !ParseU64(*from, fromFrame))
+        return "from_frame must be a non-negative integer";
+    return "";
+}
+
+template <class S>
+std::string TTDControlBackend<S>::HitLimit(const TTDRequest& request, size_t& limit)
+{
+    if (const std::string* t = Option(request, "limit"))
+    {
+        uint64_t n = 0;
+        if (!ParseUpTo(*t, TimeTravelController::kReverseHitLimitMax, n) || n == 0)
+            return "Invalid limit: '" + *t + "' (expected 1.." + std::to_string(TimeTravelController::kReverseHitLimitMax) + ")";
+        limit = static_cast<size_t>(n);
+    }
+    return "";
 }
 
 template <class S>
@@ -1564,7 +1708,7 @@ TTDReply TTDControlBackend<S>::ReverseContinue(const TTDRequest& request)
     const std::string* pcsText = Option(request, "pcs");
     if (!pcsText || pcsText->empty())
         return Fail(TTDControlError::BadRequest, "'pcs' must be a non-empty list of addresses");
-    std::vector<uint16_t> pcs;
+    TTDReverseContinueQuery query;
     size_t start = 0;
     while (start <= pcsText->size())
     {
@@ -1578,20 +1722,70 @@ TTDReply TTDControlBackend<S>::ReverseContinue(const TTDRequest& request)
         if (!ParseUpTo(item, 0xFFFF, pc))
             return Fail(TTDControlError::BadRequest,
                         "'pcs' entries must be 0..65535 (decimal, or hex as \"0x..\", \"#..\" or \"$..\")");
-        pcs.push_back(static_cast<uint16_t>(pc));
+        query.pcs.push_back(static_cast<uint16_t>(pc));
         start = end + 1;
     }
+    // phys_page: only runs on that page (a RAM page, or rom); all: every hit up to limit, the machine stays;
+    // before / before_frame + before_tin: at or before that point (default: strictly before now); from_frame: not
+    // older than that frame
+    if (const std::string* t = Option(request, "phys_page"); t && !ParsePhysPage(*t, query.physPage))
+        return Fail(TTDControlError::BadRequest, "Invalid phys_page: '" + *t + "' (expected 0..255 or rom)");
+    if (std::string err = FlagOption(request, "all", query.all); !err.empty())
+        return Fail(TTDControlError::BadRequest, err);
+    if (std::string err = HitLimit(request, query.limit); !err.empty())
+        return Fail(TTDControlError::BadRequest, err);
+    if (std::string err = SearchBounds(request, query.beforeGlobalT, query.fromFrame); !err.empty())
+        return Fail(TTDControlError::BadRequest, err);
 
     if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
     PauseAndConfirm();
-    const auto r = _manager->ReverseContinue(pcs);
-    NotifyFrameRefresh();
+    TTDReverseContinueResult r;
+    if constexpr (std::is_same<S, TimeTravelController>::value)
+        r = _manager->ReverseContinue(query);
+    else
+    {
+        if (query.physPage || query.all || query.beforeGlobalT != UINT64_MAX || query.fromFrame)
+            return Fail(TTDControlError::NotAvailable,
+                        "phys_page, all and the bounds need the time travel controller (backend engine)");
+        r = _manager->ReverseContinue(query.pcs);
+    }
+    if (!query.all)
+        NotifyFrameRefresh();
 
     TTDReply reply;
     reply.body["matched"] = r.matched;
     reply.body["pc"] = static_cast<unsigned>(r.pc);
-    AddPosition(reply.body, r.arrivedAt);
+    if (query.all)
+    {
+        // The hits, newest first; the machine stays where it stood
+        StateNode hits = StateNode::Array();
+        for (const TTDReverseHit& h : r.hits)
+        {
+            StateNode hit = StateNode::Object();
+            hit["frame"] = h.time.frame;
+            hit["tinframe"] = static_cast<unsigned>(h.time.tInFrame);
+            hit["t"] = h.globalT;
+            hit["pc"] = static_cast<unsigned>(h.pc);
+            hit["phys_page"] = PhysPageNode(h.physPage);
+            hits.push(hit);
+        }
+        reply.body["hits"] = hits;
+        reply.body["count"] = static_cast<uint64_t>(r.hits.size());
+        reply.body["truncated"] = r.truncated;
+        // The next page: pass it back as `before` (at or before), the oldest hit excluded
+        if (r.truncated && !r.hits.empty())
+            reply.body["next_before"] = r.hits.back().globalT - 1;
+    }
+    else
+    {
+        AddPosition(reply.body, r.arrivedAt);
+        if (r.matched && !r.hits.empty())
+        {
+            reply.body["t"] = r.hits.front().globalT;
+            reply.body["phys_page"] = PhysPageNode(r.hits.front().physPage);
+        }
+    }
     if (r.blockingMarker.reason[0] != '\0')
     {
         StateNode m = StateNode::Object();
@@ -1665,9 +1859,8 @@ std::string CoverageRange(const TTDRequest& request, TTDCoverageKind& kind, uint
         return "addr_from (" + Hex4(addrFrom) + ") must not exceed addr_to (" + Hex4(addrTo) + ")";
     if (const std::string* t = Option(request, "phys_page"))
     {
-        if (!ParseUpTo(*t, kPhysPageMax, n))
-            return "Invalid phys_page: '" + *t + "' (expected 0..255)";
-        page = static_cast<PhysPage>(n);
+        if (!ParsePhysPage(*t, page))
+            return "Invalid phys_page: '" + *t + "' (expected 0..255 or rom)";
     }
     return "";
 }
@@ -1755,6 +1948,21 @@ TTDReply TTDControlBackend<S>::CoverageScan(const TTDRequest& request)
     std::string err = CoverageWindow(request, fromFrame, toFrame, limit);
     if (err.empty())
         err = CoverageRange(request, kind, addrFrom, addrTo, page, space);
+    // order: the list's first `limit` matches oldest first (the default) or newest first; ranges: runs of
+    // consecutive matching frames instead of single frames
+    bool newestFirst = false;
+    if (const std::string* order = Option(request, "order"); err.empty() && order)
+    {
+        if (*order == "newest")
+            newestFirst = true;
+        else if (*order != "oldest")
+            err = "Invalid order: '" + *order + "' (expected oldest or newest)";
+    }
+    bool asRanges = false;
+    if (err.empty())
+        err = FlagOption(request, "ranges", asRanges);
+    if (err.empty() && limit > TimeTravelController::kCoverageScanLimitMax)
+        err = "Invalid limit: at most " + std::to_string(TimeTravelController::kCoverageScanLimitMax);
     if (!err.empty())
         return Fail(TTDControlError::BadRequest, err);
 
@@ -1763,25 +1971,64 @@ TTDReply TTDControlBackend<S>::CoverageScan(const TTDRequest& request)
     reply.body["addr_from"] = Hex4(addrFrom);
     reply.body["addr_to"] = Hex4(addrTo);
     AddCoverageSpace(reply.body, space, page, addrFrom, addrTo);
-    const TTDCoverageScanResult res =
-        _manager ? _manager->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, page, limit)
-                 : TTDCoverageScanResult{};
+    if (space == TTDMemorySpace::Ram && page == kPhysPageNone)
+        reply.body["phys_page"] = "rom";
+    TTDCoverageScanResult res;
+    if constexpr (std::is_same<S, TimeTravelController>::value)
+    {
+        if (_manager)
+            res = _manager->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, page, limit, newestFirst, asRanges);
+    }
+    else
+    {
+        if (newestFirst || asRanges)
+            return Fail(TTDControlError::NotAvailable, "order and ranges need the time travel controller (backend engine)");
+        if (_manager)
+            res = _manager->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, page, limit);
+    }
     reply.body["scanned_frames"] = res.scannedFrames;
     reply.body["matching_frames"] = res.matchingFrames;
     reply.body["first_match"] = res.firstMatch;
     reply.body["last_match"] = res.lastMatch;
     reply.body["truncated"] = res.truncated;
     reply.body["index_available"] = res.indexAvailable;
+    reply.body["order"] = newestFirst ? "newest" : "oldest";
+    // exact: a page names the bytes. Without one the offset matches on every page (and every 16 KB window of the
+    // Z80 address), so a frame in the list may hold another page's access
+    reply.body["exact"] = page.has_value();
     // The covered window shows a request range that was clamped to the index
     if (res.indexAvailable)
     {
         reply.body["covered_from"] = res.coveredFrom;
         reply.body["covered_to"] = res.coveredTo;
     }
-    StateNode frames = StateNode::Array();
-    for (uint64_t f : res.frames)
-        frames.push(f);
-    reply.body["frames"] = frames;
+    // The cursor: the window the next call scans to go on with the list
+    if (res.truncated)
+    {
+        if (newestFirst)
+            reply.body["next_to_frame"] = res.nextTo;
+        else
+            reply.body["next_from_frame"] = res.nextFrom;
+    }
+    if (asRanges)
+    {
+        StateNode ranges = StateNode::Array();
+        for (const auto& [from, to] : res.ranges)
+        {
+            StateNode run = StateNode::Array();
+            run.push(from);
+            run.push(to);
+            ranges.push(run);
+        }
+        reply.body["ranges"] = ranges;
+    }
+    else
+    {
+        StateNode frames = StateNode::Array();
+        for (uint64_t f : res.frames)
+            frames.push(f);
+        reply.body["frames"] = frames;
+    }
     return reply;
 }
 
@@ -2221,6 +2468,10 @@ TTDReply TTDControlBackend<S>::MemoryAt(const TTDRequest& request)
         if (TTDReply refusal; RefuseWhileRecording(refusal, true))
             return refusal;
         PauseAndConfirm();
+        std::string lower = *space;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lower == "cpu")
+            return MemoryAtCpu(frame, static_cast<uint32_t>(tin), offset, length);
         uint32_t region = 0;
         uint32_t base = 0;
         size_t index = 0;
@@ -2309,6 +2560,58 @@ TTDReply TTDControlBackend<S>::MemoryAt(const TTDRequest& request)
         {
             hex += kHex[bytes[at + i] >> 4];
             hex += kHex[bytes[at + i] & 0x0F];
+        }
+        reply.body["hex"] = hex;
+        return reply;
+    }
+}
+
+template <class S>
+TTDReply TTDControlBackend<S>::MemoryAtCpu(uint64_t frame, uint32_t tin, uint64_t offset, uint64_t length)
+{
+    if constexpr (!std::is_same<S, TimeTravelController>::value)
+    {
+        (void)frame, (void)tin, (void)offset, (void)length;
+        return Fail(TTDControlError::NotAvailable, "memory-at space cpu needs the time travel controller (backend engine)");
+    }
+    else
+    {
+        if (offset > 0xFFFF)
+            return Fail(TTDControlError::BadRequest, "space cpu: offset is a Z80 address 0..65535");
+        if (offset + length > 0x10000)
+            return Fail(TTDControlError::BadRequest, "space cpu: the bytes end at 0xFFFF (offset + length at most 65536)");
+        const TTDCpuView view = _manager->ReadCpuView({frame, tin}, static_cast<uint16_t>(offset), static_cast<size_t>(length));
+        if (!view.ok)
+            return Fail(TTDControlError::Conflict, "space cpu: " + view.error);
+        TTDReply reply;
+        reply.body["space"] = "cpu";
+        reply.body["offset"] = offset;
+        reply.body["length"] = static_cast<uint64_t>(view.bytes.size());
+        reply.body["frame"] = frame;
+        reply.body["tinframe"] = static_cast<uint64_t>(tin);
+        reply.body["at_frame"] = view.at.frame;
+        reply.body["exact"] = true;
+        // The mapping the bytes were read through: each 16 KB window's ROM / RAM / cache page
+        StateNode banks = StateNode::Array();
+        static const char* const kKinds[] = {"rom", "ram", "cache"};
+        for (uint8_t w = 0; w < 4; ++w)
+        {
+            StateNode bank = StateNode::Object();
+            bank["window"] = static_cast<unsigned>(w);
+            bank["addr"] = Hex4(static_cast<uint16_t>(w * 0x4000));
+            bank["kind"] = view.windows[w].kind < 3 ? kKinds[view.windows[w].kind] : "unknown";
+            bank["page"] = static_cast<unsigned>(view.windows[w].page);
+            bank["name"] = view.windows[w].name;
+            banks.push(bank);
+        }
+        reply.body["banks"] = banks;
+        std::string hex;
+        hex.reserve(view.bytes.size() * 2);
+        static const char kHex[] = "0123456789ABCDEF";
+        for (uint8_t b : view.bytes)
+        {
+            hex += kHex[b >> 4];
+            hex += kHex[b & 0x0F];
         }
         reply.body["hex"] = hex;
         return reply;

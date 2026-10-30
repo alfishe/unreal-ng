@@ -1,0 +1,41 @@
+# Badlands (Domark / Atari Games 1990), the 48K Z80 snapshot "Badlands_1990_Domark.z80" (archive.org zx_*): it starts in the
+# race at once (the "waiting for other player" screen counts down on its own, then the track name). Top-down racer, three cars in
+# the record table at #E5ED / #E658 / #E6C3 (stride #6B, IX in the car update #9505..#95C3); the player is the first. Keys (the
+# game's own scan #A463..#A49C, mask table #A520): Q accelerates, A brakes, O / P steer, SPACE fires the missile, M is the
+# second weapon. Haptics (haptics.md §13 H5), found with TTD on a recorded run (the key flags #A45F by find-last, the car update
+# that reads them, IX by seek + registers): the player's speed is (ix+6) = #E5F3 (0 to 9, one step per ~11 frames under Q, the
+# writers are #98E3 up, #A659 on a hit (9 -> 4 in one write), #9906 down on the brake and #986A at the end of a recovery);
+# the hit sets the car flags (ix+#12) = #E5FF to 2 and 3 in #A637 / #A63B, so a write that raises #E5FF is the player's hit.
+# Checked in real time (Q held 48 s, random O / P / SPACE every 0.8 s): the speed level follows the car (values 0 to 9 seen),
+# 12 `hit`. #B877 is the missile launch (the free-slot branch of the shot spawn, IX = the player's record, 6 runs for 6 SPACE taps);
+# the drones' records #E658 / #E6C3 do not take the player's hit path (their flag byte ix+#12 was written once in 3200 frames, by
+# other code), so a drone hit is not an event; the lap events are not mapped.
+schema: 1
+kind: play
+id: builtin/game/badlands
+label: Badlands
+match:
+  machines: [48K, 128K, PENTAGON]
+  file_sha256: ["22657f5e8cc63ec64a38e17b744f5cd542773866c18fb8abfe3af15da031e307"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    rt.click:     { key: Q, label: Accelerate }
+    lt.click:     { key: A, label: Brake }
+    south:        { key: SPACE, label: Missile }
+    west:         { key: M, label: Weapon }
+    menu:         { key: ENTER, label: Start }
+haptics:
+  sources:
+    speed: { probe: value, address: "0xE5F3", scale: 28 }
+    hit:   { probe: write, address: "0xE5FF", when: increased }
+    fire:  { probe: exec, address: "0xB877" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: hit, play: hit }
+    - { on: fire, play: shot, scale: 0.6 }

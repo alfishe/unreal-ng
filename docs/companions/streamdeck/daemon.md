@@ -49,9 +49,10 @@ on the daemon's network loop (no thread of its own), with the token of `unreal-s
 | Readouts | `subscribe` with exactly what the scenario names: the readouts of the faces' `state` paths (`run.state.paused` -> `run.state`) and of the strips (`ttd` -> `ttd.position`, `run` -> `run.state`, `tape` -> `media.tape`, `target` -> `machine`), at 50 Hz with a TTD timeline, else 10 Hz. Values go into the faces (`Runtime::SetReadout`) and the strip ([below](#strip-readouts)); a deck with a session polls nothing (its REST poller thread ends) |
 | Contexts | `ctx` from the core moves the deck to the nearest menu declaring it (`Runtime::OnContext`); entering a menu with a `context` sends `ctx.set`. After a new instance (a machine replaced, unreal-qt restarted) the deck keeps its page and sends its context to the new instance |
 | Activity | `activity` (an action another surface ran on the target) flashes the visible keys bound to the same id; `settings.activity.strip: "line"` adds a quiet line "LABEL - surface" for `seconds`; `ttd.seek_by` is ignored by default (Q-3) |
-| Target | `target` (the instance the session drives: model, RAM, index, follow / pinned) is the strip's target line. A `{"view": n}` target the host refuses (`not_now`: no views on the surface topic yet) is joined again with `"follow"` |
+| Target | `target` (the instance the session drives: model, RAM, index, view, follow / view / instance) is the strip's target line. Each deck's session is a `TargetState` session on the host: unreal-qt's surfaces table and `PUT /api/v1/surfaces/sessions/{id}/pin` pin it, and the deck is told by `target`. A `{"view": n}` target the host cannot bind (`not_now`: a host without views; `Not Found`: no view `vN`) is joined again with `"follow"` |
 | Instances | The `instances` topic on the same connection: the host's instance list (`GET /api/v1/surface`) |
 | Reconnect | A dropped socket (unreal-qt quits or restarts) reconnects with backoff 0.25 s .. 5 s and joins every deck again; meanwhile the strips say `RECONNECTING` and the REST fallback serves |
+| Page | Each deck's menu path (by serial and scenario) is kept in `~/.config/unreal-streamdeck/deck-pages.json` whenever it changes (written through a temporary file): a restarted daemon opens the deck where it was (the longest prefix of the path the scenario still has) |
 | Revoked | `revoked` (or a handshake refused with 401: a token the host no longer knows) stops the client: every strip says `COMPANION REVOKED - TOUCH TO PAIR`, actions fail at once. The companion file is looked at every 2 s; a new token ([pairing](#pairing)) connects again |
 | Not paired | No companion file: REST only, every strip says `NOT PAIRED - TOUCH TO PAIR`, the file is watched the same way |
 
@@ -125,7 +126,8 @@ attached), Stream Deck Studio (it starts one when none answers). The daemon watc
 `EVFILT_PROC` on macOS, a pidfd on Linux, a process handle on Windows; looked at every 250 ms by the watcher thread) and
 stops cleanly when the last one is gone or gives its lease back (`DELETE /api/v1/parents/{pid}`): unreal-qt quitting
 leaves it running while a studio still holds it, and the other way round. A daemon started with no parent (by hand)
-is nobody's: leases come and go, it stays until `POST /api/v1/quit` or a signal.
+is nobody's: leases come and go, it stays until `POST /api/v1/quit` or a signal. When it stops, the real deck is left dark with `UNREAL-NG STREAM DECK
+STOPPED` on the strip, not frozen on a page whose keys no longer answer.
 
 | Route | What |
 |:--|:--|
@@ -275,7 +277,7 @@ deck, else the first deck); the runtime routes take `?deck=SERIAL` with the same
 | `DELETE /api/v1/decks/{serial}/scenario` | The deck plays the daemon's start scenario again |
 | `POST /api/v1/decks/{serial}/reconnect` | `{"away_ms": 0..60000}`: close the real deck's USB handle and open it again after that long (an unplug on purpose, [hot plug](#hot-plug)); 409 for an own deck |
 | `POST /api/v1/decks/{serial}/snapshot` | `{"path": file}`: every viewer of the deck saves a PNG there (a `Control` frame); answers how many viewers it went to, 409 when nobody views the deck |
-| `GET /api/v1/state`, `/page`, `/nodes` | The runtime of one deck: menu stack, page, toggles, last actions; what the keys mean now; the scenario's nodes (filters `tag`, `type`, `kind`, `menu`, `text`) |
+| `GET /api/v1/state`, `/page`, `/nodes` | The runtime of one deck: menu stack, page, toggles, last actions; what the keys mean now (each page key's `on`, `value`, and `flash: true` while an activity flash lights it); the scenario's nodes (filters `tag`, `type`, `kind`, `menu`, `text`) |
 | `POST /api/v1/navigate`, `/press` | `{"to": back\|home\|node, "node"}`; a key by `node` id or `key` index (down and up). The answer is `/state` once the deck's device thread has applied it (its next step, ~10 ms; no fixed wait), with `deck` and `"applied": true`; a device thread that does not come round within 1 s answers 202, `"applied": false`, the state as it was (the request stays queued). An action the press starts runs on the runtime's worker: its result is in `last_actions` of a later `/state`. A node that is not on the page: 404 before anything is queued |
 | `POST /api/v1/reload` | Read the deck's file again, or `{"file"}` for another one (as `PUT .../scenario`) |
 | `GET /api/v1/scenario` | The deck's file and its document |

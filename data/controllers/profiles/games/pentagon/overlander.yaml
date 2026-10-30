@@ -1,0 +1,43 @@
+# Overlander (Elite Systems 1988), the 48K Z80 snapshot "Overlander_1988_Elite_Systems.z80" (archive.org zx_*). Menu: K = keyboard,
+# R = redefine keys, S = start. The redefine editor asks, in this order: right, left, decelerate, accelerate, fire, special weapon,
+# pause, quit; the profile assumes P, O, A, Q, Z, M, N, B (enter them with R once per run: the snapshot keeps no key table
+# worth trusting). After S: choose the cargo (fire), buy fuel (accelerate buys, fire leaves), the weapon shop (decelerate moves
+# down to FINISHED!, fire takes it), then the road. Haptics (haptics.md §13 H5), found with TTD on a recorded run: the speed is the
+# step byte #F019 (0 to 15, the MPH dial shows 0 to 160 in steps of about 10; #631B raises it by one step, #6AA1 lowers it one
+# step per ~11 frames: it is the slow-down after a crash and under the brake); #7297 is the head of the player-hit handler (it
+# runs once per crash, the car explodes and the speed falls 15 -> 0 in the next 140 frames), #6A72 is the respawn (speed set to 0,
+# state #11, shield counter #F067 = #18).
+# #5FE3 is the shot spawn (it fills the bullet record #F049 from the weapon #F045; 5 runs for 6 Z taps, the sixth was refused while
+# two shots were in flight). #7524 is the reward routine (it adds a table value #B0CC[n] to the score word #F00C and the money word
+# #F00A, then redraws both): one run per kill in the recording (SC +100, $ +100). Known limits: other pickups are not mapped.
+schema: 1
+kind: play
+id: builtin/game/overlander
+label: Overlander
+match:
+  machines: [48K, 128K, PENTAGON]
+  file_sha256: ["86c6a0d0c4be7042e8cf59ec7dd28aa2fa8f3903188381b103296aee60a693de"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    rt.click:     { key: Q, label: Accelerate }
+    lt.click:     { key: A, label: Brake }
+    south:        { key: Z, label: Fire }
+    west:         { key: M, label: Special }
+    menu:         { key: S, label: Start }
+haptics:
+  sources:
+    speed: { probe: value, address: "0xF019", scale: 17 }
+    crash: { probe: exec, address: "0x7297" }
+    fire:  { probe: exec, address: "0x5FE3" }
+    kill:  { probe: exec, address: "0x7524" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: crash, play: explosion, scale: 0.9 }
+    - { on: fire, play: shot, scale: 0.6 }
+    - { on: kill, play: pickup }

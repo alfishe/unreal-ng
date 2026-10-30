@@ -79,6 +79,22 @@ public:
     {
         (void)skipped;
     }
+
+    /// TTD pins the render path while the machine is bound to a timeline (recording, replay, Detached; pushed once
+    /// per frame by the manager, and set by the device itself when a recording starts or a checkpoint loads). A
+    /// device whose TTD state holds its render loop's position (TSFM: sample and decimator phases, render cursor,
+    /// frame progress) then changes its render mode (quality, synthesis suppressed by sound off or turbo) only at a
+    /// frame start, where the frame's checkpoint records it. @p followsHost (recording): the mode the host asks for
+    /// is taken at each frame start. Otherwise (replay, Detached) the device keeps the mode of the checkpoint it
+    /// loaded, whatever the host asks: a replay from a checkpoint reaches the next one on any host. A replay that
+    /// runs on across frame starts stays exact up to the first frame whose recorded mode differs (the frame's blob
+    /// says it). The host speed is locked while a history exists (Core::CanSetSpeedMultiplier). Devices without such
+    /// state ignore it
+    virtual void setTtdRenderPinned(bool pinned, bool followsHost)
+    {
+        (void)pinned;
+        (void)followsHost;
+    }
     /// endregion </Lifecycle>
 
     /// region <Rate / quality>

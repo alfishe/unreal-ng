@@ -23,6 +23,11 @@ Coverage in general: [analysis/code-coverage-and-analyzers.md](../analysis/code-
 | a continuous value (speed, altitude) | `value` (`word: true` for 16 bits) | none on the CPU |
 | a border flash, an AY register | `port-out` with `value` / `mask` | the port path's existing gate |
 
+A probe that fires too often (the routine also runs when nothing happens) takes `if:`, a condition in the
+[breakpoint condition language](../../docs/features/conditional-breakpoints.md):
+`{probe: exec, address: 0x9A20, if: "A != 0"}`, or at the frame end `{probe: value, address: 0x5f20, if: "M(#5F20) <
+M(#5F20)@prev"}`. Check `game.events`: an event with `condition_error` never fires.
+
 Prefer `exec`. Take a `write` that reads at the frame end when the game has a clean counter. Use `read` only when
 nothing else works: it switches the debug memory path on (+38 % CPU on a 48K).
 

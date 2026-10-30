@@ -3,6 +3,8 @@
 #include "upload_helper.h"
 
 #include <common/filehelper.h>
+#include <platform/processinfo.h>
+#include "upload_sweep.h"
 #include <drogon/HttpTypes.h>
 #include <drogon/MultiPart.h>
 #include <algorithm>
@@ -39,7 +41,7 @@ MediaType getMediaTypeFromFilename(const std::string& filename)
     // Disks
     if (ext == ".trd" || ext == ".scl" || ext == ".fdi" || ext == ".udi" || ext == ".td0" || ext == ".img" ||
         ext == ".ima" || ext == ".dsk" || ext == ".mgt" || ext == ".mb2" || ext == ".mbd" || ext == ".d40" ||
-        ext == ".d80")
+        ext == ".d80" || ext == ".pro")
         return MediaType::Disk;
 
     // Tapes
@@ -89,7 +91,7 @@ std::string sanitizeFilename(const std::string& filename)
     return result.empty() ? "upload" : result;
 }
 
-// Generate a short random session ID
+// Generate a session ID: this process's id, then a short random part (the sweep reads the owner from it)
 static std::string generateSessionId()
 {
     static const char chars[] = "0123456789abcdef";
@@ -97,8 +99,8 @@ static std::string generateSessionId()
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> dis(0, 15);
 
-    std::string id;
-    id.reserve(16);
+    std::string id = std::to_string(platform::CurrentProcessId()) + "-";
+    id.reserve(id.size() + 16);
     for (int i = 0; i < 16; ++i)
         id += chars[dis(gen)];
     return id;
@@ -127,16 +129,30 @@ void UploadHelper::setWritableRoot(const std::string& root)
     _initialized = false; // Will re-create upload dir on next use
 }
 
+void UploadHelper::resolveWritableRoot()
+{
+    if (_writableRoot.empty())
+    {
+        // The system temp folder: staged uploads are temporary, and the executable's folder is a signed bundle or
+        // a read-only install (a package once shipped the build tree's leftovers from there)
+        std::error_code tempError;
+        const fs::path temp = fs::temp_directory_path(tempError);
+        _writableRoot = tempError ? FileHelper::GetWritablePath() : (temp / "unreal-ng").string();
+    }
+}
+
+void UploadHelper::sweepLeftovers()
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    resolveWritableRoot();
+    SweepUploadSessions((fs::path(_writableRoot) / "uploads").string());
+}
+
 void UploadHelper::ensureUploadDir()
 {
     if (_initialized) return;
 
-    if (_writableRoot.empty())
-    {
-        // Fallback to executable path + "uploads"
-        _writableRoot = FileHelper::GetExecutablePath();
-    }
-
+    resolveWritableRoot();
     _uploadDir = _writableRoot + "/uploads/" + _sessionId + "/";
 
     std::error_code ec;

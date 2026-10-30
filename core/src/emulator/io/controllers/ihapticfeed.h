@@ -83,6 +83,9 @@ struct HapticProbe
     uint16_t end = 0;         ///< inclusive; == address: one address
     uint16_t page = 0xFFFF;   ///< memory: 0xFFFF the CPU address; else the RAM page, `address & #3FFF` in it
     uint16_t portMask = 0xFFFF;  ///< ports: matches when (port & portMask) == (address & portMask)
+    /// The profile's `if:` (the core condition language, breakpointcondition.h): the tap counts a hit only when it
+    /// holds, checked at the access with its operands (VAL, MWV, ...). Empty: every hit
+    std::string condition;
 };
 
 /// One write (the byte before and after it) or OUT (the value) a probe saw this frame, in order
@@ -120,6 +123,11 @@ struct HapticFrame
     static constexpr unsigned kMaxProbeEvents = 64;
     std::array<HapticProbeEvent, kMaxProbeEvents> probeEvents{};
     unsigned probeEventCount = 0;
+    /// IHapticFeed::FrameConditions at the frame end, in its order: bit i set when condition i held (a condition
+    /// that did not compile never holds)
+    static constexpr unsigned kMaxConditions = 16;
+    uint32_t conditionsHeld = 0;
+    unsigned conditionCount = 0;
 };
 
 /// Where a machine's ControllerManager sends its frames (HostInputService::HapticFeedFor). Called on the emulator
@@ -142,6 +150,12 @@ public:
     /// The breakpoint probes to arm (at most HapticFrame::kMaxProbes); asked once, when the feed is set. An exec, read
     /// or write probe runs the CPU on the debug path while it is armed (the cost of a probe, none without one)
     virtual std::vector<HapticProbe> Probes() const
+    {
+        return {};
+    }
+    /// Conditions (the core condition language) evaluated at every frame end on the machine's state, no access
+    /// operands (at most HapticFrame::kMaxConditions): HapticFrame::conditionsHeld. Asked once, when the feed is set
+    virtual std::vector<std::string> FrameConditions() const
     {
         return {};
     }

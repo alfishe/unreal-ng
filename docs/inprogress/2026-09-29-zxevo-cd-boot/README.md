@@ -195,8 +195,10 @@ and later, which the ERS never looks at), subdirectories and the path table.
   (the zero-filled system area, then the PVD copy at `#E000`, whose second byte `C` makes it jump out
   of range). An ISO whose system area (sectors 0-15) is not empty, such as a "hybrid" ISO with a
   hard-disk boot record, can make this walk do odd things **(unverified in practice)**.
-- **No match: `RST 0`** (`:356`), a jump to address 0. With the mapping the ERS runs in, that is most
-  likely a restart of the ERS menu **(unverified; see [TODO](TODO.md))**. There is no message.
+- **No match: `RST 0`** (`:356`), a jump to address 0. The ERS runs from RAM with the **48K BASIC
+  ROM** (page 28) at `#0000`, so this is a 48K BASIC cold start: the RAM check, then the
+  "(c) 1982 Sinclair Research Ltd" screen - not the ERS menu. There is no message. Verified in
+  unreal-ng with the real ROM (`ZXEvoErs_Test.CdBootWithoutAutorunColdStarts48KBasic`, 2026-10-02).
 
 ### Step 7: load and start
 
@@ -213,10 +215,10 @@ loaded as a 4,464-byte one.
 
 | Situation | What happens | Why |
 |---|---|---|
-| No device on the slave, or a hard disk there | The screen stays blank; the ERS resets and re-identifies the slave forever (with no device at all it can also hang in the busy wait). | Step 1, row 5 jumps back to `iniini` (`:259`). |
+| No device on the slave, or a hard disk there | The screen stays blank; the ERS resets and re-identifies the slave forever (with no device at all it can also hang in the busy wait). With a hard disk: verified, the emulator keeps running (`CdBootWithAHardDiskOnTheSlaveKeepsAsking`); no device at all: not tried (the ZX-Evo config always fits a unit). | Step 1, row 5 jumps back to `iniini` (`:259`). |
 | CD drive, no disc | Blank screen; READ(10) + TEST UNIT READY forever. Insert a disc and it boots. | Step 3 retry (`:555-566`). |
 | Audio CD, or a mixed-mode disc | Same endless retry (the data read of an audio track fails). | Steps 3/4. |
-| Data CD without `AUTORUN.ZX` in the root | `RST 0`: back to address 0, most likely the ERS menu **(unverified)**. | `:356` |
+| Data CD without `AUTORUN.ZX` in the root | `RST 0` into the 48K BASIC ROM: the machine cold-starts 48K BASIC (the (c) 1982 screen). Verified. | `:356` |
 | `AUTORUN.ZX` bigger than 34,816 bytes | Crash while loading. | Loader at `#E800`. |
 | Good disc | Program starts in well under a second after the disc is ready. | |
 
@@ -251,22 +253,25 @@ actually passed):
 | `D` | `1` | language: 0 English, 1 Russian. **Always 1** (a constant in the loader, `:140`) |
 | `E` | `#FB` | Covox port (`#FB` = ATM / Pentagon; `#FF` would mean none) |
 | `HL` | `4` | video modes available, a bit set: 1 = 512x192 mono, 2 = 384x304, 4 = 256x192 16-color, 8 = 320x200 16-color ATM. ZX-Evo passes only **4** (the source has `;8` commented next to it, `:142`) |
-| Interrupts | **off** (`DI`) | the standard adds "IM 1" |
-| `SP` | just below `#6000` | the ERS menu stack (the standard says `SP=#6000`); **set your own** |
+| Interrupts | **off** (`DI`), **IM 1** | verified |
+| `SP` | `#5FFC` | just below the file (the standard says `SP=#6000`); **set your own**. Verified |
+| `IY` | `#5C3A` (23610) | as BASIC expects. Verified |
 | Port `#7FFD` | `#10` | RAM page 0 at `#C000`, normal screen (page 5), ROM bit set |
 | RAM | pages 0, 1, 3, 4, 6, 7 **zeroed** before loading; page 5 holds the ERS screen and stack; page 2 is `#8000`-`#BFFF` | `CLEAR_128K` |
 | `#6000`-... | your file | |
 | `#E000`-`#E7FF` | the volume descriptor copy, unless your file is bigger than 32 KB | step 13 |
 | `#E800`-... (page 0) | the ERS CD loader code | no documented entry points: do not call it |
 | CPU speed, memory mode | as set in the ERS Setup | `MEMSET` |
-| ROM at `#0000` | whatever the ERS runs in: most likely the ERS page, **not** BASIC **(unverified)** | do not call ROM routines without checking |
+| ROM at `#0000` | page 28, the **48K BASIC ROM** (port `#EFF7` = `#14`) | the 48K ROM routines are there. Verified |
 
 The 2006 standard, as published in *Info Guide* #09, says (translated): "the root directory holds a
 file `AUTORUN.ZX` no longer than `#8000` bytes. It is loaded at `#6000` (port `#7FFD` = `#10`) and
 started at `#6000` with interrupts disabled, IM 1. SP = `#6000`, IY = 23610, A = `#A0` (master) or
 `#B0` (slave), B = computer type, C = IDE controller type, D = language, E = Covox port, HL = video
-modes." The ERS follows it except for the stack and the fixed B/C/D/HL values above; `IY` and `IM`
-are not set by the CD loader itself **(unverified whether the ERS leaves IY = 23610 and IM 1)**.
+modes." The ERS follows it except for the stack (`#5FFC`) and the fixed B/C/D/HL values above. The
+CD loader does not set `IY` and `IM` itself; the ERS leaves IY = 23610 and IM 1, as the standard
+asks. All values in this table were measured in unreal-ng with the real ROM
+(`ZXEvoErs_Test.CdBootEntersAutorunWithTheDocumentedRegisters`, 2026-10-02).
 
 **The program gets no disc services.** To read anything else from the CD it needs its own ATAPI
 driver, which is exactly what *Time Gal* and *DNA OS* do: the `AUTORUN.ZX` is a small loader that
@@ -342,9 +347,9 @@ file at sector 20.
 
 | Software | What it is | Evidence |
 |---|---|---|
-| **Time Gal** (Alone Coder, Shiru; January 2006) | Full-motion-video game, "the first CD game for the Spectrum". The disc is a 185 MB ISO; the program is an `AUTORUN.ZX`-convention loader that streams video from the CD. For Pentagon + 16-color, ATM Turbo 2/2+, ZX-Evo. | Source in `pentevo/z80_soft/timegal/source/gal5evo.a80`: `ORG #6000` (`:113`), reads the entry registers of the standard (`:123-128`, `:155-171`), own ATAPI driver (`:1603-1698`), finds its data files on the CD by name (`SCANCAT`, `:1313-1362`; the file table `TFILES` in `galscrip.a80:722-1254`). ZX-Evo build `timegal_evo.a80` (savelij, 2014). ISO on the Internet Archive (item `timegal-zx`), download on Alone Coder's site. |
+| **Time Gal** (Alone Coder, Shiru; January 2006) | Full-motion-video game, "the first CD game for the Spectrum". The disc is a 185 MB ISO; the program is an `AUTORUN.ZX`-convention loader that streams video from the CD. For Pentagon + 16-color, ATM Turbo 2/2+, ZX-Evo. | Source in `pentevo/z80_soft/timegal/source/gal5evo.a80`: `ORG #6000` (`:113`), reads the entry registers of the standard (`:123-128`, `:155-171`), own ATAPI driver (`:1603-1698`), finds its data files on the CD by name (`SCANCAT`, `:1313-1362`; the file table `TFILES` in `galscrip.a80:722-1254`). ZX-Evo build `timegal_evo.a80` (savelij, 2014). ISO on the Internet Archive (item `timegal-zx`), download on Alone Coder's site. **Plays on ZX-Evo in unreal-ng** (2026-10-02) from the original ISO, without the ZX Evo fix: "D. CD boot" on `ATM3`, the 16-color title, then the video streams from the disc (40 different frames in 40 screenshots over 10 s). The drive-model dependence users reported cannot show in an emulator. |
 | **Alone Coder's CD autorunners** `CDRUNATM.$B`, `CDRUNPEN.$B` (2006) | Tiny TR-DOS BASIC programs that do the CD boot on an ATM Turbo 2+ or a Pentagon with a Nemo IDE: "insert the disc, reset, run the launcher". The ERS "D. CD boot" is the ROM version of these. | `TGCDBOOT.zip` from Alone Coder's site (2 files, 785 bytes each); *Info Guide* #09 article. |
-| **DNA OS** (ZET-9; ISO dated 2007) | A disk operating system for ATM Turbo / Nemo IDE, distributed as a **bootable CD image** `dna_nemo.iso` (324 KB). Its root holds `AUTORUN.ZX` (14,592 bytes), `DNA_OS.SYS`, `SHELL.SEP` and a set of viewers/players. The kernel has a CD driver and an **ISO 9660 file system** (strings `CDR_DRV`, `CD_DFS`, `ISO-9660` in `AUTORUN.ZX`). | `dna_nemo_iso.zip` from Alone Coder's site, root directory listed by us. Whether it runs on ZX-Evo / in unreal-ng: **not tried yet** ([TODO](TODO.md)). |
+| **DNA OS** (ZET-9; ISO dated 2007) | A disk operating system for ATM Turbo / Nemo IDE, distributed as a **bootable CD image** `dna_nemo.iso` (324 KB). Its root holds `AUTORUN.ZX` (14,592 bytes), `DNA_OS.SYS`, `SHELL.SEP` and a set of viewers/players. The kernel has a CD driver and an **ISO 9660 file system** (strings `CDR_DRV`, `CD_DFS`, `ISO-9660` in `AUTORUN.ZX`). | `dna_nemo_iso.zip` from Alone Coder's site, root directory listed by us. **Boots on ZX-Evo in unreal-ng** (2026-10-02): "D. CD boot" on `ATM3` brings up DNA_SHELL v0.14 (12.09.2007, ZET-9) with the disc's files in both panels. Its CD driver sends TEST UNIT READY (`#00`), READ TOC (`#43`), READ (10) (`#28`) and SET CD SPEED (`#BB`), with no error (sense 0). |
 | **NedoVIDEO Player v1.00** (`VPLAYER.ZX`, Maksim Timonin "Maksagor", July 2006) | The Time Gal video engine plus a menu of up to 16 clips, for ATM Turbo 2+ with a slave CD drive; rename to `AUTORUN.ZX` to make a video disc (the clip names are patched into the binary, its help says where). **Not for ZX-Evo:** it drives the CD through the ATM IDE ports (`#FE0F`/`#FF0F` data, `#FECF`, `#FEEF`, ...), opened by `OUT (#4177)` through the TR-DOS `#3D2F` trap (CP/M mode, `#FF77` A9 = 0). BaseConf has only NemoIDE; its `#F8EF-#FFEF` are the RS232 port (`base_trdemu/trunk/z80/zports.v:212`). In unreal-ng on `ATM3` the ERS boots it and its menu runs; starting a clip loops forever on `IN (#FEEF)`. A ZX-Evo version would need its IDE driver moved to the Nemo ports, as the Time Gal ZX Evo fix did. On `ATM710` with the CD on the slave it **plays** in unreal-ng (2026-09-29): ATM BIOS → SPECTRUM 128 → TR-DOS → `RUN "boot"` (the hobeta name of `CDRUNATM.$B`); the launcher resets the drive, reads the TOC and the root directory, loads `AUTORUN.ZX`; after ENTER the player streams `ZXTVCLIP.ZXV` with READ (10) at consecutive blocks, about 3.8 KB per frame. | `vplayer.zip` (`VPLAYER.ZX`, 4,938 bytes, and `vplayer.hlp`) from atmturbo.nedopc.com, `download/cdsoft/zxvid1/`. |
 | **ZX-video CD No. 1** (NedoPC, July 2006) | A bootable ISO (455 MB): NedoVIDEO Player as `autorun.zx` and 16 clips (`.zxv`: up to 15 fps, Covox 17.5 kHz, 224x160). | `zxvid1.zip` from atmturbo.nedopc.com, `download/cdsoft/zxvid1/`; ISO listed by us. |
 | **CD-Pack for iS-DOS** (Yuri Korsunin, Maksim Timonin; TASiS / Chic / Classic) | `CDPLAYER.COM` (audio CD), `CDCOPY.COM` (CD to iS-DOS devices, mounts disc images), `CDIMG.BLK` (driver for iS-DOS device images on a CD), `CDTUNE.COM`, and **`CDBOOT.COM`**, which finds and starts `AUTORUN.ZX` from iS-DOS. ATM2 IDE only. | `cd_pack.ipc` and its description page, atmturbo.nedopc.com `download/isdos/cd_pack/`. |

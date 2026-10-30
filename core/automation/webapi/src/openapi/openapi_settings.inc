@@ -20,10 +20,10 @@
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["parameters"][1]["description"] =
-        "Setting name (fast_tape, turbo_tape, fast_disk, turbo_mode, speed, turbo_audio, turbo_active, "
+        "Setting name (fast_tape, turbo_tape, fast_disk, turbo_mode, speed, effective_speed, turbo_audio, turbo_active, "
         "trdos_traps, audio_rate, ay_voicing, ay_punch, ay_room, beeper_punch, ay_stereo, ay_chip, fm_trim_db, "
         "neogs_stereo, covox_dc_removal, fir_filter, ...). speed and the "
-        "sound-character settings return 'allowed' with the accepted values; turbo_active returns read_only: true";
+        "sound-character settings return 'allowed' with the accepted values; turbo_active and effective_speed return read_only: true";
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["parameters"][1]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["responses"]["200"]["description"] = "Setting value";
 
@@ -55,10 +55,12 @@
         "on a stopped or loaded TTD session drops that session's history. turbo_mode: bool, run as fast as the "
         "host allows (the turbomode feature); true answers 409 while a TTD recording runs. turbo_audio: bool, "
         "keep audio (at a raised pitch) in turbo mode. turbo_active is read-only (400): it reports whether the "
-        "engine runs unthrottled now - turbo_mode, or turbo tape warping a load";
+        "engine runs unthrottled now - turbo_mode, or turbo tape warping a load. effective_speed is read-only "
+        "(400): host speed x the machine's hardware turbo (TS-Conf 7/14 MHz, Scorpion, ATM), the CPU clock "
+        "multiplier in effect; a guest can raise it while a TTD recording holds speed at 1";
     paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["responses"]["200"]["description"] = "Setting updated";
     paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["responses"]["400"]["description"] =
-        "Bad value (e.g. speed not 1, 2, 4, 8 or 16), or a PUT to the read-only turbo_active";
+        "Bad value (e.g. speed not 1, 2, 4, 8 or 16), or a PUT to the read-only turbo_active / effective_speed";
     paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["responses"]["404"]["description"] =
         "Unknown emulator id or unknown setting";
     paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["responses"]["409"]["description"] =

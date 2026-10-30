@@ -1,6 +1,7 @@
 #include "unrealdisk/cpmfs.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <map>
 
@@ -12,9 +13,8 @@ namespace
 {
 constexpr uint32_t kEntry = 32;
 constexpr uint32_t kExtent = 16384;
-/// The ATM CP/M floppy: cylinder 0 (two tracks of 16 x 256 bytes) reserved
+/// The ATM CP/M floppy: cylinder 0 (two tracks of 16 x 256 bytes) reserved, the directory after it
 constexpr uint64_t kFloppyDirectory = 0x2000;
-constexpr uint32_t kFloppyTrack = 16 * 256;
 
 std::string Trimmed(const uint8_t* bytes, size_t n)
 {
@@ -63,6 +63,12 @@ bool Number(const std::string& text, uint32_t& out)
     return true;
 }
 
+std::string BadName(const std::string& name)
+{
+    return "not a CP/M name NAME.TYP (1-8 and 0-3 characters, none of < > . , ; : = ? * [ ] | / \\ or a blank): " +
+           name;
+}
+
 std::string Trim(const std::string& text)
 {
     const size_t first = text.find_first_not_of(" \t");
@@ -87,28 +93,41 @@ CpmGeometry AtmCpmChannel::Geometry() const
     return g;
 }
 
-CpmFileSystem CpmFileSystem::AtmFloppy(DiskImage& image)
+namespace
 {
-    CpmGeometry geometry;
-    geometry.blocks = 316;
-    geometry.entries = 128;
+/// A CP/M floppy on a disk image: logical track t is cylinder t / 2, side t % 2, its sectors 1..perTrack of
+/// `sectorSize` bytes found by number; the directory `directory` bytes in. A write changes the sector in the image
+/// (its CRC and the track's dirty flag follow). `lastAlias`: the ID the last sector of track 0 may carry instead of
+/// perTrack (0: none)
+CpmFileSystem FloppyCpm(DiskImage& image, CpmGeometry geometry, uint64_t directory, uint32_t sectorSize, uint32_t perTrack,
+                        uint8_t lastAlias = 0)
+{
     DiskImage* disk = &image;
-    return CpmFileSystem(
-        [disk](uint64_t offset, uint8_t* dst, uint32_t size) {
-            uint64_t at = kFloppyDirectory + offset;
+    const uint64_t trackBytes = static_cast<uint64_t>(sectorSize) * perTrack;
+    // The sector holding byte `at` of the disk and its track
+    auto locate = [disk, trackBytes, sectorSize, perTrack, lastAlias](uint64_t at,
+                                                                      DiskImage::Track*& t) -> DiskImage::Sector* {
+        const uint64_t track = at / trackBytes;
+        if (track / 2 > 0xFF)
+            return nullptr;
+        t = disk->getTrackForCylinderAndSide(static_cast<uint8_t>(track / 2), static_cast<uint8_t>(track % 2));
+        const uint8_t number = static_cast<uint8_t>(at % trackBytes / sectorSize + 1);
+        DiskImage::Sector* s = t ? t->findSector(number) : nullptr;
+        if (!s && t && lastAlias != 0 && track == 0 && number == perTrack)
+            s = t->findSector(lastAlias);
+        return s && s->data && s->dataSize >= sectorSize ? s : nullptr;
+    };
+    CpmFileSystem fs(
+        [locate, directory, sectorSize](uint64_t offset, uint8_t* dst, uint32_t size) {
+            uint64_t at = directory + offset;
             while (size > 0)
             {
-                const uint64_t track = at / kFloppyTrack;
-                const uint32_t inTrack = static_cast<uint32_t>(at % kFloppyTrack);
-                if (track / 2 > 0xFF)
+                DiskImage::Track* t = nullptr;
+                const DiskImage::Sector* s = locate(at, t);
+                if (!s)
                     return false;
-                DiskImage::Track* t =
-                    disk->getTrackForCylinderAndSide(static_cast<uint8_t>(track / 2), static_cast<uint8_t>(track % 2));
-                const DiskImage::Sector* s = t ? t->findSector(static_cast<uint8_t>(inTrack / 256 + 1)) : nullptr;
-                if (!s || !s->data || s->dataSize < 256)
-                    return false;
-                const uint32_t n = std::min<uint32_t>(size, 256 - inTrack % 256);
-                std::memcpy(dst, s->data + inTrack % 256, n);
+                const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(sectorSize - at % sectorSize));
+                std::memcpy(dst, s->data + at % sectorSize, n);
                 dst += n;
                 at += n;
                 size -= n;
@@ -116,6 +135,54 @@ CpmFileSystem CpmFileSystem::AtmFloppy(DiskImage& image)
             return true;
         },
         geometry);
+    fs.SetWriter([locate, directory, sectorSize](uint64_t offset, const uint8_t* src, uint32_t size) {
+        uint64_t at = directory + offset;
+        std::vector<uint8_t> sector(sectorSize);
+        while (size > 0)
+        {
+            DiskImage::Track* t = nullptr;
+            const DiskImage::Sector* s = locate(at, t);
+            if (!s)
+                return false;
+            std::memcpy(sector.data(), s->data, sectorSize);
+            const uint32_t n = std::min<uint32_t>(size, static_cast<uint32_t>(sectorSize - at % sectorSize));
+            std::memcpy(sector.data() + at % sectorSize, src, n);
+            t->writeSectorData(static_cast<uint8_t>(s->number() - 1), sector.data(), sectorSize);
+            src += n;
+            at += n;
+            size -= n;
+        }
+        return true;
+    });
+    return fs;
+}
+}  // namespace
+
+CpmFileSystem CpmFileSystem::AtmFloppy(DiskImage& image)
+{
+    CpmGeometry geometry;
+    geometry.blocks = 316;
+    geometry.entries = 128;
+    return FloppyCpm(image, geometry, kFloppyDirectory, 256, 16);
+}
+
+CpmFileSystem CpmFileSystem::ProfiFloppy(DiskImage& image)
+{
+    // DOSBIO.DRV's DPB: SPT 40, BSH 4, EXM 0, DSM 399, DRM 127, AL0 #C0, OFF 0. The driver reads the fifth sector
+    // of logical track 0 as R = 9 (HDD22.DRV #094D), the sector the BIOS boots from.
+    CpmGeometry geometry;
+    geometry.blocks = 400;
+    geometry.entries = 128;
+    return FloppyCpm(image, geometry, 0, 1024, 5, 9);
+}
+
+CpmFileSystem CpmFileSystem::KlugFloppy(DiskImage& image)
+{
+    // The BIOS's DPB (KLUGCPM.TD0, system track at #C3F): SPT 40, BSH 4, EXM 0, DSM 389, DRM 127, AL0 #C0, OFF 4
+    CpmGeometry geometry;
+    geometry.blocks = 390;
+    geometry.entries = 128;
+    return FloppyCpm(image, geometry, 4 * 5 * 1024, 1024, 5, 9);
 }
 
 bool CpmFileSystem::ParseAtmConfig(const uint8_t* sector, std::vector<AtmCpmChannel>& out)
@@ -228,7 +295,44 @@ uint32_t CpmFileSystem::Pointer(const uint8_t* e, uint32_t k) const
     return _geometry.Wide() ? (e[16 + 2 * k] | e[17 + 2 * k] << 8) : e[16 + k];
 }
 
-bool CpmFileSystem::IsCpm(std::string* why) const
+namespace
+{
+/// Why the used entry `e` does not read (empty when it does): user 0-15, printable name bytes, EX <= 31, S1 0,
+/// RC <= 128. `named`: not all eleven blank
+std::string EntryFault(const uint8_t* e, bool& named)
+{
+    if (e[0] > 15)
+        return "user " + std::to_string(e[0]);
+    // A blank name happens, with a type (PASC_MT.TRD: "        .COM") and without (five Profi floppies of
+    // PROFI_DISK.ZIP keep a file of eleven blanks); it counts as a file only next to a named one
+    named = false;
+    for (int k = 1; k < 12; k++)
+    {
+        if ((e[k] & 0x7F) < 0x20 || (e[k] & 0x7F) > 0x7E)
+            return "no name";
+        named = named || (e[k] & 0x7F) != ' ';
+    }
+    if (e[12] > 31 || e[13] != 0 || e[15] > 128)
+        return "no extent";
+    return {};
+}
+}  // namespace
+
+bool CpmFileSystem::LooksLikeDirectory(const uint8_t* bytes, uint32_t count)
+{
+    bool file = false;
+    for (uint32_t i = 0; i < count; i++)
+    {
+        const uint8_t* e = bytes + i * kEntry;
+        bool named = false;
+        if (e[0] != 0xE5 && !EntryFault(e, named).empty())
+            return false;
+        file = file || (e[0] != 0xE5 && named);
+    }
+    return file;
+}
+
+bool CpmFileSystem::IsCpm(std::string* why, bool empty) const
 {
     auto fail = [why](const std::string& reason) {
         if (why)
@@ -246,20 +350,9 @@ bool CpmFileSystem::IsCpm(std::string* why) const
         if (e[0] == 0xE5)
             continue;
         const std::string at = "entry " + std::to_string(i);
-        if (e[0] > 15)
-            return fail(at + ": user " + std::to_string(e[0]));
-        // A blank name with a type happens (PASC_MT.TRD: "        .COM"); all eleven blank does not
         bool named = false;
-        for (int k = 1; k < 12; k++)
-        {
-            if ((e[k] & 0x7F) < 0x20 || (e[k] & 0x7F) > 0x7E)
-                return fail(at + ": no name");
-            named = named || (e[k] & 0x7F) != ' ';
-        }
-        if (!named)
-            return fail(at + ": no name");
-        if (e[12] > 31 || e[13] != 0 || e[15] > 128)
-            return fail(at + ": no extent");
+        if (const std::string fault = EntryFault(e, named); !fault.empty())
+            return fail(at + ": " + fault);
         const uint32_t pointers = UsedPointers(e);
         for (uint32_t k = 0; k < pointers; k++)
         {
@@ -270,9 +363,9 @@ bool CpmFileSystem::IsCpm(std::string* why) const
                 return fail(at + ": block " + std::to_string(block) + " used twice");
             used[block] = true;
         }
-        files++;
+        files += named;
     }
-    return files > 0 ? true : fail("no file");
+    return files > 0 || empty ? true : fail("no file");
 }
 
 bool CpmFileSystem::List(std::vector<CpmFile>& out, std::string& error) const
@@ -288,7 +381,7 @@ bool CpmFileSystem::List(std::vector<CpmFile>& out, std::string& error) const
         uint32_t extent = 0;
         uint32_t first = UINT32_MAX;
     };
-    std::map<std::vector<uint8_t>, size_t> index;
+    std::map<std::array<uint8_t, 12>, size_t> index;
     std::vector<Last> last;
     for (uint32_t i = 0; i < _geometry.entries; i++)
     {
@@ -296,7 +389,9 @@ bool CpmFileSystem::List(std::vector<CpmFile>& out, std::string& error) const
         if (e[0] > 15)
             continue;
         std::vector<uint8_t> key = Key(e);
-        auto [it, fresh] = index.emplace(key, out.size());
+        std::array<uint8_t, 12> sorted;
+        std::copy_n(key.begin(), sorted.size(), sorted.begin());
+        auto [it, fresh] = index.emplace(sorted, out.size());
         if (fresh)
         {
             CpmFile f;
@@ -382,5 +477,281 @@ bool CpmFileSystem::FreeBlocks(uint32_t& out) const
     }
     out = static_cast<uint32_t>(std::count(used.begin(), used.end(), false));
     return true;
+}
+
+bool CpmFileSystem::LastUsedBlock(uint32_t& out) const
+{
+    std::vector<uint8_t> dir;
+    if (!Directory(dir))
+        return false;
+    out = std::max<uint32_t>(_geometry.DirectoryBlocks(), 1) - 1;
+    for (uint32_t i = 0; i < _geometry.entries; i++)
+    {
+        const uint8_t* e = dir.data() + i * kEntry;
+        if (e[0] > 15)
+            continue;
+        for (uint32_t k = 0, n = UsedPointers(e); k < n; k++)
+            if (Pointer(e, k) < _geometry.blocks)
+                out = std::max(out, Pointer(e, k));
+    }
+    return true;
+}
+
+bool CpmFileSystem::ValidName(const std::string& name, const std::string& type)
+{
+    if (name.empty() || name.size() > 8 || type.size() > 3)
+        return false;
+    for (const char c : name + type)
+        if (c <= ' ' || c >= 0x7F || (c >= 'a' && c <= 'z') || std::strchr("<>.,;:=?*[]|/\\", c))
+            return false;
+    return true;
+}
+
+bool CpmFileSystem::Writable(std::string& error) const
+{
+    if (_writer)
+        return true;
+    error = "the CP/M volume is read only";
+    return false;
+}
+
+bool CpmFileSystem::WriteDirectory(const std::vector<uint8_t>& before, const std::vector<uint8_t>& after,
+                                   std::string& error)
+{
+    for (uint32_t i = 0; i < _geometry.entries; i++)
+    {
+        const uint64_t at = static_cast<uint64_t>(i) * kEntry;
+        if (std::memcmp(before.data() + at, after.data() + at, kEntry) == 0)
+            continue;
+        // Changed entries next to each other go in one write
+        uint32_t n = 1;
+        while (i + n < _geometry.entries &&
+               std::memcmp(before.data() + at + n * kEntry, after.data() + at + n * kEntry, kEntry) != 0)
+            n++;
+        if (!_writer(at, after.data() + at, n * kEntry))
+        {
+            error = "the CP/M directory cannot be written";
+            return false;
+        }
+        i += n - 1;
+    }
+    return true;
+}
+
+bool CpmFileSystem::Entries(const std::vector<uint8_t>& dir, const std::vector<uint8_t>& key,
+                            std::vector<uint32_t>& out, std::string& error) const
+{
+    for (uint32_t i = 0; i < _geometry.entries; i++)
+        if (dir[i * kEntry] <= 15 && Key(dir.data() + i * kEntry) == key)
+            out.push_back(i);
+    if (out.empty())
+        error = "the file is not on the CP/M volume";
+    return !out.empty();
+}
+
+bool CpmFileSystem::Write(uint8_t user, const std::string& name, const std::string& type,
+                          const std::vector<uint8_t>& bytes, std::string& error)
+{
+    if (!Writable(error))
+        return false;
+    if (user > 15 || !ValidName(name, type))
+    {
+        error = BadName(name + (type.empty() ? "" : "." + type));
+        return false;
+    }
+    std::vector<uint8_t> dir;
+    if (!Directory(dir))
+    {
+        error = "the CP/M directory does not read";
+        return false;
+    }
+    std::vector<uint8_t> key(12, ' ');
+    key[0] = user;
+    std::memcpy(key.data() + 1, name.data(), name.size());
+    std::memcpy(key.data() + 9, type.data(), type.size());
+
+    // The older file's entries go free in the same directory write; its blocks are not reused for the new data
+    std::vector<uint8_t> after = dir;
+    std::vector<bool> used(_geometry.blocks, false);
+    for (uint32_t b = 0; b < _geometry.DirectoryBlocks() && b < _geometry.blocks; b++)
+        used[b] = true;
+    std::vector<uint32_t> freeEntries;
+    for (uint32_t i = 0; i < _geometry.entries; i++)
+    {
+        uint8_t* e = after.data() + i * kEntry;
+        if (e[0] > 15)
+        {
+            freeEntries.push_back(i);
+            continue;
+        }
+        if (Key(e) == key)
+        {
+            if (e[9] & 0x80)
+            {
+                error = Trimmed(e + 1, 8) + "." + Trimmed(e + 9, 3) + " is read only";
+                return false;
+            }
+            e[0] = 0xE5;
+            freeEntries.push_back(i);
+        }
+        for (uint32_t k = 0, n = UsedPointers(dir.data() + i * kEntry); k < n; k++)
+            if (Pointer(e, k) < _geometry.blocks)
+                used[Pointer(e, k)] = true;
+    }
+
+    const uint32_t records = static_cast<uint32_t>((bytes.size() + 127) / 128);
+    const uint32_t needed = (records * 128 + CpmGeometry::kBlock - 1) / CpmGeometry::kBlock;
+    const uint32_t perEntry = _geometry.Wide() ? 8 : 16;
+    const uint32_t entriesNeeded = std::max<uint32_t>(1, (needed + perEntry - 1) / perEntry);
+    std::vector<uint32_t> blocks;
+    for (uint32_t b = 0; b < _geometry.blocks && blocks.size() < needed; b++)
+        if (!used[b])
+            blocks.push_back(b);
+    if (blocks.size() < needed)
+    {
+        error =
+            "not enough free blocks: " + std::to_string(needed) + " needed, " + std::to_string(blocks.size()) + " free";
+        return false;
+    }
+    if (freeEntries.size() < entriesNeeded)
+    {
+        error = "the CP/M directory is full";
+        return false;
+    }
+
+    std::vector<uint8_t> block(CpmGeometry::kBlock);
+    for (uint32_t k = 0; k < needed; k++)
+    {
+        const size_t at = static_cast<size_t>(k) * CpmGeometry::kBlock;
+        const size_t n = std::min<size_t>(CpmGeometry::kBlock, bytes.size() - at);
+        std::fill(block.begin(), block.end(), static_cast<uint8_t>(0x1A));
+        std::memcpy(block.data(), bytes.data() + at, n);
+        if (!_writer(static_cast<uint64_t>(blocks[k]) * CpmGeometry::kBlock, block.data(), CpmGeometry::kBlock))
+        {
+            error = "block " + std::to_string(blocks[k]) + " cannot be written";
+            return false;
+        }
+    }
+
+    // An entry holds perEntry blocks: one logical extent of 16 KB (16-bit pointers) or two (8-bit); EX is its last
+    // logical extent, RC the records in that one
+    const uint32_t extentsPerEntry = perEntry * CpmGeometry::kBlock / kExtent;
+    const uint32_t recordsPerEntry = perEntry * CpmGeometry::kBlock / 128;
+    for (uint32_t k = 0; k < entriesNeeded; k++)
+    {
+        uint8_t* e = after.data() + freeEntries[k] * kEntry;
+        std::memset(e, 0, kEntry);
+        std::memcpy(e, key.data(), key.size());
+        const uint32_t inEntry = k + 1 == entriesNeeded ? records - k * recordsPerEntry : recordsPerEntry;
+        const uint32_t extent = k * extentsPerEntry + (inEntry ? (inEntry - 1) / 128 : 0);
+        e[12] = static_cast<uint8_t>(extent & 0x1F);
+        e[14] = static_cast<uint8_t>(extent >> 5);
+        e[15] = static_cast<uint8_t>(inEntry - extent % extentsPerEntry * 128);
+        for (uint32_t n = 0; n < perEntry && k * perEntry + n < blocks.size(); n++)
+        {
+            const uint32_t b = blocks[k * perEntry + n];
+            if (_geometry.Wide())
+            {
+                e[16 + 2 * n] = static_cast<uint8_t>(b);
+                e[17 + 2 * n] = static_cast<uint8_t>(b >> 8);
+            }
+            else
+                e[16 + n] = static_cast<uint8_t>(b);
+        }
+    }
+    return WriteDirectory(dir, after, error);
+}
+
+bool CpmFileSystem::Delete(const CpmFile& file, std::string& error)
+{
+    std::vector<uint8_t> dir;
+    std::vector<uint32_t> entries;
+    if (!Writable(error))
+        return false;
+    if (!Directory(dir))
+    {
+        error = "the CP/M directory does not read";
+        return false;
+    }
+    if (!Entries(dir, file.key, entries, error))
+        return false;
+    if (file.attributes & CpmFile::kReadOnly)
+    {
+        error = file.FullName() + " is read only";
+        return false;
+    }
+    std::vector<uint8_t> after = dir;
+    for (const uint32_t i : entries)
+        after[i * kEntry] = 0xE5;
+    return WriteDirectory(dir, after, error);
+}
+
+bool CpmFileSystem::Rename(const CpmFile& file, uint8_t user, const std::string& name, const std::string& type,
+                           std::string& error)
+{
+    if (!Writable(error))
+        return false;
+    if (user > 15 || !ValidName(name, type))
+    {
+        error = BadName(name + (type.empty() ? "" : "." + type));
+        return false;
+    }
+    std::vector<uint8_t> dir;
+    std::vector<uint32_t> entries;
+    if (!Directory(dir))
+    {
+        error = "the CP/M directory does not read";
+        return false;
+    }
+    if (!Entries(dir, file.key, entries, error))
+        return false;
+    if (file.attributes & CpmFile::kReadOnly)
+    {
+        error = file.FullName() + " is read only";
+        return false;
+    }
+    std::vector<uint8_t> key(12, ' ');
+    key[0] = user;
+    std::memcpy(key.data() + 1, name.data(), name.size());
+    std::memcpy(key.data() + 9, type.data(), type.size());
+    std::vector<uint32_t> taken;
+    std::string ignored;
+    if (key != file.key && Entries(dir, key, taken, ignored))
+    {
+        error = name + (type.empty() ? "" : "." + type) + " is there already";
+        return false;
+    }
+    std::vector<uint8_t> after = dir;
+    for (const uint32_t i : entries)
+    {
+        uint8_t* e = after.data() + i * kEntry;
+        e[0] = user;
+        for (int k = 0; k < 11; k++)
+            e[1 + k] = static_cast<uint8_t>((e[1 + k] & 0x80) | key[1 + k]);
+    }
+    return WriteDirectory(dir, after, error);
+}
+
+bool CpmFileSystem::SetAttributes(const CpmFile& file, uint8_t attributes, std::string& error)
+{
+    if (!Writable(error))
+        return false;
+    std::vector<uint8_t> dir;
+    std::vector<uint32_t> entries;
+    if (!Directory(dir))
+    {
+        error = "the CP/M directory does not read";
+        return false;
+    }
+    if (!Entries(dir, file.key, entries, error))
+        return false;
+    std::vector<uint8_t> after = dir;
+    for (const uint32_t i : entries)
+        for (int k = 0; k < 3; k++)
+        {
+            uint8_t& b = after[i * kEntry + 9 + k];
+            b = static_cast<uint8_t>((b & 0x7F) | ((attributes >> k) & 1 ? 0x80 : 0));
+        }
+    return WriteDirectory(dir, after, error);
 }
 }  // namespace unrealdisk

@@ -149,6 +149,28 @@ void Automation::stop()
 #endif
 }
 
+bool Automation::IsLuaReady()
+{
+#if ENABLE_LUA_AUTOMATION
+    return _lua && _lua->ready();
+#else
+    return false;
+#endif
+}
+
+int Automation::RunLuaFile(const std::string& path, std::string& error)
+{
+#if ENABLE_LUA_AUTOMATION
+    if (_lua)
+        return _lua->runFile(path, error);
+    error = "Lua automation is not started";
+#else
+    (void)path;
+    error = "this build has no Lua automation";
+#endif
+    return 1;
+}
+
 std::string Automation::getEmulatorIdOrFirst(const std::string& providedId)
 {
     if (!providedId.empty()) {

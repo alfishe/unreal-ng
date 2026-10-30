@@ -11,6 +11,7 @@
 #include "unrealdisk/loaders/loader_mb02.h"
 #include "unrealdisk/loaders/loader_mdos.h"
 #include "unrealdisk/loaders/loader_mgt.h"
+#include "unrealdisk/loaders/loader_pro.h"
 #include "unrealdisk/loaders/loader_rawpc.h"
 #include "unrealdisk/loaders/loader_scl.h"
 #include "unrealdisk/loaders/loader_scp.h"
@@ -118,6 +119,11 @@ namespace
             LoaderRawPcFloppy loader(options, path);
             return WriteWith(loader, disk, warnings);
         }
+        if (ext == "pro")
+        {
+            LoaderPRO loader(options, path);
+            return WriteWith(loader, disk, warnings);
+        }
         if (ext == "mb2" || ext == "mbd")
         {
             LoaderMB02 loader(options, path);
@@ -151,7 +157,7 @@ namespace
 std::vector<std::string> FloppyFormats::Extensions()
 {
     return {"trd", "scl", "fdi", "udi", "dsk", "td0", "mgt", "img", "ima", "mb2",
-            "mbd", "d40", "d80", "hfe", "scp", "$b",  "$c",  "$d",  "$#"};
+            "mbd", "d40", "d80", "pro", "hfe", "scp", "$b",  "$c",  "$d",  "$#"};
 }
 
 std::string FloppyFormats::Probe(const std::string& path)
@@ -198,6 +204,10 @@ std::string FloppyFormats::ProbeHead(const uint8_t* data, size_t length, uint64_
     // #10 where the TR-DOS id would be, so the size rule goes first
     if (LoaderRawPcFloppy::detect(static_cast<size_t>(size)))
         return "rawpc";
+
+    // A Profi CP/M dump: 80-83 cylinders of 2 x 5 x 1024 bytes, by its extension (no signature, no TR-DOS size)
+    if (ext == "pro" && LoaderPRO::cylindersForSize(static_cast<size_t>(size)) != 0)
+        return "pro";
 
     // An MB-02 boot sector whose geometry matches the size: a DD MB-02 disk is as large as an MGT one
     if (LoaderMB02::detect(data, length, size))
@@ -318,6 +328,11 @@ FormatResult FloppyFormats::LoadData(const LoaderOptions& options, const uint8_t
         LoaderRawPcFloppy loader(options, name);
         result = ParseWith(loader, data, size, "raw PC floppy", disk);
     }
+    else if (format == "pro")
+    {
+        LoaderPRO loader(options, name);
+        result = ParseWith(loader, data, size, "PRO", disk);
+    }
     else if (format == "mb02")
     {
         LoaderMB02 loader(options, name);
@@ -399,6 +414,11 @@ FormatResult FloppyFormats::LoadAny(const LoaderOptions& options, const std::str
     {
         LoaderRawPcFloppy loader(options, path);
         return LoadWith(loader, "raw PC floppy", disk);
+    }
+    if (format == "pro")
+    {
+        LoaderPRO loader(options, path);
+        return LoadWith(loader, "PRO", disk);
     }
     if (format == "mb02")
     {

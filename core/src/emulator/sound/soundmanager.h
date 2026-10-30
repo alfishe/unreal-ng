@@ -35,7 +35,7 @@
 #include "stdafx.h"
 
 class EmulatorContext;
-class ICard;
+class ICardAudio;
 class SoundChip_Moonsound;
 
 /// The GS slot as other threads see it (SoundManager::generalSoundSlot)
@@ -54,8 +54,9 @@ public:
         DirectRun = 0,
         TtdReplay,
         Turbo,
+        Unpaced,
     };
-    static constexpr size_t kHostHoldReasons = 3;
+    static constexpr size_t kHostHoldReasons = 4;
 
     /// region <Fields>
 protected:
@@ -360,6 +361,8 @@ protected:
 
     /// Per-frame cache: turbo mode with audio not requested and no recording in progress
     bool _synthesisSuppressed = false;
+    /// Per-frame cache: no generator synthesises this frame (suppressed above or the sound feature off)
+    bool _generationOff = false;
 
     /// A gap in the chains' stream (sound off, turbo without audio): the next
     /// frame with audio resets every character chain first, so no delay line or
@@ -429,9 +432,11 @@ public:
     ///    run_to_*, step, step_n...), on whatever thread runs it
     ///  - TtdReplay: TimeTravelManager, EnterReplayMode .. ExitReplayMode (seek, replay, history browsing)
     ///  - Turbo: Core, EnableTurboMode .. DisableTurboMode (one hold per turbo span)
+    ///  - Unpaced: ScriptCallbackManager, while frame and sync callbacks of the unpaced policy keep the frames over
+    ///    their period (the machine runs slower than real time; its sound would break up)
     /// The guard releases exactly what it took, once (destructor, Release, or move-assign over it).
     /// (HostHoldReason: declared at the top of the class)
-    /// "direct_run" / "ttd_replay" / "turbo" (the audio mixer state's keys)
+    /// "direct_run" / "ttd_replay" / "turbo" / "unpaced" (the audio mixer state's keys)
     static const char* HostHoldReasonName(HostHoldReason reason);
 
     class HostOutputHold
@@ -471,9 +476,10 @@ public:
     /// Holds dropped by reconcileHostOutputHolds since creation (each one a holder that never gave it back)
     uint64_t hostOutputStaleHoldsCleared() const { return _hostStaleHoldsCleared.load(std::memory_order_relaxed); }
     /// Drops every hold whose reason is not in effect right now - a direct run on some thread, a TTD replay,
-    /// turbo mode - and returns how many it dropped (logged as a warning: a holder leaked it). Emulator::Resume
-    /// calls it, so a resumed machine is always heard unless something really is holding it. Any thread
-    int reconcileHostOutputHolds(bool directRunActive, bool ttdReplayActive, bool turboActive);
+    /// turbo mode, unpaced script hooks - and returns how many it dropped (logged as a warning: a holder leaked it).
+    /// Emulator::Resume calls it, so a resumed machine is always heard unless something really is holding it. Any
+    /// thread
+    int reconcileHostOutputHolds(bool directRunActive, bool ttdReplayActive, bool turboActive, bool unpacedActive);
 
     /// Emulated frames handed to the host audio callback / of those, with any non-zero sample / withheld by a hold
     uint64_t hostFramesDelivered() const { return _hostFramesDelivered.load(std::memory_order_relaxed); }
@@ -491,6 +497,11 @@ public:
     void setTurboLowQualityOverride(bool enabled);
     bool isTurboLowQualityOverride() const { return _turboLowQualityOverride.load(std::memory_order_relaxed); }
 
+    /// TTD pins the TurboSound device's render path while the machine is bound to a timeline (recording, replay,
+    /// Detached), taking the host's mode at each frame start while it records: ITurboSoundDevice::setTtdRenderPinned
+    bool ttdPinsTurboSoundRender() const;
+    bool ttdRecordsTurboSoundRender() const;
+
     /// Effective DSP quality: the user's `soundhq` feature unless turbo overrides it
     bool isHQActive() const
     {
@@ -502,6 +513,9 @@ public:
     /// level state is still tracked so program-visible behaviour is unchanged.
     /// Evaluated once per frame in handleFrameStart.
     bool isSynthesisSuppressed() const { return _synthesisSuppressed; }
+    /// True while the generators synthesise nothing this frame (isSynthesisSuppressed or the sound feature off),
+    /// as handleFrameStart told them: the render mode a TTD recording holds (render.sound_generation)
+    bool isGenerationOff() const { return _generationOff; }
 
     /// TTD restore of a device that carries its own copy of the sample phase
     /// (same units as _sampleAccumulator - SoundChip_TurboSoundFM restores it
@@ -662,9 +676,9 @@ public:
     /// A card's mixer rows join the registry (volume / mute / solo / capture / HUD like any row) and its frames run
     /// with the machine's: FrameStart at every frame start, FrameEnd with the frame's sample count (0 in turbo
     /// without audio). Called by SlotManager at machine creation and release
-    void attachSlotCard(ICard* card);
-    void detachSlotCard(ICard* card);
-    const std::vector<ICard*>& slotCards() const { return _slotCards; }
+    void attachSlotCard(ICardAudio* card);
+    void detachSlotCard(ICardAudio* card);
+    const std::vector<ICardAudio*>& slotCards() const { return _slotCards; }
     /// Why a row is silent by hardware ("shadowed by zxbus.1"); empty when nothing hides it
     void setDeviceState(AudioSourceType type, const std::string& state);
     std::string deviceState(AudioSourceType type) const;
@@ -925,18 +939,18 @@ public:
 private:
     // Cards the slots build themselves (ZX-bus slots card.h; the ZX-MultiSound): SlotManager owns them, the mixer
     // drives their frames and mixes their rows
-    std::vector<ICard*> _slotCards;
+    std::vector<ICardAudio*> _slotCards;
     /// The slot cards' SSG rows (CardMixerRow::ssgRow) get what the AY socket's chips get: the AY / SSG tone voicing
     /// (one stage per row, set up, requested, reset and invalidated together with _ayVoicing0 / _ayVoicing1) and then
     /// the AY character chain (punch, room: configured, set up, reset and gated together with _ayChain0 /
     /// _ayChain1, Sound HQ only). Both restart when the card restarts its render layers (a TTD restore)
     struct CardSsgRow
     {
-        ICard* card = nullptr;
+        ICardAudio* card = nullptr;
         AudioSourceType type = AudioSourceType::Custom;
         std::unique_ptr<VoicingStage> stage;
         std::unique_ptr<AudioCharacterChain> chain;
-        uint64_t renderEpoch = 0;   // the card's ICard::RenderEpoch the stage and the chain run in
+        uint64_t renderEpoch = 0;   // the card's ICardAudio::RenderEpoch the stage and the chain run in
     };
     std::vector<CardSsgRow> _cardSsgRows;
     /// A card row's chain takes the socket chains' settings (chip type, punch preset, punch, room)

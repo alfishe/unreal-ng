@@ -40,6 +40,17 @@ application).
 [`analysis/score_draft.py`](analysis/README.md): scores a SkoolKit ctl / skool draft against a reference disassembly
 (byte categories, code entries, graphics regions, record fields) with no agent, for the analysis-layers work.
 
+### Disk images (`disk/`)
+
+[`disk/`](disk/README.md): disk images that do not load or boot.
+
+- `dsk-tracks.py` reads a DSK without the emulator: odd tracks, and the marks inside long dumps that give the real
+  layout of a CPDRead protection track.
+- `disk-boot-check.py` boots a set of images and keeps a results table, screenshots and a contact sheet.
+- `fdc-probe.py` traces a hanging load frame by frame: registers, floppy controller, stack and the code it returns to.
+
+`--launch` starts an offscreen instance on ports of its own.
+
 ---
 
 ### MCP (`mcp/`)
@@ -229,3 +240,11 @@ All scripts are designed to be cross-platform and have been tested on:
 *   `cmake`
 *   `rsync`
 *   `sudo` privileges (required on Linux/WSL for mounting/unmounting)
+
+---
+
+### Headless runner (`headless/`)
+
+`headless/test_headless_runner.py <unreal-qt> [--port-base 18695]`: `unreal-qt --headless --script <file.lua>
+--exit-on-script` ends with the script's exit code (an integer, `true` / `false`, an error), its `print` on stdout, the
+emulator muted. One unreal-qt per case on its own ports (~2 s a case).

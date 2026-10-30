@@ -23,6 +23,10 @@
 //   aylog {op}                          → POST /ay/log {action, capacity?}, GET /ay/log
 //   pchist {op}                         → POST /debug/pchist {enabled}, GET /debug/pchist?depth=
 //   analyzers {op, name}                → GET /analyzers, PUT /analyzer/{name}, GET|DELETE /analyzer/{name}/events
+//   memory_counters {space, start, length|end, addresses, view, kinds, min, limit}
+//                                       → GET /profiler/memory/counters?space=&format=top|sparse|dense&...
+//   memory_watch {op, name, start, length, port, mask, callers, values}
+//                                       → GET|POST|DELETE /profiler/memory/watches, DELETE /profiler/memory/watches/{name}
 //
 // analysis actions (the analysis layers, core analysis::Execute behind the routes):
 //   start {level?, mode?, record?} → POST /analysis/start
@@ -47,6 +51,10 @@
 // Drogon-free; all calls go through the loopback IApiCaller.
 
 #include "mcp-analysis.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <sstream>
 
 #include "mcp-tool-utils.h"
 
@@ -416,6 +424,92 @@ std::string SummarizeLineBudget(const Json::Value& m)
     return out.str();
 }
 
+/// The counters of GET /profiler/memory/counters as lines an agent reads ("0x5C00 r=3 w=1 x=0", the page for phys)
+std::string DescribeMemoryCounters(const Json::Value& body)
+{
+    std::ostringstream out;
+    out << "space " << body.get("space", "").asString() << ", session " << body.get("session_state", "").asString();
+    if (!body.get("allocated", true).asBool())
+        out << " (no counters yet: start the memory profiler)";
+    const Json::Value& totals = body["totals"];
+    out << "; window totals r=" << totals.get("reads", 0).asUInt64() << " w=" << totals.get("writes", 0).asUInt64()
+        << " x=" << totals.get("executes", 0).asUInt64();
+    auto hex = [](uint32_t value) {
+        char text[16];
+        std::snprintf(text, sizeof(text), "0x%04X", value);
+        return std::string(text);
+    };
+    if (body.isMember("counters"))
+    {
+        const Json::Value& counters = body["counters"];
+        const uint32_t start = body.get("start", 0).asUInt();
+        const Json::ArrayIndex n = counters["reads"].size();
+        out << "\n" << n << " cells from " << hex(start);
+        const Json::ArrayIndex shown = std::min<Json::ArrayIndex>(n, 64);
+        for (Json::ArrayIndex i = 0; i < shown; i++)
+            out << "\n" << hex(start + i) << " r=" << counters["reads"][i].asUInt() << " w=" << counters["writes"][i].asUInt()
+                << " x=" << counters["executes"][i].asUInt();
+        if (shown < n)
+            out << "\n... " << (n - shown) << " more in structuredContent";
+        return out.str();
+    }
+    const Json::Value& cells = body["cells"];
+    out << "\n" << cells.size() << " cell(s)";
+    if (body.isMember("matched"))
+        out << " of " << body["matched"].asUInt() << " at or above min " << body.get("min", 1).asUInt() << " ("
+            << body.get("kinds", "rwx").asString() << ")" << (body.get("truncated", false).asBool() ? ", truncated" : "");
+    for (const Json::Value& cell : cells)
+    {
+        out << "\n" << hex(cell[0].asUInt());
+        if (cell.size() > 4)
+            out << " (" << cell[4].asString() << " " << hex(cell[0].asUInt() % 0x4000) << ")";
+        out << " r=" << cell[1].asUInt() << " w=" << cell[2].asUInt() << " x=" << cell[3].asUInt();
+    }
+    return out.str();
+}
+
+/// The watches of /profiler/memory/watches as lines: counts, the top callers and values
+std::string DescribeMemoryWatches(const Json::Value& body)
+{
+    std::ostringstream out;
+    const Json::Value& watches = body["watches"];
+    if (watches.empty())
+        return "no watches";
+    auto hex = [](uint32_t value, int digits) {
+        char text[16];
+        std::snprintf(text, sizeof(text), "0x%0*X", digits, value);
+        return std::string(text);
+    };
+    bool first = true;
+    for (const Json::Value& watch : watches)
+    {
+        if (!first)
+            out << "\n";
+        first = false;
+        out << watch["name"].asString() << ": ";
+        if (watch["kind"].asString() == "port")
+            out << "port " << hex(watch["port"].asUInt(), 4) << " mask " << hex(watch["mask"].asUInt(), 4);
+        else
+            out << "region " << hex(watch["start"].asUInt(), 4) << " +" << watch["length"].asUInt();
+        out << " r=" << watch["reads"].asUInt() << " w=" << watch["writes"].asUInt();
+        if (watch.isMember("executes"))
+            out << " x=" << watch["executes"].asUInt();
+        for (const char* key : {"callers", "values"})
+        {
+            const Json::Value& list = watch[key];
+            if (list.empty())
+                continue;
+            out << "; " << key << ":";
+            const Json::ArrayIndex shown = std::min<Json::ArrayIndex>(list.size(), 8);
+            for (Json::ArrayIndex i = 0; i < shown; i++)
+                out << " " << hex(list[i][0].asUInt(), std::string(key) == "callers" ? 4 : 2) << "x" << list[i][1].asUInt();
+            if (shown < list.size())
+                out << " ...";
+        }
+    }
+    return out.str();
+}
+
 void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -425,7 +519,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     for (const char* action : {"coverage_start", "coverage_stop", "coverage_read", "coverage_gaps", "coverage_clear", "coverage_export", "frame_cost",
                                "profile_start", "profile_stop", "profile_status", "profile_report", "porttrace", "gs_porttrace",
                                "vdac2_line_budget", "vdac2_line_budget_set", "profiler", "gs_trace", "aylog", "pchist",
-                               "analyzers"})
+                               "analyzers", "memory_counters", "memory_watch"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -443,7 +537,14 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
         "pause, resume, clear, status), gs_trace the General Sound port trace step by step (op: start, stop, pause, "
         "resume, clear, events), aylog the AY register log (op: start + capacity?, stop, clear, status, read + limit?), "
         "pchist the PC history (op: on, off, read + depth?), analyzers the analyzers (op: list, enable, disable, events, "
-        "clear; name: trdos, editor-input, coverage, aylog, audiocapture).";
+        "clear; name: trdos, editor-input, coverage, aylog, audiocapture). "
+        "memory_counters reads the memory profiler's per-address read / write / execute counters (start it with "
+        "profiler memory start): space cpu (the CPU's 64K view), phys (all physical pages; cells name their page), ram, "
+        "or a page ram5 / rom2 / cache0; a window start + length (or end), or addresses \"0x5C00,0x8000-0x80FF\"; view top "
+        "(heaviest first, default), sparse (touched cells in address order) or dense; kinds r / w / x mix the weight; "
+        "min, limit. memory_watch counts a region of CPU addresses or a partially decoded port (mask 0x00FF = any port "
+        "with that low byte, e.g. 0x1F Kempston, 0xFE keyboard), with callers (PCs) and values: op add (name + start + "
+        "length, or name + port + mask?, callers?, values?), remove (name), clear, list (default).";
     schema["properties"]["profiler"]["type"] = "string";
     schema["properties"]["profiler"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* name : {"opcode", "memory", "calltrace", "porttrace", "all"})
@@ -452,7 +553,31 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["properties"]["op"]["type"] = "string";
     schema["properties"]["op"]["description"] = "profiler / gs_trace / aylog / pchist / analyzers: the operation";
     schema["properties"]["name"]["type"] = "string";
-    schema["properties"]["name"]["description"] = "analyzers: the analyzer id (trdos, editor-input, coverage, aylog, audiocapture)";
+    schema["properties"]["name"]["description"] =
+        "analyzers: the analyzer id (trdos, editor-input, coverage, aylog, audiocapture); memory_watch: the watch's name";
+    schema["properties"]["space"]["type"] = "string";
+    schema["properties"]["space"]["description"] = "memory_counters: cpu (default), phys, ram, or a page ram5 / rom2 / cache0";
+    schema["properties"]["length"]["type"] = "string";
+    schema["properties"]["length"]["description"] = "memory_counters: window cells (default: to the space's end); memory_watch add: region bytes";
+    schema["properties"]["addresses"]["type"] = "string";
+    schema["properties"]["addresses"]["description"] = "memory_counters: exactly these cells, \"0x5C00,#5C08,0x8000-0x80FF\"";
+    schema["properties"]["view"]["type"] = "string";
+    schema["properties"]["view"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* view : {"top", "sparse", "dense"})
+        schema["properties"]["view"]["enum"].append(view);
+    schema["properties"]["view"]["description"] = "memory_counters: top (heaviest first, default), sparse or dense";
+    schema["properties"]["kinds"]["type"] = "string";
+    schema["properties"]["kinds"]["description"] = "memory_counters: the counters a cell's weight sums: r, w, x or a mix (default rwx)";
+    schema["properties"]["min"]["type"] = "integer";
+    schema["properties"]["min"]["description"] = "memory_counters top / sparse: cells whose weight is at least this (default 1)";
+    schema["properties"]["port"]["type"] = "string";
+    schema["properties"]["port"]["description"] = "memory_watch add: the port (0x1F, 0xFE, 0x7FFD)";
+    schema["properties"]["mask"]["type"] = "string";
+    schema["properties"]["mask"]["description"] = "memory_watch add: the port's address lines compared (default 0xFFFF; 0x00FF: the low byte)";
+    schema["properties"]["callers"]["type"] = "boolean";
+    schema["properties"]["callers"]["description"] = "memory_watch add: count the PC of every access";
+    schema["properties"]["values"]["type"] = "boolean";
+    schema["properties"]["values"]["description"] = "memory_watch add: count the values read and written";
     schema["properties"]["depth"]["type"] = "integer";
     schema["properties"]["depth"]["description"] = "pchist read: entries, newest first (default 64)";
     schema["properties"]["capacity"]["type"] = "integer";
@@ -906,6 +1031,89 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "memory_counters")
+            {
+                auto text = [](const Json::Value& value) {
+                    return value.isString() ? value.asString() : (value.isNull() ? std::string() : value.asString());
+                };
+                std::string view = args.get("view", "top").asString();
+                if (view != "top" && view != "sparse" && view != "dense")
+                {
+                    done(ToolResult::Error("view: top, sparse or dense"));
+                    return;
+                }
+                std::string query = "/profiler/memory/counters?space=" + UrlEncodeSegment(args.get("space", "cpu").asString()) +
+                                    "&format=" + view;
+                for (const char* key : {"start", "end", "length", "addresses", "kinds"})
+                    if (args.isMember(key) && !text(args[key]).empty())
+                        query += std::string("&") + key + "=" + UrlEncodeSegment(text(args[key]));
+                if (args.isMember("min"))
+                    query += "&min=" + std::to_string(args["min"].asUInt());
+                const unsigned limit = args.isMember("limit") ? args["limit"].asUInt() : 32u;
+                if (view != "dense")
+                    query += "&limit=" + std::to_string(limit == 0 ? 1u : limit);
+                ResolveAndForward(args, "GET", query, nullptr, caller, "Memory counters",
+                                  [done](ToolResult result) {
+                                      if (!result.isError)
+                                          result.text += "\n" + DescribeMemoryCounters(result.structured);
+                                      done(std::move(result));
+                                  });
+                return;
+            }
+
+            if (action == "memory_watch")
+            {
+                const std::string op = args.get("op", "list").asString();
+                const std::string name = args.get("name", "").asString();
+                auto describe = [done](ToolResult result) {
+                    if (!result.isError)
+                        result.text += "\n" + DescribeMemoryWatches(result.structured);
+                    done(std::move(result));
+                };
+                if (op == "list")
+                {
+                    ResolveAndForward(args, "GET", "/profiler/memory/watches", nullptr, caller, "Memory watches", describe);
+                    return;
+                }
+                if (op == "clear")
+                {
+                    ResolveAndForward(args, "DELETE", "/profiler/memory/watches", nullptr, caller, "Memory watches cleared", done);
+                    return;
+                }
+                if (name.empty())
+                {
+                    done(ToolResult::Error("memory_watch " + op + " requires 'name'"));
+                    return;
+                }
+                if (op == "remove")
+                {
+                    ResolveAndForward(args, "DELETE", "/profiler/memory/watches/" + UrlEncodeSegment(name), nullptr, caller,
+                                      "Memory watch '" + name + "' removed", done);
+                    return;
+                }
+                if (op != "add")
+                {
+                    done(ToolResult::Error("op: add, remove, clear or list"));
+                    return;
+                }
+                Json::Value body(Json::objectValue);
+                body["name"] = name;
+                for (const char* key : {"start", "length", "port", "mask"})
+                    if (args.isMember(key))
+                        body[key] = args[key].isString() ? args[key] : Json::Value(std::to_string(args[key].asUInt()));
+                for (const char* key : {"callers", "values"})
+                    if (args.isMember(key))
+                        body[key] = args[key].asBool();
+                if (!body.isMember("start") && !body.isMember("port"))
+                {
+                    done(ToolResult::Error("memory_watch add needs start (+ length) for a region or port (+ mask)"));
+                    return;
+                }
+                ResolveAndForward(args, "POST", "/profiler/memory/watches", &body, caller, "Memory watch '" + name + "' added",
+                                  describe);
+                return;
+            }
+
             if (action == "profiler" || action == "gs_trace" || action == "aylog" || action == "pchist" || action == "analyzers")
             {
                 const std::string op = args.get("op", action == "analyzers" ? "list" : "status").asString();
@@ -1035,7 +1243,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                                             "'. Valid: coverage_start, coverage_stop, coverage_read, coverage_gaps, coverage_clear, "
                                             "frame_cost, profile_start, profile_stop, profile_status, profile_report, porttrace, "
                                             "gs_porttrace, vdac2_line_budget, vdac2_line_budget_set, profiler, gs_trace, aylog, "
-                                            "pchist, analyzers"));
+                                            "pchist, analyzers, memory_counters, memory_watch"));
         });
 }
 

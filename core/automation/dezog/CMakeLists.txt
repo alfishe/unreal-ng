@@ -13,6 +13,7 @@ get_filename_component(ROOT_DIR ../../../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOUR
 set(PROTOCOL_SOURCES
     src/dzrpprotocol.cpp
     src/dzrpserver.cpp
+    src/dezogcondition.cpp
 )
 
 # Emulator-bound layer (requires unrealng::core)
@@ -25,6 +26,7 @@ set(HEADERS
     include/dzrptypes.h
     include/dzrpprotocol.h
     include/dzrpserver.h
+    include/dezogcondition.h
     include/dezogdebugadapter.h
     include/automation-dezog.h
 )

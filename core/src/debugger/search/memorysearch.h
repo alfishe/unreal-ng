@@ -64,7 +64,7 @@ struct MemorySearchResult
 
 namespace MemorySearch
 {
-/// RAM pages of the machine (config.ramsize / 16)
+/// RAM pages of the machine (config.ramsize / 16, at least the 8 pages of the 128K numbering)
 uint32_t RamPageCount(EmulatorContext* context);
 /// The host memory of one physical page (RAM, ROM, cache); nullptr when the machine has no such page
 const uint8_t* PageHost(EmulatorContext* context, MemoryBankModeEnum type, uint32_t page);

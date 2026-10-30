@@ -24,7 +24,7 @@
 | Raw controls from companion processes (a session backend in the router) | needs a trust rule for the `model` a client claims and a companion identity in `ActionEvent` |
 | A core owner of `HostInputService` (the Dial headless) | Q-3 |
 | Windows raw HID backend and the Dial on it (Linux hidraw haptics: built with controller manager C9, not exercised on hardware) | Q-4; D6 plans the raw HID backend anyway |
-| Generic HID encoder driver, a DIY HID POC | after the Dial driver exists |
+| A DIY HID POC | the generic path exists: a family's `hid.usages` read encoders, counters and split rings (the ShuttlePRO, [devices.md §4](devices.md#4-contour-shuttlepro-v2-and-shuttlexpress), built 2026-10-28; owner test open) |
 | MIDI backend | after the generic encoder path |
 | Touch strips, keys with displays, text, images, lights | no v1 use case |
 | Register / memory nudging, tape scrub, AY solo, profiler toggles | UC-9 |

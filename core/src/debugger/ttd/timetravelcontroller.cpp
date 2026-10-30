@@ -25,6 +25,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -73,6 +74,8 @@
 #include "emulator/sound/soundmanager.h"                 // SoundManager
 #include "stdafx.h"
 #include "debugger/ttd/ttdsessionport.h"
+#include "debugger/debugmanager.h"
+#include "debugger/targets/gscardtarget.h"
 
 // Static assertion: the .ttd v1 format assumes a little-endian host. Every
 // multi-byte field in the header / cpu_state / chipset_state is written in
@@ -1601,6 +1604,7 @@ bool TimeTravelController::CaptureNow(TTDCheckpoint& out)
     }
     out.chipset = CaptureChipsetState(st, cpu ? static_cast<uint32_t>(cpu->t) : 0u);
     CaptureBankOverrides(out.bankOverrides);
+    out.cpuWindows.valid = _memory->GetWindowMap(out.cpuWindows.offset, out.cpuWindows.mode);
 
     // --- Device state, through the registry (TDD §6.4): raw, as the engine takes it. A
     // device whose state also carries the memory it offers as regions (General Sound)
@@ -1775,13 +1779,24 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
     // --- Every region (machine RAM, device memories), then the devices, then the
     // banks the restored latches select ---
     const PerfClock::time_point memoryStart = PerfClock::now();
-    _engine->ForgetMemory();
+    // Inside a run of replays the engine knows what its last restore left in memory: only the pieces written
+    // since and those whose version differs are decoded. Anything else starts from nothing known
+    const bool memoryKnown = _engineMemoryKnown && _knownMemoryDepth > 0;
+    const TTDWrittenFn written = memoryKnown ? TakeWrittenSinceRestore() : TTDWrittenFn{};
+    if (!memoryKnown)
+    {
+        _engine->ForgetMemory();
+        (void)TakeWrittenSinceRestore();   // the marks so far are covered by forgetting: start counting here
+    }
     CheckEngineCheckpoint(size_t(engineIndex), false);
     SetMediaToCheckpoint(size_t(engineIndex));
-    const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex));
+    const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex), written, &_lastMemoryRestore);
+    _engineMemoryKnown = _knownMemoryDepth > 0 && memory.Ok();
     const PerfClock::time_point devicesStart = PerfClock::now();
     const TTDRestoreResult devices =
         _engine->RestoreDevices(size_t(engineIndex), TTDRestoreContext{engineCp->position.frame, 0, true});
+    if (_engineMemoryKnown)
+        (void)TakeWrittenSinceRestore();   // marks the restore itself made (a device loading its state) hold the checkpoint
     if (!memory.Ok() || devices.status != TTDRestoreStatus::Exact)
         MLOGWARNING("TimeTravelController::RestoreCheckpoint — engine restore of frame %llu: %s%s%s",
                     static_cast<unsigned long long>(cp.time.frame), memory.message.c_str(),
@@ -1798,6 +1813,60 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
     _perf.lastRestoreMemoryNs = elapsedNs(memoryStart, devicesStart);
     _perf.lastRestoreDevicesNs = elapsedNs(devicesStart, devicesEnd);
     _perf.lastRestoreScreenNs = elapsedNs(devicesEnd, PerfClock::now());
+}
+
+TTDWrittenFn TimeTravelController::TakeWrittenSinceRestore()
+{
+    // A device that tracks writes its own way (MoonSound's wave memory) moves them into its trackers first
+    for (ITTDRegionSource* source : _peripherals.RegionSources())
+        source->TTDBeforeCapture();
+
+    _writtenPages.clear();
+    if (_dirtyTracker)
+        _dirtyTracker->CollectAndClear(_writtenPages);
+    _writtenRamPages.assign(_modelRamPages, 0);
+    for (const uint16_t page : _writtenPages)
+        if (page < _writtenRamPages.size())
+            _writtenRamPages[page] = 1;
+
+    // Per engine region: its tracker (matched by the live memory it watches); a region no armed tracker watches
+    // counts as written whole
+    const std::vector<TTDRegionDesc>& regions = _engine->Regions();
+    const uint8_t* ram = _memory ? _memory->RAMPageAddress(0) : nullptr;
+    _writtenPieces.resize(regions.size());
+    for (size_t r = 0; r < regions.size(); ++r)
+    {
+        std::vector<uint8_t>& marks = _writtenPieces[r];
+        const TTDRegionDesc& desc = regions[r];
+        if (desc.memory && desc.memory == ram)
+        {
+            marks.clear();   // machine RAM: by page
+            continue;
+        }
+        const TTDDeviceRegion* watched = nullptr;
+        for (const TTDDeviceRegion& d : _shadowDeviceRegions)
+            if (_shadowArmed && desc.memory && d.desc.memory == desc.memory && d.tracker && !d.compareEachCapture)
+                watched = &d;
+        marks.assign(desc.pieces, watched ? 0 : 1);
+        if (!watched)
+            continue;
+        _writtenScratch.clear();
+        watched->tracker->CollectAndClear(_writtenScratch);
+        for (const uint32_t p : _writtenScratch)
+            if (p < marks.size())
+                marks[p] = 1;
+    }
+    return [this](uint32_t region, uint32_t piece) {
+        if (region >= _writtenPieces.size())
+            return true;
+        const std::vector<uint8_t>& marks = _writtenPieces[region];
+        if (marks.empty())
+        {
+            const size_t page = piece / 4;   // machine RAM: 16 KB pages of four pieces
+            return page >= _writtenRamPages.size() || _writtenRamPages[page] != 0;
+        }
+        return piece >= marks.size() || marks[piece] != 0;
+    };
 }
 
 void TimeTravelController::ResyncScreenState()
@@ -2148,6 +2217,7 @@ bool TimeTravelController::SubmitLiveInputImpl(const TTDInputEvent& ev, const TT
             if (payload && length)
                 pending.payload.assign(payload, payload + length);
             _pendingInput.push_back(std::move(pending));
+            _pendingQueued.store(true);
         }
         _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, true);
         return true;
@@ -2170,6 +2240,7 @@ TimeTravelController::MachineTaskResult TimeTravelController::SubmitMachineTask(
         {
             std::lock_guard<std::mutex> lock(_pendingInputMutex);
             _pendingTasks.push_back(std::move(task));
+            _pendingQueued.store(true);
         }
         _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, true);
         return MachineTaskResult::Queued;
@@ -2206,6 +2277,36 @@ void TimeTravelController::ApplyLiveInput(TTDInputEvent ev, const TTDNetInput* n
     ApplyInputEvent(ev, InputDevicesOf(_context), net ? &applied : nullptr, payload);
 }
 
+// The records of a tool edit's payload (BeginToolEdit / EndToolEdit, RecordScriptEdit, RecordCardEdits)
+namespace
+{
+enum : uint8_t
+{
+    kEditRamPage = 1,
+    kEditRegionPiece = 2,
+    kEditDeviceState = 3,
+    kEditCpu = 4,
+    kEditChipset = 5,
+    kEditClock = 6,
+    kEditBanks = 7,
+    kEditDeviceStateAt = 8,   ///< a device state by its index in the session's device table (D23; kind 3: by v1 id)
+    kEditCpuBytes = 9,        ///< bytes through the CPU's view (RecordScriptEdit)
+    kEditCardEdit = 10,       ///< a card hook's write (RecordCardEdits): id cpu | kind << 8, index the address,
+                              ///< bytes the frame (8), the card time (8), the edit's bytes
+};
+void PutEditRecord(std::vector<uint8_t>& out, uint8_t kind, uint16_t id, uint32_t index, const uint8_t* bytes,
+                   uint32_t length)
+{
+    const size_t at = out.size();
+    out.resize(at + 11 + length);
+    out[at] = kind;
+    std::memcpy(out.data() + at + 1, &id, 2);
+    std::memcpy(out.data() + at + 3, &index, 4);
+    std::memcpy(out.data() + at + 7, &length, 4);
+    std::memcpy(out.data() + at + 11, bytes, length);
+}
+}  // namespace
+
 void TimeTravelController::ServiceInput()
 {
     if (!_context)
@@ -2225,15 +2326,25 @@ void TimeTravelController::ServiceInput()
     {
         // Phase 3 A/B: the engine's event log (input kinds; network bytes from its payloads)
         const TTDTimePoint now = InputEventTimeNow(_context);
-        TTDMachineTime start = 0;
+        if (now.frame != _inputStartFrame)
+        {
+            _inputStartFrame = now.frame;
+            _inputFrameKnown = _replayEngine->Frames().Start(now.frame, _inputFrameStart);
+        }
+        const TTDMachineTime start = _inputFrameStart;
         const TTDEventLog& log = _replayEngine->Events();
-        if (_replayEngine->Frames().Start(now.frame, start))
+        if (now.frame != _cardEditFrame)
+            DeliverCardEdits(now.frame);
+        if (_inputFrameKnown)
             while (_engineEventCursor < log.Count() && log.At(_engineEventCursor).machineTime <= start + now.tInFrame)
             {
                 const TTDEvent& ev = log.At(_engineEventCursor++);
                 if (ev.kind == TTDEventKind::DebuggerEdit && TTDEventLog::RoleOf(ev) == TTDEventRole::Input)
                 {
-                    ApplyToolEdit(_replayEngine->Payloads().Bytes(ev.payload));
+                    // A card's edits went to its target at the frame's start (DeliverCardEdits)
+                    const std::vector<uint8_t>& payload = _replayEngine->Payloads().Bytes(ev.payload);
+                    if (payload.empty() || payload[0] != kEditCardEdit)
+                        ApplyToolEdit(payload);
                     continue;
                 }
                 if (!IsInputKind(ev.kind))
@@ -2282,21 +2393,26 @@ void TimeTravelController::ServiceInput()
             _inputPlaybackArmed = false;
     }
 
-    // 2. Live input queued by other threads: applied (and journaled) here, or
-    //    dropped when the journal took over input while it waited
-    DrainPendingLiveInput();
+    // Nothing queued (the common case while a journal plays): no mutex on this instruction
+    if (_pendingQueued.load())
+    {
+        // 2. Live input queued by other threads: applied (and journaled) here, or
+        //    dropped when the journal took over input while it waited
+        DrainPendingLiveInput();
 
-    // 3. Machine tasks queued by other threads (SubmitMachineTask), dropped
-    //    like live input when the journal took over while they waited
-    std::vector<std::function<void()>> tasks;
-    {
-        std::lock_guard<std::mutex> lock(_pendingInputMutex);
-        tasks.swap(_pendingTasks);
-    }
-    if (!tasks.empty() && !OwnsInput())
-    {
-        for (auto& task : tasks)
-            task();
+        // 3. Machine tasks queued by other threads (SubmitMachineTask), dropped
+        //    like live input when the journal took over while they waited
+        std::vector<std::function<void()>> tasks;
+        {
+            std::lock_guard<std::mutex> lock(_pendingInputMutex);
+            tasks.swap(_pendingTasks);
+            _pendingQueued.store(!_pendingInput.empty());
+        }
+        if (!tasks.empty() && !OwnsInput())
+        {
+            for (auto& task : tasks)
+                task();
+        }
     }
 
     UpdateInputWorkFlag();
@@ -2308,6 +2424,7 @@ void TimeTravelController::DrainPendingLiveInput()
     {
         std::lock_guard<std::mutex> lock(_pendingInputMutex);
         pending.swap(_pendingInput);
+        _pendingQueued.store(!_pendingTasks.empty());
     }
     if (!pending.empty() && !OwnsInput())
     {
@@ -2317,19 +2434,41 @@ void TimeTravelController::DrainPendingLiveInput()
     }
 }
 
+uint32_t TimeTravelController::InputIdleLimit() const
+{
+    // Journal playback only: live input and the watch for a paused recording's end act at every boundary
+    if (!_context || _pendingQueued.load() || (_recordingPaused && _state == TTDSessionState::Detached))
+        return 0;
+    if (!_inputPlaybackArmed || !_replayEngine)
+        return UINT32_MAX;
+    // ServiceInput looked this frame up (its start, the card edits) at the frame's first instruction
+    const TTDTimePoint now = InputEventTimeNow(_context);
+    if (now.frame != _inputStartFrame || now.frame != _cardEditFrame || !_inputFrameKnown)
+        return 0;
+    // The next event of any kind: ServiceInput takes it at the first boundary at or past its time
+    const TTDEventLog& log = _replayEngine->Events();
+    if (_engineEventCursor >= log.Count())
+        return UINT32_MAX;
+    const TTDMachineTime due = log.At(_engineEventCursor).machineTime;
+    if (due <= _inputFrameStart + now.tInFrame)
+        return 0;
+    const uint64_t perT = std::max<uint32_t>(1, _context->emulatorState.TtdUnitsPerTState());
+    const uint64_t dueT = (due - _inputFrameStart + perT - 1) / perT;
+    return dueT < UINT32_MAX ? static_cast<uint32_t>(dueT) : UINT32_MAX;
+}
+
 void TimeTravelController::UpdateInputWorkFlag()
 {
     if (!_context)
         return;
 
-    bool pending;
-    {
-        std::lock_guard<std::mutex> lock(_pendingInputMutex);
-        pending = !_pendingInput.empty() || !_pendingTasks.empty();
-    }
     // A paused recording is watched for the moment execution reaches where it paused
     const bool watchPausedEnd = _recordingPaused && _state == TTDSessionState::Detached;
-    _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, _inputPlaybackArmed || pending || watchPausedEnd);
+    const bool work = _inputPlaybackArmed || _pendingQueued.load() || watchPausedEnd;
+    _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, work);
+    // A producer that queued between the load and the clear set the flag before it: set it again
+    if (!work && _pendingQueued.load())
+        _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, true);
 }
 
 void TimeTravelController::ArmInputPlayback()
@@ -2342,6 +2481,7 @@ void TimeTravelController::ArmInputPlayback()
     // at them and the first step applies them (Z80::StepInstruction)
     _inputCursor = _inputJournal.FirstIndexAtOrAfter(InputEventTimeNow(_context));
     _inputPlaybackArmed = _inputCursor < _inputJournal.Size();
+    _inputStartFrame = UINT64_MAX;   // the engine (or its frame table) may be another one now
     if (_replayEngine)
     {
         const TTDTimePoint now = InputEventTimeNow(_context);
@@ -2350,6 +2490,7 @@ void TimeTravelController::ArmInputPlayback()
         _engineEventCursor = _replayEngine->Events().CursorAt(start + now.tInFrame);
         _inputPlaybackArmed = _engineEventCursor < _replayEngine->Events().Count();
     }
+    _cardEditFrame = UINT64_MAX;
     UpdateInputWorkFlag();
 }
 
@@ -2357,6 +2498,9 @@ void TimeTravelController::DisarmInputPlayback()
 {
     _inputPlaybackArmed = false;
     _inputCursor = 0;
+    _inputStartFrame = UINT64_MAX;
+    if (_cardEditFrame != UINT64_MAX)
+        DeliverCardEdits(UINT64_MAX);
     UpdateInputWorkFlag();
 }
 
@@ -2472,7 +2616,7 @@ TTDPortSearchResult TimeTravelController::SearchPortEvents(const TTDPortQuery& q
         if (!cpuHold->Held())
         {
             TTDPortSearchResult result;
-            result.error = "the recording is busy writing the journals (a long run): try again when it ends";
+            result.error = "the recording is busy writing the journals (a long run): pause the emulator, or try again when the run ends";
             return result;
         }
     }
@@ -2491,32 +2635,10 @@ TTDPortSearchResult TimeTravelController::SearchPortEvents(const TTDPortQuery& q
 // CPU (TTDCpuState), 5 the chipset latches (TTDChipsetState; its counters are
 // the machine time and stay as they are, the paging is decoded from it), 6 the
 // CPU time the edit spent (a fast loader's trap: u32, Z80::tt units), 7 the
-// debugger-forced RAM windows 1/2 (TTDBankOverrides; applied after the banks)
-namespace
-{
-enum : uint8_t
-{
-    kEditRamPage = 1,
-    kEditRegionPiece = 2,
-    kEditDeviceState = 3,
-    kEditCpu = 4,
-    kEditChipset = 5,
-    kEditClock = 6,
-    kEditBanks = 7,
-    kEditDeviceStateAt = 8,   ///< a device state by its index in the session's device table (D23; kind 3: by v1 id)
-};
-void PutEditRecord(std::vector<uint8_t>& out, uint8_t kind, uint16_t id, uint32_t index, const uint8_t* bytes,
-                   uint32_t length)
-{
-    const size_t at = out.size();
-    out.resize(at + 11 + length);
-    out[at] = kind;
-    std::memcpy(out.data() + at + 1, &id, 2);
-    std::memcpy(out.data() + at + 3, &index, 4);
-    std::memcpy(out.data() + at + 7, &length, 4);
-    std::memcpy(out.data() + at + 11, bytes, length);
-}
-}  // namespace
+// debugger-forced RAM windows 1/2 (TTDBankOverrides; applied after the banks),
+// 8 a device state by its table index, 9 bytes written through the CPU's view
+// (a logic callback: index = the first address, written in order as a tool's
+// poke writes them; the replay reaches the same paging, so they land alike)
 
 void TimeTravelController::BeginToolEdit()
 {
@@ -2622,8 +2744,129 @@ void TimeTravelController::EndToolEdit(const char* source)
         _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
 }
 
+void TimeTravelController::RecordScriptEdit(const char* source, const std::vector<std::pair<uint16_t, uint8_t>>& pokes,
+                                            bool cpu)
+{
+    if (_state != TTDSessionState::Recording || !_context)
+        return;
+    // Only what the callback wrote: the replay reaches this boundary with the machine as it was, so the same writes
+    // leave it as the callback did. Runs of consecutive addresses go as one record
+    std::vector<uint8_t> payload;
+    std::vector<uint8_t> run;
+    uint16_t runStart = 0;
+    auto flush = [&]() {
+        if (!run.empty())
+            PutEditRecord(payload, kEditCpuBytes, 0, runStart, run.data(), static_cast<uint32_t>(run.size()));
+        run.clear();
+    };
+    for (const auto& [address, value] : pokes)
+    {
+        if (run.empty() || address != static_cast<uint16_t>(runStart + run.size()) || address == 0)
+        {
+            flush();
+            runStart = address;
+        }
+        run.push_back(value);
+    }
+    flush();
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (cpu && z80)
+    {
+        const TTDCpuState state = CaptureCpuState(*static_cast<const Z80State*>(z80));
+        PutEditRecord(payload, kEditCpu, 0, 0, reinterpret_cast<const uint8_t*>(&state), sizeof(state));
+    }
+    if (payload.empty())
+        return;
+    const size_t before = _externalEvents.Size();
+    RecordExternalEventAt(TTDExternalEventKind::DebuggerEdit, source,
+                          {_context->emulatorState.frame_counter, TInFrameNow()});
+    if (_externalEvents.Size() > before)
+        _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
+}
+
+void TimeTravelController::RecordCardEdits(const char* source, const std::vector<TTDCardEdit>& edits)
+{
+    if (_state != TTDSessionState::Recording || !_context || edits.empty())
+        return;
+    std::vector<uint8_t> payload;
+    std::vector<uint8_t> bytes;
+    for (const TTDCardEdit& edit : edits)
+    {
+        bytes.resize(16 + edit.bytes.size());
+        std::memcpy(bytes.data(), &edit.frame, 8);
+        std::memcpy(bytes.data() + 8, &edit.at, 8);
+        if (!edit.bytes.empty())
+            std::memcpy(bytes.data() + 16, edit.bytes.data(), edit.bytes.size());
+        PutEditRecord(payload, kEditCardEdit, static_cast<uint16_t>(edit.cpu | (edit.kind << 8)), edit.address,
+                      bytes.data(), static_cast<uint32_t>(bytes.size()));
+    }
+    const size_t before = _externalEvents.Size();
+    RecordExternalEventAt(TTDExternalEventKind::DebuggerEdit, source,
+                          {_context->emulatorState.frame_counter, TInFrameNow()});
+    if (_externalEvents.Size() > before)
+        _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
+}
+
+void TimeTravelController::DeliverCardEdits(uint64_t frame)
+{
+    _cardEditFrame = frame;
+    DebugManager* debug = _context ? _context->pDebugManager : nullptr;
+    if (!debug)
+        return;
+    GSCardTarget* targets[] = {debug->GetCardTarget(DebugCpuId::GS), debug->GetCardTarget(DebugCpuId::MultiSoundGS)};
+    for (GSCardTarget* target : targets)
+        if (target)
+            target->ClearReplayEdits();
+    // The frame's edits sit at the main CPU's positions in it, the frame-end catch-up's just past its end: two
+    // frames of events from the cursor on hold them all
+    TTDMachineTime start = 0;
+    if (frame != UINT64_MAX && _replayEngine && _replayEngine->Frames().Start(frame, start))
+    {
+        const TTDEventLog& log = _replayEngine->Events();
+        const TTDMachineTime end = start + 2 * static_cast<TTDMachineTime>(FrameSpan());
+        for (size_t i = _engineEventCursor; i < log.Count() && log.At(i).machineTime < end; ++i)
+        {
+            const TTDEvent& ev = log.At(i);
+            if (ev.kind != TTDEventKind::DebuggerEdit || TTDEventLog::RoleOf(ev) != TTDEventRole::Input)
+                continue;
+            const std::vector<uint8_t>& payload = _replayEngine->Payloads().Bytes(ev.payload);
+            size_t at = 0;
+            while (at + 11 + 16 <= payload.size() && payload[at] == kEditCardEdit)
+            {
+                uint16_t id = 0;
+                uint32_t index = 0, length = 0;
+                std::memcpy(&id, payload.data() + at + 1, 2);
+                std::memcpy(&index, payload.data() + at + 3, 4);
+                std::memcpy(&length, payload.data() + at + 7, 4);
+                const uint8_t* bytes = payload.data() + at + 11;
+                at += 11 + length;
+                if (at > payload.size() || length < 16)
+                    break;
+                TTDCardEdit edit;
+                edit.cpu = static_cast<uint8_t>(id & 0xFF);
+                edit.kind = static_cast<TTDCardEdit::Kind>(id >> 8);
+                std::memcpy(&edit.frame, bytes, 8);
+                std::memcpy(&edit.at, bytes + 8, 8);
+                edit.address = static_cast<uint16_t>(index);
+                edit.bytes.assign(bytes + 16, bytes + length);
+                if (edit.frame != frame)
+                    continue;
+                if (GSCardTarget* target = debug->GetCardTarget(static_cast<DebugCpuId>(edit.cpu)))
+                {
+                    _engineMemoryKnown = false;   // the target writes the card's memory past the trackers
+                    target->AddReplayEdit(std::move(edit));
+                }
+            }
+        }
+    }
+    for (GSCardTarget* target : targets)
+        if (target)
+            target->CommitReplayEdits();
+}
+
 void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
 {
+    _engineMemoryKnown = false;   // the edit writes memory past the trackers
     std::vector<TTDRegionDesc> regions = LiveRegions();
     TTDBankOverrides banks;
     bool haveBanks = false;
@@ -2674,6 +2917,11 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
             chipset.t_states = st.t_states;           // the machine time is not part of an edit
             chipset.frame_counter = st.frame_counter;
             RestoreChipsetState(chipset, &st);
+        }
+        else if (kind == kEditCpuBytes && _memory)
+        {
+            for (uint32_t k = 0; k < length; ++k)
+                _memory->ToolWriteToZ80Memory(static_cast<uint16_t>(index + k), bytes[k]);
         }
         else if (kind == kEditBanks && length == sizeof(TTDBankOverrides))
         {
@@ -2938,6 +3186,8 @@ void TimeTravelController::PauseRecordingForBrowsing()
 bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* outResult)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    // The picture's restore (the frame before) follows the seek's: it decodes only what differs
+    const KnownMemoryScope knownMemory{*this};
     // Each new Detached window starts with a clean auto-pause signal.
     // The flag is set by OnFrameBoundary when execution runs past
     // SessionEndPosition(); clearing here means callers can poll
@@ -4192,6 +4442,7 @@ void TimeTravelController::SetReplaySource(TimeTravelEngine* engine)
     if (!engine)
         engine = _engine.get();
     _replayEngine = engine;
+    _inputStartFrame = UINT64_MAX;
     _lastEngineCheck = {};
     _replayRomSignature = ComputeRomSignature();
     if (engine == _engine.get())
@@ -4722,6 +4973,7 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
                                                           const TTDJournalBuildProgress& progress)
 {
     TTDJournalBuildResult r;
+    const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
     if (!_context)
     {
         r.error = "no machine";
@@ -4905,6 +5157,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
                                   TTDSearchWindow* outWindow)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Read};
+    const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
     // ------------------------------------------------------------------
     // Guards — same shape as SeekTo.
     // ------------------------------------------------------------------
@@ -5180,6 +5433,462 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
     return answer;
 }
 
+TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const TTDFindOptions& options)
+{
+    // Replays checkpoints and puts the machine back: an operation that changes it
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    TTDFindResult result;
+    const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
+
+    // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
+    if (_state == TTDSessionState::Recording)
+        PauseRecordingForBrowsing();
+    if (_timeline.empty() || !_context || !_context->pEmulator)
+    {
+        MLOGWARNING("TimeTravelController::FindAccesses — no recorded history");
+        return result;
+    }
+
+    const size_t limit = options.all ? std::clamp(options.limit, size_t{1}, kReverseHitLimitMax) : 1;
+    const bool changes = options.changesOnly && q.access == TTDAccessType::Write;
+    const uint64_t beforeT = q.beforeGlobalT == UINT64_MAX ? GlobalT(CurrentPosition()) : q.beforeGlobalT;
+    const uint64_t floorT = options.fromFrame > 0 ? GlobalT(TTDTimePoint{options.fromFrame, 0}) : 0;
+    const TTDTimePoint sessionStart = _timeline.front().time;
+    const TTDTimePoint windowTo = std::min(TimePointAt(beforeT), SessionEndPosition());
+    auto reportWindow = [&](const TTDTimePoint& from) {
+        result.window.searched = true;
+        result.window.from = from;
+        result.window.to = windowTo;
+    };
+    auto passes = [&](const TTDSearchResult& a) {
+        return (!q.hasValueFilter || a.value == q.value) && (!q.hasPcFilter || (a.pc >= q.pcFrom && a.pc <= q.pcTo));
+    };
+
+    // Candidates arrive newest first. With changes_only each waits for the byte it replaced: the next older write
+    // to its page and offset, or the byte at the checkpoint its stretch starts from. The list is final once the
+    // resolved prefix holds enough kept hits: the newest one, or limit + 1 (the extra one says older hits exist)
+    const size_t want = options.all ? limit + 1 : 1;
+    struct Candidate
+    {
+        TTDFoundAccess hit;
+        bool resolved = false;
+        bool keep = true;
+    };
+    std::vector<Candidate> candidates;
+    std::unordered_map<uint32_t, size_t> pending;   // (page, offset) -> candidate waiting for its old byte
+    size_t prefix = 0;
+    size_t kept = 0;
+    auto enough = [&] {
+        while (prefix < candidates.size() && candidates[prefix].resolved)
+            kept += candidates[prefix++].keep ? 1 : 0;
+        return kept >= want;
+    };
+    auto keyOf = [](const TTDSearchResult& a) { return (uint32_t(a.physPage) << 14) | (a.addr & 0x3FFFu); };
+    auto resolve = [&](Candidate& c, uint8_t old) {
+        c.hit.hasOldValue = true;
+        c.hit.oldValue = old;
+        c.keep = old != c.hit.access.value;
+        c.resolved = true;
+    };
+    // One access in the query's range, newest first: it settles the older byte of a waiting candidate, and becomes
+    // a candidate when it matches
+    auto offer = [&](const TTDSearchResult& a, uint64_t globalT, bool candidate) {
+        if (changes)
+        {
+            if (auto it = pending.find(keyOf(a)); it != pending.end())
+            {
+                resolve(candidates[it->second], a.value);
+                pending.erase(it);
+            }
+        }
+        if (!candidate || globalT < floorT)
+            return;
+        Candidate c;
+        c.hit.access = a;
+        c.hit.globalT = globalT;
+        c.resolved = !changes;
+        candidates.push_back(c);
+        if (changes)
+            pending[keyOf(a)] = candidates.size() - 1;
+    };
+    // The waiting candidates' old bytes as the checkpoint at timeline index @p i holds them (its stretch starts there)
+    auto resolveAtCheckpoint = [&](size_t i) {
+        if (pending.empty())
+            return;
+        const int64_t engineIndex = _engine->CheckpointIndexOf({0, _timeline[i].time.frame, 0});
+        std::map<std::string, std::vector<uint8_t>> regions;
+        std::map<std::string, std::vector<uint8_t>> present;
+        auto byteAt = [&](const std::string& name, uint64_t offset, uint8_t& out) {
+            if (engineIndex < 0)
+                return false;
+            auto it = regions.find(name);
+            if (it == regions.end())
+            {
+                const std::vector<TTDRegionDesc>& descs = _engine->Regions();
+                uint32_t region = 0;
+                while (region < descs.size() && descs[region].name != name)
+                    ++region;
+                std::vector<uint8_t> bytes;
+                std::vector<uint8_t> seen;
+                if (region < descs.size())
+                {
+                    bytes.resize(size_t(descs[region].pieces) * kTTDPieceSize);
+                    if (!_engine->RestoreRegion(size_t(engineIndex), region, bytes.data(), &seen).Ok())
+                        bytes.clear();
+                }
+                present[name] = std::move(seen);
+                it = regions.emplace(name, std::move(bytes)).first;
+            }
+            const std::vector<uint8_t>& seen = present[name];
+            if (offset >= it->second.size() || offset / kTTDPieceSize >= seen.size() || !seen[offset / kTTDPieceSize])
+                return false;
+            out = it->second[offset];
+            return true;
+        };
+        for (const auto& [key, index] : pending)
+        {
+            Candidate& c = candidates[index];
+            const PhysPage page = c.hit.access.physPage;
+            const TTDMemorySpace space = SpaceOfPage(page);
+            uint8_t old = 0;
+            const bool known = space == TTDMemorySpace::Ram
+                                   ? byteAt("ram", uint64_t(page) * 0x4000 + (c.hit.access.addr & 0x3FFF), old)
+                               : space == TTDMemorySpace::Vram  ? byteAt("sprinter.vram", SpaceOffset(page, c.hit.access.addr), old)
+                               : space == TTDMemorySpace::Cache ? byteAt("sprinter.fastram", SpaceOffset(page, c.hit.access.addr), old)
+                                                                : false;
+            if (known)
+                resolve(c, old);
+            else
+                c.resolved = true;   // the byte before is unknown: keep the write (a change cannot be ruled out)
+        }
+        pending.clear();
+    };
+
+    bool stopped = false;   // the limit, a barrier or the floor ended the walk
+    bool replayed = false;  // the live machine was saved before the first replay
+    const TTDSessionState stateBefore = _state;
+
+    if (q.access == TTDAccessType::Io)
+    {
+        // Port writes come from the port journal (D40): every session records each OUT with its time and PC
+        if (_portJournalRecorded)
+        {
+            const TTDTimePoint before = TimePointAt(beforeT);
+            const TTDPortJournal& writes = _engine->BusWrites();
+            TTDPortJournal::ReadCache cache;
+            TTDPortRecord rec;
+            for (uint64_t k = writes.LowerBound({before.frame, before.tInFrame + 1}, cache); k > 0 && !stopped; --k)
+            {
+                if (k - 1 < writes.FirstIndex() || !writes.Get(k - 1, rec, cache) || rec.Time() < sessionStart)
+                    break;
+                const uint64_t t = GlobalT(rec.Time());
+                if (t < floorT)
+                {
+                    stopped = true;
+                    break;
+                }
+                if (rec.port < q.addrFrom || rec.port > q.addrTo)
+                    continue;
+                TTDSearchResult a;
+                a.time = rec.Time();
+                a.pc = rec.pc;
+                a.value = rec.value;
+                a.physPage = kPhysPageNone;
+                a.access = TTDAccessType::Io;
+                a.addr = rec.port;
+                if (passes(a))
+                    offer(a, t, true);
+                stopped = enough();
+            }
+        }
+    }
+    else
+    {
+        TTDTimePoint targetTime = TimePointAt(beforeT);
+        const uint64_t sessionEndFrame = _timeline.back().time.frame;
+        if (targetTime.frame > sessionEndFrame)
+            targetTime = TTDTimePoint{sessionEndFrame, 0};
+        const int64_t atOrBefore = TimelineIndexAtOrBefore(targetTime);
+        const size_t targetCpIdx = atOrBefore < 0 ? 0 : static_cast<size_t>(atOrBefore);
+
+        // Write journal segments (D40): a frame runs (startT(i), startT(i + 1)]
+        const TTDWriteIndex& writes = _engine->Writes();
+        const std::vector<TTDJournalSegment> segments =
+            q.access == TTDAccessType::Write ? writes.Segments() : std::vector<TTDJournalSegment>{};
+        auto startT = [&](size_t index) { return CheckpointStartT(_timeline[index]); };
+        auto segmentOf = [&](uint64_t after, uint64_t upTo) -> int {
+            for (size_t k = 0; k < segments.size(); ++k)
+                if (segments[k].from <= after && upTo <= segments[k].to)
+                    return static_cast<int>(k);
+            return -1;
+        };
+        auto inRange = [&](uint16_t addr, PhysPage page) {
+            return addr >= q.addrFrom && addr <= q.addrTo && (!q.hasPhysPageFilter || page == q.physPage);
+        };
+        // With changes_only the probe sees every write in the range: a write the value / pc filter drops still
+        // tells the byte an older matching one left
+        TTDSearchQuery probeQuery = q;
+        if (changes)
+        {
+            probeQuery.hasValueFilter = false;
+            probeQuery.hasPcFilter = false;
+        }
+
+        for (size_t i = targetCpIdx + 1; atOrBefore >= 0 && !stopped && i-- > 0;)
+        {
+            const TTDCheckpoint& cp = _timeline[i];
+            const uint64_t intervalEndT = i == targetCpIdx ? beforeT : startT(i + 1);
+            if (intervalEndT < floorT)
+            {
+                stopped = true;
+                break;
+            }
+
+            // Inside a journal segment: the whole run of covered frames at once, the machine stays
+            if (!segments.empty())
+            {
+                const int seg = segmentOf(startT(i), intervalEndT);
+                if (seg >= 0)
+                {
+                    size_t first = i;
+                    while (first > 0 && segmentOf(startT(first - 1), startT(first)) == seg)
+                        --first;
+                    writes.ForEachBackward(startT(first), intervalEndT, [&](const TTDWriteRecord& rec) {
+                        const PhysPage page = RecordPage(rec);
+                        if (rec.isIo || !inRange(rec.addr, page))
+                            return true;
+                        if (rec.globalT < floorT && pending.empty())
+                        {
+                            stopped = true;
+                            return false;
+                        }
+                        TTDSearchResult a;
+                        a.time = TimePointAt(rec.globalT);
+                        a.pc = rec.m1pc;
+                        a.value = rec.value;
+                        a.physPage = page;
+                        a.access = TTDAccessType::Write;
+                        a.addr = rec.addr;
+                        offer(a, rec.globalT, passes(a));
+                        if (enough())
+                        {
+                            stopped = true;
+                            return false;
+                        }
+                        return true;
+                    });
+                    if (!stopped)
+                    {
+                        resolveAtCheckpoint(first);
+                        stopped = enough();
+                    }
+                    i = first;   // the loop steps to the frame before the run
+                    continue;
+                }
+            }
+
+            const uint32_t replayEndT = i == targetCpIdx ? targetTime.tInFrame : FrameSpan();
+            if (replayEndT == 0 && i == targetCpIdx)
+                continue;   // the target stands exactly at the frame boundary
+
+            if (const std::optional<TTDExternalEvent> barrier =
+                    FirstBarrierBetween(cp.time, TTDTimePoint{cp.time.frame, replayEndT}))
+            {
+                result.blockingMarker = *barrier;
+                stopped = true;
+                break;   // can't replay past a marker
+            }
+
+            // Coverage-index prune (see FindLastAccess): no restore, no replay for a frame proven absent
+            if (CanPruneByCoverage(q))
+            {
+                const TTDCoverageKind coverageKind = q.access == TTDAccessType::Execute ? TTDCoverageKind::Executed
+                                                     : q.access == TTDAccessType::Write ? TTDCoverageKind::Written
+                                                                                        : TTDCoverageKind::Read;
+                if (!_coverageIndex.FrameMayContain(coverageKind, cp.time.frame, q.addrFrom & 0x3FFF,
+                                                    q.addrTo & 0x3FFF, q.hasPhysPageFilter, q.physPage))
+                    continue;
+            }
+
+            if (!replayed)
+            {
+                SaveLiveState(_liveSnapshot);
+                replayed = true;
+            }
+            RestoreCheckpointForReplay(cp);
+            _context->ttdProbe.Reset();
+            _context->ttdProbe.Arm(probeQuery);
+            ReplayModeScope replay(*this);
+            ReplayWithinFrame(cp.time.frame, replayEndT);
+            replay.Exit();
+            std::vector<TTDSearchResult> hits = _context->ttdProbe.ExtractHits();
+            _context->ttdProbe.Disarm();
+
+            for (size_t k = hits.size(); k > 0 && !stopped; --k)
+            {
+                const TTDSearchResult& h = hits[k - 1];
+                const uint64_t t = GlobalT(h.time);
+                if (t > beforeT)
+                    continue;   // the replay finishes the instruction that crosses the target
+                offer(h, t, !changes || passes(h));
+                stopped = enough();
+            }
+            if (!stopped)
+            {
+                resolveAtCheckpoint(i);
+                stopped = enough();
+            }
+        }
+    }
+
+    if (replayed)
+    {
+        ReplayModeScope restore(*this);
+        RestoreLiveState(_liveSnapshot);
+        restore.Exit();
+        SetState(stateBefore);
+    }
+
+    enough();
+    for (size_t k = 0; k < prefix && result.hits.size() < limit; ++k)
+        if (candidates[k].keep)
+            result.hits.push_back(candidates[k].hit);
+    result.truncated = options.all && kept > limit;
+
+    // The walk ended at the last hit it needed (the newest one, or the list's oldest when cut)
+    if (result.truncated || (!options.all && !result.hits.empty()))
+        reportWindow(result.hits.back().access.time);
+    else if (result.blockingMarker.reason[0] != '\0')
+        reportWindow(result.blockingMarker.time);
+    else
+        reportWindow(std::max(sessionStart, TTDTimePoint{options.fromFrame, 0}));
+    return result;
+}
+
+TTDCpuView TimeTravelController::ReadCpuView(const TTDTimePoint& at, uint16_t offset, size_t length)
+{
+    // At a checkpoint the store holds every mapped page: a read, the machine untouched (phase 2, B4)
+    if (_state != TTDSessionState::Recording)
+    {
+        const SessionOperation read{*this, SessionOperation::Kind::Read};
+        TTDCpuView stored;
+        if (_state != TTDSessionState::Recording && ReadCpuViewFromStore(at, offset, length, stored))
+            return stored;
+    }
+
+    // Replays and puts the machine back: an operation that changes it
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    TTDCpuView view;
+    if (_state == TTDSessionState::Recording)
+        PauseRecordingForBrowsing();
+    Memory* memory = _context ? _context->pMemory : nullptr;
+    if (_timeline.empty() || !memory || !_context->pEmulator)
+    {
+        view.error = "no recorded history";
+        return view;
+    }
+    if (at < _timeline.front().time || SessionEndPosition() < at)
+    {
+        view.error = "the point is outside the recorded history";
+        return view;
+    }
+    length = std::min<size_t>(length, size_t{0x10000} - offset);
+
+    // Save, replay to the point, read through the CPU's mapping, restore verbatim (marker-proof, exact); the
+    // session state the caller saw comes back with it
+    const TTDSessionState stateBefore = _state;
+    SaveLiveState(_liveSnapshot);
+    ReplayModeScope replay(*this);
+    TTDSeekResult seek;
+    const bool reached = SeekToInternal(at, &seek) && seek.reached && seek.arrivedAt == at;
+    if (reached)
+    {
+        view.at = seek.arrivedAt;
+        view.bytes.resize(length);
+        for (size_t i = 0; i < length; ++i)
+            view.bytes[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(offset + i));
+        for (uint8_t w = 0; w < 4; ++w)
+        {
+            const MemoryPageDescriptor page = memory->MapZ80AddressToPhysicalPage(static_cast<uint16_t>(w * 0x4000));
+            view.windows[w].kind = static_cast<uint8_t>(page.mode);
+            view.windows[w].page = page.page;
+            view.windows[w].name = memory->GetCurrentBankName(w);
+        }
+        view.ok = true;
+    }
+    else if (seek.haltReason == TTDSeekHaltReason::ExternalEvent)
+        view.error = "a replay barrier (" + std::string(seek.blockingMarker.reason) + ") at frame " +
+                     std::to_string(seek.blockingMarker.time.frame) + " stands before the point";
+    else
+        view.error = "the replay could not reach the point";
+    RestoreLiveState(_liveSnapshot);
+    replay.Exit();
+    SetState(stateBefore);
+    return view;
+}
+
+bool TimeTravelController::ReadCpuViewFromStore(const TTDTimePoint& at, uint16_t offset, size_t length,
+                                                TTDCpuView& view)
+{
+    Memory* memory = _context ? _context->pMemory : nullptr;
+    if (_timeline.empty() || !memory || !_engine)
+        return false;
+    const int64_t i = TimelineIndexAtOrBefore(at);
+    if (i < 0 || at.frame > _timeline.back().time.frame)
+        return false;
+    const TTDCheckpoint& cp = _timeline[size_t(i)];
+    const int64_t engineIndex = _engine->CheckpointIndexOf({0, cp.time.frame, 0});
+    const TTDEngineCheckpoint* engineCp = engineIndex >= 0 ? _engine->Checkpoint(size_t(engineIndex)) : nullptr;
+    // The seek lands on the checkpoint itself up to the CPU's overshoot past the frame boundary
+    if (!cp.cpuWindows.valid || !engineCp || cp.time.frame != at.frame || at.tInFrame > GetChipsetCpuTInFrame(engineCp->chipset))
+        return false;
+
+    // Each window's 16 KB: from the stored region holding it, or the ROM (not recorded: it stays as it is)
+    const uint8_t* block = memory->BlockAt(0);
+    const uint8_t* romStart = memory->ROMBase();
+    const uint8_t* romEnd = romStart + size_t(MAX_ROM_PAGES) * PAGE_SIZE;
+    const std::vector<TTDRegionDesc>& regions = _engine->Regions();
+    std::vector<uint8_t> window(0x4000);
+    std::vector<uint8_t> bytes(size_t{0x10000});
+    for (uint8_t w = 0; w < 4; ++w)
+    {
+        const uint8_t* read = block + cp.cpuWindows.offset[w];
+        bool found = false;
+        for (uint32_t r = 0; r < regions.size() && !found; ++r)
+        {
+            const TTDRegionDesc& desc = regions[r];
+            if (!desc.memory || read < desc.memory || read + 0x4000 > desc.memory + desc.bytes)
+                continue;
+            const size_t start = size_t(read - desc.memory);
+            if (start % kTTDPieceSize != 0)
+                return false;
+            for (uint32_t k = 0; k < 0x4000 / kTTDPieceSize; ++k)
+            {
+                const uint32_t id = _engine->VersionAt(size_t(engineIndex), r, uint32_t(start / kTTDPieceSize) + k);
+                if (id == TimeTravelEngine::kAbsent || !_engine->PieceStore().Decode(id, window.data() + k * kTTDPieceSize))
+                    return false;
+            }
+            found = true;
+        }
+        if (!found)
+        {
+            if (read < romStart || read + 0x4000 > romEnd)
+                return false;
+            std::memcpy(window.data(), read, 0x4000);
+        }
+        std::memcpy(bytes.data() + size_t(w) * 0x4000, window.data(), 0x4000);
+        const MemoryPageDescriptor page = memory->DescribeWindow(cp.cpuWindows.mode[w], cp.cpuWindows.offset[w]);
+        view.windows[w].kind = static_cast<uint8_t>(page.mode);
+        view.windows[w].page = page.page;
+        view.windows[w].name = memory->WindowName(cp.cpuWindows.mode[w], cp.cpuWindows.offset[w]);
+    }
+    length = std::min<size_t>(length, size_t{0x10000} - offset);
+    view.bytes.assign(bytes.begin() + offset, bytes.begin() + offset + std::ptrdiff_t(length));
+    view.at = at;
+    view.ok = true;
+    return true;
+}
+
 bool TimeTravelController::StepBackInstruction()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
@@ -5282,6 +5991,7 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
                                       TTDExternalEvent* outBlockingMarkerStorage)
 {
     EnumerateResult result;
+    const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
     if (outBlockingMarkerStorage)
         *outBlockingMarkerStorage = TTDExternalEvent{};
 
@@ -5429,8 +6139,9 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
 
     // Trim leading M1s whose globalT < startGlobalT. (The earliest interval
     // may have captured instructions before startGlobalT; drop them.)
-    while (!outM1s.empty() && outM1s.front().globalT < startGlobalT)
-        outM1s.erase(outM1s.begin());
+    outM1s.erase(outM1s.begin(),
+                 std::lower_bound(outM1s.begin(), outM1s.end(), startGlobalT,
+                                  [](const TTDM1Record& m, uint64_t t) { return m.globalT < t; }));
 
     MLOGINFO("TimeTravelController::EnumerateM1InRange — enumerated %zu M1 records "
              "in [%llu, %llu)%s",
@@ -5625,6 +6336,14 @@ bool TimeTravelController::ReverseStepTStates(uint64_t n)
 TimeTravelController::TTDReverseContinueResult
 TimeTravelController::ReverseContinue(const std::vector<uint16_t>& breakpoints)
 {
+    TTDReverseContinueQuery query;
+    query.pcs = breakpoints;
+    return ReverseContinue(query);
+}
+
+TimeTravelController::TTDReverseContinueResult
+TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
+{
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     TTDReverseContinueResult result;
 
@@ -5641,24 +6360,75 @@ TimeTravelController::ReverseContinue(const std::vector<uint16_t>& breakpoints)
         MLOGWARNING("TimeTravelController::ReverseContinue — null _context or pEmulator");
         return result;
     }
-    if (breakpoints.empty())
+    if (query.pcs.empty())
     {
         MLOGINFO("TimeTravelController::ReverseContinue — empty breakpoint set, no-op");
         return result;
     }
 
-    const TTDTimePoint now = CurrentPosition();
-    const uint64_t nowGlobalT =
-        GlobalT(now);
+    const size_t limit = query.all ? std::clamp(query.limit, size_t{1}, kReverseHitLimitMax) : 1;
+    std::vector<uint16_t> pcs = query.pcs;
+    std::sort(pcs.begin(), pcs.end());
+    pcs.erase(std::unique(pcs.begin(), pcs.end()), pcs.end());
+    const bool hasPage = query.physPage.has_value();
+    const PhysPage page = hasPage ? *query.physPage : PhysPage{0};
+    auto matches = [&](const TTDM1Record& m) {
+        return std::binary_search(pcs.begin(), pcs.end(), m.pc) && (!hasPage || m.physPage == page);
+    };
 
-    // TD-8: the scan walks back from `now` and ends at the match, at a barrier
-    // it cannot replay across, or at the session start.
-    const TTDTimePoint sessionStart = _timeline.front().time;
-    auto reportWindow = [&result, &now](const TTDTimePoint& from)
+    // The search walks back over [floorT, endT): strictly before now, or at or before the caller's bound
+    const TTDTimePoint now = CurrentPosition();
+    const uint64_t endT = query.beforeGlobalT == UINT64_MAX ? GlobalT(now) : query.beforeGlobalT + 1;
+    const uint64_t floorT = query.fromFrame > 0 ? GlobalT(TTDTimePoint{query.fromFrame, 0}) : 0;
+    const TTDTimePoint windowTo = query.beforeGlobalT == UINT64_MAX
+                                      ? now
+                                      : std::min(TimePointAt(query.beforeGlobalT), SessionEndPosition());
+    const TTDTimePoint windowFloor = std::max(_timeline.front().time, TTDTimePoint{query.fromFrame, 0});
+
+    // TD-8: the scan walks back from the bound and ends at the limit, at a barrier it cannot replay across, at
+    // from_frame or at the session start
+    auto reportWindow = [&result, &windowTo](const TTDTimePoint& from)
     {
         result.window.searched = true;
         result.window.from = from;
-        result.window.to = now;
+        result.window.to = windowTo;
+    };
+
+    // All mode replays checkpoints and puts the machine back verbatim (marker-proof, exact), like a frame cache
+    // build; the session state the caller saw comes back with it
+    const TTDSessionState stateBefore = _state;
+    if (query.all)
+        SaveLiveState(_liveSnapshot);
+
+    // One enumerated interval, newest instruction first. True: the walk is over (the limit, or a barrier)
+    bool done = false;
+    auto collect = [&](uint64_t from, uint64_t to) {
+        if (from >= to)
+            return;
+        std::vector<TTDM1Record> m1s;
+        TTDExternalEvent barrier;
+        EnumerateM1InRange(from, to, m1s, &barrier);
+        for (auto it = m1s.rbegin(); it != m1s.rend(); ++it)
+        {
+            if (!matches(*it))
+                continue;
+            if (result.hits.size() == limit)
+            {
+                result.truncated = true;
+                done = true;
+                break;
+            }
+            result.hits.push_back(TTDReverseHit{TimePointAt(it->globalT), it->globalT, it->pc, it->physPage});
+        }
+        if (barrier.reason[0] != '\0')
+        {
+            // The interval holds a marker the replay cannot cross: what lies before it is out of reach, so the
+            // walk ends here - an older hit is never reported over a newer one it could not see
+            result.blockingMarker = barrier;
+            done = true;
+        }
+        if (!query.all && !result.hits.empty())
+            done = true;
     };
 
     // ------------------------------------------------------------------
@@ -5669,117 +6439,53 @@ TimeTravelController::ReverseContinue(const std::vector<uint16_t>& breakpoints)
     // growing without bound as the session gets longer. The index already knows
     // which frames executed which addresses, so instead of replaying everything
     // we replay one candidate frame at a time, newest first, and stop at the
-    // first real hit.
+    // first real hit (single mode) or at the limit (all mode).
     //
     // The index is keyed by (physical page, offset within page), while a
-    // breakpoint is a bare Z80 address. Asking "any page, this offset"
-    // over-approximates — four Z80 addresses share an offset — so a candidate
-    // frame may turn out not to contain the PC at all. That costs one wasted
-    // frame enumeration and is retried on the next candidate; it can never
-    // skip a real hit, which is the only direction that would be wrong.
+    // breakpoint is a bare Z80 address. Without a page, asking "any page, this
+    // offset" over-approximates — four Z80 addresses share an offset — so a
+    // candidate frame may turn out not to contain the PC at all. That costs one
+    // wasted frame enumeration; it can never skip a real hit, which is the only
+    // direction that would be wrong. With a page the index prunes exactly.
+    //
+    // Note on degradation. With a large breakpoint set the index stops pruning:
+    // nearly every frame becomes a candidate. That is not a cliff: enumerating
+    // N frames one at a time costs about the same replay work as enumerating
+    // them in one pass, differing only by N checkpoint restores. Measured with
+    // 100 breakpoints: 65 ms per-frame against 76 ms bulk. An explicit bail-out
+    // to the bulk path was tried and made it worse (97 ms), because the
+    // fruitless per-frame work is then paid twice.
     // ------------------------------------------------------------------
     uint64_t coverFirst = 0, coverLast = 0;
     const bool coverageUsable =
         _enableCoverageIndex &&
         _coverageIndex.CoveredRange(TTDCoverageKind::Executed, coverFirst, coverLast);
     // Coverage may reach back before the history limit's start
-    if (!_timeline.empty())
-        coverFirst = std::max(coverFirst, _timeline.front().time.frame);
+    coverFirst = std::max(coverFirst, _timeline.front().time.frame);
 
-    if (coverageUsable)
+    if (coverageUsable && endT > 0)
     {
-        const uint64_t scanFrom = std::min<uint64_t>(now.frame, coverLast);
-
-        // Note on degradation. With a large breakpoint set the index stops
-        // pruning — it is keyed by offset-within-page, so each breakpoint
-        // aliases four Z80 addresses and nearly every frame becomes a
-        // candidate. That is not a cliff: enumerating N frames one at a time
-        // costs about the same replay work as enumerating them in one pass,
-        // differing only by N checkpoint restores. Measured with 100
-        // breakpoints: 65 ms per-frame against 76 ms bulk. An explicit
-        // bail-out to the bulk path was tried and made it worse (97 ms),
-        // because the fruitless per-frame work is then paid twice.
-
-        for (uint64_t frame = scanFrom + 1; frame-- > coverFirst;)
+        const uint64_t scanFrom = std::min<uint64_t>(TimePointAt(endT - 1).frame, coverLast);
+        const uint64_t scanTo = std::max<uint64_t>(coverFirst, query.fromFrame);
+        for (uint64_t frame = scanFrom + 1; !done && frame-- > scanTo;)
         {
             bool candidate = false;
-            for (uint16_t bp : breakpoints)
+            for (uint16_t bp : pcs)
             {
                 const uint16_t offset = static_cast<uint16_t>(bp & 0x3FFF);
-                if (_coverageIndex.FrameMayContain(TTDCoverageKind::Executed, frame,
-                                                   offset, offset,
-                                                   /*hasPage=*/false, 0))
+                if (_coverageIndex.FrameMayContain(TTDCoverageKind::Executed, frame, offset, offset, hasPage, page))
                 {
                     candidate = true;
                     break;
                 }
             }
-            if (!candidate)
-            {
-                if (frame == 0) break;
-                continue;
-            }
-
-            // Enumerate only this frame, clipped to the current position.
-            const uint64_t frameStart = GlobalT(TTDTimePoint{frame, 0});
-            const uint64_t frameEnd =
-                std::min<uint64_t>(nowGlobalT, GlobalT(TTDTimePoint{frame + 1, 0}));
-            if (frameStart >= frameEnd)
-            {
-                if (frame == 0) break;
-                continue;
-            }
-
-            std::vector<TTDM1Record> frameM1s;
-            TTDExternalEvent frameBarrier;
-            EnumerateM1InRange(frameStart, frameEnd, frameM1s, &frameBarrier);
-
-            auto hit = std::find_if(frameM1s.rbegin(), frameM1s.rend(),
-                [&](const TTDM1Record& m) {
-                    return std::find(breakpoints.begin(), breakpoints.end(), m.pc)
-                           != breakpoints.end();
-                });
-
-            if (hit != frameM1s.rend())
-            {
-                result.matched = true;
-                result.pc      = hit->pc;
-                result.arrivedAt = TimePointAt(hit->globalT);
-                reportWindow(result.arrivedAt);
-                if (frameBarrier.reason[0] != '\0')
-                    result.blockingMarker = frameBarrier;
-
-                if (!SeekTo(result.arrivedAt))
-                {
-                    MLOGWARNING("TimeTravelController::ReverseContinue — SeekTo(arrivedAt) failed");
-                    result.matched = false;
-                }
-                return result;
-            }
-
-            if (frameBarrier.reason[0] != '\0')
-            {
-                // The index says a breakpoint PC ran in this frame, but a marker
-                // keeps the frame from being replayed. A run there would be later
-                // than anything an older frame holds, so the scan must stop here
-                // - like the unindexed scan - instead of answering with an older
-                // hit. (Frames the index rules out are skipped even across
-                // markers: the index was captured live, not by replay.)
-                result.blockingMarker = frameBarrier;
-                reportWindow(frameBarrier.time);
-                MLOGINFO("TimeTravelController::ReverseContinue — barrier at (frame=%llu, tInFrame=%u) "
-                         "blocks candidate frame %llu",
-                         static_cast<unsigned long long>(frameBarrier.time.frame),
-                         static_cast<unsigned>(frameBarrier.time.tInFrame),
-                         static_cast<unsigned long long>(frame));
-                return result;
-            }
-
+            // Enumerate only this frame, clipped to the bounds
+            if (candidate)
+                collect(std::max(floorT, GlobalT(TTDTimePoint{frame, 0})),
+                        std::min<uint64_t>(endT, GlobalT(TTDTimePoint{frame + 1, 0})));
             if (frame == 0)
                 break;
         }
-
-        {
 
         // The indexed range does not necessarily start where the session does.
         // Coverage is sealed at frame boundaries, so the first recorded frame
@@ -5787,85 +6493,48 @@ TimeTravelController::ReverseContinue(const std::vector<uint16_t>& breakpoints)
         // timeline starts at coverFirst - 1 or earlier. Frames below coverFirst
         // are UNKNOWN, not empty, and skipping them silently loses hits that
         // happened during the session's opening frames.
-        const uint64_t prefixEnd = std::min<uint64_t>(nowGlobalT, GlobalT(TTDTimePoint{coverFirst, 0}));
-        if (prefixEnd > 0)
-        {
-            std::vector<TTDM1Record> prefixM1s;
-            TTDExternalEvent prefixBarrier;
-            EnumerateM1InRange(0, prefixEnd, prefixM1s, &prefixBarrier);
-
-            auto hit = std::find_if(prefixM1s.rbegin(), prefixM1s.rend(),
-                [&](const TTDM1Record& m) {
-                    return std::find(breakpoints.begin(), breakpoints.end(), m.pc)
-                           != breakpoints.end();
-                });
-
-            if (hit != prefixM1s.rend())
-            {
-                result.matched = true;
-                result.pc      = hit->pc;
-                result.arrivedAt = TimePointAt(hit->globalT);
-                reportWindow(result.arrivedAt);
-                if (prefixBarrier.reason[0] != '\0')
-                    result.blockingMarker = prefixBarrier;
-
-                if (!SeekTo(result.arrivedAt))
-                {
-                    MLOGWARNING("TimeTravelController::ReverseContinue — SeekTo(arrivedAt) failed");
-                    result.matched = false;
-                }
-                return result;
-            }
-
-            if (prefixBarrier.reason[0] != '\0')
-            {
-                result.blockingMarker = prefixBarrier;
-                reportWindow(prefixBarrier.time);
-                return result;
-            }
-        }
-
-            reportWindow(sessionStart);
-            MLOGINFO("TimeTravelController::ReverseContinue — no PC match in the indexed range "
-                     "nor in the unindexed prefix");
-            return result;
-        }
+        if (!done)
+            collect(floorT, std::min<uint64_t>(endT, GlobalT(TTDTimePoint{coverFirst, 0})));
+    }
+    else
+    {
+        // No index: enumerate every M1 in the window in one pass
+        collect(floorT, endT);
     }
 
-    // Enumerate M1s from session start up to (but not including) now.
-    std::vector<TTDM1Record> m1s;
-    TTDExternalEvent barrierStorage;
-    EnumerateM1InRange(0, nowGlobalT, m1s, &barrierStorage);
-
-    // If we hit a barrier, surface it to the caller.
-    if (barrierStorage.reason[0] != '\0')
+    if (result.truncated || (!query.all && !result.hits.empty()))
+        reportWindow(result.hits.back().time);
+    else if (result.blockingMarker.reason[0] != '\0')
     {
-        result.blockingMarker = barrierStorage;
-        MLOGINFO("TimeTravelController::ReverseContinue — barrier at (frame=%llu, tInFrame=%u) "
-                 "halted the scan",
-                 static_cast<unsigned long long>(barrierStorage.time.frame),
-                 static_cast<unsigned>(barrierStorage.time.tInFrame));
+        reportWindow(result.blockingMarker.time);
+        MLOGINFO("TimeTravelController::ReverseContinue — barrier at (frame=%llu, tInFrame=%u) halted the scan",
+                 static_cast<unsigned long long>(result.blockingMarker.time.frame),
+                 static_cast<unsigned>(result.blockingMarker.time.tInFrame));
     }
+    else
+        reportWindow(windowFloor);
 
-    // Scan backward for the first PC match.
-    auto it = std::find_if(m1s.rbegin(), m1s.rend(),
-        [&](const TTDM1Record& m) {
-            return std::find(breakpoints.begin(), breakpoints.end(), m.pc)
-                   != breakpoints.end();
-        });
-    if (it == m1s.rend())
+    if (query.all)
     {
-        reportWindow(barrierStorage.reason[0] != '\0' ? barrierStorage.time : sessionStart);
-        MLOGINFO("TimeTravelController::ReverseContinue — no PC match in %zu M1s",
-                 m1s.size());
+        ReplayModeScope restore(*this);
+        RestoreLiveState(_liveSnapshot);
+        restore.Exit();
+        SetState(stateBefore);
+        result.matched = !result.hits.empty();
+        if (result.matched)
+            result.pc = result.hits.front().pc;
         return result;
     }
 
-    result.matched    = true;
-    result.pc         = it->pc;
-    result.arrivedAt = TimePointAt(it->globalT);
-    reportWindow(result.arrivedAt);
+    if (result.hits.empty())
+    {
+        MLOGINFO("TimeTravelController::ReverseContinue — no PC match");
+        return result;
+    }
 
+    result.matched = true;
+    result.pc = result.hits.front().pc;
+    result.arrivedAt = result.hits.front().time;
     if (!SeekTo(result.arrivedAt))
     {
         MLOGWARNING("TimeTravelController::ReverseContinue — SeekTo(arrivedAt) failed");
@@ -6082,6 +6751,7 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
 
 void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
 {
+    _engineMemoryKnown = false;   // the caller's memory comes back behind the engine
     Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
 
     // Mirror RestoreCheckpoint's ordering (TDD §8.1): CPU, chipset,
@@ -6290,7 +6960,9 @@ TTDCoverageScanResult TimeTravelController::QueryCoverageScan(
     uint16_t addrFrom,
     uint16_t addrTo,
     std::optional<PhysPage> physPage,
-    size_t limit) const
+    size_t limit,
+    bool newestFirst,
+    bool asRanges) const
 {
     const SessionOperation op{*this, SessionOperation::Kind::Read};
     TTDCoverageScanResult result;
@@ -6305,7 +6977,7 @@ TTDCoverageScanResult TimeTravelController::QueryCoverageScan(
         return result;
     }
 
-    limit = std::clamp(limit, size_t{1}, size_t{1000});
+    limit = std::clamp(limit, size_t{1}, kCoverageScanLimitMax);
 
     uint64_t firstCovered = 0, lastCovered = 0;
     if (!_coverageIndex.CoveredRange(kind, firstCovered, lastCovered))
@@ -6333,26 +7005,52 @@ TTDCoverageScanResult TimeTravelController::QueryCoverageScan(
     const bool hasPage = physPage.has_value();
     const PhysPage page = hasPage ? *physPage : PhysPage{0};
 
-    for (uint64_t f = startFrame; f <= endFrame; ++f)
-    {
-        result.scannedFrames++;
-        if (_coverageIndex.FrameMayContain(kind, f, offsetLow, offsetHigh, hasPage, page))
+    // Every frame of the window is scanned: the counts and first / last match stay true when the list is cut.
+    // The list keeps the first `limit` items in scan order; the cursor names the window after the last one
+    uint64_t previous = UINT64_MAX;   // the last matching frame seen, in scan order (a run goes on next to it)
+    bool listFull = false;
+    auto take = [&](uint64_t f) {
+        result.matchingFrames++;
+        if (result.matchingFrames == 1)
+            result.firstMatch = result.lastMatch = f;
+        result.firstMatch = std::min(result.firstMatch, f);
+        result.lastMatch = std::max(result.lastMatch, f);
+        const bool adjacent = previous != UINT64_MAX && (newestFirst ? previous == f + 1 : f == previous + 1);
+        previous = f;
+        if (asRanges)
         {
-            result.matchingFrames++;
-            if (result.frames.size() < limit)
+            if (adjacent && !listFull)
             {
-                if (result.frames.empty())
-                {
-                    result.firstMatch = f;
-                }
-                result.lastMatch = f;
-                result.frames.push_back(f);
+                (newestFirst ? result.ranges.back().first : result.ranges.back().second) = f;
+                return;
             }
-            else
+            if (result.ranges.size() < limit && !listFull)
             {
-                result.truncated = true;
+                result.ranges.emplace_back(f, f);
+                return;
             }
         }
+        else if (result.frames.size() < limit)
+        {
+            result.frames.push_back(f);
+            return;
+        }
+        if (!listFull)
+        {
+            listFull = true;
+            result.truncated = true;
+            const uint64_t lastListed = asRanges ? (newestFirst ? result.ranges.back().first : result.ranges.back().second)
+                                                 : result.frames.back();
+            result.nextFrom = newestFirst ? startFrame : lastListed + 1;
+            result.nextTo = newestFirst ? lastListed - 1 : endFrame;
+        }
+    };
+    for (uint64_t i = 0; i <= endFrame - startFrame; ++i)
+    {
+        const uint64_t f = newestFirst ? endFrame - i : startFrame + i;
+        result.scannedFrames++;
+        if (_coverageIndex.FrameMayContain(kind, f, offsetLow, offsetHigh, hasPage, page))
+            take(f);
     }
 
     return result;

@@ -365,9 +365,14 @@ void MemoryAccessTracker::DeallocateCounters()
 }
 
 // Add a monitored memory region with the specified options
-bool MemoryAccessTracker::AddMonitoredRegion(const std::string& name, uint16_t startAddress, uint16_t length,
+bool MemoryAccessTracker::AddMonitoredRegion(const std::string& name, uint16_t startAddress, uint32_t length,
                                              const MonitoringOptions& options)
 {
+    if (length == 0 || startAddress + length > 0x10000)
+    {
+        return false;
+    }
+
     // Check if a region with this name already exists
     for (const auto& region : _monitoredRegions)
     {
@@ -395,7 +400,8 @@ bool MemoryAccessTracker::AddMonitoredRegion(const std::string& name, uint16_t s
 }
 
 // Add a monitored I/O port with the specified options
-bool MemoryAccessTracker::AddMonitoredPort(const std::string& name, uint16_t port, const MonitoringOptions& options)
+bool MemoryAccessTracker::AddMonitoredPort(const std::string& name, uint16_t port, const MonitoringOptions& options,
+                                           uint16_t mask)
 {
     // Check if a port with this name already exists
     for (const auto& monitoredPort : _monitoredPorts)
@@ -410,13 +416,11 @@ bool MemoryAccessTracker::AddMonitoredPort(const std::string& name, uint16_t por
     MonitoredPort monitoredPort;
     monitoredPort.name = name;
     monitoredPort.port = port;
+    monitoredPort.mask = mask;
     monitoredPort.options = options;
 
     // Add the port to the list
     _monitoredPorts.push_back(monitoredPort);
-
-    // Update the port to index map
-    _portToIndexMap[port] = _monitoredPorts.size() - 1;
 
     return true;
 }
@@ -444,21 +448,77 @@ bool MemoryAccessTracker::RemoveMonitoredPort(const std::string& name)
     {
         if (it->name == name)
         {
-            uint16_t port = it->port;
             _monitoredPorts.erase(it);
-            _portToIndexMap.erase(port);
-
-            // Rebuild the port to index map
-            for (size_t i = 0; i < _monitoredPorts.size(); ++i)
-            {
-                _portToIndexMap[_monitoredPorts[i].port] = i;
-            }
-
             return true;
         }
     }
 
     return false;  // Port not found
+}
+
+// Remove every monitored region and port
+void MemoryAccessTracker::ClearMonitored()
+{
+    _monitoredRegions.clear();
+    _monitoredPorts.clear();
+    _addressToRegionMap.clear();
+}
+
+// Copy every watch's totals for readers on other threads
+void MemoryAccessTracker::PublishWatches()
+{
+    // Only the writers (the emulation thread, or a tool at a coherent moment: never both) change the published list,
+    // so the writer reads it without the lock; readers take the lock
+    if (_monitoredRegions.empty() && _monitoredPorts.empty())
+    {
+        if (_publishedWatches.empty())
+        {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(_publishedMutex);
+        _publishedWatches.clear();
+        _publishedRevision++;
+        return;
+    }
+
+    std::vector<PublishedWatch> watches;
+    watches.reserve(_monitoredRegions.size() + _monitoredPorts.size());
+    for (const MonitoredRegion& region : _monitoredRegions)
+    {
+        PublishedWatch watch;
+        watch.name = region.name;
+        watch.start = region.startAddress;
+        watch.length = region.length;
+        watch.readCount = region.stats.readCount;
+        watch.writeCount = region.stats.writeCount;
+        watch.executeCount = region.stats.executeCount;
+        watches.push_back(std::move(watch));
+    }
+    for (const MonitoredPort& port : _monitoredPorts)
+    {
+        PublishedWatch watch;
+        watch.name = port.name;
+        watch.port = true;
+        watch.start = port.port;
+        watch.mask = port.mask;
+        watch.readCount = port.stats.readCount;
+        watch.writeCount = port.stats.writeCount;
+        watches.push_back(std::move(watch));
+    }
+
+    std::lock_guard<std::mutex> lock(_publishedMutex);
+    _publishedWatches.swap(watches);
+    _publishedRevision++;
+}
+
+std::vector<PublishedWatch> MemoryAccessTracker::PublishedWatches(uint64_t* revision) const
+{
+    std::lock_guard<std::mutex> lock(_publishedMutex);
+    if (revision)
+    {
+        *revision = _publishedRevision;
+    }
+    return _publishedWatches;
 }
 
 // Get statistics for a monitored memory region
@@ -499,9 +559,10 @@ void MemoryAccessTracker::UpdateAddressToRegionMap()
     for (size_t i = 0; i < _monitoredRegions.size(); ++i)
     {
         const auto& region = _monitoredRegions[i];
-        for (uint16_t addr = region.startAddress; addr < region.startAddress + region.length; ++addr)
+        // uint32_t: a region ending at 0xFFFF would wrap a 16-bit counter and never end
+        for (uint32_t addr = region.startAddress; addr < region.startAddress + region.length; ++addr)
         {
-            _addressToRegionMap[addr].push_back(i);
+            _addressToRegionMap[static_cast<uint16_t>(addr)].push_back(i);
         }
     }
 }
@@ -796,85 +857,13 @@ void MemoryAccessTracker::TrackMemoryExecute(uint16_t address, uint16_t callerAd
 // Track port read access
 void MemoryAccessTracker::TrackPortRead(uint16_t port, uint8_t value, uint16_t callerAddress)
 {
-    // THREAD SAFETY: Don't call UpdateFeatureCache() here - causes race with UI thread
-    if (!_feature_memorytracking_enabled)
-    {
-        return;
-    }
-
-    // Check if this port is monitored
-    auto it = _portToIndexMap.find(port);
-    if (it != _portToIndexMap.end())
-    {
-        size_t index = it->second;
-        MonitoredPort& monitoredPort = _monitoredPorts[index];
-
-        // Update read count, capping at max value
-        if (monitoredPort.stats.readCount < UINT32_MAX)
-        {
-            monitoredPort.stats.readCount++;
-        }
-
-        // Track caller addresses if enabled
-        if (monitoredPort.options.trackCallers)
-        {
-            AddToCallerMap(monitoredPort.stats.callerAddresses, callerAddress, monitoredPort.options.maxCallers);
-        }
-
-        // Track data values if enabled
-        if (monitoredPort.options.trackDataFlow)
-        {
-            AddToDataFlowMap(monitoredPort.stats.dataValues, value, monitoredPort.options.maxDataValues);
-        }
-
-        // Update segment statistics if segment tracking is enabled
-        if (_segmentTrackingEnabled && _currentSegment != nullptr)
-        {
-            UpdateSegmentStats(monitoredPort.name, monitoredPort.stats, true);
-        }
-    }
+    UpdatePortStats(port, value, callerAddress, AccessType::Read);
 }
 
 // Track port write access
 void MemoryAccessTracker::TrackPortWrite(uint16_t port, uint8_t value, uint16_t callerAddress)
 {
-    // Early return if memory tracking is disabled
-    if (!_feature_memorytracking_enabled)
-    {
-        return;
-    }
-
-    // Check if this port is monitored
-    auto it = _portToIndexMap.find(port);
-    if (it != _portToIndexMap.end())
-    {
-        size_t index = it->second;
-        MonitoredPort& monitoredPort = _monitoredPorts[index];
-
-        // Update write count, capping at max value
-        if (monitoredPort.stats.writeCount < UINT32_MAX)
-        {
-            monitoredPort.stats.writeCount++;
-        }
-
-        // Track caller addresses if enabled
-        if (monitoredPort.options.trackCallers)
-        {
-            AddToCallerMap(monitoredPort.stats.callerAddresses, callerAddress, monitoredPort.options.maxCallers);
-        }
-
-        // Track data values if enabled
-        if (monitoredPort.options.trackDataFlow)
-        {
-            AddToDataFlowMap(monitoredPort.stats.dataValues, value, monitoredPort.options.maxDataValues);
-        }
-
-        // Update segment statistics if segment tracking is enabled
-        if (_segmentTrackingEnabled && _currentSegment != nullptr)
-        {
-            UpdateSegmentStats(monitoredPort.name, monitoredPort.stats, true);
-        }
-    }
+    UpdatePortStats(port, value, callerAddress, AccessType::Write);
 }
 
 // Get the physical memory offset for a Z80 address
@@ -894,6 +883,12 @@ uint16_t MemoryAccessTracker::GetPageForPhysicalOffset(size_t offset) const
 void MemoryAccessTracker::UpdateRegionStats(uint16_t address, uint8_t value, uint16_t callerAddress,
                                             AccessType accessType)
 {
+    // Most sessions watch no region: skip the hash lookup on every access
+    if (_addressToRegionMap.empty())
+    {
+        return;
+    }
+
     // Check if this address is part of any monitored regions
     auto it = _addressToRegionMap.find(address);
     if (it != _addressToRegionMap.end())
@@ -951,6 +946,49 @@ void MemoryAccessTracker::UpdateRegionStats(uint16_t address, uint8_t value, uin
                     UpdateSegmentStats(region.name, region.stats, false);
                 }
             }
+        }
+    }
+}
+
+// Update the stats of every monitored port the access matches
+void MemoryAccessTracker::UpdatePortStats(uint16_t port, uint8_t value, uint16_t callerAddress, AccessType accessType)
+{
+    // THREAD SAFETY: Don't call UpdateFeatureCache() here - causes race with UI thread
+    if (_monitoredPorts.empty() || !IsMemoryCapturing())
+    {
+        return;
+    }
+
+    for (MonitoredPort& monitoredPort : _monitoredPorts)
+    {
+        if ((port & monitoredPort.mask) != (monitoredPort.port & monitoredPort.mask))
+        {
+            continue;
+        }
+
+        // Update the counter, capping at max value
+        uint32_t& count = accessType == AccessType::Write ? monitoredPort.stats.writeCount : monitoredPort.stats.readCount;
+        if (count < UINT32_MAX)
+        {
+            count++;
+        }
+
+        // Track caller addresses if enabled
+        if (monitoredPort.options.trackCallers)
+        {
+            AddToCallerMap(monitoredPort.stats.callerAddresses, callerAddress, monitoredPort.options.maxCallers);
+        }
+
+        // Track data values if enabled
+        if (monitoredPort.options.trackDataFlow)
+        {
+            AddToDataFlowMap(monitoredPort.stats.dataValues, value, monitoredPort.options.maxDataValues);
+        }
+
+        // Update segment statistics if segment tracking is enabled
+        if (_segmentTrackingEnabled && _currentSegment != nullptr)
+        {
+            UpdateSegmentStats(monitoredPort.name, monitoredPort.stats, true);
         }
     }
 }
@@ -2239,4 +2277,10 @@ ProfilerSessionState MemoryAccessTracker::GetCalltraceSessionState() const
 bool MemoryAccessTracker::IsCalltraceCapturing() const
 {
     return _feature_calltrace_enabled && _calltraceSessionState == ProfilerSessionState::Capturing;
+}
+
+bool MemoryAccessTracker::HasCapturingSession() const
+{
+    return _memorySessionState == ProfilerSessionState::Capturing ||
+           _calltraceSessionState == ProfilerSessionState::Capturing;
 }

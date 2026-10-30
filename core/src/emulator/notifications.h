@@ -329,7 +329,15 @@ enum class BreakpointHitKind : uint8_t
     Beam,
     CopperInstruction,
     Magic,
-    Keyboard  // the program read the keyboard and saw the key change (address: the port read)
+    Keyboard,  // the program read the keyboard and saw the key change (address: the port read)
+    Event,     // a General Sound event (BRK_EVENT; address: the event kind)
+    DmaWrite,  // a bus master other than the CPU (a DMA) wrote a watched byte (address: the offset in the 16 KB page on a
+               // card, the CPU address on the Next, whose DMA drives the CPU's address bus)
+    ChipRegister,  // a sound chip's register write (BRK_CHIPREG; address: the register)
+    DmaRead,       // a DMA read a watched byte (address: as DmaWrite - the CPU address on the Next, the offset in the
+                   // 16 KB page on TS-Conf)
+    AccelWrite,    // the Sprinter's accelerator repeated a store onto a watched byte (address: the CPU address)
+    AccelRead      // the Sprinter's accelerator repeated a read of a watched byte (address: the CPU address)
 };
 
 /// The automation surfaces' name of a breakpoint access kind
@@ -348,6 +356,12 @@ inline const char* BreakpointHitKindName(BreakpointHitKind kind)
         case BreakpointHitKind::CopperInstruction: return "copper";
         case BreakpointHitKind::Magic: return "magic";
         case BreakpointHitKind::Keyboard: return "keyboard";
+        case BreakpointHitKind::Event: return "event";
+        case BreakpointHitKind::DmaWrite: return "dma_write";
+        case BreakpointHitKind::ChipRegister: return "chip_register";
+        case BreakpointHitKind::DmaRead: return "dma_read";
+        case BreakpointHitKind::AccelWrite: return "accel_write";
+        case BreakpointHitKind::AccelRead: return "accel_read";
     }
     return "execute";
 }
@@ -373,6 +387,8 @@ public:
     uint16_t breakpointId{0xFFFF};
     uint16_t address{0};
     BreakpointHitKind hitKind{BreakpointHitKind::Execute};
+    std::string cpu{"main"};  ///< the CPU whose breakpoint it was ("gs": a card's, the machine parked with it)
+    uint16_t cpuPc{0};        ///< that CPU's instruction (a card: the instruction the access belonged to)
 
     EmulatorStateChangePayload(const unreal::UUID& id, uint32_t newState)
         : SimpleNumberPayload(newState), emulatorId(id) {}
@@ -397,6 +413,12 @@ public:
     unreal::UUID emulatorId;
     uint16_t    address;   // Z80 address that triggered (0 if unknown / N/A)
     bool        hidden{false};
+    /// The access the breakpoint fired on: a read / write watchpoint tells the direction by it
+    BreakpointHitKind kind{BreakpointHitKind::Execute};
+    /// The CPU whose breakpoint it was ("main", "gs") and that CPU's instruction: for a card, the access was made by
+    /// the instruction at `cpuPc` and is reported at the next card instruction boundary (gs-debugger design §4.1)
+    std::string cpu{"main"};
+    uint16_t cpuPc{0};
 
     BreakpointTriggeredPayload(const unreal::UUID& id, uint32_t breakpointId, uint16_t addr, bool isHidden = false)
         : SimpleNumberPayload(breakpointId), emulatorId(id), address(addr), hidden(isHidden) {}
@@ -422,6 +444,8 @@ public:
     uint16_t breakpointId{0xFFFF};
     uint16_t address{0};
     BreakpointHitKind hitKind{BreakpointHitKind::Execute};
+    std::string cpu{"main"};  ///< the CPU whose breakpoint it was ("gs": a card's, the machine parked with it)
+    uint16_t cpuPc{0};        ///< that CPU's instruction (a card: the instruction the access belonged to)
 
     explicit CpuStepPayload(const unreal::UUID& id) : emulatorId(id) {}
     explicit CpuStepPayload(const std::string& id) : emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id)) {}
@@ -544,6 +568,21 @@ public:
     virtual ~BreakpointsChangedPayload() = default;
 };
 
+/// Payload of NC_SCRIPT_CALLBACKS_CHANGED (debugger/callbacks/scriptcallbacks.h): callback `id` of this emulator
+/// changed (its state is read with ScriptCallbackManager::Get; gone when it is not found)
+class ScriptCallbacksChangedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    uint32_t id = 0;
+
+    ScriptCallbacksChangedPayload(const std::string& emulator, uint32_t callback)
+        : emulatorId(emulator.empty() ? unreal::UUID() : unreal::UUID(emulator)), id(callback)
+    {
+    }
+    virtual ~ScriptCallbacksChangedPayload() = default;
+};
+
 /// Payload of NC_ASM_SYNC (asm-synchronizer, core/src/debugger/asm/sync/asmsyncservice.h)
 class AsmSyncPayload : public MessagePayload
 {
@@ -628,6 +667,26 @@ public:
         , kind(std::move(mediaKind))
         , source(std::move(mediaSource))
         , access(std::move(accessMode))
+    {}
+};
+
+/// Payload for NC_GUEST_PROGRAM: a program file the guest read from a block medium (a NEX started from NextZXOS's
+/// Browser, a snapshot loaded by a menu). Carries the file's bytes so the host computes its signatures as for a
+/// file it loaded itself.
+class GuestProgramPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string slotId;   // "sd.zc", ...
+    std::string path;     // the file's path on the medium's volume, "/games/deltas/ds_next.snx"
+    std::vector<uint8_t> data;
+
+    GuestProgramPayload(const std::string& id, std::string slot, std::string filePath, std::vector<uint8_t> bytes)
+        : MessagePayload()
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , slotId(std::move(slot))
+        , path(std::move(filePath))
+        , data(std::move(bytes))
     {}
 };
 

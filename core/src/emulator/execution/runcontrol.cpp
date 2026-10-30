@@ -187,13 +187,15 @@ RunReply RunControl::StepIn(const Requester& requester)
     body["message"] = reply.message;
     body["executed"] = executed ? 1 : 0;
     StateNode stopNode = StateNode::Object();
-    stopNode["cpu"] = "main";
+    stopNode["cpu"] = DebugCpuName(stop.cpu);
     stopNode["reason"] = stop.hit ? "breakpoint" : "step";
     if (stop.hit)
     {
         stopNode["breakpoint_id"] = static_cast<int>(stop.breakpointId);
         stopNode["address"] = static_cast<int>(stop.address);
         stopNode["access"] = BreakpointHitKindName(stop.kind);
+        if (stop.cpu != DebugCpuId::Main)
+            stopNode["cpu_pc"] = static_cast<int>(stop.cpuPc);
     }
     body["stop"] = std::move(stopNode);
     for (const char* key : {"pc", "sp", "state"})
@@ -319,13 +321,15 @@ void RunControl::AddStop(RunReply& reply) const
 {
     const Emulator::BreakpointStop& stop = _emulator->LastDirectStop();
     StateNode stopNode = StateNode::Object();
-    stopNode["cpu"] = "main";
+    stopNode["cpu"] = DebugCpuName(stop.cpu);
     stopNode["reason"] = stop.hit ? "breakpoint" : "step";
     if (stop.hit)
     {
         stopNode["breakpoint_id"] = static_cast<int>(stop.breakpointId);
         stopNode["address"] = static_cast<int>(stop.address);
         stopNode["access"] = BreakpointHitKindName(stop.kind);
+        if (stop.cpu != DebugCpuId::Main)
+            stopNode["cpu_pc"] = static_cast<int>(stop.cpuPc);
     }
     reply.body["stop"] = std::move(stopNode);
 }

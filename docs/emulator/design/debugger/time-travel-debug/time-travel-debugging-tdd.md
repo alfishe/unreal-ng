@@ -332,6 +332,17 @@ Any nondeterministic event that is *not* covered by a journal gets an `ExternalE
 - Markers are visible on the timeline widget (Section 11) so the user understands why history ends where it does.
 - This keeps TTD honest: it never pretends to reproduce what it cannot. Journals (input today, disk/tape later) progressively convert marker classes into replayable events.
 
+**Script callbacks** ([script-callbacks.md](../../../../features/script-callbacks.md)). A hook (a frame or sync
+callback, on the emulation thread) is a `view` or a `logic` callback. A view hook may not write while a session
+records or is browsed; taps are muted on replay, so it never runs there. A logic hook's `poke` / `set_reg` are kept
+and made at the next instruction boundary (`EmulatorContext::kStepWorkScriptEdits`, `ScriptCallbackManager::
+ApplyEdits`). While the engine records, `ITimeTravelHooks::RecordScriptEdit` keeps them as a `DebuggerEdit` event
+at that boundary, carrying its data (role Input). The payload holds only what the hook wrote: kind 9 records with
+bytes written through the CPU's view (index = the first address) and, when it set registers, the CPU (kind 4). It
+does not hold the whole dirty pages a tool edit carries. The replay applies the event before the instruction that
+starts there and never runs the hook. TTD v1 does not record these edits (`RecordsScriptEdits()` false), and a logic
+write while it records is refused.
+
 **Determinism is enforced by test, not by hope:** the test suite gains a *divergence test* — run N frames live, checkpoint every frame, then for random frames: restore checkpoint k, replay to frame k+m, hash full machine state, compare with the live-run hash recorded earlier. Any mismatch is a P0 bug in either the serializer or an unaudited nondeterminism source. (Section 15.)
 
 ---

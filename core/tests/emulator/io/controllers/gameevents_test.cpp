@@ -14,6 +14,14 @@ using namespace controllers;
 
 namespace
 {
+GameEventInfo Info(const char* name, bool level)
+{
+    GameEventInfo info;
+    info.name = name;
+    info.level = level;
+    return info;
+}
+
 GameEventFrame Frame(uint64_t number, uint32_t fired, int32_t lives)
 {
     GameEventFrame frame;
@@ -34,7 +42,7 @@ TEST(GameEventLog_Test, CountsKeepsTheRecentAndFollowsTheRevision)
     log.Record(Frame(1, 1, 3));
     EXPECT_TRUE(log.Read().events.empty()) << "nothing defined: nothing kept";
 
-    log.Define({{"jump", false}, {"lives", true}}, "game/test");
+    log.Define({Info("jump", false), Info("lives", true)}, "game/test");
     const uint64_t defined = log.Revision();
     log.Record(Frame(10, 0, 3));
     const uint64_t first = log.Revision();
@@ -78,7 +86,7 @@ TEST(GameEventLog_Test, CountsKeepsTheRecentAndFollowsTheRevision)
     EXPECT_EQ(snapshot.recent.front().seq, snapshot.seq - GameEventLog::kRecent + 1);
 
     // A new definition starts over; Clear leaves nothing
-    log.Define({{"died", false}}, "game/other");
+    log.Define({Info("died", false)}, "game/other");
     snapshot = log.Read();
     EXPECT_EQ(snapshot.profile, "game/other");
     EXPECT_EQ(snapshot.seq, 0u);

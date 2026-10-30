@@ -131,6 +131,16 @@ protected:
     // Off: no step gate (comparisons; settleSteps)
     bool _stepGate = true;
 
+    // TTD render pin (setTtdRenderPinned): the render mode it runs (quality and suppression: the recording's, taken
+    // from the host at each frame start or from the blob on a load) and the host's own settings; not TTD state
+    bool _ttdPinned = false;
+    bool _ttdFollowsHost = false;
+    bool _pinnedHQ = true;
+    bool _pinnedSuppressed = false;
+    bool _hostHQ = true;
+    bool _hostSuppressed = false;
+    bool _hostCoreSkipped = false;
+
     // FM gain = kFmBaseGain * 10^(trim/20) (§7.1); [SOUND] TSFM_FmLevelDb
     double _fmGain = kFmBaseGain;
     double _fmTrimDb = 0.0;
@@ -286,7 +296,50 @@ public:
         _pair.updateState(bypassPrescaler);
     }
 
+    // The host's render settings. While TTD pins the render path (setTtdRenderPinned) the device runs the pinned
+    // mode: a recording takes the host's quality and suppression at each frame start, a replay keeps the blob's
     void setHQEnabled(bool enabled) override
+    {
+        _hostHQ = enabled;
+        if (!_ttdPinned)
+            applyHQ(enabled);
+    }
+
+    void setSynthesisSuppressed(bool suppressed) override
+    {
+        _hostSuppressed = suppressed;
+        if (!_ttdPinned)
+            applySynthesisSuppressed(suppressed);
+    }
+
+    void setCoreSynthesisSkipped(bool skipped) override
+    {
+        _hostCoreSkipped = skipped;
+        applyCoreSynthesisSkipped(skipped && !_ttdPinned);
+        _deferAllowed = true;
+    }
+
+    /// Pinned in the mode the host renders now (a recording's start); a checkpoint load pins the blob's
+    void setTtdRenderPinned(bool pinned, bool followsHost) override
+    {
+        _ttdFollowsHost = pinned && followsHost;
+        if (pinned == _ttdPinned)
+            return;
+        _ttdPinned = pinned;
+        _pinnedHQ = _hostHQ;
+        _pinnedSuppressed = _hostSuppressed;
+        applyRenderMode();
+    }
+    bool isTtdRenderPinned() const { return _ttdPinned; }
+    bool isCoreSynthesisSkipped() const { return _pair.coreSynthesisSkipped(); }
+private:
+    void applyRenderMode()
+    {
+        applyHQ(_ttdPinned ? _pinnedHQ : _hostHQ);
+        applySynthesisSuppressed(_ttdPinned ? _pinnedSuppressed : _hostSuppressed);
+        applyCoreSynthesisSkipped(_hostCoreSkipped && !_ttdPinned);
+    }
+    void applyHQ(bool enabled)
     {
         settleSteps();
         if (enabled != _pair.hqEnabled())
@@ -295,22 +348,19 @@ public:
             _outputFlushPending = true;  // the HQ decimators were not fed in LQ
         _pair.setHQEnabled(enabled);
     }
-
-    void setSynthesisSuppressed(bool suppressed) override
+    void applySynthesisSuppressed(bool suppressed)
     {
         settleSteps();
         if (!suppressed && _pair.synthesisSuppressed())
             _outputFlushPending = true;  // nothing was rendered while suppressed
         _pair.setSynthesisSuppressed(suppressed);
     }
-
-    void setCoreSynthesisSkipped(bool skipped) override
+    void applyCoreSynthesisSkipped(bool skipped)
     {
         catchUp();  // the deferred clocks run with the flag they were noted under
         _pair.setCoreSynthesisSkipped(skipped);
-        _deferAllowed = true;
     }
-    bool isCoreSynthesisSkipped() const { return _pair.coreSynthesisSkipped(); }
+public:
     /// Tests: off = the chips are brought to the CPU after every instruction while audio renders
     void setLazySync(bool on)
     {
@@ -497,7 +547,12 @@ public:
     ///   u8 version (= 5)
     ///   u8 board (chip | statusRead<<1 | fmEnabled<<2 | renderReanchor<<3: a
     ///     re-anchor of the render cursor pending for the next frame start - only
-    ///     a capture inside a frame sees it set; 0 in blobs written before)
+    ///     a capture inside a frame sees it set; 0 in blobs written before |
+    ///     lqRender<<4: the render path was LQ, which a load pins; 0 = HQ in
+    ///     blobs written before | adoptsClock<<5: the pair adopts the CPU's
+    ///     clock at its next sync, a capture right after a reset |
+    ///     suppressed<<6: the frame renders no output (sound off, turbo), which
+    ///     a load pins; 0 in blobs written before)
     ///   f64 samplePhase, f64 decimationPhase        (v2: render-loop PLL/LQ phase)
     ///   f64 x4: chip{0,1}.ssg.decimator{Left,Right}().phase()  (v3: per-decimator
     ///     resampling phase - all four of these are tick-gating accumulators,
@@ -566,11 +621,9 @@ public:
     }
 
     /// The recording's first capture sees the chips at the CPU: no deferred
-    /// sync from here to the frame start that re-reads the TTD state
-    void TTDRecordingStarted() override
-    {
-        catchUp();
-        _deferAllowed = false;
-    }
+    /// sync from here to the frame start that re-reads the TTD state. The
+    /// render path is pinned from the baseline on, in the mode the sound
+    /// manager has now (the manager pins it again from the next frame start)
+    void TTDRecordingStarted() override;
     /// endregion </TTDSerializable interface>
 };

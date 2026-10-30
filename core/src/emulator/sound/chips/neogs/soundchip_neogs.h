@@ -47,6 +47,7 @@
 #include "emulator/sound/chips/neogs/neogsspi.h"
 #include "emulator/sound/chips/neogs/neogszxdma.h"
 #include "emulator/sound/chips/neogs/vs10xx.h"
+#include "sysdefs.h"
 
 class EmulatorContext;
 namespace ttd
@@ -139,6 +140,17 @@ public:
     std::string deviceDescription() const override;
     bool isCPUHalted() const override { return _cpu && Z80CpuHalted(_cpu) != 0; }
     uint16_t getCPUReg(GSCpuRegister reg) const override;
+    // Card CPU debugging (gs-debugger design §4)
+    bool setDebugHooks(IGSDebugHooks* hooks) override;
+    CardPage mapCardAddress(uint16_t addr) const override;
+    uint32_t cardPageCount(CardPage::Kind kind) const override;
+    bool cardRegisters(Z80CpuRegisters& out) const override;
+    int64_t cardTime() const override { return _runner.now(); }
+    int64_t cardFrameTime() const override { return _runner.now() - _frameStartTicks; }
+    bool inFrameEndCatchUp() const override { return _frameEndCatchUp; }
+    bool pokeCardMemory(uint16_t addr, uint8_t value) override { return _cpu && _mem.writeRam(addr, value); }
+    bool setCardRegisters(const Z80CpuRegisters& regs) override;
+    double cardUnitsPerSecond() const override { return TICKS_PER_SECOND; }
 
     const GSActivityCounters& getActivityCounters() const override { return _activityCounters; }
     void resetActivityCounters() override { _activityCounters = GSActivityCounters{}; }
@@ -223,6 +235,9 @@ public:
     const NeoGSZxDma& zxDma() const { return _zx; }
     NeoGSSpi& spi() { return _spi; }
     NeoGSMemory& memory() { return _mem; }
+    /// What the DMA modules tell the card (tests: a module's RAM write without the module)
+    NeoGSDma::Host& dmaHost() { return *this; }
+    NeoGSZxDma::Host& zxHost() { return *this; }
     const NeoGSMemory& memory() const { return _mem; }
     Flash29F040B& flash() { return _flash; }
     const NeoGSConfig& config() const { return _config; }
@@ -277,7 +292,7 @@ public:
     bool sdCardPresent() const { return _sd && _sd->present(); }
 
     /// Run the card by itself for `ticks` (tests, module replay)
-    void runFor(int64_t ticks) { _runner.runTo(_runner.now() + ticks); }
+    void runFor(int64_t ticks) { runTo(_runner.now() + ticks); }
     /// endregion
 
     /// TTD blob (neogs-tdd.md §7.4, TTD v1: every checkpoint carries it all):
@@ -319,7 +334,8 @@ private:
     int64_t sleepHardStop() const { return std::min(_dma.nextEvent(), _zx.nextEvent()); }
     void onStepsSkipped(uint64_t steps) { _activityCounters.cpuSteps += steps; }
     bool sleepQuietEventsBefore(int64_t end);
-    void onStep()
+    // Forced: the fast and the debug loop both call it, and an outlined call per instruction costs the fast one 4 %
+    __forceinline void onStep()
     {
         _activityCounters.cpuSteps++;
         // A GSCFG0 clock change applies from the next instruction
@@ -339,12 +355,28 @@ private:
     int64_t replayByteStepUnits() const { return 2 * 3200; }                   // two timer periods
     int64_t replayMaxByteWaitUnits() const { return 200 * 239602 * int64_t{10}; } // as the classic card, in ticks
 
-    // Z80 bus callbacks
-    static uint8_t memReadCb(Z80CPU* cpu, uint16_t addr, int m1State, void* userData);
-    static void memWriteCb(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData);
-    static uint8_t portReadCb(Z80CPU* cpu, uint16_t port, void* userData);
-    static void portWriteCb(Z80CPU* cpu, uint16_t port, uint8_t value, void* userData);
+    // Z80 bus callbacks. Never inlined: the CPU calls them through pointers anyway, and a debug callback that inlined
+    // one would give its own inlined parts (readMem, cardIn) a second site and push them out of the fast callback
+    static UNREAL_NOINLINE uint8_t memReadCb(Z80CPU* cpu, uint16_t addr, int m1State, void* userData);
+    static UNREAL_NOINLINE void memWriteCb(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData);
+    static UNREAL_NOINLINE uint8_t portReadCb(Z80CPU* cpu, uint16_t port, void* userData);
+    static UNREAL_NOINLINE void portWriteCb(Z80CPU* cpu, uint16_t port, uint8_t value, void* userData);
     static uint8_t intVectorCb(Z80CPU* cpu, void* userData);
+    // The same with the debug hooks told (setDebugHooks): the access done, then reported
+    static uint8_t memReadDebugCb(Z80CPU* cpu, uint16_t addr, int m1State, void* userData);
+    static void memWriteDebugCb(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData);
+    static uint8_t portReadDebugCb(Z80CPU* cpu, uint16_t port, void* userData);
+    static void portWriteDebugCb(Z80CPU* cpu, uint16_t port, uint8_t value, void* userData);
+    /// The catch-up: the fast loop, or the debug loop while a debugger's hooks are set (one test per run)
+    void runTo(int64_t target)
+    {
+        if (_debugHooks) [[unlikely]]
+            runToDebug(target);
+        else
+            _runner.runTo(target);
+    }
+    /// Out of line: the debug loop's code stays away from the fast loop's
+    void runToDebug(int64_t target);
 
     uint8_t readMem(uint16_t addr)
     {
@@ -373,6 +405,17 @@ private:
     void dmaStall(int64_t units) override { _runner.stall(units); }
     int64_t dmaUnitsPerCycle() const override { return _ticksPerCycle; }
     void dmaSdByteDone(uint8_t received) override { _spi.state(NeoGSSpi::SD).rx = received; }
+    void dmaStarted(NeoGSDma::Module m) override
+    {
+        if (_debugHooks) [[unlikely]]
+            _debugHooks->onEvent(GSCardEvent::DmaStart, 0, static_cast<uint8_t>(m));
+    }
+    void dmaEnded(NeoGSDma::Module m, bool finished) override
+    {
+        if (_debugHooks) [[unlikely]]
+            _debugHooks->onEvent(GSCardEvent::DmaDone, finished ? 1 : 0, static_cast<uint8_t>(m));
+    }
+    void dmaRamWritten(uint32_t offset, uint32_t length) override;
 
     // NeoGSZxDma::Host (neogs-zxdma-design.md §5.5)
     void zxCatchUp() override { flush(); }
@@ -389,6 +432,7 @@ private:
     void zxReschedule() override { reschedule(); }
     void zxLateStart(int64_t units) override;
     void zxTrace(bool write, uint32_t address, uint8_t value) override;
+    void zxRamWritten(uint32_t offset, uint8_t value) override;
 
     // Lazy sync with the host
     void flush();
@@ -514,6 +558,7 @@ private:
     // Host frame bases
     uint64_t _frameStartZxTacts = 0;
     int64_t _frameStartTicks = 0;
+    bool _frameEndCatchUp = false;  // inside handleFrameEnd's run (a card hook's edit names the frame)
     int64_t _frameTicks = 0;
 
     // Audio
@@ -551,4 +596,5 @@ private:
     GSUploadCapture _upload;
     GSActivityCounters _activityCounters;
     GSPortTraceRecorder _portTrace;
+    IGSDebugHooks* _debugHooks = nullptr;  // a card CPU debugger (setDebugHooks): the debug loop and bus
 };

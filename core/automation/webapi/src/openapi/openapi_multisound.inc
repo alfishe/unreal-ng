@@ -26,6 +26,22 @@
         state["responses"]["200"]["description"] = "The card's report";
         state["responses"]["404"]["description"] = "Emulator not found, or no ZX-MultiSound fitted (POST slots/zxbus.next/plug {card: multisound})";
 
+        // The Sprinter's ISA Wild Sound (docs/inprogress/2026-10-09-wildsound): DeviceState::WildSound, the same tree as
+        // CLI `wildsound`, Lua / Python wildsound_state() and the MCP aspect audio_wildsound
+        Json::Value& ws = paths["/api/v1/emulator/{id}/state/audio/wildsound"]["get"];
+        ws["summary"] = "Get the Sprinter ISA Wild Sound card";
+        ws["tags"].append("Audio State");
+        ws["description"] =
+            "available, cards[] {slot, wild_sound (the slot report: mode ay | xm, unlocked, chip, register, next_read, "
+            "stream {command, command_name, size, pos, fifo, packets, error}, storage {used, size, descriptors, "
+            "track_bytes, instruments, samples_complete, sample_bytes}, track {name, channels, speed, bpm, frequencies, "
+            "song_length, restart, patterns}, ay[2] {registers, duty}), player {playing, order, pattern, row, tick, speed, "
+            "bpm, global_volume, rows_played, output_rate, channels[] {active, instrument, note, volume, panning, period, "
+            "hz}}, ay_chips[2] (the AY report of /state/audio/ay/{chip})}";
+        idParameter(ws);
+        ws["responses"]["200"]["description"] = "The card's report";
+        ws["responses"]["404"]["description"] = "Emulator not found, or no Wild Sound fitted ([ISA] Slot1=WILDSOUND)";
+
         Json::Value& midi = paths["/api/v1/emulator/{id}/state/audio/midi"]["get"];
         midi["summary"] = "Get the MIDI line and synthesizer (SAM2695)";
         midi["tags"].append("Audio State");
