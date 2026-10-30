@@ -267,6 +267,32 @@ TEST(TTDPortJournal, APollingLoopCompressesToAlmostNothing)
     EXPECT_LT(j.SerializedBytes(), raw / 100) << "raw " << raw << " B, stored " << j.SerializedBytes() << " B";
 }
 
+/// The open block's size is compressed once per change: a cut and as many other records again give the size of a
+/// journal recorded that way, not the one before the cut
+TEST(TTDPortJournal, SerializedBytesFollowsACutOpenBlock)
+{
+    // 100 records of one polling loop: they compress far better than RecordOf's
+    auto poll = [](TTDPortJournal& journal) {
+        journal.StartRecording();
+        for (uint32_t i = 0; i < 100; i++)
+            journal.OnRead(0x7FFE, 0xFF, 900, 1000 + i * 47, 0x05ED);
+        journal.Stop();
+    };
+    TTDPortJournal j;
+    Record(j, 0, kBlock + 100);
+    const size_t before = j.SerializedBytes();
+    EXPECT_EQ(j.SerializedBytes(), before);
+    j.TruncateTo(kBlock);
+    poll(j);
+
+    TTDPortJournal fresh;
+    Record(fresh, 0, kBlock);
+    poll(fresh);
+    EXPECT_EQ(j.Size(), kBlock + 100u);
+    EXPECT_EQ(j.SerializedBytes(), fresh.SerializedBytes());
+    EXPECT_LT(j.SerializedBytes(), before);
+}
+
 // ---------------------------------------------------------------------------
 // A damaged section fails the load and leaves nothing half-loaded
 // ---------------------------------------------------------------------------

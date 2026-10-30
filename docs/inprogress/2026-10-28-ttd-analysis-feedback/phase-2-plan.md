@@ -61,6 +61,17 @@ Status:
   mutex while it is clear and looks the frame start up once a frame. The step-work flag is set again when a
   producer queued between the check and the clear (a lost wake before). W3 (input playback): continuous replay
   891 → 477 µs a frame, exec-all 1251 → 802, writes-all 109 → 66; W1 and W2 (no input) unchanged.
+- B4 (uncommitted). A checkpoint keeps the CPU's four windows at its capture (`Memory::GetWindowMap`: offsets into
+  the memory block and modes). memory-at space cpu at a frame start, up to the CPU's overshoot, decodes the mapped
+  pages from the store (ROM read as it stands), the machine untouched; elsewhere, without a window map (a loaded
+  session) or where the windows are not what the CPU reads (the Next's 8K slots, the Sprinter's redirected
+  windows), it replays as before. POC 040 cpu-view at frame starts: W1 1372 → 22 µs, W2 1526 → 239, W3 534 → 32.
+  Test: `ttdcpuviewstore_test.cpp` on nine models (view equal to the machine after a seek; 48K, Pentagon,
+  Scorpion, Profi, ATM3, TS-Conf and +3 answer every frame start from the store).
+- B6 (uncommitted). The publish already ran once per outermost operation; its cost was the port journal's size,
+  which compressed the open block on every `GetSessionInfo`. The compressed size is now kept until the open block
+  changes. Seek W2: the publish was about 7 % of the samples, the compression half of it; seek W2 2848 → 2566 µs,
+  W3 1170 → 861 (W1 within the noise).
 - B3: little left after B1 (W1 writes-all 343 µs a frame against 272 continuous), and the verbs walk newest
   first, so there is nothing to run on from.
 
