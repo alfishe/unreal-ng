@@ -115,7 +115,7 @@ void EmulatorAPI::getPortsMap(const HttpRequestPtr& req, std::function<void(cons
     live["mouse_ports_decoded"] = mouseDecoded;
     live["mouse_routing_note"] = mouseNote;
 
-    const bool scorpion = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP);
+    const bool scorpion = IsScorpionModel(config.mem_model);
     if (scorpion)
         live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
     else

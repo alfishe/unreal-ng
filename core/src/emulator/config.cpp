@@ -1773,7 +1773,8 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
 
         case MM_SCORP:
         case MM_PROFSCORP:
-            // Scorpion ZS-256: Sinclair-matching 312 x 224T frame, INT at the ZX48
+        case MM_GMX:
+            // Scorpion ZS-256 (the GMX card keeps the host frame in its Scorpion scheme): Sinclair-matching 312 x 224T frame, INT at the ZX48
             // position (hardware-reference 6; Xpeccy and ZXMAK2: 14336T to paper).
             // Frame/t_line values read from another model's INI must not leak in.
             config.frame    = 69888;   // 224 * 312
@@ -1839,7 +1840,8 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
     if (canonicalGeometry)
     {
         // The Scorpion boards' Even M1 wait (z80.cpp) is part of the model, like its frame: only there, and only
-        // with the SC15.1 logic firmware ([MISC] ScorpionTurboLogic)
+        // with the SC15.1 logic firmware ([MISC] ScorpionTurboLogic). Not on the GMX: the fitting disconnects the
+        // host logic's WAIT line (GMX design 2.6)
         config.even_M1 = ((config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP) &&
                           config.scorpionTurboLogic == ScorpionTurboLogic::SC151) ? 1 : 0;
 
@@ -1867,6 +1869,7 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 break;
             case MM_SCORP:
             case MM_PROFSCORP:
+            case MM_GMX:
                 config.frame = 69888;   // 224 * 312
                 config.t_line = 224;
                 config.intstart = 1815;

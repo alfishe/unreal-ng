@@ -44,6 +44,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
+#include "emulator/ports/models/portdecoder_scorpiongmx.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "loaders/nex/loadernex.h"
 #include "loaders/snapshot/loaderspg.h"
@@ -1432,7 +1433,16 @@ void Emulator::RequestMNI()
     // comes from the forced TR-DOS page. The trigger releases on the first
     // CPU read from >= #4000 (Memory::MemoryReadFast). On non-Scorpion models
     // the plain NMI pulse semantics apply
-    if (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP)
+    // GMX: #7EFD bit 2 blocks the button; a press freezes the card's read-backs, then the host DD50 trigger as on
+    // every Scorpion (GMX design 2.2)
+    if (config.mem_model == MM_GMX)
+    {
+        auto* gmx = dynamic_cast<PortDecoder_ScorpionGMX*>(_context->pPortDecoder);
+        if (gmx && !gmx->OnMagicButton())
+            return;
+    }
+
+    if (IsScorpionModel(config.mem_model))
     {
         if (config.mem_model == MM_PROFSCORP)
         {

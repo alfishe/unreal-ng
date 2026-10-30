@@ -242,7 +242,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     // usual. Applies to every Scorpion configuration (MM_SCORP base ZS-256 and
     // MM_PROFSCORP alike). The effective speed changes at the next frame
     // boundary (Z80::Z80FrameCycle composes host speed x turbo)
-    switch (port & 0xC023)
+    switch (_turboPlusHost ? (port & 0xC023) : 0)
     {
         case 0x4021:
             _state->scorpion.turbo = 1;     // IN #7FFD family - 7 MHz
@@ -262,7 +262,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     // switch deferred to the frame boundary that test always saw 3.5 MHz,
     // left the "Computer speed" menu item disabled and the flip-flop stuck on
     // (profrom-service-monitor-turbo.md, profrom-nmi-gaps-and-findings.md 8.4)
-    if ((port & 0xC023) == 0x4021 || (port & 0xC023) == 0x0021)
+    if (_turboPlusHost && ((port & 0xC023) == 0x4021 || (port & 0xC023) == 0x0021))
     {
         _context->pCore->GetZ80()->ApplyHardwareTurboNow();
         SyncTurboWaits();
@@ -373,7 +373,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = port;
         disp.wasHandledInline = true;
     }
-    else if (isBeta128 && !(_state->flags & CF_TRDOS) && !(_state->p1FFD & 0x02)
+    else if (isBeta128 && !(_state->flags & (CF_TRDOS | CF_DOSPORTS)) && !(_state->p1FFD & 0x02)
              && !_state->scorpion.dosTrigger)
     {
         // Beta128 FDC off the bus: with no TR-DOS session, the Shadow Monitor
@@ -574,7 +574,8 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     // the Shadow Monitor is paged (#1FFD bit1 - the monitor talks to the FDC
     // with the session closed, hardware-reference 12.3) or the magic-button
     // DOS trigger is armed (MAME selects the same DOS I/O shadow view on it)
-    else if (isBeta128 && ((state.flags & CF_TRDOS) || (state.p1FFD & 0x02)
+    // CF_DOSPORTS also covers the GMX #1FFD bit 2 TR-DOS page (ScorpionMemory::UpdateModelBanks)
+    else if (isBeta128 && ((state.flags & (CF_TRDOS | CF_DOSPORTS)) || (state.p1FFD & 0x02)
                            || state.scorpion.dosTrigger))
     {
         // Mirrors (e.g. OUT (#3CFF),A drive-select with A on A15-A8) dispatch

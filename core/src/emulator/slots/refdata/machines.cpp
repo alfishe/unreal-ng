@@ -216,6 +216,7 @@ constexpr BuiltInDef kScorpionBuiltIns[] = {
 };
 constexpr Src kScorpionSources[] = { Src::ScorpionPortGuide, Src::ScorpionYellowReconstruction,
                                      Src::SpectrumExpert02, Src::MameScorpion };
+constexpr Src kGmxSources[] = { Src::ScorpionPortGuide, Src::ScorpionYellowReconstruction, Src::MameScorpion };
 constexpr Src kProfScorpionSources[] = { Src::ScorpionTurboPlusNetlist, Src::ScorpionProfRom, Src::ScorpionPortGuide,
                                          Src::MameScorpion };
 
@@ -500,6 +501,9 @@ constexpr MachineDef kMachines[] = {
       .builtIns = kScorpionBuiltIns, .sources = kScorpionSources },
     { .model = MM_PROFSCORP, .name = "PROFSCORP", .variant = "Scorpion ZS-256 Turbo+ with ProfROM",
       .buses = kProfScorpionBuses, .builtIns = kScorpionBuiltIns, .sources = kProfScorpionSources },
+    // The card sits in the CPU socket of a yellow board (GMX design 2.1): the host buses and built-ins stay
+    { .model = MM_GMX, .name = "GMX", .variant = "Scorpion ZS-256 with the GMX card", .buses = kScorpionBuses,
+      .builtIns = kScorpionBuiltIns, .sources = kGmxSources },
     { .model = MM_ATM450, .name = "ATM450", .variant = "ATM Turbo 2 v4.50", .buses = kAtm450Buses,
       .builtIns = kAtm450BuiltIns, .sources = kAtm450Sources },
     { .model = MM_ATM710, .name = "ATM710", .variant = "ATM Turbo 2+ v7.10", .buses = kAtm710Buses,

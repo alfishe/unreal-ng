@@ -28,11 +28,12 @@ what create requests accept). `ram_size` is validated against the model's
 | `ATM3` | ZX-Evo (ATM Turbo 3) | 4096 | creatable |
 | `SCORPION` | ZS Scorpion | 256, 1024 | creatable |
 | `PROFSCORP` | ZS Scorpion + PROF ROM | 256, 1024 | creatable |
+| `GMX` | ZS Scorpion + GMX | 2048 | creatable; the GMX card's loader (plane 0) enters the Scorpion 128 menu in plane 4, see [machines/gmx.md](../machines/gmx.md) |
 | `PROFI` (alias `PROFI5`) | Profi v5 | 512, **1024** | creatable; IDE hard disks on `ide0.master` / `ide0.slave` (see [machines/profi.md](../machines/profi.md)) |
 | `PROFI3` | Profi v3 | **512**, 1024 | creatable; Kramis BIOS, monochrome hi-res, no palette, extended ports, RTC or IDE (see [machines/profi.md](../machines/profi.md)) |
 | `TSL` (alias `TSCONF`) | TS-Config | 4096 | creatable; TS-BIOS, TSU, DMA, SD slot `sd.zc` (see [machines/tsconf.md](../machines/tsconf.md)) |
 | `SPRINTER` | Sprinter 2000 | 4096 | creatable; BIOS 3.04 on its own Z84C15, floppy, IDE, PS/2 (see [machines/sprinter.md](../machines/sprinter.md)) |
-| `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`, `NEXT` | various | — | no factory port decoder → HTTP 400 + reason, never a silent 48K fallback |
+| `KAY`, `QUORUM`, `LSY256`, `PHOENIX`, `NEXT` | various | — | no factory port decoder → HTTP 400 + reason, never a silent 48K fallback |
 
 Variants and ZX-Poly are created by name like any model and appear in the
 runtime list too:

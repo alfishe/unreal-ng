@@ -566,7 +566,7 @@ void LoaderZ80::commitFromStage()
                 // #1FFD first (+2A / +3 special paging and ROM high bit, Scorpion page bit 3):
                 // #7FFD's lock bit would block it afterwards
                 const MEM_MODEL model = _context->config.mem_model;
-                const bool has1FFD = model == MM_PLUS2A || model == MM_PLUS3 || model == MM_SCORP || model == MM_PROFSCORP;
+                const bool has1FFD = model == MM_PLUS2A || model == MM_PLUS3 || IsScorpionModel(model);
                 if (image.paging.p1FFD && has1FFD)
                 {
                     ports.DecodePortOut(0x1FFD, *image.paging.p1FFD, cpu.pc);

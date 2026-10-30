@@ -1702,7 +1702,7 @@ StateNode Contention(EmulatorContext* context)
     ret["io_rule"] = z80->ioContention ? ContentionRuleName(rule) : "none";
     // The Scorpion's waits outside the contention rule: Even M1 at 3.5 MHz, and the Turbo+ logic firmware
     ret["even_m1"] = context->config.even_M1 != 0;
-    if (context->config.mem_model == MM_SCORP || context->config.mem_model == MM_PROFSCORP)
+    if (context->config.mem_model == MM_SCORP || context->config.mem_model == MM_PROFSCORP)  // the GMX has no Turbo+ logic
         ret["scorpion_turbo_logic"] =
             context->config.scorpionTurboLogic == ScorpionTurboLogic::SC153 ? "SC15.3" : "SC15.1";
     // The ATM Turbo 2+ v7.10's RAM waits at 7 MHz (Atm710TurboOverlay): active, off (3.5 MHz) or contention_off

@@ -289,9 +289,8 @@ Screen::ModeSelection Screen::DetectVideoMode(MEM_MODEL model) const
             return DetectModeProfi(state);
         case MM_SCORP:
         case MM_PROFSCORP:
+        case MM_GMX:  // the 640x200 mode (#7EFD bit 3) lands with the GMX raster (design phase 3)
             return DetectModeScorpion(state);
-        case MM_GMX:
-            return DetectModeGMX(state);
         default:
             // Other models keep their current/legacy mode selection
             return DetectModeLegacy(state);

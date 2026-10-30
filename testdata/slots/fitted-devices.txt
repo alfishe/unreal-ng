@@ -99,6 +99,43 @@ fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
 ttd 0:77 1:72 2:34 3:21 7:20 8:85 10:216 12:137 17:50 26:83 35:52 36:16 56:22 notRecorded 0
+== gmx
+model 11
+mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+turbosound 2 fm
+gs NeoGS
+covox quad
+network.card 0 comport 0
+port 0000 00FF/0000 GMX configuration: scheme, RECONF, FIXROM, BLKEXT, INT type
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 005F FFFF/005F Beta128 FDC sector
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00FE 0023/0022 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port 1FFD D027/1025 RAM 0 at #0000, Shadow Monitor, RAM page bit 3, TR-DOS page
+port 78FD FF27/7825 GMX #8000 RAM page (stored XOR 2); IN: page, BRD1, magic bit
+port 7AFD FF27/7A25 GMX scroll start low (bits 7-4); IN: paging status, BRD0
+port 7CFD FF27/7C25 GMX scroll start high (bits 13-8)
+port 7EFD FF27/7E25 GMX turbo, ROM plane, 640x200, MagEnable; IN: status
+port 7FFD D027/5025 Memory paging (host Scorpion, after the GMX file)
+port BFFD C002/8000 AY / TurboSound data
+port DFFD FF27/DF25 GMX RAM page bits 4-6 at #C000
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FF1F FFFF/FF1F Kempston joystick interface
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+fulldecode 00FF/00C4 slot 1
+fulldecode 00FF/00C5 slot 1
+fulldecode 00FF/00C6 slot 1
+fulldecode 00FF/00C7 slot 1
+fulldecode 00FF/007E slot 1
+fulldecode 00FF/007F slot 1
+ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:34 56:22 notRecorded 0
 == next
 model 16
 mixer [Beeper] [Next AY 1] [Next AY 2] [Next AY 3] [Next DAC]

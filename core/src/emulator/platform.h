@@ -7,6 +7,7 @@
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
 #include "emulator/slots/slotconfig.h"
 #include "emulator/platforms/atm/atmstate.h"
+#include "emulator/platforms/gmx/gmxstate.h"
 #include "emulator/platforms/profi/profistate.h"
 #include "emulator/platforms/scorpion/scorpionstate.h"
 #include "emulator/platforms/zxevo/evostate.h"
@@ -361,6 +362,14 @@ enum MEM_MODEL : uint8_t
 inline constexpr bool IsProfiModel(MEM_MODEL model)
 {
 	return model == MM_PROFI || model == MM_PROFI3;
+}
+
+/// The machines built on the Scorpion ZS-256 host board: the base board, the ProfROM board and the GMX card in its
+/// CPU socket. What they share - the #7FFD / #1FFD paging, the DD50 Magic trigger, the Beta128, the SMUC - keys on
+/// this. Design: docs/inprogress/2026-10-07-gmx/design.md section 3
+inline constexpr bool IsScorpionModel(MEM_MODEL model)
+{
+	return model == MM_SCORP || model == MM_PROFSCORP || model == MM_GMX;
 }
 
 const int RAM_48 = 48, RAM_128 = 128, RAM_256 = 256, RAM_512 = 512, RAM_1024 = 1024, RAM_2048 = 2048, RAM_4096 = 4096;
@@ -1348,6 +1357,7 @@ struct EmulatorState
 	AtmState atm;             // ATM Turbo 1 / 2+ / 3, ZX-Evo BaseConf (shared by the three ATM decoders)
 	EvoState evo;             // ATM3 / ZX-Evo BaseConf decoder only
 	ScorpionState scorpion;   // Scorpion ZS-256 (Turbo+, ProfROM, SMUC)
+	GmxState gmx;             // Scorpion GMX card register file (#00, #78FD, scroller, Magic latch)
 	ProfiState profi;         // Profi (front-panel switches, hi-res palette)
 	/// endregion </Hardware-family state>
 };

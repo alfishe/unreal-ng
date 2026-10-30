@@ -40,6 +40,10 @@ protected:
     // host bus while turbo is on (SyncTurboWaits)
     std::unique_ptr<ScorpionTurboOverlay> _turboOverlay;
     bool _turboWaitsInstalled = false;
+
+    // The host Turbo+ logic drives the CPU: its IN strobes switch turbo, its waits and /INT stretch apply. False on
+    // the GMX, whose fitting cuts the host WAIT and CLOCK lines (PortDecoder_ScorpionGMX)
+    bool _turboPlusHost = true;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -58,12 +62,12 @@ public:
     /// #FF1F answers Joystick::Read()
     bool BoardHasKempstonJoystick() const override { return true; }
 
-    void SetRAMPage(uint8_t oage) override;
+    void SetRAMPage(uint8_t page) override;
     void SetROMPage(uint8_t page) override;
 
     /// Install the turbo wait-state overlay while turbo is on, remove it otherwise (the turbo switch, reset, a
     /// TTD restore, whose chipset copy sets the clock without the decoder)
-    void SyncTurboWaits();
+    virtual void SyncTurboWaits();
 
     /// Turbo+: while /INT is active the logic chip runs the CPU at 3.5 MHz (its TRB register only follows the
     /// turbo latch while INT1 is high), so the interrupt acknowledge and the start of the handler run at normal

@@ -253,7 +253,7 @@ void CLIProcessor::HandlePorts(const ClientSession& session, const std::vector<s
     ss << "  TR-DOS active: " << (((state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0) ? "yes" : "no") << NEWLINE;
     ss << "  Mouse ports: " << (mouseDecoded ? "" : "shadowed - ") << mouseNote << NEWLINE;
 
-    const bool scorpion = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP);
+    const bool scorpion = IsScorpionModel(config.mem_model);
     if (scorpion)
         ss << "  Shadow monitor paged: " << (((state.p1FFD & 0x02) != 0) ? "yes" : "no") << NEWLINE;
     else

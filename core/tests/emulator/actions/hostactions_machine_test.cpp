@@ -178,7 +178,9 @@ TEST(MachineNames_Test, ModelsVariantsAndZxPolyConfigurationsResolveAsTheManager
     EXPECT_FALSE(machines::Resolve("NO-SUCH", 0, out, error));
     EXPECT_NE(error.find("Unknown model"), std::string::npos) << error;
     EXPECT_FALSE(machines::Resolve("48KX", 0, out, error)) << "no prefix match";
-    EXPECT_FALSE(machines::Resolve("GMX", 0, out, error)) << "in the table, not creatable";
+    ASSERT_TRUE(machines::Resolve("GMX", 0, out, error)) << error << ": the Scorpion with the GMX card";
+    EXPECT_FALSE(machines::Resolve("GMX", 1024, out, error)) << "the card has 2 MB only";
+    EXPECT_FALSE(machines::Resolve("KAY", 0, out, error)) << "in the table, not creatable";
     EXPECT_NE(error.find("not creatable"), std::string::npos) << error;
     EXPECT_FALSE(machines::Resolve("48K", 1024, out, error)) << "a RAM size the 48K has not";
 }
