@@ -156,6 +156,10 @@ public:
     virtual void OnMachineParking() = 0;
     /// Z80, before an instruction, only when EmulatorContext::kStepWorkTtdInput is set
     virtual void ServiceInput() = 0;
+    /// A halted CPU's idle (Z80::RunHaltedIdle) with kStepWorkTtdInput set: the CPU T-state of this frame
+    /// ServiceInput next has work at - the idle runs only the fetches that start before it. 0: ServiceInput acts at
+    /// every boundary now (live input queued, a paused recording's end watched), UINT32_MAX: not in this frame
+    virtual uint32_t InputIdleLimit() const { return 0; }
     /// The machine left the recorded timeline from outside (reset)
     virtual void OnMachineReset() = 0;
     /// Ends a recording; the history is kept. For an operation that ends the session (reset, autostart) use EndSession

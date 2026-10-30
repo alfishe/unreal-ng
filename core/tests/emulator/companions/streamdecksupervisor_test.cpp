@@ -38,6 +38,7 @@ struct World
     bool upOnStart = true;  ///< a started daemon answers at once
     std::vector<LaunchSpec> starts;
     std::string deckPack = "scenario";  ///< the deck's icon pack setting at the daemon
+    int foreignPort = 0;                ///< another host's daemon answers on this port (pid 777), the rest as above
 
     bool Called(const std::string& prefix) const
     {
@@ -125,9 +126,10 @@ public:
     HttpResult Call(int port, const std::string& method, const std::string& path, const std::string& body,
                     int timeoutMs) override
     {
-        (void)port;
         (void)timeoutMs;
         _world.calls.push_back(method + " " + path + (body.empty() ? "" : " " + body));
+        if (port == _world.foreignPort && method == "GET" && path == "/api/v1/health")
+            return {200, R"({"ok":true,"name":"unreal-streamdeck","pid":777,"host":"http://127.0.0.1:8190"})", ""};
         if (!_world.up || _world.hung)
             return {0, "", "connection refused"};
         if (method == "GET" && path == "/api/v1/health")
@@ -402,6 +404,23 @@ TEST_F(StreamDeckSupervisor_Test, ADaemonOfAnotherHostIsLeftAlone)
     EXPECT_TRUE(_world.leases.empty());
     EXPECT_TRUE(_world.starts.empty());
     EXPECT_NE(Str(_sup.Status(), "error").find("8190"), std::string::npos);
+}
+
+TEST_F(StreamDeckSupervisor_Test, APortSettingMovesAwayFromAForeignDaemonAndStartsOursThere)
+{
+    _world.foreignPort = Settings{}.apiPort;  // another unreal-qt's daemon on the default port (a test rig's case)
+    Attach(Mode::Always);
+    At(0);
+    ASSERT_EQ(State(), "foreign");
+    std::string error;
+    StateNode port = StateNode::Object();
+    port["api_port"] = "13060";
+    ASSERT_TRUE(_sup.Update(port, error)) << error;
+    for (int64_t t = 200; t <= 2000 && State() != "running"; t += 200)
+        At(t);
+    EXPECT_EQ(State(), "running");
+    ASSERT_EQ(_world.starts.size(), 1u);
+    EXPECT_EQ(Str(_sup.Status(), "error"), "");
 }
 
 TEST_F(StreamDeckSupervisor_Test, StopAsksItToQuitTerminatesAfterTwoSecondsAndNothingStartsUntilStart)

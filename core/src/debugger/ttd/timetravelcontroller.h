@@ -666,6 +666,7 @@ public:
     /// cheap gate: EmulatorContext::kStepWorkTtdInput in stepWork): play due journal events,
     /// then apply queued live input.
     void ServiceInput() override;
+    uint32_t InputIdleLimit() const override;
 
     /// RZX playback while recording (Phase 3, Step 2): the CPU reports each
     /// RZX frame end at the end of the step that ended it (@p rzxFrame: the
@@ -1521,6 +1522,11 @@ private:
     /// only while _engineMemoryKnown holds
     TTDWrittenFn TakeWrittenSinceRestore();
 
+    /// @brief ReadCpuView at a checkpoint (a frame start the restore lands on) from the store: the four windows
+    /// the capture mapped, their pages decoded, the machine untouched. False where only a replay can tell (no
+    /// window map, a window outside the stored regions and ROM, a point past the checkpoint)
+    bool ReadCpuViewFromStore(const TTDTimePoint& at, uint16_t offset, size_t length, TTDCpuView& view);
+
 
     /// @brief Internal seek implementation without the Recording-state guard.
     ///
@@ -2042,6 +2048,13 @@ private:
     };
     std::vector<PendingInput> _pendingInput;
     std::vector<std::function<void()>> _pendingTasks;
+    /// Either queue holds something; written under _pendingInputMutex, read without it by the per-instruction
+    /// ServiceInput, which takes the mutex only when it is set
+    std::atomic<bool> _pendingQueued{false};
+    /// The replay engine's start of the frame playback last looked up (one lookup a frame, not an instruction)
+    uint64_t _inputStartFrame = UINT64_MAX;
+    TTDMachineTime _inputFrameStart = 0;
+    bool _inputFrameKnown = false;
 
     /// Position the playback cursor at the restored machine time (events
     /// journaled at exactly that time are applied by the next instruction)
