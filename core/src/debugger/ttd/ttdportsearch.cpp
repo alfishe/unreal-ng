@@ -129,6 +129,25 @@ bool ParseTime(const std::string& text, TTDTimePoint& out)
 }
 }  // namespace
 
+uint8_t KeyboardRowsRead(uint16_t port)
+{
+    return (port & 1) ? 0 : static_cast<uint8_t>(~(port >> 8));
+}
+
+std::vector<std::string> KeysSeenDown(uint16_t port, uint8_t value)
+{
+    std::vector<std::string> keys;
+    const uint8_t rows = KeyboardRowsRead(port);
+    if (rows == 0 || (rows & (rows - 1)) != 0)
+        return keys;
+    for (const KeyDescriptor& d : Keyboard::_keys)
+    {
+        if (static_cast<uint8_t>(~(d.port >> 8)) == rows && (value & ~d.match & 0x1F) == 0)
+            keys.push_back(Lower(DebugKeyboardManager::GetKeyDisplayName(d.key)));
+    }
+    return keys;
+}
+
 const char* PortDirectionName(TTDPortJournal::Direction d)
 {
     return d == TTDPortJournal::Direction::Read ? "in" : "out";

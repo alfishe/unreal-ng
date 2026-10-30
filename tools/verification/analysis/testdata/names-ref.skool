@@ -1,0 +1,22 @@
+; Synthetic reference for the names metric (decimal)
+
+; Move the horizontal guardians
+@label=MOVEHG
+c32768 LD A,1
+@label=MOVEHG_0
+ 32770 RET
+
+; Lives left
+@label=LIVES
+g32771 DEFB 3
+
+; Score
+@label=SCORE
+g32772 DEFB 0
+
+; Theme tune
+@label=TUNE
+b32773 DEFB 1
+
+; Print a message
+c32774 RET

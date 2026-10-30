@@ -26,6 +26,7 @@
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/actions/contextstate.h"
 #include "emulator/keyboardmanager.h"
+#include "platform/windowlesssession.h"
 #include "platform/windows/wheelmenu_windows.h"
 
 #ifdef ENABLE_CONTROLLERS
@@ -211,7 +212,9 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
             out.params = QString::fromStdString(event.params.Dump());
         QMetaObject::invokeMethod(this, [this, out] { emit actionTriggered(out); }, Qt::QueuedConnection);
     });
-    _service->StartNative();
+    // A windowless session opens no gamepad, HID device or Surface Dial: they are the person's at the desk
+    if (WindowlessSessionUses("controllers"))
+        _service->StartNative();
     // The host verbs of the automation surfaces run here, on the GUI thread
     _controlOwner = std::make_unique<ControlOwner>(*this);
     HostInputControl::SetOwner(_controlOwner.get(), [](const std::function<void()>& task) {

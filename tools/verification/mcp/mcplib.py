@@ -101,12 +101,16 @@ class Session:
     def tools(self):
         return {t['name']: t for t in self.rpc('tools/list')['result']['tools']}
 
-    def fresh_machine(self, model=None):
-        """Destroys every instance and creates one: each script starts from a known machine"""
+    def fresh_machine(self, model=None, ram_power_on=None):
+        """Destroys every instance and creates one: each script starts from a known machine (@p ram_power_on 'zero':
+        RAM all zeros, a reproducible run)"""
         listing = self.call('emulator_manage', {'action': 'list'}, ok=False)
         for emulator in (listing.structured or {}).get('emulators', []):
             self.call('emulator_manage', {'action': 'destroy', 'target': emulator['id']}, ok=False)
-        self.call('emulator_manage', {'action': 'create', 'model': model or self.model})
+        create = {'action': 'create', 'model': model or self.model}
+        if ram_power_on:
+            create['ram_power_on'] = ram_power_on
+        self.call('emulator_manage', create)
         self.call('emulator_manage', {'action': 'start'}, ok=False)  # create starts it on most builds
         # Silent: a verification run makes no sound on the host
         self.call('invoke_api', {'method': 'PUT', 'path': '/api/v1/emulator/{id}/audio/mixer/master',

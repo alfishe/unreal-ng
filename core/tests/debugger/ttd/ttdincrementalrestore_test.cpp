@@ -2,6 +2,9 @@
 // KnownMemoryScope a restore decodes only the pieces written since the previous restore and those whose version
 // differs, and leaves memory exactly as a full restore does. Outside the scope every restore starts from nothing.
 //
+// A second case runs a Pentagon with its sound cards: their memory (NeoGS RAM, MoonSound wave memory) is engine
+// regions, written by the cards' own engines during the replay, and must come back the same way.
+//
 // The program sweeps `inc (hl)` over page 0 (bank 3), about 1,400 bytes a frame, so neighbouring checkpoints differ
 // in a few pieces and far ones in many.
 
@@ -11,8 +14,10 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/soundcardscope.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/timetravelengine.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -133,5 +138,65 @@ TEST_F(TTDIncrementalRestore_Test, LiveStatePutBackForgetsTheKnownMemory)
     ASSERT_TRUE(_ttd->SeekTo(ttd::TTDTimePoint{8, 0}));
     ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(6));
     EXPECT_EQ(_ttd->LastMemoryRestoreStats().piecesSkipped, 0u);
+}
+
+// Every engine region (machine RAM and the cards' memory) after an incremental restore equals a full restore's,
+// while the cards run between the restores as in a verb's replay
+TEST(TTDIncrementalRestoreCards_Test, CardMemoryEqualsFullRestores)
+{
+    SoundCardScope sound(TestSound::GeneralSound | TestSound::MoonSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    context->pFeatureManager->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+    emulator->EnableTurboMode();
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
+    ASSERT_NE(ttd, nullptr);
+    ASSERT_TRUE(ttd->StartRecording());
+    emulator->RunNFrames(kFrames, /*skipBreakpoints=*/true);
+    ttd->StopRecording();
+
+    // Regions restored through their device (no live memory pointer) are left out
+    std::vector<ttd::TTDRegionDesc> regions;
+    size_t cardRegions = 0;
+    for (const ttd::TTDRegionDesc& r : ttd->GetEngine().Regions())
+    {
+        if (!r.memory || r.bytes == 0)
+            continue;
+        regions.push_back(r);
+        if (r.ownerType != ttd::TTDRegionDesc::kNoOwner)
+            cardRegions++;
+    }
+    ASSERT_GE(cardRegions, 2u) << "the cards' memory is no engine region";
+    auto memory = [&regions]() {
+        std::vector<std::vector<uint8_t>> all;
+        for (const ttd::TTDRegionDesc& r : regions)
+            all.emplace_back(r.memory, r.memory + r.bytes);
+        return all;
+    };
+
+    const std::vector<size_t> order = {2, 3, 15, 4, 25, 25, 1};
+    std::vector<std::vector<std::vector<uint8_t>>> expected;
+    for (size_t idx : order)
+    {
+        ASSERT_TRUE(ttd->RestoreCheckpointForTesting(idx));
+        expected.push_back(memory());
+    }
+    {
+        const ttd::TimeTravelController::KnownMemoryScope known(*ttd);
+        for (size_t k = 0; k < order.size(); k++)
+        {
+            ASSERT_TRUE(ttd->RestoreCheckpointForTesting(order[k]));
+            const std::vector<std::vector<uint8_t>> now = memory();
+            for (size_t r = 0; r < regions.size(); r++)
+                ASSERT_TRUE(now[r] == expected[k][r]) << "region " << r << " after checkpoint " << order[k];
+            // The machine and its cards run on, writing their memory, as a verb's replay of the frame does
+            ttd::TimeTravelController::ReplayModeScope replay(*ttd);
+            emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+        }
+    }
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 }  // namespace

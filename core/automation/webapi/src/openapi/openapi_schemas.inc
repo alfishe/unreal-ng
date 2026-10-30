@@ -1372,6 +1372,11 @@
         "A .ttd file on the emulator's machine to search instead of the current session. It is read and "
         "checked like a load but not loaded: the session is untouched, and it works while recording. "
         "400 when the file cannot be read or has no port journals";
+    schemas["TTDPortEventsRequest"]["properties"]["context"]["type"] = "boolean";
+    schemas["TTDPortEventsRequest"]["properties"]["context"]["description"] =
+        "Each hit's registers and stack_top at its IN / OUT instruction, replayed with the machine put back. Default "
+        "on, off while a recording runs (true pauses it, as browsing does) and for a file (true: 400); the v1 backend "
+        "has none (true: 501)";
 
     schemas["TTDPortEventHit"]["type"] = "object";
     schemas["TTDPortEventHit"]["properties"]["index"]["type"] = "integer";
@@ -1386,6 +1391,26 @@
     schemas["TTDPortEventHit"]["properties"]["pc"]["description"] = "Address of the IN / OUT instruction";
     schemas["TTDPortEventHit"]["properties"]["ay_register"]["type"] = "integer";
     schemas["TTDPortEventHit"]["properties"]["ay_register"]["description"] = "AY register selected at the access (AY queries only)";
+    schemas["TTDPortEventHit"]["properties"]["rows"]["type"] = "integer";
+    schemas["TTDPortEventHit"]["properties"]["rows"]["description"] =
+        "A read of the ULA (even port): the keyboard half-rows its address selects, bit n = A(8+n) low "
+        "(0 = CAPS..V, 7 = SPACE..B)";
+    schemas["TTDPortEventHit"]["properties"]["keys"]["type"] = "array";
+    schemas["TTDPortEventHit"]["properties"]["keys"]["items"]["type"] = "string";
+    schemas["TTDPortEventHit"]["properties"]["keys"]["description"] =
+        "A read of the ULA: the keys it saw down, by the names 'key' takes; empty when it read several half-rows "
+        "(a 0 bit cannot tell their keys apart)";
+    schemas["TTDPortEventHit"]["properties"]["registers"]["type"] = "object";
+    for (const char* r : {"af", "bc", "de", "hl", "ix", "iy", "sp"})
+        schemas["TTDPortEventHit"]["properties"]["registers"]["properties"][r]["type"] = "integer";
+    schemas["TTDPortEventHit"]["properties"]["registers"]["description"] =
+        "context: the registers at the instruction's M1, before it ran";
+    schemas["TTDPortEventHit"]["properties"]["stack_top"]["type"] = "integer";
+    schemas["TTDPortEventHit"]["properties"]["stack_top"]["description"] =
+        "context: the word at SP - the caller's return address when the routine pushed nothing";
+    schemas["TTDPortEventHit"]["properties"]["context_error"]["type"] = "string";
+    schemas["TTDPortEventHit"]["properties"]["context_error"]["description"] =
+        "context: why this hit has none (a replay barrier before it)";
 
     schemas["TTDPortEventsResponse"]["type"] = "object";
     schemas["TTDPortEventsResponse"]["properties"]["event"]["type"] = "string";
@@ -1397,6 +1422,8 @@
     schemas["TTDPortEventsResponse"]["properties"]["truncated"]["description"] = "More hits than 'limit'";
     schemas["TTDPortEventsResponse"]["properties"]["scanned"]["type"] = "integer";
     schemas["TTDPortEventsResponse"]["properties"]["scanned"]["description"] = "Journal records examined";
+    schemas["TTDPortEventsResponse"]["properties"]["context"]["type"] = "boolean";
+    schemas["TTDPortEventsResponse"]["properties"]["context"]["description"] = "The hits carry registers and stack_top";
     schemas["TTDPortEventsResponse"]["properties"]["hits"]["type"] = "array";
     schemas["TTDPortEventsResponse"]["properties"]["hits"]["items"]["$ref"] = "#/components/schemas/TTDPortEventHit";
 

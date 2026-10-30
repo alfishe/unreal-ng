@@ -23,6 +23,8 @@
 /// | `debug.buffers` | an instance | How full each trace buffer is, at most once a second: `opcode`, `calltrace`, `calltrace_hot`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `coverage` (addresses run of 65536) each {used, capacity, slot_bytes, used_bytes, capacity_bytes, percent} (a buffer not allocated is absent); `ttd` {history_bytes, limit_bytes, limit_frames, memory_bytes, checkpoints, write_journal_records, write_journal_bytes} |
 /// | `debug.analyzers` | an instance | opcode, memory, calltrace (stopped / capturing / paused), coverage {available, recording, instructions}, pchist (armed / off) |
 /// | `controllers.state` | an instance | available, connectors [{id, kind, device, plugged, fixed}], plugged |
+/// | `analysis.progress` | an instance | The `analysis build` job (analysisjobs.h): job, state (none, running, done, failed, cancelled), frames_done, frames_total, percent, error |
+/// | `analysis.ready` | an instance | The L1 the last build made: ready, job, routines, blocks, loops, instructions, frames, checked, diverged, path |
 /// | `game.events` | an instance | The game's events (gameevents.h; the play profile's `events:` / `haptics.sources`, live frames only): available, profile, frame, seq, events {<name>: {kind (event / level), fires, last_frame, level, value (the watched byte or word, else null)}} (by name: a readout path reaches one), recent [{seq, frame, name}] (the last 64 fired, oldest first) |
 /// | `debug.watches` | an instance | The memory watches (memorywatch.h) as published at the last frame's end: available, session (stopped / capturing / paused), revision, watches [{name, kind (region / port), start + length or port + mask, reads, writes, executes (regions)}] |
 ///

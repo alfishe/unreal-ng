@@ -1194,6 +1194,8 @@ local r = ttd_reverse_continue({0x8000, 0x8010})
 -- from_frame. all = true: every hit newest first, the machine stays
 local hits = ttd_reverse_continue({0xC000}, { phys_page = 3, all = true, limit = 500 })
 -- --> { hits = { {frame, tinframe, t, pc, phys_page}, ... }, count, truncated, next_before, ... }
+-- first_per_pc = true: one hit per PC (its newest), the walk ends once each has one; pcs_without_hit names the rest
+local last = ttd_reverse_continue({0x8200, 0x9A10, 0xC000}, { first_per_pc = true })
 ```
 
 **Reverse search:**
@@ -1324,12 +1326,20 @@ local runs = ttd_coverage_scan{kind = "executed", addr_from = 0x8200, addr_to = 
 -- The Sprinter's video RAM by its own offsets (space = "vram" / "cache": inside one 16 KB page)
 local written = ttd_coverage_scan{kind = "written", space = "vram", addr_from = 0x4805, addr_to = 0x4805}
 
+-- Rare code in one call: addresses executed in at most max_frames frames, as blocks with those frames
+local rare = ttd_coverage_rare{max_frames = 2, addr_from = 0x8000, addr_to = 0xFFFF, limit = 50}
+-- { rare_keys = 41, distinct_keys = 2310, rare_blocks = 6, truncated = false,
+--   blocks = { {addr_from = "0x9A10", addr_to = "0x9A2C", phys_page = 2, page_offset_from = "0x1A10", ...,
+--               keys = 11, frame_count = 1, frames = {1834}}, ... } }
+
 -- A memory at a past checkpoint, and what changed between two - from the store, no seek
 local at = ttd_memory_at{space = "ram5", frame = 150, offset = 0x1C78, length = 2}   -- tinframe = T: inside the frame (ram, vram, cache)
 -- { space = "ram", offset = 89208, length = 2, frame = 150, at_frame = 150, exact = true, hex = "6500" }
 -- ram / ramN offsets are physical; space = "cpu": Z80 addresses as the CPU saw them, with banks = {{window, addr,
 -- kind, page, name}, ...}
 local cpu = ttd_memory_at{space = "cpu", frame = 150, tinframe = 20000, offset = 0xC000, length = 16}
+-- Without frame: the machine now (live = true, at_tinframe), no recording needed
+local now = ttd_memory_at{space = "cpu", offset = 0x5C00, length = 64}
 local diff = ttd_memory_diff{space = "neogs.ram", from_frame = 150, to_frame = 600}
 -- { space = "neogs.ram", changed_bytes = ..., ranges = { {offset = 4096, length = 64}, ... }, truncated = false }
 
@@ -1543,6 +1553,47 @@ emu.listing_load("game.lst")
 emu.listing_source_at()              -- source line at PC; emu.listing_source_at(0x8100)
 emu.listing_step_line()              -- run until the source line changes (~2 s budget)
 emu.listing_run_to_line(120)         -- run to first code byte of line 120 (~10 s budget)
+```
+
+### Analysis layers
+
+The L0 access facts, the L1 build and the L2 structure of the [analysis layers](../../analysis/analysis-layers.md) through the shared
+core handler (`analysis::Execute`): the answer is a table of its fields plus `text` (the CLI's lines); a refusal is
+`{ ok = false, error = <why> }`.
+
+```lua
+emu.analysis("start")                                -- level facts, mode z80, a fresh session
+emu.analysis("start", {level = "counters", mode = "physical"})
+emu.analysis("start", "counters")                    -- a string: the level
+emu.analysis("status")                               -- { state, level, mode, frame, facts, text }
+local r = emu.analysis("explain", "$80BC")           -- a string: the address (or a label)
+print(r.text)
+emu.analysis("explain", {address = 0xC000, page = "ram:3"})   -- physical mode: the page
+emu.analysis("stop")                                 -- the facts stay readable
+
+-- L1: record, build from the recording (a job), then routine fact sheets
+emu.analysis("start", {record = true})               -- also a TTD recording
+emu.analysis("build", {wait = 20000})                -- { job, state, bundle, progress, ready, text }; frames, path
+emu.analysis("build", "500")                         -- a string: the frames to replay
+local sheet = emu.analysis("explain", "$0038")       -- L1 ready: { what = "routine", routine, text = the sheet }
+emu.analysis("explain", {address = 0x38, what = "byte"})
+emu.analysis("cancel")                               -- a running build; refused when none runs
+
+-- L2 (made by the build): the detectors' claims and the draft
+emu.analysis("query", {kind = "records", range = "8000-83FF", limit = 20})  -- { kind, range, regions, count, truncated, text }
+emu.analysis("query", "conflicts")                   -- a string: the kind
+local ctl = emu.analysis("export", "ctl")            -- a string: the format; ctl.content is the file
+emu.analysis("export", {format = "skool", path = "game.skool", ranges = "5900-59FF,8000-FFFF", width = 8})
+emu.analysis("gallery", {kind = "sprite"})           -- the graphics found: { regions, count, truncated, text }
+local g = emu.analysis("gallery", "$8200")           -- a string: the address; g.png is the PNG (base64)
+emu.analysis("gallery", {address = 0x8200, scale = 4, path = "sprite.png"})
+
+-- L3 (the review): findings register, review queue, experiments on muted clones, directed coverage
+emu.analysis("findings", {kind = "bug"})             -- { count, total, by_kind, by_status, findings, text }
+local item = emu.analysis("review")                  -- the next item: { item, sheet, sheet_bytes, queue, text }
+emu.analysis("review", {op = "resolve", id = item.item.id, verdict = "ok", label = "MainLoop"})
+emu.analysis("experiment", '{"poke": {"$8100": 5}, "frames": 50, "expect": {"mem:$8101": "$AA"}}')  -- the spec as JSON text
+emu.analysis("cover", "32")                          -- a string: the budget
 ```
 
 ## Usage Examples

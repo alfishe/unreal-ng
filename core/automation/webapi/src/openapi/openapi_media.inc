@@ -66,7 +66,7 @@
         Json::Value& files = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["get"];
         files["summary"] = "The files on a slot's disk: volumes / files / read (read only)";
         files["description"] =
-            "The file systems on the disk in a slot, one way for all of them: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MB-01 (read only) and MDOS floppies, "
+            "The file systems on the disk in a slot, one way for all of them: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MB-01 and MDOS floppies, "
             "FAT12 floppies (Sprinter DSS, MS-DOS), the FAT partitions of hard disks and SD cards (Estex DSS, NedoOS) and "
             "the ATM CP/M partitions and iS-DOS / TASiS devices (a descriptor at a cylinder boundary) of an ATM-Turbo hard disk, the MDOS3 virtual disks and BS-DOS 309 floppies (a #47 partition) of a divIDE one. "
             "volumes: reply field 'volumes' (id, fs, system, label, offset, bytes, freeBytes). "
@@ -127,10 +127,10 @@
             "NAME.TYP, iS-DOS, FAT), an older file of that name replaced: the bytes as base64 'data', a host file "
             "'in', or the body itself (application/octet-stream, ?path=NAME.T). delete removes a file or an empty "
             "iS-DOS / FAT directory (recursive: a directory with its contents); rename takes 'to': a bare name stays "
-            "in the directory, a path from the root (/name: the root) moves the file or directory (iS-DOS, FAT, MB-02; ATM CP/M to a user area); "
+            "in the directory, a path from the root (/name: the root) moves the file or directory (iS-DOS, FAT, MB-02 / MB-01; ATM CP/M to a user area); "
             "mkdir makes a directory (parents: the missing ones on the way too; iS-DOS: continuous, blocks 1-16); attrib sets a file's or directory's "
             "'attributes' (+R-H changes, RA sets exactly: FAT RHSA, iS-DOS RWHD, +3DOS and ATM CP/M RSA, MDOS HSPARWED) and / or 'time' (FAT, "
-            "iS-DOS, MB-02); label names the volume ('label': FAT volume label, TR-DOS disk title, iS-DOS device name, MB-02 or MDOS disk name). The reply's access says where the change went: writethrough is in the "
+            "iS-DOS, MB-02 / MB-01); label names the volume ('label': FAT volume label, TR-DOS disk title, iS-DOS device name, MB-02 / MB-01 or MDOS disk name). The reply's access says where the change went: writethrough is in the "
             "disk's file, session is dirty until saved. "
             "Options go in the JSON body or the query string:" + verbs;
         post["tags"].append("Media");
@@ -169,7 +169,7 @@
             "attrib: the volume's attribute letters (volumes lists them): '+R-H' sets and clears, 'RA' leaves exactly these; "
             "write: the same, set once the file is written";
         body["properties"]["time"]["type"] = "string";
-        body["properties"]["time"]["description"] = "attrib: the date and time (FAT, iS-DOS, MB-02): '2026-10-26 14:30[:05]', 'now' or UTC seconds";
+        body["properties"]["time"]["description"] = "attrib: the date and time (FAT, iS-DOS, MB-02 / MB-01): '2026-10-26 14:30[:05]', 'now' or UTC seconds";
         body["properties"]["label"]["type"] = "string";
         body["properties"]["label"]["description"] = "label: the volume's new name (empty removes a FAT label)";
         body["properties"]["out"]["type"] = "string";
@@ -180,13 +180,13 @@
         body["properties"]["in"]["description"] = "write: the file's bytes from this host file";
         body["properties"]["start"]["type"] = "string";
         body["properties"]["start"]["description"] =
-            "write: the TR-DOS / MDOS start, the +3DOS / MB-02 CODE address or program autostart line, the iS-DOS load address: 32768, 0x8000 or #8000";
+            "write: the TR-DOS / MDOS start, the +3DOS / MB-02 / MB-01 CODE address or program autostart line, the iS-DOS load address: 32768, 0x8000 or #8000";
         body["properties"]["type"]["type"] = "string";
         body["properties"]["type"]["description"] =
-            "write: the header's type: program, numbers, chars or code (+3DOS; MB-02 program or code; left out: code)";
+            "write: the header's type: program, numbers, chars or code (+3DOS; MB-02 / MB-01 program or code; left out: code)";
         body["properties"]["param2"]["type"] = "string";
         body["properties"]["param2"]["description"] =
-            "write: +3DOS, MB-02, MDOS: the header's param 2 (left out: a program's length, i.e. no variables; else 32768)";
+            "write: +3DOS, MB-02 / MB-01, MDOS: the header's param 2 (left out: a program's length, i.e. no variables; else 32768)";
         body["properties"]["header"]["type"] = "boolean";
         body["properties"]["header"]["description"] = "write: +3DOS: false leaves out the 128-byte +3DOS header";
         body["properties"]["descriptor"]["type"] = "object";

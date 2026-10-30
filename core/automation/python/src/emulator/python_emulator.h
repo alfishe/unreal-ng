@@ -68,6 +68,7 @@
 #include <set>
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
+#include "debugger/analyzers/analysis/analysiscontrol.h"
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
 #include "debugger/asm/asmcontrol.h"
@@ -2553,7 +2554,7 @@ namespace PythonBindings
                  py::arg("slot"), "A composite medium's layers and layout")
             .def("media_changes", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "changes", slot, "", py::kwargs()); },
                  py::arg("slot"), "The guest's unsaved writes as file operations, with the layer each touched")
-            // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT (DSS, NedoOS); write, delete, rename, mkdir, attrib, label
+            // The files on a slot's disk (DiskFs): TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02 / MB-01, MDOS, FAT (DSS, NedoOS); write, delete, rename, mkdir, attrib, label
             .def("media_volumes", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "volumes", slot, "", py::kwargs()); },
                  py::arg("slot"), "The file systems on the disk in a slot (floppy, hard disk, SD card)")
             .def("media_files", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
@@ -2595,7 +2596,7 @@ namespace PythonBindings
                  "Delete a file or an empty iS-DOS / FAT directory on the disk (volume=, recursive=True: a directory with its contents)")
             .def("media_mkdir", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "mkdir", slot, path, options);
-                 }, py::arg("slot"), py::arg("path"), "A new directory on the disk: FAT, iS-DOS catalogue, MB-02 (volume=, parents=True; iS-DOS: continuous=True, blocks=1-16)")
+                 }, py::arg("slot"), py::arg("path"), "A new directory on the disk: FAT, iS-DOS catalogue, MB-02 / MB-01 (volume=, parents=True; iS-DOS: continuous=True, blocks=1-16)")
             .def("media_attrib", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "attrib", slot, path, options);
                  }, py::arg("slot"), py::arg("path"), "A file's attributes and time: attributes='+R-H' or 'RA', time='2026-10-26 14:30' (volume=)")
@@ -3588,6 +3589,46 @@ namespace PythonBindings
                "(on='press'), up ('release') or both. Returns the id",
                py::arg("key") = "any", py::arg("on") = "press", py::arg("hits") = "", py::arg("group") = "",
                py::arg("note") = "")
+            .def("analysis", [](Emulator& self, const std::string& action, const py::kwargs& kwargs) -> py::object {
+                analysis::Options options;
+                for (const auto& [key, value] : kwargs)
+                {
+                    // An experiment spec or a naming batch's names may be a dict or a list: JSON text for
+                    // analysis::Execute
+                    if (py::isinstance<py::dict>(value) || py::isinstance<py::list>(value))
+                        options[py::str(key).cast<std::string>()] =
+                            py::module_::import("json").attr("dumps")(value).cast<std::string>();
+                    else
+                        options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                }
+                const analysis::Reply reply = analysis::Execute(self, action, options);
+                StateNode value = reply.ToValue();
+                if (!reply.Ok())
+                {
+                    value = StateNode::Object();
+                    value["ok"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Analysis layers (analysiscontrol.h): action start (level='facts' | 'counters', mode='z80' | 'physical', "
+               "record=True for L1) | stop | status | build (frames=N, path='l1.json', wait=ms: replay the recording "
+               "into L1) | cancel | explain (address='$80BC' or a label, page='ram:3', what='auto' | 'routine' | "
+               "'byte': a routine's fact sheet or a byte's facts) | query (kind='all' | 'conflicts' | 'records' | ..., "
+               "range='8000-83FF', limit=200: L2 claims) | export (format='ctl' | 'skool' | 'fields' | 'geometry' | "
+               "'layout' | 'symbols' | 'map', path='game.ctl', ranges='5900-59FF,8000-FFFF', width=8: the L2 draft) | "
+               "gallery (kind='sprite' | 'tile' | 'font' | 'screen' | 'level_map', address='$8200' or a label, "
+               "scale=2, path='sprite.png', limit=200: the L2 graphics, one drawn as a PNG, base64 in png) | "
+               "findings (op='list' | 'add', kind=, status=, range=, format='table' | 'markdown' | 'jsonl', path=: "
+               "the L3 findings register) | review (op='next' | 'list' | 'show' | 'resolve', id='F12', verdict='ok' | "
+               "'wrong' | 'skip', label=, title=, comment=, kind='code' | 'text' | ..., experiment=spec, "
+               "names={'$9000': 'PlayerY'} for a naming batch id='N3', reason='entry' | 'name' | ..., offset=N, "
+               "limit=N: the review queue) | experiment (spec=a "
+               "dict or a list of dicts, or path='e.json', finding='F12', parallel=N: poke / regs / input, N frames, "
+               "checks on a muted clone) | cover (budget=64, per_branch=8, frames=50, ranges=: flip one-sided "
+               "branches). "
+               "The reply's fields plus text (the readable answer); "
+               "a refusal: ok = False, error = why",
+               py::arg("action") = "status")
             .def("trace", [](Emulator& self, const std::string& name, const std::string& op, const py::kwargs& kwargs) -> py::object {
                 tracecontrol::Options options;
                 for (const auto& [key, value] : kwargs)
@@ -6275,7 +6316,8 @@ namespace PythonBindings
             }, "When did the program ...: search the port journals for an event (key, ear, ay-read, ay-write, "
                "ay-select, border, beeper, in, out) with an optional argument (a key name, an AY register) and "
                "options (limit, newest, from, to, port, port_mask, value, value_mask, match, trigger, ay_register; "
-               "file= searches a .ttd on disk without loading it)",
+               "file= searches a .ttd on disk without loading it; context= each hit's registers and stack_top at "
+               "its instruction, replayed, default on except while recording); keyboard reads carry rows and keys",
                py::arg("event"), py::arg("arg") = py::none())
 
             .def("ttd_find_last", [](Emulator& self, py::object addrObj,
@@ -6369,7 +6411,7 @@ namespace PythonBindings
                 for (uint16_t pc : pcs)
                     list += (list.empty() ? "" : ",") + std::to_string(pc);
                 std::map<std::string, std::string> options{{"pcs", list}};
-                // phys_page, all, limit, before_frame, before_tin, before, from_frame
+                // phys_page, all, first_per_pc, limit, before_frame, before_tin, before, from_frame
                 TtdKwargsPy(options, kwargs);
                 const ttd::TTDReply reply = TtdRunPy(self, "reverse-continue", options);
                 if (reply.error == ttd::TTDControlError::BadRequest)
@@ -6385,7 +6427,8 @@ namespace PythonBindings
                     return py::none();
                 return StateNodeToPy(reply.body);
             }, "Run backward until any PC matches; returns dict or None. Keywords: phys_page (a page or 'rom'), "
-               "all=True (every hit newest first, the machine stays), limit, before_frame / before_tin or before "
+               "all=True (every hit newest first, the machine stays), first_per_pc=True (one hit per PC, its newest), "
+               "limit, before_frame / before_tin or before "
                "(at or before), from_frame (not older)",
                py::arg("pcs"))
 
@@ -6424,13 +6467,35 @@ namespace PythonBindings
                 py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(), py::arg("limit") = 200,
                 py::arg("space") = py::none())
 
+            .def("ttd_coverage_rare", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj, uint32_t maxFrames,
+                                         const std::string& kindStr, uint32_t addrFrom, uint32_t addrTo,
+                                         py::object pageObj, size_t limit, py::object spaceObj) -> py::object {
+                std::map<std::string, std::string> options{
+                    {"from_frame", std::to_string(fromFrame)}, {"max_frames", std::to_string(maxFrames)},
+                    {"kind", kindStr}, {"addr_from", std::to_string(addrFrom)}, {"addr_to", std::to_string(addrTo)},
+                    {"limit", std::to_string(limit)}};
+                if (!toFrameObj.is_none())
+                    options["to_frame"] = TtdOptionTextPy(toFrameObj);
+                if (!pageObj.is_none())
+                    options["phys_page"] = TtdOptionTextPy(pageObj);
+                if (!spaceObj.is_none())
+                    options["space"] = py::str(spaceObj).cast<std::string>();
+                return TtdCoveragePy(TtdRunPy(self, "coverage-rare", options));
+            }, "Blocks of the address range touched in at most max_frames frames of from_frame..to_frame, with "
+               "those frames, rarest first (coverage index, one call)",
+                py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("max_frames") = 1,
+                py::arg("kind") = "executed", py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF,
+                py::arg("phys_page") = py::none(), py::arg("limit") = 200, py::arg("space") = py::none())
+
             // A memory at a past checkpoint and what changed between two, from the store (no seek). A bad
             // argument raises ValueError; a refusal (no history, backend v1) is a dict with error
-            .def("ttd_memory_at", [](Emulator& self, const std::string& space, uint64_t frame, py::object offsetObj,
+            .def("ttd_memory_at", [](Emulator& self, const std::string& space, py::object frameObj, py::object offsetObj,
                                      uint32_t length, uint32_t tinframe) -> py::object {
                 std::map<std::string, std::string> options{
-                    {"space", space}, {"frame", std::to_string(frame)}, {"length", std::to_string(length)},
-                    {"tinframe", std::to_string(tinframe)}};
+                    {"space", space}, {"length", std::to_string(length)}, {"tinframe", std::to_string(tinframe)}};
+                // space='cpu' without frame: the machine now
+                if (!frameObj.is_none())
+                    options["frame"] = TtdOptionTextPy(frameObj);
                 if (!offsetObj.is_none())
                     options["offset"] = TtdOptionTextPy(offsetObj);
                 const ttd::TTDReply reply = TtdRunPy(self, "memory-at", options);
@@ -6440,8 +6505,9 @@ namespace PythonBindings
                 if (!reply.Ok())
                     value["error"] = reply.message;
                 return StateNodeToPy(value);
-            }, "A memory as it was at the checkpoint at or before frame: {space, offset, length, at_frame, exact, hex}",
-                py::arg("space"), py::arg("frame"), py::arg("offset") = py::none(), py::arg("length") = 256,
+            }, "A memory as it was at the checkpoint at or before frame: {space, offset, length, at_frame, exact, hex}; "
+               "space='cpu' without frame: the machine now (live=True)",
+                py::arg("space"), py::arg("frame") = py::none(), py::arg("offset") = py::none(), py::arg("length") = 256,
                 py::arg("tinframe") = 0)
 
             .def("ttd_memory_diff", [](Emulator& self, const std::string& space, uint64_t fromFrame, uint64_t toFrame,

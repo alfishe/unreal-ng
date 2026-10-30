@@ -53,6 +53,20 @@ void ClientStats::Dropped(ClientPlane plane)
     _counters[static_cast<size_t>(plane)].dropped.fetch_add(1, std::memory_order_relaxed);
 }
 
+void ClientStats::ToolCall(const std::string& tool, const std::string& action)
+{
+    std::lock_guard<std::mutex> lock(_toolMutex);
+    ToolCallCounts& counts = _toolCalls[tool];
+    counts.calls++;
+    counts.actions[action]++;
+}
+
+std::map<std::string, ToolCallCounts> ClientStats::ReadToolCalls() const
+{
+    std::lock_guard<std::mutex> lock(_toolMutex);
+    return _toolCalls;
+}
+
 ClientCounts ClientStats::Read(ClientPlane plane) const
 {
     const Counters& counters = _counters[static_cast<size_t>(plane)];
@@ -73,6 +87,8 @@ void ClientStats::Reset()
         counters.requests.store(0, std::memory_order_relaxed);
         counters.dropped.store(0, std::memory_order_relaxed);
     }
+    std::lock_guard<std::mutex> lock(_toolMutex);
+    _toolCalls.clear();
 }
 
 }  // namespace monitoring

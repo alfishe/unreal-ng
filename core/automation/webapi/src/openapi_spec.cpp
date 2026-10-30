@@ -65,6 +65,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_ports.inc"
 #include "openapi/openapi_analyzers.inc"
 #include "openapi/openapi_analysis.inc"
+#include "openapi/openapi_analysislayers.inc"
 #include "openapi/openapi_video.inc"
 #include "openapi/openapi_temporal.inc"
 #include "openapi/openapi_window.inc"

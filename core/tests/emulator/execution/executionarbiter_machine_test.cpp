@@ -637,24 +637,29 @@ TEST_F(ExecutionArbiterMachine_Test, ALongDirectRunLetsAHoldInBetweenFrames)
 {
     const unsigned frames = 200;  // long enough that a hold asked at its start would otherwise wait for most of it
     ASSERT_TRUE(PausedForCounting(_emulator));  // the running fixture would add frames before the run starts
-    const uint64_t before = Frame(_emulator);
-    std::atomic<bool> runDone{false};
-    TestThread run([&]() {
-        _emulator->RunNFrames(frames, true);
-        runDone = true;
-    });
-    ASSERT_TRUE(TestWait::For([&]() { return _emulator->IsDirectStepping(); }));
-
+    // A loaded machine can deschedule this thread until the run is over: then the race did not happen, the next run
+    // tries again (a hold that waited for the whole run fails every attempt)
     bool heldDuringTheRun = false;
+    for (int attempt = 0; attempt < 5 && !heldDuringTheRun; ++attempt)
     {
-        Emulator::CpuHold hold(*_emulator, "ttd stop");
-        EXPECT_TRUE(hold.Held());
-        heldDuringTheRun = !runDone.load() && _emulator->IsDirectStepping();
-        EXPECT_TRUE(_emulator->IsEmulationParked() || _emulator->IsDirectStepping());
+        const uint64_t before = Frame(_emulator);
+        std::atomic<bool> runDone{false};
+        TestThread run([&]() {
+            _emulator->RunNFrames(frames, true);
+            runDone = true;
+        });
+        ASSERT_TRUE(TestWait::For([&]() { return _emulator->IsDirectStepping() || runDone.load(); }));
+        {
+            Emulator::CpuHold hold(*_emulator, "ttd stop");
+            EXPECT_TRUE(hold.Held());
+            heldDuringTheRun = !runDone.load() && _emulator->IsDirectStepping();
+            if (heldDuringTheRun)
+                EXPECT_TRUE(_emulator->IsEmulationParked() || _emulator->IsDirectStepping());
+        }
+        run.Join();
+        EXPECT_EQ(Frame(_emulator), before + frames) << "the run ran exactly its frames around the lent hold";
     }
-    run.Join();
     EXPECT_TRUE(heldDuringTheRun) << "the hold waited for the whole run instead of a frame boundary";
-    EXPECT_EQ(Frame(_emulator), before + frames) << "the run ran exactly its frames around the lent hold";
 }
 
 /// What the run does not lend to: a pause (it stays queued and applies at the run's end) and another direct run

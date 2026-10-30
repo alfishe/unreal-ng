@@ -64,6 +64,7 @@
 #include "controllers/guiactions.h"
 #include "emulator/actions/actionregistry.h"
 #include "controllers/hostcontrollers.h"
+#include "platform/windowlesssession.h"
 #include "controllers/surfacestatusicon.h"
 #include "controllers/streamdeckpage.h"
 #include "controllers/surfacetargets.h"
@@ -323,6 +324,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     {
         QMutexLocker locker(&_audioMutex);
+        // A windowless session is heard by nobody (agents, tests): silent, the device still the clock
+        _soundManager->setSilent(!WindowlessSessionUses("sound"));
         if (_soundManager->init())
         {
             _audioInitialized = true;

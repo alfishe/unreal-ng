@@ -37,6 +37,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/memoryaccesstracker.h"
 #include "loaders/snapshot/machinestatetransfer.h"
 #include "emulator/coordinator/ports.h"
 #include "emulator/media/mediamanager.h"
@@ -69,6 +70,37 @@ MachineState CaptureState(EmulatorContext* context, Session& session)
         if (e.device && e.device->TTDStateSize() != 0 && e.legacyId != ttd::PeripheralId::None)
             e.device->TTDSaveStateTo(s.devices[static_cast<uint8_t>(e.legacyId)]);
     return s;
+}
+
+/// One TAP block (flag #FF and 256 bytes) in the tape slot and the ROM's LD-BYTES entry as the fast tape trap
+/// recognizes it; the block, or empty when the tape did not load
+std::vector<uint8_t> InsertFastTapeBlock(Emulator& emulator, const char* name)
+{
+    std::vector<uint8_t> block(258);
+    block[0] = 0xFF;
+    uint8_t checksum = 0xFF;
+    for (size_t i = 1; i <= 256; ++i)
+    {
+        block[i] = static_cast<uint8_t>(i * 7 + 3);
+        checksum ^= block[i];
+    }
+    block[257] = checksum;
+    const std::string tap = TestPathHelper::GetUniqueTestScratchPath(name);
+    {
+        std::ofstream out(tap, std::ios::binary);
+        const uint8_t length[2] = {static_cast<uint8_t>(block.size() & 0xFF), static_cast<uint8_t>(block.size() >> 8)};
+        out.write(reinterpret_cast<const char*>(length), 2);
+        out.write(reinterpret_cast<const char*>(block.data()), static_cast<std::streamsize>(block.size()));
+    }
+    if (!emulator.LoadTape(tap))
+        return {};
+
+    uint8_t* rom = emulator.GetContext()->pMemory->GetPhysicalAddressForZ80Page(0);
+    const uint8_t signature1[8] = {0x14, 0x08, 0x15, 0xF3, 0x3E, 0x0F, 0xD3, 0xFE};
+    const uint8_t signature2[3] = {0xDB, 0xFE, 0x1F};
+    std::memcpy(rom + 0x0556, signature1, sizeof(signature1));
+    std::memcpy(rom + 0x0556 + 12, signature2, sizeof(signature2));
+    return block;
 }
 
 /// The devices v1 can record: the engine also records the ones past the v1 ids (D23), which v1 leaves out
@@ -1056,11 +1088,37 @@ TEST_F(TimeTravelController_Test, AMachineChangeEndsTheSession)
     EXPECT_LE(_controller->GetCheckpointCount(), 3u) << "a new session, not the old one";
 }
 
+/// A recording that switched debug mode on gives it back when it stops, but not while a debug feature switched on
+/// meanwhile still needs it: an analysis session that started memory tracking during a black box session kept losing
+/// its counters when a reset or a snapshot load ended that session (the tracker frees them with debug mode off)
+TEST_F(TimeTravelController_Test, StopKeepsDebugModeAnotherFeatureNeeds)
+{
+    FeatureManager* features = _b->GetFeatureManager();
+    MemoryAccessTracker& tracker = _b->GetMemory()->GetAccessTracker();
+    ASSERT_TRUE(features->setFeature(Features::kDebugMode, false));
+    ASSERT_TRUE(_controller->StartRecording());
+    ASSERT_TRUE(features->isEnabled(Features::kDebugMode)) << "the recording needs it";
+
+    ASSERT_TRUE(features->setFeature(Features::kMemoryTracking, true));
+    ASSERT_NE(tracker.Z80CountersView().reads, nullptr) << "tracking allocated its counters";
+    _controller->StopRecording();
+    EXPECT_TRUE(features->isEnabled(Features::kDebugMode)) << "memory tracking still needs debug mode";
+    EXPECT_NE(tracker.Z80CountersView().reads, nullptr) << "the counters survive the stop";
+
+    // Nothing else needs it: the next stop gives debug mode back as before
+    ASSERT_TRUE(features->setFeature(Features::kMemoryTracking, false));
+    ASSERT_TRUE(features->setFeature(Features::kDebugMode, false));
+    ASSERT_TRUE(_controller->StartRecording());
+    _controller->StopRecording();
+    EXPECT_FALSE(features->isEnabled(Features::kDebugMode)) << "the recording's features restored";
+}
+
 /// Step 3 (D29): the black box records without holding the machine at real
 /// speed. Before an acceleration (turbo mode, host speed) takes effect it
 /// stops, its history kept; once nothing accelerates a new session starts. The
-/// fast loaders do not stop it (their traps are recorded edits). It keeps the
-/// last N minutes. An explicit recording still refuses accelerations
+/// tape shortcuts do not stop it (the tape trap is a recorded edit; fast disk is
+/// held: its FDC timing is no edit). It keeps the
+/// last N minutes. An explicit recording still refuses another host speed
 TEST_F(TimeTravelController_Test, TheBlackBoxStepsAsideForAccelerations)
 {
     FeatureManager* features = _b->GetFeatureManager();
@@ -1075,6 +1133,9 @@ TEST_F(TimeTravelController_Test, TheBlackBoxStepsAsideForAccelerations)
     ASSERT_TRUE(features->setFeature(Features::kFastTape, true));
     EXPECT_TRUE(features->isEnabled(Features::kFastTape)) << "not masked by a black box";
     EXPECT_TRUE(_controller->IsRecording());
+    // Fast disk is held: its compressed FDC timing is no recorded edit (a DSS floppy boot replayed another WD1793)
+    EXPECT_FALSE(features->setFeature(Features::kFastDisk, true));
+    EXPECT_FALSE(features->isEnabled(Features::kFastDisk));
 
     // Turbo: allowed; the black box stops first and keeps its history
     ASSERT_TRUE(features->setFeature(Features::kTurboMode, true));
@@ -1098,14 +1159,15 @@ TEST_F(TimeTravelController_Test, TheBlackBoxStepsAsideForAccelerations)
     EXPECT_TRUE(_b->SetSpeedMultiplier(1));
     EXPECT_TRUE(_controller->IsRecording());
 
-    // An explicit recording holds the lock
+    // An explicit recording holds the host speed, and records through turbo (D4)
     _controller->StopRecording();
     _controller->SetBlackBox(false);
     ASSERT_TRUE(features->setFeature(Features::kFastTape, false));
     ASSERT_TRUE(_controller->StartRecording());
-    EXPECT_FALSE(features->setFeature(Features::kTurboMode, true)) << "refused while an explicit recording runs";
-    EXPECT_FALSE(_b->SetSpeedMultiplier(4));
-    EXPECT_TRUE(_controller->IsRecording());
+    EXPECT_FALSE(_b->SetSpeedMultiplier(4)) << "refused while an explicit recording runs";
+    EXPECT_TRUE(features->setFeature(Features::kTurboMode, true));
+    EXPECT_TRUE(_controller->IsRecording()) << "an explicit recording does not step aside";
+    ASSERT_TRUE(features->setFeature(Features::kTurboMode, false));
 }
 
 /// Step 3 (D29) with the fast loaders: in a black box a fast tape load's trap
@@ -1118,31 +1180,8 @@ TEST_F(TimeTravelController_Test, AFastTapeTrapInTheBlackBoxIsReplayed)
     Memory* memory = context->pMemory;
     Z80* z80 = context->pCore->GetZ80();
 
-    // One TAP block: flag #FF and 256 bytes
-    std::vector<uint8_t> block(258);
-    block[0] = 0xFF;
-    uint8_t checksum = 0xFF;
-    for (size_t i = 1; i <= 256; ++i)
-    {
-        block[i] = static_cast<uint8_t>(i * 7 + 3);
-        checksum ^= block[i];
-    }
-    block[257] = checksum;
-    const std::string tap = TestPathHelper::GetUniqueTestScratchPath("blackbox-trap.tap");
-    {
-        std::ofstream out(tap, std::ios::binary);
-        const uint8_t length[2] = {static_cast<uint8_t>(block.size() & 0xFF), static_cast<uint8_t>(block.size() >> 8)};
-        out.write(reinterpret_cast<const char*>(length), 2);
-        out.write(reinterpret_cast<const char*>(block.data()), static_cast<std::streamsize>(block.size()));
-    }
-    ASSERT_TRUE(_b->LoadTape(tap));
-
-    // The ROM's LD-BYTES entry as the trap recognizes it
-    uint8_t* rom = memory->GetPhysicalAddressForZ80Page(0);
-    const uint8_t signature1[8] = {0x14, 0x08, 0x15, 0xF3, 0x3E, 0x0F, 0xD3, 0xFE};
-    const uint8_t signature2[3] = {0xDB, 0xFE, 0x1F};
-    std::memcpy(rom + 0x0556, signature1, sizeof(signature1));
-    std::memcpy(rom + 0x0556 + 12, signature2, sizeof(signature2));
+    const std::vector<uint8_t> block = InsertFastTapeBlock(*_b, "blackbox-trap.tap");
+    ASSERT_FALSE(block.empty());
 
     // A wait of about three frames (LD BC,8000; w: DEC BC; LD A,B; OR C; JR NZ,w), then
     // LD A,#FF; LD DE,256; LD IX,#9000; SCF; CALL #0556; LD HL,0; loop: INC HL; JR loop
@@ -1185,6 +1224,74 @@ TEST_F(TimeTravelController_Test, AFastTapeTrapInTheBlackBoxIsReplayed)
         _b->RunSingleCPUCycle(true);
     EXPECT_EQ(_controller->CurrentPosition(), later);
     expectSame(CaptureState(context, *_controller), liveLater, "running across the trap");
+}
+
+/// Phase 2, D4: an explicit recording keeps turbo mode and the tape shortcuts (a tape loaded from zero took minutes
+/// at 1x with the ROM trap off). Turbo only takes the host's pacing away and the trap is a recorded edit: with an AY
+/// tone playing, a fast tape load in turbo and frames after it replay to what the machine was live. Host speed
+/// stays at 1x, fast disk held
+TEST_F(TimeTravelController_Test, AnExplicitRecordingKeepsTurboAndTheTapeShortcuts)
+{
+    EmulatorContext* context = _b->GetContext();
+    Memory* memory = context->pMemory;
+    Z80* z80 = context->pCore->GetZ80();
+    FeatureManager* features = _b->GetFeatureManager();
+    const std::vector<uint8_t> block = InsertFastTapeBlock(*_b, "explicit-trap.tap");
+    ASSERT_FALSE(block.empty());
+
+    // An AY tone on channel A (mixer #3E, volume 15, period #40): LD BC,#FFFD; LD A,r; OUT (C),A; LD B,#BF;
+    // LD A,v; OUT (C),A per register, then the wait of about three frames and the load as in the black box's test
+    const uint8_t program[] = {
+        0x01, 0xFD, 0xFF, 0x3E, 0x07, 0xED, 0x79, 0x06, 0xBF, 0x3E, 0x3E, 0xED, 0x79,  // R7 = #3E
+        0x06, 0xFF, 0x3E, 0x08, 0xED, 0x79, 0x06, 0xBF, 0x3E, 0x0F, 0xED, 0x79,        // R8 = 15
+        0x06, 0xFF, 0x3E, 0x00, 0xED, 0x79, 0x06, 0xBF, 0x3E, 0x40, 0xED, 0x79,        // R0 = #40
+        0x01, 0x40, 0x1F, 0x0B, 0x78, 0xB1, 0x20, 0xFB, 0x3E, 0xFF, 0x11, 0x00, 0x01, 0xDD,
+        0x21, 0x00, 0x90, 0x37, 0xCD, 0x56, 0x05, 0x21, 0x00, 0x00, 0x23, 0x18, 0xFD};
+    for (size_t i = 0; i < sizeof(program); ++i)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8100 + i), program[i]);
+    z80->pc = 0x8100;
+    z80->sp = 0xBF00;
+
+    ASSERT_TRUE(features->setFeature(Features::kFastTape, true));
+    ASSERT_TRUE(_controller->StartRecording());
+    ASSERT_FALSE(_controller->IsBlackBox());
+    EXPECT_TRUE(features->isEnabled(Features::kFastTape)) << "kept by an explicit recording";
+    EXPECT_TRUE(features->setFeature(Features::kTurboTape, true));
+    EXPECT_TRUE(features->isEnabled(Features::kTurboTape));
+    EXPECT_FALSE(features->setFeature(Features::kFastDisk, true)) << "its compressed FDC timing is no recorded edit";
+    EXPECT_FALSE(_b->SetSpeedMultiplier(4)) << "the host speed stays at 1x";
+    ASSERT_TRUE(features->setFeature(Features::kTurboMode, true)) << features->refusalReason(Features::kTurboMode, true);
+    ASSERT_TRUE(context->pCore->IsTurboMode());
+    EXPECT_TRUE(_controller->IsRecording()) << "an explicit recording goes on in turbo";
+
+    const size_t events = _controller->GetSessionInfo().externalEventCount;
+    _b->RunNFrames(1, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint inTurbo = _controller->CurrentPosition();
+    const MachineState liveInTurbo = CaptureState(context, *_controller);
+    _b->RunTStates(2 * 71680 + 30000, /*skipBreakpoints=*/true);
+    ASSERT_EQ(memory->DirectReadFromZ80Memory(0x9000), block[1]) << "the trap loaded the block";
+    ASSERT_EQ(_controller->GetSessionInfo().externalEventCount, events + 1) << "as one edit";
+    const ttd::TTDTimePoint afterTrap = _controller->CurrentPosition();
+    const MachineState liveAfterTrap = CaptureState(context, *_controller);
+    ASSERT_TRUE(features->setFeature(Features::kTurboMode, false));
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint later = _controller->CurrentPosition();
+    const MachineState liveLater = CaptureState(context, *_controller);
+    _controller->StopRecording();
+
+    auto expectSame = [&](const MachineState& seen, const MachineState& live, const char* where) {
+        EXPECT_EQ(std::memcmp(&seen.cpu, &live.cpu, sizeof(seen.cpu)), 0)
+            << where << ": CPU (pc " << seen.cpu.pc << " vs " << live.cpu.pc << ")";
+        EXPECT_TRUE(seen.ram == live.ram) << where << ": RAM";
+        for (const auto& [id, bytes] : live.devices)
+            EXPECT_TRUE(seen.devices.count(id) && seen.devices.at(id) == bytes) << where << ": device " << int(id);
+    };
+    ASSERT_TRUE(_controller->SeekTo(inTurbo, nullptr));
+    expectSame(CaptureState(context, *_controller), liveInTurbo, "a seek into the turbo stretch");
+    ASSERT_TRUE(_controller->SeekTo(afterTrap, nullptr));
+    expectSame(CaptureState(context, *_controller), liveAfterTrap, "a seek across the trap in turbo");
+    ASSERT_TRUE(_controller->SeekTo(later, nullptr));
+    expectSame(CaptureState(context, *_controller), liveLater, "a seek after turbo");
 }
 
 /// A debugger-forced RAM window (DeZog SET_SLOT, windows 1/2) follows no port

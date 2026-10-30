@@ -297,9 +297,9 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     // so the trap is active in both debug and release sessions.
     if (pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad != nullptr)
     {
-        // While TTD records (a black box: an explicit recording masks the
-        // shortcut) the trap is an edit with what it did - the block's bytes,
-        // the registers, the tape cursor and its time - so a replay repeats it
+        // While TTD records (the engine keeps the shortcut, v1 masks it) the
+        // trap is an edit with what it did - the block's bytes, the registers,
+        // the tape cursor and its time - so a replay repeats it
         ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
         const bool recorded = ttd && ttd->IsRecording();
         if (recorded)
@@ -370,9 +370,17 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
     if (_nmi_pending_count > 0 || _context->emulatorState.nmiAtIntStartPending)
         return false;
 
-    // The instruction-start work (RunInstructionStartHooks, EngineStep) and the bus observers
-    if (isDebugMode || execTapHold || busTraceHook || InstructionStartObserved() || cycles_to_capture > 0)
+    // The instruction-start work (RunInstructionStartHooks, EngineStep) and the bus observers. TTD coverage is no
+    // observer of an idle stretch: its per-frame set already holds the HALT from the stretch's first real fetch
+    // (RunHaltedIdle learns the fetch length by one). Debug mode is none while no breakpoint or tap sees the HALT
+    if (execTapHold || busTraceHook || m1TraceHook || _context->ttdProbe.IsArmed() || cycles_to_capture > 0)
         return false;
+    if (isDebugMode)
+    {
+        DebugManager* debug = _context->pDebugManager;
+        if (debug && !debug->GetBreakpointsManager()->ExecIsInertAt(pc))
+            return false;
+    }
     if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
         return false;
     if (_feature_calltrace_enabled && _memory && _memory->GetAccessTracker().IsCalltraceCapturing())
@@ -405,7 +413,14 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
     if ((pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad) || (pc == 0x3FEC && _context->pDiskFastLoad) ||
         (pc == DiskAutostart::COMMAND_LOOP_ENTRY && _context->pDiskAutostart) || (pc == 0x0008 && _context->pRst8Trap))
         return false;
-    if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks; ttd && (ttd->IsRecording() || ttd->IsReplayActive()))
+    // A recording captures at frame ends (a target of the idle) and its coverage is kept above. A replay plays its
+    // input up to the next event (RunHaltedIdle: InputIdleLimit), its port and bus journals at the reads a halted
+    // CPU does not do, and stops at a barrier through the driver's limit.
+    // An awake idle floppy controller stamps its time on every step (WD1793::handleStepAwake): the same behavior,
+    // but the stamp is in its checkpoint state, which a replay compares. While TTD records or replays it has to be
+    // asleep
+    if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+        ttd && (ttd->IsRecording() || ttd->IsReplayActive()) && _context->pBetaDisk && !_context->pBetaDisk->IsAsleep())
         return false;
 
     // The peripherals MainLoop::OnCPUStep steps: the screen and the sound catch up by time; the tape writes
@@ -437,8 +452,17 @@ bool Z80::RunHaltedIdle(bool skipBreakpoints)
     const uint16_t fetch = static_cast<uint16_t>(pc + 1);  // the byte after the HALT (HaltedM1)
     const uint32_t evenM1Period = _context->config.even_M1 ? 2u : 1u;
     uint32_t busPeriod = 1;
-    constexpr uint32_t kHandledWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep;
-    if (!(source ? SourceIdle(*source) : InterruptsIdle()) || !IdleStepsInert(kHandledWork) ||
+    uint32_t handledWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep;
+    // A TTD replay's input playback: the fetches that start before its next event (ServiceInput takes it at the
+    // first boundary at or past its time, as per step)
+    uint32_t inputDue = UINT32_MAX;
+    if ((work & EmulatorContext::kStepWorkTtdInput) && _context->pTimeTravelHooks)
+    {
+        inputDue = _context->pTimeTravelHooks->InputIdleLimit();
+        if (inputDue > t)
+            handledWork |= EmulatorContext::kStepWorkTtdInput;
+    }
+    if (!(source ? SourceIdle(*source) : InterruptsIdle()) || !IdleStepsInert(handledWork) ||
         !HaltedFetchIsPure(fetch, busPeriod) || std::lcm(evenM1Period, busPeriod) > kMaxHaltedIdlePeriod)
     {
         NoteHaltedIdleRefused();
@@ -458,7 +482,7 @@ bool Z80::RunHaltedIdle(bool skipBreakpoints)
     for (;;)
     {
         // The first boundary the step loop would treat differently: the INT pulse, the frame end, the driver's limit
-        uint32_t target = std::min(idleSkipLimit, _frameLimit);
+        uint32_t target = std::min({idleSkipLimit, _frameLimit, inputDue});
         if (source)
             target = std::min(target, sourceDue);
         else if (!_intWraps && t <= _intStart)
@@ -536,9 +560,23 @@ bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
 {
     period = 1;
     const MemoryInterface* const memIf = MemIf;
-    const bool contended = memIf == FastContendedMemIf || memIf == OverlayFastContendedMemIf;
-    const bool overlay = memIf == OverlayFastMemIf || memIf == OverlayFastContendedMemIf;
-    if (!contended && !overlay && memIf != FastMemIf)
+    // The debug interfaces add the read's bookkeeping (Memory::ReadDebugEffects): for a fetch, the access
+    // tracker's execute count and the read breakpoints; neither may watch it
+    const bool debugIf = memIf == DbgMemIf || memIf == DbgContendedMemIf || memIf == OverlayDbgMemIf ||
+                         memIf == OverlayDbgContendedMemIf;
+    if (debugIf)
+    {
+        if (_memory->GetAccessTracker().IsMemoryCapturing())
+            return false;
+        DebugManager* debug = _context->pDebugManager;
+        if (debug && !debug->GetBreakpointsManager()->ReadIsInertAt(fetch))
+            return false;
+    }
+    const bool contended = memIf == FastContendedMemIf || memIf == OverlayFastContendedMemIf ||
+                           memIf == DbgContendedMemIf || memIf == OverlayDbgContendedMemIf;
+    const bool overlay = memIf == OverlayFastMemIf || memIf == OverlayFastContendedMemIf || memIf == OverlayDbgMemIf ||
+                         memIf == OverlayDbgContendedMemIf;
+    if (!contended && !overlay && memIf != FastMemIf && memIf != DbgMemIf)
         return false;
     if (contended)
     {
@@ -564,11 +602,13 @@ bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
 }
 
 /// After a step with work that left the CPU halted (an accepted INT or NMI ends the HALT), outside the retry
-/// window: RunHaltedIdle when the work is only the machine's interrupt source and step hook, which it asks itself.
+/// window: RunHaltedIdle when the work is only the machine's interrupt source and step hook or TTD input, which it
+/// asks itself.
 /// Out of line: the work step keeps nothing live across OnCPUStep for it
 UNREAL_NOINLINE void Z80::RunHaltedIdleAfterWork(bool skipBreakpoints)
 {
-    constexpr uint32_t kIdleWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep;
+    constexpr uint32_t kIdleWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep |
+                                   EmulatorContext::kStepWorkTtdInput;
     if (_context->stepWork.load(std::memory_order_relaxed) & ~kIdleWork)
     {
         NoteHaltedIdleRefused();
@@ -743,6 +783,10 @@ void Z80::Z80Step(bool skipBreakpoints)
             // Regular Z80 bus cycle
             // 1. Fetch opcode (Z80 M1 bus cycle)
             cpu.opcode = FetchM1();
+
+            // The memory tracker's L0 facts: the class of this instruction for its data accesses (memoryaccessfacts.h)
+            if (uint8_t* sink = _accessContextSink.load(std::memory_order_relaxed)) [[unlikely]]
+                *sink = accesscontext::kBase[cpu.opcode];
         }
 
         // 1a. Call trace hook (pre-execution) — appends control-flow events
@@ -1373,7 +1417,11 @@ void Z80::NotifyMachineM1(uint16_t address)
 /// The M1 fetch for the prefix handlers (CB / ED / DD / FD); Z80Step inlines FetchM1 itself
 uint8_t Z80::m1_cycle()
 {
-    return FetchM1();
+    const uint8_t fetched = FetchM1();
+    // The memory tracker's L0 facts: the class of the instruction behind the prefix (prefix set before this fetch)
+    if (uint8_t* sink = _accessContextSink.load(std::memory_order_relaxed)) [[unlikely]]
+        *sink = static_cast<uint8_t>(AccessContextFor(prefix, fetched));
+    return fetched;
 }
 
 /// One idle opcode fetch of the halted CPU (docs/inprogress/2026-10-02-halt-fetch-address). The Z80's program
@@ -1401,6 +1449,9 @@ void Z80::HaltedM1()
     cpu.r_low = ((cpu.r_low + 1) & 0x7f) | (cpu.r_low & 0x80);
     if (machineM1Hook) [[unlikely]]
         NotifyMachineM1Before(fetch);
+    // The memory tracker's L0 facts: this fetch is not an instruction byte
+    if (uint8_t* sink = _accessContextSink.load(std::memory_order_relaxed)) [[unlikely]]
+        *sink = static_cast<uint8_t>(AccessContext::HaltFetch);
     (void)rdM1(fetch);  // contention, the +2A / +3 latch, snow, the host bus overlays, the access tracker
     if (machineM1Hook) [[unlikely]]
         NotifyMachineM1(fetch);
@@ -1894,10 +1945,16 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
         IncrementCPUCyclesCounter(11);
 
         // Push return address (raw write: both stack cycles are included in the 11T above)
+        // The memory tracker's L0 facts: the two writes are stack writes
+        uint8_t* const sink = _accessContextSink.load(std::memory_order_relaxed);
+        if (sink) [[unlikely]]
+            *sink = static_cast<uint8_t>(AccessContext::Stack);
         uint16_t sp = cpu.sp;
         (_memory->*MemIf->MemoryWrite)(--sp, cpu.pch);
         (_memory->*MemIf->MemoryWrite)(--sp, cpu.pcl);
         cpu.sp = sp;
+        if (sink) [[unlikely]]
+            *sink = static_cast<uint8_t>(AccessContext::Plain);
 
         // Restart at the NMI vector #0066
         cpu.pc = 0x0066;
@@ -2120,10 +2177,16 @@ void Z80::HandleINT(uint8_t vector)
     // Raw memory access without T-state accounting: both stack write cycles
     // are already included in interruptDuration above (wd() would add +3T per byte).
     // Same approach as the original Unreal Speccy handle_int (MemIf->wm() without t increment)
+    // The memory tracker's L0 facts: the two writes are stack writes, the IM 2 vector read after them a data read
+    uint8_t* const sink = _accessContextSink.load(std::memory_order_relaxed);
+    if (sink) [[unlikely]]
+        *sink = static_cast<uint8_t>(AccessContext::Stack);
     uint16_t sp = cpu.sp;
     (_memory->*MemIf->MemoryWrite)(--sp, cpu.pch);
     (_memory->*MemIf->MemoryWrite)(--sp, cpu.pcl);
     cpu.sp = sp;
+    if (sink) [[unlikely]]
+        *sink = static_cast<uint8_t>(AccessContext::Plain);
 
     /// region <Determine interrupt handler address>
     uint16_t interruptHandlerAddress;
