@@ -571,7 +571,7 @@ MemoryPanel::MemoryPanel(Emulator * e, const MemorySource &source, QWidget *pare
     v->setContentsMargins(0, 0, 0, 0);
     v->setSpacing(2);
 
-    QHBoxLayout * h = new QHBoxLayout();
+    QHBoxLayout * h = m_row = new QHBoxLayout();
     h->setContentsMargins(2, 2, 2, 0);
     h->setSpacing(2);
 
@@ -650,6 +650,8 @@ MemoryPanel::MemoryPanel(Emulator * e, const MemorySource &source, QWidget *pare
     show_cursor(0);
     //Opened in a scaled window (a page of the pages tab): its icons at the scale too
     scale_icons(this, dbg::zoom(dbg::Zoom::Icons));
+    //After the fields take the new font and the style its sizes
+    QMetaObject::invokeMethod(this, [this]() { even_row(m_row); }, Qt::QueuedConnection);
 }
 
 void MemoryPanel::changeEvent(QEvent *event)
@@ -658,6 +660,8 @@ void MemoryPanel::changeEvent(QEvent *event)
     if (event->type() != QEvent::FontChange) return;
     m_address->setMaximumWidth(dbg::text_width(QFontMetrics(dbg::font()), "0000000000"));
     scale_icons(this, dbg::zoom(dbg::Zoom::Icons));
+    //After the fields take the new font and the style its sizes
+    QMetaObject::invokeMethod(this, [this]() { even_row(m_row); }, Qt::QueuedConnection);
 }
 
 void MemoryPanel::refresh()

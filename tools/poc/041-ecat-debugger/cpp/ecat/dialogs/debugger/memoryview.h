@@ -19,6 +19,7 @@ class BankStrip;
 class PagedMemory;
 class CellEditor;
 class QLabel;
+class QHBoxLayout;
 class QLineEdit;
 class QToolButton;
 
@@ -155,6 +156,7 @@ private:
     QToolButton * m_base_button;
     QToolButton * m_word_button;
     QLineEdit * m_find;
+    QHBoxLayout * m_row;
     QLabel * m_status;
 
     void go();

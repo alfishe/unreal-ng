@@ -5,15 +5,18 @@
 
 #pragma once
 
+#include <algorithm>
 #include <vector>
 
 #include <QAbstractButton>
+#include <QLayout>
 #include <QPaintEvent>
 #include <QRegion>
 #include <QString>
 #include <QStringList>
 #include <QToolBar>
 #include <QVariant>
+#include <QWidget>
 
 #include "emulator/core.h"
 #include "emulator/devices/cpu/i8086.h"
@@ -75,6 +78,18 @@ inline void scale_icons(QWidget * root, double zoom)
         }
         b->setIconSize(base.toSize() * zoom);
     }
+}
+
+//The fields and buttons of one row at one height: the tallest one's (a field
+//in the views' font, a button with its scaled icon or the window's font), so
+//nothing is cut and no edge sticks out. Again after every zoom
+inline void even_row(QLayout * row)
+{
+    int h = 0;
+    for (int i = 0; i < row->count(); i++)
+        if (QWidget * w = row->itemAt(i)->widget()) h = std::max(h, w->sizeHint().height());
+    for (int i = 0; i < row->count(); i++)
+        if (QWidget * w = row->itemAt(i)->widget()) w->setFixedHeight(h);
 }
 
 //What each row of a view was last painted with. The 200 ms timer refreshes the
