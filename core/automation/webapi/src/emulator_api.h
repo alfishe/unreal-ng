@@ -719,6 +719,7 @@ public:
     // TD-7 — coverage index queries
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageProbe, "/api/v1/emulator/{id}/ttd/coverage/probe", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageScan, "/api/v1/emulator/{id}/ttd/coverage/scan", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDCoverageRare, "/api/v1/emulator/{id}/ttd/coverage/rare", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageSummary, "/api/v1/emulator/{id}/ttd/coverage/summary", drogon::Get);
     // endregion TTD
 
@@ -2251,6 +2252,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getTTDCoverageProbe(const drogon::HttpRequestPtr& req,
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getTTDCoverageScan(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDCoverageRare(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getTTDCoverageSummary(const drogon::HttpRequestPtr& req,
                                std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;

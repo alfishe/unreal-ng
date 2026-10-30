@@ -1194,6 +1194,8 @@ local r = ttd_reverse_continue({0x8000, 0x8010})
 -- from_frame. all = true: every hit newest first, the machine stays
 local hits = ttd_reverse_continue({0xC000}, { phys_page = 3, all = true, limit = 500 })
 -- --> { hits = { {frame, tinframe, t, pc, phys_page}, ... }, count, truncated, next_before, ... }
+-- first_per_pc = true: one hit per PC (its newest), the walk ends once each has one; pcs_without_hit names the rest
+local last = ttd_reverse_continue({0x8200, 0x9A10, 0xC000}, { first_per_pc = true })
 ```
 
 **Reverse search:**
@@ -1324,12 +1326,20 @@ local runs = ttd_coverage_scan{kind = "executed", addr_from = 0x8200, addr_to = 
 -- The Sprinter's video RAM by its own offsets (space = "vram" / "cache": inside one 16 KB page)
 local written = ttd_coverage_scan{kind = "written", space = "vram", addr_from = 0x4805, addr_to = 0x4805}
 
+-- Rare code in one call: addresses executed in at most max_frames frames, as blocks with those frames
+local rare = ttd_coverage_rare{max_frames = 2, addr_from = 0x8000, addr_to = 0xFFFF, limit = 50}
+-- { rare_keys = 41, distinct_keys = 2310, rare_blocks = 6, truncated = false,
+--   blocks = { {addr_from = "0x9A10", addr_to = "0x9A2C", phys_page = 2, page_offset_from = "0x1A10", ...,
+--               keys = 11, frame_count = 1, frames = {1834}}, ... } }
+
 -- A memory at a past checkpoint, and what changed between two - from the store, no seek
 local at = ttd_memory_at{space = "ram5", frame = 150, offset = 0x1C78, length = 2}   -- tinframe = T: inside the frame (ram, vram, cache)
 -- { space = "ram", offset = 89208, length = 2, frame = 150, at_frame = 150, exact = true, hex = "6500" }
 -- ram / ramN offsets are physical; space = "cpu": Z80 addresses as the CPU saw them, with banks = {{window, addr,
 -- kind, page, name}, ...}
 local cpu = ttd_memory_at{space = "cpu", frame = 150, tinframe = 20000, offset = 0xC000, length = 16}
+-- Without frame: the machine now (live = true, at_tinframe), no recording needed
+local now = ttd_memory_at{space = "cpu", offset = 0x5C00, length = 64}
 local diff = ttd_memory_diff{space = "neogs.ram", from_frame = 150, to_frame = 600}
 -- { space = "neogs.ram", changed_bytes = ..., ranges = { {offset = 4096, length = 64}, ... }, truncated = false }
 

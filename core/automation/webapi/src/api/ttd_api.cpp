@@ -562,6 +562,13 @@ void EmulatorAPI::getTTDCoverageScan(const HttpRequestPtr& req,
     RespondTTD(id, "coverage-scan", OptionsFromQuery(req, "coverage-scan"), callback);
 }
 
+void EmulatorAPI::getTTDCoverageRare(const HttpRequestPtr& req,
+                                     std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    RespondTTD(id, "coverage-rare", OptionsFromQuery(req, "coverage-rare"), callback);
+}
+
 void EmulatorAPI::getTTDCoverageSummary(const HttpRequestPtr& req,
                                         std::function<void(const HttpResponsePtr&)>&& callback,
                                         const std::string& id) const

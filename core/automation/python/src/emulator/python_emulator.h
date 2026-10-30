@@ -6369,7 +6369,7 @@ namespace PythonBindings
                 for (uint16_t pc : pcs)
                     list += (list.empty() ? "" : ",") + std::to_string(pc);
                 std::map<std::string, std::string> options{{"pcs", list}};
-                // phys_page, all, limit, before_frame, before_tin, before, from_frame
+                // phys_page, all, first_per_pc, limit, before_frame, before_tin, before, from_frame
                 TtdKwargsPy(options, kwargs);
                 const ttd::TTDReply reply = TtdRunPy(self, "reverse-continue", options);
                 if (reply.error == ttd::TTDControlError::BadRequest)
@@ -6385,7 +6385,8 @@ namespace PythonBindings
                     return py::none();
                 return StateNodeToPy(reply.body);
             }, "Run backward until any PC matches; returns dict or None. Keywords: phys_page (a page or 'rom'), "
-               "all=True (every hit newest first, the machine stays), limit, before_frame / before_tin or before "
+               "all=True (every hit newest first, the machine stays), first_per_pc=True (one hit per PC, its newest), "
+               "limit, before_frame / before_tin or before "
                "(at or before), from_frame (not older)",
                py::arg("pcs"))
 
@@ -6424,13 +6425,35 @@ namespace PythonBindings
                 py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(), py::arg("limit") = 200,
                 py::arg("space") = py::none())
 
+            .def("ttd_coverage_rare", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj, uint32_t maxFrames,
+                                         const std::string& kindStr, uint32_t addrFrom, uint32_t addrTo,
+                                         py::object pageObj, size_t limit, py::object spaceObj) -> py::object {
+                std::map<std::string, std::string> options{
+                    {"from_frame", std::to_string(fromFrame)}, {"max_frames", std::to_string(maxFrames)},
+                    {"kind", kindStr}, {"addr_from", std::to_string(addrFrom)}, {"addr_to", std::to_string(addrTo)},
+                    {"limit", std::to_string(limit)}};
+                if (!toFrameObj.is_none())
+                    options["to_frame"] = TtdOptionTextPy(toFrameObj);
+                if (!pageObj.is_none())
+                    options["phys_page"] = TtdOptionTextPy(pageObj);
+                if (!spaceObj.is_none())
+                    options["space"] = py::str(spaceObj).cast<std::string>();
+                return TtdCoveragePy(TtdRunPy(self, "coverage-rare", options));
+            }, "Blocks of the address range touched in at most max_frames frames of from_frame..to_frame, with "
+               "those frames, rarest first (coverage index, one call)",
+                py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("max_frames") = 1,
+                py::arg("kind") = "executed", py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF,
+                py::arg("phys_page") = py::none(), py::arg("limit") = 200, py::arg("space") = py::none())
+
             // A memory at a past checkpoint and what changed between two, from the store (no seek). A bad
             // argument raises ValueError; a refusal (no history, backend v1) is a dict with error
-            .def("ttd_memory_at", [](Emulator& self, const std::string& space, uint64_t frame, py::object offsetObj,
+            .def("ttd_memory_at", [](Emulator& self, const std::string& space, py::object frameObj, py::object offsetObj,
                                      uint32_t length, uint32_t tinframe) -> py::object {
                 std::map<std::string, std::string> options{
-                    {"space", space}, {"frame", std::to_string(frame)}, {"length", std::to_string(length)},
-                    {"tinframe", std::to_string(tinframe)}};
+                    {"space", space}, {"length", std::to_string(length)}, {"tinframe", std::to_string(tinframe)}};
+                // space='cpu' without frame: the machine now
+                if (!frameObj.is_none())
+                    options["frame"] = TtdOptionTextPy(frameObj);
                 if (!offsetObj.is_none())
                     options["offset"] = TtdOptionTextPy(offsetObj);
                 const ttd::TTDReply reply = TtdRunPy(self, "memory-at", options);
@@ -6440,8 +6463,9 @@ namespace PythonBindings
                 if (!reply.Ok())
                     value["error"] = reply.message;
                 return StateNodeToPy(value);
-            }, "A memory as it was at the checkpoint at or before frame: {space, offset, length, at_frame, exact, hex}",
-                py::arg("space"), py::arg("frame"), py::arg("offset") = py::none(), py::arg("length") = 256,
+            }, "A memory as it was at the checkpoint at or before frame: {space, offset, length, at_frame, exact, hex}; "
+               "space='cpu' without frame: the machine now (live=True)",
+                py::arg("space"), py::arg("frame") = py::none(), py::arg("offset") = py::none(), py::arg("length") = 256,
                 py::arg("tinframe") = 0)
 
             .def("ttd_memory_diff", [](Emulator& self, const std::string& space, uint64_t fromFrame, uint64_t toFrame,

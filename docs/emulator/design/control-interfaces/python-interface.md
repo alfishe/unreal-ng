@@ -1621,6 +1621,9 @@ hits = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, limit=500)
 # {'hits': [{'frame': 4700, 'tinframe': 812, 't': 336899052, 'pc': 0xC000, 'phys_page': 3}, ...],
 #  'count': 500, 'truncated': True, 'next_before': 336512000, ...}
 more = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, before=hits['next_before'])
+# When did each of these PCs last run: one hit per PC (its newest), the walk ends once each has one
+last = emu.ttd_reverse_continue([0x8200, 0x9A10, 0xC000], first_per_pc=True)
+# {'hits': [...], 'count': 2, 'pcs_without_hit': [39440], ...}
 # phys_page='rom': runs from the ROM. Bounds: before_frame= / before_tin= or before= (machine T), from_frame=
 ```
 
@@ -1767,11 +1770,19 @@ runs = emu.ttd_coverage_scan(kind='executed', addr_from=0x8200, addr_to=0x8200, 
 # The Sprinter's video RAM by its own offsets (space='vram' / 'cache': offsets inside one 16 KB page)
 scan = emu.ttd_coverage_scan(kind='written', space='vram', addr_from=0x4805, addr_to=0x4805)
 
+# Rare code in one call: addresses executed in at most max_frames frames, as blocks with those frames
+rare = emu.ttd_coverage_rare(max_frames=2, addr_from=0x8000, addr_to=0xFFFF, limit=50)
+# {'rare_keys': 41, 'distinct_keys': 2310, 'rare_blocks': 6, 'truncated': False,
+#  'blocks': [{'addr_from': '0x9A10', 'addr_to': '0x9A2C', 'phys_page': 2, 'page_offset_from': '0x1A10', ...,
+#              'keys': 11, 'frame_count': 1, 'frames': [1834]}, ...]}
+
 # A memory at a past checkpoint, and what changed between two - from the store, no seek
 at = emu.ttd_memory_at('ram5', frame=150, offset=0x1C78, length=2)   # tinframe=T: a point inside the frame (ram, vram, cache)
 # {'space': 'ram', 'offset': 89208, 'length': 2, 'frame': 150, 'at_frame': 150, 'exact': True, 'hex': '6500'}
 # ram / ramN offsets are physical. space='cpu': Z80 addresses, what the CPU saw at frame:tinframe, with the banks
 cpu = emu.ttd_memory_at('cpu', frame=150, offset=0xC000, length=16, tinframe=20000)
+# Without frame: the machine now ({'live': True, 'at_tinframe': ...}), no recording needed
+now = emu.ttd_memory_at('cpu', offset=0x5C00, length=64)
 # {'space': 'cpu', 'banks': [{'window': 3, 'addr': '0xC000', 'kind': 'ram', 'page': 0, 'name': 'RAM 0'}, ...], 'hex': ...}
 diff = emu.ttd_memory_diff('neogs.ram', from_frame=150, to_frame=600)
 # {'space': 'neogs.ram', 'changed_bytes': 812, 'ranges': [{'offset': 4096, 'length': 64}, ...], 'truncated': False, ...}

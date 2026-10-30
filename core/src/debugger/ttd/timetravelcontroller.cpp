@@ -6364,10 +6364,14 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
         return result;
     }
 
-    const size_t limit = query.all ? std::clamp(query.limit, size_t{1}, kReverseHitLimitMax) : 1;
+    const bool all = query.all || query.firstPerPc;
+    const size_t limit = all ? std::clamp(query.limit, size_t{1}, kReverseHitLimitMax) : 1;
     std::vector<uint16_t> pcs = query.pcs;
     std::sort(pcs.begin(), pcs.end());
     pcs.erase(std::unique(pcs.begin(), pcs.end()), pcs.end());
+    // firstPerPc: the PCs that have their hit (the index no longer nominates frames for them)
+    std::vector<bool> hit(pcs.size(), false);
+    size_t pcsHit = 0;
     const bool hasPage = query.physPage.has_value();
     const PhysPage page = hasPage ? *query.physPage : PhysPage{0};
     auto matches = [&](const TTDM1Record& m) {
@@ -6395,7 +6399,7 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
     // All mode replays checkpoints and puts the machine back verbatim (marker-proof, exact), like a frame cache
     // build; the session state the caller saw comes back with it
     const TTDSessionState stateBefore = _state;
-    if (query.all)
+    if (all)
         SaveLiveState(_liveSnapshot);
 
     // One enumerated interval, newest instruction first. True: the walk is over (the limit, or a barrier)
@@ -6410,6 +6414,9 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
         {
             if (!matches(*it))
                 continue;
+            const size_t pcIndex = size_t(std::lower_bound(pcs.begin(), pcs.end(), it->pc) - pcs.begin());
+            if (query.firstPerPc && hit[pcIndex])
+                continue;
             if (result.hits.size() == limit)
             {
                 result.truncated = true;
@@ -6417,6 +6424,15 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
                 break;
             }
             result.hits.push_back(TTDReverseHit{TimePointAt(it->globalT), it->globalT, it->pc, it->physPage});
+            if (query.firstPerPc)
+            {
+                hit[pcIndex] = true;
+                if (++pcsHit == pcs.size())
+                {
+                    done = true;
+                    break;
+                }
+            }
         }
         if (barrier.reason[0] != '\0')
         {
@@ -6425,7 +6441,7 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
             result.blockingMarker = barrier;
             done = true;
         }
-        if (!query.all && !result.hits.empty())
+        if (!all && !result.hits.empty())
             done = true;
     };
 
@@ -6468,8 +6484,11 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
         for (uint64_t frame = scanFrom + 1; !done && frame-- > scanTo;)
         {
             bool candidate = false;
-            for (uint16_t bp : pcs)
+            for (size_t k = 0; k < pcs.size(); ++k)
             {
+                if (hit[k])
+                    continue;
+                const uint16_t bp = pcs[k];
                 const uint16_t offset = static_cast<uint16_t>(bp & 0x3FFF);
                 if (_coverageIndex.FrameMayContain(TTDCoverageKind::Executed, frame, offset, offset, hasPage, page))
                 {
@@ -6500,7 +6519,7 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
         collect(floorT, endT);
     }
 
-    if (result.truncated || (!query.all && !result.hits.empty()))
+    if (result.truncated || (!all && !result.hits.empty()) || (query.firstPerPc && pcsHit == pcs.size()))
         reportWindow(result.hits.back().time);
     else if (result.blockingMarker.reason[0] != '\0')
     {
@@ -6512,7 +6531,7 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
     else
         reportWindow(windowFloor);
 
-    if (query.all)
+    if (all)
     {
         ReplayModeScope restore(*this);
         RestoreLiveState(_liveSnapshot);
@@ -7051,6 +7070,138 @@ TTDCoverageScanResult TimeTravelController::QueryCoverageScan(
             take(f);
     }
 
+    return result;
+}
+
+TTDCoverageRareResult TimeTravelController::QueryCoverageRare(
+    uint64_t fromFrame,
+    uint64_t toFrame,
+    TTDCoverageKind kind,
+    uint16_t addrFrom,
+    uint16_t addrTo,
+    std::optional<PhysPage> physPage,
+    uint32_t maxFrames,
+    size_t limit) const
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
+    TTDCoverageRareResult result;
+    result.kind = kind;
+    result.maxFrames = maxFrames = std::clamp<uint32_t>(maxFrames, 1, kCoverageRareMaxFrames);
+    limit = std::clamp(limit, size_t{1}, kCoverageScanLimitMax);
+    result.indexAvailable = _coverageIndex.SealedFrameCount(kind) > 0;
+    uint64_t firstCovered = 0, lastCovered = 0;
+    if (!result.indexAvailable || !_coverageIndex.CoveredRange(kind, firstCovered, lastCovered))
+        return result;
+    result.coveredFrom = firstCovered;
+    result.coveredTo = lastCovered;
+    const uint64_t startFrame = std::max(fromFrame, firstCovered);
+    const uint64_t endFrame = std::min(toFrame, lastCovered);
+    if (startFrame > endFrame)
+        return result;
+
+    // The range as QueryCoverageScan reads it: offsets in a page, every offset when it spans a page or more
+    uint16_t offsetLow = addrFrom & 0x3FFF;
+    uint16_t offsetHigh = addrTo & 0x3FFF;
+    if (addrTo < addrFrom || (addrTo - addrFrom) >= 0x3FFF || offsetLow > offsetHigh)
+    {
+        offsetLow = 0;
+        offsetHigh = 0x3FFF;
+    }
+    const std::optional<uint32_t> pageField =
+        physPage ? std::optional<uint32_t>(CoveragePageField(*physPage)) : std::nullopt;
+
+    // Per key: its frame count, and its frames while they are few enough to list
+    struct Seen
+    {
+        uint32_t count = 0;
+        std::vector<uint64_t> frames;
+    };
+    std::unordered_map<TTDCoverageKey, Seen> seen;
+    std::vector<TTDCoverageKey> keys;
+    for (uint64_t f = startFrame; f <= endFrame; ++f)
+    {
+        result.scannedFrames++;
+        if (!_coverageIndex.GetFrameKeys(kind, f, keys))
+        {
+            result.unindexedFrames++;
+            continue;
+        }
+        for (const TTDCoverageKey key : keys)
+        {
+            const uint16_t offset = static_cast<uint16_t>(key & 0x3FFF);
+            if (offset < offsetLow || offset > offsetHigh || (pageField && (key >> 14) != *pageField))
+                continue;
+            Seen& entry = seen[key];
+            if (++entry.count <= maxFrames)
+                entry.frames.push_back(f);
+            else if (entry.count == maxFrames + 1)
+                std::vector<uint64_t>().swap(entry.frames);
+        }
+    }
+    result.distinctKeys = seen.size();
+
+    std::vector<TTDCoverageKey> rare;
+    for (const auto& [key, entry] : seen)
+        if (entry.count <= maxFrames)
+            rare.push_back(key);
+    std::sort(rare.begin(), rare.end());
+    result.rareKeys = rare.size();
+
+    // Neighbouring keys of one page with the same frames form a block
+    const uint32_t gap = kind == TTDCoverageKind::Executed ? 4 : 1;
+    std::vector<TTDCoverageRareBlock> blocks;
+    for (const TTDCoverageKey key : rare)
+    {
+        const std::vector<uint64_t>& frames = seen[key].frames;
+        TTDCoverageRareBlock* last = blocks.empty() ? nullptr : &blocks.back();
+        const uint16_t offset = static_cast<uint16_t>(key & 0x3FFF);
+        if (last && last->pageField == (key >> 14) && offset - last->offsetTo <= gap && last->frames == frames)
+        {
+            last->offsetTo = offset;
+            last->keys++;
+            continue;
+        }
+        TTDCoverageRareBlock block;
+        block.pageField = key >> 14;
+        block.offsetFrom = block.offsetTo = offset;
+        block.keys = 1;
+        block.frames = frames;
+        blocks.push_back(std::move(block));
+    }
+    result.rareBlocks = blocks.size();
+    std::stable_sort(blocks.begin(), blocks.end(), [](const TTDCoverageRareBlock& a, const TTDCoverageRareBlock& b) {
+        return a.frames.size() < b.frames.size();
+    });
+    if (blocks.size() > limit)
+    {
+        blocks.resize(limit);
+        result.truncated = true;
+    }
+
+    // The CPU address of each listed block: the window that showed its page at the start of its first frame
+    Memory* memory = _context ? _context->pMemory : nullptr;
+    for (TTDCoverageRareBlock& block : blocks)
+    {
+        if (!memory || block.frames.empty() || block.pageField > kCoverageNoPageField)
+            continue;
+        const int64_t i = TimelineIndexAtOrBefore({block.frames.front(), 0});
+        if (i < 0 || _timeline[size_t(i)].time.frame != block.frames.front() || !_timeline[size_t(i)].cpuWindows.valid)
+            continue;
+        const TTDCpuWindows& windows = _timeline[size_t(i)].cpuWindows;
+        int found = -1;
+        for (uint8_t w = 0; w < 4; ++w)
+        {
+            const MemoryPageDescriptor page = memory->DescribeWindow(windows.mode[w], windows.offset[w]);
+            const bool match = block.pageField == kCoverageNoPageField
+                                   ? page.mode == BANK_ROM || page.mode == BANK_CACHE
+                                   : page.mode == BANK_RAM && page.page == block.pageField;
+            if (match)
+                found = found < 0 ? w : 4;
+        }
+        if (found >= 0 && found < 4)
+            block.z80From = static_cast<uint16_t>(found * 0x4000 + block.offsetFrom);
+    }
+    result.blocks = std::move(blocks);
     return result;
 }
 

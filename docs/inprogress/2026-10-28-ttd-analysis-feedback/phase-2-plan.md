@@ -122,6 +122,20 @@ debug work costs nothing measurable, and such a path saves part of 41-60 µs a f
 | D4 | loading a tape from zero takes minutes | measure first (turbo with TTD, the tape's warp while recording), then fix the cause |
 | D5 | port-events: the port value is not enough | each event carries the caller's PC, HL and the port mask of the read |
 
+D1 done: `coverage-rare` (CLI `ttd coverage rare`, `GET /ttd/coverage/rare`, Lua `ttd_coverage_rare`, Python
+`ttd_coverage_rare`, MCP `time_travel coverage_rare`). One pass over the range's coverage keys counts each key's
+frames and keeps the frames of the keys seen in at most `max_frames` of them (default 1, at most 1000); neighbouring
+keys of one page with the same frames join into a block (gaps up to 4 bytes for executed code, 1 otherwise), the
+rarest first, cut at `limit`. A block names its page and offsets, and its Z80 addresses when the page was mapped in
+exactly one window at its first frame (the checkpoint's CPU windows). Frames not indexed yet are counted, not guessed.
+
+D2 done: `first_per_pc` on reverse-continue (`--first-per-pc`, MCP `reverse_continue`): each listed PC's newest hit
+in the window, the search stops once every PC has one; `pcs_without_hit` names the others. v1 refuses it.
+
+D3 done: memory-at `space: cpu` without `frame` (or at the machine's own frame past the history) reads the machine
+now: `live: true`, the mapping and banks as they are, no recording needed. A frame past the history otherwise answers
+409 naming the history's end and the machine's frame.
+
 ### E. Checks
 
 - `tools/build/test.sh`, zero warnings; gcc, MSVC and MinGW before landing.

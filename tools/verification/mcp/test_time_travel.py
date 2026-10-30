@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""time_travel: record, stop, the history in status, seek back, the machine state follows"""
+"""time_travel: record, stop, the history in status, seek back, the machine state follows, rare coverage"""
 
 import re
 import sys
@@ -45,6 +45,18 @@ def test_reverse_step_by_scanlines_and_the_build_cancel(s):
     expect(r.is_error, 'one unit only', r.text)
     r = s.call('time_travel', {'action': 'journal_build_cancel'})
     expect(not r.is_error and 'journal' in r.text, 'nothing to cancel, said so', r.text)
+
+
+def test_coverage_rare_lists_blocks_in_the_text(s):
+    # The history of test_record_stop_seek: the ROM's code; every block is in the text with its frames
+    r = s.call('time_travel', {'action': 'coverage_rare', 'max_frames': 3, 'limit': 5})
+    expect(not r.is_error and 'addresses in at most 3 frames' in r.text, 'the totals in the text', r.text)
+    blocks = r.structured.get('blocks', [])
+    expect(r.structured.get('index_available') and r.structured.get('distinct_keys', 0) > 0, 'the index answered',
+           r.structured)
+    expect(len(blocks) <= 5 and r.text.count('frames ') >= len(blocks), 'each listed block in the text', r.text)
+    r = s.call('time_travel', {'action': 'coverage_rare', 'max_frames': 0}, ok=False)
+    expect(r.is_error and 'max_frames' in r.text, 'a bad bound named', r.text)
 
 
 if __name__ == '__main__':

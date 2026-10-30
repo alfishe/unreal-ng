@@ -6097,7 +6097,7 @@ public:
             return reply.Ok() && reply.body.find("reached")->b;
         });
 
-        // ttd_reverse_continue({pcs}, {phys_page=, all=, limit=, before_frame=, before_tin=, before=, from_frame=})
+        // ttd_reverse_continue({pcs}, {phys_page=, all=, first_per_pc=, limit=, before_frame=, before_tin=, before=, from_frame=})
         lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable,
                                                         sol::optional<sol::table> optionsTable) -> sol::object {
             std::string pcs;
@@ -6126,6 +6126,13 @@ public:
             for (const auto& [key, value] : argsTable)
                 options[key.as<std::string>()] = TtdOptionText(value);
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-scan", options)));
+        });
+
+        lua.set_function("ttd_coverage_rare", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-rare", options)));
         });
 
         lua.set_function("ttd_coverage_summary", [this](sol::this_state ts, sol::table argsTable) -> sol::object {

@@ -5259,7 +5259,7 @@ std::string PhysPageParam(const Json::Value& v)
 /// The reverse searches' list options: all, changes_only, limit, before, from_frame (verbatim; the WebAPI checks them)
 bool CopySearchListOptions(const Json::Value& args, Json::Value& body, std::string& error)
 {
-    for (const char* flag : {"all", "changes_only"})
+    for (const char* flag : {"all", "changes_only", "first_per_pc"})
         if (args.isMember(flag))
         {
             if (!args[flag].isBool())
@@ -5309,7 +5309,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
                                "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
-                               "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary",
+                               "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary",
                                "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
                                "memory_at", "memory_diff"})
@@ -5328,7 +5328,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
         "'reverse_step' (count instructions, tstates OR scanlines back), 'reverse_continue' (run backward until PC hits one of pcs; "
         "phys_page keeps only runs on that page; all=true lists every hit newest first up to limit and leaves the machine "
-        "where it is; next_before pages on), "
+        "where it is; next_before pages on; first_per_pc=true lists one hit per PC, its newest, and names the PCs that "
+        "did not run), "
         "'find_last' (latest write/read/execute/io at an address before the current point, or before before_frame; "
         "changes_only=true skips writes that store the byte already there and gives old_value; all=true lists the hits "
         "newest first up to limit, the machine stays; next_before pages on). "
@@ -5352,6 +5353,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Coverage index: 'coverage_probe' (did frame X touch an address range), 'coverage_scan' (which frames did: the "
         "list, oldest first or order=newest, ranges=true for runs of frames, next_from_frame / next_to_frame page on; "
         "exact=false means the offset matched on any page - give phys_page), "
+        "'coverage_rare' (rare code in one call: the addresses of a range executed - or kind written / read - in at "
+        "most max_frames frames of from_frame..to_frame, as blocks with those frames, rarest first; addr_from / "
+        "addr_to where the page was mapped at the first frame's start, else phys_page and page offsets), "
         "'coverage_summary' (bucketed activity heatmap). "
         "Write journal (who wrote an address last, answered at once; off by default): 'journal_on' / 'journal_off' "
         "switch it at any moment, also while recording (each on-off span is a segment); 'journal_build' builds it by "
@@ -5411,6 +5415,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["all"]["description"] =
         "reverse_continue / find_last: every hit newest first (up to limit, default 100, at most 10000) instead of the "
         "newest one; the machine is not moved. A truncated list gives next_before: pass it as 'before' for the next page";
+    schema["properties"]["first_per_pc"]["type"] = "boolean";
+    schema["properties"]["first_per_pc"]["description"] =
+        "reverse_continue: the list as with all, one hit per PC (its newest) - when did each of these PCs last run; "
+        "the walk ends once every PC has its hit";
     schema["properties"]["changes_only"]["type"] = "boolean";
     schema["properties"]["changes_only"]["description"] =
         "find_last (access write): skip writes that store the byte already there; each hit gives old_value";
@@ -5445,7 +5453,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "offsets inside one 16 KB page. memory_at / memory_diff (required): ram (all RAM pages back to back, page N at "
         "N x 0x4000 - on a 48K machine Z80 0xC000 is page 0), ramN, or any memory the session records by name or alias "
         "(sprinter.vram / vram, cache, neogs.ram, gs.ram, moonsound.wave, evo.flash ...). memory_at space cpu: Z80 "
-        "addresses as the CPU saw them at frame / tinframe, with the four windows' ROM / RAM pages";
+        "addresses as the CPU saw them at frame / tinframe, with the four windows' ROM / RAM pages; without frame (or at "
+        "the machine's own frame past the history) the machine as it stands now - no recording needed";
     schema["properties"]["offset"]["type"] = "string";
     schema["properties"]["offset"]["description"] =
         "memory_at: byte offset in the space (number, '0x..', '#..'), default 0; space cpu: the Z80 address";
@@ -5503,11 +5512,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["before_tin"]["description"] = "find_last / reverse_continue: T-states within before_frame (default 0)";
     schema["properties"]["from_frame"]["type"] = "integer";
     schema["properties"]["from_frame"]["description"] =
-        "Starting frame for coverage_scan / coverage_summary / port_events / journal_build / export_clip; the oldest "
+        "Starting frame for coverage_scan / coverage_rare / coverage_summary / port_events / journal_build / export_clip; the oldest "
         "frame find_last / reverse_continue look at";
     schema["properties"]["to_frame"]["type"] = "integer";
     schema["properties"]["to_frame"]["description"] =
-        "Ending frame for coverage_scan / coverage_summary / port_events / journal_build / export_clip";
+        "Ending frame for coverage_scan / coverage_rare / coverage_summary / port_events / journal_build / export_clip";
     schema["properties"]["chunk"]["type"] = "integer";
     schema["properties"]["chunk"]["description"] = "export_clip: frames per zstd chunk (default 500)";
     schema["properties"]["kind"]["type"] = "string";
@@ -5526,8 +5535,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "or a coverage query - picks the bank on paged machines; without it an address matches on every page";
     schema["properties"]["limit"]["type"] = "integer";
     schema["properties"]["limit"]["description"] =
-        "Max results for coverage_scan (default 200, at most 10000), port_events (default 100), find_last / "
+        "Max results for coverage_scan and blocks for coverage_rare (default 200, at most 10000), port_events (default 100), find_last / "
         "reverse_continue with all (default 100, at most 10000), or max buckets for coverage_summary (default 100)";
+    schema["properties"]["max_frames"]["type"] = "integer";
+    schema["properties"]["max_frames"]["description"] =
+        "coverage_rare: an address is rare when at most this many frames touched it (default 1, at most 1000)";
     schema["properties"]["bucket_size"]["type"] = "integer";
     schema["properties"]["bucket_size"]["description"] = "Frames per bucket for coverage_summary (default: auto)";
     schema["required"].append("action");
@@ -5711,9 +5723,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
             else if (action == "memory_at" || action == "memory_diff")
             {
                 const bool at = action == "memory_at";
-                if (!args["space"].isString() || (at ? !args.isMember("frame") : !(args.isMember("from_frame") && args.isMember("to_frame"))))
+                // space cpu without frame: the machine now
+                const bool cpuNow = at && args["space"].isString() && args["space"].asString() == "cpu";
+                if (!args["space"].isString() ||
+                    (at ? !args.isMember("frame") && !cpuNow : !(args.isMember("from_frame") && args.isMember("to_frame"))))
                 {
-                    done(ToolResult::Error(at ? "Action 'memory_at' requires 'space' and 'frame' (offset, length optional)"
+                    done(ToolResult::Error(at ? "Action 'memory_at' requires 'space' and 'frame' (offset, length optional; "
+                                                "space cpu without frame reads the machine now)"
                                               : "Action 'memory_diff' requires 'space', 'from_frame' and 'to_frame'"));
                     return;
                 }
@@ -5749,6 +5765,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     !CopyNumber(args, "before_tin", *body, error))
                 {
                     done(ToolResult::Error(error));
+                    return;
+                }
+                if (args.isMember("first_per_pc"))
+                {
+                    done(ToolResult::Error("'first_per_pc' is a reverse_continue option"));
                     return;
                 }
             }
@@ -5992,6 +6013,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             }
                             if (hits.size() > shown)
                                 out << "\n  ... " << (hits.size() - shown) << " more in the structured result";
+                            if (b.isMember("pcs_without_hit") && b["pcs_without_hit"].size() > 0)
+                            {
+                                // first_per_pc: one hit per PC above; these did not run in the window
+                                out << "\nNo hit in the window:";
+                                for (const Json::Value& pc : b["pcs_without_hit"])
+                                    out << " " << Hex16(pc.asUInt());
+                            }
                             if (b["truncated"].asBool())
                                 out << "\n[TRUNCATED] older hits remain: go on with before=" << b["next_before"].asUInt64();
                             if (b.isMember("blocked_by_marker"))
@@ -6012,11 +6040,15 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 {
                     CallAndSummarize("POST", Endpoint(id, "/ttd/memory-at"), body.get(), caller, [](const Json::Value& b) {
                         const std::string hex = b["hex"].asString();
+                        const bool live = b["live"].asBool();
                         std::string text = std::to_string(b["length"].asUInt64()) + " bytes of " + b["space"].asString() +
                                            " at offset " + std::to_string(b["offset"].asUInt64()) + " as at frame " +
                                            std::to_string(b["at_frame"].asUInt64()) +
-                                           (b["tinframe"].asUInt64() ? " t=" + std::to_string(b["tinframe"].asUInt64()) : std::string()) +
-                                           (b["exact"].asBool() ? "" : " (the checkpoint before the frame asked)");
+                                           (live ? " t=" + std::to_string(b["at_tinframe"].asUInt64()) + " (the machine now)"
+                                                 : b["tinframe"].asUInt64() ? " t=" + std::to_string(b["tinframe"].asUInt64()) : std::string()) +
+                                           (b["exact"].asBool() ? ""
+                                                                : live ? " (not the asked T-state: where the machine stands)"
+                                                                       : " (the checkpoint before the frame asked)");
                         if (b.isMember("banks"))
                         {
                             // space cpu: how the Z80's 64 KB was paged there
@@ -6290,6 +6322,57 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         if (!body["exact"].asBool() && matched > 0)
                             out << "\nNot exact: without phys_page the offset matched on every page and 16 KB window - a frame "
                                    "may hold another page's access. Give phys_page (or 'rom') for exact frames.";
+                        done(ToolResult::Ok(out.str(), std::move(body)));
+                    });
+                }
+                else if (action == "coverage_rare")
+                {
+                    std::string query = "/ttd/coverage/rare?";
+                    if (args.isMember("space")) query += "space=" + UrlEncodeSegment(args["space"].asString()) + "&";
+                    if (args.isMember("from_frame")) query += "from_frame=" + std::to_string(args["from_frame"].asUInt64()) + "&";
+                    if (args.isMember("to_frame")) query += "to_frame=" + std::to_string(args["to_frame"].asUInt64()) + "&";
+                    if (args.isMember("kind")) query += "kind=" + UrlEncodeSegment(args["kind"].asString()) + "&";
+                    if (args.isMember("addr_from")) query += "addr_from=" + UrlEncodeSegment(args["addr_from"].asString()) + "&";
+                    if (args.isMember("addr_to")) query += "addr_to=" + UrlEncodeSegment(args["addr_to"].asString()) + "&";
+                    if (args.isMember("phys_page")) query += "phys_page=" + PhysPageParam(args["phys_page"]) + "&";
+                    if (args.isMember("max_frames")) query += "max_frames=" + std::to_string(args["max_frames"].asUInt()) + "&";
+                    if (args.isMember("limit")) query += "limit=" + std::to_string(args["limit"].asUInt()) + "&";
+                    if (query.back() == '&' || query.back() == '?') query.pop_back();
+
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200) {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        if (!body["index_available"].asBool()) {
+                            done(ToolResult::Ok("Index not available for this session", std::move(body)));
+                            return;
+                        }
+                        std::ostringstream out;
+                        out << body["rare_keys"].asUInt64() << " of " << body["distinct_keys"].asUInt64() << " "
+                            << body["kind"].asString() << " addresses in at most " << body["max_frames"].asUInt()
+                            << " frames, " << body["rare_blocks"].asUInt64() << " blocks ("
+                            << body["scanned_frames"].asUInt64() << " frames scanned";
+                        if (body["unindexed_frames"].asUInt64() > 0)
+                            out << ", " << body["unindexed_frames"].asUInt64() << " not indexed";
+                        out << ")";
+                        // The blocks themselves: an agent may read only this text
+                        for (const Json::Value& b : body["blocks"]) {
+                            out << "\n";
+                            if (b.isMember("addr_from"))
+                                out << b["addr_from"].asString() << ".." << b["addr_to"].asString();
+                            else
+                                out << "offset " << b["page_offset_from"].asString() << ".." << b["page_offset_to"].asString();
+                            if (b.isMember("phys_page"))
+                                out << " page " << (b["phys_page"].isString() ? b["phys_page"].asString()
+                                                                               : std::to_string(b["phys_page"].asUInt()));
+                            else if (b.isMember("space"))
+                                out << " " << b["space"].asString() << " " << b["offset_from"].asString();
+                            out << " (" << b["keys"].asUInt() << " addr): frames " << FormatFrameRuns(b["frames"]);
+                        }
+                        if (body["truncated"].asBool())
+                            out << "\n[TRUNCATED] the list holds the rarest " << body["blocks"].size()
+                                << "; narrow the range or raise limit";
                         done(ToolResult::Ok(out.str(), std::move(body)));
                     });
                 }
