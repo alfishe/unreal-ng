@@ -1,0 +1,1540 @@
+{
+ "game": "Manic Miner (Bug-Byte)",
+ "reference": "skoolkid mm.skool (SkoolKit 10.x, decimal)",
+ "note": "Written once from the reference comments; record offsets are relative to the live copy (base); instances are the other copies (cavern records at $B000 + $400 n + $200).",
+ "range": [
+  "$8000",
+  "$10000"
+ ],
+ "records": [
+  {
+   "name": "cavern_buffer",
+   "base": "$8000",
+   "size": 512,
+   "count": 1,
+   "instances": [
+    "$B200",
+    "$B600",
+    "$BA00",
+    "$BE00",
+    "$C200",
+    "$C600",
+    "$CA00",
+    "$CE00",
+    "$D200",
+    "$D600",
+    "$DA00",
+    "$DE00",
+    "$E200",
+    "$E600",
+    "$EA00",
+    "$EE00",
+    "$F200",
+    "$F600",
+    "$FA00",
+    "$FE00"
+   ],
+   "evidence": "mm.skool entries g32768-g33024 (CAVERNNAME..GGDATA); cavern records b45056+1024n: \"The next N bytes are copied to #R...\" mid-block comments; StartCavern (34436) copies 512 bytes",
+   "layouts": [
+    {
+     "name": "cavern",
+     "fields": [
+      {
+       "offset": 0,
+       "size": 32,
+       "name": "cavern name"
+      },
+      {
+       "offset": 32,
+       "size": 72,
+       "name": "tiles: background, floor, crumbling, wall, conveyor, nasty 1, nasty 2, extra",
+       "count": 8,
+       "stride": 9
+      },
+      {
+       "offset": 104,
+       "size": 7,
+       "name": "Willy's state (willy_state)"
+      },
+      {
+       "offset": 111,
+       "size": 4,
+       "name": "conveyor (conveyor)"
+      },
+      {
+       "offset": 115,
+       "size": 1,
+       "name": "border colour"
+      },
+      {
+       "offset": 116,
+       "size": 1,
+       "name": "attribute of the last item drawn"
+      },
+      {
+       "offset": 117,
+       "size": 25,
+       "name": "items (items)",
+       "count": 5,
+       "stride": 5
+      },
+      {
+       "offset": 142,
+       "size": 1,
+       "name": "item terminator $FF"
+      },
+      {
+       "offset": 143,
+       "size": 1,
+       "name": "portal attribute"
+      },
+      {
+       "offset": 144,
+       "size": 32,
+       "name": "portal graphic"
+      },
+      {
+       "offset": 176,
+       "size": 2,
+       "name": "portal location in the attribute buffer"
+      },
+      {
+       "offset": 178,
+       "size": 2,
+       "name": "portal location in the screen buffer"
+      },
+      {
+       "offset": 180,
+       "size": 8,
+       "name": "item graphic"
+      },
+      {
+       "offset": 188,
+       "size": 1,
+       "name": "air supply"
+      },
+      {
+       "offset": 189,
+       "size": 1,
+       "name": "game clock"
+      },
+      {
+       "offset": 190,
+       "size": 28,
+       "name": "horizontal guardians (guardians/horizontal)",
+       "count": 4,
+       "stride": 7
+      },
+      {
+       "offset": 218,
+       "size": 1,
+       "name": "horizontal guardian terminator $FF"
+      },
+      {
+       "offset": 219,
+       "size": 1,
+       "name": "Eugene's direction / Kong Beast status"
+      },
+      {
+       "offset": 220,
+       "size": 1,
+       "name": "Eugene's / Kong Beast's pixel y"
+      },
+      {
+       "offset": 221,
+       "size": 28,
+       "name": "vertical guardians (guardians/vertical)",
+       "count": 4,
+       "stride": 7
+      },
+      {
+       "offset": 249,
+       "size": 1,
+       "name": "vertical guardian terminator"
+      },
+      {
+       "offset": 250,
+       "size": 6,
+       "name": "spare"
+      },
+      {
+       "offset": 256,
+       "size": 256,
+       "name": "guardian graphic data",
+       "count": 8,
+       "stride": 32
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "guardians",
+   "base": "$80BE",
+   "size": 7,
+   "count": 4,
+   "evidence": "mm.skool g32958 HGUARDS and g32989 VGUARDS byte tables",
+   "layouts": [
+    {
+     "name": "horizontal",
+     "base": "$80BE",
+     "terminator": 255,
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "bit 7 animation speed (1 = slow), bits 0-6 attribute"
+      },
+      {
+       "offset": 1,
+       "size": 2,
+       "name": "location in the attribute buffer"
+      },
+      {
+       "offset": 3,
+       "size": 1,
+       "name": "MSB of the location in the screen buffer"
+      },
+      {
+       "offset": 4,
+       "size": 1,
+       "name": "animation frame"
+      },
+      {
+       "offset": 5,
+       "size": 1,
+       "name": "LSB of the leftmost point of the path (attribute buffer)"
+      },
+      {
+       "offset": 6,
+       "size": 1,
+       "name": "LSB of the rightmost point of the path (attribute buffer)"
+      }
+     ],
+     "instances": [
+      "$B2BE",
+      "$B6BE",
+      "$BABE",
+      "$BEBE",
+      "$C2BE",
+      "$C6BE",
+      "$CABE",
+      "$CEBE",
+      "$D2BE",
+      "$D6BE",
+      "$DABE",
+      "$DEBE",
+      "$E2BE",
+      "$E6BE",
+      "$EABE",
+      "$EEBE",
+      "$F2BE",
+      "$F6BE",
+      "$FABE",
+      "$FEBE"
+     ]
+    },
+    {
+     "name": "vertical",
+     "base": "$80DD",
+     "terminator": 255,
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "attribute"
+      },
+      {
+       "offset": 1,
+       "size": 1,
+       "name": "animation frame"
+      },
+      {
+       "offset": 2,
+       "size": 1,
+       "name": "pixel y"
+      },
+      {
+       "offset": 3,
+       "size": 1,
+       "name": "x"
+      },
+      {
+       "offset": 4,
+       "size": 1,
+       "name": "pixel y increment"
+      },
+      {
+       "offset": 5,
+       "size": 1,
+       "name": "minimum pixel y"
+      },
+      {
+       "offset": 6,
+       "size": 1,
+       "name": "maximum pixel y"
+      }
+     ],
+     "instances": [
+      "$B2DD",
+      "$B6DD",
+      "$BADD",
+      "$BEDD",
+      "$C2DD",
+      "$C6DD",
+      "$CADD",
+      "$CEDD",
+      "$D2DD",
+      "$D6DD",
+      "$DADD",
+      "$DEDD",
+      "$E2DD",
+      "$E6DD",
+      "$EADD",
+      "$EEDD",
+      "$F2DD",
+      "$F6DD",
+      "$FADD",
+      "$FEDD"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "items",
+   "base": "$8075",
+   "size": 5,
+   "count": 5,
+   "terminator": 255,
+   "instances": [
+    "$B275",
+    "$B675",
+    "$BA75",
+    "$BE75",
+    "$C275",
+    "$C675",
+    "$CA75",
+    "$CE75",
+    "$D275",
+    "$D675",
+    "$DA75",
+    "$DE75",
+    "$E275",
+    "$E675",
+    "$EA75",
+    "$EE75",
+    "$F275",
+    "$F675",
+    "$FA75",
+    "$FE75"
+   ],
+   "evidence": "mm.skool g32885 ITEMS byte table; attribute 0 = collected (routine 36707)",
+   "layouts": [
+    {
+     "name": "item",
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "current attribute (0 = collected)"
+      },
+      {
+       "offset": 1,
+       "size": 2,
+       "name": "location in the attribute buffer"
+      },
+      {
+       "offset": 3,
+       "size": 1,
+       "name": "MSB of the location in the screen buffer"
+      },
+      {
+       "offset": 4,
+       "size": 1,
+       "name": "unused (always $FF)"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "conveyor",
+   "base": "$806F",
+   "size": 4,
+   "count": 1,
+   "instances": [
+    "$B26F",
+    "$B66F",
+    "$BA6F",
+    "$BE6F",
+    "$C26F",
+    "$C66F",
+    "$CA6F",
+    "$CE6F",
+    "$D26F",
+    "$D66F",
+    "$DA6F",
+    "$DE6F",
+    "$E26F",
+    "$E66F",
+    "$EA6F",
+    "$EE6F",
+    "$F26F",
+    "$F66F",
+    "$FA6F",
+    "$FE6F"
+   ],
+   "evidence": "mm.skool g32879 CONVDIR / CONVLOC / CONVLEN",
+   "layouts": [
+    {
+     "name": "conveyor",
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "direction (0 = left, 1 = right)"
+      },
+      {
+       "offset": 1,
+       "size": 2,
+       "name": "location in the screen buffer at 28672"
+      },
+      {
+       "offset": 3,
+       "size": 1,
+       "name": "length"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "willy_state",
+   "base": "$8068",
+   "size": 7,
+   "count": 1,
+   "instances": [
+    "$B268",
+    "$B668",
+    "$BA68",
+    "$BE68",
+    "$C268",
+    "$C668",
+    "$CA68",
+    "$CE68",
+    "$D268",
+    "$D668",
+    "$DA68",
+    "$DE68",
+    "$E268",
+    "$E668",
+    "$EA68",
+    "$EE68",
+    "$F268",
+    "$F668",
+    "$FA68",
+    "$FE68"
+   ],
+   "evidence": "mm.skool g32872-g32878 (WILLY_Y, FRAME, DMFLAGS, AIRBORNE, LOCATION, JUMPING)",
+   "layouts": [
+    {
+     "name": "willy",
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "pixel y * 2 (LSB into the screen buffer row table at 33536)"
+      },
+      {
+       "offset": 1,
+       "size": 1,
+       "name": "animation frame 0-3"
+      },
+      {
+       "offset": 2,
+       "size": 1,
+       "name": "bit 0 facing left, bit 1 moving"
+      },
+      {
+       "offset": 3,
+       "size": 1,
+       "name": "airborne: 0 no, 1 jumping, 2-11 falling, 12+ fallen too far, 255 dead"
+      },
+      {
+       "offset": 4,
+       "size": 2,
+       "name": "location in the attribute buffer"
+      },
+      {
+       "offset": 6,
+       "size": 1,
+       "name": "jumping animation counter"
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "graphics": [
+  {
+   "start": "$8200",
+   "end": "$8300",
+   "macro": "#UDGARRAY",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "Willy, 4 right + 4 left"
+  },
+  {
+   "start": "$A000",
+   "end": "$B000",
+   "macro": "#SCR",
+   "kind": "screen",
+   "width": 256,
+   "height": 128,
+   "frames": 1,
+   "note": "title screen, top and middle thirds"
+  },
+  {
+   "start": "$B000",
+   "end": "$B200",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$B220",
+   "end": "$B268",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$B28F",
+   "end": "$B2B4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$B2B4",
+   "end": "$B2BC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$B2E0",
+   "end": "$B300",
+   "macro": "#UDGARRAY",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "swordfish"
+  },
+  {
+   "start": "$B300",
+   "end": "$B400",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$B400",
+   "end": "$B600",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$B620",
+   "end": "$B668",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$B68F",
+   "end": "$B6B4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$B6B4",
+   "end": "$B6BC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$B6E0",
+   "end": "$B700",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "plinth"
+  },
+  {
+   "start": "$B700",
+   "end": "$B800",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$B800",
+   "end": "$BA00",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$BA20",
+   "end": "$BA68",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$BA8F",
+   "end": "$BAB4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$BAB4",
+   "end": "$BABC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$BAE0",
+   "end": "$BB00",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "boot"
+  },
+  {
+   "start": "$BB00",
+   "end": "$BC00",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$BC00",
+   "end": "$BE00",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$BE20",
+   "end": "$BE68",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$BE8F",
+   "end": "$BEB4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$BEB4",
+   "end": "$BEBC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$BF00",
+   "end": "$C000",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$C000",
+   "end": "$C200",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$C220",
+   "end": "$C268",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$C28F",
+   "end": "$C2B4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$C2B4",
+   "end": "$C2BC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$C2E0",
+   "end": "$C300",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "Eugene"
+  },
+  {
+   "start": "$C300",
+   "end": "$C400",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$C400",
+   "end": "$C600",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$C620",
+   "end": "$C668",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$C68F",
+   "end": "$C6B4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$C6B4",
+   "end": "$C6BC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$C700",
+   "end": "$C800",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$C800",
+   "end": "$CA00",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$CA20",
+   "end": "$CA68",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$CA8F",
+   "end": "$CAB4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$CAB4",
+   "end": "$CABC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$CB00",
+   "end": "$CC00",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$CC00",
+   "end": "$CE00",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$CE20",
+   "end": "$CE68",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$CE8F",
+   "end": "$CEB4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$CEB4",
+   "end": "$CEBC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$CF00",
+   "end": "$D000",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$D000",
+   "end": "$D200",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$D220",
+   "end": "$D268",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$D28F",
+   "end": "$D2B4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$D2B4",
+   "end": "$D2BC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$D300",
+   "end": "$D400",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$D400",
+   "end": "$D600",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$D620",
+   "end": "$D668",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$D68F",
+   "end": "$D6B4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$D6B4",
+   "end": "$D6BC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$D700",
+   "end": "$D800",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$D800",
+   "end": "$DA00",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$DA20",
+   "end": "$DA68",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$DA8F",
+   "end": "$DAB4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$DAB4",
+   "end": "$DABC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$DB00",
+   "end": "$DC00",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$DC00",
+   "end": "$DE00",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$DE20",
+   "end": "$DE68",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$DE8F",
+   "end": "$DEB4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$DEB4",
+   "end": "$DEBC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$DF00",
+   "end": "$E000",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$E000",
+   "end": "$E200",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$E220",
+   "end": "$E268",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$E28F",
+   "end": "$E2B4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$E2B4",
+   "end": "$E2BC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$E300",
+   "end": "$E400",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$E400",
+   "end": "$E600",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$E620",
+   "end": "$E668",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$E68F",
+   "end": "$E6B4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$E6B4",
+   "end": "$E6BC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$E700",
+   "end": "$E800",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$E800",
+   "end": "$EA00",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$EA20",
+   "end": "$EA68",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$EA8F",
+   "end": "$EAB4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$EAB4",
+   "end": "$EABC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$EB00",
+   "end": "$EC00",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$EC00",
+   "end": "$EE00",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$EE20",
+   "end": "$EE68",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$EE8F",
+   "end": "$EEB4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$EEB4",
+   "end": "$EEBC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$EF00",
+   "end": "$F000",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$F000",
+   "end": "$F200",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$F220",
+   "end": "$F268",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$F28F",
+   "end": "$F2B4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$F2B4",
+   "end": "$F2BC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$F300",
+   "end": "$F400",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$F400",
+   "end": "$F600",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$F620",
+   "end": "$F668",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$F68F",
+   "end": "$F6B4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$F6B4",
+   "end": "$F6BC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$F700",
+   "end": "$F800",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$F800",
+   "end": "$FA00",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$FA20",
+   "end": "$FA68",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$FA8F",
+   "end": "$FAB4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$FAB4",
+   "end": "$FABC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$FB00",
+   "end": "$FC00",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  },
+  {
+   "start": "$FC00",
+   "end": "$FE00",
+   "macro": "#CAVERN",
+   "kind": "attribute_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells"
+  },
+  {
+   "start": "$FE20",
+   "end": "$FE68",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 8,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$FE8F",
+   "end": "$FEB4",
+   "macro": "#PORTAL",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "attribute byte first, then 32 bytes"
+  },
+  {
+   "start": "$FEB4",
+   "end": "$FEBC",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$FF00",
+   "end": "$10000",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardians"
+  }
+ ]
+}

@@ -116,7 +116,7 @@ Z80OPCODE op_0F(Z80 *cpu) { // rrca
 Z80OPCODE op_10(Z80 *cpu) { // djnz rr
 	cpuidle(cpu->IR(), 1);
 
-	int8_t offset = cpu->rd(cpu->pc++);
+	int8_t offset = cpu->rd(cpu->pc++, true);  // an operand fetch, as every other instruction byte
 
 	// Branch taken
 	if (--cpu->b)

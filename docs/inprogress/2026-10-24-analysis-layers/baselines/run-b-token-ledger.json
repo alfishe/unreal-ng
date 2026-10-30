@@ -1,0 +1,214 @@
+{
+ "run_b": {
+  "game": "Manic Miner",
+  "method": "zx-reaper + unreal-ng",
+  "date": "2026-10-24",
+  "source": "scratch/reaper-mm/run-B/re/run-log.md (per agent), run-report.md (totals)",
+  "wall_time": "19:07:43-20:31 (about 1 h 23 min)",
+  "agents": [
+   {
+    "id": "A",
+    "group": "annotation wave 1",
+    "model": "sonnet",
+    "scope": "front end",
+    "tokens": 88706,
+    "tool_calls": 31,
+    "wall_s": 349,
+    "finished": "19:37:03",
+    "unreal_ng": "no (zxrun only)"
+   },
+   {
+    "id": "H",
+    "group": "annotation wave 1",
+    "model": "sonnet",
+    "scope": "caverns 10-19",
+    "tokens": 120135,
+    "tool_calls": 54,
+    "wall_s": 403,
+    "finished": "19:37:56",
+    "unreal_ng": "no (zxrun only)"
+   },
+   {
+    "id": "F",
+    "group": "annotation wave 1",
+    "model": "sonnet",
+    "scope": "cavern setup, items, portal, sprite, ending",
+    "tokens": 136336,
+    "tool_calls": 48,
+    "wall_s": 613,
+    "finished": "19:41:25",
+    "unreal_ng": "yes (MCP + WebAPI)"
+   },
+   {
+    "id": "C",
+    "group": "annotation wave 1",
+    "model": "sonnet",
+    "scope": "lives, air, score, game over",
+    "tokens": 113897,
+    "tool_calls": 46,
+    "wall_s": 635,
+    "finished": "19:41:45",
+    "unreal_ng": "yes (WebAPI)"
+   },
+   {
+    "id": "B",
+    "group": "annotation wave 1",
+    "model": "sonnet",
+    "scope": "main loop, cheat",
+    "tokens": 117656,
+    "tool_calls": 46,
+    "wall_s": 718,
+    "finished": "19:43:08",
+    "unreal_ng": "no (zxrun + own trace script)"
+   },
+   {
+    "id": "D",
+    "group": "annotation wave 1",
+    "model": "sonnet",
+    "scope": "Willy",
+    "tokens": 193508,
+    "tool_calls": 83,
+    "wall_s": 808,
+    "finished": "19:44:39",
+    "unreal_ng": "no (zxrun)"
+   },
+   {
+    "id": "G",
+    "group": "annotation wave 1",
+    "model": "sonnet",
+    "scope": "caverns 0-9, stack area, leftover source text",
+    "tokens": 191606,
+    "tool_calls": 83,
+    "wall_s": 821,
+    "finished": "19:44:52",
+    "unreal_ng": "no (zxrun)"
+   },
+   {
+    "id": "E",
+    "group": "annotation wave 1",
+    "model": "sonnet",
+    "scope": "guardians, specials",
+    "tokens": 174872,
+    "tool_calls": 61,
+    "wall_s": 895,
+    "finished": "19:46:06",
+    "unreal_ng": "yes (WebAPI + MCP breakpoint)"
+   },
+   {
+    "id": "W",
+    "group": "relocation",
+    "model": "sonnet",
+    "scope": "comment-address warnings (#R / @ignoreua)",
+    "tokens": 94456,
+    "tool_calls": 34,
+    "wall_s": 252,
+    "finished": null,
+    "unreal_ng": null
+   },
+   {
+    "id": "X",
+    "group": "bug hunt",
+    "model": "sonnet",
+    "scope": "bug hunt, findings F77-F89",
+    "tokens": 155872,
+    "tool_calls": 56,
+    "wall_s": 597,
+    "finished": null,
+    "unreal_ng": null
+   },
+   {
+    "id": "G2",
+    "group": "gallery",
+    "model": "sonnet",
+    "scope": "44 images, scripts/docs-images.sh",
+    "tokens": 160419,
+    "tool_calls": 84,
+    "wall_s": 576,
+    "finished": null,
+    "unreal_ng": null
+   },
+   {
+    "id": "V",
+    "group": "verification",
+    "model": "sonnet",
+    "scope": "17 inferred findings -> observed, 3 refuted, F90-F91",
+    "tokens": 213774,
+    "tool_calls": 97,
+    "wall_s": 898,
+    "finished": null,
+    "unreal_ng": null
+   },
+   {
+    "id": "C2",
+    "group": "comment fixes",
+    "model": "not stated",
+    "scope": "comment fixes in src/ (named \"C\" in the log)",
+    "tokens": 49290,
+    "tool_calls": 11,
+    "wall_s": 71,
+    "finished": null,
+    "unreal_ng": null
+   },
+   {
+    "id": "article",
+    "group": "article",
+    "model": "inherited (lead model)",
+    "scope": "14 files, 13,403 words",
+    "tokens": 224324,
+    "tool_calls": 72,
+    "wall_s": 820,
+    "finished": null,
+    "unreal_ng": null
+   }
+  ],
+  "totals": {
+   "subagents": 14,
+   "tokens": 2034851,
+   "annotation_wave_1": 1136716,
+   "later": 898135,
+   "article": 224324,
+   "re_part": 1810527,
+   "tool_calls_subagents": 806,
+   "tool_calls_lead": "about 200 (not counted per call)"
+  },
+  "report_states": {
+   "tokens": 2034851,
+   "annotation_wave_1": 1136716,
+   "later": 898135,
+   "tool_calls_subagents": 806
+  }
+ },
+ "run_a": {
+  "game": "Manic Miner",
+  "method": "zx-reaper alone",
+  "date": "2026-10-24",
+  "source": "scratch/reaper-mm/run-A/re/run-log.md (per phase only), run-report.md (totals)",
+  "wall_time": "18:48:58-20:23 (about 1 h 34 min)",
+  "per_agent": null,
+  "phases": [
+   {
+    "phase": "3. annotation",
+    "start": "19:09:58",
+    "end": "19:33:18",
+    "subagents": 10,
+    "model": "sonnet",
+    "agents": "A, B, C1, C2, E, F, G, H, I, J",
+    "tokens": 1144505
+   },
+   {
+    "phase": "6. document",
+    "start": "19:57:15",
+    "end": "20:22:43",
+    "subagents": 3,
+    "resumes": 2,
+    "agents": "K bug hunt + audit (sonnet), L gallery (sonnet, 1 resume), M article (opus, 1 resume)",
+    "tokens": 879970
+   }
+  ],
+  "totals": {
+   "tokens_sum_of_phases": 2024475,
+   "tokens_stated": 2023475,
+   "note": "the stated total is 1,000 below the sum of the two phase figures; the run has no per-agent lines to say which figure is wrong"
+  }
+ }
+}

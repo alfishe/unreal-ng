@@ -551,6 +551,11 @@ protected:
     // tracker's CallTraceBuffer; the session state is polled live, the cached
     // flag only avoids the lookup when the calltrace feature is off
     bool _feature_calltrace_enabled = false;
+
+    // The memory tracker's access context byte (AccessContext, memoryaccessfacts.h) while its level is Facts, else
+    // null: after each opcode fetch the instruction's class (stack / block / plain) is stored there, and the INT / NMI
+    // acceptance marks its pushes. Off, it costs one null test per instruction
+    std::atomic<uint8_t*> _accessContextSink{nullptr};
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -1039,6 +1044,8 @@ public:
     /// region <Feature Cache>
     void UpdateFeatureCache();
     OpcodeProfiler* GetOpcodeProfiler() { return _opcodeProfiler; }
+    /// The memory tracker's access context byte (level Facts) or null (MemoryAccessTracker::SetLevel)
+    void SetAccessContextSink(uint8_t* sink) { _accessContextSink.store(sink, std::memory_order_relaxed); }
     /// endregion </Feature Cache>
 
     /// region <Register Access API>

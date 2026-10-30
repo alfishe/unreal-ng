@@ -735,6 +735,58 @@ Or use hex string format:
 
 While a time-travel (TTD) recording runs, a memory write (`PUT /memory/{addr}`) and a physical page write (`PUT /memory/{type}/{page}/{offset}`) record a `debugger_edit` marker, a replay barrier, and briefly pause a running emulator for the edit so the recording sees it. No marker is written when no recording runs.
 
+### Analysis layers
+
+The L0 access facts, the L1 code behaviour and the L2 structure of the [analysis layers](../../analysis/analysis-layers.md)
+(`analysis_api.cpp` over the shared core handler `analysis::Execute`; OpenAPI tag `Analyzers`). Every answer carries
+`text`, the CLI's lines; refusals are `{"error", "message"}` with 400 (unknown option, bad value), 404 (no such label,
+no routine there), 409 (`explain` at level `counters`, a build already running, no recording, `cancel` with no
+build, `query` / `export` before a build, a file `export` cannot write), 503 (no tracker, no TTD engine).
+
+```
+POST /api/v1/emulator/{id}/analysis/start     {level?: "facts"|"counters", mode?: "z80"|"physical", record?: bool}: status
+POST /api/v1/emulator/{id}/analysis/stop      the facts stay readable (a recording start made stops): status
+GET  /api/v1/emulator/{id}/analysis/status    {state, level, mode, frame, recording, facts {allocated, bytes,
+                                               z80_bytes_touched, pages}, l1 {progress, ready}, text}
+POST /api/v1/emulator/{id}/analysis/build     {frames?, path?, wait?: ms <= 30000}: the L1 build job
+                                              {job, state, bundle, progress, ready, text}
+POST /api/v1/emulator/{id}/analysis/cancel    cancel the running build: {job, state, text}
+GET  /api/v1/emulator/{id}/analysis/explain?address=$80BC[&page=ram:3][&what=auto|routine|byte]
+                                              routine (L1 ready, auto or what=routine): {what: "routine", address,
+                                               routine {entry, page, kinds, ...}, sheet_bytes, text: the fact sheet}
+                                              byte (what=byte or no L1): {what: "byte",
+                                               address, mode, bank | page, label, accessed, kinds, kinds_mask,
+                                               first_frame, last_frame, last_reader, multi_reader, last_writer,
+                                               multi_writer, written {distinct, min, max}, counters, text}
+GET  /api/v1/emulator/{id}/analysis/query?kind=records&range=8000-83FF&limit=20
+                                              L2 claims: kind all (default) | conflicts | a region kind (code, data,
+                                               text, buffer, init_table, records, variable, pointer_table,
+                                               handler_table, ...); {kind, range, regions [{start, end, page, size, kind,
+                                               detector, confidence, status, label, title, stride, count, ...}] |
+                                               conflicts [{a, b}], count,
+                                               truncated, text}
+POST /api/v1/emulator/{id}/analysis/export    {format: ctl|skool|fields|geometry|layout|symbols|map, path?,
+                                               ranges?: "5900-59FF,8000-FFFF", width?: 1..64}: the L2 draft
+                                              {format, entries, bytes, ranges, path, content (no path), text}
+POST /api/v1/emulator/{id}/analysis/gallery   {address?, kind?: all|font|sprite|tile|screen|level_map, scale?: 1..8,
+                                               path?, limit?}: the L2 graphics; no address: {regions [...], count,
+                                               truncated, text}; an address (or a label): the region starting there
+                                               (else covering it) drawn as a PNG {region, width, height, frames,
+                                               scale, bytes, mime_type, png (base64; empty with a path), path, text}
+GET|POST /api/v1/emulator/{id}/analysis/findings  {op?: list|add, kind?, status?, range?, limit?, format?: table|markdown|
+                                               jsonl, path?; add: claim, evidence?, by?, title?}: the L3 findings
+                                               register {count, total, by_kind, by_status, findings [...], content, text}
+GET|POST /api/v1/emulator/{id}/analysis/review    {op?: next|list|show|resolve, id?, verdict?: ok|wrong|skip, label?,
+                                               title?, comment?, by?, experiment? (a spec object), ranges?, limit?}:
+                                               the review queue {item, sheet, sheet_bytes, queue | items | finding, text}
+POST /api/v1/emulator/{id}/analysis/experiment  {spec: an object or an array (or their JSON text), path?, parallel?,
+                                               finding?}: runs on muted clones {results [...], observed, refuted,
+                                               errors, workers, peak_concurrency, seeks, micros, text}
+POST /api/v1/emulator/{id}/analysis/cover      {budget?, per_branch?, frames?, parallel?, limit?, ranges?}: directed
+                                               coverage {candidates, tried, flipped, attempts, new_code, branches [...],
+                                               text}
+```
+
 ### Settings Management
 ```
 GET  /api/v1/emulator/{id}/settings            All settings, grouped (io_acceleration, disk_interface, audio) plus turbo_mode, speed, effective_speed, turbo_active, turbo_audio

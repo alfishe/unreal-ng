@@ -232,6 +232,12 @@ public:
     /// off takes effect too). Emulation thread or CPU held
     void setTapDebugHold(bool on);
     bool tapDebugHold() const;
+    /// @brief A collector that runs on the debug path is on (memory tracking, call trace, opcode profiler): with
+    /// debug mode off it stops and the tracker frees what it gathered. Whoever gives debug mode back without having
+    /// asked for these (a TTD recording that stops, the BASIC editor monitor, the Qt debugger window going away)
+    /// leaves it on while this holds. Breakpoints do not hold it: they gather nothing
+    bool debugCaptureOn() const;
+
     /// @brief An active stopping breakpoint exists (BreakpointManager::ApplyTapDemand): while 'breakpoints' is on, the
     /// CPU runs the debug path whatever 'debugmode' says, so the breakpoint fires (a hidden debugger window switching
     /// 'debugmode' off cannot leave it accepted and inert). No breakpoints: 'debugmode' alone decides

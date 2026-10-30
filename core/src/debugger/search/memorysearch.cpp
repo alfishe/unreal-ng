@@ -180,6 +180,27 @@ std::string SpaceName(const MemorySearchRequest& request)
     }
 }
 
+std::vector<uint32_t> FindInBuffer(const uint8_t* data, size_t size, const std::vector<uint8_t>& pattern,
+                                   const std::vector<uint8_t>& mask, unsigned max)
+{
+    std::vector<uint32_t> out;
+    const size_t n = pattern.size();
+    if (data == nullptr || n == 0 || n > size || (!mask.empty() && mask.size() != n))
+        return out;
+    for (size_t at = 0; at + n <= size && out.size() < max; ++at)
+    {
+        bool matched = true;
+        for (size_t i = 0; i < n && matched; ++i)
+        {
+            const uint8_t m = mask.empty() ? 0xFF : mask[i];
+            matched = ((data[at + i] ^ pattern[i]) & m) == 0;
+        }
+        if (matched)
+            out.push_back(static_cast<uint32_t>(at));
+    }
+    return out;
+}
+
 MemorySearchResult Search(EmulatorContext* context, const MemorySearchRequest& request)
 {
     MemorySearchResult result;

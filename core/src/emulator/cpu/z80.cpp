@@ -783,6 +783,10 @@ void Z80::Z80Step(bool skipBreakpoints)
             // Regular Z80 bus cycle
             // 1. Fetch opcode (Z80 M1 bus cycle)
             cpu.opcode = FetchM1();
+
+            // The memory tracker's L0 facts: the class of this instruction for its data accesses (memoryaccessfacts.h)
+            if (uint8_t* sink = _accessContextSink.load(std::memory_order_relaxed)) [[unlikely]]
+                *sink = accesscontext::kBase[cpu.opcode];
         }
 
         // 1a. Call trace hook (pre-execution) — appends control-flow events
@@ -1413,7 +1417,11 @@ void Z80::NotifyMachineM1(uint16_t address)
 /// The M1 fetch for the prefix handlers (CB / ED / DD / FD); Z80Step inlines FetchM1 itself
 uint8_t Z80::m1_cycle()
 {
-    return FetchM1();
+    const uint8_t fetched = FetchM1();
+    // The memory tracker's L0 facts: the class of the instruction behind the prefix (prefix set before this fetch)
+    if (uint8_t* sink = _accessContextSink.load(std::memory_order_relaxed)) [[unlikely]]
+        *sink = static_cast<uint8_t>(AccessContextFor(prefix, fetched));
+    return fetched;
 }
 
 /// One idle opcode fetch of the halted CPU (docs/inprogress/2026-10-02-halt-fetch-address). The Z80's program
@@ -1441,6 +1449,9 @@ void Z80::HaltedM1()
     cpu.r_low = ((cpu.r_low + 1) & 0x7f) | (cpu.r_low & 0x80);
     if (machineM1Hook) [[unlikely]]
         NotifyMachineM1Before(fetch);
+    // The memory tracker's L0 facts: this fetch is not an instruction byte
+    if (uint8_t* sink = _accessContextSink.load(std::memory_order_relaxed)) [[unlikely]]
+        *sink = static_cast<uint8_t>(AccessContext::HaltFetch);
     (void)rdM1(fetch);  // contention, the +2A / +3 latch, snow, the host bus overlays, the access tracker
     if (machineM1Hook) [[unlikely]]
         NotifyMachineM1(fetch);
@@ -1934,10 +1945,16 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
         IncrementCPUCyclesCounter(11);
 
         // Push return address (raw write: both stack cycles are included in the 11T above)
+        // The memory tracker's L0 facts: the two writes are stack writes
+        uint8_t* const sink = _accessContextSink.load(std::memory_order_relaxed);
+        if (sink) [[unlikely]]
+            *sink = static_cast<uint8_t>(AccessContext::Stack);
         uint16_t sp = cpu.sp;
         (_memory->*MemIf->MemoryWrite)(--sp, cpu.pch);
         (_memory->*MemIf->MemoryWrite)(--sp, cpu.pcl);
         cpu.sp = sp;
+        if (sink) [[unlikely]]
+            *sink = static_cast<uint8_t>(AccessContext::Plain);
 
         // Restart at the NMI vector #0066
         cpu.pc = 0x0066;
@@ -2160,10 +2177,16 @@ void Z80::HandleINT(uint8_t vector)
     // Raw memory access without T-state accounting: both stack write cycles
     // are already included in interruptDuration above (wd() would add +3T per byte).
     // Same approach as the original Unreal Speccy handle_int (MemIf->wm() without t increment)
+    // The memory tracker's L0 facts: the two writes are stack writes, the IM 2 vector read after them a data read
+    uint8_t* const sink = _accessContextSink.load(std::memory_order_relaxed);
+    if (sink) [[unlikely]]
+        *sink = static_cast<uint8_t>(AccessContext::Stack);
     uint16_t sp = cpu.sp;
     (_memory->*MemIf->MemoryWrite)(--sp, cpu.pch);
     (_memory->*MemIf->MemoryWrite)(--sp, cpu.pcl);
     cpu.sp = sp;
+    if (sink) [[unlikely]]
+        *sink = static_cast<uint8_t>(AccessContext::Plain);
 
     /// region <Determine interrupt handler address>
     uint16_t interruptHandlerAddress;

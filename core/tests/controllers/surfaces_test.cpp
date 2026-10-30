@@ -439,6 +439,35 @@ TEST(Surfaces_Test, Service_MarksPlayTheLayersPatternWithTheRateLimit)
     EXPECT_FALSE(rig.service.PlayMarks(kPad.id, {"edge"}, 6000).played) << "not connected / no outputs";
 }
 
+/// Another client on the machine took the controllers: nothing reaches the Dial; back, it gets its feel again
+TEST(Surfaces_Test, Service_NotTheOwnerWritesNothingAndTakesTheFeelBack)
+{
+    ServiceRig rig;
+    rig.devices->SetHasLight(kDial.id, true);
+    rig.service.Router().SetContext("emu-1", "ttd");
+    ASSERT_TRUE(rig.service.SetLight(kDial.id, {1, 2, 3}));
+    const size_t steps = rig.devices->Steps(kDial.id).size();
+    ASSERT_GE(steps, 1u);
+
+    rig.service.SetOwner(false);
+    EXPECT_FALSE(rig.service.Owner());
+    EXPECT_TRUE(rig.service.Router().Suspended());
+    rig.service.Router().SetContext("emu-1", "ttd.timecode");
+    EXPECT_FALSE(rig.service.PlayMarks(kDial.id, {"edge"}, 1000).played);
+    EXPECT_FALSE(rig.service.Output(kDial.id, HapticOut{HapticPattern::Tick}));
+    EXPECT_TRUE(rig.service.SetLight(kDial.id, {4, 5, 6})) << "kept for the owner to come";
+    EXPECT_EQ(rig.devices->Steps(kDial.id).size(), steps) << "the feel is followed, not sent";
+    EXPECT_TRUE(rig.devices->Patterns(kDial.id).empty());
+    EXPECT_EQ(rig.devices->Lights(kDial.id).size(), 1u);
+
+    rig.service.SetOwner(true);
+    const std::vector<StepsOut> back = rig.devices->Steps(kDial.id);
+    ASSERT_EQ(back.size(), steps + 1);
+    EXPECT_FALSE(back.back().clicks) << "the feel of ttd.timecode, the context it followed meanwhile";
+    ASSERT_EQ(rig.devices->Lights(kDial.id).size(), 2u);
+    EXPECT_EQ(rig.devices->Lights(kDial.id).back(), (LightColor{4, 5, 6}));
+}
+
 /// endregion </Service outputs and marks>
 
 /// region <The Dial's reports and writer>

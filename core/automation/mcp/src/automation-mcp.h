@@ -11,7 +11,9 @@
 // Header stays drogon/jsoncpp free so the automation library can include it
 // without those include paths.
 
+#include <functional>
 #include <memory>
+#include <string>
 
 namespace mcp
 {
@@ -26,6 +28,7 @@ protected:
     bool _started = false;
     std::shared_ptr<mcp::McpDispatcher> _dispatcher;
     std::shared_ptr<mcp::WebApiClient> _caller;
+    std::function<void(const std::string& tool, const std::string& action)> _toolCallObserver;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -43,6 +46,11 @@ public:
 
     /// region <Methods>
 public:
+    /// Sees every tool call (name, "action" argument); set before start (McpDispatcher::SetToolCallObserver)
+    void SetToolCallObserver(std::function<void(const std::string& tool, const std::string& action)> observer)
+    {
+        _toolCallObserver = std::move(observer);
+    }
     void start();
     void stop();
     /// endregion </Methods>

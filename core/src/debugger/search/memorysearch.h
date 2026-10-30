@@ -77,6 +77,10 @@ std::string NumberPattern(uint64_t value);
 bool ParseSpace(const std::string& text, MemorySearchRequest& request, std::string& error);
 /// "cpu", "ram", or the page name: the request's space as the surfaces name it
 std::string SpaceName(const MemorySearchRequest& request);
+/// The offsets where @p pattern (with @p mask, empty: every bit) matches in a host buffer, in order, at most @p max
+/// (the analysis detectors match signatures against memory images with it)
+std::vector<uint32_t> FindInBuffer(const uint8_t* data, size_t size, const std::vector<uint8_t>& pattern,
+                                   const std::vector<uint8_t>& mask, unsigned max = 64);
 /// Runs the search on the machine's memory (side-effect free reads)
 MemorySearchResult Search(EmulatorContext* context, const MemorySearchRequest& request);
 /// A request from what the surfaces take: pattern text (or `patternBytes` when not null), optional mask text,

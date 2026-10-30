@@ -25,6 +25,7 @@
 #include "wheelclaim.h"
 #endif
 #include "controllers/connectorview.h"
+#include "emulator/actions/contextstate.h"
 
 class Emulator;
 class EmulatorContext;
@@ -151,8 +152,9 @@ public:
     /// region <Contexts (control surfaces architecture.md §6)>
     /// The widgets whose focus sets the bound instance's context through actions::ContextState (last setter wins,
     /// Q-5): the debugger's panes (`debug.disasm`, `debug.registers`, `debug.memory`, `debug.stack`) and the TTD panel
-    /// (`ttd`). Entering one sets its context; the TTD panel shown sets `ttd`, hidden returns a `ttd` the GUI set to
-    /// the default; the debugger window hidden returns a `debug.*` the GUI set to the default
+    /// (`ttd`); elsewhere in the debugger window `debug`. Entering one sets its context; the focus back in another
+    /// window of the application returns a context the GUI set to the default, as the TTD panel or the debugger
+    /// window hidden does. Every surface follows the context (the pads too, InputRouter::FollowsIntoDebug)
     void SetContextWidgets(std::vector<std::pair<QWidget*, std::string>> widgets, QWidget* ttdPanel);
     /// The TTD panel was shown or hidden
     void OnTtdPanelVisible(bool visible);
@@ -196,15 +198,18 @@ protected:
 private:
     /// A key of a window the shortcuts take: true when a binding takes it (the window and the machine do not see it)
     bool shortcutKey(const QKeyEvent* event, bool pressed);
-    /// The debugger window took or lost the focus: the pads follow
-    void updateDebugFocus();
     void onBound();
     void onUnbound();
     void poll();
-    /// The bound instance's context (actions::ContextState, its default included) into the router
+    /// Every instance's context (actions::ContextState, its default included) into the router: the surfaces and the
+    /// pads of each follow their own instance's. When the bound instance's pads go into the debugger or come back,
+    /// its debug profiles are applied or dropped and the status bar says so
     void followContext();
-    /// The focus moved: the pane or panel it entered sets the context
+    /// The focus moved: the pane, panel or debugger window it entered sets the context, another window releases it
     void updateGuiContext();
+    /// A player's own `debug` layer (its layer key) went up or down: the instance's context is `debug` while it is
+    /// up (set by the device), what it was before comes back with the key
+    void onDebugLayer(const std::string& device, const std::string& instance, bool up);
     /// Set the bound instance's context as the GUI ("" = back to the default)
     void setGuiContext(const std::string& context);
     /// The GUI set the context in force and it matches @p prefix: back to the default
@@ -228,6 +233,13 @@ private:
     /// the system wheel (Windows: no built-in tools, no wheel menu); released when the last one goes and at the end
     void updateWheelMenu();
     void releaseWheelMenu();
+    /// Which client on this machine owns the devices (ClientQueue): the one the user activated last. The queue is a
+    /// file of process ids every client of this user shares; activating the application claims it, quitting leaves
+    void claimControllers();
+    void leaveControllers();
+    /// Own the devices while this process is the first live one of the queue; a queue with no live client is claimed
+    void updateOwner();
+    QString _ownersPath;  ///< "" in a windowless session: it never takes the devices from a window
     controllers::WheelClaim _wheelClaim;
     std::map<controllers::WheelClaim::Window, void*> _wheelHolds;  ///< WheelMenuWindows::Take's holds by window
     bool _wheelConnected = false;
@@ -265,7 +277,13 @@ private:
     uint64_t _revision = ~0ull;
     uint64_t _machineRevision = ~0ull;
     bool _debugLayer = false;
-    bool _debugFocus = false;  ///< the debugger window has the focus
+    bool _playersFollow = false;  ///< the bound instance's context takes its pads into the debugger
+    struct HeldContext
+    {
+        std::string instance;
+        actions::ContextInfo before;  ///< the context the key replaced
+    };
+    std::map<std::string, HeldContext> _layerContexts;  ///< by device: the debug layer keys held up
     std::string _manualProfile;
     bool _soundHaptics = false;
     bool _soundHapticsDsp = false;

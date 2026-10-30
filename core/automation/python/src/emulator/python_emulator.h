@@ -68,6 +68,7 @@
 #include <set>
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
+#include "debugger/analyzers/analysis/analysiscontrol.h"
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
 #include "debugger/asm/asmcontrol.h"
@@ -3588,6 +3589,46 @@ namespace PythonBindings
                "(on='press'), up ('release') or both. Returns the id",
                py::arg("key") = "any", py::arg("on") = "press", py::arg("hits") = "", py::arg("group") = "",
                py::arg("note") = "")
+            .def("analysis", [](Emulator& self, const std::string& action, const py::kwargs& kwargs) -> py::object {
+                analysis::Options options;
+                for (const auto& [key, value] : kwargs)
+                {
+                    // An experiment spec or a naming batch's names may be a dict or a list: JSON text for
+                    // analysis::Execute
+                    if (py::isinstance<py::dict>(value) || py::isinstance<py::list>(value))
+                        options[py::str(key).cast<std::string>()] =
+                            py::module_::import("json").attr("dumps")(value).cast<std::string>();
+                    else
+                        options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                }
+                const analysis::Reply reply = analysis::Execute(self, action, options);
+                StateNode value = reply.ToValue();
+                if (!reply.Ok())
+                {
+                    value = StateNode::Object();
+                    value["ok"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Analysis layers (analysiscontrol.h): action start (level='facts' | 'counters', mode='z80' | 'physical', "
+               "record=True for L1) | stop | status | build (frames=N, path='l1.json', wait=ms: replay the recording "
+               "into L1) | cancel | explain (address='$80BC' or a label, page='ram:3', what='auto' | 'routine' | "
+               "'byte': a routine's fact sheet or a byte's facts) | query (kind='all' | 'conflicts' | 'records' | ..., "
+               "range='8000-83FF', limit=200: L2 claims) | export (format='ctl' | 'skool' | 'fields' | 'geometry' | "
+               "'layout' | 'symbols' | 'map', path='game.ctl', ranges='5900-59FF,8000-FFFF', width=8: the L2 draft) | "
+               "gallery (kind='sprite' | 'tile' | 'font' | 'screen' | 'level_map', address='$8200' or a label, "
+               "scale=2, path='sprite.png', limit=200: the L2 graphics, one drawn as a PNG, base64 in png) | "
+               "findings (op='list' | 'add', kind=, status=, range=, format='table' | 'markdown' | 'jsonl', path=: "
+               "the L3 findings register) | review (op='next' | 'list' | 'show' | 'resolve', id='F12', verdict='ok' | "
+               "'wrong' | 'skip', label=, title=, comment=, kind='code' | 'text' | ..., experiment=spec, "
+               "names={'$9000': 'PlayerY'} for a naming batch id='N3', reason='entry' | 'name' | ..., offset=N, "
+               "limit=N: the review queue) | experiment (spec=a "
+               "dict or a list of dicts, or path='e.json', finding='F12', parallel=N: poke / regs / input, N frames, "
+               "checks on a muted clone) | cover (budget=64, per_branch=8, frames=50, ranges=: flip one-sided "
+               "branches). "
+               "The reply's fields plus text (the readable answer); "
+               "a refusal: ok = False, error = why",
+               py::arg("action") = "status")
             .def("trace", [](Emulator& self, const std::string& name, const std::string& op, const py::kwargs& kwargs) -> py::object {
                 tracecontrol::Options options;
                 for (const auto& [key, value] : kwargs)

@@ -272,7 +272,7 @@ bool TimeTravelController::StartRecording()
     auto refuse = [&]() {
         if (fm)
         {
-            if (_toggledDebugModeOn)
+            if (_toggledDebugModeOn && !fm->debugCaptureOn())
                 fm->setFeature(Features::kDebugMode, false);
             if (_toggledTimeTravelOn)
                 fm->setFeature(Features::kTimeTravel, false);
@@ -474,13 +474,15 @@ void TimeTravelController::StopRecording()
     FeatureManager* fm = _context ? _context->pFeatureManager : nullptr;
     if (fm)
     {
-        if (_toggledDebugModeOn)
+        // A debug feature switched on during the recording (memory tracking of an analysis session) still needs
+        // debug mode: it stays on, or that feature would lose its buffers
+        if (_toggledDebugModeOn && !fm->debugCaptureOn())
         {
             fm->setFeature(Features::kDebugMode, false);
-            _toggledDebugModeOn = false;
             MLOGINFO("TimeTravelController::StopRecording — restored feature '%s' to OFF (was auto-enabled by StartRecording)",
                      Features::kDebugMode);
         }
+        _toggledDebugModeOn = false;
         // Note: kTimeTravel is left enabled. It only gates Memory's cached
         // _feature_ttd_enabled flag, which is harmless when not recording,
         // and leaving it on lets the next StartRecording skip the toggle.

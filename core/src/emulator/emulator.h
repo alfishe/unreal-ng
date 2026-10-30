@@ -507,6 +507,9 @@ public:
     void SetAudioDeviceSampleRate(uint32_t rate);
     void ClearAudioCallback();
 
+    /// The master mute: an instance starts muted; the GUI (its bound instance) or an automation plane unmutes it
+    void SetHostAudioMuted(bool muted);
+
     /// Realtime device/ring monitoring state (nullptr = no device attached)
     const AudioDeviceDescriptor* GetAudioDeviceDescriptor() const;
 

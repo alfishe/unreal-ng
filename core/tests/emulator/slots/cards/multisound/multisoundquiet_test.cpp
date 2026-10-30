@@ -36,6 +36,7 @@ public:
         if (!_m->Ok() || !_m->Card())
             return;
         _ok = true;
+        _m->Context()->pSoundManager->unmute();  // an instance starts muted
         _m->Context()->pFeatureManager->setFeature(Features::kSoundGeneration, true);
         _m->Card()->Card().Ym().setQuietTicksEnabled(quiet);
         ParkCpu(*_m);

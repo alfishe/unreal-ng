@@ -169,6 +169,8 @@ void AutomationMCP::start()
 
     _caller = std::make_shared<mcp::WebApiClient>();
     _dispatcher = std::make_shared<mcp::McpDispatcher>(mcp::BuildFullRegistry(_caller));
+    if (_toolCallObserver)
+        _dispatcher->SetToolCallObserver(_toolCallObserver);
 
     // Streamable HTTP endpoint, stateless: every request is self-contained
     // (no Mcp-Session-Id). Notifications are acknowledged with 202 + empty

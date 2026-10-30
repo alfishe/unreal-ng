@@ -488,6 +488,7 @@ private:
     QMutex _audioMutex;              // Protects audio operations from race conditions
     bool _audioInitialized = false;  // Tracks if audio device is initialized
     bool _audioStarted = false;       // Tracks if audio device is started (on-demand)
+    std::string _audioBoundId;        // The emulator the host audio was last bound to (a rebind keeps its mute state)
 
 #ifdef ENABLE_AUTOMATION
     Automation* _automation = nullptr;

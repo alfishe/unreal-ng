@@ -90,6 +90,17 @@ archive.org (`zx_*` items) when a tape image is damaged.
   set-up, 4 runs in 3700 frames) is the clean event.
 - **128K pages**: `memory-at` with `space: ram` for the whole 128 KB, `cpu` space only for the latest recording;
   `phys_page` 0..7 for the `#C000` window.
+- **Messages name the incidents** (Test Drive II: ticket, blown engine, out of gas): search the RAM for the game's text
+  (bytes with bit 7 clear, `[A-Za-z ]{8,}`), then for `21 lo hi` (`ld hl,text`) and for the `CD`/`C3` that reach it; the
+  address of the `ld hl,text` is a clean exec probe, once per incident. Check it on the screen of the frame that fires.
+- **A HUD number on the screen is a variable you can chase**: sample the screen page every 10 frames, list the 8x8 cells that
+  change when the number steps, then compare *all RAM* at the same samples and keep the byte that changes at exactly those
+  steps (Super Hang-On TIME: `#C4AE` tens / `#C4AF` units, decremented by `#C2F5`; the distance word `#C4AA` and the road
+  segment counter `#A724` came from "monotone in every sample" over the same dump). Poking such a counter (`PUT /memory/{addr}`)
+  works as a shortcut, but a counter that the game reads for pointers (the segment index walks a course table) desyncs the
+  road: poking `#A724` through 46 segments did not run the time-extension code, so the checkpoint is not reachable that way.
+- **Stale instance trap**: `lsof -ti tcp:<port>` may find nothing while the instance is alive; `lib.launch` then attaches to the
+  old one and the "new" run starts in a game-over state. Kill by path: `pkill -f "<worktree>/cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt "`.
 - **Snapshots**: a denied or damaged tape is often on archive.org as `zx_*` `.z80`; store it in the collection with its
   source in the README.
 

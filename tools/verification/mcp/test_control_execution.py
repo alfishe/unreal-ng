@@ -247,6 +247,11 @@ def test_a_host_script_and_mcp_share_one_machine(s):
     status, body, _ = script(s, 'POST', base + '/run_frames', {'frames': 1}, taken)
     expect(status == 200 and 'automation_session' not in body, 'the script drives with the shared id', body)
     s.call('control_execution', {'action': 'run_frames', 'frames': 1})
+    # The holder taking control again (a new MCP connection of the same server, a script that restarted) keeps it
+    r = s.call('control_execution', {'action': 'take_control', 'client': 'cross-plane check'})
+    expect(r.structured['session'] == taken, 'a second take_control keeps the session', r.text)
+    status, body, _ = script(s, 'POST', base + '/control/session', {'client': 'restarted script'}, taken)
+    expect(status == 200 and body['session'] == taken, 'the holder\'s id takes it again', body)
     r = s.call('control_execution', {'action': 'release_control'})
     expect('session ended' in r.text, 'released', r.text)
     r = s.call('control_execution', {'action': 'release_control'})

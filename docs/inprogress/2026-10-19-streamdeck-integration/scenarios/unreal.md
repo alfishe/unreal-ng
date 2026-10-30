@@ -458,7 +458,7 @@ Title: Debugger; use cases D2, D4, D6, D8, D10; context `debug`; opened from `ho
 
 ## menu time
 
-Title: Time; use cases D1, D3; opened from `home` at [3, 1]; strip content `title`, status `ttd`, target `true`.
+Title: Time; use cases D1, D3; context `ttd`; opened from `home` at [3, 1]; strip content `title`, status `ttd`, target `true`.
 
 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
 |:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|

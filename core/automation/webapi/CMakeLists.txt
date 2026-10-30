@@ -208,6 +208,7 @@ set(COMMON_SOURCES
     src/api/interpreter_api.h
     src/api/basic_api.cpp
     src/api/analyzers_api.cpp
+    src/api/analysis_api.cpp
     src/api/debug_api.cpp
     src/api/capture_api.cpp
     src/api/recording_api.cpp

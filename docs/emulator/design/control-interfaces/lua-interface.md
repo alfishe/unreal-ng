@@ -1555,6 +1555,47 @@ emu.listing_step_line()              -- run until the source line changes (~2 s 
 emu.listing_run_to_line(120)         -- run to first code byte of line 120 (~10 s budget)
 ```
 
+### Analysis layers
+
+The L0 access facts, the L1 build and the L2 structure of the [analysis layers](../../analysis/analysis-layers.md) through the shared
+core handler (`analysis::Execute`): the answer is a table of its fields plus `text` (the CLI's lines); a refusal is
+`{ ok = false, error = <why> }`.
+
+```lua
+emu.analysis("start")                                -- level facts, mode z80, a fresh session
+emu.analysis("start", {level = "counters", mode = "physical"})
+emu.analysis("start", "counters")                    -- a string: the level
+emu.analysis("status")                               -- { state, level, mode, frame, facts, text }
+local r = emu.analysis("explain", "$80BC")           -- a string: the address (or a label)
+print(r.text)
+emu.analysis("explain", {address = 0xC000, page = "ram:3"})   -- physical mode: the page
+emu.analysis("stop")                                 -- the facts stay readable
+
+-- L1: record, build from the recording (a job), then routine fact sheets
+emu.analysis("start", {record = true})               -- also a TTD recording
+emu.analysis("build", {wait = 20000})                -- { job, state, bundle, progress, ready, text }; frames, path
+emu.analysis("build", "500")                         -- a string: the frames to replay
+local sheet = emu.analysis("explain", "$0038")       -- L1 ready: { what = "routine", routine, text = the sheet }
+emu.analysis("explain", {address = 0x38, what = "byte"})
+emu.analysis("cancel")                               -- a running build; refused when none runs
+
+-- L2 (made by the build): the detectors' claims and the draft
+emu.analysis("query", {kind = "records", range = "8000-83FF", limit = 20})  -- { kind, range, regions, count, truncated, text }
+emu.analysis("query", "conflicts")                   -- a string: the kind
+local ctl = emu.analysis("export", "ctl")            -- a string: the format; ctl.content is the file
+emu.analysis("export", {format = "skool", path = "game.skool", ranges = "5900-59FF,8000-FFFF", width = 8})
+emu.analysis("gallery", {kind = "sprite"})           -- the graphics found: { regions, count, truncated, text }
+local g = emu.analysis("gallery", "$8200")           -- a string: the address; g.png is the PNG (base64)
+emu.analysis("gallery", {address = 0x8200, scale = 4, path = "sprite.png"})
+
+-- L3 (the review): findings register, review queue, experiments on muted clones, directed coverage
+emu.analysis("findings", {kind = "bug"})             -- { count, total, by_kind, by_status, findings, text }
+local item = emu.analysis("review")                  -- the next item: { item, sheet, sheet_bytes, queue, text }
+emu.analysis("review", {op = "resolve", id = item.item.id, verdict = "ok", label = "MainLoop"})
+emu.analysis("experiment", '{"poke": {"$8100": 5}, "frames": 50, "expect": {"mem:$8101": "$AA"}}')  -- the spec as JSON text
+emu.analysis("cover", "32")                          -- a string: the budget
+```
+
 ## Usage Examples
 
 ### Register Dump Macro

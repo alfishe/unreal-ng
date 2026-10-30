@@ -1363,6 +1363,9 @@ HostReply HostInputControl::Context()
     reply.body.Set("applied", Strings(resolved.applied));
     reply.body.Set("warnings", Strings(resolved.warnings));
     reply.body.Set("debug_layer", JsonValue::Bool(context.debugLayer));
+    // Another client on the machine (activated later) owns the devices: this one neither reads nor writes them
+    const HostInputService* input = _owner.Input();
+    reply.body.Set("owner", JsonValue::Bool(input == nullptr || input->Owner()));
     reply.body.Set("user_dir", JsonValue::String(_owner.UserProfileDir()));
     return reply;
 }

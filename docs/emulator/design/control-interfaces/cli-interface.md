@@ -605,6 +605,47 @@ reference: [command-interface.md](./command-interface.md).
 | `label resolve <name\|addr>` | Resolve a label by name or an address to labels + context. |
 | `listing <load\|clear\|info\|source_at\|step_line\|run_to_line>` | Source-level debugging via assembler listings. |
 
+### Analysis layers
+
+The L0 access facts, the L1 code behaviour and the L2 structure of the [analysis layers](../../analysis/analysis-layers.md): one command, the same core handler
+as every other plane (`analysis::Execute`), so the lines below are also the `text` of the REST and MCP answers.
+
+| CLI Command | Description |
+| :--- | :--- |
+| `analysis start [facts\|counters] [z80\|physical] [record]` | Switch on memory tracking at level `facts` (default) or `counters`, mode `z80` (default) or `physical`, and start a fresh session (`level=`, `mode=` work too); `record` (`record=true`) also starts a TTD recording for the L1 build. |
+| `analysis stop` | Stop the session (and the recording `record` started); the facts stay readable. |
+| `analysis build [frames] [path=F] [wait=MS]` | L1: capture the recording, replay it on a muted analysis instance and build routines, CFG, call graph, loops, patterns, data flow, branches, paging. A job: the answer has its id and state; `frames` caps the replay, `path` writes the L1 JSON, `wait` (at most 30000 ms) waits for the end. Progress: topics `analysis.progress`, `analysis.ready`. |
+| `analysis cancel` | Cancel the running build (409 when none runs). |
+| `analysis status` (`analysis`) | State, level, mode, frame, what the facts hold. |
+| `analysis explain <addr> [page] [routine\|byte]` | With an L1 build, the fact sheet of the routine holding the address (at most 1 KB, 24 disassembly lines); `byte` (or no L1): what L0 knows of one byte: kinds, last writer and the values, last reader, frames, counters, labels. `<addr>`: `$80BC`, `#80BC`, `0x80BC`, `80BCh`, decimal or a label; `[page]` in physical mode: index, `ram:N`, `rom:N`. |
+| `analysis query [kind] [range] [limit=N]` | L2: the claims of the detectors (signatures, code map, text, init tables, pointer / handler tables, records, variables) that cover the range (hex `8000-83FF`, `$8000-$83FF`; default all memory): `kind` `all` (default), `conflicts` (pairs of clashing claims) or a region kind (`code`, `data`, `text`, `buffer`, `init_table`, `records`, `variable`, `pointer_table`, `handler_table`, ...); `limit` (default 200) caps the list, `truncated` says when it cut. One line per claim: range, kind, detector, confidence, status, label or title. 409 before an L1 build. |
+| `analysis export <format> [path] [ranges=R,...] [width=N]` | The L2 draft: `ctl` (SkoolKit control file for `sna2skool.py -c`), `skool` (a skool file that assembles relocatable: `@label` on referenced addresses, `@isub` where an operand points inside an instruction or names a page, `@keep` on constants equal to an address, ALIGN 256 and the ORG of a range start after the instruction before), `fields` / `geometry` (JSON: record field lists, graphics geometry), `layout` (zx-reaper `re/layout.mk` lines `REGION_START`, `SHIFT_END`), `symbols` (the unreal-asm symbol codec), `map` (one line per claim). `ranges` (comma separated, no overlap; default `4000-FFFF`) are the Z80 ranges written, `width` (1-64, default 8) the bytes per DEFB line; with `path` the file is written there, without it the answer carries it (`content`; the text up to 16 KB). |
+| `analysis gallery [kind] [addr [path]] [scale=N] [limit=N]` | L2 graphics (fonts, sprites, tiles, screens and back buffers, level maps): without an address, the list with the geometry (range, kind, width x height x frames, mask, prefix, detector, confidence); with one (or a label), the region starting there (else covering it) drawn from the memory at the end of the replay as a PNG: frames in a grid, black ink on white paper (a tile's attribute colours it, a mask's transparent pixels light grey), screens in display file order, attributes and map cells as 8x8 colour cells, zoomed `scale` (1-8, default 2) times; written to `path`, else base64 in `png`. 404 when no graphics region holds the address, 409 before an L1 build. |
+| `analysis findings [list\|add]` | L3: the findings register of the last build, every L2 claim, conflict, candidate bug, unnamed hot routine and unknown area plus the notes, coverage flips and experiments added since, ids `F1..` in a fixed order ([findings](../../analysis/analysis-layers.md#findings-register)). `kind=`, `status=`, `range=`, `limit=` filter; `format=markdown` (zx-reaper's `re/findings.md`) or `jsonl`, `path=` writes it. `add`: a note (`claim=`, `range=`, `status=`, `evidence=` `;`-separated, `by=`). 409 before an L1 build. |
+| `analysis review [next\|list\|show\|resolve] [id] [ok\|wrong\|skip]` | L3: the review queue (bugs, conflicts, unnamed hot routines, low-confidence claims, unknown areas over 16 bytes; at most `limit=` 40 plus a summary). `next` (default): the next open item and its fact sheet (at most 1 KB); `list`; `show <id>`; `resolve <id>` with a verdict and `label=`, `title=`, `comment=` that the draft export carries, `experiment=<json>` to decide with a run. 404 for an unknown id, 409 for a label already used. |
+| `analysis experiment <spec.json\|{json}> [finding=<id>] [parallel=<n>]` | L3: experiments on muted clones from the recording: `poke`, `regs`, `input` (keys, joystick), `frames`, `watch`, `expect`; one spec or an array ([experiment runner](../../analysis/analysis-layers.md#experiment-runner)). Each result is observed or refuted and marks `finding=`. The source machine is never touched. |
+| `analysis cover [budget] [frames=<n>] [per_branch=<n>] [ranges=<r,...>]` | L3: directed coverage: the branches the session took one way only, flipped by holding the byte they test or pressing the keys / joystick of the port they read; flips become coverage findings and draft notes. |
+
+`--json` prints the fields instead of the lines. Example:
+
+```text
+> analysis start
+analysis: capturing, level facts, mode z80, frame 120; facts 1024 KB, 0 Z80 addresses touched
+> analysis explain $0038
+$0038 [ROM 0]: OpcodeFetch
+  frames 121..170
+  counters: 0 reads, 0 writes, 50 executes
+> analysis query conflicts limit=2
+L2 conflicts in $0000-$FFFF: 117 conflicts (first 2)
+range     kind          detector       conf status   label / title
+8418-841A data          code_map        700 observed 
+  vs 8418-841A text          text            800 observed 
+841F-845D data          code_map        700 observed 
+  vs 842F-8457 text          text            800 observed 
+> analysis export skool scratch/game.skool ranges=5900-59FF,8000-FFFF
+L2 skool (5900-59FF,8000-FFFF): 103 entries, 224275 bytes written to scratch/game.skool
+```
+
 ## Connection Examples
 
 ### Using Telnet
