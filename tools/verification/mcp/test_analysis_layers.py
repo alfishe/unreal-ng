@@ -160,7 +160,9 @@ def test_gallery(s):
     r = s.call('debug_code', {'action': 'assemble', 'code': source, 'address': '0x8000'})
     s.call('control_execution', {'action': 'set_register', 'name': 'pc', 'value': '0x8000'})
     s.call('analysis', {'action': 'start', 'record': True})
-    s.call('control_execution', {'action': 'run_frames', 'frames': 3})
+    # Ten frames, as AnalysisDetectorSprites_Test: a sprite's rows link where the screen shows them as a frame ends,
+    # and three frame ends show some of the four frames only part drawn
+    s.call('control_execution', {'action': 'run_frames', 'frames': 10})
     r = s.call('analysis', {'action': 'build'})
     expect((r.structured or {}).get('state') == 'done', 'build of the sprite fixture: done', r.text[:300])
 
