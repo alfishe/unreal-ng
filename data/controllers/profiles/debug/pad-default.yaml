@@ -1,5 +1,9 @@
 # The debugger on any pad (debug-and-ttd.md §4.2): the layer key on the view+menu chord, bookmarks on lb / rb with
-# the d-pad
+# the d-pad. The pad follows its instance's context as every surface does (control surfaces profiles.md §1): in
+# `debug` / `debug.*`, or a `ttd` somebody set (the Stream Deck's Time page, the TTD panel focused), it drives the
+# debugger with no key held, and its layer key sets `debug` for all of them. Above `debug`, the context's layer:
+#   ttd           the d-pad steps the history by frames
+#   ttd.timecode  by seconds
 schema: 1
 kind: debug
 id: builtin/debug/pad-default
@@ -29,3 +33,9 @@ layers:
     lstick.right:    { action: dbg.cursor_right }
     rstick.click:    { action: dbg.breakpoint_toggle_pc }
     lstick.click:    { action: dbg.memory_follow }
+  "@ttd":
+    dpad.left:       { action: ttd.step_back_frame, repeat: { delay: 15, rate: 4 } }
+    dpad.right:      { action: ttd.step_forward_frame, repeat: { delay: 15, rate: 4 } }
+  "@ttd.timecode":
+    dpad.left:       { action: ttd.unit_back, curve: { unit: seconds }, repeat: { delay: 15, rate: 4 } }
+    dpad.right:      { action: ttd.unit_forward, curve: { unit: seconds }, repeat: { delay: 15, rate: 4 } }
