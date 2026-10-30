@@ -7,6 +7,9 @@
 
 #include <QColor>
 #include <QFont>
+#include <algorithm>
+#include <cmath>
+
 #include <QFontDatabase>
 #include <QFontMetrics>
 #include <QPalette>
@@ -14,12 +17,54 @@
 
 namespace dbg {
 
+//The window's scale (POC 041, not in ecat): the views' font, and with it
+//every row, column and margin they measure in it
+inline double &zoom_value()
+{
+    static double z = 1.0;
+    return z;
+}
+inline double zoom() { return zoom_value(); }
+inline void set_zoom(double z) { zoom_value() = z; }
+
+//What follows the scale, and how fast. The text read closely (listing, dump,
+//registers) grows with it; the frame around it, glanced at, grows slower and
+//within limits: a size is clamp(zoom ^ exponent, min, max) times its 100 % one
+enum class Zoom {
+    Content,    // the views' text, their rows and columns
+    Frame,      // tabs, buttons, labels, column titles: one size in the window
+    Icons,      // toolbar and button icons
+};
+
+struct ZoomCurve {
+    double exponent;
+    double min;
+    double max;
+};
+
+inline ZoomCurve zoom_curve(Zoom what)
+{
+    switch (what) {
+    case Zoom::Content: return {1.0, 0.5, 3.0};
+    case Zoom::Frame: return {0.5, 0.85, 1.6};
+    case Zoom::Icons: return {0.75, 0.75, 2.0};
+    }
+    return {1.0, 1.0, 1.0};
+}
+
+inline double zoom(Zoom what, double z)
+{
+    const ZoomCurve c = zoom_curve(what);
+    return std::clamp(std::pow(z, c.exponent), c.min, c.max);
+}
+inline double zoom(Zoom what) { return zoom(what, zoom()); }
+
 //The views are text in columns: one fixed-pitch font for all of them, the
 //Consolas the main window registers from the resources
 inline QFont font()
 {
     QFont f("Consolas");
-    f.setPointSize(10);
+    f.setPointSizeF(10.0 * zoom(Zoom::Content));
     f.setStyleHint(QFont::Monospace);
     f.setFixedPitch(true);
     return f;

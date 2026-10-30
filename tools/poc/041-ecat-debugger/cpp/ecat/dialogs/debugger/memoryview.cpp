@@ -23,9 +23,12 @@
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
+#include "addressmenu.h"
+#include "bankstrip.h"
 #include "celleditor.h"
 #include "debugstyle.h"
 #include "debugutil.h"
+#include "pagedmemory.h"
 #include "dialogs/numfmt.h"
 
 static const unsigned int LINE_BYTES = 16;
@@ -52,6 +55,9 @@ MemorySource memory_of_cpu(CPU * cpu)
     const int base = s.base;
     if (mm != nullptr && cpu->type != "1801vm3")
         s.owner = [mm, base](unsigned int a) { return owner_text(mm, a, base); };
+    s.windows = [cpu]() { return cpu->get_windows(); };
+    s.pc = [cpu]() { return cpu->get_pc(); };
+    s.cpu = cpu;
     return s;
 }
 
@@ -189,7 +195,8 @@ void MemoryView::update_scrollbar()
     sb->setPageStep(rows());
     sb->setValue((int)(m_top / LINE_BYTES));
     QScrollBar * hb = horizontalScrollBar();
-    const int width = x_chars() + m_cw * ((int)LINE_BYTES + 2);
+    //Room for a window's label after the characters
+    const int width = x_chars() + m_cw * ((int)LINE_BYTES + 2) + (m_windows.empty() ? 0 : m_cw * 36);
     hb->setRange(0, std::max(0, width - viewport()->width()));
     hb->setPageStep(viewport()->width());
 }
@@ -198,6 +205,20 @@ void MemoryView::scrollContentsBy(int, int)
 {
     m_top = (unsigned int)verticalScrollBar()->value() * LINE_BYTES;
     close_edit();
+    viewport()->update();
+}
+
+void MemoryView::changeEvent(QEvent *event)
+{
+    QAbstractScrollArea::changeEvent(event);
+    if (event->type() != QEvent::FontChange) return;
+    const QFontMetrics fm(font());
+    m_rh = dbg::row_height(fm);
+    m_cw = dbg::text_width(fm, "0");
+    m_painted.clear();
+    //The constructor's own font comes before the rest of the view; the first show measures the scrollbar
+    if (!testAttribute(Qt::WA_WState_Polished)) return;
+    update_scrollbar();
     viewport()->update();
 }
 
@@ -253,7 +274,7 @@ QString MemoryView::row_key(int row) const
     QString key = QString::number(line) + ' ' + QString::number(m_base) + (m_word ? 'w' : 'b')
                   + QString::number(horizontalScrollBar()->value()) + (m_on_chars ? 'c' : 'v') + (hasFocus() ? 'f' : ' ');
     if (m_cursor >= line && m_cursor - line < LINE_BYTES) key += QString::number(m_cursor - line);
-    key += ' ';
+    key += window_start(line) + ' ';
     for (unsigned int i = 0; i < LINE_BYTES && line + i < m_src.size; i++) {
         const unsigned int a = line + i;
         const unsigned int v = m_src.read(a) & 0xFF;
@@ -261,6 +282,12 @@ QString MemoryView::row_key(int row) const
         key += QString::number(v, 16) + (changed ? '*' : ',');
     }
     return key;
+}
+
+QString MemoryView::window_start(unsigned int line) const
+{
+    const int i = window_starting(m_windows, m_src.origin + line);
+    return (i < 0) ? QString() : window_label(m_windows[(size_t)i], m_base);
 }
 
 void MemoryView::mark_stop()
@@ -339,6 +366,15 @@ void MemoryView::paintEvent(QPaintEvent *event)
             p.setPen(cur && m_on_chars && hasFocus() ? c.selection_text : c.text);
             p.drawText(x, y + base_y, QString::fromStdString(e->translate_char(m_src.read(a) & 0xFF)));
         }
+
+        //A window of the paged space starts at the line: a line over it and
+        //the page after the characters
+        const QString start = window_start(line);
+        if (!start.isEmpty()) {
+            p.setPen(c.dim);
+            p.drawLine(0, y, viewport()->width(), y);
+            p.drawText(dx + x_chars() + m_cw * ((int)LINE_BYTES + 2), y + base_y, start);
+        }
     }
 }
 
@@ -380,6 +416,15 @@ void MemoryView::mouseDoubleClickEvent(QMouseEvent *event)
     if (!hit(event->pos(), a, chars)) return;
     set_cursor(a, chars);
     start_edit(m_cursor, chars);
+}
+
+void MemoryView::contextMenuEvent(QContextMenuEvent *event)
+{
+    unsigned int a;
+    bool chars;
+    if (!hit(event->pos(), a, chars)) return;
+    set_cursor(a, chars);
+    exec_address_menu(this, event->globalPos(), AddressTarget{m_src.cpu, m_src.origin + a, QString()});
 }
 
 void MemoryView::wheelEvent(QWheelEvent *event)
@@ -520,6 +565,7 @@ MemoryPanel::MemoryPanel(Emulator * e, const MemorySource &source, QWidget *pare
     e(e)
 {
     m_view = new MemoryView(e, source, this);
+    m_banks = nullptr;
 
     QVBoxLayout * v = new QVBoxLayout(this);
     v->setContentsMargins(0, 0, 0, 0);
@@ -582,6 +628,17 @@ MemoryPanel::MemoryPanel(Emulator * e, const MemorySource &source, QWidget *pare
     h->addWidget(save_button);
 
     v->addLayout(h);
+    if (source.windows) {
+        m_banks = new BankStrip(source.windows, m_view->base(), this);
+        if (source.pc) m_banks->set_pc(source.pc);
+        m_banks->set_cpu(source.cpu);
+        connect(m_banks, &BankStrip::activated, this, [this](unsigned int address) {
+            m_view->go_to(address - m_view->source().origin);
+            m_view->setFocus();
+        });
+        m_view->set_windows(m_banks->windows());
+        v->addWidget(m_banks);
+    }
     v->addWidget(m_view, 1);
 
     m_status = new QLabel(this);
@@ -591,6 +648,45 @@ MemoryPanel::MemoryPanel(Emulator * e, const MemorySource &source, QWidget *pare
     connect(m_view, &MemoryView::cursor_moved, this, &MemoryPanel::show_cursor);
     apply_view();
     show_cursor(0);
+    //Opened in a scaled window (a page of the pages tab): its icons at the scale too
+    scale_icons(this, dbg::zoom(dbg::Zoom::Icons));
+}
+
+void MemoryPanel::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    if (event->type() != QEvent::FontChange) return;
+    m_address->setMaximumWidth(dbg::text_width(QFontMetrics(dbg::font()), "0000000000"));
+    scale_icons(this, dbg::zoom(dbg::Zoom::Icons));
+}
+
+void MemoryPanel::refresh()
+{
+    if (m_banks != nullptr && isVisible()) {
+        m_banks->refresh();
+        m_view->set_windows(m_banks->windows());
+    }
+    m_view->refresh();
+    show_cursor(m_view->cursor());
+}
+
+void MemoryPanel::mark_stop()
+{
+    if (m_banks != nullptr) {
+        m_banks->mark_stop();
+        m_view->set_windows(m_banks->windows());
+    }
+    m_view->mark_stop();
+}
+
+void MemoryPanel::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    //Hidden, it was not refreshed: the pages may have moved since
+    if (m_banks != nullptr) {
+        m_banks->refresh();
+        m_view->set_windows(m_banks->windows());
+    }
 }
 
 void MemoryPanel::apply_view()
@@ -700,20 +796,39 @@ void MemoryPanel::save_file()
 
 MemoryTabs::MemoryTabs(Emulator * e, QWidget *parent):
     QTabWidget(parent),
-    e(e)
+    e(e),
+    m_paged(nullptr)
 {
     setUsesScrollButtons(true);
 
-    //Each processor's space first: what its code sees
-    for (CPU * cpu : e->dm->get_cpus())
-        add_panel(memory_of_cpu(cpu), QString::fromStdString(cpu->name));
+    //The main processor's space first (what its code sees), its pages, then the cards' processors and the rest
+    const std::vector<CPU*> cpus = e->dm->get_cpus();
+    if (!cpus.empty()) add_panel(memory_of_cpu(cpus.front()), QString::fromStdString(cpus.front()->name));
 
-    //The mappers and the memories; the rest on demand
+    //The pages the processors map, a page at a time
+    std::vector<Memory*> paged;
+    for (unsigned int i = 0; i < e->dm->device_count; i++) {
+        Memory * m = dynamic_cast<Memory*>(e->dm->get_device(i)->device.get());
+        if (m != nullptr && m->page_size() > 0 && m->get_size() > 0) paged.push_back(m);
+    }
+    if (!paged.empty()) {
+        m_paged = new PagedMemory(e, paged, this);
+        addTab(m_paged, tr("pages"));
+        connect(m_paged, &PagedMemory::memory_changed, this, [this]() {
+            refresh();
+            emit memory_changed();
+        });
+    }
+    for (size_t i = 1; i < cpus.size(); i++) add_panel(memory_of_cpu(cpus[i]), QString::fromStdString(cpus[i]->name));
+
+    //The mappers and the other memories; the rest on demand
     QMenu * more = new QMenu(this);
     for (unsigned int i = 0; i < e->dm->device_count; i++) {
         ComputerDevice * d = e->dm->get_device(i)->device.get();
         AddressableDevice * a = dynamic_cast<AddressableDevice*>(d);
         if (a == nullptr || a->get_size() == 0) continue;
+        if (Memory * m = dynamic_cast<Memory*>(d))
+            if (m->page_size() > 0) continue;
         if (dynamic_cast<MemoryMapper*>(d) != nullptr || dynamic_cast<Memory*>(d) != nullptr) {
             add_panel(memory_of_device(a), QString::fromStdString(d->name));
         } else {
@@ -744,12 +859,37 @@ void MemoryTabs::add_panel(const MemorySource &s, const QString &title)
     });
 }
 
+void MemoryTabs::show_address(CPU * cpu, unsigned int address)
+{
+    for (MemoryPanel * p : m_panels)
+        if (p->view()->source().cpu == cpu) {
+            setCurrentWidget(p);
+            p->view()->go_to(address - p->view()->source().origin);
+            p->view()->setFocus();
+            return;
+        }
+}
+
+void MemoryTabs::show_page(CPU * cpu, unsigned int address)
+{
+    if (m_paged == nullptr || cpu == nullptr) return;
+    const std::vector<AddressWindow> windows = cpu->get_windows();
+    const int i = window_at(windows, address);
+    if (i < 0) return;
+    Memory * m = dynamic_cast<Memory*>(windows[i].device);
+    if (m == nullptr || m->page_size() == 0) return;
+    setCurrentWidget(m_paged);
+    m_paged->show_page(m, windows[i].offset + (address - windows[i].start));
+}
+
 void MemoryTabs::refresh()
 {
     for (MemoryPanel * m : m_panels) m->refresh();
+    if (m_paged != nullptr) m_paged->refresh();
 }
 
 void MemoryTabs::mark_stop()
 {
     for (MemoryPanel * m : m_panels) m->mark_stop();
+    if (m_paged != nullptr) m_paged->mark_stop();
 }

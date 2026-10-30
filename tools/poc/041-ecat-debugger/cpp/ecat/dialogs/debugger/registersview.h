@@ -37,8 +37,12 @@ signals:
 protected:
     void paintEvent(QPaintEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+    //A register's value as an address: its menu
+    void contextMenuEvent(QContextMenuEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void scrollContentsBy(int dx, int dy) override;
+    //Another font (the window's scale): rows and columns measured again
+    void changeEvent(QEvent *event) override;
 
 private:
     Emulator * e;
@@ -86,6 +90,7 @@ signals:
 protected:
     void paintEvent(QPaintEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void changeEvent(QEvent *event) override;
 
 private:
     Emulator * e;

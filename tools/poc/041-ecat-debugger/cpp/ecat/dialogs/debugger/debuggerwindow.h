@@ -14,8 +14,10 @@ class QAction;
 class QLabel;
 class QLineEdit;
 class QSplitter;
+class QToolBar;
 class QTabWidget;
 class QTimer;
+class BankStrip;
 class DisasmView;
 class RegistersView;
 class FlagsView;
@@ -40,6 +42,10 @@ public:
     ~DebuggerWindow() override;
 
     void select_cpu(CPU * cpu);
+    //The scale of the whole window (POC 041, not in ecat): its fonts, and the
+    //rows, columns and icons measured in them; the window keeps its size
+    void set_zoom(double zoom);
+    double zoom() const;
     //The processor whose tab is in front
     CPU * current_cpu();
 
@@ -52,10 +58,13 @@ private slots:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    //Ctrl + the wheel anywhere in the window: the scale
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     struct CpuPane {
         CPU * cpu;
+        BankStrip * banks;
         DisasmView * code;
         RegistersView * regs;
         FlagsView * flags;
@@ -74,6 +83,11 @@ private:
     HistoryView * m_history;
     DevicesView * m_devices;
     QLabel * m_state;
+    QToolBar * m_toolbar;
+    QLabel * m_zoom_label;
+    QFont m_ui_font;        //The window's font at 100 %
+    int m_wheel_zoom;       //Wheel turns not yet a step of the scale
+    double m_zoom;          //The scale the window has
     QLineEdit * m_goto;
     QTimer * m_timer;
     QAction * m_run;
@@ -108,6 +122,7 @@ private:
     void update_actions();
     void run_command(void (*command)(Emulator *, CPU *));
     void save_layout();
+    void zoom_step(int steps);
     void restore_layout();
 };
 

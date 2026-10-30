@@ -195,8 +195,16 @@ void DisasmBuffer::ensure(unsigned int address, size_t below)
     reset(address, below);
 }
 
-bool DisasmBuffer::refresh()
+bool DisasmBuffer::refresh(bool all)
 {
+    if (all && !m_lines.empty()) {
+        const size_t count = m_lines.size();
+        const unsigned int address = m_lines.front().address;
+        m_lines.clear();
+        m_lines.push_back(decode(address));
+        extend_down(count - 1);
+        return true;
+    }
     for (size_t i = 0; i < m_lines.size(); i++) {
         const Line &l = m_lines[i];
         bool same = true;

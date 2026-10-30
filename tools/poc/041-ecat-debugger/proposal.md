@@ -11,9 +11,9 @@
    - a coherent per-tick snapshot of what the views show (registers, the visible memory), instead of racing reads;
    - a single-instruction step of a card CPU (`DebugCpuId::GS`);
    - (done) the disassembler: labels only for address operands, upper case (`ListingStyleScope`).
-3. **The partial repaint upstream**: [Ptr314/ecat3#84](https://github.com/Ptr314/ecat3/pull/84) is open. Its
-   `PaintedRows` has the defect fixed here (the arrows' column repaints the whole listing on the next tick); adding
-   the 5-line fix to the pull request is again on the owner's go, as it publishes under the owner's name.
+3. **ecat is no longer an upstream** (owner, 2026-10-30): the ported views are unreal-ng's own code from here on,
+   changed freely for our needs; nothing more goes to ecat3. The open pull request
+   [Ptr314/ecat3#84](https://github.com/Ptr314/ecat3/pull/84) stays as it is.
 4. Done in the follow-ups ([measurements-2026-10-29-followups.md](measurements-2026-10-29-followups.md)): the
    Consolas font from the resources, the dump's find / load / save and in-place byte editing in the self-check, the
    Devices tab seen on screen, the MultiSound GS as a processor tab.

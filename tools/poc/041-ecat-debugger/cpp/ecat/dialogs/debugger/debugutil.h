@@ -7,10 +7,13 @@
 
 #include <vector>
 
+#include <QAbstractButton>
 #include <QPaintEvent>
 #include <QRegion>
 #include <QString>
 #include <QStringList>
+#include <QToolBar>
+#include <QVariant>
 
 #include "emulator/core.h"
 #include "emulator/devices/cpu/i8086.h"
@@ -59,6 +62,21 @@ inline QStringList split_words(const QString &s)
 #endif
 }
 
+//The icons of the buttons under a widget at the window's scale (POC 041, not in
+//ecat), from the size each one had at 100 %; a toolbar scales its own
+inline void scale_icons(QWidget * root, double zoom)
+{
+    for (QAbstractButton * b : root->findChildren<QAbstractButton*>()) {
+        if (qobject_cast<QToolBar*>(b->parentWidget()) != nullptr) continue;
+        QVariant base = b->property("dbg_icon_size");
+        if (!base.isValid()) {
+            base = b->iconSize();
+            b->setProperty("dbg_icon_size", base);
+        }
+        b->setIconSize(base.toSize() * zoom);
+    }
+}
+
 //What each row of a view was last painted with. The 200 ms timer refreshes the
 //views while the machine runs; repainting them whole every time costs more
 //than everything else the window does, so a refresh repaints only the rows
@@ -81,6 +99,8 @@ public:
     {
         return row < (int)m_rows.size() && m_rows[row].valid && m_rows[row].key == key;
     }
+    //The rows moved (another font): none is on the screen as known
+    void clear() { m_rows.clear(); }
 
 private:
     struct Row {

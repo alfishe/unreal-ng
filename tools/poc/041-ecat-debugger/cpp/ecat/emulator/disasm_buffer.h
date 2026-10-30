@@ -59,8 +59,9 @@ public:
     //it does not: below the first line, inside one or far away
     void ensure(unsigned int address, size_t below);
     //Reads the memory again. The lines whose bytes have changed are decoded
-    //again with everything below them; true when anything changed
-    bool refresh();
+    //again with everything below them; true when anything changed. all: every
+    //line decoded again (what the decoder adds to a line has changed: labels)
+    bool refresh(bool all = false);
 
     //Addresses known to start instructions - where PC has been, breakpoints:
     //the backward disassembly prefers them when the bytes allow two readings

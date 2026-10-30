@@ -9,6 +9,7 @@
 #include <QPainter>
 #include <QScrollBar>
 
+#include "addressmenu.h"
 #include "celleditor.h"
 #include "debugstyle.h"
 #include "debugutil.h"
@@ -137,6 +138,21 @@ int RegistersView::first_row() const
     return verticalScrollBar()->value();
 }
 
+void RegistersView::changeEvent(QEvent *event)
+{
+    QAbstractScrollArea::changeEvent(event);
+    if (event->type() != QEvent::FontChange) return;
+    const QFontMetrics fm(font());
+    m_rh = dbg::row_height(fm);
+    m_cw = dbg::text_width(fm, "0");
+    m_painted.clear();
+    //The constructor's own font comes before the rest of the view
+    if (!testAttribute(Qt::WA_WState_Polished)) return;
+    updateGeometry();
+    viewport()->update();
+    refresh();
+}
+
 void RegistersView::resizeEvent(QResizeEvent *event)
 {
     QAbstractScrollArea::resizeEvent(event);
@@ -174,6 +190,15 @@ void RegistersView::paintEvent(QPaintEvent *event)
         p.setPen(changed ? c.changed : c.dim);
         p.drawText(dx + x_binary(), y, binary_text(reg));
     }
+}
+
+void RegistersView::contextMenuEvent(QContextMenuEvent *event)
+{
+    const int i = first_row() + event->pos().y() / m_rh;
+    if (i < 0 || i >= (int)m_regs.size() || m_regs[i].name.empty()) return;
+    const CpuRegister &reg = m_regs[i];
+    exec_address_menu(this, event->globalPos(),
+                      AddressTarget{cpu, reg.value & 0xFFFF, QString::fromStdString(reg.name)});
 }
 
 void RegistersView::mouseDoubleClickEvent(QMouseEvent *event)
@@ -222,6 +247,18 @@ void RegistersView::commit_edit()
 }
 
 //------------------------------- FlagsView --------------------------------//
+
+void FlagsView::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    if (event->type() != QEvent::FontChange) return;
+    const QFontMetrics fm(font());
+    m_rh = dbg::row_height(fm);
+    m_cw = dbg::text_width(fm, "0");
+    m_painted.clear();
+    updateGeometry();
+    update();
+}
 
 FlagsView::FlagsView(Emulator * e, CPU * cpu, QWidget *parent):
     QWidget(parent),

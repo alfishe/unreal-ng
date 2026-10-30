@@ -5,18 +5,29 @@
 
 #include "debuggerwindow.h"
 
+#include <QAbstractItemView>
 #include <QAction>
+#include <QApplication>
 #include <QCloseEvent>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QSplitter>
 #include <QTabWidget>
+#include <QTabBar>
+#include <QStyleFactory>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
+#include <algorithm>
+#include <cmath>
+
+#include "addressmenu.h"
+#include "bankstrip.h"
 #include "debugstyle.h"
 #include "debugutil.h"
 #include "disasmview.h"
@@ -30,8 +41,14 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     e(e),
     m_serial(0),
     m_paused(false),
-    m_device_tick(0)
+    m_device_tick(0),
+    m_wheel_zoom(0),
+    m_zoom(1.0)
 {
+    //Everything is built at 100 %, the scale of the setup comes after: the
+    //font of the views is process-wide and may still be a closed window's
+    dbg::set_zoom(1.0);
+    m_ui_font = font();
     setWindowTitle(tr("Debugger"));
     setWindowFlags(windowFlags() | Qt::WindowMinMaxButtonsHint);
     resize(1100, 760);
@@ -50,7 +67,18 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         CpuPane p;
         p.cpu = cpu;
         p.split = new QSplitter(Qt::Horizontal, m_cpu_tabs);
-        p.code = new DisasmView(e, cpu, p.split);
+        //The listing under the windows of its space
+        QWidget * left = new QWidget(p.split);
+        QVBoxLayout * ll = new QVBoxLayout(left);
+        ll->setContentsMargins(0, 0, 0, 0);
+        ll->setSpacing(1);
+        p.banks = new BankStrip([cpu]() { return cpu->get_windows(); }, view_base(cpu), left);
+        p.banks->set_pc([cpu]() { return cpu->get_pc(); });
+        p.banks->set_cpu(cpu);
+        p.code = new DisasmView(e, cpu, left);
+        p.code->set_windows(p.banks->windows());
+        ll->addWidget(p.banks);
+        ll->addWidget(p.code, 1);
         QWidget * right = new QWidget(p.split);
         QVBoxLayout * rl = new QVBoxLayout(right);
         rl->setContentsMargins(0, 0, 0, 0);
@@ -80,6 +108,10 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         connect(p.code, &DisasmView::cursor_moved, this, [this, code]() {
             if (CpuPane * cp = pane())
                 if (cp->code == code) update_cursor();
+        });
+        connect(p.banks, &BankStrip::activated, this, [code](unsigned int address) {
+            code->go_to(address);
+            code->setFocus();
         });
         connect(p.code, &DisasmView::memory_changed, this, [this]() {
             m_memory_tabs->refresh();
@@ -115,6 +147,44 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
             p->code->setFocus();
         }
     };
+    //The address menu of every view: its requests come here
+    AddressRouter * router = new AddressRouter(this);
+    connect(router, &AddressRouter::show_code, this, [this](CPU * cpu, unsigned int address) {
+        select_cpu(cpu);
+        if (CpuPane * p = pane()) {
+            p->code->go_to(address);
+            p->code->setFocus();
+        }
+    });
+    connect(router, &AddressRouter::show_memory, this, [this](CPU * cpu, unsigned int address) {
+        m_memory_tabs->show_address(cpu, address);
+    });
+    connect(router, &AddressRouter::show_page, this, [this](CPU * cpu, unsigned int address) {
+        m_memory_tabs->show_page(cpu, address);
+    });
+    connect(router, &AddressRouter::toggle_breakpoint, this, [this](CPU * cpu, unsigned int address) {
+        for (CpuPane &p : m_panes)
+            if (p.cpu == cpu) p.code->toggle_breakpoint(address);
+    });
+    connect(router, &AddressRouter::run_to, this, [this](CPU * cpu, unsigned int address) {
+        if (!this->e->loaded) return;
+        mark_all();
+        Emulator * em = this->e;
+        this->e->invoke([em, cpu, address]() { em->debug_run_to(cpu, address); });
+        show_state();
+    });
+    connect(router, &AddressRouter::set_pc, this, [this](CPU * cpu, unsigned int address) {
+        this->e->invoke([cpu, address]() { cpu->set_context_value("PC", address); });
+        this->e->record_command(cpu->name, "setreg", "PC, $" + hex_str(address, 1));
+        for (CpuPane &p : m_panes)
+            if (p.cpu == cpu) {
+                p.regs->refresh();
+                p.flags->refresh();
+                p.code->show_pc();
+            }
+        m_stack->refresh();
+    });
+
     connect(m_breakpoints, &BreakpointsView::activated, this, show_code);
     connect(m_history, &HistoryView::activated, this, show_code);
     connect(m_stack, &StackView::activated, this, show_code);
@@ -132,6 +202,18 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     connect(m_side_tabs, &QTabWidget::currentChanged, this, [this](int) { refresh_side(); });
 
     restore_layout();
+    //The macOS style draws tabs at one fixed height whatever the font: Fusion sizes them to their text, so they grow
+    //with the scale; names are not cut, the bar scrolls when they do not fit
+    static QStyle * tab_style = QStyleFactory::create("Fusion");
+    if (tab_style != nullptr)
+        for (QTabWidget * t : findChildren<QTabWidget*>()) {
+            t->setStyle(tab_style);
+            t->tabBar()->setStyle(tab_style);
+            t->tabBar()->setElideMode(Qt::ElideNone);
+            t->tabBar()->setUsesScrollButtons(true);
+        }
+    set_zoom(QString::fromStdString(e->read_setup("Debugger", "zoom", "1")).toDouble());
+    qApp->installEventFilter(this);
 
     //The machine's events come on the emulation thread and are handed over
     e->set_debug_listener([this]() {
@@ -203,6 +285,7 @@ QString DebuggerWindow::code_text(unsigned int address)
 void DebuggerWindow::build_toolbar(QWidget * host)
 {
     QToolBar * tb = new QToolBar(host);
+    m_toolbar = tb;
     tb->setIconSize(QSize(20, 20));
     host->layout()->addWidget(tb);
 
@@ -327,6 +410,25 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     QWidget * spacer = new QWidget(tb);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     tb->addWidget(spacer);
+
+    //The scale: larger, smaller, as it was; the wheel with Ctrl too
+    auto zoom_action = [this](const QString &text, const QList<QKeySequence> &keys, int steps) {
+        QAction * a = new QAction(text, this);
+        a->setShortcuts(keys);
+        a->setShortcutContext(Qt::WindowShortcut);
+        addAction(a);
+        connect(a, &QAction::triggered, this, [this, steps]() { zoom_step(steps); });
+    };
+    zoom_action(tr("Larger"), {QKeySequence::ZoomIn, QKeySequence(Qt::CTRL | Qt::Key_Equal)}, 1);
+    zoom_action(tr("Smaller"), {QKeySequence::ZoomOut}, -1);
+    zoom_action(tr("Actual size"), {QKeySequence(Qt::CTRL | Qt::Key_0)}, 0);
+    m_zoom_label = new QLabel(tb);
+    m_zoom_label->setContentsMargins(6, 0, 6, 0);
+    m_zoom_label->setToolTip(tr("The scale of the window: %1, %2, %3 or Ctrl + the wheel")
+                                 .arg(QKeySequence(QKeySequence::ZoomIn).toString(QKeySequence::NativeText),
+                                      QKeySequence(QKeySequence::ZoomOut).toString(QKeySequence::NativeText),
+                                      QKeySequence(Qt::CTRL | Qt::Key_0).toString(QKeySequence::NativeText)));
+    tb->addWidget(m_zoom_label);
     QAction * close_action = tb->addAction(QIcon(":/icons/exit"), tr("Close"));
     connect(close_action, &QAction::triggered, this, &QDialog::close);
     if (QToolButton * b = qobject_cast<QToolButton*>(tb->widgetForAction(close_action)))
@@ -396,6 +498,7 @@ void DebuggerWindow::run_command(void (*command)(Emulator *, CPU *))
 void DebuggerWindow::mark_all()
 {
     for (CpuPane &p : m_panes) {
+        p.banks->mark_stop();
         p.regs->mark_stop();
         p.flags->mark_stop();
     }
@@ -418,6 +521,8 @@ void DebuggerWindow::refresh_all(bool stopped)
 {
     if (!e->loaded) return;
     for (CpuPane &p : m_panes) {
+        p.banks->refresh();
+        p.code->set_windows(p.banks->windows());
         p.regs->refresh();
         p.flags->refresh();
         if (stopped) p.code->show_pc();
@@ -497,6 +602,108 @@ void DebuggerWindow::on_timer()
         }
     }
     show_state();
+}
+
+//The steps a browser takes: round numbers, the same way back
+static const double ZOOMS[] = {0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0};
+
+double DebuggerWindow::zoom() const
+{
+    return m_zoom;
+}
+
+void DebuggerWindow::zoom_step(int steps)
+{
+    if (steps == 0) {
+        set_zoom(1.0);
+        return;
+    }
+    const double z = m_zoom;
+    const int n = (int)(sizeof(ZOOMS) / sizeof(ZOOMS[0]));
+    int i = 0;
+    //The step nearest to the scale now, then the next one
+    for (int k = 1; k < n; k++)
+        if (std::fabs(ZOOMS[k] - z) < std::fabs(ZOOMS[i] - z)) i = k;
+    set_zoom(ZOOMS[std::clamp(i + steps, 0, n - 1)]);
+}
+
+void DebuggerWindow::set_zoom(double zoom)
+{
+    if (!(zoom > 0)) zoom = 1.0;
+    zoom = std::clamp(zoom, ZOOMS[0], ZOOMS[sizeof(ZOOMS) / sizeof(ZOOMS[0]) - 1]);
+    m_zoom_label->setText(QString::number(std::lround(zoom * 100)) + " %");
+    if (std::fabs(zoom - m_zoom) < 0.001) return;
+    const double before = m_zoom;
+    m_zoom = zoom;
+    dbg::set_zoom(zoom);
+
+    //Tabs, buttons, labels, column titles: one font, the window's own at 100 % scaled slower than the views. Set on
+    //each of them, as the platform gives some classes (tab bars, buttons) fonts of their own
+    const auto ui_font = [this](double scale) {
+        QFont f = m_ui_font;
+        if (m_ui_font.pointSizeF() > 0) f.setPointSizeF(m_ui_font.pointSizeF() * scale);
+        else f.setPixelSize(std::max(1, (int)std::lround(m_ui_font.pixelSize() * scale)));
+        return f;
+    };
+    const QFont frame = ui_font(dbg::zoom(dbg::Zoom::Frame, zoom));
+    setFont(frame);
+    //The views and fields set the debugger's font themselves: it again, at the new size; each one measures its rows
+    //and columns again on the change, nothing is drawn scaled
+    const QFont mono = dbg::font();
+    //Which is which is told once, before the frame's font is set on anything (the frame may be of that family too)
+    for (QWidget * w : findChildren<QWidget*>()) {
+        if (!w->property("dbg_mono").isValid())
+            w->setProperty("dbg_mono", w->testAttribute(Qt::WA_SetFont) && w->font().family() == mono.family());
+        w->setFont(w->property("dbg_mono").toBool() ? mono : frame);
+    }
+
+    const double icons = dbg::zoom(dbg::Zoom::Icons, zoom);
+    m_toolbar->setIconSize(QSize(20, 20) * icons);
+    scale_icons(this, icons);
+    m_goto->setMaximumWidth(dbg::text_width(QFontMetrics(mono), "0000000000000"));
+    m_state->setMinimumWidth((int)std::lround(200 * dbg::zoom(dbg::Zoom::Frame, zoom)));
+    //Columns sized to the views' text: the same text at its new size. Each one's
+    //width at 100 % is kept, so steps there and back do not drift; a column
+    //resized by hand gives a new one
+    const double was_scale = dbg::zoom(dbg::Zoom::Content, before);
+    const double scale = dbg::zoom(dbg::Zoom::Content, zoom);
+    for (QHeaderView * h : findChildren<QHeaderView*>()) {
+        //A header that follows its view's columns itself (the listing's)
+        if (h->property("dbg_fixed_sections").toBool()) continue;
+        QList<QVariant> base = h->property("dbg_section_base").toList();
+        while (base.size() < h->count()) base.append(QVariant());
+        const int stretched = h->stretchLastSection() ? h->logicalIndex(h->count() - 1) : -1;
+        for (int i = 0; i < h->count(); i++) {
+            if (i == stretched) continue;
+            const double was = base[i].isValid() ? base[i].toDouble() : h->sectionSize(i) / was_scale;
+            const double b = (std::lround(was * was_scale) == h->sectionSize(i)) ? was : h->sectionSize(i) / was_scale;
+            base[i] = b;
+            h->resizeSection(i, (int)std::lround(b * scale));
+        }
+        h->setProperty("dbg_section_base", base);
+    }
+    //Lists drawn by a delegate in the debugger's font: their rows measured again
+    for (QAbstractItemView * v : findChildren<QAbstractItemView*>())
+        if (qobject_cast<QHeaderView*>(v) == nullptr) v->doItemsLayout();
+
+    e->write_setup("Debugger", "zoom", QString::number(zoom).toStdString());
+}
+
+bool DebuggerWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event->type() == QEvent::Wheel) {
+        QWheelEvent * w = static_cast<QWheelEvent*>(event);
+        QWidget * target = qobject_cast<QWidget*>(watched);
+        if ((w->modifiers() & Qt::ControlModifier) && target != nullptr && target->window() == this) {
+            //A notch is 120; a touchpad gives it in small parts
+            m_wheel_zoom += w->angleDelta().y();
+            const int steps = m_wheel_zoom / 120;
+            m_wheel_zoom -= steps * 120;
+            if (steps != 0) zoom_step(steps);
+            return true;
+        }
+    }
+    return GenericDbgWnd::eventFilter(watched, event);
 }
 
 void DebuggerWindow::save_layout()

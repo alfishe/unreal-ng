@@ -37,6 +37,7 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
+    void changeEvent(QEvent *event) override;
 
 private:
     CPU * cpu;
@@ -70,6 +71,9 @@ signals:
 protected:
     void keyPressEvent(QKeyEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
+
+private:
+    CPU * m_cpu = nullptr;
 };
 
 //Where PC has been, the newest last and in view, for a processor that keeps it

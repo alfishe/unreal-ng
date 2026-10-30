@@ -7,11 +7,13 @@
 //   ecat-debugger-poc --list-memory         the dump tabs and the "+" menu the window builds
 //   ecat-debugger-poc --connect 127.0.0.1:8090 [--emulator id]   a running emulator (unreal-qt) through its WebAPI;
 //                                           --self-check, --measure and --screenshot work on it too
+//   ecat-debugger-poc --zoom 1.5 [...]      the window's scale (Ctrl+= / Ctrl+- / Ctrl+0, Ctrl + the wheel)
 //
 // Run from the build's bin/ directory (the core finds data/ there). A small screen window shows the machine; the
 // debugger is ecat's DebuggerWindow as it is, over the adapter of adapter/unrealmachine.cpp (the core in this
 // process) or adapter/remotemachine.cpp (--connect; the emulator shows its own screen).
 
+#include <QAbstractButton>
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
@@ -20,19 +22,28 @@
 #include <QFileDialog>
 #include <QFontDatabase>
 #include <QImage>
+#include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
+#include <QToolBar>
 #include <QToolButton>
 #include <QWidget>
 
 #include <sys/resource.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <csignal>
 #include <cstdio>
 #include <functional>
 #include <map>
@@ -41,11 +52,25 @@
 
 #include "remotemachine.h"
 #include "unrealmachine.h"
+#include "dialogs/debugger/addressmenu.h"
+#include "dialogs/debugger/bankstrip.h"
 #include "dialogs/debugger/debuggerwindow.h"
+#include "dialogs/debugger/debugstyle.h"
 #include "dialogs/debugger/disasmview.h"
 #include "dialogs/debugger/memoryview.h"
+#include "dialogs/debugger/pagedmemory.h"
 
 namespace {
+
+// SIGINT / SIGTERM end the event loop, so the machine is destroyed: over the WebAPI that releases the run-control
+// session and debug mode (killed outright, the session stays held until its lease runs out)
+std::atomic<bool> g_quit{false};
+// The first signal asks the event loop to end; a second one (a GUI thread stuck in a request) ends the process
+void on_quit_signal(int sig)
+{
+    g_quit = true;
+    std::signal(sig, SIG_DFL);
+}
 
 // Frames the machine has run, in this process or behind the WebAPI
 uint64_t machine_frames(ecatshim::Emulator * m)
@@ -170,7 +195,7 @@ bool wait_for(const std::function<bool()> &done, int ms)
     QElapsedTimer t;
     t.start();
     while (!done()) {
-        if (t.elapsed() > ms) return false;
+        if (t.elapsed() > ms || g_quit) return false;
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
     }
     return true;
@@ -245,7 +270,7 @@ void window_check(QWidget * window, ecatshim::CPU * cpu, const std::function<voi
 {
     QApplication::processEvents();
     QTabWidget * cpu_tabs = tabs_with(window, QString::fromStdString(cpu->name + " :"));
-    QTabWidget * memory_tabs = tabs_with(window, "ram");
+    QTabWidget * memory_tabs = tabs_with(window, "pages");
     DisasmView * code = cpu_tabs ? cpu_tabs->widget(0)->findChild<DisasmView *>() : nullptr;
     auto * panel = memory_tabs ? qobject_cast<MemoryPanel *>(memory_tabs->widget(0)) : nullptr;
     check(code != nullptr && panel != nullptr, "window: listing and dump found");
@@ -286,6 +311,9 @@ void window_check(QWidget * window, ecatshim::CPU * cpu, const std::function<voi
         check(editor != nullptr && cpu->peek_mem(0xC000) == 0x3E && cpu->peek_mem(0xC001) == 0x42 &&
                   code->describe(0xC000).contains("42"),
               "listing: instruction bytes typed over (LD A,#42)");
+        if (editor == nullptr || cpu->peek_mem(0xC000) != 0x3E || cpu->peek_mem(0xC001) != 0x42)
+            printf("  (row y %d, editor %s, #C000 = %02X %02X, listing \"%s\")\n", y, editor ? "opened" : "none",
+                   cpu->peek_mem(0xC000), cpu->peek_mem(0xC001), code->describe(0xC000).toUtf8().constData());
         for (unsigned int i = 0; i < 4; i++) cpu->poke_mem(0xC000 + i, saved[i]);
         code->refresh_memory();
     }
@@ -350,6 +378,92 @@ void window_check(QWidget * window, ecatshim::CPU * cpu, const std::function<voi
         for (unsigned int i = 0; i < 16; i++) cpu->poke_mem(0xC200 + i, saved[i]);
     }
     for (const QString &t : answer.messages) printf("  (dialog: %s)\n", t.toUtf8().constData());
+
+    // The windows of the space: each one's page holds the bytes the CPU reads there; a strip above the listing and
+    // one above the dump; the pages tab marks the page at #C000 and shows it
+    {
+        // Four 16 KB windows, or the Next's eight 8 KB slots: together the 64 KB
+        const std::vector<ecatshim::AddressWindow> windows = cpu->get_windows();
+        unsigned int covered = 0;
+        for (const ecatshim::AddressWindow &w : windows) covered += w.size;
+        bool same = !windows.empty() && covered == 0x10000;
+        for (const ecatshim::AddressWindow &w : windows)
+            for (unsigned int k : {0u, 0x123u, w.size - 1})
+                same = same && w.device != nullptr && w.device->get_direct(w.offset + k) == cpu->peek_mem(w.start + k);
+        check(same, "windows: each window's page holds its bytes");
+        if (!same)
+            for (const ecatshim::AddressWindow &w : windows)
+                printf("  (window #%04X %s %u, %s + #%X: %02X / cpu %02X)\n", w.start, w.kind.c_str(), w.page,
+                       w.device ? w.device->name.c_str() : "-", w.offset,
+                       w.device ? w.device->get_direct(w.offset) : 0, cpu->peek_mem(w.start));
+        int strips = 0;
+        for (BankStrip * b : window->findChildren<BankStrip *>())
+            if (!b->windows().empty()) strips++;
+        check(strips >= 2, "windows: strips above the listing and the dump");
+
+        PagedMemory * paged = window->findChild<PagedMemory *>();
+        QTreeWidget * tree = paged ? paged->findChild<QTreeWidget *>() : nullptr;
+        if (memory_tabs != nullptr && paged != nullptr) memory_tabs->setCurrentWidget(paged);
+        QApplication::processEvents();
+        if (paged != nullptr) paged->refresh();
+        ecatshim::AddressWindow top;
+        for (const ecatshim::AddressWindow &w : windows)
+            if (w.start == 0xC000) top = w;
+        // The tab's pages are the memory's own (16 KB), a Next slot is half of one
+        auto * top_memory = dynamic_cast<ecatshim::Memory *>(top.device);
+        const unsigned int page_size = top_memory ? top_memory->page_size() : 0;
+        // The tree: device ("system" for the machine's own, "neogs" for "neogs.ram"), memory, page
+        const QString memory = top.device ? QString::fromStdString(top.device->name) : QString();
+        const int dot = memory.lastIndexOf('.');
+        const QString device = dot < 0 ? QString("system") : memory.left(dot);
+        const QString name = page_size ? memory.mid(dot + 1) + ' ' + QString::number(top.offset / page_size) : QString();
+        QTreeWidgetItem * item = nullptr;
+        for (QTreeWidgetItemIterator it(tree); tree != nullptr && *it; ++it)
+            if ((*it)->text(0) == name && (*it)->parent() && (*it)->parent()->parent() &&
+                (*it)->parent()->parent()->text(0) == device)
+                item = *it;
+        if (item != nullptr) tree->setCurrentItem(item);
+        QApplication::processEvents();
+        MemoryPanel * shown = paged ? paged->findChild<MemoryPanel *>() : nullptr;
+        const bool marked = item != nullptr && item->text(1).contains("#C000");
+        const bool holds = shown != nullptr && page_size && shown->view()->source().size == page_size &&
+                           shown->view()->source().read(top.offset % page_size + 0x123) == cpu->peek_mem(0xC123);
+        check(marked && holds, "pages tab: the page at #C000 marked and shown");
+        if (memory_tabs != nullptr) memory_tabs->setCurrentIndex(0);
+    }
+    // The address menu: the same actions wherever an address is shown, done by the window
+    {
+        const auto run = [&](const AddressTarget &t, const QString &text) {
+            QMenu menu;
+            add_address_actions(&menu, code, t);
+            for (QAction * a : menu.actions())
+                if (a->text() == text && a->isEnabled()) {
+                    a->trigger();
+                    QApplication::processEvents();
+                    return true;
+                }
+            return false;
+        };
+        const bool listing = code && run(AddressTarget{cpu, 0xC123, "HL"}, "Show in disassembly") &&
+                             code->cursor_address() == 0xC123;
+        const bool dump = panel && run(AddressTarget{cpu, 0xC124, QString()}, "Show in memory") &&
+                          memory_tabs->currentWidget() == panel && panel->view()->cursor() == 0xC124;
+        const std::vector<AddressWindow> windows = cpu->get_windows();
+        const int w = window_at(windows, 0xC125);
+        auto * m = w >= 0 ? dynamic_cast<ecatshim::Memory *>(windows[w].device) : nullptr;
+        PagedMemory * paged = memory_tabs ? memory_tabs->findChild<PagedMemory *>() : nullptr;
+        MemoryPanel * page_panel = nullptr;
+        const bool page = m && m->page_size() && paged && run(AddressTarget{cpu, 0xC125, QString()}, "Show its page") &&
+                          memory_tabs->currentWidget() == paged && (page_panel = paged->findChild<MemoryPanel *>()) &&
+                          page_panel->view()->cursor() == (windows[w].offset + 0xC125 - windows[w].start) % m->page_size();
+        const unsigned int pc = cpu->get_pc();
+        const bool set_pc = run(AddressTarget{cpu, 0x8000, QString()}, "Set PC here") && cpu->get_pc() == 0x8000;
+        cpu->set_context_value("PC", pc);
+        check(listing && dump && page && set_pc, "address menu: listing, memory, page, set PC");
+        if (!(listing && dump && page && set_pc))
+            printf("  (listing %d, memory %d, page %d, set PC %d)\n", listing, dump, page, set_pc);
+        if (memory_tabs != nullptr) memory_tabs->setCurrentIndex(0);
+    }
 }
 
 // What the window's buttons and editors do, through the same calls, on the machine as it runs; the number failed
@@ -408,6 +522,15 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         m->debug_run_to(cpu, to);
         const bool stopped = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 3000);
         check(stopped && cpu->get_pc() == to, "run to cursor");
+        if (!stopped || cpu->get_pc() != to) {
+            const unsigned int pc1 = cpu->get_pc();
+            wait_for([]() { return false; }, 100);
+            printf("  (run to #%04X, %u times in %zu of history: %s, PC #%04X then #%04X, paused %d stepping %d reason %d,"
+                   " frames %llu, run-to bps %zu, IFF1 %u IM %u)\n",
+                   to, (unsigned)seen[to], history.size(), stopped ? "stopped" : "not stopped in 3 s", pc1,
+                   cpu->get_pc(), m->debug_paused(), m->debug_stepping(), m->debug_stop_reason(),
+                   (unsigned long long)machine_frames(m), cpu->get_breakpoints().size(), reg(cpu, "IFF1"), reg(cpu, "IM"));
+        }
         check(cpu->get_breakpoints().empty(), "run-to breakpoint gone after the stop");
     }
 
@@ -423,6 +546,10 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
     const bool hit = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 3000);
     snprintf(what, sizeof(what), "breakpoint hit at #%04X", bp);
     check(hit && cpu->get_pc() == bp && m->debug_stop_reason() == ecatshim::Emulator::DSTOP_BREAKPOINT, what);
+    if (!hit || cpu->get_pc() != bp)
+        printf("  (%s, PC #%04X, paused %d stepping %d reason %d, frames %llu, IFF1 %u IM %u)\n",
+               hit ? "stopped" : "not stopped in 3 s", cpu->get_pc(), m->debug_paused(), m->debug_stepping(),
+               m->debug_stop_reason(), (unsigned long long)machine_frames(m), reg(cpu, "IFF1"), reg(cpu, "IM"));
     cpu->remove_breakpoint(bp);
     check(!cpu->has_breakpoint(bp), "breakpoint remove");
     if (!hit) {
@@ -473,6 +600,18 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         check(reg(gs, "DE") == (gde ^ 0x0101), "gs register edit (DE)");
         gs->set_context_value("DE", gde);
 
+        // The card's windows: RAM pages hold what its Z80 reads there; a ROM / flash page too where the machine
+        // lists the card's ROM (the NeoGS flash; the classic card's ROM is no device memory)
+        const std::vector<ecatshim::AddressWindow> gw = gs->get_windows();
+        bool gsame = gw.size() == 4;
+        for (const ecatshim::AddressWindow &w : gw) {
+            if (w.kind == "RAM") gsame = gsame && w.device != nullptr;
+            if (w.device == nullptr) continue;
+            for (unsigned int k : {0u, 0x123u, w.size - 1})
+                gsame = gsame && w.device->get_direct(w.offset + k) == gs->peek_mem(w.start + k);
+        }
+        check(gsame, "gs windows: each listed page holds its bytes");
+
         gs->add_breakpoint(gpc);
         m->debug_run(true);
         const bool ghit = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 3000);
@@ -487,6 +626,78 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
 
     window_check(window, cpu, check);
 
+    // The window's scale: the views' font and their rows follow it, the keys step it, 100 % gives every size back
+    {
+        auto * w = static_cast<DebuggerWindow *>(window);
+        // Every tab bar of the window: one font, one height
+        const auto tabs_alike = [&](const char * what) {
+            QString sizes;
+            bool same = true;
+            const QList<QTabBar *> bars = window->findChildren<QTabBar *>();
+            for (QTabBar * b : bars) {
+                sizes += QString(" %1pt/%2px").arg(b->font().pointSizeF()).arg(b->count() ? b->tabRect(0).height() : -1);
+                same = same && b->font() == bars.front()->font() &&
+                       (b->count() == 0 || b->tabRect(0).height() == bars.front()->tabRect(0).height());
+            }
+            check(same, what);
+            if (!same) printf("  (tab bars:%s)\n", sizes.toUtf8().constData());
+        };
+        tabs_alike("zoom: every tab bar of one font and height as opened");
+        const double z0 = w->zoom();
+        w->set_zoom(1.0);
+        QApplication::processEvents();
+        DisasmView * code = window->findChild<DisasmView *>();
+        QToolBar * tb = window->findChild<QToolBar *>();
+        const int rows1 = code ? code->viewport()->height() / QFontMetrics(code->font()).height() : 0;
+        const int h1 = code ? QFontMetrics(code->font()).height() : 0;
+        const QSize icons1 = tb ? tb->iconSize() : QSize();
+        const int ui1 = QFontMetrics(window->font()).height();
+        QTabBar * bar = window->findChild<QTabBar *>();
+        const qreal tab1 = bar ? bar->font().pointSizeF() : 0;
+        QElapsedTimer switch_time;
+        switch_time.start();
+        w->set_zoom(2.0);
+        window->repaint();
+        QApplication::processEvents();
+        const qint64 switch_ms = switch_time.elapsed();
+        const int h2 = code ? QFontMetrics(code->font()).height() : 0;
+        const int rows2 = code ? code->viewport()->height() / h2 : 0;
+        tabs_alike("zoom 200 %: every tab bar of one font and height");
+        // Tabs, buttons and labels: the window's one font, grown slower than the views
+        bool frame_one = bar && bar->font().pointSizeF() > tab1 && bar->font() == window->font();
+        for (QWidget * f : window->findChildren<QWidget *>())
+            if ((qobject_cast<QAbstractButton *>(f) || qobject_cast<QLabel *>(f)) && !f->property("dbg_mono").toBool())
+                frame_one = frame_one && f->font() == window->font();
+        const bool tabs_slower = frame_one && bar->font().pointSizeF() / tab1 < 1.9;
+        bool views = true;
+        for (QWidget * v : window->findChildren<QWidget *>())
+            if (v->property("dbg_mono").toBool())
+                if (std::fabs(v->font().pointSizeF() - dbg::font().pointSizeF()) >= 0.01) {
+                    views = false;
+                    printf("  (%s %s at %.1f pt, the views at %.1f)\n", v->metaObject()->className(),
+                           v->objectName().toUtf8().constData(), v->font().pointSizeF(), dbg::font().pointSizeF());
+                }
+        check(code && h2 >= h1 * 18 / 10 && rows2 < rows1 && views && tb && tb->iconSize() == icons1 * dbg::zoom(dbg::Zoom::Icons, 2.0) &&
+                  QFontMetrics(window->font()).height() > ui1 * 13 / 10 && tabs_slower,
+              "zoom 200 %: views twice the size, tabs, buttons, labels one font, slower");
+        if (!(tabs_slower && h2 >= h1 * 18 / 10 && rows2 < rows1 && views))
+            printf("  (rows %d -> %d, row %d -> %d px, views %d, tab %.1f -> %.1f pt, window %.1f pt, frame one %d)\n", rows1,
+                   rows2, h1, h2, views, tab1, bar ? bar->font().pointSizeF() : 0.0, window->font().pointSizeF(),
+                   frame_one);
+        printf("  (zoom 100 -> 200 %%: %lld ms, layout and one full paint)\n", (long long)switch_ms);
+        QAction * smaller = nullptr;
+        for (QAction * a : window->actions())
+            if (a->text() == "Smaller") smaller = a;
+        if (smaller) smaller->trigger();
+        const bool stepped = std::fabs(w->zoom() - 1.75) < 0.001;
+        w->set_zoom(1.0);
+        QApplication::processEvents();
+        check(stepped && QFontMetrics(code->font()).height() == h1 && tb->iconSize() == icons1 &&
+                  QFontMetrics(window->font()).height() == ui1,
+              "zoom: a step down, 100 % gives the sizes back");
+        w->set_zoom(z0);
+    }
+
     m->debug_run(true);
     check(wait_for([m]() { return !m->debug_paused(); }, 2000), "run again");
     return failed;
@@ -497,6 +708,17 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
 int main(int argc, char * argv[])
 {
     QApplication app(argc, argv);
+    std::signal(SIGINT, on_quit_signal);
+    std::signal(SIGTERM, on_quit_signal);
+    QTimer quit_poll;
+    QObject::connect(&quit_poll, &QTimer::timeout, [&app, &quit_poll]() {
+        if (g_quit) {
+            quit_poll.stop();
+            for (QWidget * w : QApplication::topLevelWidgets()) w->close();
+            app.quit();
+        }
+    });
+    quit_poll.start(200);
     app.setApplicationName("poc041-ecat-debugger");
     // ecat's main window registers the views' font from its resources; without it Qt searches every family for an
     // alias of the missing "Consolas" when the window opens
@@ -519,6 +741,8 @@ int main(int argc, char * argv[])
     QCommandLineOption listOpt("list-memory", "Print the dump tabs and the \"+\" menu the window builds, exit");
     parser.addOption(listOpt);
     QCommandLineOption connectOpt("connect", "A running emulator's WebAPI instead of a machine of its own", "host:port");
+    QCommandLineOption zoomOpt("zoom", "The debugger window's scale (1.5 = 150 %)", "scale");
+    parser.addOption(zoomOpt);
     QCommandLineOption emulatorOpt("emulator", "With --connect: the emulator's id or symbolic id (default: the first)", "id");
     parser.addOption(connectOpt);
     parser.addOption(emulatorOpt);
@@ -552,15 +776,18 @@ int main(int argc, char * argv[])
     }
 
     if (parser.isSet(listOpt)) {
-        // As MemoryTabs builds them: each processor's space, then mappers and memories as tabs, the rest in "+"
+        // As MemoryTabs builds them: each processor's space, the paged memories in the pages tab, then mappers and
+        // memories as tabs, the rest in "+"
         ecatshim::Emulator * m = machine.get();
         for (ecatshim::CPU * c : m->dm->get_cpus()) printf("tab  %-20s cpu space\n", c->name.c_str());
         for (unsigned int i = 0; i < m->dm->device_count; i++) {
             ecatshim::ComputerDevice * d = m->dm->get_device(i)->device.get();
             auto * a = dynamic_cast<ecatshim::AddressableDevice *>(d);
             if (a == nullptr || a->get_size() == 0 || dynamic_cast<ecatshim::CPU *>(d) != nullptr) continue;
-            const bool tab = dynamic_cast<ecatshim::MemoryMapper *>(d) != nullptr || dynamic_cast<ecatshim::Memory *>(d) != nullptr;
-            printf("%s %-20s %8u  %s\n", tab ? "tab " : "more", d->name.c_str(), a->get_size(), d->type.c_str());
+            auto * mem = dynamic_cast<ecatshim::Memory *>(d);
+            const bool tab = dynamic_cast<ecatshim::MemoryMapper *>(d) != nullptr || mem != nullptr;
+            const bool paged = mem != nullptr && mem->page_size() > 0;
+            printf("%s %-20s %8u  %s\n", paged ? "page" : (tab ? "tab " : "more"), d->name.c_str(), a->get_size(), d->type.c_str());
         }
         return 0;
     }
@@ -598,6 +825,7 @@ int main(int argc, char * argv[])
             s.push_back(sample());
             paints.widgets.clear();
             dbg = CreateDebuggerWindow(nullptr, m, nullptr);
+            if (parser.isSet(zoomOpt)) static_cast<DebuggerWindow *>(dbg)->set_zoom(parser.value(zoomOpt).toDouble());
             dbg->show();
             m->debug_run(true);
         });
@@ -645,6 +873,7 @@ int main(int argc, char * argv[])
     }
 
     GenericDbgWnd * dbg = CreateDebuggerWindow(nullptr, machine.get(), nullptr);
+    if (parser.isSet(zoomOpt)) static_cast<DebuggerWindow *>(dbg)->set_zoom(parser.value(zoomOpt).toDouble());
     dbg->show();
 
     if (parser.isSet(checkOpt)) {
@@ -684,9 +913,20 @@ int main(int argc, char * argv[])
             if (QTabWidget * side = tabs_with(w, "Devices"))
                 for (int i = 0; i < side->count(); i++)
                     if (side->tabText(i) == "Devices") side->setCurrentIndex(i);
-            QTimer::singleShot(300, [dbg, path]() {
+            QTimer::singleShot(300, [dbg, m, path]() {
                 dbg->grab().save(QString(path).replace(".png", "-gs.png"));
-                QApplication::quit();
+                // The main Z80 again: the listing across the #8000 window's start, the pages tab
+                auto * w = static_cast<DebuggerWindow *>(dbg);
+                w->select_cpu(m->dm->get_cpus().front());
+                if (QTabWidget * t = tabs_with(w, QString::fromStdString(m->dm->get_cpus().front()->name + " :")))
+                    if (DisasmView * code = t->currentWidget()->findChild<DisasmView *>()) code->go_to(0x7FF0);
+                if (QTabWidget * t = tabs_with(w, "pages"))
+                    for (int i = 0; i < t->count(); i++)
+                        if (t->tabText(i) == "pages") t->setCurrentIndex(i);
+                QTimer::singleShot(400, [dbg, path]() {
+                    dbg->grab().save(QString(path).replace(".png", "-banks.png"));
+                    QApplication::quit();
+                });
             });
         });
     }

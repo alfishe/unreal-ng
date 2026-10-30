@@ -12,6 +12,7 @@
 #include <QPainter>
 #include <QStyledItemDelegate>
 
+#include "addressmenu.h"
 #include "debugstyle.h"
 #include "dialogs/numfmt.h"
 
@@ -28,6 +29,17 @@ StackView::StackView(CPU * cpu, QWidget *parent):
     setFocusPolicy(Qt::ClickFocus);
     //Paints every pixel of itself: nothing beneath it needs painting first
     setAttribute(Qt::WA_OpaquePaintEvent);
+}
+
+void StackView::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    if (event->type() != QEvent::FontChange) return;
+    const QFontMetrics fm(font());
+    m_rh = dbg::row_height(fm);
+    m_cw = dbg::text_width(fm, "0");
+    m_painted.clear();
+    update();
 }
 
 void StackView::refresh()
@@ -139,9 +151,10 @@ void StackView::contextMenuEvent(QContextMenuEvent *event)
 {
     unsigned int v;
     if (!value_at(event->pos(), v)) return;
-    QMenu menu(this);
-    QAction * go = menu.addAction(QIcon(":/icons/next"), tr("Go to"));
-    if (menu.exec(event->globalPos()) == go) emit activated(v);
+    unsigned int slot = 0;
+    cpu->stack_address(event->pos().y() / m_rh - center(), slot);
+    const QString at = QString::number(slot, 16).toUpper().rightJustified(4, '0');
+    exec_address_menu(this, event->globalPos(), AddressTarget{cpu, v, tr("on the stack at #%1").arg(at)});
 }
 
 //------------------------------ CodeDelegate ------------------------------//
@@ -205,6 +218,7 @@ void BreakpointsView::refresh(CPU * cpu, const CodeFormatter &fmt)
 {
     const int row = currentRow();
     clear();
+    m_cpu = cpu;
     if (cpu == nullptr) return;
     for (unsigned int a : cpu->get_breakpoints()) {
         QListWidgetItem * item = new QListWidgetItem(fmt(a), this);
@@ -230,12 +244,7 @@ void BreakpointsView::contextMenuEvent(QContextMenuEvent *event)
     if (item == nullptr) return;
     setCurrentItem(item);
     const unsigned int address = item->data(Qt::UserRole).toUInt();
-    QMenu menu(this);
-    QAction * go = menu.addAction(QIcon(":/icons/next"), tr("Go to"));
-    QAction * del = menu.addAction(QIcon(":/icons/remove"), tr("Remove"));
-    QAction * chosen = menu.exec(event->globalPos());
-    if (chosen == go) emit activated(address);
-    else if (chosen == del) emit remove(address);
+    exec_address_menu(this, event->globalPos(), AddressTarget{m_cpu, address, tr("breakpoint")});
 }
 
 //------------------------------ HistoryView -------------------------------//
@@ -274,14 +283,7 @@ void HistoryView::contextMenuEvent(QContextMenuEvent *event)
     if (item == nullptr || m_cpu == nullptr || !item->data(Qt::UserRole).isValid()) return;
     setCurrentItem(item);
     const unsigned int address = item->data(Qt::UserRole).toUInt();
-    QMenu menu(this);
-    QAction * go = menu.addAction(QIcon(":/icons/next"), tr("Go to"));
-    QAction * bp = m_cpu->has_breakpoint(address)
-                 ? menu.addAction(QIcon(":/icons/remove"), tr("Remove the breakpoint"))
-                 : menu.addAction(QIcon(":/icons/add"), tr("Set a breakpoint"));
-    QAction * chosen = menu.exec(event->globalPos());
-    if (chosen == go) emit activated(address);
-    else if (chosen == bp) emit toggle_breakpoint(address);
+    exec_address_menu(this, event->globalPos(), AddressTarget{m_cpu, address, tr("in the history")});
 }
 
 //------------------------------ DevicesView -------------------------------//

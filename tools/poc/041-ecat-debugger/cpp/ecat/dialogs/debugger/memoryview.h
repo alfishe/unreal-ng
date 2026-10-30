@@ -15,6 +15,8 @@
 #include "emulator/emulator.h"
 #include "debugutil.h"
 
+class BankStrip;
+class PagedMemory;
 class CellEditor;
 class QLabel;
 class QLineEdit;
@@ -36,6 +38,12 @@ struct MemorySource {
     std::function<bool(unsigned int)> writable;
     //The device that answers an address, for a mapper or a processor
     std::function<QString(unsigned int)> owner;
+    //The windows of a paged space (a processor's): a strip above the dump
+    std::function<std::vector<AddressWindow>()> windows;
+    //The processor's PC, for the strip's chip
+    std::function<unsigned int()> pc;
+    //The processor whose space it is: the address menu acts on it
+    CPU * cpu = nullptr;
 };
 
 MemorySource memory_of_cpu(CPU * cpu);
@@ -64,6 +72,8 @@ public:
     void mark_stop();
     //The next place after the cursor holding the bytes, wrapping around
     bool find(const std::vector<uint8_t> &pattern);
+    //A line marks where each window starts
+    void set_windows(const std::vector<AddressWindow> &windows) { m_windows = windows; }
 
 signals:
     void cursor_moved(unsigned int address);
@@ -74,9 +84,13 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+    //The cell's address: its menu (a processor's dump; a page's has only the copies)
+    void contextMenuEvent(QContextMenuEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void scrollContentsBy(int dx, int dy) override;
+    //Another font (the window's scale): rows and columns measured again
+    void changeEvent(QEvent *event) override;
 
 private:
     Emulator * e;
@@ -115,8 +129,11 @@ private:
     void write(unsigned int address, const std::vector<uint8_t> &bytes);
 
     PaintedRows m_painted;
+    std::vector<AddressWindow> m_windows;
     //What a line of the view shows, for PaintedRows
     QString row_key(int row) const;
+    //The label of the window starting at the line, empty when none does
+    QString window_start(unsigned int line) const;
 };
 
 //The dump with its controls: address, notation, bytes or words, search,
@@ -127,12 +144,13 @@ class MemoryPanel : public QWidget
 public:
     MemoryPanel(Emulator * e, const MemorySource &source, QWidget *parent);
     MemoryView * view() const { return m_view; }
-    void refresh() { m_view->refresh(); show_cursor(m_view->cursor()); }
-    void mark_stop() { m_view->mark_stop(); }
+    void refresh();
+    void mark_stop();
 
 private:
     Emulator * e;
     MemoryView * m_view;
+    BankStrip * m_banks;
     QLineEdit * m_address;
     QToolButton * m_base_button;
     QToolButton * m_word_button;
@@ -145,11 +163,16 @@ private:
     void save_file();
     void apply_view();
     void show_cursor(unsigned int address);
+
+protected:
+    //The window's scale: the address field as wide as its digits again
+    void changeEvent(QEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 };
 
-//The dumps of a machine as tabs: each processor's address space, the
-//mappers and the memories; any other device with an address space from the
-//button at the corner
+//The dumps of a machine as tabs: each processor's address space, the paged
+//memories as one tab, the mappers and the other memories; any other device
+//with an address space from the button at the corner
 class MemoryTabs : public QTabWidget
 {
     Q_OBJECT
@@ -157,6 +180,10 @@ public:
     MemoryTabs(Emulator * e, QWidget *parent);
     void refresh();
     void mark_stop();
+    //The processor's dump at an address
+    void show_address(CPU * cpu, unsigned int address);
+    //The page that holds a processor's address, in the pages tab, at that byte
+    void show_page(CPU * cpu, unsigned int address);
 
 signals:
     //A value was changed in one of the dumps
@@ -165,6 +192,7 @@ signals:
 private:
     Emulator * e;
     std::vector<MemoryPanel*> m_panels;
+    PagedMemory * m_paged;
 
     void add_panel(const MemorySource &s, const QString &title);
 };

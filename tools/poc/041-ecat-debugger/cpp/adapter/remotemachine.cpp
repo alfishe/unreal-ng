@@ -30,6 +30,7 @@
 #include <mutex>
 
 #include "unrealmachine.h"
+#include "zxwindows.h"
 
 namespace {
 
@@ -207,14 +208,24 @@ public:
         type = kind;
     }
     unsigned int get_size() override { return m_pages * kPage; }
+    unsigned int page_size() override { return kPage; }
+    std::string page_title(unsigned int page) override;
+    std::string page_role(unsigned int page) override;
+    void set_paging(const ZxPaging &p) { m_paging = p; }
     unsigned int get_direct(unsigned int a) override;
     void set_value(unsigned int a, unsigned int v, bool) override;
 
 private:
     RemoteMachine * m_m;
+    ZxPaging m_paging;
     QString m_kind;
     unsigned int m_pages;
     std::map<unsigned int, std::pair<uint64_t, QByteArray>> m_cache;
+    // The ROM pages' titles and roles (GET /state/memory/rom), asked again after an event of the machine (a stop, a
+    // run, an edit): a flash write or an edit gives a page another name
+    std::vector<std::pair<std::string, std::string>> m_titles;
+    uint64_t m_titles_seq = ~0ull;
+    void rom_titles();
 };
 
 // A device memory (GET /memory/region/{name}), 4 KB per read; as a Memory a dump tab, else in the "+" menu
@@ -341,9 +352,19 @@ public:
         for (unsigned int a : get_breakpoints()) remove_breakpoint(a);
     }
     std::vector<unsigned int> get_breakpoints() override;
+    std::vector<ecatshim::AddressWindow> get_windows() override;
+    void set_pages(ecatshim::AddressableDevice * ram, ecatshim::AddressableDevice * rom, const ZxPaging &paging)
+    {
+        m_ram = ram;
+        m_rom = rom;
+        m_paging = paging;
+    }
 
 private:
     RemoteMachine * m_m;
+    ecatshim::AddressableDevice * m_ram = nullptr;
+    ecatshim::AddressableDevice * m_rom = nullptr;
+    ZxPaging m_paging;
 };
 
 //------------------------------------------------------------------- the machine
@@ -390,11 +411,16 @@ public:
         for (const QJsonValue &e : list)
             if (e.toObject().value("id").toString() == m_id && e.toObject().value("ram_kb").toInt() > 0)
                 ram_pages = (unsigned int)e.toObject().value("ram_kb").toInt() / 16;
-        const unsigned int rom_pages = (unsigned int)pages.value("rom").toObject().value("count").toInt();
+        // The ROM pages the machine loaded (16 KB each), not the core's capacity
+        unsigned int rom_pages = (unsigned int)m_http.json("GET", m_base + "/state/memory/rom").value("total_rom_pages").toInt();
+        if (rom_pages == 0) rom_pages = (unsigned int)pages.value("rom").toObject().value("count").toInt();
         auto ram = std::make_shared<RemotePages>(this, "ram", std::max(1u, ram_pages));
         auto rom = std::make_shared<RemotePages>(this, "rom", std::max(1u, rom_pages));
         m_mapper = std::make_shared<RemoteMapper>(this, ram.get(), rom.get());
         m_cpu->mm = m_mapper.get();
+        const ZxPaging paging = ZxModelPaging(m_http.json("GET", m_base + "/state/paging").value("model").toString().toStdString());
+        m_cpu->set_pages(ram.get(), rom.get(), paging);
+        ram->set_paging(paging);
         m_dm.add(ram);
         m_dm.add(rom);
 
@@ -525,6 +551,7 @@ public:
     }
     void debug_run(bool breakpoints) override
     {
+        if (!m_arming_run_to) drop_run_to();
         // Breakpoints fire only in debug mode: a run without them is a run with it off
         m_http.json("PUT", m_base + "/debugmode", QJsonObject{{"enabled", breakpoints}});
         m_cpu->m_debug = breakpoints ? ecatshim::DEBUG_BRAKES : ecatshim::DEBUG_OFF;
@@ -533,6 +560,7 @@ public:
     }
     void debug_step(ecatshim::CPU *, unsigned int count) override
     {
+        drop_run_to();
         if (count <= 1) m_http.json("POST", m_base + "/step");
         else m_http.json("POST", m_base + "/steps", QJsonObject{{"count", (int)count}});
         changed();
@@ -540,11 +568,13 @@ public:
     // Step over / out answer when the machine has stopped (a pool of the WebAPI runs them)
     void debug_step_over(ecatshim::CPU *) override
     {
+        drop_run_to();
         m_http.json("POST", m_base + "/stepover", QJsonObject(), nullptr, 15000);
         changed();
     }
     void debug_step_out(ecatshim::CPU *) override
     {
+        drop_run_to();
         m_http.json("POST", m_base + "/stepout", QJsonObject(), nullptr, 15000);
         changed();
     }
@@ -554,12 +584,20 @@ public:
         // user's breakpoint a run-to would move it into its group, and the user's stops there all the same
         bool user = false;
         for (const Breakpoint &b : breakpoints()) user = user || (!b.run_to && b.address == (address & 0xFFFF));
-        if (!user)
+        // Gone at a stop after this run starts (the run start and the stop each move the seq), not at the stop it
+        // was set at, whose answer may come only now
+        drop_run_to();
+        m_run_to_seq = m_seq.load();
+        if (!user) {
             m_http.json("POST", m_base + "/breakpoints",
                         QJsonObject{{"type", "execution"}, {"address", (int)(address & 0xFFFF)}, {"group", kRunToGroup},
                                     {"note", "run to the cursor"}});
+            m_run_to_armed = true;
+        }
         breakpoints_changed();
+        m_arming_run_to = true;
         debug_run(true);
+        m_arming_run_to = false;
     }
     unsigned int debug_serial() const override { return (unsigned int)m_seq.load(); }
     ecatshim::CPU * debug_stop_cpu() const override { return m_cpu.get(); }
@@ -622,6 +660,9 @@ private:
     QElapsedTimer m_age;
     std::atomic<bool> m_dirty{true};
     std::atomic<uint64_t> m_seq{0};
+    std::atomic<uint64_t> m_run_to_seq{0};
+    std::atomic<bool> m_run_to_armed{false};
+    bool m_arming_run_to = false;
     std::vector<Breakpoint> m_bps;
     uint64_t m_bp_generation = 0;
     bool m_bp_dirty = true;
@@ -635,6 +676,12 @@ private:
     std::mutex m_listener_mutex;
     std::function<void()> m_listener;
 
+    // A run-to of an earlier command is over whatever happened since: a new command never meets it (on a CPU in
+    // HALT at its address it would stop the run at once)
+    void drop_run_to()
+    {
+        if (m_run_to_armed.exchange(false)) clear_run_to();
+    }
     void clear_run_to()
     {
         m_http.json("POST", m_base + "/breakpoints/remove", QJsonObject{{"select", QString("group:") + kRunToGroup}});
@@ -661,7 +708,8 @@ private:
             if (!a.value("changed").toBool()) continue;
             m_seq = (uint64_t)a.value("seq").toDouble();
             m_dirty = true;
-            if (a.value("state").toString() == "paused")
+            if (a.value("state").toString() == "paused" && m_seq.load() >= m_run_to_seq.load() + 2 &&
+                m_run_to_armed.exchange(false))
                 wait.json("POST", m_base + "/breakpoints/remove", QJsonObject{{"select", QString("group:") + kRunToGroup}});
             std::lock_guard<std::mutex> lock(m_listener_mutex);
             if (m_listener) m_listener();
@@ -678,13 +726,47 @@ unsigned int RemotePages::get_direct(unsigned int a)
     auto &c = m_cache[page];
     if (c.first != gen || c.second.size() != (int)kPage) {
         QByteArray out;
-        if (m_m->http().request("GET", m_m->base() + "/memory/page/" + m_kind + "/" + QString::number(page) + "?format=binary",
+        if (m_m->http().request("GET", m_m->base() + "/memory/page/" + m_kind + "/" + QString::number(page) +
+                                    "?format=binary&length=" + QString::number(kPage),
                                 QByteArray(), out) != 200)
             out.clear();
         out.resize(kPage, '\xFF');
         c = {gen, out};
     }
     return (uint8_t)c.second[a % kPage];
+}
+
+void RemotePages::rom_titles()
+{
+    const uint64_t seq = m_m->snap().seq;
+    if (seq == m_titles_seq) return;
+    m_titles_seq = seq;
+    m_titles.assign(m_pages, {});
+    const QJsonArray list = m_m->http().json("GET", m_m->base() + "/state/memory/rom").value("pages").toArray();
+    for (const QJsonValue &v : list) {
+        const QJsonObject p = v.toObject();
+        const unsigned int page = (unsigned int)p.value("page").toInt();
+        if (page >= m_pages) continue;
+        std::string title = p.value("title").toString().toStdString();
+        std::string role = p.value("description").toString().toStdString();
+        if (title.rfind("Unknown ROM", 0) == 0) title = "unknown ROM";
+        if (role.rfind("ROM Page", 0) == 0) role.clear();
+        m_titles[page] = {title, role};
+    }
+}
+
+std::string RemotePages::page_title(unsigned int page)
+{
+    if (m_kind == "ram") return ZxRamNote(m_paging, page);
+    rom_titles();
+    return page < m_titles.size() ? m_titles[page].first : std::string();
+}
+
+std::string RemotePages::page_role(unsigned int page)
+{
+    if (m_kind == "ram") return std::string();
+    rom_titles();
+    return page < m_titles.size() ? m_titles[page].second : std::string();
 }
 
 void RemotePages::set_value(unsigned int a, unsigned int v, bool)
@@ -766,6 +848,38 @@ bool RemoteZ80::poke_mem(unsigned int a, unsigned int v)
                      QJsonObject{{"data", QJsonArray{(int)(v & 0xFF)}}}, &status);
     m_m->changed();
     return status == 200;
+}
+
+std::vector<ecatshim::AddressWindow> RemoteZ80::get_windows()
+{
+    std::vector<ecatshim::AddressWindow> r;
+    const Snapshot &s = m_m->snap();
+    for (unsigned int w = 0; w < 4; w++) {
+        const Snapshot::Bank &b = s.banks[w];
+        ecatshim::AddressWindow x;
+        x.start = w * kPage;
+        x.size = kPage;
+        x.page = b.page;
+        x.offset = b.page * kPage;
+        x.writable = b.writable;
+        x.switchable = m_paging.switchable[w];
+        if (b.kind == "rom") {
+            x.kind = "ROM";
+            x.device = m_rom;
+            if (auto * pages = dynamic_cast<ecatshim::Memory *>(m_rom)) {
+                x.name = pages->page_title(b.page);
+                x.role = pages->page_role(b.page);
+            }
+        } else if (b.kind == "ram") {
+            x.kind = "RAM";
+            x.device = m_ram;
+            x.name = ZxRamNote(m_paging, b.page);
+        } else if (!b.kind.isEmpty()) {
+            x.kind = b.kind.toStdString();
+        }
+        r.push_back(x);
+    }
+    return r;
 }
 
 std::vector<CpuRegister> RemoteZ80::get_register_values()

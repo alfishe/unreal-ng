@@ -6,6 +6,7 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include <QAbstractScrollArea>
 
@@ -20,6 +21,8 @@ class CellEditor;
 //lives as long as the view, so what scrolled away is there when the program
 //comes back; the keys and the wheel move over it, adding lines below and,
 //through the backward disassembly, above
+class QHeaderView;
+
 class DisasmView : public QAbstractScrollArea
 {
     Q_OBJECT
@@ -43,6 +46,8 @@ public:
     void toggle_breakpoint(unsigned int address);
     //The instruction under the cursor
     bool cursor_line(DisasmLine &line) const;
+    //The windows of a paged space: a line marks where each one starts
+    void set_windows(const std::vector<AddressWindow> &windows) { m_windows = windows; }
 
     unsigned int space() const { return m_space; }
     int base() const { return m_base; }
@@ -58,6 +63,9 @@ signals:
     void memory_changed();
 
 protected:
+    bool viewportEvent(QEvent *event) override;
+    //The row's address, and the target of its jump or call when it has one
+    void contextMenuEvent(QContextMenuEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
@@ -65,6 +73,8 @@ protected:
     void wheelEvent(QWheelEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void scrollContentsBy(int dx, int dy) override;
+    //Another font (the window's scale): rows and columns measured again
+    void changeEvent(QEvent *event) override;
 
 private:
     Emulator * e;
@@ -83,16 +93,38 @@ private:
     int m_edit_line;
     unsigned int m_shown_cursor;    //What cursor_moved() said last
     PaintedRows m_painted;
+    //The labels' column: its width in characters (0: none), whether there are labels, the labels it was laid out for
+    int m_label_chars = 0;
+    int m_label_px = 0;     // its width measured in the font (glyphs advance by fractions of a pixel)
+    bool m_has_labels = false;
+    unsigned int m_labels_serial = 0;
+    //The column is of one width (none without labels), 12 characters until the header's edge is dragged: a longer
+    //label fades out at its edge, the tooltip has it whole
+    static constexpr int kLabelChars = 12;
+    int m_label_set = kLabelChars;
+    //The columns' titles above the rows, staying there as they scroll; only the labels' edge moves
+    QHeaderView * m_header = nullptr;
+    bool m_syncing = false;
+    void sync_header();
+    void place_header();
+    bool label_cut(const std::string &label) const;
     PaintedRows m_painted_arrows;   //The arrows' strip as one row
+    std::vector<AddressWindow> m_windows;
 
     int rows() const;
     int bytes_chars() const;
     int x_marks() const;
     int x_address() const;
     int x_bytes() const;
+    int x_label() const;
     int x_text() const;
+    //The labels changed: the lines decoded again, the column measured again
+    bool follow_labels();
     QString bytes_text(const DisasmBuffer::Line &l) const;
     int row_at(int y) const;
+    //The label of the window that starts at the buffer line (or inside the
+    //instruction above it), empty when none does
+    QString window_start(int line) const;
     //What a row shows and what the arrows' strip shows, for PaintedRows
     QString row_key(int row, unsigned int pc) const;
     QString arrows_key(const std::vector<DisasmBuffer::Arrow> &arrows, int pc_row) const;

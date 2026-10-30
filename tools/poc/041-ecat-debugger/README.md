@@ -2,12 +2,13 @@
 
 **Result (2026-10-29): go.** [conclusions.md](conclusions.md), [proposal.md](proposal.md), [analysis.md](analysis.md),
 measurements: [port](measurements-2026-10-29-port.md), [cost](measurements-2026-10-29-cost.md),
-[follow-ups](measurements-2026-10-29-followups.md). Window:
-[main Z80](window-pentagon.png), [GS Z80](window-pentagon-gs.png).
+[follow-ups](measurements-2026-10-29-followups.md), [banks, pages and the scale](measurements-2026-10-30-pages-zoom.md).
+Window: [main Z80](window-pentagon.png), [GS Z80](window-pentagon-gs.png), [pages tab](window-pentagon-pages.png),
+[150 %](window-pentagon-zoom150.png).
 
 Build: configure with `-DBUILD_ECAT_DEBUGGER_POC=ON`, then `tools/build/build.sh ecat-debugger-poc`; run
 `ecat-debugger-poc [--model 48K] [--card neogs|multisound] [--no-gs] [file]`, `--self-check`, `--list-memory`,
-`--measure 10`, `--screenshot out.png`, or `--connect 127.0.0.1:8090` (a running unreal-qt through its WebAPI) from the
+`--measure 10`, `--screenshot out.png`, `--zoom 1.5`, or `--connect 127.0.0.1:8090` (a running unreal-qt through its WebAPI) from the
 build's `bin/`.
 
 Can the debugger of eCat3 (Mikhail Revzin's emulator of Soviet machines, <https://github.com/Ptr314/ecat3>, GPL-3.0)
@@ -15,6 +16,9 @@ be the Qt debugger of unreal-ng? The owner showed its window on 2026-10-29 (УК
 unreal-ng can have one like it. Feature: [`docs/inprogress/2026-09-28-debugger-model`](../../../docs/inprogress/2026-09-28-debugger-model/)
 (the "modern GUI skin", `gui-main-debugger.md`); POC 035 picks the GUI technology, this POC tries one finished,
 working design on our core.
+
+2026-10-30, owner: ecat is no longer an upstream. The port is ours and is adapted freely; the diff against ecat no
+longer counts (goal 1 and the 15 % criterion measured the port as of 2026-10-29).
 
 Charter written 2026-10-29, before any code. Source: ecat3 branch `dev` at `27a98108` (2026-10-27), the newest of the
 repository; master `69a5817` has the same debugger minus the last 49 lines.

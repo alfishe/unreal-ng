@@ -13,23 +13,27 @@
 // display are direct, as in ecat: while the machine runs a value may be one instruction stale.
 
 #include "unrealmachine.h"
+#include "zxwindows.h"
 
 #include <QDir>
 #include <QSettings>
 
 #include <algorithm>
 #include <atomic>
+#include <map>
 #include <mutex>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "debugger/labels/labelmanager.h"
 #include "debugger/pchistory/pchistory.h"
 #include "debugger/search/memorysearch.h"
 #include "debugger/targets/gscardtarget.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/config.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/cpu/core.h"
@@ -64,7 +68,7 @@ void at_coherent_moment(::Emulator * emu, const std::function<void()> &fn)
 class Z80DisAsm : public ecatshim::DisAsm
 {
 public:
-    Z80DisAsm(EmulatorContext * context, bool labels) : m_dis(context), m_labels(labels)
+    Z80DisAsm(EmulatorContext * context, bool labels) : m_dis(context), m_context(context), m_labels(labels)
     {
         max_command_length = Z80Disassembler::MAX_INSTRUCTION_LENGTH;
     }
@@ -88,6 +92,7 @@ public:
         l.length = len ? len : 1;
         l.valid = d.isValid;
         l.text = d.isValid ? text : "DB " + hex(buf[0]);
+        if (m_labels) l.label = d.label;
         const uint32_t f = d.opcode.flags;
         l.conditional = d.hasCondition || (f & OF_CONDITION) || d.isDjnz;
         if (d.hasReturn || (f & OF_RET)) {
@@ -110,9 +115,37 @@ public:
         return l.length;
     }
 
+    unsigned int label_chars() override
+    {
+        LabelManager * lm = label_manager();
+        if (lm == nullptr) return 0;
+        const size_t count = lm->GetLabelCount();
+        if (count != m_label_count) {
+            m_label_count = count;
+            m_label_chars = 0;
+            for (const std::shared_ptr<Label> &l : lm->GetAllLabels())
+                if (l && l->active) m_label_chars = std::max(m_label_chars, (unsigned int)l->name.size());
+        }
+        return m_label_chars;
+    }
+    unsigned int labels_serial() override
+    {
+        LabelManager * lm = label_manager();
+        return lm ? (unsigned int)lm->GetLabelCount() : 0;
+    }
+
 private:
     Z80Disassembler m_dis;
+    EmulatorContext * m_context;
     bool m_labels;
+    size_t m_label_count = (size_t)-1;
+    unsigned int m_label_chars = 0;
+
+    LabelManager * label_manager() const
+    {
+        if (!m_labels || m_context == nullptr || m_context->pDebugManager == nullptr) return nullptr;
+        return m_context->pDebugManager->GetLabelManager();
+    }
 
     static std::string hex(uint8_t b)
     {
@@ -135,6 +168,32 @@ public:
         type = (kind == BANK_RAM) ? "ram" : "rom";
     }
     unsigned int get_size() override { return m_pages * PAGE_SIZE; }
+    unsigned int page_size() override { return PAGE_SIZE; }
+    std::string page_title(unsigned int page) override
+    {
+        if (m_kind == BANK_RAM) return ZxRamNote(m_paging, page);
+        // The ROM the page holds now, by its signature: a flash write or an edit gives it another name
+        ROM * rom = m_emu->GetContext()->pCore ? m_emu->GetContext()->pCore->GetROM() : nullptr;
+        const uint8_t * host = MemorySearch::PageHost(m_emu->GetContext(), BANK_ROM, page);
+        if (rom == nullptr || host == nullptr) return std::string();
+        const std::string signature = rom->CalculateSignature(host, PAGE_SIZE);
+        auto it = m_titles.find(signature);
+        if (it == m_titles.end()) {
+            std::string title = rom->GetROMTitle(signature);
+            if (title.rfind("Unknown ROM", 0) == 0) title = "unknown ROM";
+            it = m_titles.emplace(signature, title).first;
+        }
+        return it->second;
+    }
+    std::string page_role(unsigned int page) override
+    {
+        if (m_kind == BANK_RAM) return std::string();
+        ROM * rom = m_emu->GetContext()->pCore ? m_emu->GetContext()->pCore->GetROM() : nullptr;
+        const std::string role = rom ? rom->GetROMPageRole((uint8_t)page) : std::string();
+        // Models without a curated layout name every slot "ROM Page N": nothing to add to "rom N"
+        return role.rfind("ROM Page", 0) == 0 ? std::string() : role;
+    }
+    void set_paging(const ZxPaging &p) { m_paging = p; }
     unsigned int get_direct(unsigned int a) override
     {
         const uint8_t * p = MemorySearch::PageHost(m_emu->GetContext(), m_kind, a / PAGE_SIZE);
@@ -158,6 +217,9 @@ private:
     ::Emulator * m_emu;
     MemoryBankModeEnum m_kind;
     uint32_t m_pages;
+    ZxPaging m_paging;
+    // A ROM's title by its signature: the lookup once per ROM image, the signature at each ask
+    std::map<std::string, std::string> m_titles;
 };
 
 // A device memory region (DeviceMemory): a card's RAM and flash, video memory, a clock's CMOS. As a Memory it is a
@@ -202,6 +264,14 @@ private:
     bool m_writable = true;
     IDeviceMemoryRegion * m_region = nullptr;
     unsigned int m_next = 0;
+};
+
+// A sound card's RAM or flash: its Z80 maps them a 16 KB page at a time
+class CardPages : public RegionMemory<ecatshim::Memory>
+{
+public:
+    using RegionMemory<ecatshim::Memory>::RegionMemory;
+    unsigned int page_size() override { return PAGE_SIZE; }
 };
 
 // The main Z80's 64 KB as its page map: whose byte an address is
@@ -472,6 +542,54 @@ public:
         return r;
     }
     BreakpointManager * breakpoints() override { return m_emu->GetBreakpointManager(); }
+
+    void set_pages(ecatshim::AddressableDevice * ram, ecatshim::AddressableDevice * rom, const ZxPaging &paging)
+    {
+        m_ram = ram;
+        m_rom = rom;
+        m_paging = paging;
+    }
+    std::vector<ecatshim::AddressWindow> get_windows() override
+    {
+        std::vector<ecatshim::AddressWindow> r;
+        ::Memory * m = m_emu->GetMemory();
+        //Four 16 KB windows; the Next's MMU has eight 8 KB slots, each its own page
+        const unsigned int slot = 1u << m->MapZ80AddressToPhysicalPage(0).slotShift;
+        for (unsigned int start = 0; start < 0x10000; start += slot) {
+            ecatshim::AddressWindow x;
+            const uint8_t w = (uint8_t)(start / PAGE_SIZE);
+            x.start = start;
+            x.size = slot;
+            x.switchable = m_paging.switchable[w];
+            const MemoryPageDescriptor d = m->MapZ80AddressToPhysicalPage((uint16_t)x.start);
+            //The 16 KB banks' write map is not the Next's: there a ROM slot is the read-only one
+            x.writable = slot == PAGE_SIZE ? m->IsWindowWritable(w) : d.mode != BANK_ROM;
+            x.offset = (unsigned int)d.page * PAGE_SIZE + d.addressInPage;
+            //A page in the slot's size: the Next's 8 KB pages as its MMU numbers them
+            x.page = x.offset / slot;
+            if (d.mode == BANK_ROM) {
+                x.kind = "ROM";
+                x.device = m_rom;
+                if (auto * pages = dynamic_cast<ecatshim::Memory *>(m_rom)) {
+                    x.name = pages->page_title(d.page);
+                    x.role = pages->page_role(d.page);
+                }
+            } else if (d.mode == BANK_RAM) {
+                x.kind = "RAM";
+                x.device = m_ram;
+                x.name = ZxRamNote(m_paging, d.page);
+            } else if (d.mode == BANK_CACHE) {
+                x.kind = "cache";
+            }
+            r.push_back(x);
+        }
+        return r;
+    }
+
+private:
+    ecatshim::AddressableDevice * m_ram = nullptr;
+    ecatshim::AddressableDevice * m_rom = nullptr;
+    ZxPaging m_paging;
 };
 
 // A sound card's Z80: the General Sound's ("gs") or the GS of a MultiSound card ("ms"). Its registers and memory
@@ -536,8 +654,49 @@ public:
         return dm ? dm->GetBreakpointsManager(m_id) : nullptr;
     }
 
+    // The card's RAM and ROM (flash on the NeoGS) as paged memories, when the machine lists them
+    void set_ram(ecatshim::AddressableDevice * ram) { m_ram = ram; }
+    void set_rom(ecatshim::AddressableDevice * rom) { m_rom = rom; }
+    // The prefix of the card's device memories
+    std::string region_prefix()
+    {
+        if (m_id == DebugCpuId::MultiSoundGS) return "multisound.gs";
+        GSCardTarget * t = target();
+        return (t != nullptr && t->Card()->implementation() == GSCardImplementation::NGS) ? "neogs" : "gs";
+    }
+    // The classic card maps ROM at #0000 and RAM page 0 at #4000 for good, its #00 port pages #8000-#FFFF; the
+    // NeoGS also puts RAM at #0000 (GSCFG0.NOROM) and pages #C000 on its own (MPAGEX)
+    std::vector<ecatshim::AddressWindow> get_windows() override
+    {
+        std::vector<ecatshim::AddressWindow> r;
+        GSCardTarget * t = target();
+        if (t == nullptr) return r;
+        const bool neo = t->Card()->implementation() == GSCardImplementation::NGS;
+        for (unsigned int w = 0; w < 4; w++) {
+            ecatshim::AddressWindow x;
+            x.start = w * PAGE_SIZE;
+            x.size = PAGE_SIZE;
+            x.switchable = (w >= 2) || (w == 0 && neo);
+            const MemoryPageDescriptor d = t->MapAddress((uint16_t)x.start);
+            x.page = d.page;
+            x.offset = (unsigned int)d.page * PAGE_SIZE;
+            if (d.mode == BANK_ROM) {
+                x.kind = neo ? "flash" : "ROM";
+                x.device = m_rom;
+                x.writable = false;
+            } else if (d.mode == BANK_RAM) {
+                x.kind = "RAM";
+                x.device = m_ram;
+            }
+            r.push_back(x);
+        }
+        return r;
+    }
+
 private:
     DebugCpuId m_id;
+    ecatshim::AddressableDevice * m_ram = nullptr;
+    ecatshim::AddressableDevice * m_rom = nullptr;
 
     bool set_card_register(const std::string &n, unsigned int v)
     {
@@ -581,6 +740,9 @@ public:
         // The page map names the owner of each byte in the CPU's tab; as a tab of its own it would repeat that tab
         m_mapper = std::make_shared<ZxMapper>(e, ram.get(), rom.get());
         m_main->mm = m_mapper.get();
+        const ZxPaging paging = ZxModelPaging(Config::GetModelFullName(ctx->config.mem_model));
+        m_main->set_pages(ram.get(), rom.get(), paging);
+        ram->set_paging(paging);
         m_dm.add(ram);
         m_dm.add(rom);
         // A tab for what a processor runs or a screen shows (a card's RAM, video and fast RAM); the rest, firmware
@@ -588,6 +750,18 @@ public:
         for (IDeviceMemoryRegion * r : DeviceMemory::Regions(ctx)) {
             const std::string n = r->Name();
             const std::string kind = n.substr(n.rfind('.') + 1);
+            const std::string owner = n.substr(0, n.rfind('.'));
+            // A sound card's RAM and ROM: its Z80's pages ("gs.ram", "neogs.flash", "multisound.gs.ram")
+            CardZ80 * card = nullptr;
+            for (const auto &c : m_cards)
+                if (owner == c->region_prefix()) card = c.get();
+            if (card != nullptr && (kind == "ram" || kind == "rom" || kind == "flash")) {
+                auto pages = std::make_shared<CardPages>(e, r);
+                if (kind == "ram") card->set_ram(pages.get());
+                else card->set_rom(pages.get());
+                m_dm.add(pages);
+                continue;
+            }
             if (kind == "ram" || kind == "vram" || kind == "fastram")
                 m_dm.add(std::make_shared<RegionMemory<ecatshim::Memory>>(e, r));
             else
@@ -654,23 +828,44 @@ public:
     }
     void debug_run(bool breakpoints) override
     {
+        // A run-to of an earlier command is over whatever happened since: a new command never meets it (on a CPU in
+        // HALT at its address it would stop the run at once)
+        if (!m_arming_run_to) clear_run_to();
         // Breakpoints only fire in debug mode: a run without them is a run with it off
         if (breakpoints) m_emu->DebugOn();
         else m_emu->DebugOff();
         for (ecatshim::CPU * c : m_dm.get_cpus()) c->m_debug = breakpoints ? ecatshim::DEBUG_BRAKES : ecatshim::DEBUG_OFF;
-        if (m_emu->IsPaused()) m_emu->Resume(kGui);
+        if (!m_emu->IsPaused()) return;
+        const execution::Result r = m_emu->Resume(kGui);
+        if (r.outcome != execution::Outcome::Applied && r.outcome != execution::Outcome::Coalesced)
+            fprintf(stderr, "ecat-debugger: resume not applied (outcome %d): %s\n", (int)r.outcome, r.detail.c_str());
     }
     void debug_step(ecatshim::CPU *, unsigned int count) override
     {
+        clear_run_to();
         for (unsigned int i = 0; i < count; i++) m_emu->RunSingleCPUCycle(true);
     }
-    void debug_step_over(ecatshim::CPU *) override { m_emu->StepOver(); }
-    void debug_step_out(ecatshim::CPU *) override { m_emu->StepOut(); }
+    void debug_step_over(ecatshim::CPU *) override
+    {
+        clear_run_to();
+        m_emu->StepOver();
+    }
+    void debug_step_out(ecatshim::CPU *) override
+    {
+        clear_run_to();
+        m_emu->StepOut();
+    }
     void debug_run_to(ecatshim::CPU * c, unsigned int address) override
     {
-        // A breakpoint of its own that goes away at the next stop, whatever stops the machine
+        // A breakpoint of its own that goes away at the next stop, whatever stops the machine: a stop after this run
+        // starts (the run start and the stop each move the debug seq), not the stop it was set at, whose event may
+        // come only now
+        clear_run_to();
+        m_run_to_seq = m_emu->DebugSeq();
         if (auto * z = dynamic_cast<Z80CpuBase *>(c)) z->add_run_to(address);
+        m_arming_run_to = true;
         debug_run(true);
+        m_arming_run_to = false;
     }
     unsigned int debug_serial() const override { return m_serial.load(); }
     ecatshim::CPU * debug_stop_cpu() const override
@@ -729,6 +924,8 @@ private:
     std::mutex m_listener_mutex;
     std::function<void()> m_listener;
     std::atomic<unsigned int> m_serial{0};
+    std::atomic<uint64_t> m_run_to_seq{0};
+    bool m_arming_run_to = false;
 
     void clear_run_to()
     {
@@ -739,7 +936,7 @@ private:
     void on_core_event()
     {
         m_serial++;
-        if (m_emu->IsPaused()) clear_run_to();
+        if (m_emu->IsPaused() && m_emu->DebugSeq() >= m_run_to_seq + 2) clear_run_to();
         std::lock_guard<std::mutex> lock(m_listener_mutex);
         if (m_listener) m_listener();
     }

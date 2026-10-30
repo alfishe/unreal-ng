@@ -5,15 +5,25 @@
 
 #include "disasmview.h"
 
+#include <algorithm>
+#include <cmath>
 #include <set>
 
+#include <QFontMetricsF>
+#include <QHeaderView>
+#include <QHelpEvent>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QScrollBar>
+#include <QStandardItemModel>
+#include <QToolTip>
 #include <QWheelEvent>
 
+#include "addressmenu.h"
+#include "bankstrip.h"
 #include "celleditor.h"
 #include "debugstyle.h"
 #include "debugutil.h"
@@ -57,7 +67,54 @@ DisasmView::DisasmView(Emulator * e, CPU * cpu, QWidget *parent):
     connect(m_editor, &CellEditor::tab_pressed, this, &DisasmView::commit_edit);
 
     connect(verticalScrollBar(), &QScrollBar::actionTriggered, this, &DisasmView::on_scroll_action);
+
+    m_label_set = std::clamp(QString::fromStdString(e->read_setup("Debugger", "label_chars", "12")).toInt(), 4, 64);
+    m_header = new QHeaderView(Qt::Horizontal, this);
+    m_header->setProperty("dbg_fixed_sections", true);
+    m_header->setModel(new QStandardItemModel(0, 5, m_header));
+    m_header->model()->setHeaderData(1, Qt::Horizontal, tr("Addr"));
+    m_header->model()->setHeaderData(2, Qt::Horizontal, tr("Bytes"));
+    m_header->model()->setHeaderData(3, Qt::Horizontal, tr("Label"));
+    m_header->model()->setHeaderData(4, Qt::Horizontal, tr("Instruction"));
+    m_header->model()->setHeaderData(0, Qt::Horizontal, QString());
+    m_header->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    m_header->setTextElideMode(Qt::ElideNone);
+    m_header->setSectionsClickable(false);
+    m_header->setStretchLastSection(true);
+    for (int i = 0; i < 4; i++) m_header->setSectionResizeMode(i, i == 3 ? QHeaderView::Interactive : QHeaderView::Fixed);
+    m_header->setMinimumSectionSize(1);
+    connect(m_header, &QHeaderView::sectionResized, this, [this](int section, int, int size) {
+        if (m_syncing || section != 3 || !m_has_labels) return;
+        const double w = QFontMetricsF(font()).boundingRect(QString(10, QChar('W'))).width() / 10.0;
+        const int chars = std::clamp((int)std::lround((size - 2 * m_cw) / std::max(1.0, w)), 4, 64);
+        if (chars == m_label_set) return;
+        m_label_set = chars;
+        this->e->write_setup("Debugger", "label_chars", std::to_string(chars));
+        viewport()->update();
+    });
+    place_header();
     update_scrollbar();
+}
+
+void DisasmView::place_header()
+{
+    const int h = m_header->sizeHint().height();
+    setViewportMargins(0, h, 0, 0);
+    const QRect vp = viewport()->geometry();
+    m_header->setGeometry(vp.left(), vp.top() - h, vp.width(), h);
+    sync_header();
+}
+
+void DisasmView::sync_header()
+{
+    if (m_header == nullptr) return;
+    m_syncing = true;
+    m_header->resizeSection(0, x_address());
+    m_header->resizeSection(1, x_bytes() - x_address());
+    m_header->resizeSection(2, x_label() - x_bytes());
+    m_header->setSectionHidden(3, m_label_px == 0);
+    if (m_label_px) m_header->resizeSection(3, m_label_px);
+    m_syncing = false;
 }
 
 DisasmView::~DisasmView()
@@ -82,7 +139,56 @@ int DisasmView::bytes_chars() const
 int DisasmView::x_marks() const   { return ARROW_LANES * LANE_WIDTH + 14; }
 int DisasmView::x_address() const { return x_marks() + m_cw * 2; }
 int DisasmView::x_bytes() const   { return x_address() + m_cw * (format_address(0).size() + 2); }
-int DisasmView::x_text() const    { return x_bytes() + m_cw * (bytes_chars() + 1) + m_cw / 2; }
+int DisasmView::x_label() const   { return x_bytes() + m_cw * (bytes_chars() + 1) + m_cw / 2; }
+int DisasmView::x_text() const    { return x_label() + m_label_px; }
+
+bool DisasmView::follow_labels()
+{
+    const unsigned int serial = m_disasm->labels_serial();
+    const bool has = m_disasm->label_chars() > 0;
+    if (serial == m_labels_serial && has == m_has_labels) return false;
+    m_labels_serial = serial;
+    m_has_labels = has;
+    return true;
+}
+
+bool DisasmView::label_cut(const std::string &label) const
+{
+    return QFontMetricsF(font()).boundingRect(QString::fromStdString(label)).width() > m_label_px - 2 * m_cw;
+}
+
+void DisasmView::contextMenuEvent(QContextMenuEvent *event)
+{
+    //Coming through the viewport, the position is the viewport's
+    const int i = row_at(event->pos().y());
+    if (i < 0 || i >= (int)m_buf->size()) return;
+    const DisasmBuffer::Line &l = m_buf->at(i);
+    QMenu own;
+    if (l.d.has_target) {
+        const unsigned int t = l.d.target & 0xFFFF;
+        QMenu * target = own.addMenu(tr("Target #%1").arg(QString::number(t, 16).toUpper().rightJustified(4, '0')));
+        add_address_actions(target, this, AddressTarget{cpu, t, tr("target")});
+    }
+    exec_address_menu(this, event->globalPos(), AddressTarget{cpu, l.address, QString()}, &own);
+}
+
+bool DisasmView::viewportEvent(QEvent *event)
+{
+    if (event->type() == QEvent::ToolTip && m_label_chars) {
+        const QHelpEvent * h = static_cast<QHelpEvent*>(event);
+        const int i = row_at(h->pos().y());
+        if (i >= 0 && i < (int)m_buf->size() && h->pos().x() >= x_label() && h->pos().x() < x_text()) {
+            const std::string &label = m_buf->at(i).d.label;
+            if (!label.empty()) {
+                QToolTip::showText(h->globalPos(), QString::fromStdString(label), viewport());
+                return true;
+            }
+        }
+        QToolTip::hideText();
+        return true;
+    }
+    return QAbstractScrollArea::viewportEvent(event);
+}
 
 QString DisasmView::format_address(unsigned int address) const
 {
@@ -121,6 +227,17 @@ QString DisasmView::bytes_text(const DisasmBuffer::Line &l) const
 int DisasmView::row_at(int y) const
 {
     return m_top + y / m_rh;
+}
+
+QString DisasmView::window_start(int line) const
+{
+    if (m_windows.empty() || line < 0 || line >= (int)m_buf->size()) return QString();
+    const unsigned int a = m_buf->at(line).address;
+    const bool prev = line > 0 && m_buf->at(line - 1).address < a;
+    const unsigned int from = prev ? m_buf->at(line - 1).address : a;
+    for (const AddressWindow &w : m_windows)
+        if (w.start == a || (prev && w.start > from && w.start <= a)) return window_label(w, m_base);
+    return QString();
 }
 
 template <typename F> void DisasmView::keep_place(F op)
@@ -319,7 +436,8 @@ bool DisasmView::cursor_line(DisasmLine &line) const
 
 void DisasmView::refresh_memory()
 {
-    keep_place([&]() { m_buf->refresh(); });
+    const bool labels = follow_labels();
+    keep_place([&]() { m_buf->refresh(labels); });
     fill();
     viewport()->update();
 }
@@ -327,8 +445,9 @@ void DisasmView::refresh_memory()
 void DisasmView::follow_memory()
 {
     if (m_edit_line >= 0) return;
-    bool changed = false;
-    keep_place([&]() { changed = m_buf->refresh(); });
+    const bool labels = follow_labels();
+    bool changed = labels;
+    keep_place([&]() { changed = m_buf->refresh(labels) || changed; });
     if (changed) fill();
     repaint_changed();
 }
@@ -340,8 +459,8 @@ QString DisasmView::row_key(int row, unsigned int pc) const
     const DisasmBuffer::Line &l = m_buf->at(i);
     const int cursor = (i == m_cursor) ? (hasFocus() ? 2 : 1) : 0;
     return QString::number(l.address) + ' ' + bytes_text(l) + ' ' + QString::fromStdString(l.d.text) + ' '
-           + QString::number(l.d.valid ? 1 : 0) + QString::number(l.d.flow) + QString::number(l.address == pc ? 1 : 0)
-           + QString::number(cpu->has_breakpoint(l.address) ? 1 : 0) + QString::number(cursor);
+           + QString::fromStdString(l.d.label) + ' ' + QString::number(m_label_chars) + ' ' + QString::number(l.d.valid ? 1 : 0) + QString::number(l.d.flow) + QString::number(l.address == pc ? 1 : 0)
+           + QString::number(cpu->has_breakpoint(l.address) ? 1 : 0) + QString::number(cursor) + window_start(i);
 }
 
 QString DisasmView::arrows_key(const std::vector<DisasmBuffer::Arrow> &arrows, int pc_row) const
@@ -392,15 +511,45 @@ void DisasmView::toggle_breakpoint(unsigned int address)
     emit breakpoints_changed();
 }
 
+void DisasmView::changeEvent(QEvent *event)
+{
+    QAbstractScrollArea::changeEvent(event);
+    if (event->type() != QEvent::FontChange) return;
+    const QFontMetrics fm(font());
+    m_rh = dbg::row_height(fm);
+    m_cw = dbg::text_width(fm, "0");
+    m_painted.clear();
+    m_painted_arrows.clear();
+    //The constructor's own font comes before the rest of the view; the first show measures the scrollbar
+    if (!testAttribute(Qt::WA_WState_Polished)) return;
+    place_header();
+    update_scrollbar();
+    viewport()->update();
+}
+
 void DisasmView::resizeEvent(QResizeEvent *event)
 {
     QAbstractScrollArea::resizeEvent(event);
+    place_header();
     fill();
     update_scrollbar();
 }
 
 void DisasmView::paintEvent(QPaintEvent *event)
 {
+    //The labels' column, measured in the font (glyphs advance by fractions of a pixel): on a new width every row is
+    //drawn again
+    const int label_chars = m_has_labels ? m_label_set : 0;
+    const int label_px = label_chars
+        ? (int)std::ceil(QFontMetricsF(font()).boundingRect(QString(label_chars, QChar('W'))).width()) + 2 * m_cw
+        : 0;
+    if (label_chars != m_label_chars || label_px != m_label_px) {
+        m_label_chars = label_chars;
+        m_label_px = label_px;
+        sync_header();
+        m_painted.clear();
+        if (!event->rect().contains(viewport()->rect())) viewport()->update();
+    }
     QPainter p(viewport());
     const dbg::Colors c = dbg::colors(palette());
     const int w = viewport()->width();
@@ -452,6 +601,26 @@ void DisasmView::paintEvent(QPaintEvent *event)
         p.drawText(x_address(), y + base_y, format_address(l.address));
         p.setPen(sel ? c.selection_text : c.dim);
         p.drawText(x_bytes(), y + base_y, bytes_text(l));
+        if (m_label_chars && !l.d.label.empty()) {
+            const QColor lc = sel ? c.selection_text : c.reg_name;
+            const int edge = x_text() - 2 * m_cw;
+            if (label_cut(l.d.label)) {
+                //Cut at the column's edge, the last two characters fading out to it
+                QLinearGradient fade(edge - 2 * m_cw, 0, edge, 0);
+                QColor clear = lc;
+                clear.setAlpha(0);
+                fade.setColorAt(0, lc);
+                fade.setColorAt(1, clear);
+                p.save();
+                p.setClipRect(x_label(), y, edge - x_label(), m_rh);
+                p.setPen(QPen(QBrush(fade), 1));
+                p.drawText(x_label(), y + base_y, QString::fromStdString(l.d.label));
+                p.restore();
+            } else {
+                p.setPen(lc);
+                p.drawText(x_label(), y + base_y, QString::fromStdString(l.d.label));
+            }
+        }
 
         QColor tc = c.text;
         if (!l.d.valid) tc = c.dim;
@@ -460,6 +629,19 @@ void DisasmView::paintEvent(QPaintEvent *event)
         else if (l.d.flow == FLOW_RET) tc = c.ret;
         p.setPen(sel ? c.selection_text : tc);
         p.drawText(x_text(), y + base_y, QString::fromStdString(l.d.text));
+
+        //A window of the paged space starts here: a line over the row and its
+        //page at the right
+        const QString start = window_start(i);
+        if (!start.isEmpty()) {
+            p.setPen(c.dim);
+            p.drawLine(x_marks(), y, w, y);
+            const int tw = dbg::text_width(fm, start) + m_cw;
+            const int tx = std::max(x_text() + m_cw * 16, w - tw);
+            if (!sel) p.fillRect(tx - m_cw / 2, y + 1, w - tx + m_cw / 2, m_rh - 1, at_pc ? c.pc_back : c.back);
+            p.setPen(sel ? c.selection_text : c.dim);
+            p.drawText(tx, y + base_y, start);
+        }
     }
 
     //Thin lines between the address, the bytes and the instruction
@@ -468,6 +650,7 @@ void DisasmView::paintEvent(QPaintEvent *event)
     const int x2 = x_text() - m_cw;
     p.drawLine(x1, 0, x1, h);
     p.drawLine(x2, 0, x2, h);
+    if (m_label_chars) p.drawLine(x_label() - m_cw, 0, x_label() - m_cw, h);
 
     //Every move of the cursor ends in a repaint: that is where it is told
     const unsigned int cur = cursor_address();
@@ -552,7 +735,7 @@ void DisasmView::mouseDoubleClickEvent(QMouseEvent *event)
     if (i < 0 || i >= (int)m_buf->size()) return;
     const int x = event->pos().x();
     if (x >= x_address() && x < x_bytes()) toggle_breakpoint(m_buf->at(i).address);
-    else if (x >= x_bytes() && x < x_text()) start_edit(i);
+    else if (x >= x_bytes() && x < x_label()) start_edit(i);
     else if (x >= x_text()) {
         const DisasmLine &l = m_buf->at(i).d;
         if (l.has_target) go_to(l.target);

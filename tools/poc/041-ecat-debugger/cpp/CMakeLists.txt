@@ -8,14 +8,18 @@ find_package(Qt6 COMPONENTS Widgets Network REQUIRED)
 
 set(ECAT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ecat)
 
-# eCat3 dev 27a98108 (src/dialogs/debugger, emulator/disasm_buffer.*, dialogs/numfmt.h, dialogs/genericdbgwnd.*)
+# eCat3 dev 27a98108 (src/dialogs/debugger, emulator/disasm_buffer.*, dialogs/numfmt.h, dialogs/genericdbgwnd.*);
+# bankstrip.* and pagedmemory.* are the POC's own (the windows of a paged space)
 add_library(ecat-debugger-views STATIC
     ${ECAT_DIR}/dialogs/genericdbgwnd.cpp
+    ${ECAT_DIR}/dialogs/debugger/addressmenu.cpp
+    ${ECAT_DIR}/dialogs/debugger/bankstrip.cpp
     ${ECAT_DIR}/dialogs/debugger/celleditor.cpp
     ${ECAT_DIR}/dialogs/debugger/debuggerwindow.cpp
     ${ECAT_DIR}/dialogs/debugger/disasmview.cpp
     ${ECAT_DIR}/dialogs/debugger/memoryview.cpp
     ${ECAT_DIR}/dialogs/debugger/memorywindow.cpp
+    ${ECAT_DIR}/dialogs/debugger/pagedmemory.cpp
     ${ECAT_DIR}/dialogs/debugger/registersview.cpp
     ${ECAT_DIR}/dialogs/debugger/sideviews.cpp
     ${ECAT_DIR}/emulator/disasm_buffer.cpp

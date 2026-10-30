@@ -40,6 +40,7 @@ struct DisasmLine {
     bool conditional = false;
     bool has_target = false;
     unsigned int target = 0;
+    std::string label;          // the symbol at this address, if any
 };
 
 typedef uint8_t (*CommandBytes)[15];
@@ -50,6 +51,9 @@ public:
     virtual ~DisAsm() {}
     virtual unsigned int decode(CommandBytes bytes, unsigned int PC, unsigned int max_len, DisasmLine * out) = 0;
     virtual unsigned int unit_bytes() const { return 1; }
+    //The labels' column: as wide as the longest name (0: no labels, no column); the serial moves when they change
+    virtual unsigned int label_chars() { return 0; }
+    virtual unsigned int labels_serial() { return 0; }
 };
 
 struct CpuRegister {
@@ -89,7 +93,32 @@ public:
     virtual bool debug_writable(unsigned int) { return true; }
 };
 
-class Memory : public AddressableDevice {};
+// Not in ecat: a memory made of pages a processor maps into its windows (RAM, ROM, a card's RAM). The debugger
+// groups them under one tab, a page at a time
+class Memory : public AddressableDevice {
+public:
+    // 0: not paged
+    virtual unsigned int page_size() { return 0; }
+    // What the page holds now: a ROM by its signature ("128k with TR-DOS in menu"), a RAM page's use ("screen 0");
+    // empty when nothing particular
+    virtual std::string page_title(unsigned int) { return std::string(); }
+    // Its slot in the model's layout ("48K BASIC ROM"), empty when the model has none
+    virtual std::string page_role(unsigned int) { return std::string(); }
+};
+
+// Not in ecat: one window of a processor's address space and the page mapped there now
+struct AddressWindow {
+    unsigned int start = 0;
+    unsigned int size = 0;
+    std::string kind;           // "ROM", "RAM", ...; empty: nothing answers there
+    unsigned int page = 0;
+    std::string name;           // what the page holds: a ROM's title found by its signature, "screen 0"
+    std::string role;           // the page's role in the model's ROM layout
+    bool switchable = false;    // the machine's ports can map another page there
+    bool writable = true;
+    AddressableDevice * device = nullptr;   // the paged memory the page is part of, and where
+    unsigned int offset = 0;
+};
 
 class MemoryMapper : public AddressableDevice {
 public:
@@ -126,6 +155,9 @@ public:
     // A copy: ecat returns a reference to its own vector, the views only read it
     virtual std::vector<unsigned int> get_breakpoints() = 0;
     virtual bool has_temp_break() const { return false; }
+
+    // Not in ecat: the windows of the address space in order, empty when it is not paged
+    virtual std::vector<AddressWindow> get_windows() { return {}; }
 };
 
 struct DeviceEntry {
