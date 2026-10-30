@@ -543,11 +543,13 @@ TEST(LuaGSCardHook_Test, ALogicCardHookIsRecordedAndReplayedWithoutRunningIt)
             set_reg("i", n)
             shared_set("unchanged", peek(0x6000) ~= n)
             return 0x5A
-        end]], {mode = "sync", role = "logic"})
+        end]], {mode = "sync", role = "logic", policy = "ignore"})
         rrca = on_tap({exec = 0x0270, cpu = "gs"}, [[return function(hit)
             if shared_get("a") == nil then shared_set("a", reg("a")) end
-        end]], {mode = "sync"})
+        end]], {mode = "sync", policy = "ignore"})
     )", message, output)) << message;
+    // policy "ignore": on a loaded host a call over the time budget would suspend the hook within the first
+    // frame, every poke would land before checkpoint 1 and the seek there would find the last count
     emulator->RunNFrames(4, true);
 
     for (const CallbackInfo& info : callbacks->List())
