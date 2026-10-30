@@ -4906,7 +4906,6 @@ namespace
     // Written by the MessageCenter worker, read by the test: every access holds the mutex
     std::mutex g_fddStatesMutex;
     std::vector<CapturedFddState> g_fddStates;
-    bool g_fddStateObserverRegistered = false;
 
     void onFddStateChanged(int /*id*/, Message* msg)
     {
@@ -4935,11 +4934,9 @@ namespace
 TEST_F(WD1793_Test, FDD_StateNotification_PostedOnChangeOnly)
 {
     MessageCenter::DefaultMessageCenter(true);
-    if (!g_fddStateObserverRegistered)
-    {
-        MessageCenter::DefaultMessageCenter().AddObserver(NC_FDD_STATE_CHANGED, &onFddStateChanged);
-        g_fddStateObserverRegistered = true;
-    }
+    // The center may have been disposed since the last pass: remove-then-add keeps one registration
+    MessageCenter::DefaultMessageCenter().RemoveObserver(NC_FDD_STATE_CHANGED, &onFddStateChanged);
+    MessageCenter::DefaultMessageCenter().AddObserver(NC_FDD_STATE_CHANGED, &onFddStateChanged);
     {
         std::lock_guard lock(g_fddStatesMutex);
         g_fddStates.clear();
