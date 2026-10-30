@@ -78,6 +78,8 @@ public:
     /// Host time in ns (the chord window)
     using Clock = std::function<uint64_t()>;
     using ActionSink = std::function<void(const ActionEvent&)>;
+    /// A player's own `debug` layer (its layer key) went up or down, on the instance it acts on
+    using LayerSink = std::function<void(const HostDeviceId& device, const std::string& instance, bool up)>;
 
     static constexpr uint64_t kChordWindowNs = 60'000'000;
 
@@ -127,9 +129,6 @@ public:
     void Promote(const HostDeviceId& from, const HostDeviceId& to);
     /// The instance whose window has focus: what follow-focus devices drive. Empty (the default) = every instance
     void SetFocus(const std::string& instance);
-    /// The debugger window has the focus: every player device acts as a debugger remote (its `debug` layer alone,
-    /// no layer key needed) until it is cleared. Either switch releases what is held
-    void SetDebugFocus(bool on);
     /// The device drives that instance now (a player that follows the focus, is pinned to it, or drives all)
     bool Drives(const HostDeviceId& device, const std::string& instance) const;
 
@@ -145,9 +144,27 @@ public:
     /// region <Contexts and surface feedback (control surfaces profiles.md §1, architecture.md §9)>
 
     /// The context of an instance (`play`, `ttd`, `ttd.timecode`, `debug.disasm`): the owner pushes it from the
-    /// core's ContextState. While a device's `debug` layer is up, the context layer of its instance's context (`@ttd`,
-    /// or the longest `@<prefix>.*` match) is up above it; a change releases what is held, as a layer switch does
-    void SetContext(const std::string& instance, const std::string& context);
+    /// core's ContextState, @p set when somebody set it (false: the default, `ttd` because a history exists). While a
+    /// device's `debug` layer is up, the context layer of its instance's context (`@ttd`, or the longest
+    /// `@<prefix>.*` match) is up above it; a change releases what is held, as a layer switch does.
+    /// Every surface of an instance follows its context: in a debugging context (FollowsIntoDebug) the player devices
+    /// acting on it are debugger remotes too, their `debug` layer up with no layer key
+    void SetContext(const std::string& instance, const std::string& context, bool set = false);
+    /// The player devices follow @p context into the debugger: `debug` and `debug.*` always, `ttd` and `ttd.*` when
+    /// somebody set it (a history alone, the default `ttd`, keeps the pads in the game)
+    static bool FollowsIntoDebug(const std::string& context, bool set);
+    /// The player devices acting on @p instance are debugger remotes now (its context, FollowsIntoDebug)
+    bool PlayersFollow(const std::string& instance) const;
+    /// Where a player's own `debug` layer changes go (its layer key, the device gone with it up): the owner sets the
+    /// instance's context to `debug` so every surface follows the pad, and restores it on the way down. Called outside
+    /// the lock, as the actions
+    void SetLayerSink(LayerSink sink);
+
+    /// Another client on this machine owns the host's controllers (HostInputService::SetOwner): every control is let
+    /// go (its held actions released, nothing held at the next Sample), the devices' events are dropped, and their
+    /// feel is followed but not sent. Back to false: each device's feel goes to it again (the other client set its own)
+    void SetSuspended(bool suspended);
+    bool Suspended() const;
     /// The context of the instance a device acts on (its pinned one, else the focused one); "" when none was pushed
     std::string Context(const HostDeviceId& device) const;
     /// What a scope's devices feel per layer (a debug profile's `haptics`); set and cleared with the bindings
@@ -278,6 +295,12 @@ private:
         std::map<std::string, EncoderRate> rates;  ///< per encoder control
         bool feelSent = false;     ///< the output sink got its steps
         StepsOut feel;             ///< what it got
+        bool debugReported = false;  ///< the layer sink knows its own `debug` layer is up
+    };
+    struct InstanceContext
+    {
+        std::string name;
+        bool set = false;
     };
     struct Settings
     {
@@ -325,6 +348,9 @@ private:
     void FeelLocked(Device& device);
     /// A debugger remote by its role, or a player while the debugger window has the focus
     bool RemoteLocked(const Device& device) const;
+    bool PlayersFollowLocked(const std::string& instance) const;
+    /// Queue a change of the device's own `debug` layer for the layer sink
+    void NoteDebugLayerLocked(Device& device, bool gone = false);
     /// The bits of a binding's sources as @p value gives them (the hysteresis memory advances)
     static uint16_t SourceBits(const CompiledBinding& compiled, BindingState& state, const ValueOf& value);
     static void Settle(BindingState& state, uint16_t bits);
@@ -344,14 +370,22 @@ private:
     mutable std::mutex _mutex;
     std::map<std::string, CompiledSet> _bindings;
     std::map<std::string, SurfaceHaptics> _surfaceHaptics;  ///< by scope, as _bindings
-    std::map<std::string, std::string> _contexts;           ///< instance -> context
+    std::map<std::string, InstanceContext> _contexts;       ///< instance -> context
+    struct LayerChange
+    {
+        HostDeviceId device;
+        std::string instance;
+        bool up = false;
+    };
+    mutable std::vector<LayerChange> _layerQueue;  ///< under _mutex; Dispatch sends them
+    LayerSink _layers;
+    bool _suspended = false;  ///< under _mutex
     mutable std::vector<std::pair<HostDeviceId, StepsOut>> _feelQueue;  ///< under _mutex; Dispatch sends them
     OutputSink _outputs;
     std::map<HostDeviceId, Device> _devices;
     std::map<HostDeviceId, Settings> _settings;
     std::map<std::string, Instance> _instances;
     std::string _focus;
-    bool _debugFocus = false;
     Clock _clock;
     ActionSink _actions;
     std::function<void()> _wake;

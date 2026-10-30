@@ -9,26 +9,31 @@
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QLockFile>
 #include <QMetaObject>
 #include <QSettings>
 #include <QPlainTextEdit>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QTextEdit>
 #include <QThread>
 
 #include <algorithm>
+#include <functional>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/filehelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/actions/contextstate.h"
 #include "emulator/keyboardmanager.h"
 #include "platform/windows/wheelmenu_windows.h"
 
 #ifdef ENABLE_CONTROLLERS
+#include "clientqueue.h"
 #include "debugger/ttd/timetravelhooks.h"
 #include "devicedatabase.h"
 #include "emulator/config.h"
@@ -38,6 +43,7 @@
 #include "emulator/platform.h"
 #include "haptics/profilehaptics.h"
 #include "hostcontrols.h"
+#include "platform/processinfo.h"
 #include "profiles/json.h"
 #include "router/inputrouter.h"
 #ifdef ENABLE_SWSIGNATURE
@@ -211,7 +217,28 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
             out.params = QString::fromStdString(event.params.Dump());
         QMetaObject::invokeMethod(this, [this, out] { emit actionTriggered(out); }, Qt::QueuedConnection);
     });
+    // A pad's layer key takes the instance into the debugger: every surface follows, not only that pad
+    _service->Router().SetLayerSink([this](const HostDeviceId& device, const std::string& instance, bool up) {
+        QMetaObject::invokeMethod(this, [this, device, instance, up] { onDebugLayer(device, instance, up); },
+                                  Qt::QueuedConnection);
+    });
     _service->StartNative();
+    // Several clients on the machine see the same devices: the one activated last owns them. The temporary folder is
+    // the user's own (TMPDIR on macOS, %TEMP% on Windows); on Linux /tmp is shared, so the name carries the user
+    const QString platformName = QGuiApplication::platformName();
+    if (platformName != "offscreen" && platformName != "minimal")
+    {
+        const QString user = qEnvironmentVariable("USER", qEnvironmentVariable("USERNAME"));
+        _ownersPath = QDir(QDir::tempPath()).filePath("unreal-ng-controllers-" + user + ".owners");
+        connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+            if (state == Qt::ApplicationActive)
+                claimControllers();
+        });
+        if (QGuiApplication::applicationState() == Qt::ApplicationActive)
+            claimControllers();
+        else
+            updateOwner();
+    }
     // The host verbs of the automation surfaces run here, on the GUI thread
     _controlOwner = std::make_unique<ControlOwner>(*this);
     HostInputControl::SetOwner(_controlOwner.get(), [](const std::function<void()>& task) {
@@ -278,7 +305,9 @@ HostControllers::~HostControllers()
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_EXECUTION_BREAKPOINT, _breakpointObserver);
     releaseWheelMenu();
     _service->Router().SetActionSink(nullptr);
+    _service->Router().SetLayerSink(nullptr);
     _service->Stop();
+    leaveControllers();
 #endif
 }
 
@@ -326,8 +355,9 @@ void HostControllers::SetShortcutWindows(QWidget* main, QWidget* debugger)
     if (_mainWindow == nullptr && _debuggerWindow == nullptr)
     {
         qApp->installEventFilter(this);
-        connect(qApp, &QApplication::focusChanged, this, &HostControllers::updateDebugFocus);
-        connect(qApp, &QGuiApplication::focusWindowChanged, this, &HostControllers::updateDebugFocus);
+        connect(qApp, &QApplication::focusChanged, this, &HostControllers::updateGuiContext, Qt::UniqueConnection);
+        connect(qApp, &QGuiApplication::focusWindowChanged, this, &HostControllers::updateGuiContext,
+                Qt::UniqueConnection);
     }
     _mainWindow = main;
     _debuggerWindow = debugger;
@@ -345,31 +375,96 @@ void HostControllers::OnDebuggerVisible(bool visible)
     if (visible)
         return;
     _guiPane.clear();
-    releaseGuiContext("debug.");
+    releaseGuiContext("debug");
 }
 
 void HostControllers::OnTtdPanelVisible(bool visible)
 {
+    // Shown it sets nothing: the context is where the focus is (the panel open beside a game keeps the pads in it)
     if (visible)
-        setGuiContext(actions::ContextState::kTtd);
-    else
-        releaseGuiContext(actions::ContextState::kTtd);
+        return;
+    if (_guiPane == actions::ContextState::kTtd)
+        _guiPane.clear();
+    releaseGuiContext(actions::ContextState::kTtd);
 }
 
 void HostControllers::updateGuiContext()
 {
+    QWidget* active = QApplication::activeWindow();
+    if (active == nullptr)
+        return;  // another application has the focus: the surfaces keep what they drove
     QWidget* focus = QApplication::focusWidget();
+    const auto inside = [focus](QWidget* widget) {
+        return focus != nullptr && widget != nullptr && (widget == focus || widget->isAncestorOf(focus));
+    };
     std::string pane;
     for (const auto& [widget, context] : _contextWidgets)
-        if (focus != nullptr && widget != nullptr && (widget == focus || widget->isAncestorOf(focus)))
+        if (inside(widget))
             pane = context;
-    if (pane.empty() && focus != nullptr && _ttdPanel != nullptr && (_ttdPanel == focus || _ttdPanel->isAncestorOf(focus)))
+    if (pane.empty() && inside(_ttdPanel))
         pane = actions::ContextState::kTtd;
+    const bool debugger = _debuggerWindow != nullptr && _debuggerWindow->isVisible() &&
+                          (active == _debuggerWindow || inside(_debuggerWindow));
+    if (pane.empty() && debugger)
+        pane = "debug";
     if (pane == _guiPane)
         return;
+    const std::string left = _guiPane;
     _guiPane = pane;
-    if (!pane.empty())
-        setGuiContext(pane);  // entering a pane sets its context once; another setter's later one stays until then
+    Emulator* emulator = _binding->emulator();
+    if (pane.empty())
+    {
+        // Out of the pane, panel or debugger window: what the GUI set there goes back to the default
+        if (!left.empty())
+            releaseGuiContext(left == actions::ContextState::kTtd ? left : std::string("debug"));
+        return;
+    }
+    if (pane == "debug" && emulator != nullptr)
+    {
+        const std::string now = actions::ContextState::Instance().Get(emulator->GetId(), emulator).context;
+        if (now == pane || now.rfind("debug.", 0) == 0)
+            return;  // the debugger window keeps a `debug.*` context somebody set: it is in the debugger already
+    }
+    setGuiContext(pane);  // entering a pane sets its context once; another setter's later one stays until then
+}
+
+void HostControllers::onDebugLayer(const std::string& device, const std::string& instance, bool up)
+{
+#ifdef ENABLE_CONTROLLERS
+    std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->GetEmulator(instance);
+    if (!emulator)
+        return;
+    actions::ContextState& contexts = actions::ContextState::Instance();
+    const std::string by = "host-device:" + device;
+    std::string error;
+    if (up)
+    {
+        const actions::ContextInfo before = contexts.Get(instance, emulator.get());
+        if (InputRouter::FollowsIntoDebug(before.context, false))
+            return;  // in the debugger already: the key changes nothing anybody else follows
+        _layerContexts[device] = {instance, before};
+        if (!contexts.Set(instance, emulator.get(), "debug", by, error))
+            qWarning("controllers: context 'debug': %s", error.c_str());
+        return;
+    }
+    const auto held = _layerContexts.find(device);
+    if (held == _layerContexts.end())
+        return;
+    const HeldContext restore = held->second;
+    _layerContexts.erase(held);
+    // Somebody set another context while the key was held: the last setter wins (Q-5), the key restores nothing
+    const actions::ContextInfo now = contexts.Get(restore.instance, emulator.get());
+    if (now.by != by || now.context != "debug")
+        return;
+    const std::string context = restore.before.set ? restore.before.context : std::string{};
+    const std::string setter = restore.before.set ? restore.before.by : by;
+    if (!contexts.Set(restore.instance, emulator.get(), context, setter, error))
+        qWarning("controllers: context '%s': %s", context.c_str(), error.c_str());
+#else
+    (void)device;
+    (void)instance;
+    (void)up;
+#endif
 }
 
 void HostControllers::setGuiContext(const std::string& context)
@@ -396,12 +491,31 @@ void HostControllers::releaseGuiContext(const std::string& prefix)
 void HostControllers::followContext()
 {
 #ifdef ENABLE_CONTROLLERS
-    Emulator* emulator = _binding->emulator();
-    if (emulator == nullptr)
+    // Every instance: a device pinned to one follows that one's context. The default (Q-7: `ttd` while a history
+    // exists) is also read by the poll
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    for (const std::string& id : manager->GetEmulatorIds())
+    {
+        std::shared_ptr<Emulator> emulator = manager->GetEmulator(id);
+        if (!emulator)
+            continue;
+        const actions::ContextInfo info = actions::ContextState::Instance().Get(id, emulator.get());
+        _service->Router().SetContext(id, info.context, info.set);
+    }
+    Emulator* bound = _binding->emulator();
+    const bool follow = bound != nullptr && _service->Router().PlayersFollow(bound->GetId());
+    if (follow == _playersFollow)
         return;
-    // The default (Q-7: `ttd` while a history exists) changes without a notification: the poll reads it too
-    const actions::ContextInfo info = actions::ContextState::Instance().Get(emulator->GetId(), emulator);
-    _service->Router().SetContext(emulator->GetId(), info.context);
+    _playersFollow = follow;
+    if (!_debugLayer)
+        Reapply();  // the pads' debug profiles: applied while the context has them in the debugger
+    const std::vector<HostDeviceInfo> devices = _service->Router().Devices();
+    const bool pads = std::any_of(devices.begin(), devices.end(), [this](const HostDeviceInfo& device) {
+        return device.family != "keyboard" && device.family != "mouse" &&
+               _service->Router().Role(device.id) == DeviceRole::Player;
+    });
+    if (pads)
+        emit notice(follow ? tr("Game pads drive the debugger") : tr("Game pads drive the game"));
 #endif
 }
 
@@ -412,30 +526,6 @@ void HostControllers::PlayMarks(const std::string& device, const std::vector<std
 #else
     (void)device;
     (void)marks;
-#endif
-}
-
-void HostControllers::updateDebugFocus()
-{
-#ifdef ENABLE_CONTROLLERS
-    QWidget* active = QApplication::activeWindow();
-    if (active == nullptr)
-        return;  // another app has the focus: the pads keep what they drove
-    QWidget* focus = QApplication::focusWidget();
-    const bool on = _debuggerWindow != nullptr && _debuggerWindow->isVisible() &&
-                    (active == _debuggerWindow || (focus != nullptr && _debuggerWindow->isAncestorOf(focus)));
-    if (on == _debugFocus)
-        return;
-    _debugFocus = on;
-    Reapply();
-    _service->Router().SetDebugFocus(on);
-    const std::vector<HostDeviceInfo> devices = _service->Router().Devices();
-    const bool pads = std::any_of(devices.begin(), devices.end(), [this](const HostDeviceInfo& device) {
-        return device.family != "keyboard" && device.family != "mouse" &&
-               _service->Router().Role(device.id) == DeviceRole::Player;
-    });
-    if (pads)
-        emit notice(on ? tr("Game pads drive the debugger") : tr("Game pads drive the game"));
 #endif
 }
 
@@ -599,6 +689,84 @@ void HostControllers::onUnbound()
 #endif
 }
 
+#ifdef ENABLE_CONTROLLERS
+namespace
+{
+bool ClientAlive(int64_t pid)
+{
+    return pid > 0 && pid <= UINT32_MAX && platform::IsProcessAlive(static_cast<uint32_t>(pid));
+}
+
+/// Edit the owners file under its lock; false when the lock or the write failed
+bool EditOwners(const QString& path, const std::function<void(std::vector<int64_t>&)>& edit)
+{
+    QLockFile lock(path + ".lock");
+    if (!lock.tryLock(500))
+        return false;
+    std::vector<int64_t> pids;
+    QFile in(path);
+    if (in.open(QIODevice::ReadOnly))
+        pids = ClientQueue::Parse(in.readAll().toStdString());
+    in.close();
+    edit(pids);
+    QSaveFile out(path);  // a reader without the lock sees the old list or the new one, never half of it
+    if (!out.open(QIODevice::WriteOnly))
+        return false;
+    out.write(QByteArray::fromStdString(ClientQueue::Format(pids)));
+    return out.commit();
+}
+}  // namespace
+
+void HostControllers::claimControllers()
+{
+    if (_ownersPath.isEmpty())
+        return;
+    const int64_t self = platform::CurrentProcessId();
+    if (!EditOwners(_ownersPath, [self](std::vector<int64_t>& pids) { ClientQueue::Claim(pids, self, ClientAlive); }))
+        qWarning("controllers: cannot write %s", qPrintable(_ownersPath));
+    updateOwner();
+}
+
+void HostControllers::leaveControllers()
+{
+    if (_ownersPath.isEmpty())
+        return;
+    const int64_t self = platform::CurrentProcessId();
+    EditOwners(_ownersPath, [self](std::vector<int64_t>& pids) { ClientQueue::Leave(pids, self); });
+}
+
+void HostControllers::updateOwner()
+{
+    if (_ownersPath.isEmpty())
+        return;
+    QFile file(_ownersPath);
+    std::vector<int64_t> pids;
+    if (file.open(QIODevice::ReadOnly))
+        pids = ClientQueue::Parse(file.readAll().toStdString());
+    const int64_t self = platform::CurrentProcessId();
+    int64_t owner = ClientQueue::Owner(pids, ClientAlive);
+    if (owner == 0)
+    {
+        // Nobody lives in the queue (the owner quit or crashed and nobody was active before it): the first to see it
+        // takes the devices
+        EditOwners(_ownersPath, [self](std::vector<int64_t>& list) {
+            if (ClientQueue::Owner(list, ClientAlive) == 0)
+                ClientQueue::Claim(list, self, ClientAlive);
+        });
+        QFile again(_ownersPath);
+        if (again.open(QIODevice::ReadOnly))
+            owner = ClientQueue::Owner(ClientQueue::Parse(again.readAll().toStdString()), ClientAlive);
+    }
+    const bool owns = owner == self;
+    if (owns == _service->Owner())
+        return;
+    qInfo("controllers: %s", owns ? "this window owns the controllers again"
+                                  : qPrintable(QString("another unreal-ng (pid %1) owns the controllers").arg(owner)));
+    _service->SetOwner(owns);
+    emit changed();
+}
+#endif
+
 void HostControllers::poll()
 {
 #ifdef ENABLE_CONTROLLERS
@@ -606,6 +774,7 @@ void HostControllers::poll()
     if (EmulatorContext* context = _binding->context())
         if (context->pControllerManager != nullptr)
             machine = context->pControllerManager->Revision();
+    updateOwner();
     checkAuto();
     updateHapticsGate();
     followContext();
@@ -732,8 +901,8 @@ connectorview::Led HostControllers::ConnectorLed() const
 bool HostControllers::DebugLayerHeld() const
 {
 #ifdef ENABLE_CONTROLLERS
-    if (_debugFocus)
-        return false;  // the debugger window has the pads: no key is held for it
+    if (_playersFollow)
+        return false;  // the context has the pads in the debugger: no key is held for it
     for (const HostDeviceInfo& device : _service->Router().Devices())
     {
         if (device.id == kKeyboard || _service->Router().Role(device.id) != DeviceRole::Player)
@@ -761,7 +930,7 @@ void HostControllers::Reapply()
     context.fileSet = _program.fileSet;
     if (!_manualProfile.empty())
         context.manual = {_manualProfile};
-    context.debugLayer = _debugLayer || _debugFocus;
+    context.debugLayer = _debugLayer || _playersFollow;
     assignPlayers(context.devices);
     _resolved = _profiles.Apply(_service->Router(), context);
     // The user's drag and drop (the player verb) wins over the machine default and a profile's pin
