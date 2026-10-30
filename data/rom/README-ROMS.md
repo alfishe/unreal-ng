@@ -15,7 +15,7 @@ that the emulator works out of the box, on the following basis:
 * **Pentagon, Scorpion, KAY, ATM, Profi, ZX Evolution / TS-Conf, General Sound and other clone firmware**
   (`pentagon*.rom`, `glukpen*.rom`, `scorp*.rom`, `kay1024*.rom`, `atm*.rom`, `glukatm.rom`, `profi.rom`, `profi/*.rom`,
   `zxevo.rom`, `zxevo-fe.rom`, `ts-bios*.rom`, `gs*.rom`, `bootGS.rom`, `lsy256.rom`, `qu7v42.rom`, `qc_3_05.rom`, `madrom.rom`,
-  `zxi1.rom`, `2006.rom`, `xbios135.rom`, `sgen.rom`, `gd.rom`, `gmx.rom`, `1993.rom`, `ZXM-Phoenix_bios.bin`,
+  `zxi1.rom`, `2006.rom`, `xbios135.rom`, `sgen.rom`, `gd.rom`, `gmx.rom`, `gmx644.rom`, `1993.rom`, `ZXM-Phoenix_bios.bin`,
   `tk90.rom`, `tk95.rom`): property of the respective clone manufacturers and authors, distributed freely in the
   ZX Spectrum community. ZX Evolution firmware sources are published by TSLabs.
   `zxevo-fe.rom` is the official NedoPC BaseConf image `rom/zxevo_fe.rom` of the pentevo repository
@@ -83,6 +83,14 @@ that the emulator works out of the box, on the following basis:
   vers 1.27" of the 8035 on the PROFI-XT board, **reconstructed**: the only known dump (speccy4ever
   `PROFI_XT-9A8E2686.ROM`) never enables interrupts and so receives no key; 5 bytes at `02Eh`-`032h` are replaced.
   The patch, why, and how it was checked: [`profixt/README.md`](profixt/README.md). CRC32 `59C7A98C`.
+* **Scorpion GMX flash images** (`gmx.rom`, `gmx644.rom`): the whole 512 KB flash of the GMX card (loader, FPGA
+  schemes, eight 64 KB ROM planes). `gmx.rom` (CRC32 `00DF8568`) is "GMX Boot Rom 1.2 V. 5.00" (TMgmx Loader V1.20,
+  MOA 1998). `gmx644.rom` (CRC32 `0F84E542`, MD5 `3e07fc606947eef4348c79d2bde4a974`, SHA-256
+  `b6796bf88049aac851006211f9ca1a78187ee3701f8b53a8763d427de20e31a5`) is the current community firmware: TMgmx Loader
+  V2.00 (MOA 1997-1998, LW/PLM 2024) and the Shadow Service Monitor v6.44su of 21.08.2025 (MOA 1993-1998, PLM
+  2022-2025) with FAT32 and Z-Controller support, from the ZS ProfROM group (<https://t.me/ZS_ProfRom>). Copied
+  unchanged from the web Unreal Speccy's `rom/gmx644.zip` (<https://www.zxby.org/unreal/>, archive dated 2026-10-28,
+  fetched 2026-10-30). OSZ needs this image. Page map: `docs/inprogress/2026-10-07-gmx/roms.md`.
 * **Open firmware**: `gdos-pd.rom` (public domain), `opense.rom` (OpenSE BASIC, GPL),
   `data/testrom/zx-diagnostics.rom` (Brendan Alford, GPL-3.0).
 * **YRW801 wave data ROM** (`opl4/yrw801-m-yamaha-1993.rom`, renamed from the archive's

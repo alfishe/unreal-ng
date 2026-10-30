@@ -1,7 +1,9 @@
 # GMX: technical design
 
-**Date:** 2026-10-07 - part of [README.md](README.md) - requirements in [requirements.md](requirements.md) - evidence in
-[research-reference-consensus.md](research-reference-consensus.md)
+**Date:** 2026-10-07, revised 2026-10-30 - part of [README.md](README.md) - requirements in [requirements.md](requirements.md) -
+evidence in [research-reference-consensus.md](research-reference-consensus.md) and, for everything marked **[MAN]**, the
+original manual (Scorpion, 22.11.1998, [references/GMX271198.txt](references/GMX271198.txt)) as read in
+[research-2026-10-30-emulators-and-manual.md](research-2026-10-30-emulators-and-manual.md)
 
 ## 0. Name
 
@@ -13,7 +15,7 @@ The model table says "ZS Scorpion + GMX"; this folder keeps that name.
 | Piece | State on master |
 |:--|:--|
 | `MM_GMX` | `platform.h`; model row `{"ZS Scorpion + GMX", "GMX", MM_GMX, 2048, RAM_2048}` in `config.h` |
-| ROM | `config.gmx_rom_path` read from `[ROM] GMX=`; `rom.cpp` has `case MM_GMX: assert("Not implemented")` (twice: file name and bank layout); the loader checks only that the image is 32 pages (512 KB). `data/rom/gmx.rom` is tracked ([roms.md](roms.md)) |
+| ROM | `config.gmx_rom_path` read from `[ROM] GMX=`; `rom.cpp` has `case MM_GMX: assert("Not implemented")` (twice: file name and bank layout); the loader checks only that the image is 32 pages (512 KB). `data/rom/gmx.rom` (V1.20 / 5.00) and `data/rom/gmx644.rom` (Loader V2.00 + monitor 6.44su, 2025) are tracked ([roms.md](roms.md)) |
 | Ports | `ports.h` still declares `_p7EFD, _p78FD, _p7AFD, _p7CFD, _gmx_config, _gmx_magic_shift`; `EmulatorState` has `scorpion.p7EFD` only (the GMX group was removed by the model-state refactor) |
 | Port decoder | none: `PortDecoder::IsModelSupported(MM_GMX)` is false, the factory has no case; `emulatormanager_test.cpp` asserts exactly that |
 | Config folder | none (`data/configs/gmx` missing) so `Config::IsModelCreatable` is false |
@@ -40,34 +42,37 @@ scope (Q8).
 ### 2.2 Ports
 
 All ports are decoded with the Scorpion rule `A5 = 1, A1 = 0, A0 = 1` plus the high byte (H, Black_Cat table and
-Unreal); the high byte is matched **exactly** in the GMX register file (H, Unreal and MAME). Writes unless noted.
+Unreal); the high byte is matched **exactly** in the GMX register file (H, Unreal and MAME). `#00` has the full decode
+A0-A7 = 0 [MAN]. Writes unless noted. **RESET clears every GMX latch except `#00`** [MAN] (Q18).
 
 | Port | Dir | Effect |
 |:--|:--|:--|
-| `#xx00` | W | Global configuration, any high byte, **always** reachable (even when the register file is blocked). Bit 3 arms the "magic" readout (below) and, with bit 4 = 0, resets the CPU (RAM and latches stay). Bit 4 "fixrom": freezes the ROM plane (`#7EFD` bits 4-6 ignored) and suppresses that reset. Bit 5 "BLKEXT": disables `#78FD #7AFD #7CFD #7EFD #DFFD`. Bit 7 read back at `#7EFD` bit 4. Bits 0-2 are the low bits of the magic byte. Other bits: stored (H: Unreal, MAME, pico-speccy) |
-| `#7FFD` | W | As Scorpion: bits 0-2 RAM page bits 0-2, bit 3 screen 5 / 7, bit 4 ROM A14, bit 5 lock. The lock is lifted when `#7EFD` bit 2 = 1 in Unreal; **MAME: bit 2 means "Magic disabled"** (Q3) |
+| `#xx00` | W | Global configuration, any high byte, **always** reachable (even when the register file is blocked) [MAN]. Bits 0-2 CONF0-2: the FLEX8000 scheme number. Bit 3 RECONF: with 1, reload the card with scheme CONF (we: arm the magic readout `#88 \| CONF`, below, and reset the CPU; RAM stays). Bit 4 FIXROM: freezes the plane bits of `#7EFD`, then RESET neither clears them nor reloads the scheme (we: no CPU reset). Bit 5 BLKEXT: disables `#78FD #7AFD #7CFD #7EFD #DFFD` (a plain ZS-256 Turbo+). Bit 6 BLKEX2: with bit 5, also blocks all `xxFD` ports and decodes `#7FFD` at A15 = 0 (not built). Bit 7 ST/PENT: INT and frame type (2.5); read back at `#7EFD` bit 4. Not cleared by RESET. A write without bit 3 only stores (OSZ and the firmware write `#02` around every monitor call) (H: [MAN], Unreal, MAME, pico-speccy) |
+| `#7FFD` | W | As Scorpion: bits 0-2 RAM page bits 0-2, bit 3 screen 5 / 7 (in the extended mode screen 0 / 1), bit 4 ROM A14, bit 5 lock BLKPK1. The lock does not act while `#7EFD` bit 2 = 1 ([MAN] 3.1, Q3) |
 | `#1FFD` | W | Scorpion: bit 0 RAM page 0 at `#0000`, bit 1 service ROM, bit 4 RAM page bit 3. **GMX: bit 2 "hard DOS page"**: the plane's page 3 (TR-DOS) at `#0000` with the Beta ports on, overriding bit 0 (MAME, pico-speccy; Unreal marks it as TR-DOS flag). Bits 6-7 (ZS-1024 page bits) are not used by the GMX RAM formula (H) |
 | `#DFFD` | W | Bits 0-2: RAM page bits 4-6 (Profi-style, `(DFFD & 7) << 4`) (H: Unreal reads it back, MAME and pico-speccy use it in the formula) |
 | `#78FD` | W | Bits 0-6: the page at `#8000-#BFFF`, stored **XOR 2**: value 0 = page 2 (H: MAME, pico-speccy; the article: "any bank can be connected to the second page") |
 | `#78FD` | R | Bit 7 = `#FE` bit 1 (BRD1); bits 0-6 = the stored `#78FD` value; bit 0 is OR-ed with the magic shift bit, and every read shifts the magic byte right once (H: Unreal, MAME, pico-speccy) |
-| `#7AFD` | W | Hardware scroller, low byte of the offset. MAME and pico-speccy keep `data & #F0`, Unreal keeps all 8 bits, the articles say "8 bits" (Q4) |
+| `#7AFD` | W | Hardware scroller, low byte of the 14-bit start address; the low four bits are forced to 0 (`data & #F0`) [MAN] (Q4). Write-only: a read returns the paging status below |
 | `#7AFD` | R | Paging status: bits 0-2 = `#7FFD` bits 0-2, bit 3 = `#1FFD` bit 4, bits 4-6 = `#DFFD` bits 0-2, bit 7 = `#FE` bit 0 (BRD0) (H, three sources identical) |
 | `#7CFD` | W | Scroller high byte, 6 bits (`data & #3F`) (H) |
-| `#7EFD` | W | Bit 7 turbo (7 MHz); bits 6-4 ROM plane = flash A18-A16 (ignored when `#00` bit 4); bit 3 extended 640x200 mode; bit 2 see Q3; bit 1 Vpp and bit 0 EWR of the flash (ignored, Q9) (H except bit 2) |
+| `#7EFD` | W | Bit 7 turbo (7 MHz; the board's Normal/Turbo button toggles it too); bits 6-4 ROM plane = flash A18-A16 (frozen when `#00` bit 4); bit 3 extended 640x200 mode; bit 2 MagEnable: 1 = the Magic button (NMI) is ignored **and** the `#7FFD` lock does not act; bit 1 Vpp and bit 0 EWR of the flash (ignored, Q9) (H: [MAN], MAME, Unreal) |
 | `#7EFD` | R | Bit 0 = `#7FFD` bit 5; bit 1 = `#7FFD` bit 3; bit 2 = turbo (write bit 7); bit 3 = write bit 3; bit 4 = `#00` bit 7; bit 5 = `#00` bit 5; bit 6 = `#1FFD` bit 0; bit 7 = `#FE` bit 2 (BRD2) (H, three sources identical) |
 | `#FE`, `#FF`, `#FFFD`, `#BFFD`, FDC `#1F-#FF`, Kempston, mouse, SMUC, ... | | as the Scorpion decoder (host board) |
-| Turbo+ strobes | R | `IN` from the `#1FFD` family clears turbo, from the `#7FFD` family sets it (Scorpion Turbo+; MAME's GMX class inherits it, Unreal and pico-speccy do not model it for GMX) (Q5) |
+| Turbo+ strobes | R | `IN` from the `#1FFD` family clears turbo, from the `#7FFD` family sets it on the Turbo+ host. Not in [MAN]; MAME's GMX class inherits it, Unreal and pico-speccy do not. Not built: the host EPLD that makes them no longer drives the CPU clock (Q5) |
 
 The "magic" readout: a write to `#00` with bit 3 stores `#88 | (value & 7)`; each read of `#78FD` returns the low bit in
 bit 0 and shifts right, so eight reads return, least significant bit first: the three bits `v & 7`, then 1, then three 0,
-then 1 (after eight reads the byte is 0 and reads add nothing). No source says what software does with it, Q6. The registers read back in the shadow monitor are frozen at the Magic button
-(MAME `m_port_7afd_lock_data`, `m_port_7efd_lock_data`) and released by the next `IN #FF` (MAME only, Q7).
+then 1 (after eight reads the byte is 0 and reads add nothing). The GMX loader reads it this way right after the reset
+(`gmx644.rom` plane 0 page 0 `#00F1`) to learn which scheme RECONF asked for (Q6). The bits marked in [MAN] section 2
+(`#7AFD` bits 0-6, `#7EFD` bits 0-3 and 6) are latched when the Magic button is pressed and released by a dummy read
+of `#FF` (MAME `m_port_7afd_lock_data`, `m_port_7efd_lock_data`; Q7).
 
 ### 2.3 RAM
 
 | Window | Page |
 |:--|:--|
-| `#0000-#3FFF` | ROM (2.4) or RAM page 0 (`#1FFD` bit 0 and not Magic pending) |
+| `#0000-#3FFF` | ROM (2.4) or RAM page 0 (`#1FFD` bit 0). After a Magic press with bit 0 set, reads (fetches and data) come from the ROM DOS page and writes still go to RAM page 0, while the DOS trigger is on [MAN] 3.2 (Q19) |
 | `#4000-#7FFF` | RAM page 5 |
 | `#8000-#BFFF` | RAM page `(#78FD & #7F) ^ 2` (H) |
 | `#C000-#FFFF` | RAM page `((DFFD & 7) << 4) \| ((1FFD & #10) >> 1) \| (7FFD & 7)` (H) |
@@ -95,8 +100,8 @@ change the two low plane bits as on the Turbo+ ProfROM add-on, which pico-speccy
 Q2). The plane at power-on is 0, which is the **GMX loader**, not an editor. The tracked 512 KB image (CRC32
 `00DF8568`, identical to MAME's "GMX Boot Rom 1.2 V.5.00") has, from our own page scan ([roms.md](roms.md)): plane 0 = loader,
 test and FPGA scheme data; plane 1 = Pentagon scheme ROMs (128, 48 BASIC); plane 4 = ProfROM-class Scorpion ROMs;
-plane 5 = shadow monitor. Which plane the real Scorpion scheme enters after the loader is firmware behavior, not a
-register: the loader pokes `#7EFD` itself.
+plane 5 = shadow monitor. The loader hands over to plane 4 page 0 (the Scorpion 128 menu) through `OUT (#7EFD),#40`, `OUT (#00),#02`,
+`JP #0000`, after a RECONF reset of its own (Q1); every RESET runs the loader again.
 
 ### 2.5 Video
 
@@ -105,28 +110,32 @@ one attribute byte per 8 horizontal pixels, in extended RAM (H: article, MAME, U
 
 | Item | Value | Source |
 |:--|:--|:--|
-| Pixel bytes | page `#39` (`#7FFD` bit 3 = 0) or `#3B` (= 1), 80 bytes per line, 200 lines = 16000 bytes | MAME, Unreal, pico-speccy |
-| Attribute bytes | the same offset in page `#79` / `#7B` (page + 64) | same three |
-| Attribute | bits 0-2 ink, 3-5 paper, bit 6 bright (both), bit 7 flash (inverts the pixels on the flash phase) | MAME, Unreal |
-| Buffer pages | the article says `#3A / #7A`; the code of all three emulators says `#3B / #7B` | Q11 |
-| Scroll | 14-bit offset from `#7CFD:#7AFD`. MAME and pico-speccy: `offset / 80` = first source line, mod 200 (a line scroller). Unreal: byte offset, wrapping at 16000 (shifts columns too). The article: "hardware line scroller" | Q4 |
+| Pixel bytes | page `#39` (`#7FFD` bit 3 = 0) or `#3B` (= 1), 80 bytes per line, linear, 200 lines = 16000 bytes | MAME, Unreal, pico-speccy, web Unreal, Edge Grinder on the real board; [MAN] says `#3A` for screen 1 (Q11) |
+| Attribute bytes | the same offset in page `#79` / `#7B` (page + 64) | same; [MAN] |
+| Attribute | bits 0-2 ink, 3-5 paper, bit 6 bright (both), bit 7 flash (inverts the pixels on the flash phase) | [MAN] "standard attribute byte", MAME, Unreal; the web Unreal's 16-color nibble decode is a deviation (Q22) |
+| Scroll | one write-only 14-bit start address in bytes: `start = (#7CFD & #3F) << 8 \| (#7AFD & #F0)`; the displayed byte at line `y`, column `x` is `(y * 80 + x + start) mod 16000`, pixels and attributes alike. 80 = one line, 640 = one text row | [MAN] (Q4 closed); Unreal's byte model with MAME's mask; OSZ uses multiples of 640 |
 | Palette | the fixed 16 ZX colors; no palette port (pico-speccy) | M |
 | Geometry | the dot clock doubles: 640 pixels in the time of the 256-pixel line; the border is a few pixels wide on the sides (MAME 24 / 40) | MAME; Q12 |
-| Timing | the frame, line and INT are the Scorpion's; the INT may be switched to Pentagon's from the shadow monitor (article) | M, Q13 |
+| Timing | the frame, line and INT are the Scorpion's while `#00` bit 7 = 0 (312 lines, INT at the end of frame sync); with bit 7 = 1, 320 lines and INT at the start of frame sync (the Pentagon profile the monitor offers) | [MAN] (Q13) |
 
 The article states that a second mode of 320x200 with one color per pixel was announced and **never realized**; no emulator
 has it. Not built.
 
 ### 2.6 Turbo
 
-`#7EFD` bit 7 selects 7 MHz and is read back in bit 2 (H). The Scorpion Turbo+ wait states (`ScorpionTurboOverlay`) apply
-unchanged (the board is a Scorpion Turbo+ with the card on it) (Q5). The article's "INT stretched to 132000 clocks in
-turbo" is not understood and not used (Q13).
+`#7EFD` bit 7 selects 7 MHz and is read back in bit 2 (H). The CPU, RAM and ROM are on the card, so the host Turbo+
+EPLD wait states (`ScorpionTurboOverlay`) do not apply: the fitting disconnects the host WAIT and CLOCK. ZX-Format #07
+gives "1.8-1.9x from RAM, exactly 2x from ROM": the card's own waits fall on RAM accesses only. Model (Q21): an Even M1
+alignment on opcode fetches from RAM on the 7 MHz grid, none for ROM; calibrated against a RAM-bound loop (1.8-1.9x)
+and Edge Grinder's frame counter (25 fps on the real board). No Turbo+ `IN` strobes (Q5). The article's "INT stretched to 132000 clocks in turbo" is not
+understood and not used (Q13).
 
 ### 2.7 Devices
 
 All of the host Scorpion: Beta128 FDC, AY (the Scorpion's, TurboSound option), Kempston joystick and mouse, covox, SMUC
-(IDE, NVRAM, RTC; ProfROM and GMX firmware use it), PS/2 keyboard controller option. Not working on the real card: General
+(IDE, NVRAM, RTC; ProfROM and GMX firmware use it), PS/2 keyboard controller option. The 6.44 monitor also drives a
+Z-Controller SD card ("by the KOE standard when no SMUC", FAT32), detected at power-on only; OSZ boots through it.
+`#1FFD` bit 2 forces the TR-DOS page and the Beta ports on (GMX only). Not working on the real card: General
 Sound (article) - the slot planner should say so (Q14).
 
 ## 3. How it fits unreal-ng
@@ -138,7 +147,7 @@ Sound (article) - the slot planner should say so (Q14).
 | State | `platforms/gmx/gmxstate.h`: `GmxState` member `gmx` of `EmulatorState` (plain values: `p00, p78FD, p7AFD (scroll lo), p7CFD (scroll hi), pDFFD`, magic shift byte, `magicLock` and its two frozen bytes). `scorpion.p7EFD` stays where it is (GMX shares it), so `DetectModeGMX` keeps working. `pDFFD` already exists in `EmulatorState` (Profi) and is reused | `core/src/emulator/platforms/gmx/` |
 | Memory | `ScorpionMemory::UpdateModelBanks` gets the GMX branch: window 2 from `78FD ^ 2`, window 3 from the 7-bit formula, plane from `#7EFD`, `1FFD.2` hard DOS page. `ScorpionRomWindow` with a 512 KB image already takes plane bits from `#7EFD`; for GMX the 0x0100 read strobe is **off** (Q2). RAM is 2048 KB (`MM_GMX`, `RAM_2048`) | `core/src/emulator/memory/scorpion/` |
 | ROM | remove the two `assert("Not implemented")`; `GMX` returns `config.gmx_rom_path`; keep the 32-page check; `OnRomLoaded(32)` derives the plane mask (8 planes). Add `GMX_ROLES` in `ROM::GetROMPageRole` (per plane, Section 2.4) | `core/src/emulator/memory/rom.cpp` |
-| Config | folder `gmx` (`data/configs/gmx/unreal.ini`: copy of `profscorp`, `HIMEM=GMX`, `RAMSize=2048`, `[ROM] GMX=rom\gmx.rom`, SMUC on, `ScorpionTurboLogic=SC15.1`); `Config::ApplyModelTimingDefaults` and `even_M1` get `MM_GMX` next to the Scorpion cases | `data/configs/gmx/`, `core/src/emulator/config.cpp` |
+| Config | folder `gmx` (`data/configs/gmx/unreal.ini`: copy of `profscorp`, `HIMEM=GMX`, `RAMSize=2048`, `[ROM] GMX=rom\gmx644.rom`, SMUC on, Z-Controller on, Dallas clock); `Config::ApplyModelTimingDefaults` gets `MM_GMX` next to the Scorpion cases, `even_M1` off (MAME) | `data/configs/gmx/`, `core/src/emulator/config.cpp` |
 | Screen | `DetectModeGMX` returns a new raster `R_640_200` (replace `R_320_200`, which no source supports); `M_GMX` geometry row and `DrawGMX` filled (section 5); `DetectModeGMX` falls back to the Scorpion mode, not `_vid.mode` | `core/src/emulator/video/screen.{h,cpp}` |
 | TTD | one peripheral blob `GmxPaging` (next free `PeripheralId`; Phoenix reserves 62 in its design, so number at implementation time), class `TTDGmxPaging` in `core/src/debugger/ttd/gmx/`. Fields: the `GmxState` bytes, version byte. `#DFFD` joins it (not in the standard chipset blob). Existing `ScorpionProfRom` blob keeps `p7EFD` and the plane | `core/src/debugger/ttd/` |
 | Snapshot capture | `WindowMapCapture`: while `#78FD = 0`, `#DFFD = 0`, `1FFD.2 = 0` and no page above 15 is mapped the machine is a Scorpion 256 and the existing `scorpion256` view applies; else `capture_unsupported` "extended GMX paging in use". Remove GMX from the default-branch text | `core/src/loaders/snapshot/snapshotcapture.cpp` |
@@ -159,20 +168,22 @@ Add to `PortDecoder_Scorpion256`, guarded by `mem_model == MM_GMX` (cold path, l
 ```text
 DecodePortOut(port, value, pc):
     if (port & 0x00FF) == 0x00:             Out00(value)          // before everything, any high byte, even blocked
+    // the GMX file must win over the Scorpion #7FFD mask (it matches all four #7xFD) and the AY mask (it matches #DFFD)
     elif gmx.p00 & 0x20:                    fall through to the Scorpion decode
     elif IsPortFD(port) && high byte is one of 78 7A 7C 7E DF:   // A5=1 A1=0 A0=1 + exact high byte
         78: gmx.p78FD = v & 7F, remap;  7A: gmx.scrollLo = v;  7C: gmx.scrollHi = v & 3F
         7E: Out7EFD(v);                     DF: state.pDFFD = v & 7, remap
-    else Scorpion decode (7FFD lock lifted per Q3, 1FFD with bit 2)
+    else Scorpion decode (7FFD lock ignored while 7EFD bit 2, 1FFD with bit 2)
 DecodePortIn: same keys -> Read78FD / Read7AFD / Read7EFD (with the Magic freeze, Q7); everything else as Scorpion
 ```
 
 - `Out7EFD`: turbo from bit 7 (`state.scorpion.turbo`, `SyncTurboWaits()`); plane from bits 6-4 when `p00` bit 4 is clear
   (`ScorpionRomWindow::OnWindowPortWrite` with the GMX mask, then remap); bit 3 -> `InitRaster` (as `DetectModeGMX`
-  today, `Screen` re-detects on the next frame boundary); bit 2 per Q3.
-- `Out00`: bit 3 -> magic byte and `Z80::reset` through the existing CPU-reset entry when bit 4 is 0 (RAM and ports
-  stay, so it is not `Emulator::Reset`).
-- `reset()`: every GMX latch 0, plane 0, `p00 = 0` (MAME `machine_start` also zeroes `p00`), turbo off.
+  today, `Screen` re-detects on the next frame boundary); bit 2 gates the NMI and the `#7FFD` lock (Q3).
+- `Out00`: store the value; bit 3 (RECONF) -> magic byte `#88 | (v & 7)` and `Z80::reset` through the existing CPU-reset
+  entry when bit 4 is 0 (RAM stays, so it is not `Emulator::Reset`). A write without bit 3 changes nothing else.
+- `reset()`: every GMX latch 0, plane 0 unless `p00` bit 4 (FIXROM) holds it, turbo off; **`p00` is kept** (zeroed only at
+  power-on) [MAN] - MAME and Unreal zero it, a deviation we do not copy (Q18).
 - The decode constants are `static constexpr` masks next to each other, shared with the port-map rows
   (`GetPortMapInfo`, model name "ScorpionGMX") and the tests.
 - `GetTTDModelStateIds()` adds `GmxPaging` to what the Scorpion returns.
@@ -203,11 +214,11 @@ OpenAPI / MCP / Lua / Python / Qt / recipe.
 
 | Phase | Work | Parity delivered | Needs |
 |:--|:--|:--|:--|
-| 1 | **Creatable machine.** Factory + `IsModelSupported`; `GmxState`; `#00`, `#78FD`, `#7AFD`, `#7CFD`, `#7EFD`, `#DFFD`, read-backs; RAM formula; plane and `1FFD.2`; ROM loader and roles; `data/configs/gmx/`; timing defaults; port-map rows. Boots `gmx.rom` to the GMX loader and the shadow monitor. `emulatormanager_test` flips from "unsupported" to "creatable" | CLI `start GMX`, `list_models`; WebAPI `POST /emulator/start {"model":"GMX"}` + OpenAPI model enum and `GET /ports`; MCP `emulator_manage create` + resource text; Lua/Python `create` accept it; Qt Machine menu; recipe `.recipe/machines/gmx.md` sections 1-2 verified (create, ports, boot) | Q2, Q3 decided (recommendations in TODO.md) |
+| 1 | **Creatable machine.** Factory + `IsModelSupported`; `GmxState`; `#00`, `#78FD`, `#7AFD`, `#7CFD`, `#7EFD`, `#DFFD`, read-backs; RAM formula; plane and `1FFD.2`; ROM loader and roles; `data/configs/gmx/`; timing defaults; port-map rows. Boots `gmx644.rom` to the GMX loader, the 128 menu (plane 4) and the shadow monitor. `emulatormanager_test` flips from "unsupported" to "creatable" | CLI `start GMX`, `list_models`; WebAPI `POST /emulator/start {"model":"GMX"}` + OpenAPI model enum and `GET /ports`; MCP `emulator_manage create` + resource text; Lua/Python `create` accept it; Qt Machine menu; recipe `.recipe/machines/gmx.md` sections 1-2 verified (create, ports, boot) | Q1 trace; Q2, Q3, Q18 closed in TODO.md |
 | 2 | **TTD and state.** `GmxPaging` blob, ksy, fixture, divergence hash; `FamilyOf`, `WindowMapCapture`, `MachineStateTransfer`; `state/paging` `gmx_*` fields | WebAPI/CLI/Lua/Python paging fields (`p78FD`, `pDFFD`, plane, gfx_ext, turbo, `p00`); MCP `inspect_state` and `time_travel`; TTD checkpoint/seek from every surface; recipe section 3 (paging, TTD) | 1 |
-| 3 | **640x200 video.** `R_640_200`, `DrawGMX`, scroller, flash; screenshot/video recording sizes; Qt widget; test pattern from the board test scheme is not available, so a synthetic RAM pattern is the fixture | screenshot via WebAPI/MCP/CLI/Lua/Python returns 640x200; Qt shows it; recipe section 4 | 1; Q4, Q11, Q12 |
+| 3 | **640x200 video.** `R_640_200`, `DrawGMX`, scroller, flash; screenshot/video recording sizes; Qt widget; a synthetic RAM pattern plus Edge Grinder (`testdata/machines/gmx/edgegrinder/EGGMX.TRD`) as fixtures | screenshot via WebAPI/MCP/CLI/Lua/Python returns 640x200; Qt shows it; recipe section 4 | 1; Q12 |
 | 4 | **Turbo and details.** Turbo read-back, Turbo+ strobe decision (Q5), Magic freeze (Q7), BLKEXT, `#00` reset, INT select (Q13) | the same surfaces; recipe adds the device sections | 1; Q5-Q7, Q13 |
-| 5 | **Slots and media.** Refdata row, General Sound incompatibility, SMUC with the GMX firmware's HDD menu (disk list), floppy flow | WebAPI `slots`/`media`; MCP; recipe `slots.md` row | 1; Q14 |
+| 5 | **Slots and media.** Refdata row, General Sound incompatibility, SMUC with the GMX firmware's HDD menu (disk list), Z-Controller SD, floppy flow; OSZ boots from `OS.TRD` + the SD folder to the None Commander panel | WebAPI `slots`/`media`; MCP; recipe `slots.md` row | 1; Q14, Q19, Q20 |
 | 6 | **Evidence-driven corrections.** Anything a schematic, the Zonov manual, a flash dump or a real board settles (Q1-Q13); each is a one-line table change plus its test | none new | sources |
 
 Phases 1-3 can start once the phase 1 questions have a recorded answer; the recommendations in [TODO.md](TODO.md) are
