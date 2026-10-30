@@ -13,6 +13,10 @@ fewer than 3 distinct rows) prove nothing. A cut off by a byte, a wrong row widt
 anywhere. A piece of a larger picture does show; it is told by its surroundings: where the frame shows at two or more
 different places and the screen next to one side of it is the same non-empty band at every place, the picture goes on
 past that side (a fragment); the frame's own edge repeated there (a wall of one tile) is no continuation.
+Where memory around a claim is known, a side counts only when what memory holds past it in the claim's own layout
+(the next row, the next byte along the rows; with a mask, the pixels it covers) shows there too: tiles a map sets side
+by side and sprites stored one after another over a patterned floor are separate pictures, the top half of a sprite is
+a fragment.
 
 A backdrop (one frame 128 pixels wide or more) that does not show so is read row by row: sprites move over it, and a
 scroll by part of a byte, made when it is copied to the screen, moves each row (each band of a parallax its own) right
@@ -250,6 +254,23 @@ def aligning(row):
     return bool(row.any() and not row.all() and all(not np.array_equal(row[k:], row[:-k]) for k in range(1, 9)))
 
 
+_WINDOWS = {}
+
+
+def screen_windows(shot, w, d):
+    """value -> [(y, x)]: the screen's runs of w - d pixels from x + d on each line (built once a screen and width)"""
+    key = (id(shot), w, d)
+    if key not in _WINDOWS:
+        n, W = w - d, shot.shape[1] - w + 1
+        places = {}
+        for y in range(shot.shape[0]):
+            line = int.from_bytes(np.packbits(shot[y]).tobytes(), 'big')
+            for x in range(d, W + d):
+                places.setdefault((line >> (shot.shape[1] - x - n)) & ((1 << n) - 1), []).append((y, x - d))
+        _WINDOWS[key] = (shot, places)  # the screen kept alive: its id stays its own
+    return _WINDOWS[key][1]
+
+
 def find_backdrop(shot, ink):
     """Positions (y, x) where @p ink shows row by row: a scroll by part of a byte, made when the backdrop is copied to
     the screen, moves each row (each band of a parallax its own) right by 0..7 pixels; sprites over it break a stretch
@@ -259,17 +280,13 @@ def find_backdrop(shot, ink):
     W = shot.shape[1] - w + 1
     if W <= 0 or h > shot.shape[0]:
         return []
-    lines = [int.from_bytes(np.packbits(shot[y]).tobytes(), 'big') for y in range(shot.shape[0])]
     rows = [r for r in range(h) if aligning(ink[r])]
     if len(rows) < BACKDROP_EXACT:
         return []
     votes = {}
     for d in range(8):
         n = w - d  # the row's pixels still in the window
-        places = {}
-        for y, line in enumerate(lines):
-            for x in range(d, W + d):
-                places.setdefault((line >> (shot.shape[1] - x - n)) & ((1 << n) - 1), []).append((y, x - d))
+        places = screen_windows(shot, w, d)
         for r in rows:
             value = int.from_bytes(np.packbits(ink[r][:n]).tobytes(), 'big') >> (-n % 8)
             for y, x in places.get(value, []):
@@ -297,22 +314,112 @@ def bands(shot, y, x, h, w, depth=4):
     return out
 
 
-def backdrop_goes_on(ink, shot, y, x, around):
-    """The sides of a backdrop shown at (y, x) past which the picture goes on: the row of memory before (after) the
-    claim, @p around, shows on the screen line above (below) it"""
-    h, w = ink.shape
+def layout_of(region):
+    """(lines, length, pitch, stride, prefix, columns) of a claim's frames: lines of length cells (a byte, a mask and a
+    data byte with a mask), pitch bytes apart"""
+    g = region.get('geometry') or {}
+    w, h = int(g.get('width', 0)), int(g.get('height', 0))
+    columns = g.get('layout') == 'columns'
+    pair = 2 if g.get('mask') else 1
+    lines, length = (w // 8, h) if columns else (h, w // 8)
+    pitch = int(g.get('pitch', 0)) or length * pair
+    prefix = int(g.get('prefix', 0))
+    stride = int(g.get('stride', 0)) or (lines - 1) * pitch + length * pair + prefix
+    return lines, length, pitch, stride, prefix, columns
+
+
+def bits_of(data):
+    return np.unpackbits(np.frombuffer(bytes(data), dtype=np.uint8)).astype(bool)
+
+
+def cells_of(data, mask):
+    """(ink, cover) bits of cells: a byte each, or a mask and a data byte (cover: what the AND mask clears, and ink)"""
+    if not mask:
+        return bits_of(data), None
+    ink = bits_of(data[1::2])
+    return ink, ~bits_of(data[0::2]) | ink
+
+
+def continuation(region, fi, context):
+    """side -> (ink, cover) of the picture memory holds just past that side of frame @p fi in the claim's own layout
+    (the line before and after: a row above and below, a column left and right; the cell before and after each line
+    when the lines are a window of wider ones, pitch longer than a line); cover None: no mask; a side memory cannot go
+    on past is absent"""
+    lines, length, pitch, stride, prefix, columns = layout_of(region)
+    mask = bool((region.get('geometry') or {}).get('mask'))
+    cell = 2 if mask else 1
+    base = fi * stride + prefix
+    out = {}
+    before, after = context(base - pitch, length * cell), context(base + lines * pitch, length * cell)
+    across = {}
+    if pitch > length * cell:
+        first = [context(base + i * pitch - cell, cell) for i in range(lines)]
+        last = [context(base + i * pitch + length * cell, cell) for i in range(lines)]
+        across = {'first': None if None in first else b''.join(first),
+                  'last': None if None in last else b''.join(last)}
+
+    def shaped(data, rows, cols):
+        ink, cover = cells_of(data, mask)
+        return ink.reshape(rows, cols), None if cover is None else cover.reshape(rows, cols)
+
+    if columns:
+        # a column is length cells down: 8 pixels wide, length high
+        if before is not None:
+            out['left'] = shaped(before, length, 8)
+        if after is not None:
+            out['right'] = shaped(after, length, 8)
+        if across.get('first') is not None:
+            out['top'] = shaped(across['first'], 1, lines * 8)
+        if across.get('last') is not None:
+            out['bottom'] = shaped(across['last'], 1, lines * 8)
+    else:
+        if before is not None:
+            out['top'] = shaped(before, 1, length * 8)
+        if after is not None:
+            out['bottom'] = shaped(after, 1, length * 8)
+        if across.get('first') is not None:
+            out['left'] = shaped(across['first'], lines, 8)
+        if across.get('last') is not None:
+            out['right'] = shaped(across['last'], lines, 8)
+    return out
+
+
+def beside(shot, side, y, x, h, w):
+    """The screen just past @p side of a box (one line above / below, 8 pixels left / right); None: off the screen"""
+    H, W = shot.shape
+    if side == 'top':
+        return shot[y - 1:y, x:x + w] if y >= 1 else None
+    if side == 'bottom':
+        return shot[y + h:y + h + 1, x:x + w] if y + h < H else None
+    if side == 'left':
+        return shot[y:y + h, x - 8:x] if x >= 8 else None
+    return shot[y:y + h, x + w:x + w + 8] if x + w + 8 <= W else None
+
+
+def goes_on(cont, shot, y, x, h, w, flip, backdrop=False):
+    """The sides whose memory continuation @p cont shows just past the box: the picture goes on there (a backdrop's
+    rows as find_backdrop reads them; a masked one where its mask covers)"""
     out = set()
-    for side, row, at in (('top', around[0], y - 1), ('bottom', around[1], y + h)):
-        if row is None or len(row) * 8 != w or not 0 <= at < shot.shape[0]:
+    for side, (pic, cover) in cont.items():
+        if cover is None:
+            cover = np.ones(pic.shape, dtype=bool)
+        if not pic[cover].any() or pic[cover].all():
             continue
-        bits = np.unpackbits(np.frombuffer(bytes(row), dtype=np.uint8)).astype(bool)
-        if bits.any() and not bits.all() and backdrop_row(shot[at, x:x + w], bits) < 2:
+        if flip:
+            pic, cover = pic[:, ::-1], cover[:, ::-1]
+            side = {'left': 'right', 'right': 'left'}.get(side, side)
+        there = beside(shot, side, y, x, h, w)
+        if there is None or there.shape != pic.shape:
+            continue
+        if np.array_equal(there[cover], pic[cover]) or (
+                backdrop and pic.shape[0] == 1 and backdrop_row(there[0], pic[0]) < 2):
             out.add(side)
     return out
 
 
-def check_sprite(region, data, shots, around=None):
-    """@p around: the rows of memory just before and after a claim of one frame stored row after row (None: unknown)"""
+def check_sprite(region, data, shots, context=None):
+    """@p context(offset, length): the memory around the claim, offsets from its first byte (None: unknown, or out of
+    the page); with it, a side is a fragment's only when what memory holds past it shows there"""
     frames = frames_of(region, data)
     result = {'frames': len(frames), 'informative': 0, 'shown': 0, 'fragment': [], 'placements': []}
     if not frames:
@@ -332,8 +439,9 @@ def check_sprite(region, data, shots, around=None):
                 found = find(shot, i, c)
                 if not found and c is None and not flip and i.shape[1] >= BACKDROP_WIDTH:
                     found = find_backdrop(shot, i)
-                    if found and around:
-                        fragment_sides = (fragment_sides or set()) | backdrop_goes_on(i, shot, *found[0], around)
+                    if found and context:
+                        fragment_sides = (fragment_sides or set()) | goes_on(
+                            continuation(region, fi, context), shot, *found[0], *i.shape, False, backdrop=True)
                 for (y, x) in found:
                     places.append((si, y, x, flip))
         if not places:
@@ -356,7 +464,13 @@ def check_sprite(region, data, shots, around=None):
                     sides = {k: v for k, v in b.items() if v is not None and v.any()}
                 else:
                     sides = {k: v for k, v in sides.items() if b.get(k) is not None and np.array_equal(b[k], v)}
-            fragment_sides = (fragment_sides or set()) | set(sides or {})
+            sides = set(sides or {})
+            if sides and context:
+                # Only where memory goes on past the side as it shows there: tiles a map always sets side by side
+                # (a building) are no fragment, the top half of a sprite is
+                cont = continuation(region, fi, context)
+                sides &= set().union(*(goes_on(cont, shots[si][1], y, x, h, w, flip) for si, y, x, flip in places))
+            fragment_sides = (fragment_sides or set()) | sides
     result['fragment'] = sorted(fragment_sides or [])
     if result['informative'] == 0:
         result['status'] = 'trivial'
@@ -621,8 +735,8 @@ def check_contents(memory, region, variants, shots):
     """(the best result and its data, every (result, data) that verifies) over the contents of a sprite claim: every
     content that verifies explains its placements (a scrolled backdrop: each screen its own)"""
     best, shown = None, []
-    for data, around in with_rows_around(memory, region, variants):
-        res = check_sprite(region, data, shots, around)
+    for data, context in with_context(memory, region, variants):
+        res = check_sprite(region, data, shots, context)
         if best is None or RANK[res['status']] > RANK[best[0]['status']]:
             best = (res, data)
         if res['status'] == 'verified':
@@ -630,21 +744,24 @@ def check_contents(memory, region, variants, shots):
     return best, shown
 
 
-def with_rows_around(memory, region, variants):
-    """(data, around) of each content: a backdrop (one frame, BACKDROP_WIDTH or wider, stored row after row) with the
-    rows of memory just before and after it in the same page, read from the same content; else around None"""
-    g = region.get('geometry') or {}
-    w = int(g.get('width', 0))
+def with_context(memory, region, variants):
+    """(data, context) of each content: context(offset, length) reads the memory around the claim in the same content
+    (offsets from its first byte; None past the page or the window)"""
+    lines, length, pitch, stride, prefix, columns = layout_of(region)
     start, end = int(region['start'][1:], 16), int(region['end'][1:], 16)
-    pitch = int(g.get('pitch', 0)) or w // 8
-    if (not is_backdrop(region) or (start - pitch) >> 14 != start >> 14 or (end + pitch) >> 14 != end >> 14 or start < 0x4000):
+    margin = pitch + 2
+    lo, hi = max(start - margin, start & 0xC000), min(end + margin, (start & 0xC000) + 0x3FFF)
+    if start < 0x4000 or not length:
         return [(data, None) for data in variants]
-    wide = dict(region, start=f'${start - pitch:04X}', end=f'${end + pitch:04X}')
+    wide = dict(region, start=f'${lo:04X}', end=f'${hi:04X}')
     out = []
     for ext in memory.variants(wide):
-        data = ext[pitch:len(ext) - pitch]
+        data = ext[start - lo:start - lo + len(variants[0])]
         if data in variants and all(data != d for d, _ in out):
-            out.append((data, (ext[:w // 8], ext[len(ext) - pitch:len(ext) - pitch + w // 8])))
+            def context(offset, n, ext=ext):
+                at = start - lo + offset
+                return bytes(ext[at:at + n]) if 0 <= at and at + n <= len(ext) and n > 0 else None
+            out.append((data, context))
     return out + [(data, None) for data in variants if all(data != d for d, _ in out)]
 
 

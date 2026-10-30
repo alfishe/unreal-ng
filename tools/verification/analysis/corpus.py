@@ -235,6 +235,11 @@ CONTROL_PAIRS = [(['O', 'KL'], ['P', 'KR']), (['Q', 'KU'], ['A', 'KD']), (['6'],
 EXPLORE_IDLE = 100   # frames before the first key (the attract mode settles)
 EXPLORE_AFTER = 100  # frames after a key before the screen is compared
 EXPLORE_HOLD = 6
+EXPLORE_LONGWAIT = 500  # the LONGWAIT step
+EXPLORE_LONG_HOLD = 30  # the key again, held longer, when the screen has not changed (a game that reads keys seldom)
+# then more frames (a key that starts slow work: a level drawn), up to a LONGWAIT in all: a retried key that leaves the
+# LONGWAIT screen did nothing
+EXPLORE_LATE = EXPLORE_LONGWAIT - EXPLORE_HOLD - EXPLORE_AFTER - EXPLORE_LONG_HOLD
 EXPLORE_DEPTH = 10  # keys in a row at most
 EXPLORE_BEAM = 6    # states kept at each depth (at most two reached by the same key)
 CONTROL_CELLS = (3, 120)  # a moved player: a few cells, not a page
@@ -274,17 +279,32 @@ class Explorer:
         self.m.post('/snapshot/load', {'path': path})
 
     def tap(self, key):
-        """A key held EXPLORE_HOLD frames, then EXPLORE_AFTER frames; WAIT the same frames with no key (time is a
-        step too: a page that prints slowly reads no keys), LONGWAIT 500 frames"""
+        """A key held EXPLORE_HOLD frames, then EXPLORE_AFTER frames; when the screen is still the one before the key,
+        the key again for EXPLORE_LONG_HOLD frames and EXPLORE_LATE frames after it; WAIT the same frames with no key (time is a step too: a page that prints slowly reads
+        no keys), LONGWAIT EXPLORE_LONGWAIT frames. Returns the frames run"""
         if key in ('WAIT', 'LONGWAIT'):
-            run_frames(self.m, EXPLORE_HOLD + EXPLORE_AFTER if key == 'WAIT' else 500, None, 0)
-            return
+            frames = EXPLORE_HOLD + EXPLORE_AFTER if key == 'WAIT' else EXPLORE_LONGWAIT
+            run_frames(self.m, frames, None, 0)
+            return frames
+        before = screen_signature(self.m)
         self.player.set([key])
         run_frames(self.m, EXPLORE_HOLD, None, 0)
         self.player.set([])
         run_frames(self.m, EXPLORE_AFTER, None, 0)
+        if screen_signature(self.m) != before:
+            return EXPLORE_HOLD + EXPLORE_AFTER
+        self.player.set([key])
+        run_frames(self.m, EXPLORE_LONG_HOLD, None, 0)
+        self.player.set([])
+        run_frames(self.m, EXPLORE_LATE, None, 0)
+        return EXPLORE_LONGWAIT
 
     def controlled(self, state):
+        # A moved player leaves the rest of the screen as the same frames with no key leave it: a pair whose screens
+        # are both far from that one went to another page (any key leaves an attract mode), only at another moment
+        self.restore(state)
+        run_frames(self.m, CONTROL_FRAMES, None, 0)
+        idle = screen_signature(self.m)
         for one, other in CONTROL_PAIRS:
             shots = []
             for keys in (one, other):
@@ -294,7 +314,8 @@ class Explorer:
                 self.player.set([])
                 shots.append(screen_signature(self.m))
             d = cells_differ(*shots)
-            if CONTROL_CELLS[0] <= d <= CONTROL_CELLS[1]:
+            if CONTROL_CELLS[0] <= d <= CONTROL_CELLS[1] and \
+                    min(cells_differ(idle, shot) for shot in shots) <= CONTROL_CELLS[1]:
                 return one + other, d
         return None, 0
 
@@ -316,10 +337,17 @@ class Explorer:
         for depth in range(1, EXPLORE_DEPTH + 1):
             candidates = []
             for state, steps, shot0 in frontier:
+                waited = None
                 for key in EXPLORE_KEYS:
                     self.restore(state)
-                    self.tap(key)
+                    frames = self.tap(key)
                     shot = screen_signature(self.m)
+                    if key == 'LONGWAIT':
+                        waited = shot
+                    elif frames == EXPLORE_LONGWAIT and shot == waited:
+                        # a retried key that did nothing: only time passed, and that screen (a blink phase, a
+                        # later page) must not hide a key that does something from another state
+                        continue
                     if shot in seen:
                         continue
                     seen.add(shot)
@@ -351,9 +379,7 @@ class Explorer:
 
     def play(self, steps):
         run_frames(self.m, EXPLORE_IDLE, None, 0)
-        for key in steps:
-            self.tap(key)
-        return EXPLORE_IDLE + sum(500 if k == 'LONGWAIT' else EXPLORE_HOLD + EXPLORE_AFTER for k in steps)
+        return EXPLORE_IDLE + sum(self.tap(key) for key in steps)
 
     def clean(self):
         for f in glob.glob(os.path.join(self.folder, 'explore-*.szx')):

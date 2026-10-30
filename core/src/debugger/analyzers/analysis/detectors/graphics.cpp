@@ -226,9 +226,14 @@ std::vector<Piece> Pieces(const std::vector<DrawnByte>& drawn)
         for (const auto& [residue, count] : starts)
             if (count > startCount)
                 start = residue, startCount = count;
-        int64_t firstLine = -1;
-        uint32_t lines = 0, length = 0, bytes = 0;
-        std::vector<std::pair<int64_t, uint32_t>> cells;
+        struct Cell
+        {
+            int64_t line = 0;
+            uint32_t cell = 0;
+            size_t member = 0;
+        };
+        std::vector<Cell> cells;
+        std::map<int64_t, std::pair<uint64_t, uint32_t>> lineDraws;  // line -> draws, bytes
         for (const size_t i : members)
         {
             const int64_t at = static_cast<int64_t>(KeyOffset(drawn[i].key)) - start;
@@ -236,39 +241,77 @@ std::vector<Piece> Pieces(const std::vector<DrawnByte>& drawn)
             const int64_t within = at - line * pitch;
             if (within % stride != 0)
                 continue;
-            cells.emplace_back(line, static_cast<uint32_t>(within / stride));
+            cells.push_back(Cell{line, static_cast<uint32_t>(within / stride), i});
+            lineDraws[line].first += drawn[i].draws;
+            ++lineDraws[line].second;
         }
-        if (cells.size() < kMinPieceBytes)
-            continue;
-        for (const auto& [line, cell] : cells)
-            firstLine = firstLine < 0 || line < firstLine ? line : firstLine;
-        for (const auto& [line, cell] : cells)
+        // Lines no step across links (down a row, right a column), drawn a different number of times or one twice as
+        // wide as the other, are two pictures: frames stored back to back, the last row of one beside the first of the
+        // next only by the spill byte a shifted sprite reads past its row (the byte after the last frame, read so)
+        std::set<int64_t> crossed;
+        for (const Cell& c : cells)
+            if (const size_t j = linked(c.member, piece.columns ? drawn[c.member].right : drawn[c.member].down); j < n)
+                if (KeyOffset(drawn[j].key) == KeyOffset(drawn[c.member].key) + pitch)
+                    crossed.insert(c.line);
+        const auto mean = [&](int64_t line) {
+            const auto& [draws, count] = lineDraws[line];
+            return static_cast<double>(draws) / count;
+        };
+        std::map<int64_t, int64_t> runOf;  // line -> the first line of its run
+        int64_t run = 0;
+        for (auto it = lineDraws.begin(); it != lineDraws.end(); ++it)
         {
-            lines = std::max(lines, static_cast<uint32_t>(line - firstLine) + 1);
-            length = std::max(length, cell + 1);
-            ++bytes;
+            if (it == lineDraws.begin())
+                run = it->first;
+            else if (const int64_t before = std::prev(it)->first; before + 1 == it->first && !crossed.count(before))
+            {
+                const double a = mean(before), b = mean(it->first);
+                const uint32_t wa = lineDraws[before].second, wb = it->second.second;
+                if (std::max(a, b) >= 2 * std::min(a, b) || std::max(wa, wb) >= 2 * std::min(wa, wb))
+                    run = it->first;
+            }
+            runOf[it->first] = run;
         }
-        const uint32_t across = piece.columns ? lines : length;
-        const uint32_t down = piece.columns ? length : lines;
-        if (across >= 32 || down <= 1 || down > 192 || bytes * 4 < across * down || length * stride > pitch)
-            continue;
-        const int64_t base = static_cast<int64_t>(start) + firstLine * pitch;
-        if (base < 0 || base + (lines - 1) * pitch + (length - 1) * stride >= 0x4000)
-            continue;
-        const PhysKey page = MakeKey(KeyPage(drawn[members.front()].key), 0);
-        piece.first = page + static_cast<uint32_t>(base);
-        piece.last = piece.first + (lines - 1) * pitch + (length - 1) * stride;
-        piece.stride = stride;
-        piece.pitch = pitch == length * stride ? 0 : pitch;
-        piece.width = static_cast<uint16_t>(across);
-        piece.height = static_cast<uint16_t>(down);
-        for (const size_t i : members)
+        std::map<int64_t, std::vector<const Cell*>> runs;
+        for (const Cell& c : cells)
+            runs[runOf[c.line]].push_back(&c);
+        for (const auto& [_, part] : runs)
         {
-            piece.draws += drawn[i].draws;
-            if (drawn[i].writer != kNoKey && piece.writers.size() < 8)
-                piece.writers.insert(drawn[i].writer);
+            if (part.size() < kMinPieceBytes)
+                continue;
+            int64_t firstLine = part.front()->line;
+            uint32_t lines = 0, length = 0;
+            for (const Cell* c : part)
+                firstLine = std::min(firstLine, c->line);
+            for (const Cell* c : part)
+            {
+                lines = std::max(lines, static_cast<uint32_t>(c->line - firstLine) + 1);
+                length = std::max(length, c->cell + 1);
+            }
+            const auto bytes = static_cast<uint32_t>(part.size());
+            const uint32_t across = piece.columns ? lines : length;
+            const uint32_t down = piece.columns ? length : lines;
+            if (across >= 32 || down <= 1 || down > 192 || bytes * 4 < across * down || length * stride > pitch)
+                continue;
+            const int64_t base = static_cast<int64_t>(start) + firstLine * pitch;
+            if (base < 0 || base + (lines - 1) * pitch + (length - 1) * stride >= 0x4000)
+                continue;
+            Piece cut = piece;
+            const PhysKey page = MakeKey(KeyPage(drawn[members.front()].key), 0);
+            cut.first = page + static_cast<uint32_t>(base);
+            cut.last = cut.first + (lines - 1) * pitch + (length - 1) * stride;
+            cut.stride = stride;
+            cut.pitch = pitch == length * stride ? 0 : pitch;
+            cut.width = static_cast<uint16_t>(across);
+            cut.height = static_cast<uint16_t>(down);
+            for (const Cell* c : part)
+            {
+                cut.draws += drawn[c->member].draws;
+                if (drawn[c->member].writer != kNoKey && cut.writers.size() < 8)
+                    cut.writers.insert(drawn[c->member].writer);
+            }
+            out.push_back(cut);
         }
-        out.push_back(piece);
     }
     std::sort(out.begin(), out.end(), [](const Piece& a, const Piece& b) { return a.first < b.first; });
     return out;
@@ -340,7 +383,7 @@ public:
         {
             // The pieces in the pages the start's paging shows, then those of each page it did not (a bank switched
             // in later: scenery in another 128 K page), seen at bank 3
-            _pieces = Pieces(_context.l1.drawn);
+            _pieces = Pieces(Pictures(_context.l1.drawn));
             std::set<int> views{-1};
             for (const Piece& p : _pieces)
                 if (std::find(std::begin(_context.l1.startBanks), std::end(_context.l1.startBanks), KeyPage(p.first)) ==
@@ -958,7 +1001,8 @@ private:
         Region copy = r;
         Add(std::move(r), live, liveEnd);
 
-        // Inside a buffer: the same object in each of the buffer's sources (buffers are in the start's paging)
+        // Inside a buffer: the same object in each of the buffer's sources, in the page a copy read it from (a
+        // source no copy names, one the lattice inferred: the start's paging)
         for (const media::BufferCopy& buffer : _buffers)
         {
             if (_view >= 0)
@@ -987,18 +1031,52 @@ private:
                                                          std::string("copied to the buffer at ") + Hex(buffer.lo) +
                                                              (shown ? ", the blit read its bytes there"
                                                                     : ", drawn from the buffer")});
-                Add(std::move(r2), static_cast<uint16_t>(at), static_cast<uint16_t>(end));
+                Add(std::move(r2), static_cast<uint16_t>(at), static_cast<uint16_t>(end), SourcePage(at, live));
             }
         }
     }
 
-    void Add(Region r, uint16_t lo, uint16_t hi)
+    /// The drawn bytes less a working buffer's: a byte drawn more than twice a frame (both screens: twice) and written
+    /// as often as it is drawn holds a value computed for each draw (a line buffer a routine fills, shifts and prints
+    /// row after row), no picture of its own
+    std::vector<DrawnByte> Pictures(const std::vector<DrawnByte>& drawn) const
     {
-        if (!_claimed.insert({KeyAt(lo), KeyAt(hi), static_cast<uint8_t>(r.kind)}).second)
+        std::vector<DrawnByte> out;
+        out.reserve(drawn.size());
+        for (const DrawnByte& d : drawn)
+        {
+            const ByteUse* u = _context.l1.UseAt(d.key);
+            if (u != nullptr && d.draws > 2ull * d.frames && u->writes >= d.draws)
+                continue;
+            out.push_back(d);
+        }
+        return out;
+    }
+
+    /// The page a block copy read @p at from to put it at @p to (-1: no copy did)
+    int SourcePage(uint32_t at, uint32_t to) const
+    {
+        for (const BlockCopy& c : _context.l1.copies)
+        {
+            const uint32_t src = c.dir > 0 ? c.src : static_cast<uint16_t>(c.src - (c.length - 1));
+            const uint32_t dst = c.dir > 0 ? c.dst : static_cast<uint16_t>(c.dst - (c.length - 1));
+            if (at >= src && at < src + c.length && to >= dst && at - src == to - dst)
+                return KeyPage(c.srcKey);
+        }
+        return -1;
+    }
+
+    /// Claims @p r on @p lo..hi, in @p page when one is given (else the view's, else the start's paging)
+    void Add(Region r, uint16_t lo, uint16_t hi, int page = -1)
+    {
+        const auto key = [&](uint16_t z80) {
+            return page >= 0 ? MakeKey(static_cast<uint16_t>(page), z80) : KeyAt(z80);
+        };
+        if (!_claimed.insert({key(lo), key(hi), static_cast<uint8_t>(r.kind)}).second)
             return;
         if (_view < 0)
             r.users = _context.UsersOf(lo, hi);
-        _context.Claim(std::move(r), KeyAt(lo), lo, hi);
+        _context.Claim(std::move(r), key(lo), lo, hi);
     }
 };
 

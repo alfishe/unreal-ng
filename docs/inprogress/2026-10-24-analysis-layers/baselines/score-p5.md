@@ -101,7 +101,7 @@ scored the same way:
 | subagent tokens | no ledger (dummy: 150,000) | 2,034,851 |
 
 Gate: pass (all 7 steps). Verdict: fail, as expected for the draft alone: 2 code entries short of run B, and no ledger.
-The review-only agent run by the recipe ([analysis-layers.md](../../../../.recipe/analysis/analysis-layers.md)) is the
+The review-only agent run by the recipe ([reverse-engineering.md](../../../../.recipe/analysis/reverse-engineering.md)) is the
 run that has to close both; `run_ab.py` judges it with its ledger.
 
 ## Run C: the review agent

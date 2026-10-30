@@ -1060,6 +1060,35 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_BackBufferCopiedByRows)
     EXPECT_EQ(buffer->Z80End(), At("buffer") + 23 * 32 + 23) << MediaClaims(b.l2);
 }
 
+/// A working buffer filled, shifted and drawn for each of 8 columns is no picture: its bytes are drawn 8 times a frame
+/// and written as often
+TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_LineBufferIsNoPicture)
+{
+    const Built& b = Run("line-buffer.asm", 10);
+    ASSERT_FALSE(HasFailure());
+    const uint16_t linebuf = At("linebuf");
+    for (const Region& r : b.l2.store.Regions())
+        if (r.kind == RegionKind::Sprite || r.kind == RegionKind::Tile || r.kind == RegionKind::Font)
+            EXPECT_FALSE(r.z80 <= linebuf + 15 && r.Z80End() >= linebuf) << MediaClaims(b.l2);
+    // The picture copied into it stays one
+    const Region* picture = StartsAt(At("picture"), RegionKind::Sprite, DetectorId::Graphics);
+    ASSERT_NE(picture, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(picture->geometry.height, 8u) << MediaClaims(b.l2);
+}
+
+/// Two frames stored back to back, the first one's last row drawn beside the second one's first byte (a shifted
+/// sprite's spill byte read past the row): two frames, the step onto the next frame's first row links no line
+TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_SpillByteSplitsFrames)
+{
+    const Built& b = Run("spill-byte.asm", 10);
+    ASSERT_FALSE(HasFailure());
+    const Region* sprite = StartsAt(At("frames"), RegionKind::Sprite, DetectorId::Graphics);
+    ASSERT_NE(sprite, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(sprite->geometry.width, 16u) << MediaClaims(b.l2);
+    EXPECT_EQ(sprite->geometry.height, 8u) << MediaClaims(b.l2);
+    EXPECT_EQ(sprite->geometry.frames, 2u) << MediaClaims(b.l2);
+}
+
 /// The export states the graphics: an image macro SkoolKit draws (in #UDGTABLE, which skool2asm drops) and the
 /// geometry JSON with stride, mask, prefix and layout
 TEST_F(AnalysisL2_Test, GraphicsGeometryInTheDraft)
@@ -1234,6 +1263,30 @@ TEST_F(AnalysisL2_Test, ReviewKindInsideABufferKeepsItsAlignAndFields)
     EXPECT_EQ(aligned(retyped.text), aligned(plain.text)) << retyped.text;
     EXPECT_NE(retypedFields.text.find("\"base\": \"$9000\""), std::string::npos)
         << "the buffer keeps its fields\n" << retypedFields.text;
+}
+
+/// A reviewer writes a port the way the hardware docs do ("port #FE"): a '#' starts a SkoolKit macro, and skool2asm
+/// stopped at "unknown macro: #FE" (the Skool Daze review), so the draft writes it as #CHR(35)#HTML()
+TEST_F(AnalysisL2_Test, ReviewTextHashIsNoMacro)
+{
+    Run("buffer-page.asm");
+    ASSERT_FALSE(HasFailure());
+    ExportOptions options;
+    options.ranges = {{0x8000, 0x9FFF}};
+    const DraftPlan plan = MakePlan(_built->l1, _built->l2, options);
+    ASSERT_GE(plan.entries.size(), 2u);
+    const uint16_t first = plan.entries[0].start;
+    const uint16_t inner = static_cast<uint16_t>(plan.entries[1].start + 1);
+    std::map<uint16_t, ExportNote> notes;
+    notes[first].title = "Beep through port #FE";
+    notes[first].comments = {"Bit 4 of #FE is the speaker."};
+    notes[inner].title = "Read #FE";
+    const ExportResult skool = ExportDraft("skool", 8, {{0x8000, 0x9FFF}}, notes);
+    ASSERT_TRUE(skool.ok) << skool.error;
+    EXPECT_EQ(skool.text.find("#FE"), std::string::npos) << skool.text;
+    EXPECT_NE(skool.text.find("; Beep through port #CHR(35)#HTML()FE\n"), std::string::npos) << skool.text;
+    EXPECT_NE(skool.text.find("Bit 4 of #CHR(35)#HTML()FE is the speaker."), std::string::npos) << skool.text;
+    EXPECT_NE(skool.text.find("Read #CHR(35)#HTML()FE"), std::string::npos) << skool.text;
 }
 
 TEST_F(AnalysisL2_Test, SkoolDraftIsub)

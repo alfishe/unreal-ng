@@ -9,7 +9,7 @@ adds the **L2 structure** (detectors over L1, a region store) and the **draft**:
 writes a SkoolKit ctl / skool that builds relocatable, the record fields, a relocation layout and symbols. Phase P4
 adds the media detectors and the gallery. Phase P5 adds **L3 review**: the findings register, the review queue whose
 decisions go into the draft, the experiment runner on muted clones, directed coverage and candidate bugs. The agent
-workflow on top of it: [.recipe/analysis/analysis-layers.md](../../../.recipe/analysis/analysis-layers.md).
+workflow on top of it: [.recipe/analysis/reverse-engineering.md](../../../.recipe/analysis/reverse-engineering.md).
 
 ## L0 access facts
 
@@ -215,19 +215,23 @@ past the frame size sets the step; frames drawn between two seen ones are filled
 
 Drawn pieces: graphics drawn without a blit loop (unrolled LDI chains, stack copies, back buffers) are found from the
 value flow (`l1valueflow.h`). Every byte written to the screen's pixels names the memory byte its value came from (a
-copy keeps its source; a copied byte whose value goes to more than two places before it is written again is a table,
-the source itself; a buffer's byte goes to one place, two with both screens), and at each frame end each drawn source
-byte votes for the source bytes shown to its right and below it (`DrawStep`: the majority delta, steady at two or more
-frame ends). Bytes linked by steady steps form a piece (a right step longer than a mask's links only when every byte
-between is drawn too: the letters of a text are no column picture), then again by the set's most common pair of steps
-only (tiles a map stacks stay apart). The pair is the layout: right 1 (2 with a mask) and down the row pitch, stored in
-rows; down 1 (2) and right the column pitch, in columns. A line starts at a byte the one a stride back does not step
-to along the line (rows stored back to back: the end of the line before has no step right), the most common residue
-of those modulo the pitch; the cells drawn give the width and height. Pieces in a page not mapped at the start are
-read with that page in bank 3. An object whose frames are all one value in every byte (a back buffer's blank) is no
-picture. 8 x 8 frames on one lattice are a font of the game's own codes when eight or more different ones are drawn,
-not picked by a map, and the routine writing them to the screen reads them itself (printed straight to the screen;
-tiles composed in a back buffer and copied to the screen are sprites).
+copy keeps its source; a copied byte whose value goes to more than two places before it is written again is a table, the
+source itself; a buffer's byte goes to one place, two with both screens), and at each frame end each drawn source byte
+votes for the source bytes shown to its right and below it (`DrawStep`: the majority delta, steady at two or more frame
+ends). Bytes linked by steady steps form a piece (a right step longer than a mask's links only when every byte between
+is drawn too: the letters of a text are no column picture), then again by the set's most common pair of steps only
+(tiles a map stacks stay apart). The pair is the layout: right 1 (2 with a mask) and down the row pitch, stored in rows;
+down 1 (2) and right the column pitch, in columns. A line starts at a byte the one a stride back does not step to along
+the line (rows stored back to back: the end of the line before has no step right), the most common residue of those
+modulo the pitch; the cells drawn give the width and height. Two lines no step down (right, in columns) links, drawn a
+different number of times or one twice as wide as the other, are two pictures: frames stored back to back that a shifted
+sprite's spill byte, read past the row, put side by side. Pieces in a page not mapped at the start are read with that
+page in bank 3; a piece seen through a buffer is claimed in the page the block copy into the buffer read it from. A
+working buffer is no picture: a byte drawn more than twice a frame and written at least as often (a line buffer filled,
+shifted and printed for each row) holds a value made for each draw. An object whose frames are all one value in every
+byte (a back buffer's blank) is no picture. 8 x 8 frames on one lattice are a font of the game's own codes when eight or
+more different ones are drawn, not picked by a map, and the routine writing them to the screen reads them itself
+(printed straight to the screen; tiles composed in a back buffer and copied to the screen are sprites).
 
 At the end each buffer gets its field list (`FinishBufferFields`): one field per claim inside it, a group followed by
 its variables, the spans between as `unclaimed` (split where a page the code named by its high byte starts).

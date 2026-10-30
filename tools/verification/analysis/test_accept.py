@@ -31,6 +31,14 @@ def put(shot, picture, y, x):
     shot[y:y + h, x:x + w] |= picture
 
 
+def context_of(memory, at):
+    """context(offset, length) over @p memory, the claim's first byte at @p at"""
+    def context(offset, n):
+        lo = at + offset
+        return bytes(memory[lo:lo + n]) if 0 <= lo and lo + n <= len(memory) and n > 0 else None
+    return context
+
+
 def region(kind, start, data_len, **geometry):
     return {'kind': kind, 'start': f'${start:04X}', 'end': f'${start + data_len - 1:04X}', 'geometry': geometry}
 
@@ -86,6 +94,22 @@ class Sprites(unittest.TestCase):
         self.assertEqual(r['status'], 'fragment', r)
         self.assertIn('bottom', r['fragment'])
 
+    def test_top_half_with_memory_is_a_fragment(self):
+        # the rows after it in memory show below it
+        r = accept.check_sprite(region('sprite', 0x8000, 16, width=16, height=8, frames=1, stride=16),
+                                MAN_BYTES[:16], self.shots, context_of(MAN_BYTES, 0))
+        self.assertEqual(r['status'], 'fragment', r)
+
+    def test_tiles_a_map_sets_together_are_no_fragment(self):
+        # two tiles stored apart, always drawn one above the other (a building): each a whole tile
+        top, bottom = MAN_BYTES[:16], MAN_BYTES[16:]
+        memory = top + bytes([0x99] * 40) + bottom
+        claim = region('tile', 0x8000, 16, width=16, height=8, frames=1, stride=16)
+        r = accept.check_sprite(claim, top, self.shots, context_of(memory, 0))
+        self.assertEqual(r['status'], 'verified', r)
+        r = accept.check_sprite(claim, top, self.shots)  # no memory to tell: the screen alone says it goes on
+        self.assertEqual(r['status'], 'fragment', r)
+
     def test_columns_layout(self):
         cols = bytes(MAN_BYTES[y * 2 + c] for c in range(2) for y in range(16))
         r = self.check(cols, width=16, height=16, frames=1, stride=32, layout='columns')
@@ -114,6 +138,24 @@ class Sprites(unittest.TestCase):
         r = accept.check_sprite(region('sprite', 0x8000, len(data), width=16, height=16, mask=True, stride=64),
                                 data, shots)
         self.assertEqual(r['status'], 'verified', r)
+
+    def test_masked_on_a_patterned_floor(self):
+        # the man masked onto a checkered floor at three places: the floor around him is the same band at each one
+        s = (np.indices((192, 256)).sum(axis=0) % 2).astype(bool)
+        for y, x in ((40, 36), (100, 130), (150, 8)):
+            s[y:y + 16, x:x + 16] = sprite_bits(MAN)
+        shots = [('f.scr', s)]
+        masked = bytes(v for b in MAN_BYTES for v in (0x00, b))
+        other = bytes(v for _ in range(16) for v in (0x00, rng.randrange(1, 255)))
+        claim = region('sprite', 0x8000, len(masked), width=16, height=16, mask=True, stride=64)
+        # sprites stored one after another: what memory holds past him does not show there
+        memory = other + masked + other
+        r = accept.check_sprite(claim, masked, shots, context_of(memory, len(other)))
+        self.assertEqual(r['status'], 'verified', r)
+        # his top half: memory goes on with his legs, shown below it
+        top = region('sprite', 0x8000, 32, width=16, height=8, mask=True, stride=32)
+        r = accept.check_sprite(top, masked[:32], shots, context_of(other + masked, len(other)))
+        self.assertEqual(r['status'], 'fragment', r)
 
     def test_a_wall_of_one_tile_is_no_fragment(self):
         tile = [[0xFF], [0x81], [0xBD], [0xA5], [0xA5], [0xBD], [0x81], [0xFF]]
@@ -148,9 +190,9 @@ class Backdrops(unittest.TestCase):
         put(s, sprite_bits(MAN), 60, 120)
         self.shots = [('b.scr', s)]
 
-    def check(self, data, around=None):
+    def check(self, data, context=None):
         return accept.check_sprite(region('sprite', 0x8000, len(data), width=240, height=60), data, self.shots,
-                                   around)
+                                   context)
 
     def test_backdrop_is_verified(self):
         r = self.check(self.data)
@@ -162,9 +204,10 @@ class Backdrops(unittest.TestCase):
             r = self.check(data)
             self.assertNotEqual(r['status'], 'verified', r)
         # a row short at the top: the row before it in memory shows above it
-        r = self.check(self.data[30:] + bytes(30), (self.data[:30], None))
+        r = self.check(self.data[30:] + bytes(30), context_of(self.data + bytes(30), 30))
         self.assertEqual(r['status'], 'fragment', r)
-        self.assertEqual(self.check(self.data, (bytes(30), None))['status'], 'verified')
+        self.assertEqual(self.check(self.data, context_of(bytes(30) + self.data + bytes(30), 30))['status'],
+                         'verified')
         # a row of something else at the bottom, the blank top row left out: no row before it to tell
         top_blank = bytes(30) + self.data[30:]
         r = accept.check_sprite(region('sprite', 0x8000, len(top_blank), width=240, height=60), top_blank[30:] +

@@ -163,6 +163,17 @@ std::string Trim(const std::string& text)
     return text.substr(from, text.find_last_not_of(' ') - from + 1);
 }
 
+/// A reviewer's title or comment as skool text: a '#' starts a SkoolKit macro ("port #FE" stops skool2asm with
+/// "unknown macro"), so it is written as #CHR(35)#HTML(): skool2asm expands the '#' of #CHR(35) again together with
+/// what follows ("#CHR(35)FE" is "#FE" once more), and the empty #HTML() between them prints nothing in any writer
+std::string ReviewText(const std::string& text)
+{
+    std::string out;
+    for (const char c : text)
+        out += c == '#' ? std::string("#CHR(35)#HTML()") : std::string(1, c);
+    return out;
+}
+
 std::string Plural(uint64_t n, const char* one, const char* many)
 {
     return std::to_string(n) + " " + (n == 1 ? one : many);
@@ -836,7 +847,7 @@ struct Exporter
                 reloc.labels[e.start] = note.label;
             }
             if (!note.title.empty())
-                e.title = note.title;
+                e.title = ReviewText(note.title);
         }
     }
 
@@ -852,9 +863,9 @@ struct Exporter
             {
                 const bool atStart = it->first == e.start;
                 if (!atStart && !it->second.title.empty())
-                    lines.push_back(Hex4(it->first) + ": " + it->second.title);
+                    lines.push_back(Hex4(it->first) + ": " + ReviewText(it->second.title));
                 for (const std::string& comment : it->second.comments)
-                    lines.push_back(atStart ? comment : Hex4(it->first) + ": " + comment);
+                    lines.push_back(atStart ? ReviewText(comment) : Hex4(it->first) + ": " + ReviewText(comment));
                 // Inside an instruction no label can go (ApplyNoteInnerLabels puts the others)
                 const CodeLine* over = lineOver[it->first];
                 if (!atStart && !it->second.label.empty() && over != nullptr && over->z80 != it->first)

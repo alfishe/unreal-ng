@@ -7,7 +7,7 @@ project and the reference score (reaper_gate.py), its token ledger against run B
       --reference mm.skool --expected tools/verification/analysis/expected/manic-miner-records.json \\
       --venv scratch/skoolkit-venv --bin scratch/reaper-mm/bin [--run-b-skool run-B/compare/B.skool]
 
-It runs no agent: a review-only agent works on the draft by the recipe (.recipe/analysis/analysis-layers.md), its
+It runs no agent: a review-only agent works on the draft by the recipe (.recipe/analysis/reverse-engineering.md), its
 draft directory and its ledger come in here.
 
 --draft: a directory with draft.skool, draft.layout.mk, draft.fields.json, draft.geometry.json (mm_session.py's

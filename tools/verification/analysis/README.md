@@ -90,7 +90,7 @@ The A/B harness (P5): a draft directory (`draft.skool`, `draft.layout.mk`, `draf
 score), and a token ledger in run B's format
 ([run-b-token-ledger.json](../../../docs/inprogress/2026-10-24-analysis-layers/baselines/run-b-token-ledger.json):
 `{"run_c": {"agents": [{"id", "group", "model", "tokens", "tool_calls", "wall_s"}]}}`) against run B's. It runs no
-agent: the review agent works by [the recipe](../../../.recipe/analysis/analysis-layers.md) and hands in its draft
+agent: the review agent works by [the recipe](../../../.recipe/analysis/reverse-engineering.md) and hands in its draft
 and ledger. Without `--ledger` (or with an empty file) only the quality side is judged.
 
 ```bash
