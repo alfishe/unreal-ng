@@ -60,6 +60,7 @@ void TTDPortJournal::Clear()
     _droppedBlocks = 0;
     _sealedRecords = 0;
     _open.clear();
+    ++_openEdits;
     _cache = ReadCache{};
     ResetStatistics();
 }
@@ -257,6 +258,7 @@ void TTDPortJournal::SealOpenBlock()
     _blocks.push_back(MakeBlock(_open));
     _sealedRecords += _open.size();
     _open.clear();
+    ++_openEdits;
 }
 
 void TTDPortJournal::TruncateTo(uint64_t count)
@@ -282,6 +284,7 @@ void TTDPortJournal::TruncateTo(uint64_t count)
     {
         _open.resize(static_cast<size_t>(count - _sealedRecords));
     }
+    ++_openEdits;
     if (_cursor > Size())
         _cursor = Size();
 }
@@ -325,7 +328,15 @@ size_t TTDPortJournal::SerializedBytes() const
     for (const Block& b : _blocks)
         bytes += b.compressed.size() + kBlockHeader;
     if (!_open.empty())
-        bytes += MakeBlock(_open).compressed.size() + kBlockHeader;
+    {
+        if (_openBytesEdits != _openEdits || _openBytesRecords != _open.size())
+        {
+            _openBytes = MakeBlock(_open).compressed.size();
+            _openBytesEdits = _openEdits;
+            _openBytesRecords = _open.size();
+        }
+        bytes += _openBytes + kBlockHeader;
+    }
     return bytes;
 }
 
@@ -452,6 +463,7 @@ bool TTDPortJournal::Deserialize(std::istream& in, uint32_t checkpointCount, std
         if (last && b.records < kBlockRecords)
         {
             _open = std::move(decoded);  // the last partial block is the open block again
+            ++_openEdits;
             decoded.clear();
         }
         else

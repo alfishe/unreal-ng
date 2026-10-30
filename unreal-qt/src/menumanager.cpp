@@ -6,6 +6,7 @@
 #include <QSettings>
 #include <algorithm>
 #include <set>
+#include <utility>
 
 #include "debugger/vdac2/ft812debugwindow.h"
 #include "widgets/crtprofiles.h"
@@ -1551,41 +1552,43 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         EmulatorContext* context = activeEmulator->GetContext();
         FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
 
-        // The same predicate the core refuses on (FeatureManager::setFeature,
-        // Core::SetSpeedMultiplier), so the menu never offers what the core rejects
-        bool ttdActive = (featureManager && featureManager->isTtdRecordingActive()) ||
-                         (context && context->pTimeTravelHooks && context->pTimeTravelHooks->IsRecording());
-        // Shortcuts change what the guest code does: off while recording AND while
-        // replaying or positioned in history
-        // An RZX playback holds them off the same way (the recording's CPU path)
+        // The core's own refusal (FeatureManager::refusalReason, Core::CanSetSpeedMultiplier), so the menu never
+        // offers what the core rejects: TTD and an RZX playback hold the shortcuts that change what the guest code
+        // does (the engine's recording keeps them, their traps are recorded edits), v1 recording holds turbo too
+        auto offered = [featureManager](const char* id) {
+            return featureManager && featureManager->refusalReason(id, true).empty();
+        };
         const bool rzxPlaying = activeEmulator->IsRzxPlaying();
         const bool timelineBound =
-            ttdActive || rzxPlaying || (featureManager && featureManager->isTtdTimelineBound());
+            rzxPlaying || (featureManager && (featureManager->isTtdRecordingActive() || featureManager->isTtdTimelineBound()));
         if (_stopRzxAction)
             _stopRzxAction->setEnabled(rzxPlaying);
 
-        _tapeTrapsAction->setEnabled(!timelineBound);
-        _turboTapeAction->setEnabled(!timelineBound);
+        // A held feature reads as off (isEnabled reports the state in effect)
+        _tapeTrapsAction->setEnabled(offered(Features::kFastTape));
+        _turboTapeAction->setEnabled(offered(Features::kTurboTape));
         if (_fastDiskAction)
         {
-            _fastDiskAction->setEnabled(!timelineBound);
-            _fastDiskAction->setChecked(!timelineBound && featureManager && featureManager->isEnabled(Features::kFastDisk));
+            _fastDiskAction->setEnabled(offered(Features::kFastDisk));
+            _fastDiskAction->setChecked(featureManager && featureManager->isEnabled(Features::kFastDisk));
         }
 
-        _tapeTrapsAction->setChecked(!timelineBound && featureManager && featureManager->isEnabled(Features::kFastTape));
-        _turboTapeAction->setChecked(!timelineBound && featureManager && featureManager->isEnabled(Features::kTurboTape));
+        _tapeTrapsAction->setChecked(featureManager && featureManager->isEnabled(Features::kFastTape));
+        _turboTapeAction->setChecked(featureManager && featureManager->isEnabled(Features::kTurboTape));
 
-        // Run > Speed: same TTD lock as the tape/disk shortcuts above. Only 1x is
-        // offered while recording (the core forced it on record start); the check
-        // mark follows the host speed setting, not the emulated hardware turbo.
+        // Run > Speed: only 1x is offered while a recording (or a history recorded at 1x) holds the host speed; the
+        // check mark follows the host speed setting, not the emulated hardware turbo
         if (_turboModeAction)
         {
-            _turboModeAction->setEnabled(!ttdActive);
-            _turboModeAction->setChecked(!ttdActive && featureManager && featureManager->isEnabled(Features::kTurboMode));
+            _turboModeAction->setEnabled(offered(Features::kTurboMode));
+            _turboModeAction->setChecked(featureManager && featureManager->isEnabled(Features::kTurboMode));
         }
-        for (QAction* fast : {_speed2xAction, _speed4xAction, _speed8xAction, _speed16xAction})
-            fast->setEnabled(!ttdActive);
-        if (Core* core = context ? context->pCore : nullptr)
+        Core* core = context ? context->pCore : nullptr;
+        const std::pair<QAction*, uint8_t> speeds[] = {
+            {_speed2xAction, 2}, {_speed4xAction, 4}, {_speed8xAction, 8}, {_speed16xAction, 16}};
+        for (const auto& [action, multiplier] : speeds)
+            action->setEnabled(core && core->CanSetSpeedMultiplier(multiplier));
+        if (core)
         {
             switch (core->GetHostSpeedMultiplier())
             {

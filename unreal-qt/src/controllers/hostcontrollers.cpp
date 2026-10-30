@@ -30,6 +30,7 @@
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/actions/contextstate.h"
 #include "emulator/keyboardmanager.h"
+#include "platform/windowlesssession.h"
 #include "platform/windows/wheelmenu_windows.h"
 
 #ifdef ENABLE_CONTROLLERS
@@ -222,11 +223,13 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
         QMetaObject::invokeMethod(this, [this, device, instance, up] { onDebugLayer(device, instance, up); },
                                   Qt::QueuedConnection);
     });
-    _service->StartNative();
+    // A windowless session opens no gamepad, HID device or Surface Dial: they are the person's at the desk
+    if (WindowlessSessionUses("controllers"))
+        _service->StartNative();
     // Several clients on the machine see the same devices: the one activated last owns them. The temporary folder is
-    // the user's own (TMPDIR on macOS, %TEMP% on Windows); on Linux /tmp is shared, so the name carries the user
-    const QString platformName = QGuiApplication::platformName();
-    if (platformName != "offscreen" && platformName != "minimal")
+    // the user's own (TMPDIR on macOS, %TEMP% on Windows); on Linux /tmp is shared, so the name carries the user.
+    // A windowless session never takes them from a window
+    if (!IsWindowlessSession())
     {
         const QString user = qEnvironmentVariable("USER", qEnvironmentVariable("USERNAME"));
         _ownersPath = QDir(QDir::tempPath()).filePath("unreal-ng-controllers-" + user + ".owners");

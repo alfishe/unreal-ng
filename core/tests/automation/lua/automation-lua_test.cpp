@@ -18,6 +18,7 @@
 #include "automation-lua.h"  // its LuaEmulator declares the Automation singleton
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
+#include "debugger/targets/gscardtarget.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/cpu/core.h"
@@ -114,7 +115,9 @@ TEST_F(AutomationLua_Test, RunFileAnswersTheScriptsExitCode)
         EXPECT_EQ(_lua.runFile(file.string(), message), c.exitCode) << c.code;
         EXPECT_NE(message.find(c.message), std::string::npos) << c.code << ": " << message;
         if (!*c.message)
+        {
             EXPECT_TRUE(message.empty()) << c.code << ": " << message;
+        }
     }
     std::string message;
     EXPECT_EQ(_lua.runFile((dir / "absent.lua").string(), message), 1);
@@ -476,7 +479,7 @@ TEST(LuaGSCardHook_Test, ACardReadHookReplacesTheByteTheCardSees)
         main, why = on_tap({event = "int", cpu = "main"}, function() end)
         print(pages, poll, rrca, main, why)
     )", message, output)) << message;
-    EXPECT_EQ(output, "1\t2\t3\t-1\ta tap callback watches memory or ports\n");
+    EXPECT_EQ(output, "1\t2\t3\t-1\ta main CPU tap callback watches the machine's events (cpu_int, fdc_command, ...)\n");
 
     for (int i = 0; i < 200 && card->getActivityCounters().volumeLatchWrites < 4; i++)
         emulator->RunNFrames(1, false);
@@ -500,6 +503,124 @@ TEST(LuaGSCardHook_Test, ACardReadHookReplacesTheByteTheCardSees)
     EXPECT_EQ(list[1].target, "tap in #0004 (gs CPU)");
     lua.stop();
     EXPECT_TRUE(callbacks->List().empty());
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// Q3 (gs-debugger design §8A.7): a logic hook on the card writes the card while TTD records - the byte its read
+/// sees, a poke and a register - and the track keeps them; a seek back and forward replays them without the hook, and
+/// a fork from a checkpoint records its own
+TEST(LuaGSCardHook_Test, ALogicCardHookIsRecordedAndReplayedWithoutRunningIt)
+{
+    SoundCardScope sound(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::Z80));
+    auto* card = dynamic_cast<SoundChip_GeneralSound*>(context->pSoundManager->getGeneralSound());
+    ASSERT_NE(card, nullptr);
+    ScriptCallbackManager* callbacks = context->pDebugManager->GetScriptCallbacks();
+    // POST done and the reply taken: the firmware polls IN A,(4) at #026E
+    for (int i = 0; i < 200 && card->getActivityCounters().volumeLatchWrites < 4; i++)
+        emulator->RunNFrames(1, false);
+    emulator->RunNFrames(1, false);
+    if (card->readStatus() & 0x80)
+        (void)card->portDeviceInMethod(GeneralSoundCard::PORT_DATA);
+
+    ASSERT_EQ(card->mapCardAddress(0x6000).kind, GeneralSoundCard::CardPage::Ram) << "the hook's poke lands in RAM";
+
+    auto controller = std::make_unique<ttd::TimeTravelController>(context);
+    context->pTimeTravelHooks = controller.get();
+    context->ttdWriteSink = controller.get();
+    context->pTimeTravelController = controller.get();
+    ASSERT_TRUE(ttd::TTDControl(context).Execute({"start", {}}).Ok());
+
+    BoundLua lua;
+    lua.start();
+    lua.Bind(emulator);
+    std::string message;
+    std::string output;
+    ASSERT_TRUE(lua.executeCode(R"(
+        poll = on_tap({port_in = 4, mask = 0xFF, cpu = "gs"}, [[return function(hit)
+            local n = (peek(0x6000) + (shared_get("step") or 1)) % 256
+            poke(0x6000, n)
+            set_reg("i", n)
+            shared_set("unchanged", peek(0x6000) ~= n)
+            return 0x5A
+        end]], {mode = "sync", role = "logic", policy = "ignore"})
+        rrca = on_tap({exec = 0x0270, cpu = "gs"}, [[return function(hit)
+            if shared_get("a") == nil then shared_set("a", reg("a")) end
+        end]], {mode = "sync", policy = "ignore"})
+    )", message, output)) << message;
+    // policy "ignore": on a loaded host a call over the time budget would suspend the hook within the first
+    // frame, every poke would land before checkpoint 1 and the seek there would find the last count
+    emulator->RunNFrames(4, true);
+
+    for (const CallbackInfo& info : callbacks->List())
+        EXPECT_EQ(info.stats.errors, 0u) << info.target << ": " << info.stats.lastError;
+    const CallbackInfo poll = callbacks->List()[0];
+    ASSERT_GE(poll.stats.calls, 4u);
+    EXPECT_TRUE(callbacks->SharedGet("unchanged").b) << "the writes wait for the card's boundary";
+    EXPECT_EQ(callbacks->SharedGet("a").i, 0x5A) << "IN A,(4) took the hook's byte";
+    uint8_t count = 0;
+    ASSERT_TRUE(card->peekCardMemory(0x6000, count));
+    Z80CpuRegisters regs{};
+    ASSERT_TRUE(card->cardRegisters(regs));
+    EXPECT_EQ(regs.i, count) << "set_reg made at the same boundary";
+    const ttd::TTDTimePoint end = controller->CurrentPosition();
+    controller->StopRecording();
+
+    callbacks->SharedSet("a", CallbackValue{});
+    ASSERT_TRUE(controller->SeekTo({controller->GetCheckpoint(1)->time.frame, 0}, nullptr));
+    uint8_t early = 0;
+    ASSERT_TRUE(card->peekCardMemory(0x6000, early));
+    EXPECT_NE(early, count);
+    ASSERT_TRUE(controller->SeekTo(end, nullptr));
+    uint8_t replayed = 0;
+    ASSERT_TRUE(card->peekCardMemory(0x6000, replayed));
+    EXPECT_EQ(replayed, count) << "the recorded pokes, replayed";
+    Z80CpuRegisters after{};
+    ASSERT_TRUE(card->cardRegisters(after));
+    EXPECT_EQ(after.i, regs.i) << "and the register";
+    EXPECT_EQ(after.pc, regs.pc) << "the card at the same instruction";
+    EXPECT_EQ(after.af, regs.af);
+    EXPECT_EQ(callbacks->List()[0].stats.calls, poll.stats.calls) << "the hook does not run on replay";
+    EXPECT_EQ(context->pDebugManager->GetGSTarget()->PendingEdits(), 0u);
+
+    // A fork: back to the checkpoint, the recording resumes there with the hook writing other bytes; the fork's track
+    // keeps its own edits (the old ones after the point went with the old future)
+    const ttd::TTDTimePoint from{controller->GetCheckpoint(1)->time.frame, 0};
+    ASSERT_TRUE(controller->ResumeRecordingFrom(from));
+    CallbackValue step;
+    step.kind = CallbackValue::Kind::Integer;
+    step.i = 3;
+    callbacks->SharedSet("step", step);
+    emulator->RunNFrames(4, true);
+    for (const CallbackInfo& info : callbacks->List())
+        EXPECT_EQ(info.stats.errors, 0u) << info.target << ": " << info.stats.lastError;
+    uint8_t forked = 0;
+    ASSERT_TRUE(card->peekCardMemory(0x6000, forked));
+    EXPECT_NE(forked, count) << "the fork wrote other bytes";
+    ASSERT_TRUE(card->cardRegisters(regs));
+    EXPECT_EQ(regs.i, forked);
+    const uint64_t forkCalls = callbacks->List()[0].stats.calls;
+    EXPECT_GT(forkCalls, poll.stats.calls) << "the hook ran in the fork";
+    const ttd::TTDTimePoint forkEnd = controller->CurrentPosition();
+    controller->StopRecording();
+    ASSERT_TRUE(controller->SeekTo(from, nullptr));
+    ASSERT_TRUE(controller->SeekTo(forkEnd, nullptr));
+    ASSERT_TRUE(card->peekCardMemory(0x6000, replayed));
+    EXPECT_EQ(replayed, forked) << "the fork's pokes, replayed";
+    ASSERT_TRUE(card->cardRegisters(after));
+    EXPECT_EQ(after.i, regs.i);
+    EXPECT_EQ(after.pc, regs.pc);
+    EXPECT_EQ(after.af, regs.af);
+    EXPECT_EQ(callbacks->List()[0].stats.calls, forkCalls) << "the hook does not run on replay";
+
+    lua.stop();
+    context->pTimeTravelHooks = nullptr;
+    context->ttdWriteSink = nullptr;
+    context->pTimeTravelController = nullptr;
+    controller.reset();
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
@@ -556,21 +677,33 @@ TEST(LuaGSCardHook_Test, NamedCardCallbacksSeeTheCardsEvents)
 TEST_F(AutomationLua_Test, SnapshotLoadSwitchesTheModelOnlyWhenAsked)
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
+    // Every instance goes at the end, an assertion's early return included: one left registered breaks the later
+    // tests of the process that count instances (WsHub_Test)
+    struct RemoveAll
+    {
+        EmulatorManager* manager;
+        ~RemoveAll()
+        {
+            for (const auto& emulatorId : manager->GetEmulatorIds())
+                manager->RemoveEmulator(emulatorId);
+        }
+    } removeAll{manager};
     auto spectrum48 = manager->CreateEmulatorWithModel("lua-switch", "48K", LoggerLevel::LogError);
     ASSERT_TRUE(spectrum48);
     manager->SetSelectedEmulatorId(spectrum48->GetId());
+    // A long-bracket Lua string: a Windows path's backslashes stay as they are
     const std::string path = TestPathHelper::GetTestDataPath("loaders/z80/libspectrum/synth-128.z80");
 
     std::string message;
     std::string output;
-    ASSERT_TRUE(_lua.executeCode("local ok, reason = snapshot_load('" + path + "', {switch_model = false}); print(ok, reason)",
+    ASSERT_TRUE(_lua.executeCode("local ok, reason = snapshot_load([[" + path + "]], {switch_model = false}); print(ok, reason)",
                                  message, output))
         << message;
     EXPECT_EQ(output.rfind("false\t", 0), 0u) << output;
     EXPECT_NE(output.find("128k"), std::string::npos) << "the machine it needs: " << output;
 
     output.clear();
-    ASSERT_TRUE(_lua.executeCode("local ok, reason, id = snapshot_load('" + path + "', {switch_model = true}); print(ok, id)",
+    ASSERT_TRUE(_lua.executeCode("local ok, reason, id = snapshot_load([[" + path + "]], {switch_model = true}); print(ok, id)",
                                  message, output))
         << message;
     EXPECT_EQ(output.rfind("true\t", 0), 0u) << output;
@@ -581,9 +714,6 @@ TEST_F(AutomationLua_Test, SnapshotLoadSwitchesTheModelOnlyWhenAsked)
     EXPECT_EQ(switched->GetContext()->config.mem_model, MM_SPECTRUM128);
 
     output.clear();
-    ASSERT_TRUE(_lua.executeCode("print((snapshot_load('" + path + "', 'legacy')))", message, output)) << message;
+    ASSERT_TRUE(_lua.executeCode("print((snapshot_load([[" + path + "]], 'legacy')))", message, output)) << message;
     EXPECT_EQ(output, "true\n") << "a string is still the commit (on the 128K now selected)";
-
-    for (const auto& emulatorId : manager->GetEmulatorIds())
-        manager->RemoveEmulator(emulatorId);
 }

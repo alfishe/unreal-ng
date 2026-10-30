@@ -41,6 +41,14 @@ inline std::string Hex16(unsigned value)
     return buffer;
 }
 
+/// Formats an 8-bit value as 0xNN
+inline std::string Hex8(unsigned value)
+{
+    char buffer[8];
+    std::snprintf(buffer, sizeof(buffer), "0x%02X", value & 0xFFu);
+    return buffer;
+}
+
 /// Percent-encodes a path segment (RFC 3986 unreserved characters kept
 /// literal). Labels are free-form text ("umt entry"), so they must not be
 /// spliced raw into a URL path.

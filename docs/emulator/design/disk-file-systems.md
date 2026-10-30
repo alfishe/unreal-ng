@@ -10,7 +10,7 @@ the unreal-asm tools and `zxdisk` link it, none of them needs the emulator's cor
 
 | Layer | Where (`unrealdisk/`) | What |
 |---|---|---|
-| File systems | `trdosfs.h`, `plus3fs.h`, `isdosfs.h`, `cpmfs.h`, `mb02fs.h`, `mdosfs.h`, `fatvolumereader.h`, `fatfs.h` | TR-DOS and +3DOS, iS-DOS / TASiS over a 256-byte block reader and writer, ATM CP/M and Profi CP/M over a byte reader and writer, MB-02 over a 1024-byte sector reader and writer, MDOS over a 512-byte sector reader and writer, FAT12 / 16 / 32 on a block device (read by `FatVolumeReader`, changed by `FatFs`) |
+| File systems | `trdosfs.h`, `plus3fs.h`, `isdosfs.h`, `cpmfs.h`, `mb02fs.h`, `mb01fs.h`, `mdosfs.h`, `fatvolumereader.h`, `fatfs.h` | TR-DOS and +3DOS, iS-DOS / TASiS over a 256-byte block reader and writer, ATM CP/M and Profi CP/M over a byte reader and writer, MB-02 and MB-01 over a 1024-byte sector reader and writer, MDOS over a 512-byte sector reader and writer, FAT12 / 16 / 32 on a block device (read by `FatVolumeReader`, changed by `FatFs`) |
 | Block devices | `blockdevice.h`, `subrangedevice.h`, `floppyblockdevice.h` | a disk as 512-byte sectors (core: `IBlockDevice`), a partition window, a floppy of uniform 512-byte sectors (FAT on a Sprinter DSS or MS-DOS floppy; writable when asked) |
 | Code pages | `unicode.h` | CP866 / CP1251 names to UTF-8 (FAT short names, iS-DOS) |
 | One interface | `diskfs.h` | `DiskFs`: probes the volumes, then `List` / `Stat` / `Read` / `Write` / `Delete` / `Rename` / `MakeDirectory` / `SetAttributes` / `SetTime` / `SetLabel` by volume and path |
@@ -201,13 +201,8 @@ is a volume `mb02-<n>`; one never formatted (FF17 formats them one by one) is le
 
 ## MB-01 layout
 
-BS-DOS 52..105 (`mb01fs.h`, read only), from Busy's own description, "Format diskety MB-01" in
-[mb02form.htm](https://busy.speccy.cz/tvorba/mb02form.htm). Two MB-01 units were ever built (Busy's and Sapo soft's,
-1992, [mb02hist.htm](https://busy.speccy.cz/tvorba/mb02hist.htm)); BS-DOS 105 and the DC58 copier are listed on
-[mb02soft.htm](https://busy.speccy.cz/tvorba/mb02soft.htm) without a file, and no MB-01 disk image is known (Busy's
-`/download/`, the Wayback index of busy.speccy.cz, velesoft, ZXDB, the BS-DOS Total Commander plugins and RIDE know
-MB-02 only). So the reader follows the description and a disk built from it (`Mb01Fs.ABusyDescribedDiskReads`), not
-a real disk.
+BS-DOS 52..105 (`mb01fs.h`, read and written), from Busy's own description, "Format diskety MB-01" in
+[mb02form.htm](https://busy.speccy.cz/tvorba/mb02form.htm).
 
 - **Geometry**: 1024-byte sectors, two sides; 40 x 5 (400 KB), 80 x 5 (800 KB) or 80 x 11 (1760 KB); a FAT of 1, 2
   or 4 sectors. LSNs as on MB-02 (assumed: the description gives none).
@@ -231,8 +226,20 @@ a real disk.
 Assumed where the description is silent: little-endian fields, the time before the date (as MB-02, from the same
 author a year later), a list ending with its chain. It speaks of checksums over "every important structure" but
 gives no field for one (the free bytes 35-36 of the boot and 29 of a file entry are marked unused), and of the
-backup sector taking the boot or a list sector before its place: neither is needed to read. Not written: where
-SAVE puts a new entry, how a list grows and where a sum would go are not described, and no disk can check a guess.
+backup sector taking the boot or a list sector before its place. No disk keeps a sum to check, so none is written.
+
+Writing takes MB-02's rules (the same author's next format) where the description is silent: the boot and list
+sectors to the backup sector first, then to their place; both FAT copies, at the sectors the reader found them,
+after the data. A file is a header (the type, the name blank-padded, length, param 1 the `start`, param 2) with ID
+#63 for CODE (#60 a program, its body at 23755), the body address the `start`, flag byte #FF, the first body LSN at
+30; an empty file has ID #23 and no body. A new entry takes the first slot of the file list that holds no file (an
+older file of the name in the directory leaves its own), a full list grows by a system sector (#5400) at the end of
+its chain. A body's sectors are the free ones (word 0) from LSN 1 up (LSN 0 never: a link to it would read as a free
+word), chained by normal words, the last one #4000 + its bytes; deleting sets bit 7 of the ID byte and gives the
+sectors back as 0 (bit 15 of the FAT, a deleted sector, is not set: what BS-DOS does with one is not described).
+`mkdir` takes the first invalid slot (1..255) of the directory list (valid byte 1), growing it the same way; a
+directory is deleted only empty (its slot cleared), moved or renamed in its slot, never into itself. `rename` of a
+file changes its name and the directory byte in place.
 
 ## MDOS layout
 
@@ -373,6 +380,7 @@ UTC seconds of the DOS wall clock (the media verbs' `time` takes `YYYY-MM-DD HH:
 | iS-DOS / TASiS | `RWHD`: read-protect (status bit 2), write-protect (3), hidden (4), delete-protect (7) | `SRWHD` (`S` segmented) | +28 time, +30 date; a catalogue gets both in its parent's entry and its own entry 0 | the device name in block 0 at +2: 8 characters, 11 on a Chic disk with no `DSK` at +10 |
 | ATM CP/M | `RSA`: read only, system, archive (bit 7 of t1', t2', t3'; a read-only file is not deleted, written over or renamed) | `RSA` | none | none (`label`: the drive `D:` or the `.CDS` file) |
 | MB-02 | none | none (the byte is the `attributes` field) | 2-second steps, the entry's #01 time and #03 date; a directory's in its header | the disk name at #26 of the boot sector (10 characters, blanks after it) |
+| MB-01 | none | none (the byte is the `attributes` field) | 2-second steps, the entry's 1 time and 3 date; a directory's in its slot of the directory list | the disk name at 4 of the boot sector (10 characters, blanks after it) |
 | MDOS | `HSPARWED`: hidden, system, protected, archive, read, write, execute, delete (entry +20, bit 7 to bit 0; a file without `D` is not deleted or written over) | `HSPARWED` | none | the disk name at 192 (10 bytes, zeroes after it); an MDOS3 slot's name in its info sector (32 characters, blanks after it) |
 | +3DOS | `RSA`: bit 7 of the type bytes t1', t2', t3' (read only, system, archive) | `RSA` | none | none |
 | TR-DOS | none | | none | the disk title, 8 printable ASCII characters at +#F5 of the info sector |
@@ -401,7 +409,7 @@ sets the disk to it. The reply's `access` says where the change went: `session` 
   63 for a raw image without one), when the first 16 entries hold a file with a name, and is read only.
 - MB-02: files are written as a program or CODE (no arrays), no attributes (the byte at #1D is undocumented). The BS-DOS 309 hard disk layout
   comes from its BIOS source, not from an image of a real disk.
-- MB-01: read only, from its description (see [MB-01 layout](#mb-01-layout)); no real disk checks it.
+- MB-01: files are written as on MB-02 (a program or CODE, no attributes).
 - MDOS: no file times (MDOS keeps none). An MDOS3 partition is found by its MBR type #49 (`nmi.a80`); without one
   the firmware reads the disk sector by sector up to the first `SDOS` one. Here the first sector of every FAT file,
   and outside the FAT volumes the first 4096 sectors (2 MiB) only: reading a 2 GB disk sector by sector takes about

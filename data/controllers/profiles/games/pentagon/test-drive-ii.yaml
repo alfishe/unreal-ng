@@ -5,9 +5,10 @@
 # The speed dial does not coast down: it holds the speed reached until K brakes. Haptics (haptics.md §13 H5), found with TTD on
 # a recorded run, matching the dial reading by reading: the speed is the byte #F058 = dial / 4 (0 to 22 at 88, 24 at about 96;
 # a drop of a few units at a time is a gear change). The writer is #8168.
-# Checked in real time (L held 32 s, random Q / W every 0.8 s): the level follows the dial (0.71 to 0.81 at cruise). Known limits: only speed so far; the desert beside the
-# road costs no speed, and no crash with a car, a cliff or the police occurred in the first miles, so the crash events are not
-# mapped yet.
+# The traffic collision: #88C7 (ld a,#FF / ld (#FCE6),a, in the per-car overlap test #8890..#88EC) sets the collision flag
+# once per crash, then the game shows "You have N Lives Left." and the per-car reset loop #88D8 zeroes the speed.
+# Checked in real time (L held 32 s, random Q / W every 0.8 s): the level follows the dial (0.71 to 0.81 at cruise).
+# Known limits: the desert beside the road costs no speed; cliff and police hits are not mapped.
 schema: 1
 kind: play
 id: builtin/game/test-drive-ii
@@ -30,5 +31,7 @@ layers:
 haptics:
   sources:
     speed: { probe: value, address: "0xF058", scale: 9 }
+    crash: { probe: exec, address: "0x88C7" }
   rules:
     - { on: speed, play: engine, target: handle.low }
+    - { on: crash, play: explosion, scale: 0.9 }

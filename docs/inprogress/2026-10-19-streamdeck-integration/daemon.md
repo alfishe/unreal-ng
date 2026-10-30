@@ -181,9 +181,10 @@ of its own stepping every 250 ms; the process is `childprocess::Child` (posix_sp
 | Modes | `off`, `deck` (default), `always`; plus Start / Stop / Restart by the user (Stop latches until Start) |
 | Deck watch | `controllers::CountUsbDevices(0x0FD9)` (`core/controllers/src/usbpresence.h`) once a second on the supervisor's thread: the I/O registry on macOS, SetupAPI on Windows, sysfs on Linux; matched, never opened. A deck that goes keeps the daemon (its runtime waits; own decks work) |
 | Start | `unreal-streamdeck run --wait --api <37053> --viewers <37050> --host 127.0.0.1:<webapi> --parent <pid> --activity <look>`; the binary is `UNREAL_STREAMDECK_BIN`, else the setting, else beside unreal-qt (`Contents/MacOS` in the bundle, beside the exe, a build tree's `bin/`). No `--ready-fd`: the first health check 200 ms after the start, then every 2 s |
+| No binary | `missing` (a build without `-DUNREAL_STREAMDECK=ON`, the default with the Qt apps): the reason in `error`, no countdown; a daemon on the port is still adopted (looked for every 5 s); Start, Restart or a binary setting tries again |
 | Crash | Restarted after 1 s, 2 s, 4 s; the fourth end in a row: `failed`, tried again after 60 s; 30 s healthy starts the count again. A clean end within 5 s counts too (a second start that found one running: after the backoff that one is adopted) |
 | Hang | Three failed checks: killed, then the crash path. Not answering within 10 s of the start: the same |
-| Adopt | A daemon answering on the port with this emulator as `host`: `POST /api/v1/parents {pid}`, state `adopted`; another host's: `foreign`, left alone |
+| Adopt | A daemon answering on the port with this emulator as `host`: `POST /api/v1/parents {pid}`, state `adopted`; another host's: `foreign`, left alone (a new `api_port` setting leaves it: ours starts on that port) |
 | Quit | `DELETE /api/v1/parents/<pid>`: the daemon ends unless the studio still holds a lease; never killed |
 | Mode off | The lease back, as at quit (a daemon another starter holds stays) |
 | Applied | The activity look (`PUT /api/v1/activity`) and each deck's kept brightness once per daemon |

@@ -701,7 +701,10 @@
         "alone), 'ear' (the program saw the tape signal change), 'ay-read' / "
         "'ay-write' [register] (the register selection is followed through the OUT "
         "journal), 'ay-select', 'border', 'beeper', or 'in' / 'out' narrowed with the "
-        "raw filters. Nothing is replayed: it answers the same on a loaded .ttd file. "
+        "raw filters. The search replays nothing: it answers the same on a loaded .ttd file. A read of the ULA "
+        "names the half-rows it selected and the keys it saw down; with 'context' (default on, off while a "
+        "recording runs) each hit carries the registers at its instruction and the word at SP (the caller), replayed "
+        "with the machine put back. "
         "409 when the session has no port journal (TSConf, ZX Next, NeoGS, a file "
         "without it), or when a long run keeps a running recording's CPU busy (pause and ask again). With 'file' it searches a .ttd on "
         "disk instead, without loading it (400 when the file cannot be read or has no journals).";
@@ -883,6 +886,48 @@
             "ends of the window, also when the list is cut), matching_frames, scanned_frames, truncated, "
             "next_from_frame (oldest order) / next_to_frame (newest order) when cut: pass it back as from_frame / "
             "to_frame, index_available, covered_from, covered_to}";
+    }
+
+    // =====================================================================
+    // GET /ttd/coverage/rare — addresses touched in at most N frames, as blocks
+    // =====================================================================
+    {
+        Json::Value& get = paths["/api/v1/emulator/{id}/ttd/coverage/rare"]["get"];
+        get["summary"] = "Rare code or data: addresses touched in at most max_frames frames, as blocks";
+        get["tags"].append("Time-Travel Debug");
+        get["description"] =
+            "One pass over the coverage index (no replay): the keys of the address range touched in at most "
+            "max_frames frames of the window, neighbouring keys of one page with the same frames joined into a "
+            "block (executed: up to 4 bytes apart; written / read: adjacent), rarest first. Returns 400 like scan, "
+            "and when max_frames is not 1..1000.";
+        get["parameters"][0]["name"] = "id";
+        get["parameters"][0]["in"] = "path";
+        get["parameters"][0]["required"] = true;
+        const char* const params[][2] = {
+            {"from_frame", "First frame of the window (default: the session start)"},
+            {"to_frame", "Last frame of the window (default: the session end)"},
+            {"kind", "executed (default), written or read"},
+            {"addr_from", "Range start (Z80 address; with space vram / cache an offset in that memory)"},
+            {"addr_to", "Range end, inclusive"},
+            {"phys_page", "0..255, or rom (the bucket all ROM shares): only that page"},
+            {"space", "ram (default), vram or cache (the Sprinter's memories)"},
+            {"max_frames", "A key is rare when at most this many frames touched it, 1..1000 (default 1)"},
+            {"limit", "Blocks listed, 1..10000 (default 200)"}};
+        for (const auto& [name, text] : params)
+        {
+            Json::Value param;
+            param["name"] = name;
+            param["in"] = "query";
+            param["schema"]["type"] = "string";
+            param["description"] = text;
+            get["parameters"].append(param);
+        }
+        get["responses"]["200"]["description"] =
+            "{kind, addr_from, addr_to, max_frames, scanned_frames, unindexed_frames, distinct_keys, rare_keys, "
+            "rare_blocks (all, also when the list is cut), truncated, index_available, covered_from, covered_to, "
+            "blocks[{phys_page (0..255 or rom) or space + offset_from, page_offset_from, page_offset_to, addr_from / "
+            "addr_to (where the page was mapped at the start of the first frame, when one window showed it), keys, "
+            "frame_count, frames[]}]}";
     }
 
     // =====================================================================

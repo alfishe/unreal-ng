@@ -322,10 +322,33 @@ endif ()
 # ========================================
 # Companions (paired processes; no link to the core)
 # ========================================
-option(UNREAL_STREAMDECK "Build the Stream Deck companion (companions/streamdeck)" OFF)
-if (UNREAL_STREAMDECK)
+# On with the Qt apps: unreal-qt's supervisor starts the daemon found beside it, so every build carries one
+option(UNREAL_STREAMDECK "Build the Stream Deck companion (companions/streamdeck)" ${BUILD_QT_APPS})
+# A build folder configured while the default was OFF holds OFF in its cache: turned on once (an OFF given after that
+# stays). CMAKE_CACHE_MAJOR_VERSION is defined only when an existing cache was loaded
+if (BUILD_QT_APPS AND NOT UNREAL_STREAMDECK AND NOT DEFINED CACHE{UNREAL_STREAMDECK_DEFAULT_ON}
+    AND DEFINED CACHE{CMAKE_CACHE_MAJOR_VERSION})
+    message(STATUS ">>> UNREAL_STREAMDECK now defaults to ON with the Qt apps: turned on in this build folder")
+    set(UNREAL_STREAMDECK ON CACHE BOOL "Build the Stream Deck companion (companions/streamdeck)" FORCE)
+endif ()
+set(UNREAL_STREAMDECK_DEFAULT_ON 1 CACHE INTERNAL "UNREAL_STREAMDECK's default ON applied to this build folder")
+if (UNREAL_STREAMDECK AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # hidapi's hidraw backend enumerates through libudev
+    find_package(PkgConfig QUIET)
+    if (PkgConfig_FOUND)
+        pkg_check_modules(SD_UDEV_PROBE QUIET libudev)
+    endif ()
+    if (NOT SD_UDEV_PROBE_FOUND)
+        message(WARNING "The Stream Deck companion is skipped: libudev not found (install libudev-dev)")
+        set(UNREAL_STREAMDECK_SKIPPED ON)
+    endif ()
+endif ()
+if (UNREAL_STREAMDECK AND NOT UNREAL_STREAMDECK_SKIPPED)
     message(STATUS ">>> Building the Stream Deck companion")
     add_subdirectory(companions/streamdeck)
+    if (TARGET unreal-qt AND TARGET unreal-streamdeck)
+        add_dependencies(unreal-qt unreal-streamdeck)  # `build.sh unreal-qt` refreshes the daemon its supervisor runs
+    endif ()
 endif ()
 
 # ========================================
@@ -370,6 +393,12 @@ endif ()
 option(BUILD_TTD_REPLAY_POC "Build POC 038 ttd-replay-poc (tools/poc/038-ttd-replay-query-engine)" OFF)
 if (BUILD_TTD_REPLAY_POC AND TARGET unrealng::core)
 	add_subdirectory(tools/poc/038-ttd-replay-query-engine/cpp)
+endif ()
+
+# POC 040 (TTD in-place replay profile): where today's in-place replay spends its time; needs the core
+option(BUILD_TTD_INPLACE_PROFILE_POC "Build POC 040 ttd-inplace-profile (tools/poc/040-ttd-inplace-replay-profile)" OFF)
+if (BUILD_TTD_INPLACE_PROFILE_POC AND TARGET unrealng::core)
+	add_subdirectory(tools/poc/040-ttd-inplace-replay-profile/cpp)
 endif ()
 
 # Steam Deck client experiments (SDL3), built on their own: the other PoCs are not needed

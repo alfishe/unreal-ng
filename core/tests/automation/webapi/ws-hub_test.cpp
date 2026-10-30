@@ -150,6 +150,16 @@ class WsHub_Test : public ::testing::Test
 protected:
     void SetUp() override
     {
+        // The tests count instances (a state topic sends one value per instance, a follower takes the sole one): an
+        // instance an earlier test of the process left registered breaks them, so it is named here instead
+        std::string leftover;
+        for (const std::string& id : EmulatorManager::GetInstance()->GetEmulatorIds())
+        {
+            std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+            leftover += " " + id + " ('" + (emulator ? emulator->GetSymbolicId() : std::string()) + "')";
+        }
+        ASSERT_TRUE(leftover.empty()) << "instances left registered by an earlier test:" << leftover;
+
         Companions().ResetForTesting();
         ASSERT_EQ(Companions().AddFromSpec(std::string("deck:") + kToken + ":all"), 1u);
         ASSERT_EQ(Companions().AddFromSpec(std::string("narrow:") + kNarrowToken + ":run"), 1u);

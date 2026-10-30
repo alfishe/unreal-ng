@@ -413,6 +413,25 @@ public:
     /// Card time in the card's own unit and that unit's rate (classic GS: 12 MHz cycles; NeoGS: 120 MHz ticks)
     virtual int64_t cardTime() const { return 0; }
     virtual double cardUnitsPerSecond() const { return 0.0; }
+    /// Card time since the ZX frame's start, as the card state keeps it (TTD): a replay reaches the same value at the
+    /// same instruction of the frame
+    virtual int64_t cardFrameTime() const { return 0; }
+    /// The card runs to the ZX frame's end (handleFrameEnd): the frame counter already names the next frame
+    virtual bool inFrameEndCatchUp() const { return false; }
+    /// A script's write to card memory as the card CPU's write would land (a ROM or flash window keeps its byte):
+    /// no bus side effect (no DAC latch, no flash command). False without a CPU or on a read-only window
+    virtual bool pokeCardMemory(uint16_t addr, uint8_t value)
+    {
+        (void)addr;
+        (void)value;
+        return false;
+    }
+    /// The card CPU's full register file, set between two instructions; false without a CPU
+    virtual bool setCardRegisters(const Z80CpuRegisters& regs)
+    {
+        (void)regs;
+        return false;
+    }
     /// endregion </Card CPU debugging>
 
     /// region <Diagnostics: activity counters + port/DAC trace>

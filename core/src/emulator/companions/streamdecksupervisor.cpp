@@ -155,6 +155,7 @@ const char* Supervisor::StateName(State state)
         case State::Backoff: return "backoff";
         case State::Failed: return "failed";
         case State::Stopped: return "stopped";
+        case State::Missing: return "missing";
     }
     return "detached";
 }
@@ -276,7 +277,8 @@ void Supervisor::Start()
         _failedUntil = 0;
         _restartAt = 0;
         _failures = 0;
-        if (_state == State::Failed || _state == State::Backoff || _state == State::Stopped)
+        if (_state == State::Failed || _state == State::Backoff || _state == State::Stopped ||
+            _state == State::Missing)
             _state = State::Waiting;
     }
     Notify();
@@ -391,6 +393,16 @@ bool Supervisor::Update(const StateNode& changes, std::string& error)
             const bool restart = (next.apiPort != _settings.apiPort || next.viewersPort != _settings.viewersPort ||
                                   next.binary != _settings.binary) &&
                                  (_child || _state == State::Running);
+            if (_state == State::Missing && next.binary != _settings.binary)
+                _failedUntil = 0;  // the binary named now: tried at the next step
+            if (_state == State::Foreign && next.apiPort != _settings.apiPort)
+            {
+                // another host's daemon on the old port is no reason to stay: ours on the new one
+                _state = State::Waiting;
+                _health = Health{};
+                _healthFails = 0;
+                _error.clear();
+            }
             _settings = next;
             if (restart)
                 _restart = true;  // ours takes the new ports or binary
@@ -516,9 +528,10 @@ void Supervisor::Launch(int64_t now)
     spec.path = BinaryPathLocked();
     if (spec.path.empty())
     {
-        _error = "no unreal-streamdeck beside unreal-qt: set UNREAL_STREAMDECK_BIN or the binary setting";
-        _state = State::Failed;
-        _failedUntil = now + kGiveUpMs;
+        _error = "this build has no unreal-streamdeck beside unreal-qt (configure with -DUNREAL_STREAMDECK=ON), or set "
+                 "UNREAL_STREAMDECK_BIN or the binary setting";
+        _state = State::Missing;
+        _failedUntil = now + kMissingCheckMs;
         return;
     }
     spec.args = LaunchArgsLocked();
@@ -773,7 +786,8 @@ void Supervisor::Step(int64_t now)
         {
             _state = _userStopped ? State::Stopped : (_settings.mode == Mode::Off ? State::Off : State::Waiting);
         }
-        else if (!(_state == State::Backoff && now < _restartAt) && !(_state == State::Failed && now < _failedUntil))
+        else if (!(_state == State::Backoff && now < _restartAt) &&
+                 !((_state == State::Failed || _state == State::Missing) && now < _failedUntil))
         {
             const int wantPort = _settings.apiPort;
             l.unlock();

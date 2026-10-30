@@ -314,7 +314,7 @@ scrubs and debugs as well): the Stream Deck, the Dial, the ShuttlePRO, the pads 
   devices, so the one the user activated last owns them: `ClientQueue` is the list of process ids, the last
   activated first, in `<temp>/unreal-ng-controllers-<user>.owners` (a `QLockFile` around each edit, a `QSaveFile`
   write); activating the application claims, quitting leaves, the 250 ms poll follows it, and a queue with no live
-  process is taken by the first client to see it. A windowless session (offscreen, minimal) never claims.
+  process is taken by the first client to see it. A windowless session (offscreen, minimal) never claims (and opens no devices unless `UNREAL_WINDOWLESS_DEVICES` lets it).
   `HostInputService::SetOwner(false)` suspends the router (`InputRouter::SetSuspended`: the controls are let go, the
   held actions released, the events dropped, the feel followed but not sent), stops the motors and writes nothing to
   a device (rumble, patterns, clicks, steps, lights; a light keeps the colour asked for); the owner again, each device

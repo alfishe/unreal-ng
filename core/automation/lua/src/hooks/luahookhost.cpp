@@ -103,7 +103,8 @@ std::unique_ptr<IScriptHookHost> LuaHookHost::Create(EmulatorContext* context)
 
 std::string LuaHookHost::EditRefusal() const
 {
-    return ScriptCallbackManager::EditRefusal(_context, _edits != nullptr ? CallbackRole::Logic : CallbackRole::View);
+    return ScriptCallbackManager::EditRefusal(
+        _context, _edits != nullptr && !_edits->view ? CallbackRole::Logic : CallbackRole::View);
 }
 
 void LuaHookHost::RegisterApi()
@@ -135,8 +136,8 @@ void LuaHookHost::RegisterApi()
                (context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(at + 1)) << 8);
     };
     lua["poke"] = [this, context](int address, int value) {
-        if (_card)
-            throw std::runtime_error("poke: a card hook does not write the card (a read's hook returns the byte)");
+        if (_card && _edits == nullptr)
+            throw std::runtime_error("poke: the card has no CPU");
         if (const std::string refusal = EditRefusal(); !refusal.empty())
             throw std::runtime_error("poke: " + refusal);
         if (_edits != nullptr)
@@ -164,10 +165,19 @@ void LuaHookHost::RegisterApi()
         return value;
     };
     lua["set_reg"] = [this, z80](const std::string& name, int value) {
-        if (_card)
-            throw std::runtime_error("set_reg: a card hook does not write the card");
+        if (_card && _edits == nullptr)
+            throw std::runtime_error("set_reg: the card has no CPU");
         if (const std::string refusal = EditRefusal(); !refusal.empty())
             throw std::runtime_error("set_reg: " + refusal);
+        if (_card)
+        {
+            // Made at the card's next instruction boundary (GSCardTarget::QueueHookEdits)
+            Z80CpuRegisters probe{};
+            if (value < 0 || value > 0xFFFF || !GSCardTarget::SetRegister(probe, name, static_cast<uint16_t>(value)))
+                throw std::runtime_error("set_reg: unknown register '" + name + "' of the card CPU or a value out of its range");
+            _edits->regs.emplace_back(name, static_cast<uint16_t>(value));
+            return;
+        }
         if (_edits != nullptr)
         {
             const Z80::RegisterInfo* info = Z80::FindRegister(name);
