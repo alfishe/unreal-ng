@@ -1602,6 +1602,7 @@ bool TimeTravelController::CaptureNow(TTDCheckpoint& out)
     }
     out.chipset = CaptureChipsetState(st, cpu ? static_cast<uint32_t>(cpu->t) : 0u);
     CaptureBankOverrides(out.bankOverrides);
+    out.cpuWindows.valid = _memory->GetWindowMap(out.cpuWindows.offset, out.cpuWindows.mode);
 
     // --- Device state, through the registry (TDD §6.4): raw, as the engine takes it. A
     // device whose state also carries the memory it offers as regions (General Sound)
@@ -5741,6 +5742,15 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
 
 TTDCpuView TimeTravelController::ReadCpuView(const TTDTimePoint& at, uint16_t offset, size_t length)
 {
+    // At a checkpoint the store holds every mapped page: a read, the machine untouched (phase 2, B4)
+    if (_state != TTDSessionState::Recording)
+    {
+        const SessionOperation read{*this, SessionOperation::Kind::Read};
+        TTDCpuView stored;
+        if (_state != TTDSessionState::Recording && ReadCpuViewFromStore(at, offset, length, stored))
+            return stored;
+    }
+
     // Replays and puts the machine back: an operation that changes it
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     TTDCpuView view;
@@ -5790,6 +5800,68 @@ TTDCpuView TimeTravelController::ReadCpuView(const TTDTimePoint& at, uint16_t of
     replay.Exit();
     SetState(stateBefore);
     return view;
+}
+
+bool TimeTravelController::ReadCpuViewFromStore(const TTDTimePoint& at, uint16_t offset, size_t length,
+                                                TTDCpuView& view)
+{
+    Memory* memory = _context ? _context->pMemory : nullptr;
+    if (_timeline.empty() || !memory || !_engine)
+        return false;
+    const int64_t i = TimelineIndexAtOrBefore(at);
+    if (i < 0 || at.frame > _timeline.back().time.frame)
+        return false;
+    const TTDCheckpoint& cp = _timeline[size_t(i)];
+    const int64_t engineIndex = _engine->CheckpointIndexOf({0, cp.time.frame, 0});
+    const TTDEngineCheckpoint* engineCp = engineIndex >= 0 ? _engine->Checkpoint(size_t(engineIndex)) : nullptr;
+    // The seek lands on the checkpoint itself up to the CPU's overshoot past the frame boundary
+    if (!cp.cpuWindows.valid || !engineCp || cp.time.frame != at.frame || at.tInFrame > GetChipsetCpuTInFrame(engineCp->chipset))
+        return false;
+
+    // Each window's 16 KB: from the stored region holding it, or the ROM (not recorded: it stays as it is)
+    const uint8_t* block = memory->BlockAt(0);
+    const uint8_t* romStart = memory->ROMBase();
+    const uint8_t* romEnd = romStart + size_t(MAX_ROM_PAGES) * PAGE_SIZE;
+    const std::vector<TTDRegionDesc>& regions = _engine->Regions();
+    std::vector<uint8_t> window(0x4000);
+    std::vector<uint8_t> bytes(size_t{0x10000});
+    for (uint8_t w = 0; w < 4; ++w)
+    {
+        const uint8_t* read = block + cp.cpuWindows.offset[w];
+        bool found = false;
+        for (uint32_t r = 0; r < regions.size() && !found; ++r)
+        {
+            const TTDRegionDesc& desc = regions[r];
+            if (!desc.memory || read < desc.memory || read + 0x4000 > desc.memory + desc.bytes)
+                continue;
+            const size_t start = size_t(read - desc.memory);
+            if (start % kTTDPieceSize != 0)
+                return false;
+            for (uint32_t k = 0; k < 0x4000 / kTTDPieceSize; ++k)
+            {
+                const uint32_t id = _engine->VersionAt(size_t(engineIndex), r, uint32_t(start / kTTDPieceSize) + k);
+                if (id == TimeTravelEngine::kAbsent || !_engine->PieceStore().Decode(id, window.data() + k * kTTDPieceSize))
+                    return false;
+            }
+            found = true;
+        }
+        if (!found)
+        {
+            if (read < romStart || read + 0x4000 > romEnd)
+                return false;
+            std::memcpy(window.data(), read, 0x4000);
+        }
+        std::memcpy(bytes.data() + size_t(w) * 0x4000, window.data(), 0x4000);
+        const MemoryPageDescriptor page = memory->DescribeWindow(cp.cpuWindows.mode[w], cp.cpuWindows.offset[w]);
+        view.windows[w].kind = static_cast<uint8_t>(page.mode);
+        view.windows[w].page = page.page;
+        view.windows[w].name = memory->WindowName(cp.cpuWindows.mode[w], cp.cpuWindows.offset[w]);
+    }
+    length = std::min<size_t>(length, size_t{0x10000} - offset);
+    view.bytes.assign(bytes.begin() + offset, bytes.begin() + offset + std::ptrdiff_t(length));
+    view.at = at;
+    view.ok = true;
+    return true;
 }
 
 bool TimeTravelController::StepBackInstruction()

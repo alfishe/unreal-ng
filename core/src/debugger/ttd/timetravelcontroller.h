@@ -1521,6 +1521,11 @@ private:
     /// only while _engineMemoryKnown holds
     TTDWrittenFn TakeWrittenSinceRestore();
 
+    /// @brief ReadCpuView at a checkpoint (a frame start the restore lands on) from the store: the four windows
+    /// the capture mapped, their pages decoded, the machine untouched. False where only a replay can tell (no
+    /// window map, a window outside the stored regions and ROM, a point past the checkpoint)
+    bool ReadCpuViewFromStore(const TTDTimePoint& at, uint16_t offset, size_t length, TTDCpuView& view);
+
 
     /// @brief Internal seek implementation without the Recording-state guard.
     ///
