@@ -677,21 +677,33 @@ TEST(LuaGSCardHook_Test, NamedCardCallbacksSeeTheCardsEvents)
 TEST_F(AutomationLua_Test, SnapshotLoadSwitchesTheModelOnlyWhenAsked)
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
+    // Every instance goes at the end, an assertion's early return included: one left registered breaks the later
+    // tests of the process that count instances (WsHub_Test)
+    struct RemoveAll
+    {
+        EmulatorManager* manager;
+        ~RemoveAll()
+        {
+            for (const auto& emulatorId : manager->GetEmulatorIds())
+                manager->RemoveEmulator(emulatorId);
+        }
+    } removeAll{manager};
     auto spectrum48 = manager->CreateEmulatorWithModel("lua-switch", "48K", LoggerLevel::LogError);
     ASSERT_TRUE(spectrum48);
     manager->SetSelectedEmulatorId(spectrum48->GetId());
+    // A long-bracket Lua string: a Windows path's backslashes stay as they are
     const std::string path = TestPathHelper::GetTestDataPath("loaders/z80/libspectrum/synth-128.z80");
 
     std::string message;
     std::string output;
-    ASSERT_TRUE(_lua.executeCode("local ok, reason = snapshot_load('" + path + "', {switch_model = false}); print(ok, reason)",
+    ASSERT_TRUE(_lua.executeCode("local ok, reason = snapshot_load([[" + path + "]], {switch_model = false}); print(ok, reason)",
                                  message, output))
         << message;
     EXPECT_EQ(output.rfind("false\t", 0), 0u) << output;
     EXPECT_NE(output.find("128k"), std::string::npos) << "the machine it needs: " << output;
 
     output.clear();
-    ASSERT_TRUE(_lua.executeCode("local ok, reason, id = snapshot_load('" + path + "', {switch_model = true}); print(ok, id)",
+    ASSERT_TRUE(_lua.executeCode("local ok, reason, id = snapshot_load([[" + path + "]], {switch_model = true}); print(ok, id)",
                                  message, output))
         << message;
     EXPECT_EQ(output.rfind("true\t", 0), 0u) << output;
@@ -702,9 +714,6 @@ TEST_F(AutomationLua_Test, SnapshotLoadSwitchesTheModelOnlyWhenAsked)
     EXPECT_EQ(switched->GetContext()->config.mem_model, MM_SPECTRUM128);
 
     output.clear();
-    ASSERT_TRUE(_lua.executeCode("print((snapshot_load('" + path + "', 'legacy')))", message, output)) << message;
+    ASSERT_TRUE(_lua.executeCode("print((snapshot_load([[" + path + "]], 'legacy')))", message, output)) << message;
     EXPECT_EQ(output, "true\n") << "a string is still the commit (on the 128K now selected)";
-
-    for (const auto& emulatorId : manager->GetEmulatorIds())
-        manager->RemoveEmulator(emulatorId);
 }
