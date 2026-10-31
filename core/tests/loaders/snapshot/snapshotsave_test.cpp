@@ -516,6 +516,40 @@ TEST_F(SnapshotSave_Test, AGmxSavesAsAScorpionWhileItsCardPagingIsOff)
     }
 }
 
+// The loader's Pentagon scheme (#00 = #E4) is a Pentagon 128: the GMX saves as one, a .sna included, and the file
+// loads on the PENTAGON model with the same pages and #7FFD
+TEST_F(SnapshotSave_Test, AGmxInItsPentagonSchemeSavesAsAPentagon128)
+{
+    _machine = Machine{"GMX", 0, "GMX", 8};
+    _emulator = Create(_machine);
+    ASSERT_NE(_emulator, nullptr);
+    _context = _emulator->GetContext();
+    PortDecoder& ports = *_context->pPortDecoder;
+    ports.DecodePortOut(0x7EFD, 0x10, 0x8000);   // plane 1, the Pentagon ROMs, as the loader leaves it
+    ports.DecodePortOut(0x0000, 0xE4, 0x8000);
+    ports.DecodePortOut(0x1FFD, 0x16, 0x8000);   // a #7FFD on a Pentagon: page 6, ROM 1
+    ASSERT_EQ(_context->emulatorState.p7FFD, 0x16);
+    for (uint16_t page = 0; page < 8; page++)
+        std::memset(_context->pMemory->RAMPageAddress(page), page * 7 + 3, 16384);
+
+    const snapshot::SaveFormats formats = _emulator->SnapshotSaveFormats();
+    ASSERT_TRUE(formats.viewAvailable) << formats.view;
+    EXPECT_EQ(formats.machine, "Pentagon 128");
+
+    const std::string path = ScratchFile("sna");
+    ASSERT_TRUE(_emulator->SaveSnapshot(path)) << _emulator->LastSaveResult().text;
+    Emulator* pentagon = Create(kMachines[5]);
+    ASSERT_NE(pentagon, nullptr);
+    ASSERT_TRUE(pentagon->LoadSnapshot(path));
+    for (uint16_t page = 0; page < 8; page++)
+        EXPECT_EQ(0, std::memcmp(_context->pMemory->RAMPageAddress(page),
+                                 pentagon->GetContext()->pMemory->RAMPageAddress(page), 16384))
+            << "page " << page;
+    EXPECT_EQ(pentagon->GetContext()->emulatorState.p7FFD, 0x16);
+    EmulatorTestHelper::CleanupEmulator(pentagon);
+    std::remove(path.c_str());
+}
+
 // A Scorpion snapshot loads into a GMX in its Scorpion scheme: ROM plane 4, the card's pages off
 TEST_F(SnapshotSave_Test, AScorpionSnapshotLoadsIntoTheGmxScorpionScheme)
 {

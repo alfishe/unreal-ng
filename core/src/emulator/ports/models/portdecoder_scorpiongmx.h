@@ -27,7 +27,7 @@ public:
     static constexpr uint8_t P00_RECONF = 0x08;       // reload scheme CONF: the card resets the CPU
     static constexpr uint8_t P00_FIXROM = 0x10;       // freeze the ROM plane: RESET neither clears it nor reloads
     static constexpr uint8_t P00_BLKEXT = 0x20;       // the GMX register file off: a plain ZS-256 Turbo+
-    static constexpr uint8_t P00_BLKEX2 = 0x40;       // with BLKEXT: all xxFD ports blocked (not built)
+    static constexpr uint8_t P00_BLKEX2 = 0x40;       // with BLKEXT: all xxFD ports off, #7FFD at A1 = A15 = 0
     static constexpr uint8_t P00_PENTAGON_INT = 0x80; // ST/PENT: 1 = INT at the start of frame sync, 320 lines
 
     /// #7EFD bits (manual section 2)
@@ -41,13 +41,16 @@ public:
     /// The magic byte a RECONF arms: #88 | scheme, read LSB first through IN #78FD bit 0
     static constexpr uint8_t MAGIC_BASE = 0x88;
 
-    /// The frames #00 bit 7 selects (manual, Q13), on the same raster origin (paper at T 16152). ST: the Scorpion's
-    /// 312 lines, INT at the end of frame sync, 14336 T before the paper. PENT: 320 lines, INT at the start of frame
-    /// sync, 17988 T before the paper as on the Pentagon (its intstart 71635, paper at 17944)
-    static constexpr uint32_t kScorpionFrame = 69888;      // 224 * 312
-    static constexpr uint32_t kScorpionIntStart = 1815;    // INT fires at 1816
-    static constexpr uint32_t kPentagonFrame = 71680;      // 224 * 320
-    static constexpr uint32_t kPentagonIntStart = 69843;   // INT fires at 69844 = 16152 + 71680 - 17988
+    /// The frames #00 bit 7 selects (manual, Q13). ST: the Scorpion's 312 lines, INT at the end of frame sync,
+    /// 14336 T before the paper (raster paper at T 16152). PENT: 320 lines, INT at the start of frame sync, 80 lines
+    /// to the active screen (manual, "the Pentagon scheme"), 17988 T before the paper as on the Pentagon. The ZX
+    /// screen then runs the Pentagon raster (paper at T 17944, the model's intstart 71635); the 640x200 mode keeps
+    /// the Scorpion-line raster, so its INT moves to 16152 + 71680 - 17988
+    static constexpr uint32_t kScorpionFrame = 69888;              // 224 * 312
+    static constexpr uint32_t kScorpionIntStart = 1815;            // INT fires at 1816
+    static constexpr uint32_t kPentagonFrame = 71680;              // 224 * 320
+    static constexpr uint32_t kPentagonIntStart = 71635;           // INT fires at 71636 = 17944 + 71680 - 17988
+    static constexpr uint32_t kPentagonIntStartGmxRaster = 69843;  // INT fires at 69844 = 16152 + 71680 - 17988
     static constexpr uint32_t kIntLength = 32;
     /// endregion </Constants>
 
@@ -115,6 +118,11 @@ public:
     uint8_t Plane() const;
     /// RECONF requested and not run yet
     bool IsReconfigurationPending() const { return _reconfPending; }
+    /// BLKEXT + BLKEX2 (the loader's Pentagon scheme 4 writes #E4): no #xxFD ports, #7FFD decoded at A1 = A15 = 0
+    bool IsPentagonDecode() const
+    {
+        return (_state->gmx.p00 & (P00_BLKEXT | P00_BLKEX2)) == (P00_BLKEXT | P00_BLKEX2);
+    }
     /// TTD restore: the pending RECONF and its step hook
     void RestoreReconfigurationPending(bool pending);
     /// endregion </Register file>

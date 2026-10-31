@@ -4,6 +4,11 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <algorithm>
+#include <cstring>
+
+#include <emulator/cpu/core.h>
+#include <emulator/cpu/z80.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/emulatormanager.h>
@@ -176,4 +181,101 @@ TEST_F(GmxBoot_Test, OszBootsFromTheSdCard)
     EXPECT_TRUE(card.initialized()) << "the monitor's SD driver ran the card's init (CMD0, CMD8, ACMD41)";
     EXPECT_GT(card.blocksRead(), 40u) << "the system and the None Commander come from the SD card";
     EXPECT_EQ(_context->pScreen->GetVideoMode(), M_GMX);
+}
+
+namespace
+{
+/// Border stripes timed from an IM 2 interrupt: each frame XOR A, then 512 x (OUT (C),A; INC A; AND 7) = 36 T steps
+/// across the top border, the paper black. Identical frames need the same INT, frame, raster and border latch
+std::vector<uint8_t> RunBorderStripes(Emulator& emulator)
+{
+    EmulatorContext* context = emulator.GetContext();
+    Memory* memory = context->pMemory;
+    const uint8_t program[] = {
+        0xF3,                    // 8000 DI
+        0x31, 0xF0, 0x7F,        // 8001 LD SP,#7FF0
+        0x3E, 0x81,              // 8004 LD A,#81
+        0xED, 0x47,              // 8006 LD I,A
+        0xED, 0x5E,              // 8008 IM 2
+        0xFB,                    // 800A EI
+        0x76,                    // 800B HALT
+        0xAF,                    // 800C XOR A
+        0x0E, 0xFE,              // 800D LD C,#FE
+        0x16, 0x02,              // 800F LD D,2
+        0x06, 0x00,              // 8011 LD B,0
+        0xED, 0x79,              // 8013 OUT (C),A
+        0x3C,                    // 8015 INC A
+        0xE6, 0x07,              // 8016 AND 7
+        0x10, 0xF9,              // 8018 DJNZ #8013
+        0x15,                    // 801A DEC D
+        0x20, 0xF4,              // 801B JR NZ,#8011
+        0xC3, 0x0A, 0x80,        // 801D JP #800A
+    };
+    for (size_t i = 0; i < sizeof(program); i++)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    for (uint16_t a = 0x8100; a <= 0x8200; a++)
+        memory->DirectWriteToZ80Memory(a, 0x82);  // the IM 2 vector #8282
+    memory->DirectWriteToZ80Memory(0x8282, 0xC9);  // RET: interrupts stay off until the EI at #800A
+    for (uint16_t a = 0x4000; a < 0x5B00; a++)
+        memory->DirectWriteToZ80Memory(a, 0x00);
+
+    Z80* z80 = context->pCore->GetZ80();
+    z80->iff1 = z80->iff2 = 0;
+    z80->halted = 0;
+    z80->pc = 0x8000;
+    context->pScreen->SetPresentDelayFrames(0);
+    emulator.RunNFrames(4, true);
+
+    const auto& fb = context->pScreen->GetFramebufferDescriptor();
+    std::vector<uint8_t> rgba(fb.memoryBufferSize);
+    EXPECT_TRUE(context->pScreen->CopyPresentedFramebuffer(rgba.data(), rgba.size()));
+    return rgba;
+}
+}  // namespace
+
+/// @brief The loader's Set Up menu (Delete held at power-on) picks the FPGA scheme; "4. Pentagon" writes #00 = #E4 and
+///        starts the Pentagon 128 of plane 1: no card ports, the 320-line frame, the Pentagon raster and border. The
+///        manual promises "full compatibility with the Pentagon, border and multicolour effects": a border effect
+///        timed from the INT draws the same frame as on the PENTAGON model, pixel for pixel
+TEST_F(GmxBoot_Test, LoaderSchemeFourIsAPentagon128)
+{
+    Keyboard* keyboard = _context->pKeyboard;
+    keyboard->PressKey(ZXKEY_CAPS_SHIFT);
+    keyboard->PressKey(ZXKEY_0);
+    _emulator->RunNFrames(100, true);
+    keyboard->ReleaseKey(ZXKEY_0);
+    keyboard->ReleaseKey(ZXKEY_CAPS_SHIFT);
+    _emulator->RunNFrames(10, true);
+
+    keyboard->PressKey(ZXKEY_4);
+    _emulator->RunNFrames(6, true);
+    keyboard->ReleaseKey(ZXKEY_4);
+    const int frames = EmulatorTestHelper::RunUntil(
+        _emulator.get(), [&] { return _context->emulatorState.gmx.p00 == 0xE4 && (P7EFD() & 0x70) == 0x10; }, 300, 5);
+    ASSERT_LT(frames, 300) << "#00=" << std::hex << int(_context->emulatorState.gmx.p00) << " 7EFD=" << int(P7EFD());
+
+    EXPECT_EQ(_context->config.frame, 71680u);
+    EXPECT_EQ(_context->pScreen->GetVideoMode(), M_PENTAGON128K);
+    auto* gmx = dynamic_cast<PortDecoder_ScorpionGMX*>(_context->pPortDecoder);
+    ASSERT_NE(gmx, nullptr);
+    EXPECT_TRUE(gmx->IsPentagonDecode());
+
+    const std::vector<uint8_t> onGmx = RunBorderStripes(*_emulator);
+    std::shared_ptr<Emulator> pentagon =
+        _manager->CreateEmulatorWithModelAndRAM("gmx-pentagon-ref", "PENTAGON", 128, LoggerLevel::LogError);
+    ASSERT_NE(pentagon, nullptr);
+    const std::vector<uint8_t> onPentagon = RunBorderStripes(*pentagon);
+    const std::string pentagonId = pentagon->GetId();
+    pentagon.reset();
+    _manager->RemoveEmulator(pentagonId);
+
+    ASSERT_EQ(onGmx.size(), onPentagon.size());
+    size_t differing = 0;
+    for (size_t i = 0; i < onGmx.size(); i += 4)
+        differing += std::memcmp(&onGmx[i], &onPentagon[i], 4) != 0 ? 1 : 0;
+    EXPECT_EQ(differing, 0u) << "pixels that differ from the Pentagon's frame";
+    const uint32_t* first = reinterpret_cast<const uint32_t*>(onGmx.data());
+    const size_t pixels = onGmx.size() / 4;
+    EXPECT_GT(std::count_if(first, first + pixels, [&](uint32_t px) { return px != first[0]; }), 1000)
+        << "the stripes are drawn";
 }

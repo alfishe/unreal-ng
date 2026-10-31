@@ -110,6 +110,19 @@ uint8_t PortDecoder_ScorpionGMX::DecodePortIn(uint16_t port, uint16_t pc)
         return value;
     }
 
+    // The Pentagon decode: #7FFD is write-only, nothing drives the bus there
+    if (IsPentagonDecode() && (port & 0x8002) == 0)
+    {
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = 0x7FFD;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, 0xFF, pc, disp);
+        return 0xFF;
+    }
+
     const uint8_t reg = (gmx.p00 & P00_BLKEXT) ? 0 : GmxRegisterOf(port);
     uint8_t result = 0xFF;
     switch (reg)
@@ -168,6 +181,14 @@ void PortDecoder_ScorpionGMX::DecodePortOut(uint16_t port, uint8_t value, uint16
         disp.decodedPort = port & 0x00FF;
         disp.device = PortDeviceId::SdCard;
         OnPortOutComplete(port, value, pc, disp);
+        return;
+    }
+
+    // The Pentagon scheme (manual, "the Pentagon scheme"; #00 BLKEX2): every #xxFD port of the card and the host is
+    // off and #7FFD answers at A1 = A15 = 0, #1FFD included, as on a Pentagon 128
+    if (IsPentagonDecode() && (port & 0x8002) == 0)
+    {
+        PortDecoder_Scorpion256::DecodePortOut(0x7FFD, value, pc);
         return;
     }
 
@@ -239,8 +260,9 @@ void PortDecoder_ScorpionGMX::SyncFrame()
 {
     CONFIG& config = _context->config;
     const bool pentagon = (_state->gmx.p00 & P00_PENTAGON_INT) != 0;
+    const bool extended = (_state->scorpion.p7EFD & P7EFD_GFX) != 0;
     const uint32_t frame = pentagon ? kPentagonFrame : kScorpionFrame;
-    const uint32_t intstart = pentagon ? kPentagonIntStart : kScorpionIntStart;
+    const uint32_t intstart = !pentagon ? kScorpionIntStart : (extended ? kPentagonIntStartGmxRaster : kPentagonIntStart);
     if (config.frame == frame && config.intstart == intstart && config.intlen == kIntLength)
         return;
 
@@ -251,7 +273,7 @@ void PortDecoder_ScorpionGMX::SyncFrame()
     config.frame_duration_us = CalculateFrameDurationUs(frame);
     if (_context->pCore && _context->pCore->GetZ80())
         _context->pCore->GetZ80()->RecomputeFrameTiming();
-    // The raster keeps the Scorpion's 312 lines: the 8 more of the Pentagon frame are blanking
+    // The ZX screen follows: the Pentagon raster with PENT (Screen::DetectModeGMX)
     if (_context->pScreen)
         _context->pScreen->InitRaster();
 }
@@ -464,9 +486,12 @@ void PortDecoder_ScorpionGMX::Out7EFD(uint8_t value)
     _context->pMemory->UpdateZ80Banks();
     ApplyTurbo();
 
-    // Bit 3 switches the 640x200 extended mode (Screen::DetectModeGMX)
+    // Bit 3 switches the 640x200 extended mode (Screen::DetectModeGMX) and with PENT the INT position of its raster
     if ((changed & P7EFD_GFX) && _context->pScreen)
+    {
         _context->pScreen->InitRaster();
+        SyncFrame();
+    }
 }
 
 void PortDecoder_ScorpionGMX::ApplyTurbo()

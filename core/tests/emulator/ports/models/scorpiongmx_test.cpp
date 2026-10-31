@@ -247,9 +247,13 @@ TEST_F(ScorpionGmx_Test, Port00Bit7SelectsThePentagonFrame)
     Out(0x0000, 0x80);
     EXPECT_EQ(config.frame, 71680u);
     EXPECT_EQ(config.t_line, 224u);
-    EXPECT_EQ(config.intstart, 69843u);
-    EXPECT_EQ(config.frame - (config.intstart + 1) + 16152u, 17988u) << "the Pentagon's INT-to-paper distance";
+    EXPECT_EQ(config.intstart, 71635u) << "the Pentagon model's: the ZX screen runs the Pentagon raster";
+    EXPECT_EQ(config.frame - (config.intstart + 1) + 17944u, 17988u) << "the Pentagon's INT-to-paper distance";
     EXPECT_NE(In(0x7EFD) & 0x10, 0);
+    Out(0x7EFD, 0x08);
+    EXPECT_EQ(config.frame - (config.intstart + 1) + 16152u, 17988u) << "640x200 keeps its raster, INT moves";
+    Out(0x7EFD, 0x00);
+    EXPECT_EQ(config.intstart, 71635u);
 
     _gmx->reset();
     EXPECT_EQ(config.frame, 71680u) << "#00 survives RESET";
@@ -368,4 +372,32 @@ TEST_F(ScorpionGmx_Test, ZControllerPortsReachTheSdCard)
 
     _gmx->reset();
     EXPECT_TRUE(_gmx->GetSdCard().present()) << "RESET keeps the card";
+}
+
+
+/// @brief The Pentagon scheme (manual, "the Pentagon scheme"; the loader's scheme 4 writes #00 = #E4): BLKEXT + BLKEX2
+///        turn every #xxFD port off and decode #7FFD at A1 = A15 = 0, as on a Pentagon 128; #00 stays reachable
+TEST_F(ScorpionGmx_Test, PentagonSchemeDecodesThe7FFDAtA1A15)
+{
+    Out(0x0000, 0xE4);
+    EXPECT_TRUE(_gmx->IsPentagonDecode());
+
+    Out(0x1FFD, 0x03);
+    EXPECT_EQ(State().p7FFD, 0x03) << "#1FFD is a #7FFD on a Pentagon";
+    EXPECT_EQ(State().p1FFD, 0x00);
+    Out(0x7EFD, 0x07);
+    EXPECT_EQ(State().p7FFD, 0x07) << "#7EFD too: the card's register file is off";
+    EXPECT_EQ(State().scorpion.p7EFD & 0x07, 0x00);
+    Out(0x0FFC, 0x01);
+    EXPECT_EQ(State().p7FFD, 0x01) << "any port with A1 = A15 = 0";
+    EXPECT_EQ(In(0x7FFD), 0xFF) << "write-only";
+
+    State().pFFFD = 0x00;
+    Out(0xDFFD, 0x0E);
+    EXPECT_EQ(State().pFFFD, 0x0E) << "#DFFD (A15 = A14 = 1, A1 = 0) selects an AY register, as on a Pentagon";
+    EXPECT_EQ(State().pDFFD, 0x00);
+
+    Out(0x0000, 0x42);  // BLKEX2 without BLKEXT: the working decode
+    Out(0x1FFD, 0x00);
+    EXPECT_EQ(State().p7FFD, 0x01);
 }

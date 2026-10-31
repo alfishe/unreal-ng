@@ -471,7 +471,10 @@ the `#7AFD` / `#7EFD` read-backs until an `IN #FF`. No Turbo+ host logic (no Pro
 
 ## Turbo, frame, Magic
 `#7EFD` bit 7 = 7 MHz; an opcode fetch from RAM on an odd 7 MHz T waits one T (ROM code 2x, RAM loops ~1.9x).
-`#00` bit 7 = the Pentagon frame (320 lines, 71680 T), else the Scorpion's 312 (69888 T); `#00` survives RESET.
+`#00` bit 7 = the Pentagon frame (320 lines, 71680 T) with the Pentagon raster (video mode Pentagon128K), else the
+Scorpion's 312 (69888 T); `#00` survives RESET. Pentagon timings come from the loader's Set Up menu (hold Caps
+Shift + 0 at a hard reset): key 4 = the Pentagon scheme (`#00` = `#E4`: a Pentagon 128, no `#xxFD` ports, `#7FFD`
+at A1 = A15 = 0), key 7 = Pentagon7 (`#A7`: Scorpion ports on the Pentagon frame), key 2 = back to the GMX.
 The Magic button (NMI) is ignored while `#7EFD` bit 2 is set.
 
 ## SD card (Z-Controller)
@@ -489,7 +492,8 @@ ScorpionProfROM (6) and the SMUC clock (Ds12887, 18).
 
 ## Snapshots and state transfer
 With the card's paging off (`#78FD` = `#DFFD` = 0, `#1FFD` bit 2 clear, 640x200 off) the machine saves as a Scorpion
-ZS 256; otherwise `capture_unsupported` says what is in use. Scorpion snapshots load into the Scorpion scheme (ROM plane
+ZS 256; otherwise `capture_unsupported` says what is in use. In the Pentagon scheme (`#00` = `#E4`) it saves as a
+Pentagon 128. Scorpion snapshots load into the Scorpion scheme (ROM plane
 4); a Spectrum / Scorpion state moves into a GMX the same way. A GMX using its own paging moves only to a GMX.
 )md";
 

@@ -469,6 +469,11 @@ Screen::ModeSelection Screen::DetectModeGMX(const EmulatorState& state) const
     if (state.scorpion.p7EFD & 0x08)
         return { M_GMX, R_320_200 };
 
+    // #00 bit 7 (ST/PENT): the Pentagon frame, 320 lines with 80 from INT to the active screen and the border
+    // without strobing (GMX manual, the Pentagon scheme): the Pentagon 128 raster
+    if (state.gmx.p00 & 0x80)
+        return { M_PENTAGON128K, R_256_192 };
+
     return DetectModeScorpion(state);
 }
 

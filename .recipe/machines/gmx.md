@@ -54,6 +54,7 @@ time_travel  {"action":"seek","frame":N}    # the card's latches, the plane and 
 
 - Snapshots: with the card's paging off (`#78FD` = `#DFFD` = 0, `#1FFD` bit 2 clear, 640x200 off) the machine
   saves as a Scorpion ZS 256; otherwise every format answers `needs: mode:scorpion256` and names what is in use.
+  In the loader's Pentagon scheme (`#00` = `#E4`) it saves as a Pentagon 128 (`.sna` included).
 - A Scorpion `.z80` / `.szx` (and any 48K / 128K snapshot) loads into the Scorpion scheme: ROM plane 4, card pages off.
 - State transfer: a Spectrum / Scorpion state moves into a GMX; a GMX moves to a Scorpion 256 while its paging is off
   and pages 16-127 are empty; with `#78FD` / `#DFFD` / its own plane in use, only to another GMX.
@@ -87,9 +88,33 @@ screen, the Scorpion GMX 128 menu, Edge Grinder's attract mode in 640x200.
   7 MHz T waits one T (`even_M1` = 2, turbo only); ROM code runs exactly 2x, a byte copy loop from RAM 1.93x.
   No Turbo+ `IN` strobes, no host waits.
   Check: Edge Grinder in game, key R shows the frame rate: 25 (the real board's figure; 16 = too slow, 50 = too fast).
-- `#00` bit 7 (ST/PENT): the Pentagon frame, 320 lines (71680 T) with INT 17988 T before the paper; 0 = the
-  Scorpion's 312 lines (69888 T). `#00` survives RESET, power-off clears it. Check with
-  `inspect_state aspects:["paging"]` (`gmx.port_00.pentagon_int`) and the frame length in the timing state.
+- `#00` bit 7 (ST/PENT): the Pentagon frame, 320 lines (71680 T) with INT 17988 T before the paper, and the ZX
+  screen on the Pentagon raster and border (video mode `Pentagon128K`; 640x200 keeps its own); 0 = the Scorpion's
+  312 lines (69888 T). `#00` survives RESET, power-off clears it. Check with `inspect_state aspects:["paging"]`
+  (`gmx.port_00.pentagon_int`) and the frame length in the timing state.
+
+## Pentagon timings: the loader's schemes
+
+Hold Delete (Caps Shift + 0) at power-on: the loader V2.00 Set Up menu lists the FPGA schemes. The firmware itself
+writes `#00`; nothing to configure in the emulator.
+
+| Key | Scheme | `#00` | What runs |
+|:--|:--|:--|:--|
+| 2 | Scorpion (the default) | `#02` | the GMX: Scorpion frame, card ports, plane 4 |
+| 4 | Pentagon | `#E4` | a Pentagon 128 (manual, "the Pentagon scheme"): no `#xxFD` ports, `#7FFD` at A1 = A15 = 0, 320 lines, 80 from INT to the screen, plane 1 ROMs |
+| 7 | Pentagon7 | `#A7` | the Scorpion ports without the card's (BLKEXT) on the Pentagon frame, plane 3 "Reset Rom Loader" menu |
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/keyboard/press" -H 'Content-Type: application/json' -d '{"key":"cs"}'
+curl -s -X POST "$BASE/emulator/$EMU_ID/keyboard/press" -H 'Content-Type: application/json' -d '{"key":"0"}'
+curl -s -X POST "$BASE/emulator/$EMU_ID/reset" -H 'Content-Type: application/json' -d '{"hard":true}'
+sleep 3; curl -s -X POST "$BASE/emulator/$EMU_ID/keyboard/release_all"
+curl -s -X POST "$BASE/emulator/$EMU_ID/keyboard/tap" -H 'Content-Type: application/json' -d '{"key":"4"}'
+curl -s "$BASE/emulator/$EMU_ID/state/paging" | jq '.gmx.port_00'      # value 0xE4, pentagon_int true
+```
+
+The choice lasts until power-off (RESET keeps `#00`). Verified 2026-10-31 (wt-gmx-impl): a border effect timed from
+the INT draws the same frame on scheme 4 as on the `PENTAGON` model (`GmxBoot_Test.LoaderSchemeFourIsAPentagon128`).
 - Magic (NMI, the CLI `nmi` / WebAPI `nmi` routes): ignored while `#7EFD` bit 2 is set; otherwise the read-backs of
   `#7AFD` / `#7EFD` stay frozen until an `IN #FF` (`gmx.magic.frozen`).
 

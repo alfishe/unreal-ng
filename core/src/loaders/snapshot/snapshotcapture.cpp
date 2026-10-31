@@ -158,6 +158,19 @@ MachineView DefaultView(EmulatorContext& context)
         }
         case MM_GMX:
         {
+            // The loader's Pentagon scheme (#00 BLKEXT + BLKEX2 + ST/PENT, the 640x200 mode off): a Pentagon 128, its
+            // #xxFD ports off, so RAM pages 0-7 and #7FFD are all of it (GMX manual, the Pentagon scheme)
+            if ((state.gmx.p00 & 0xE0) == 0xE0 && !(state.scorpion.p7EFD & 0x08))
+            {
+                view.note = "the GMX runs its Pentagon scheme: the machine is a Pentagon 128";
+                view.model = MM_PENTAGON;
+                view.ramKb = 128;
+                view.machineHint = "pentagon128";
+                view.timingHint = "pentagon";
+                for (uint16_t page = 0; page < 8; page++)
+                    AddBanks(view, memory, {page});
+                break;
+            }
             // The card's own paging has no snapshot id in any format: while it is off the machine is a Scorpion 256
             // (GMX design section 6)
             std::string inUse;
@@ -193,7 +206,7 @@ MachineView DefaultView(EmulatorContext& context)
                                "capture_unsupported");
     }
 
-    const size_t wanted = view.layout48 ? 3 : (view.machineHint == "scorpion256" ? 16 : (view.machineHint.rfind("pentagon", 0) == 0 && config.ramsize > 128 ? config.ramsize / 16 : 8));
+    const size_t wanted = view.layout48 ? 3 : (view.machineHint == "scorpion256" ? 16 : (view.machineHint.rfind("pentagon", 0) == 0 && view.ramKb > 128 ? view.ramKb / 16 : 8));
     if (view.banks.size() < wanted)
         return Unavailable("the machine's RAM is not all there (" + std::to_string(view.banks.size()) + " of " + std::to_string(wanted) + " banks)",
                            "ram");
