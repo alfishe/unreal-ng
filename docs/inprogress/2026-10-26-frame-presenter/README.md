@@ -605,6 +605,38 @@ Each phase lands on its own with tests and docs.
      (period 5, the lives row excluded), Thundercats (4) and Garfield (3).
    - Flickering blocks held as the frame due (section 4.4); the adaptive lead shared by the Metal and DXGI presenters
      (`platform/presentlead.h`), late measured from the frame's own time.
+
+   **5b. Layers** ([POC 039](../../../tools/poc/039-smoothing-filters/README.md)). One composition for every kind of
+   motion, tuned on a synthetic suite with ground truth: 24.5 % wrong over the suite's 10-scene sum, against 118 % for
+   `MotionField::Compose`. It replaces the per-pair composition of `Interpolate`; the game modes keep theirs (pictures
+   several frames apart, extrapolation past B).
+   1. CPU reference `smoothmotion::LayerFlow` (`smoothlayers.{h,cpp}`), ported from the POC. The POC calls it, so the
+      suite measures the product code. Done: byte-identical to the POC on the 12 scenes.
+   2. Speed on the CPU with the same bits. The POC costs 117 ms per refresh on average and 350 ms on full-screen
+      parallax (M-series, one thread): the cover rule's per-colour windows 203 ms, the per-vector fits and windows
+      99 ms, two field estimates 21 ms. Target: under 4 ms per refresh on full-screen motion. Done, with the suite's
+      output still byte-identical (12 scenes) and the bench hashes unchanged. Compose alone on an idle M3 Ultra, one
+      thread, 352 x 288: parallax 47.7 -> 4.3 ms, strips 27.6 -> 3.7, flux 32.0 -> 3.7, dotmatrix 17.1 -> 2.4,
+      sprites 13.4 -> 1.9. The changes:
+      - the cover balance per vector and colour summed at the pixel while few pixels ask, a window image only after
+        64 asks;
+      - the pictures copied with repeated edges, so reads need no clamp; the per-vector pass reads whole rows and
+        vectorizes;
+      - window sums as column sums plus a sliding row sum, scores in bytes and support in 16 bits;
+      - the per-block counts by popcount over 8-byte rows; the aliases rule only where a slower look-alike fits the
+        block;
+      - the buffers kept from call to call. The hot loops use raw pointers, because a byte store may alias a
+        vector's own pointer and stop the vectorizer.
+   3. The engine: `Interpolate` composes with `LayerFlow` from frames k - 1, k, k + 1. The field k - 1 -> k is the
+      cached field of the pair before; for the first pair after a start or a seek, p = a with an all-still field.
+      Flicker is held as before, the frame due over the composed picture. `Device::ComposeLayers` takes the step when
+      a device has it; until step 4 it runs on the CPU. Done; unit tests for the scroller, a sprite over paper, a still
+      picture and the pinned hashes. Known limit: a sprite over random background of few colours. The background it
+      left between k - 1 and k is not still3, and moving vectors fit the noise by chance there.
+   4. The GPU passes in `SmoothMotionGPU`: the per-pixel fits and windows as passes, the per-block votes as a pass
+      per block. The tied regions (44 x 36 blocks) need a sequential flood: either iterated on the GPU or read back
+      and done on the CPU, whichever is cheaper. The result is tested to the bit against the CPU.
+   5. Live check through the WebAPI on the hold-out clips; then the owner looks.
 6. **Automation planes.** Settings and `PresentStats` on CLI, Python, Lua, MCP, REST and WebSocket; docs chain per the
    guidelines. On the branch: `smooth_motion`, `effects_device` and the `present` report (section 6.4); not yet the
    policy and the lip-sync offset.

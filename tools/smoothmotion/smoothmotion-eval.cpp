@@ -13,7 +13,7 @@
 //
 // Build (no CMake target: a measuring tool, as the POC):
 //   c++ -std=c++20 -O3 -Icore/src -o scratch/smoothmotion-eval tools/smoothmotion/smoothmotion-eval.cpp \
-//       core/src/emulator/video/smoothmotion.cpp
+//       core/src/emulator/video/smoothmotion.cpp core/src/emulator/video/smoothlayers.cpp
 #include <algorithm>
 #include <chrono>
 #include <cstdint>

@@ -8,7 +8,7 @@ F=${FRAMES:-scratch/2026-10-26-poc-038/frames}
 SHORT=${SHORT:-off,blend-narrow,interpolate,interp-rows}
 mkdir -p $D
 clang++ -std=c++20 -O2 -Wall -Wextra -Icore/src tools/poc/039-smoothing-filters/filters.cpp \
-    core/src/emulator/video/smoothmotion.cpp -o $D/filters || exit 1
+    core/src/emulator/video/smoothmotion.cpp core/src/emulator/video/smoothlayers.cpp -o $D/filters || exit 1
 clips=("$@")
 [ ${#clips[@]} -eq 0 ] && clips=($(ls $F | sed -n 's/\.rgba$//p'))
 one()

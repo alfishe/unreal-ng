@@ -1,5 +1,7 @@
 #include "smoothmotion.h"
 
+#include "smoothlayers.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -370,6 +372,10 @@ void MotionField::Compose(const Picture& a, const Picture& b, int w, uint32_t* o
         }
 }
 
+SmoothMotion::SmoothMotion() : _layers(std::make_unique<LayerFlow>()) {}
+
+SmoothMotion::~SmoothMotion() = default;
+
 void SmoothMotion::SetMode(Mode mode)
 {
     _mode = mode;
@@ -648,12 +654,20 @@ bool SmoothMotion::Draw(const Result& r, uint32_t* out)
             _stats.blended++;
             break;
         case Kind::Interpolate:
-            if (!a->smooth.empty())
-                std::memcpy(out, a->pixels.data(), a->pixels.size() * sizeof(uint32_t));
-            Compose(FieldFor(*a, *b, MotionField::kRangeFrames), pa, pb, r.weight, out,
-                    a->smooth.empty() ? nullptr : a->smooth.data());
+        {
+            // The frame before a for the still and steady checks (a itself when it is the first)
+            const Stored* p = a;
+            for (size_t i = 1; i < _frames.size(); i++)
+                if (&_frames[i] == a)
+                    p = &_frames[i - 1];
+            ComposeLayers(*p, *a, *b, r.weight, out);
+            // Flickering pixels: the frame due
+            for (size_t q = 0; q < a->smooth.size(); q++)
+                if (!a->smooth[q])
+                    out[q] = a->pixels[q];
             _stats.interpolated++;
             break;
+        }
         case Kind::Cadence:
         case Kind::Carry:
             // Outside the game's window the frame due, as it is
@@ -675,6 +689,29 @@ void SmoothMotion::Compose(const MotionField& field, const Picture& a, const Pic
         _stats.onDevice++;
     else
         field.Compose(a, b, w, out, mask);
+}
+
+void SmoothMotion::ComposeLayers(const Stored& p, const Stored& a, const Stored& b, int w, uint32_t* out)
+{
+    // The field p -> a first: in order, it is the last pair's a -> b, still cached
+    const MotionField* prev = &_still;
+    if (&p != &a)
+        prev = &FieldFor(p, a, MotionField::kRangeFrames);
+    else if (_still.BlocksWide() != (_width + MotionField::kBlock - 1) / MotionField::kBlock ||
+             _still.BlocksHigh() != (_height + MotionField::kBlock - 1) / MotionField::kBlock)
+    {
+        const int blocksWide = (_width + MotionField::kBlock - 1) / MotionField::kBlock;
+        const int blocksHigh = (_height + MotionField::kBlock - 1) / MotionField::kBlock;
+        _still.Assign(blocksWide, blocksHigh,
+                      std::vector<MotionField::Block>(static_cast<size_t>(blocksWide) * blocksHigh, {{}, true}),
+                      MotionField::kRangeFrames);
+    }
+    const MotionField& next = FieldFor(a, b, MotionField::kRangeFrames);
+    const Picture pp = p.View(_width, _height), pa = a.View(_width, _height), pb = b.View(_width, _height);
+    if (_device && _device->ComposeLayers(pp, pa, pb, *prev, next, w, out))
+        _stats.onDevice++;
+    else
+        _layers->Compose(pp, pa, pb, *prev, next, w, out);
 }
 
 SmoothMotion::Result SmoothMotion::Render(int64_t tNs, uint32_t* out)

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 /// Smooth motion on a fixed display (frame presenter design, docs/inprogress/2026-10-26-frame-presenter, sections 4.3-4.5
@@ -18,7 +19,7 @@ enum class Mode : uint8_t
 {
     Off,          // the frame due (the beat pattern on a fixed display)
     Blend,        // (1 - w) A + w B between the two frames around the refresh's time
-    Interpolate,  // each block moved to its position at the refresh's time, the blend where no motion is found
+    Interpolate,  // every pixel drawn by the layer moving through it at the refresh's time (LayerFlow, smoothlayers.h)
 };
 
 /// A game profile's `video.smooth` (mapping-and-profiles.md section 7.7); only with Mode::Interpolate
@@ -162,7 +163,15 @@ public:
     /// MotionField::Compose: `out` holds what stays outside `mask`
     virtual bool Compose(const MotionField& field, const Picture& a, const Picture& b, int w, uint32_t* out,
                          const uint8_t* mask) = 0;
+    /// LayerFlow::Compose (smoothlayers.h); a device without it leaves it to the CPU
+    virtual bool ComposeLayers(const Picture& /*p*/, const Picture& /*a*/, const Picture& /*b*/,
+                               const MotionField& /*prev*/, const MotionField& /*next*/, int /*w*/, uint32_t* /*out*/)
+    {
+        return false;
+    }
 };
+
+class LayerFlow;
 
 /// The presenter's side: every timed frame once, in order (Screen::CopyNextFrame), and per refresh the picture for
 /// its time. Keeps copies of the recent frames and of the game's last pictures; caches the motion fields per pair.
@@ -175,6 +184,9 @@ public:
 class SmoothMotion
 {
 public:
+    SmoothMotion();
+    ~SmoothMotion();
+
     /// The game mode's lookahead: the step to the next picture starts at most this many frames before it
     static constexpr int kLookaheadFrames = 2;
     static constexpr size_t kFrames = 8;    ///< recent frames kept
@@ -266,6 +278,8 @@ private:
     };
 
     const MotionField& FieldFor(const Stored& a, const Stored& b, int range);
+    /// Interpolate's picture of the pair a, b with `p` the frame before a (a itself after a start or a seek)
+    void ComposeLayers(const Stored& p, const Stored& a, const Stored& b, int w, uint32_t* out);
     void Compose(const MotionField& field, const Picture& a, const Picture& b, int w, uint32_t* out,
                  const uint8_t* mask);
     bool ChangedInWindow(const uint32_t* a, const uint32_t* b) const;
@@ -285,6 +299,8 @@ private:
     std::vector<uint8_t> _mask;     ///< the game's window minus its exclusions (empty: no game)
     std::vector<int64_t> _periods;  ///< the last target steps
     CachedField _fields[2];
+    MotionField _still;  ///< every block matched still: the field a -> a when no frame comes before a
+    std::unique_ptr<LayerFlow> _layers;
     size_t _nextField = 0;
     Stats _stats;
 };

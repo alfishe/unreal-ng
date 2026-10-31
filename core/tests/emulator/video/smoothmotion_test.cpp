@@ -5,6 +5,7 @@
 #include <cstring>
 #include <vector>
 
+#include "emulator/video/smoothlayers.h"
 #include "emulator/video/smoothmotion.h"
 
 /// SmoothMotion: the CPU reference of the blend, the interpolation and the game cadence modes
@@ -161,6 +162,64 @@ TEST(SmoothMotion_Test, SpriteMovesOverAStaticBackground)
             EXPECT_EQ(out.At(23 + x, 22 + y), truth.At(23 + x, 22 + y)) << x << "," << y;
 }
 
+namespace
+{
+/// LayerFlow's picture of p, a, b at the weight w, the fields estimated as the engine does
+Image Layers(const Image& p, const Image& a, const Image& b, int w)
+{
+    MotionField prev, next;
+    prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
+    next.Estimate(a.View(), b.View(), MotionField::kRangeFrames);
+    Image out(a.width, a.height);
+    LayerFlow().Compose(p.View(), a.View(), b.View(), prev, next, w, out.pixels.data());
+    return out;
+}
+
+int Wrong(const Image& out, const Image& truth)
+{
+    int wrong = 0;
+    for (size_t q = 0; q < out.pixels.size(); q++)
+        wrong += out.pixels[q] != truth.pixels[q];
+    return wrong;
+}
+}  // namespace
+
+TEST(SmoothMotion_Test, LayersMoveTheScrollerToTheMiddle)
+{
+    // Exact away from the edges, where the band's content comes in from outside
+    const Image out = Layers(Scroller(96, 64, -4, 16, 32), Scroller(96, 64, 0, 16, 32), Scroller(96, 64, 4, 16, 32), 128);
+    const Image truth = Scroller(96, 64, 2, 16, 32);
+    for (int y = 0; y < 64; y++)
+        for (int x = 8; x < 88; x++)
+            ASSERT_EQ(out.At(x, y), truth.At(x, y)) << x << "," << y;
+}
+
+TEST(SmoothMotion_Test, LayersMoveASpriteOverPaper)
+{
+    // (14, 16) -> (20, 20) -> (26, 24) over black paper: at w = 1/2 at (23, 22), exact. Known limit: over random
+    // background of few colours the pixels the sprite left between k - 1 and k are not still, and moving vectors fit
+    // the noise by chance there (smoothlayers.h)
+    const auto sprite = [](int sx, int sy) {
+        Image img(96, 64);
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++)
+                img.At(sx + x, sy + y) = PatternAt(x + 1000, y + 1000);
+        return img;
+    };
+    EXPECT_EQ(Wrong(Layers(sprite(14, 16), sprite(20, 20), sprite(26, 24), 128), sprite(23, 22)), 0);
+}
+
+TEST(SmoothMotion_Test, LayersKeepAStillPictureAndUnrelatedChanges)
+{
+    // Nothing moves: a; a line recoloured fits no layer: the nearer frame
+    const Image a = Sprite(64, 32, 8, 8);
+    Image b = a;
+    for (int x = 0; x < 64; x++)
+        b.At(x, 30) = PatternAt(x, 3);
+    EXPECT_EQ(Wrong(Layers(a, a, b, 100), a), 0);
+    EXPECT_EQ(Wrong(Layers(a, a, b, 200), b), 0);
+}
+
 TEST(SmoothMotion_Test, NoMotionFoundIsTheBlend)
 {
     // Unrelated noise: no block matches, the output is the blend everywhere
@@ -238,10 +297,14 @@ TEST(SmoothMotion_Test, SameBitsOnEveryCompiler)
     field.Compose(a.View(), b.View(), 85, third.pixels.data());
     field.Compose(a.View(), b.View(), 400, carry.pixels.data());
     Blend(a.View(), b.View(), 77, blend.pixels.data());
-    const uint64_t hashes[4] = {Hash(half.pixels), Hash(third.pixels), Hash(carry.pixels), Hash(blend.pixels)};
-    const uint64_t expected[4] = {4633665985508127287ull, 14177168654969719964ull, 6201765027649431927ull,
-                                  1468177541638179538ull};
-    for (int i = 0; i < 4; i++)
+    // LayerFlow: the sprite on from a frame before a
+    const Image p = Sprite(80, 48, 5, 10);
+    const Image layersHalf = Layers(p, a, b, 128), layersThird = Layers(p, a, b, 85);
+    const uint64_t hashes[6] = {Hash(half.pixels),   Hash(third.pixels),      Hash(carry.pixels),
+                                Hash(blend.pixels),  Hash(layersHalf.pixels), Hash(layersThird.pixels)};
+    const uint64_t expected[6] = {4633665985508127287ull, 14177168654969719964ull, 6201765027649431927ull,
+                                  1468177541638179538ull, 1473332912888063342ull,  18128183336690002154ull};
+    for (int i = 0; i < 6; i++)
         EXPECT_EQ(hashes[i], expected[i]) << "output " << i << ": 0x" << std::hex << hashes[i];
 }
 
@@ -336,7 +399,7 @@ namespace
 struct CountingDevice : Device
 {
     bool accept = true;
-    int estimates = 0, blends = 0, composes = 0;
+    int estimates = 0, blends = 0, composes = 0, layers = 0;
     bool Estimate(const Picture& a, const Picture& b, int range, MotionField& field) override
     {
         estimates++;
@@ -357,6 +420,14 @@ struct CountingDevice : Device
         composes++;
         if (accept)
             field.Compose(a, b, w, out, mask);
+        return accept;
+    }
+    bool ComposeLayers(const Picture& p, const Picture& a, const Picture& b, const MotionField& prev,
+                       const MotionField& next, int w, uint32_t* out) override
+    {
+        layers++;
+        if (accept)
+            LayerFlow().Compose(p, a, b, prev, next, w, out);
         return accept;
     }
 };
@@ -388,7 +459,9 @@ TEST(SmoothMotion_Test, StepsGoToTheDeviceOrBackToTheCpu)
         }
         EXPECT_EQ(device.estimates, 1);
         EXPECT_EQ(device.blends, 1);
-        EXPECT_EQ(device.composes, 1);
+        // Interpolate is LayerFlow's; Compose is the game modes'
+        EXPECT_EQ(device.composes, 0);
+        EXPECT_EQ(device.layers, 1);
         EXPECT_EQ(feed.engine.GetStats().onDevice, accept ? 3u : 0u);
     }
 }
