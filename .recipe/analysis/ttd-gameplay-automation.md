@@ -99,8 +99,11 @@ archive.org (`zx_*` items) when a tape image is damaged.
   segment counter `#A724` came from "monotone in every sample" over the same dump). Poking such a counter (`PUT /memory/{addr}`)
   works as a shortcut, but a counter that the game reads for pointers (the segment index walks a course table) desyncs the
   road: poking `#A724` through 46 segments did not run the time-extension code, so the checkpoint is not reachable that way.
-- **Stale instance trap**: `lsof -ti tcp:<port>` may find nothing while the instance is alive; `lib.launch` then attaches to the
-  old one and the "new" run starts in a game-over state. Kill by path: `pkill -f "<worktree>/cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt "`.
+- **Stale instance trap**: `launch` attaches to a live instance on the port instead of starting a new one, so a "new" run
+  can begin in a game-over state. Check what answers the port before a run, and kill the previous instance by its path
+  (`pkill -f "<worktree>/cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt "`), not only by port: a helper
+  module that sets its own port (one session lost an hour to a library that rewrote `PORT` on import) leaves instances on a
+  port nobody looks at.
 - **Snapshots**: a denied or damaged tape is often on archive.org as `zx_*` `.z80`; store it in the collection with its
   source in the README.
 

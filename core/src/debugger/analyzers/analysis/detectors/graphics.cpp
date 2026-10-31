@@ -647,7 +647,7 @@ private:
                 size_t j = i + 1;
                 while (j < objects.size() && (objects[j].step == 0 || objects[j].step == 8) &&
                        (group.step == 0 || group.step == 8) && (objects[j].first - group.last) % 8 == 0 &&
-                       objects[j].first - group.last <= 32u * 8)
+                       static_cast<unsigned>(objects[j].first - group.last) <= 32u * 8)
                 {
                     group.filled += (objects[j].first - group.last) / 8 - 1 + objects[j].filled;
                     group.seen += objects[j].seen;

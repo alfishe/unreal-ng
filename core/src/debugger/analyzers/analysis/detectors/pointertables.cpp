@@ -47,7 +47,7 @@ void DetectPointerTables(DetectorContext& context)
     while (i < entries.size())
     {
         size_t j = i;
-        while (j + 1 < entries.size() && entries[j + 1].z80 - entries[j].z80 <= kMaxGap &&
+        while (j + 1 < entries.size() && uint32_t(entries[j + 1].z80 - entries[j].z80) <= kMaxGap &&
                (entries[j + 1].z80 - entries[i].z80) % 2 == 0 && (entries[j + 1].z80 >> 14) == (entries[i].z80 >> 14))
             ++j;
         bool code = false;
