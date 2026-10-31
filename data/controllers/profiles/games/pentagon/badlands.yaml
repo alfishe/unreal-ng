@@ -9,7 +9,7 @@
 # Checked in real time (Q held 48 s, random O / P / SPACE every 0.8 s): the speed level follows the car (values 0 to 9 seen),
 # 12 `hit`. #B877 is the missile launch (the free-slot branch of the shot spawn, IX = the player's record, 6 runs for 6 SPACE taps);
 # the drones' records #E658 / #E6C3 do not take the player's hit path, but a drone that is shot ends in #A67D (set 7 and 3 of
-# ix+#12, speed ix+6 = 0; 3 runs in 3200 frames, IX = #E658 / #E6C3 each time), which is the `wreck` event; the lap events are not mapped.
+# ix+#12, speed ix+6 = 0; 3 runs in 3200 frames, IX = #E658 / #E6C3 each time), which is the `wreck` event (in a 15000-frame stepped run the player was hit 64 times through #A659 and none of them ran #A67D, so it does not double the player's `hit`); the lap events are not mapped.
 # Checked in real time (Q held 120 s, random O / P, SPACE every 0.8 s): 129 `fire`, 23 `hit`, 1 `wreck`.
 schema: 1
 kind: play
