@@ -197,7 +197,7 @@ TEST_F(TTD_Tape_Serializer_Test, LoadDoesNotAlterContent_BlocksVectorUntouched)
 
 /// endregion </Tape serializer tests>
 
-/// region <TimeTravelManager integration: tapeState blob is populated>
+/// region <Time travel integration: tapeState blob is populated>
 
 TEST(TTD_Tape_ManagerIntegration_Test, CaptureNow_PopulatesTapeStateBlob)
 {
@@ -225,4 +225,4 @@ TEST(TTD_Tape_ManagerIntegration_Test, CaptureNow_PopulatesTapeStateBlob)
     emulator.Release();
 }
 
-/// endregion </TimeTravelManager integration>
+/// endregion </Time travel integration>

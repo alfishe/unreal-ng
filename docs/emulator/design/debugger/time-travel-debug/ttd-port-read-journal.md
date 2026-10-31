@@ -1,8 +1,10 @@
 # TTD port journals: replay without the outside world, and "when did the program ..."
 
 - **Date:** 2026-09-29
-- **Status:** implemented on branch `ttd-o1-journals` (worktree
-  `scratch/wt-ttd-o1`), not merged yet. First version: classic machines.
+- **Status:** implemented and landed for v1. **v1 was deleted on 2026-10-30** (TTD v2
+  migration, Phase 6): the engine (`TimeTravelController`) records the port journals
+  itself; the v1 code paths named below (`TimeTravelManager`, the analyzer's
+  `ttd_format.py`, the v1 `ttd.ksy`) are history.
 - **Code:** `core/src/debugger/ttd/ttdportjournal.{h,cpp}` (the journals),
   `ttdportsearch.{h,cpp}` (the search), the hooks in `Z80::in` / `Z80::out`
   (`core/src/emulator/cpu/z80.cpp`), the lifecycle in `TimeTravelManager`
@@ -54,7 +56,7 @@ different copy of it.
   (`port_replay_value_mismatches`), so the missing tape is visible, not
   harmful.
 
-The test `TimeTravelManager_PortReadJournal_Test.LoadedSessionReplaysTheTapeWithoutTheTape`
+The test `TimeTravelController_PortReadJournal_Test.LoadedSessionReplaysTheTapeWithoutTheTape`
 does exactly this; its control test strips the journal from the same file and
 shows the replay diverge.
 
@@ -289,8 +291,8 @@ the live search, the file search and the analyzer - are checked against each
 other on the real recordings: `record_port_journal_fixtures.py` asks 27
 questions of the live session and of the file (checked equal) and writes the
 answers to `expected.json`, which the C++ test
-`TimeTravelManager_PortJournalFixture_Test` and the analyzer's
-`tests/test_port_search.py` must reproduce.
+`TimeTravelController_PortJournalFixture_Test` and the analyzer's
+`tests/test_port_search.py` had to reproduce (deleted with v1's reader).
 
 **Named events**, the same on every surface (CLI `ttd port-events`, WebAPI
 `POST /ttd/port-events`, MCP `time_travel` action `port_events`, Lua and

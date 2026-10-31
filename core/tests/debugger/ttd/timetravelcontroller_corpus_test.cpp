@@ -39,7 +39,6 @@
 #include "_helpers/ttdslotcards.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdfileinfo.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/cpu/core.h"
@@ -63,7 +62,7 @@ std::vector<fs::path> EngineCorpus()
                 files.push_back(entry.path());
     std::sort(files.begin(), files.end());
     // The ZX-MultiSound sessions, recorded by the engine in this process
-    for (const fs::path& recorded : ttdtest::MultiSoundSessions(ttdtest::SessionRecorder::Engine))
+    for (const fs::path& recorded : ttdtest::MultiSoundSessions())
         files.push_back(recorded);
     return files;
 }
@@ -93,7 +92,7 @@ protected:
     SoundCardScope _soundCards;
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    std::unique_ptr<ttd::TimeTravelController> _controller;
+    ttd::TimeTravelController* _controller = nullptr;
 
     /// A fresh machine of the fixture's recorded machine: its General Sound card and its slot-built cards
     /// (ttdslotcards.h)
@@ -107,7 +106,7 @@ protected:
         ASSERT_TRUE(FitGeneralSoundCard(_context->pSoundManager, machine.generalSound));
     }
 
-    /// The engine's controller as the recorder of _emulator, in the recorder's modes
+    /// The machine's own controller as its recorder, in the recorder's modes
     void AttachController()
     {
         _context = _emulator->GetContext();
@@ -119,10 +118,8 @@ protected:
         features->setFeature(Features::kScreenHQ, true);
         _context->pMemory->UpdateFeatureCache();
         _context->pSoundManager->UpdateFeatureCache();
-        _controller = std::make_unique<ttd::TimeTravelController>(_context);
-        _context->pTimeTravelHooks = _controller.get();
-        _context->ttdWriteSink = _controller.get();
-        _context->pTimeTravelController = _controller.get();
+        _controller = _context->pTimeTravelController;
+        ASSERT_NE(_controller, nullptr);
     }
 
     void StopMachine()
@@ -131,10 +128,7 @@ protected:
             return;
         if (_controller)
             _controller->StopRecording();
-        _context->pTimeTravelHooks = _context->pTimeTravelManager;
-        _context->ttdWriteSink = _context->pTimeTravelManager;
-        _context->pTimeTravelController = nullptr;
-        _controller.reset();
+        _controller = nullptr;
         EmulatorTestHelper::CleanupEmulator(_emulator);
         _emulator = nullptr;
     }

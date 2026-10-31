@@ -10,7 +10,7 @@
 /// the machine is not running. An image file or a host folder can go in.
 /// Without a media manager (bare contexts) the card opens the image itself.
 /// A flash save is carried out on the machine's thread at an instruction
-/// boundary (TimeTravelManager::SubmitMachineTask; while paused: when
+/// boundary (TimeTravelController::SubmitMachineTask; while paused: when
 /// execution continues). Neither is TTD input: nothing is journaled.
 ///
 /// While a TTD recording runs the machine's configuration is fixed: SD insert

@@ -26,7 +26,7 @@ removed by this script), then from anywhere:
 
     python3 tools/verification/ttd-analyzer/scripts/record_fixtures.py
 
-That re-records the whole fixture corpus into ``testdata/ttd/``. One fixture:
+That re-records the whole fixture corpus into ``testdata/ttd/engine/``. One fixture:
 
     python3 tools/verification/ttd-analyzer/scripts/record_fixtures.py --only active_demo
 
@@ -91,11 +91,8 @@ CORPUS: List[Tuple[str, str, Optional[str], int]] = [
     # card for other uses: --snapshot testdata/sound/multisound/ttd/allsources.sna --settle-frames 10 --frames 70
     # with "slots": {"zxbus.1": "multisound"} in FIXTURE_OPTIONS under the --name you give it
 ]
-CORPUS_DIR = "testdata/ttd"
-# Sessions recorded by the engine (the application's default recorder since the
-# Phase 5 switch) are in the engine's format and live apart from v1's corpus;
-# v1's corpus is re-recorded with the application started with UNREAL_TTD_BACKEND=v1
-ENGINE_CORPUS_DIR = "testdata/ttd/engine"
+# The engine's session files (v1's corpus went with v1, Phase 6)
+CORPUS_DIR = "testdata/ttd/engine"
 
 # The General Sound cards of the slot catalog and the card of each personality
 GS_CARDS = ("gs", "gs-lw", "neogs")
@@ -103,22 +100,15 @@ GS_CARD_OF = {"z80": "gs", "lle": "gs", "lightweight": "gs-lw", "ngs": "neogs"}
 
 # Per-fixture extras. "slots": the machine's [SLOTS] set at creation (the create request's "slots" object; it
 # replaces the shipped config's set, so the socket keeps its plain AY / YM2149). "frames": the fixture's length
-# instead of --frames. "out": where the fixture lives when it is not a Pentagon
-# corpus file (testdata/machines/<machine>/ttd, next to the machine's other
-# test data; TTD_Corpus_Test picks those up too). "gs": the General Sound card
-# swapped in before loading - NeoGS keeps its RAM outside TTD so far, so a
-# fixture recorded with it cannot replay exactly; the classic card can. "network":
+# instead of --frames. "gs": the General Sound card swapped in before loading
+# (a session loads only into the card it was recorded with). "network":
 # network settings applied before loading (POST /network/config; a board change
 # restarts the machine under a new id). "eject": media slots emptied before loading
 FIXTURE_OPTIONS: Dict[str, Dict[str, Any]] = {
     # The shipped ts-conf config fits a ZiFi board and an SD card with Wild Commander (2026-10): the corpus machine
     # has neither (core-tests build TS-Conf without a network or a card), so the fixture is recorded without them
-    "tsconf_sprites": {"out": "testdata/machines/tsconf/ttd/sprites.ttd", "gs": "z80", "network": {"zifi": "NONE"},
-                       "eject": ["sd.zc"]},
-    # The Sprinter fits the General Sound behind its ISA ZX-bus adapter (slot 1, ISA phase I2, 2026-10-03); the classic
-    # card, as for the Pentagon corpus (NeoGS leaves its RAM out of TTD v1). The fixture also carries the port journals
-    # (PortDecoder::TtdEnginesSealed; the adapter passes no memory cycles, so no NeoGS ZX-DMA could stop them either)
-    "sprinter_boot": {"out": "testdata/machines/sprinter/ttd/boot.ttd"},   # as shipped (NeoGS behind the ISA ZX-bus adapter)
+    "tsconf_sprites": {"gs": "z80", "network": {"zifi": "NONE"}, "eject": ["sd.zc"]},
+    # The Sprinter records as shipped (NeoGS behind its ISA ZX-bus adapter, slot 1, ISA phase I2, 2026-10-03)
     # The Pentagon corpus: TTD_Corpus_Test fits the classic card before loading, and a session loads only into the
     # card it was recorded with. The shipped configs fit NeoGS, so without this a re-record from the stock app
     # produced files the test refuses ("General Sound slot mismatch")
@@ -360,14 +350,7 @@ def main() -> int:
             if emu_id is None:
                 emu_id = api.create_instance(model, options.get("slots"))
                 print(f"  fresh {model} instance: {emu_id}" + (f", slots {options['slots']}" if "slots" in options else ""))
-            backend = api.get(f"/emulator/{emu_id}/ttd/status").get("backend") or "v1"
             out_path = os.path.join(out_dir, f"{name}.ttd")
-            if args.out_dir == CORPUS_DIR and backend == "engine":
-                out_path = os.path.join(from_root(ENGINE_CORPUS_DIR), f"{name}.ttd")
-            elif "out" in options and args.out_dir == CORPUS_DIR:
-                out_path = from_root(options["out"])
-            os.makedirs(os.path.dirname(out_path), exist_ok=True)
-            print(f"  recorder: {backend}")
             if "gs" in options:
                 # A slot change (owner decision Q10): the machine restarts with the card, under a new id.
                 # A machine whose shipped config fits no General Sound (48K / 128K / Profi / Sprinter since

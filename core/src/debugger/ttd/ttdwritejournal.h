@@ -55,7 +55,7 @@ namespace ttd {
 /// the rest of the .ttd format.
 struct TTDWriteRecord
 {
-    uint64_t globalT  : 40;   ///< TimeTravelManager::GlobalT of the write (T-states at the
+    uint64_t globalT  : 40;   ///< TimeTravelController::GlobalT of the write (T-states at the
                               ///< model's top clock since frame 0; ~90 h at 1 unit per
                               ///< T-state, ~10 h at 8)
     uint64_t addr     : 16;   ///< Z80 address (or port number when isIo == 1)
@@ -123,7 +123,7 @@ public:
 
     /// @brief Append a write record.
     ///
-    /// Caller (TimeTravelManager::RecordMemoryWrite / RecordIoWrite) is
+    /// Caller (TimeTravelController::RecordMemoryWrite / RecordIoWrite) is
     /// responsible for monotonicity of `globalT`. This method just stores.
     void Append(const TTDWriteRecord& rec);
 
@@ -184,7 +184,7 @@ public:
     /// @brief Write the live records as a length-prefixed block.
     ///
     /// Format: u8 count, then count * sizeof(TTDWriteRecord) bytes.
-    /// Called by TimeTravelManager::SerializeSession under pause.
+    /// Called by TimeTravelController::SerializeSession under pause.
     bool Serialize(std::ostream& out) const;
 
     /// @brief Read records written by Serialize.

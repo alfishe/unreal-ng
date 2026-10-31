@@ -16,7 +16,7 @@
 #include "emulator/zxpoly/zxpolyportinterceptor.h"
 #include "emulator/zxpoly/zxpolyscreencomposer.h"
 #include "emulator/zxpoly/zxpolyworkers.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -1036,7 +1036,7 @@ void ZXPolyGroup::ApplyInput(size_t module, const std::vector<InputOp>& input)
         }
 
         // Journal it in the module's TTD session first (the contract of
-        // TimeTravelManager::RecordInputEvent: before applying), so a replay
+        // TimeTravelController::RecordInputEvent: before applying), so a replay
         // feeds every module the same input at the same T
         ttd::ITimeTravelHooks* ttd = context->pTimeTravelHooks;
         if (ttd && ttd->IsRecording() && !ttd->IsReplayActive())

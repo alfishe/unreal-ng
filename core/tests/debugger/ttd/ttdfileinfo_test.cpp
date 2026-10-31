@@ -214,10 +214,16 @@ TEST(TTDFileInfo_Refusal, NotATtdFile)
     EXPECT_FALSE(ttd::ReadTTDFileInfo(junk, info, err));
     EXPECT_NE(err.find("not a .ttd"), std::string::npos) << err;
 
-    std::istringstream truncated(std::string("TTDD\x01\x00", 6), std::ios::binary);
+    std::istringstream truncated(std::string("TTDD\x02\x00", 6), std::ios::binary);
     err.clear();
     EXPECT_FALSE(ttd::ReadTTDFileInfo(truncated, info, err));
-    EXPECT_NE(err.find("truncated"), std::string::npos) << err;
+    EXPECT_NE(err.find("too short"), std::string::npos) << err;
+
+    // A v1 file (schema 1 or 3) is refused with what to do about it
+    std::istringstream v1(std::string("TTDD\x03\x00", 6), std::ios::binary);
+    err.clear();
+    EXPECT_FALSE(ttd::ReadTTDFileInfo(v1, info, err));
+    EXPECT_NE(err.find("engine's format only"), std::string::npos) << err;
 
     err.clear();
     EXPECT_FALSE(ttd::ReadTTDFileInfo(std::string("/nonexistent/dir/none.ttd"), info, err));

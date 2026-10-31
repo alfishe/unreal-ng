@@ -14,10 +14,10 @@
 ///
 /// This file owns the journal data structure only. It does NOT own:
 ///   - The capture call sites (live input reaches the journal through
-///     TimeTravelManager::SubmitLiveInput / ApplyLiveInput).
+///     TimeTravelController::SubmitLiveInput / ApplyLiveInput).
 ///   - Applying an event to a device (ttdinputapply.h: ApplyInputEvent, shared
 ///     by live input and playback).
-///   - Playback timing (TimeTravelManager::ServiceInput walks a cursor through
+///   - Playback timing (TimeTravelController::ServiceInput walks a cursor through
 ///     Events(), positioned with FirstIndexAtOrAfter).
 ///
 /// Record format: TTDInputEvent is 17 bytes on 64-bit (8 + 4 + 1 + padding).
@@ -27,7 +27,7 @@
 /// Thread model: Record() and ApplyInputEvent() run on the thread executing the machine
 /// (the emulator loop, or the caller of a synchronous Emulator::Run*). Live
 /// input from other threads (MessageCenter host keys/mouse, automation) is
-/// queued by TimeTravelManager::SubmitLiveInput and applied + journaled there
+/// queued by TimeTravelController::SubmitLiveInput and applied + journaled there
 /// at an instruction boundary, so a journal entry's time IS the moment the
 /// program could first observe the change - which is what makes replay exact.
 /// DropAfter / Clear run on the control thread under pause. No internal
@@ -54,7 +54,7 @@ namespace ttd {
 /// Record() enforces this by trusting the caller — host events arrive in
 /// wall-clock order, which under the emulator's pause/pacing maps to
 /// monotonic TTDTimePoint order. A non-monotonic insert is logged and
-/// dropped at the call site (TimeTravelManager::RecordInputEvent) rather
+/// dropped at the call site (TimeTravelController::RecordInputEvent) rather
 /// than silently corrupting the journal.
 /// @brief What kind of input device mutation an event records.
 ///
@@ -65,7 +65,7 @@ namespace ttd {
 /// Adding an input device (e.g. a Kempston joystick fed from host controllers):
 /// add a kind here and its case in ApplyInputEvent (ttdinputapply.h; a new device
 /// is a field in TTDInputDevices), and route every live
-/// source through TimeTravelManager::SubmitLiveInput - never mutate the device
+/// source through TimeTravelController::SubmitLiveInput - never mutate the device
 /// directly. That one path gives it replay ownership (live input refused while
 /// the journal drives the machine), marshalling onto the machine's thread and an
 /// exact journal time. Connector devices without a kind of their own (the Sinclair, Cursor and keys joysticks:
@@ -190,7 +190,7 @@ public:
 
     /// @brief Append an event to the journal.
     ///
-    /// Caller (TimeTravelManager::RecordInputEvent) is responsible for
+    /// Caller (TimeTravelController::RecordInputEvent) is responsible for
     /// monotonicity checking — this method just appends. Idempotent in the
     /// sense that recording the same event twice produces two entries; the
     /// caller's monotonicity guard rejects the second one before it gets here.
@@ -225,7 +225,7 @@ public:
     // -----------------------------------------------------------------------
 
     /// @brief Read-only access to the full event list (the playback cursor in
-    /// TimeTravelManager::ServiceInput walks it; tests read it too).
+    /// TimeTravelController::ServiceInput walks it; tests read it too).
     inline const std::vector<TTDInputEvent>& Events() const { return _events; }
 
     /// @brief Number of events currently in the journal.

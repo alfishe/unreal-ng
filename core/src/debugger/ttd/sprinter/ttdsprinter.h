@@ -204,7 +204,7 @@ private:
 
 /// Id 33: the ISA slots (Sprinter ISA tdd §9): version, the whole #9FBD byte, the kind fitted in slot 1 and 2,
 /// then each card's own bus state (SprinterIsaBus::SaveState). A blob recorded with another population is not
-/// loaded (logged); a session with one is refused at load (TimeTravelManager's slot guards)
+/// loaded (logged); a session with one is refused at load (TimeTravelController's slot guards)
 class TTDSprinterIsa : public TTDSerializable
 {
 public:

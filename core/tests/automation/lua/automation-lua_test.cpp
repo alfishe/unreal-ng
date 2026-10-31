@@ -207,7 +207,7 @@ protected:
     EmulatorContext* _context = nullptr;
     ScriptCallbackManager* _callbacks = nullptr;
     ScriptHookHostFactory _factory = nullptr;
-    std::unique_ptr<ttd::TimeTravelController> _controller;
+    ttd::TimeTravelController* _controller = nullptr;
 
     void SetUp() override
     {
@@ -232,13 +232,7 @@ protected:
         if (_callbacks)
             _callbacks->RemoveAll();
         if (_controller)
-        {
             _controller->StopRecording();
-            _context->pTimeTravelHooks = _context->pTimeTravelManager;
-            _context->ttdWriteSink = _context->pTimeTravelManager;
-            _context->pTimeTravelController = nullptr;
-            _controller.reset();
-        }
         SetScriptHookHostFactory(_factory);
         if (_emulator)
             EmulatorTestHelper::CleanupEmulator(_emulator);
@@ -332,10 +326,7 @@ TEST_F(LuaHookHost_Test, ARunawayHookStopsAtItsBudgetAndCannotCatchIt)
 
 TEST_F(LuaHookHost_Test, AHookDoesNotChangeTheMachineWhileTimeTravelRecords)
 {
-    _controller = std::make_unique<ttd::TimeTravelController>(_context);
-    _context->pTimeTravelHooks = _controller.get();
-    _context->ttdWriteSink = _controller.get();
-    _context->pTimeTravelController = _controller.get();
+    _controller = _context->pTimeTravelController;
     ASSERT_TRUE(ttd::TTDControl(_context).Execute({"start", {}}).Ok());
 
     const uint32_t id = SyncTap(R"(return function(hit)
@@ -355,10 +346,7 @@ TEST_F(LuaHookHost_Test, AHookDoesNotChangeTheMachineWhileTimeTravelRecords)
 /// without running the callback again
 TEST_F(LuaHookHost_Test, ALogicHookIsRecordedAndReplayedWithoutRunningIt)
 {
-    _controller = std::make_unique<ttd::TimeTravelController>(_context);
-    _context->pTimeTravelHooks = _controller.get();
-    _context->ttdWriteSink = _controller.get();
-    _context->pTimeTravelController = _controller.get();
+    _controller = _context->pTimeTravelController;
     ASSERT_TRUE(ttd::TTDControl(_context).Execute({"start", {}}).Ok());
 
     const uint32_t id = SyncTap(R"(return function(hit)
@@ -528,10 +516,8 @@ TEST(LuaGSCardHook_Test, ALogicCardHookIsRecordedAndReplayedWithoutRunningIt)
 
     ASSERT_EQ(card->mapCardAddress(0x6000).kind, GeneralSoundCard::CardPage::Ram) << "the hook's poke lands in RAM";
 
-    auto controller = std::make_unique<ttd::TimeTravelController>(context);
-    context->pTimeTravelHooks = controller.get();
-    context->ttdWriteSink = controller.get();
-    context->pTimeTravelController = controller.get();
+    ttd::TimeTravelController* controller = context->pTimeTravelController;
+    ASSERT_NE(controller, nullptr);
     ASSERT_TRUE(ttd::TTDControl(context).Execute({"start", {}}).Ok());
 
     BoundLua lua;
@@ -617,10 +603,6 @@ TEST(LuaGSCardHook_Test, ALogicCardHookIsRecordedAndReplayedWithoutRunningIt)
     EXPECT_EQ(callbacks->List()[0].stats.calls, forkCalls) << "the hook does not run on replay";
 
     lua.stop();
-    context->pTimeTravelHooks = nullptr;
-    context->ttdWriteSink = nullptr;
-    context->pTimeTravelController = nullptr;
-    controller.reset();
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 

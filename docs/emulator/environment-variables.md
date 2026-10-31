@@ -32,9 +32,6 @@ Windows `cmd`: `set UNREAL_WEBAPI_PORT=8190` and then the command on the next li
   `UNREAL_CONTENTION_GOLDEN_PRINT`, `GS_GOLDEN_PRINT`) print new expected values to paste into the source
   and skip the comparison, so those tests pass whatever the code does. The `*_UPDATE` switches also skip
   the comparing tests while they rewrite. A test run with one of them set proves nothing.
-- **`UNREAL_TTD_BACKEND=v1`** is an emergency fallback, not a setting: it brings back the previous
-  time-travel recorder (v1) for that one application process until v1 is removed. The new engine is the
-  default. It has no effect in `core-tests` (see section 3).
 - **Two prefixes for the same kind of switch:** `UNREAL_` and `UNREALNG_` (the older one, still used by a
   few test switches). A misspelled or wrongly prefixed name is silently ignored, nothing warns.
 - **`UNREAL_SLOTS_...` means two unrelated things:** `UNREAL_SLOTS_DIR` / `UNREAL_SLOTS_BUILD` /
@@ -64,7 +61,6 @@ automation servers live inside it).
 | `UNREAL_DEZOG_TARGET_WAIT_MS` | 1-60000 ms (2000) | How long the DeZog server waits for an emulator instance before a connection fails. Mainly for tests that want a short failure. | `core/automation/dezog/src/automation-dezog.cpp:59` |
 | `UNREAL_DEZOG_HISTORY` | `0` = off, anything else = on (on) | Turns off the step-back history that DeZog's reverse debugging uses. | `core/automation/dezog/src/dezogdebugadapter.cpp:60` |
 | `UNREAL_ZRCP_PORT` | 1-65535 (10000) | Port of the ZEsarUX-compatible remote control server (ZRCP). Used when the caller does not pass a port. | `core/automation/zesarux/src/automation-zesarux.cpp:33`, name in `core/automation/zesarux/include/automation-zesarux.h:48` |
-| `UNREAL_TTD_BACKEND` | `v1` or unset (unset = the engine) | Which time-travel recorder new emulator instances use. Only the exact value `v1` matters: it selects the previous recorder for the whole process, kept as an emergency fallback until v1 is removed (v1 has no black box). Anything else: the engine. | `core/src/emulator/emulator.cpp:2025` (read once at start-up) |
 | `UNREAL_SYMBOL_BUNDLES` | `0` = off, anything else = on (on) | Turns off the symbol bundles: the labels of known ROMs (`data/symbols/manifest.json`, shipped as `symbols/` next to `rom/`) that each new instance and each ROM reload imports as sets of origin `bundle`. | `core/src/emulator/emulator.cpp:3752` |
 | `UNREAL_AUDIO_DIAG` | set / unset (off) | Temporary diagnostics: prints frame timing lateness and audio buffer fill to stderr about every 5 seconds. | `core/src/emulator/mainloop.cpp:92` |
 | `ZXDLSS_THREADS` | number >= 1 (logical cores, at most 8) | Number of threads for the ZX-DLSS GigaScreen de-flicker filter (`mod-tpgw`). | `core/src/emulator/video/zxdlss/mod_tpgw.cpp:78` |
@@ -117,7 +113,7 @@ CMake reads a few standard variables while configuring: `VCPKG_ROOT` (Windows de
 | `MOONSOUND_FULL_SWEEP` | set / unset (fast subset) | Runs the full 11-patch MoonSound sweep with long windows instead of the fast subset. | `core/tests/emulator/sound/chips/soundchip_moonsound_test.cpp:1657` |
 | `PAIR_LONG_RUN_FRAMES` | number (1000) | Length of the YM2203 pair long-run drift test. | `core/tests/emulator/sound/tsfm/ym2203pair_test.cpp:892` |
 | `UNREAL_RZX_FULL` | exactly `1` (off) | Plays the whole RZX Archive recordings (minutes) instead of the first 300 frames. | `core/tests/emulator/rzx/rzxsession_test.cpp:824` |
-| `UNREAL_RZX_CORPUS` | a folder of `.rzx` files (test skipped) | Plays every recording in the folder to the end (and the TTD seek check on them). | `core/tests/emulator/rzx/rzxsession_test.cpp:855`, `core/tests/debugger/ttd/timetravelmanager_rzxplayback_test.cpp:294` ([`tools/verification/rzx/README.md`](../../tools/verification/rzx/README.md)) |
+| `UNREAL_RZX_CORPUS` | a folder of `.rzx` files (test skipped) | Plays every recording in the folder to the end (and the TTD seek check on them). | `core/tests/emulator/rzx/rzxsession_test.cpp:855`, `core/tests/debugger/ttd/timetravelcontroller_rzxplayback_test.cpp:294` ([`tools/verification/rzx/README.md`](../../tools/verification/rzx/README.md)) |
 | `UNREAL_RZX_FILE`, `UNREAL_RZX_ORACLE`, `UNREAL_RZX_STOP` | `.rzx` path, `.z80` path, frame count (skipped; STOP 0 = whole) | Plays one recording up to a frame and compares the machine with a reference snapshot (finding the first frame where two emulators disagree). | `core/tests/emulator/rzx/rzxsession_test.cpp:960` |
 | `UNREAL_SPRINTER_HDD` | path to the raw `sp_hdd_sys.img` (tests skipped) | Sprinter hard-disk boot tests, Flex Navigator and ZX-mode tests with the MAME pack's system disk; the demo exactness tests (`SprinterFastPathsDemo_Test`) and the demo benchmarks (`BM_SprinterDemo_*`, skipped with an error without it). | `core/tests/emulator/machines/sprinter/sprinter_boot_test.cpp:962`, `sprinterzxsession.h`, `sprinteridlecycles_test.cpp`, `core/benchmarks/emulator/machines/sprinter_demo_benchmark.cpp` |
 | `UNREAL_SPRINTER_HDD_MEDIA` | path (`sp_hdd_media.img` next to the system disk) | Data disk for drive D in the Flex Navigator test. | `sprinter_boot_test.cpp:1565` |
@@ -138,10 +134,6 @@ Set by the test programs themselves (not switches): `core-tests` pins `TZ=EST5ED
 (`core/tests/main.cpp:56`) so the real-time-clock pictures match on any machine; `unreal-qt-tests` sets
 `QT_QPA_PLATFORM=offscreen` (`unreal-qt/tests/qt/qttestmain.cpp:10`). `GTEST_TOTAL_SHARDS` (set by the sharded
 run) relaxes a wall-clock budget in `core/tests/common/timehelper_test.cpp:48`.
-
-**`UNREAL_TTD_BACKEND` in core-tests:** the variable has no effect there. `core-tests` and `unreal-qt-tests` record
-with the engine; the test files that drive v1 directly are listed in `core/tests/_helpers/ttdv1tests.h`, and a
-listener in `core/tests/main.cpp` selects v1 before each of their suites and tests.
 
 ## 4. Regenerating expected results (golden files) - rewrite or print
 
@@ -168,7 +160,6 @@ and skips the comparison.
 | `UNREALNG_RECORD_TSCONF_EQUIV` | set / unset | **Prints** the TS-Conf renderer hash; no comparison. | `core/tests/emulator/machines/tsconf/screentsconf_test.cpp:434` |
 | `UNREAL_CONTENTION_GOLDEN_PRINT` | set / unset | **Prints** the per-model timing fingerprint table; no comparison. | `core/tests/emulator/video/contentionregression_test.cpp:283` |
 | `GS_GOLDEN_PRINT` | set / unset | **Prints** the General Sound digests; no comparison. | `core/tests/emulator/sound/chips/soundchip_gs_golden_test.cpp:222` |
-| `TTD_FIXTURE_OUT` | file path (`./ttd_fixture.ttd`) | Where the TTD dump-format test writes its fixture session. | `core/tests/debugger/ttd/ttddumpformat_test.cpp:413` |
 | `UNREALNG_SZX_EXPORT_DIR` | a folder (skipped / not copied) | Saves our `.szx` / `.z80` files there for the libspectrum interoperability check. | `core/tests/loaders/snapshot/szx/loaderszx_test.cpp:304`, `loader_z80_test.cpp:938` ([`tools/verification/szx/README.md`](../../tools/verification/szx/README.md)) |
 
 ## 5. Diagnostics and probes inside tests
@@ -255,7 +246,7 @@ description in [`tools/verification/ttd-bench/README.md`](../../tools/verificati
 | Variable | Values (default) | What it does |
 |---|---|---|
 | `UNREAL_TTD_BENCH_SET` | `ci`, `turbo`, `full` (`ci`) | Which set of configurations to measure. |
-| `UNREAL_TTD_BENCH_ENGINE` | `v1`, `all`, or a comma list (`v1`) | Which recorders to measure. |
+| `UNREAL_TTD_BENCH_ENGINE` | `controller`, `all`, or a comma list (`controller`, the only one since v1 was deleted) | Which recorders to measure. |
 | `UNREAL_TTD_BENCH_PERIPHERALS` | `none` or a list like `ay+gs512+moon` (the matrix's own) | Peripheral overlay for every configuration. |
 | `UNREAL_TTD_BENCH_FRAMES` | number (each workload's own) | Recorded frames. |
 | `UNREAL_TTD_BENCH_SEEKS` | number (40 for `ci`, else 200) | Random seek positions. |
@@ -284,7 +275,6 @@ The last three are in the shared bench code, so they also act in `core-tests`' `
 | `UNREAL_WEBAPI_URL` | URL (`http://127.0.0.1:8090`) | Emulator the Wireshark capture plugin talks to. | `tools/wireshark/unreal-ng-extcap.py:26` ([README](../../tools/wireshark/README.md)) |
 | `UNREAL_ASM_EMULATOR_URL` | URL (default `http://localhost:<--port>`, port 8090) | Emulator the assembler scripts talk to (another host); `--port` is enough on this one. | `tools/verification/unreal-asm/lib/emulator.py` |
 | `UNREAL_ASM_ZXASM`, `UNREAL_ASM_SJASMPLUS`, `UNREAL_ASM_PASMO`, `UNREAL_ASM_Z80ASM` | binary paths (names on `PATH`; in `unreal-asm-tests` the tests skip) | External assemblers for the cross-checks, in `tools/verification/unreal-asm/*/*.py` and in `unreal-asm-tests`. | `tools/verification/unreal-asm/checks/crosscheck.py:115`, `core/src/3rdparty/unreal-asm/tests/*_test.cpp` ([README](../../core/src/3rdparty/unreal-asm/README.md)) |
-| `UNREAL_TTD_PERIPHERAL_HEADER` | header path (the repository's `ttdserializable.h`) | Where the TTD analyzer reads device ids from, when run outside the tree. | `tools/verification/ttd-analyzer/src/ttd_format.py:216` |
 | `UNREAL_BUILD` | build folder (`cmake-build-agent-release`) | Build with `core-tests` for the co-emulation runner. | `tools/verification/coemu/unreal-ng/run.sh:8` |
 | `PROGRAM`, `OUT`, `MAX_FRAMES` | program base path (the contention probe), out folder, frames (60000) | Co-emulation harness: what to run, where results go, when to give up. | `tools/verification/coemu/common/common.sh:23` |
 | `FUSE_BIN`/`FUSE_DIR`, `MAME_BIN`/`MAME_ROMPATH`, `ZESARUX_BIN`/`ZESARUX_PORT`, `XPECCY_DIR`, `XPECCY_UPSTREAM_DIR`/`XPECCY_ROMS`, `ZXMAK2_DIR`/`ZXMAK2_BIN`, `KOZYNAX_DIR`/`KOZYNAX_BIN`, `SPEC_CHUM_DIR`/`SPEC_CHUM_BIN`, `SKOOLKIT_PYTHON`, `M8XXX_DIR`/`M8XXX_ROMS`, `CHROME_BIN`, `*_BUILD` | paths | Where each co-emulation runner finds the other emulator and builds its harness. | `tools/verification/coemu/*/run.sh` ([coemu README](../../tools/verification/coemu/README.md)) |

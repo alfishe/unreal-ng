@@ -12,13 +12,13 @@
 ///   - I-frame / P-frame discriminator per checkpoint
 ///   - Write journal section for reverse-watchpoint fast-path scan
 ///
-/// Mirrors the canonical Kaitai Struct schema in ttd.ksy. The schema is the
-/// single source of truth — this header exists only to give the C++ writer
-/// (TimeTravelManager::SerializeSession) symbolic names for magic / version /
-/// sentinels without hand-typing integer literals.
+/// Mirrored v1's Kaitai Struct schema (ttd.ksy before 2026-10-30) for v1's
+/// writer, SerializeSession. v1, its writer and its schema were deleted in
+/// Phase 6; the constants left here detect a v1 file (refused with a reason)
+/// and name the legacy device ids.
 ///
 /// Compatibility contract:
-///   - kSchemaVersion here MUST equal meta.schema-version in ttd.ksy
+///   - kSchemaVersion here equalled meta.schema-version in v1's ttd.ksy
 ///   - Both are bumped atomically in one commit on any breaking change
 ///
 /// The .ksy is git-tagged `ttd-schema-vN` on every breaking change so
@@ -32,7 +32,7 @@ namespace ttd::dump {
 constexpr char kMagic[4] = {'T', 'T', 'D', 'D'};
 
 /// Schema version. v1 = pre-release format with XOR-delta encoding.
-/// MUST match `meta.schema-version` in ttd.ksy.
+/// matched `meta.schema-version` in v1's ttd.ksy.
 ///
 /// The format has not shipped, so it is still being amended in place rather
 /// than versioned: header.model_ram_pages is u2 (it was u1 until a 4 MB

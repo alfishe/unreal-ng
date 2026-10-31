@@ -189,7 +189,7 @@ turns the debug mode and the `breakpoints` feature on, which unreal-qt starts wi
 
 #### Reverse Execution (Time-Travel Debugging)
 
-Reverse-execution packets let a GDB/LLDB client navigate the TTD timeline exposed by the emulator. They are forwarded to the same `TimeTravelManager` that powers the CLI / WebAPI / Python / Lua surfaces (see [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd) and the [time-travel TDD](../debugger/time-travel-debug/time-travel-debugging-tdd.md) §10.4).
+Reverse-execution packets let a GDB/LLDB client navigate the TTD timeline exposed by the emulator. They are forwarded to the same time-travel controller (`TimeTravelController`) that powers the CLI / WebAPI / Python / Lua surfaces (see [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd) and the [time-travel TDD](../debugger/time-travel-debug/time-travel-debugging-tdd.md) §10.4).
 
 **Capability negotiation:** the GDB server advertises reverse-exec support in its `qSupported` reply only when both conditions hold:
 1. The `ENABLE_GDB_AUTOMATION` build-time gate is on (so the server is built).

@@ -12,7 +12,7 @@
 //   B_direct  — direct SeekTo(target) for t-states (no M1 alignment)
 //
 // Stage C of the reverse-execution plan picks the strategy thresholds from
-// these numbers. The constants in timetravelmanager.h
+// these numbers. The constants in timetravelcontroller.h
 // (`kReverseSeqStepMaxN`, `kReverseM1ListLargeN`) reference this benchmark.
 //
 // Run with:  ./core-benchmarks --benchmark_filter="TTD_Reverse.*"
@@ -24,7 +24,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -43,7 +43,7 @@ struct TTDReverseFixture
 {
     Emulator* emulator = nullptr;
     EmulatorContext* context = nullptr;
-    ttd::TimeTravelManager* ttd = nullptr;
+    ttd::TimeTravelController* ttd = nullptr;
     FeatureManager* fm = nullptr;
     Memory* memory = nullptr;
 
@@ -54,7 +54,7 @@ struct TTDReverseFixture
             return false;
         context = emulator->GetContext();
         if (!context) return false;
-        ttd = context->pTimeTravelManager;
+        ttd = context->pTimeTravelController;
         if (!ttd) return false;
         memory = context->pMemory;
         if (!memory) return false;

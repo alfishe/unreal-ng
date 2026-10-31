@@ -106,8 +106,7 @@ protected:
         ASSERT_NE(_fm, nullptr);
     }
 
-    /// Helper: enable debugmode + timetravel features. Matches the pattern in
-    /// ttd_manager_test.cpp's TimeTravelManager_Test fixture so test bodies can
+    /// Helper: enable debugmode + timetravel features, so test bodies can
     /// call EnableTTD() at their start without coupling to FeatureManager
     /// internals.
     void EnableTTD()

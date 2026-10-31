@@ -4,7 +4,8 @@
 # at the top-level CMakeLists.txt.
 add_subdirectory(010-ttd-compression/cpp)
 #add_subdirectory(027-ttd-gui)
-add_subdirectory(011-ttd-v2-capture-analysis)
+# 011 is retired: two of its benchmarks drive v1 (TimeTravelManager), deleted in TTD v2 Phase 6 (2026-10-30)
+#add_subdirectory(011-ttd-v2-capture-analysis)
 # 015-opl4-synthesis is the standalone PoC of the chip library. The emulator core does NOT
 # build this directory: it uses its own vendored copy in core/src/3rdparty/opl4 (declared in
 # core/src/CMakeLists.txt). When that opl4 target already exists (root build), skip the PoC copy

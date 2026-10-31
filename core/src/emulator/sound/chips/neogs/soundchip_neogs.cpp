@@ -10,7 +10,7 @@
 #include "common/filehelper.h"
 #include "common/statebytes.h"
 #include "debugger/targets/gscardtarget.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"

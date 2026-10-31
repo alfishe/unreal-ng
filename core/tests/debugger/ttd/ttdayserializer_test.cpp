@@ -377,11 +377,11 @@ TEST_F(TTD_TurboSound_Serializer_Test, RoundTrip_CurrentChipSelector_Restored)
 
 /// endregion </SoundChip_TurboSound serializer tests>
 
-/// region <TimeTravelManager integration: ayState blob is populated>
+/// region <Time travel integration: ayState blob is populated>
 
 TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
 {
-    // Verify the TimeTravelManager capture path actually fills the ayState checkpoint
+    // Verify the controller capture path actually fills the ayState checkpoint
     // blob with a TurboSound payload when recording. This is the wire-up test
     // for P1.5 (peripheral capture in CaptureNow).
     SoundCardScope turboSound(TestSound::TurboSound);  // the slot is the subject
@@ -418,7 +418,7 @@ TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
     emulator.Release();
 }
 
-/// endregion </TimeTravelManager integration>
+/// endregion </Time travel integration>
 
 /// region <AY clock switch replay (Profi hi-res, design-hires.md H2b)>
 

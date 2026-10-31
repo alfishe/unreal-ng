@@ -30,7 +30,6 @@ class EmulatorContext;
 
 namespace ttd
 {
-class TimeTravelManager;
 class TimeTravelController;
 struct TTDFileInfo;
 struct TTDRecordedMachine;
@@ -72,10 +71,9 @@ struct TTDReply
 class TTDControl
 {
 public:
-    /// The instance's session: the engine's controller when the emulator runs
-    /// one (EmulatorContext::pTimeTravelController), v1's manager otherwise
+    /// The instance's session (EmulatorContext::pTimeTravelController)
     explicit TTDControl(EmulatorContext* context);
-    /// The verbs over @p controller (tests run the surface contract on both backends)
+    /// The verbs over @p controller (a test's own controller)
     TTDControl(EmulatorContext* context, TimeTravelController* controller);
     ~TTDControl();
     TTDControl(const TTDControl&) = delete;
@@ -89,13 +87,11 @@ public:
     static const std::vector<std::string>& OptionsFor(const std::string& verb);
 
     /// The status body (also without time travel: the capability probe)
-    static StateNode StatusBody(const TimeTravelManager* manager);
     static StateNode StatusBody(const TimeTravelController* controller);
     static StateNode StatusBody(std::nullptr_t);
     static StateNode FileInfoBody(const TTDFileInfo& info);
     static StateNode RecordedMachineBody(const TTDRecordedMachine& machine);
     /// The write journal's fields of a status body
-    static void AddWriteJournal(StateNode& body, const TimeTravelManager& manager);
     static void AddWriteJournal(StateNode& body, const TimeTravelController& controller);
 
     class Backend;

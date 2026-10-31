@@ -43,7 +43,7 @@ struct TTDPendingFact
 /// advance the cursor. Returns how many were appended; an entry the engine
 /// refuses (before its first frame) is skipped and counted in @p refused
 /// @p editData: a debugger edit's bytes by marker index (live recording,
-/// TimeTravelManager::ToolEditPayloads); such an edit becomes input with its
+/// TimeTravelController::ToolEditPayloads); such an edit becomes input with its
 /// bytes, one without them (v1 files) a barrier. @p facts: the live
 /// machine's facts, merged in after input and markers at the same instant
 size_t FeedV1Events(TimeTravelEngine& engine, const TTDInputJournal& input, const TTDExternalEventJournal& external,

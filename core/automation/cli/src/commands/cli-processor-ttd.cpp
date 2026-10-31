@@ -25,7 +25,7 @@
 #include <algorithm>
 #include <cctype>
 
-#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/timetravelcontroller.h>
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/ttd/ttdsession.h>
 #include <debugger/ttd/ttdbookmarks.h>

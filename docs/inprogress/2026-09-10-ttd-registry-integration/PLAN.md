@@ -1,7 +1,7 @@
 # TTD Peripheral Registry Integration Plan
 
 **Created:** 2026-09-10  
-**Status:** Phase 1 COMPLETE, Phase 2-5 TODO  
+**Status:** Closed 2026-10-30. Phase 1 complete; Phases 2-5 superseded: they wired v1's capture path, deleted with v1 (TTD v2 migration Phase 6, see [TODO.md](TODO.md))  
 **Branch:** atm  
 
 ## Summary

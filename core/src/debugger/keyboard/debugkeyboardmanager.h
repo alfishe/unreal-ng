@@ -348,7 +348,7 @@ private:
     /// Journalled physical key for the PS/2 controller; false without one
     bool ApplyPcKey(PcKey key, bool pressed);
 
-    /// Live input refused while the TTD journal owns input (TimeTravelManager::OwnsInput)
+    /// Live input refused while the TTD journal owns input (TimeTravelController::OwnsInput)
     /// or an RZX recording plays
     bool IsInputOwnedByJournal() const;
     

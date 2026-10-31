@@ -17,7 +17,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointcondition.h>
 #include <debugger/breakpoints/breakpointmanager.h>
-#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/timetravelcontroller.h>
 #include <emulator/coordinator/machineop.h>
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/ttd/ttdsession.h>

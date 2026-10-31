@@ -1,6 +1,6 @@
 """TTD session files of schema 2: the time-travel engine's container.
 
-The format is described in core/src/debugger/ttd/engine/ttdsession.ksy and
+The format is described in core/src/debugger/ttd/ttd.ksy and
 written by core/src/debugger/ttd/engine/ttdcontainer.cpp (the container) and
 ttdsessionfile.cpp (the session in it). Design:
 docs/inprogress/2026-09-25-ttd-v2-migration/phase-4-session-file-tdd.md.
