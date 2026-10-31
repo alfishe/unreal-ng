@@ -1,6 +1,9 @@
 #pragma once
 #include "stdafx.h"
 
+#include "emulator/io/sdcard/sdcardspi.h"
+#include "emulator/io/spi/zcontrollerspi.h"
+#include "emulator/media/mediaslot.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
 
 /// Scorpion ZS-256 with the GMX card (Graphic Memory eXpander, MOA 1998) in its CPU socket.
@@ -8,7 +11,8 @@
 /// The card brings its own Z80, 2 MB of RAM, a 512 KB flash of eight 64 KB ROM planes and a register file on top of
 /// the host board: #xx00 (global configuration), #78FD (the #8000 page), #7AFD / #7CFD (the scroller), #7EFD (turbo,
 /// ROM plane, the 640x200 mode, MagEnable) and #DFFD (RAM page bits 4-6). Everything else - keyboard, AY, Beta128,
-/// SMUC, Kempston - is the host Scorpion, so this decoder answers the card's ports and hands every other cycle to
+/// SMUC, Kempston - is the host Scorpion, plus the Z-Controller SD card the 6.44 monitor drives (#57 / #77, media
+/// slot "sd.zc"), so this decoder answers those ports and hands every other cycle to
 /// PortDecoder_Scorpion256. The host Turbo+ logic is cut off by the fitting (its WAIT and CLOCK lines), so its IN
 /// strobes and wait states do not apply here.
 ///
@@ -51,7 +55,7 @@ public:
 public:
     PortDecoder_ScorpionGMX() = delete;
     explicit PortDecoder_ScorpionGMX(EmulatorContext* context);
-    ~PortDecoder_ScorpionGMX() override = default;
+    ~PortDecoder_ScorpionGMX() override;
     /// endregion </Constructors / Destructors>
 
     /// region <Interface methods>
@@ -84,7 +88,14 @@ public:
     /// next IN #FF (manual section 2)
     bool OnMagicButton();
 
-    /// The host Scorpion's blobs plus GmxPaging (ttd::TTDGmxPaging)
+    /// region <SD card (Z-Controller)>
+    /// The media manager's slot "sd.zc": the manager owns the medium and applies the config ([MEDIA] sd.zc, legacy
+    /// [ZC]). A Z80 reset keeps the card and its session writes; the controller deselects it
+    SdCardSpi& GetSdCard() { return _sdCard; }
+    ZControllerSpi& GetZController() { return _zc; }
+    /// endregion </SD card (Z-Controller)>
+
+    /// The host Scorpion's blobs plus GmxPaging (ttd::TTDGmxPaging) and the SD card's protocol state (EvoSdCard)
     std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
     /// endregion </Interface methods>
@@ -118,4 +129,25 @@ protected:
     void RefreshStepHook();
 
     bool _reconfPending = false;
+
+    // Z-Controller SD slot: the card outlives a reset
+    class GmxSdSlot : public IMediaSlot
+    {
+    public:
+        explicit GmxSdSlot(PortDecoder_ScorpionGMX& owner);
+        const SlotDescriptor& Descriptor() const override { return _descriptor; }
+        void Attach(Medium& medium) override;
+        void Detach() override;
+        bool IsBusy() const override;
+
+    private:
+        PortDecoder_ScorpionGMX& _owner;
+        SlotDescriptor _descriptor;
+    };
+
+    // The bus analyzer's view of the Z-Controller bus: declared before the card and the controller, which point at it
+    BusTap _spiTap{"zc.spi", BusProtocol::Spi, "Z-Controller SPI (#57 data, #77 chip select): SD card"};
+    SdCardSpi _sdCard;
+    ZControllerSpi _zc;
+    GmxSdSlot _sdSlot{*this};
 };

@@ -10,7 +10,9 @@ real software and the current firmware; nothing implemented.** The model is not 
 - [x] Phase 2: TTD blob (GmxPaging 70), snapshot capture policy, `MachineStateTransfer`, the `gmx` paging node on WebAPI, CLI, Lua, Python, MCP (+ resource `unreal://machine/gmx`)
 - [x] Phase 3: 640x200 extended video (M_GMX 736x288, ScreenGmx, GmxVideoMapper), scroller, flash, screenshots; monitor test screen and Edge Grinder boot tests
 - [x] Phase 4: turbo with the card's Even M1 wait (EVEN_M1_TURBO, a RAM copy loop 1.93x, ROM 2x), Magic latch and the `#7EFD` bit 2 gate, BLKEXT, `#00` RECONF, INT select (`#00` bit 7: the Pentagon 320-line frame). Not measured: Edge Grinder's 25 fps counter
-- [ ] Phase 5: slots and media (General Sound incompatibility, SMUC disk list, Z-Controller SD); OSZ boot test
+- [x] Phase 5: slots and media: the Z-Controller SD (`#77` / `#57`) as media slot `sd.zc` (alias `sd`, FAT32), the
+  `sd-zc` built-in, General Sound refused unless forced (soft D9 rule, shown in the matrix), port map rows, TTD
+  (EvoSdCard); the Qt Machine menu lists "ZS Scorpion + GMX" from the model table. SMUC disk list: no drive, as before
 - [ ] Phase 6: evidence-driven corrections
 
 Done so far:

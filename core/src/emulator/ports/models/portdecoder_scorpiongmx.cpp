@@ -5,8 +5,10 @@
 #include "portdecoder_scorpiongmx.h"
 
 #include "emulator/cpu/core.h"
+#include "debugger/ttd/atm/ttdevosdcard.h"
 #include "debugger/ttd/gmx/ttdgmxpaging.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/sound/audio.h"
 #include "emulator/video/screen.h"
 
@@ -16,6 +18,27 @@ PortDecoder_ScorpionGMX::PortDecoder_ScorpionGMX(EmulatorContext* context) : Por
 {
     // The fitting cuts the host board's WAIT and CLOCK lines: the Turbo+ EPLD neither strobes nor waits (Q5, Q21)
     _turboPlusHost = false;
+
+    // Z-Controller SD (GMX design 2.7): a guest write changes the medium, so it is a TTD replay barrier (the media
+    // manager's rule)
+    _zc.SetDevice(&_sdCard);
+    _spiTap.SetDevice(0, "sd");
+    _spiTap.Attach(_context);
+    _zc.SetTap(&_spiTap);
+    _sdCard.SetBusTap(&_spiTap, 0);
+    _sdCard.SetClock([this]() { return EmulatedMicroseconds(); });
+    _sdCard.setWriteListener([this](uint64_t) {
+        if (_context->pMediaManager)
+            _context->pMediaManager->NoteWrite(_sdSlot.Descriptor().id);
+    });
+    if (_context->pMediaManager)
+        _context->pMediaManager->RegisterSlot(_sdSlot);
+}
+
+PortDecoder_ScorpionGMX::~PortDecoder_ScorpionGMX()
+{
+    if (_context->pMediaManager)
+        _context->pMediaManager->UnregisterSlot(_sdSlot.Descriptor().id);
 }
 
 /// endregion </Constructors / Destructors>
@@ -40,6 +63,7 @@ void PortDecoder_ScorpionGMX::reset()
     gmx.lock7EFD = 0;
     state.pDFFD = 0;
     _reconfPending = false;
+    _zc.Reset();  // the card and its session writes stay, the controller deselects it
 
     PortDecoder_Scorpion256::reset();
 
@@ -68,6 +92,23 @@ uint8_t PortDecoder_ScorpionGMX::DecodePortIn(uint16_t port, uint16_t pc)
     // the host board (the FDC system port or the floating bus)
     if (gmx.magicLock && (port & 0x00FF) == 0x00FF) [[unlikely]]
         gmx.magicLock = 0;
+
+    // Z-Controller: #77 reads 0 ("inserted, writable": the driver finds the card by initializing it; Unreal,
+    // ZEsarUX and the BaseConf FPGA alike), #57 the byte the previous exchange received
+    const uint8_t low = static_cast<uint8_t>(port);
+    if (low == 0x57 || low == 0x77)
+    {
+        const uint8_t value = (low == 0x57) ? _zc.ReadData() : 0x00;
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = low;
+        disp.device = PortDeviceId::SdCard;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
+    }
 
     const uint8_t reg = (gmx.p00 & P00_BLKEXT) ? 0 : GmxRegisterOf(port);
     uint8_t result = 0xFF;
@@ -113,6 +154,19 @@ void PortDecoder_ScorpionGMX::DecodePortOut(uint16_t port, uint8_t value, uint16
     {
         Out00(value);
         disp.decodedPort = 0x0000;
+        OnPortOutComplete(port, value, pc, disp);
+        return;
+    }
+
+    // Z-Controller: #77 config (D1 = SD /CS), #57 data
+    if ((port & 0x00FF) == 0x0077 || (port & 0x00FF) == 0x0057)
+    {
+        if ((port & 0x00FF) == 0x0077)
+            _zc.WriteConfig(value);
+        else
+            _zc.WriteData(value);
+        disp.decodedPort = port & 0x00FF;
+        disp.device = PortDeviceId::SdCard;
         OnPortOutComplete(port, value, pc, disp);
         return;
     }
@@ -246,6 +300,7 @@ std::vector<ttd::TTDDeviceType> PortDecoder_ScorpionGMX::GetTTDModelStateTypes()
 {
     std::vector<ttd::TTDDeviceType> types = PortDecoder_Scorpion256::GetTTDModelStateTypes();
     types.push_back(ttd::TTDDeviceType::GmxPaging);
+    types.push_back(ttd::TTDDeviceType::EvoSdCard);
     return types;
 }
 
@@ -253,6 +308,8 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ScorpionGMX::Crea
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers = PortDecoder_Scorpion256::CreateTTDSerializers();
     serializers.push_back(std::make_unique<ttd::TTDGmxPaging>(_context));
+    auto* self = const_cast<PortDecoder_ScorpionGMX*>(this);
+    serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(self->_sdCard, self->_zc));
     return serializers;
 }
 
@@ -262,6 +319,43 @@ void PortDecoder_ScorpionGMX::RestoreReconfigurationPending(bool pending)
     SyncFrame();  // the restored #00 bit 7
     RefreshStepHook();
 }
+
+/// region <SD card (Z-Controller)>
+
+PortDecoder_ScorpionGMX::GmxSdSlot::GmxSdSlot(PortDecoder_ScorpionGMX& owner) : _owner(owner)
+{
+    _descriptor.id = "sd.zc";
+    _descriptor.kind = MediaKind::Block;
+    _descriptor.label = "SD card (Z-Controller)";
+    _descriptor.removable = true;
+    _descriptor.swapDelayMs = 500;
+    _descriptor.acceptsFolder = true;
+    _descriptor.defaultAccess = AccessMode::Session;
+    // The 6.44 monitor knows FAT32 (and MFS) only (GMX Q20): folder volumes are FAT32
+    _descriptor.defaultFs = FatType::Fat32;
+    _descriptor.fsCompatibility = {FatType::Fat32};
+    _descriptor.tags = {"sd", "zcontroller", "primary", "boot"};
+    _descriptor.aliases = {"sd"};
+    _descriptor.guestName = "the SD card of the GMX shadow monitor (OSZ reads \\OSZ\\ from it)";
+}
+
+void PortDecoder_ScorpionGMX::GmxSdSlot::Attach(Medium& medium)
+{
+    _owner._sdCard.attach(*medium.Block());
+    _owner._sdCard.select(_owner._zc.IsSelected());
+}
+
+void PortDecoder_ScorpionGMX::GmxSdSlot::Detach()
+{
+    _owner._sdCard.detach();
+}
+
+bool PortDecoder_ScorpionGMX::GmxSdSlot::IsBusy() const
+{
+    return _owner._sdCard.busy();
+}
+
+/// endregion </SD card (Z-Controller)>
 
 /// endregion </Interface methods>
 

@@ -14,6 +14,8 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testtier.h"
+#include "emulator/media/mediamanager.h"
+#include "emulator/ports/models/portdecoder_scorpiongmx.h"
 #include "emulator/video/gmx/gmxgeometry.h"
 #include "emulator/video/screen.h"
 
@@ -109,4 +111,69 @@ TEST_F(GmxBoot_Test, EdgeGrinderBootsIntoItsExtendedMode)
     EXPECT_LT(toGame, 4000) << "7EFD=" << std::hex << int(P7EFD());
     EXPECT_EQ(_context->pScreen->GetVideoMode(), M_GMX);
     EXPECT_GT(DrawnPixelBytes(), 1000u) << "the game's picture in the pixel page";
+}
+
+/// @brief The Z-Controller SD is the media manager's slot `sd.zc` (alias `sd` on the planes): their media routes reach it.
+///        A folder becomes a FAT32 volume behind an MBR, the layout of the web Unreal's osz.vhd (FAT32 at LBA 63)
+TEST_F(GmxBoot_Test, SdCardIsAMediaSlotTakingTheOszFolder)
+{
+    MediaManager* media = _context->pMediaManager;
+    ASSERT_NE(media, nullptr);
+    const auto slot = media->Info("sd.zc");
+    ASSERT_TRUE(slot.has_value());
+    EXPECT_NE(std::find(slot->tags.begin(), slot->tags.end(), "zcontroller"), slot->tags.end());
+    EXPECT_FALSE(slot->present);
+
+    MediaSource source;
+    source.path = TestPathHelper::GetTestDataPath("machines/gmx/osz/sdcard");
+    InsertOptions options;
+    options.immediate = true;
+    const MediaResult inserted = media->Insert("sd.zc", source, options);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    for (const std::string& line : inserted.report)
+        EXPECT_EQ(line.find("no MBR support"), std::string::npos) << "the monitor finds the FAT32 partition: " << line;
+    _emulator->RunNFrames(1, true);  // the emulation thread attaches it at the frame boundary
+    const auto info = media->Info("sd.zc");
+    ASSERT_TRUE(info.has_value());
+    EXPECT_TRUE(info->present);
+    EXPECT_EQ(info->format, "folder-fat32") << "the 6.44 monitor reads FAT32 only (GMX Q20)";
+}
+
+/// @brief OSZ (OS ver 2025.10.08, research-2026-10-30-software.md 5.1 fixture 3): OS.TRD in A: loads the kernel's
+///        loader, which finds the FAT32 partition on the Z-Controller SD through the monitor (RST 8), reads the system
+///        and the None Commander from `sd.zc`, and runs them in 640x200. Long tier: the IDE probe and the SD reads
+TEST_F(GmxBoot_Test, OszBootsFromTheSdCard)
+{
+    if (!TestTier::Long())
+        GTEST_SKIP() << "UNREAL_LONG_TESTS=1: ~4000 frames through the IDE probe and the SD reads";
+
+    MediaSource sd;
+    sd.path = TestPathHelper::GetTestDataPath("machines/gmx/osz/sdcard");
+    InsertOptions options;
+    options.immediate = true;
+    const MediaResult inserted = _context->pMediaManager->Insert("sd.zc", sd, options);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("machines/gmx/osz/OS.TRD"), 0, &error)) << error;
+    _emulator->EnableTurboMode();
+
+    const int toMenu = EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return P7EFD() == 0x40; }, 5000, 25);
+    ASSERT_LT(toMenu, 5000) << "the 128 menu never came, 7EFD=" << std::hex << int(P7EFD());
+    _emulator->RunNFrames(50, true);
+
+    Keyboard* keyboard = _context->pKeyboard;
+    keyboard->PressKey(ZXKEY_ENTER);   // "128 TR-DOS": the autoboot runs `boot`
+    _emulator->RunNFrames(6, true);
+    keyboard->ReleaseKey(ZXKEY_ENTER);
+
+    auto* gmx = dynamic_cast<PortDecoder_ScorpionGMX*>(_context->pPortDecoder);
+    ASSERT_NE(gmx, nullptr);
+    const SdCardSpi& card = gmx->GetSdCard();
+    const int toOs = EmulatorTestHelper::RunUntil(
+        _emulator.get(), [&] { return card.blocksRead() > 40 && P7EFD() == 0xC8 && DrawnPixelBytes() > 500; }, 2000,
+        25);
+    EXPECT_LT(toOs, 2000) << "7EFD=" << std::hex << int(P7EFD()) << std::dec << " blocks read " << card.blocksRead();
+    EXPECT_TRUE(card.initialized()) << "the monitor's SD driver ran the card's init (CMD0, CMD8, ACMD41)";
+    EXPECT_GT(card.blocksRead(), 40u) << "the system and the None Commander come from the SD card";
+    EXPECT_EQ(_context->pScreen->GetVideoMode(), M_GMX);
 }

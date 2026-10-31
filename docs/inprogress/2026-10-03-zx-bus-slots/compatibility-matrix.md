@@ -152,7 +152,7 @@ with identical columns are merged.
 | PENTAGON | Pentagon 128 (1991): no expansion connector, ZX-bus retrofitted | `ay-socket`, `zxbus` (retrofit, no physical slots) | CardWins | yes | `ay`, `beta128`, `kempston-joystick` | - | `zxbus`: no expansion connector on the Pentagon 128 board: the ZX-bus is retrofitted (NemoBus rules) |
 | SCORPION | Scorpion ZS-256 yellow board | `ay-socket`, `zxbus` (1) | CardWins | no | `ay`, `beta128`, `kempston-joystick` | - | `zxbus`: +12 V only on the control port |
 | PROFSCORP | Scorpion ZS-256 Turbo+ with ProfROM | `ay-socket`, `zxbus` (2) | CardWins | yes | `ay`, `beta128`, `kempston-joystick` | - | `zxbus`: Turbo+ board: +12 V on B22 (B29 through J6) |
-| GMX | Scorpion ZS-256 with the GMX card | `ay-socket`, `zxbus` (1) | CardWins | no | `ay`, `beta128`, `kempston-joystick` | - | `zxbus`: +12 V only on the control port |
+| GMX | Scorpion ZS-256 with the GMX card | `ay-socket`, `zxbus` (1) | CardWins | no | `ay`, `beta128`, `kempston-joystick`, `sd-zc` | - | `zxbus`: +12 V only on the control port |
 | ATM450 | ATM Turbo 2 v4.50 | `ay-socket`, `iobus` (atm-iobus, 1), `cpu-socket` (1) | `iobus`: None; `cpu-socket`: None (adapter `atm-cpu-socket-zxbus`: CardWins) | `iobus`: yes; `cpu-socket`: no | `ay`, `beta128`, `covox` (switchable), `adc` | - | - |
 | ATM710 | ATM Turbo 2+ v7.10 | `ay-socket`, `iobus` (atm-iobus, 2), `cpu-socket` (1) | `iobus`: None; `cpu-socket`: None (adapter `atm-cpu-socket-zxbus`: CardWins) | `iobus`: yes; `cpu-socket`: no | `ay` (socketed AY-3-8912), `beta128`, `ide`, `covox` (switchable), `adc` | - | - |
 | ATM3 | ZX-Evolution rev C, Baseconf | `ay-socket`, `zxbus` (2) | BoardWins | yes | `ay` (socketed YM2149), `beta128`, `kempston-joystick`, `kempston-mouse`, `sd-zc`, `ide-nemo` (switchable), `rtc`, `covox` (switchable), `com` | `#FE` `#F6` `#FC` `#FD` `#DF` `#1F` `#F7` `#77` `#57` `#BF` `#BE` `#BD` `#EF` `#1F/#10` `#11` `#C8` `#FF` (DOS) | `zxbus`: +12 V only with jumper J4 |
@@ -168,8 +168,8 @@ with identical columns are merged.
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | **ts** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | **tsfm** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **gs** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
-| **gs-lw** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
+| **gs** | A | ✓ | ✓ | ✓ | **X** (does not work with GMX (1999); forced plug only) | A | ✓ | ✓ | A | A | A | A |
+| **gs-lw** | A | ✓ | ✓ | ✓ | **X** (does not work with GMX (1999); forced plug only) | A | ✓ | ✓ | A | A | A | A |
 | **neogs** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
 | **moonsound** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | **X** (`#7E` palette, board wins) | A | A | A |
 | **covox-fb** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | **X** (`#FB` is the board's `covox`) | A | A | A | A |

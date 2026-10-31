@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include "emulator/io/storage/memorydisk.h"
 #include "emulator/ports/models/scorpiongmxfixture.h"
 #include "emulator/state/devicestate.h"
 
@@ -337,4 +338,34 @@ TEST(ScorpionGmxBoot_Test, LoaderReachesThePlane4Menu)
     EXPECT_EQ(context->pMemory->GetROMPage() / 4, 4) << rom->GetROMPageRole(context->pMemory->GetROMPage());
 
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// @brief The Z-Controller the 6.44 monitor drives (GMX design 2.7): #77 D1 = SD /CS, #57 the SPI byte; #77 reads 0
+///        ("inserted, writable", Unreal / ZEsarUX); the card answers CMD0 with R1 = #01 (idle)
+TEST_F(ScorpionGmx_Test, ZControllerPortsReachTheSdCard)
+{
+    EXPECT_EQ(In(0x0057), 0xFF) << "no card: the line floats high";
+    ASSERT_TRUE(_gmx->GetSdCard().insert(std::make_unique<MemoryDisk>(64), SdCardSpi::WriteMode::Session));
+    EXPECT_EQ(In(0x0077), 0x00);
+
+    const auto command = [&](uint8_t index, uint32_t arg, uint8_t crc) {
+        Out(0x0057, static_cast<uint8_t>(0x40 | index));
+        for (int shift = 24; shift >= 0; shift -= 8)
+            Out(0x0057, static_cast<uint8_t>(arg >> shift));
+        Out(0x0057, crc);
+        for (int i = 0; i < 16; i++)
+        {
+            (void)In(0x0057);
+            if (_gmx->GetZController().GetState().rxLatch != 0xFF)
+                return In(0x0057);
+        }
+        return uint8_t{0xFF};
+    };
+    Out(0x0077, 0x00);  // select (D1 = 0)
+    EXPECT_EQ(command(0, 0, 0x95), 0x01) << "CMD0: idle";
+    Out(0x7777, 0x02);  // any high byte: deselect
+    EXPECT_FALSE(_gmx->GetZController().IsSelected());
+
+    _gmx->reset();
+    EXPECT_TRUE(_gmx->GetSdCard().present()) << "RESET keeps the card";
 }

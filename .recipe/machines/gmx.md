@@ -92,6 +92,35 @@ screen, the Scorpion GMX 128 menu, Edge Grinder's attract mode in 640x200.
 - Magic (NMI, the CLI `nmi` / WebAPI `nmi` routes): ignored while `#7EFD` bit 2 is set; otherwise the read-backs of
   `#7AFD` / `#7EFD` stay frozen until an `IN #FF` (`gmx.magic.frozen`).
 
+## SD card (Z-Controller) and slots
+
+The card's Z-Controller (the 6.44 monitor's SD driver, `#77` D1 = /CS, `#57` the SPI byte, `#77` reads `#00`) is the
+media manager's slot `sd.zc` (alias `sd`, tags `sd zcontroller primary boot`, FAT32 only, 500 ms swap delay), so every
+plane's media verbs reach it: CLI `media insert sd <path>`, Lua / Python `media_insert("sd", path)`, MCP
+`media action=insert slot=sd`, WebAPI and WebSocket `media/{slot}/insert`, the Qt Media menu.
+
+```bash
+# OSZ: the system disk in A:, the SD folder (a FAT32 volume) in sd, reset, Enter on "128 TR-DOS"
+curl -s -X POST "$BASE/emulator/$EMU_ID/media/sd/insert" -H 'Content-Type: application/json' \
+     -d "{\"path\": \"$PWD/testdata/machines/gmx/osz/sdcard\"}"
+curl -s -X POST "$BASE/emulator/$EMU_ID/media/A/insert" -H 'Content-Type: application/json' \
+     -d "{\"path\": \"$PWD/testdata/machines/gmx/osz/OS.TRD\"}"
+curl -s "$BASE/emulator/$EMU_ID/media/sd.zc" | jq '{present, format, source}'      # folder-fat32
+curl -s -X POST "$BASE/emulator/$EMU_ID/reset"
+# wait for the 128 menu (#7EFD = #40), tap ENTER: "Found FAT: E:SD0,0 ... OS ver 2025.10.08" in 640x200 (#7EFD = #C8);
+# Symbol Shift + Enter switches from the OS console to the None Commander with the card's files
+curl -s -X POST "$BASE/emulator/$EMU_ID/keyboard/combo" -H 'Content-Type: application/json' \
+     -d '{"keys":["ss","enter"],"frames":6}'
+```
+
+A folder is a FAT32 volume behind an MBR (the monitor finds the first partition, as the web Unreal's `osz.vhd` at
+LBA 63). Verified 2026-10-30 (wt-gmx-impl): OSZ boots from the card into the None Commander 2025.09.10
+(`GmxBoot_Test.OszBootsFromTheSdCard`, long tier).
+
+Slots (`/slots`, MCP `slots`): the built-ins are the Scorpion's AY, Beta 128, Kempston joystick and `sd-zc`.
+The General Sound (`gs`, `gs-lw`) is refused unless forced (`replace_if_incompatible`): Ermolaev's 1999 article
+(City #18, ZX-Pilot #31) says GS does not work with GMX.
+
 ## The card at a glance
 
 | Port | Write | Read |
@@ -102,6 +131,8 @@ screen, the Scorpion GMX 128 menu, Edge Grinder's attract mode in 640x200.
 | `#7CFD` | scroll start high (bits 5-0) | - |
 | `#7EFD` | turbo, ROM plane (6-4), 640x200, MagEnable | card status |
 | `#DFFD` | RAM page bits 4-6 for `#C000` | - |
+| `#xx77` | Z-Controller: bit 1 = SD /CS | `#00` |
+| `#xx57` | SPI byte to the SD card | SPI byte from the card |
 
 - `#C000` page = `DFFD[2:0] << 4 | 1FFD[4] << 3 | 7FFD[2:0]` (128 pages).
 - `#1FFD` bit 2 maps the plane's TR-DOS page at `#0000` with the Beta ports on.

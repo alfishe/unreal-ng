@@ -12,6 +12,7 @@ namespace
 {
 
 constexpr Src kMoonsoundProfiSources[] = { Src::RepoProfi1024, Src::AlfisheZxmMoonsound, Src::RepoSlotsResearchCards };
+constexpr Src kGsGmxSources[] = { Src::GmxApollonov };
 
 constexpr ExceptionDef kExceptions[] = {
     // The claims say only "both latch #7E writes": the palette is not shown masked by /OUTIORQ and the card's IORQGE
@@ -20,6 +21,14 @@ constexpr ExceptionDef kExceptions[] = {
     { .card = "moonsound", .model = MM_PROFI, .outcome = Outcome::Refused, .hard = true,
       .reason = "`#7E` is the Profi palette port; the board wins, every wave-port write would reprogram the palette",
       .brief = "`#7E` palette, board wins", .sources = kMoonsoundProfiSources },
+    // The ports do not clash; the 1999 article says the classic General Sound does not work with the card. The
+    // official site later claimed a firmware of 20.04.99 fixed it, so a forced plug is allowed (GMX design Q14)
+    { .card = "gs", .model = MM_GMX, .outcome = Outcome::Refused, .hard = false,
+      .reason = "General Sound does not work with the GMX card (Apollonov 1999); a later firmware claims a fix",
+      .brief = "does not work with GMX (1999)", .sources = kGsGmxSources },
+    { .card = "gs-lw", .model = MM_GMX, .outcome = Outcome::Refused, .hard = false,
+      .reason = "General Sound does not work with the GMX card (Apollonov 1999); a later firmware claims a fix",
+      .brief = "does not work with GMX (1999)", .sources = kGsGmxSources },
 };
 
 } // namespace

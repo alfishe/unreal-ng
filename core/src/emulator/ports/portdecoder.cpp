@@ -782,6 +782,9 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
             entries.push_back({0xFF1F, 0xFFFF, 0xFF1F, "Kempston joystick interface",
                                "gives #1F up while TR-DOS selected / Shadow Monitor paged",
                                Tags(PortTag::Joystick)});
+            entries.push_back({0x0077, 0x00FF, 0x0077, "Z-Controller SD chip select (reads #00)", nullptr,
+                               Tags(PortTag::StorageSd)});
+            entries.push_back({0x0057, 0x00FF, 0x0057, "Z-Controller SD data", nullptr, Tags(PortTag::StorageSd)});
             break;
         case MM_PENTAGON:
             // pentagonPortMasksMatches (PortDecoder_Pentagon128/512/1024): paging row keeps

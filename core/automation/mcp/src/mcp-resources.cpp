@@ -474,6 +474,12 @@ the `#7AFD` / `#7EFD` read-backs until an `IN #FF`. No Turbo+ host logic (no Pro
 `#00` bit 7 = the Pentagon frame (320 lines, 71680 T), else the Scorpion's 312 (69888 T); `#00` survives RESET.
 The Magic button (NMI) is ignored while `#7EFD` bit 2 is set.
 
+## SD card (Z-Controller)
+The 6.44 monitor drives a Z-Controller on the card: `#77` bit 1 = SD /CS (reads `#00`), `#57` the SPI byte. The card is
+the media slot `sd.zc` (alias `sd`, FAT32 only): `media action=insert slot=sd path=<image or folder>`; a folder becomes
+a FAT32 volume. OSZ (`testdata/machines/gmx/osz`: OS.TRD in A:, the `sdcard` folder in `sd`) reads it through the
+monitor. Slots: the General Sound is refused on a GMX unless forced (Ermolaev 1999: GS does not work with the card).
+
 ## State
 `inspect_state aspects:["paging"]` reports `gmx`: `port_00` (scheme, fixrom, blkext, blkex2, pentagon_int,
 reconf_pending), `port_7efd` (rom_plane, turbo, video_640x200, magic_blocked), `page_8000`, `page_c000`,
