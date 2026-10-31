@@ -93,8 +93,8 @@ TEST_F(GmxBoot_Test, EdgeGrinderBootsIntoItsExtendedMode)
         << error;
     _emulator->EnableTurboMode();
 
-    const int toMenu = EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return P7EFD() == 0x40; }, 5000, 25);
-    ASSERT_LT(toMenu, 5000) << "the 128 menu (plane 4, turbo off) never came, 7EFD=" << std::hex << int(P7EFD());
+    const int toMenu = EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return (P7EFD() & 0x7F) == 0x40; }, 5000, 25);
+    ASSERT_LT(toMenu, 5000) << "the 128 menu (plane 4; turbo as the NVRAM settings say) never came, 7EFD=" << std::hex << int(P7EFD());
     _emulator->RunNFrames(50, true);
 
     Keyboard* keyboard = _context->pKeyboard;
@@ -162,7 +162,7 @@ TEST_F(GmxBoot_Test, OszBootsFromTheSdCard)
     ASSERT_TRUE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("machines/gmx/osz/OS.TRD"), 0, &error)) << error;
     _emulator->EnableTurboMode();
 
-    const int toMenu = EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return P7EFD() == 0x40; }, 5000, 25);
+    const int toMenu = EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return (P7EFD() & 0x7F) == 0x40; }, 5000, 25);
     ASSERT_LT(toMenu, 5000) << "the 128 menu never came, 7EFD=" << std::hex << int(P7EFD());
     _emulator->RunNFrames(50, true);
 
