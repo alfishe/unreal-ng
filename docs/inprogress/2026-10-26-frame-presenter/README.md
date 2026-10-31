@@ -506,6 +506,14 @@ Owner: blend, interpolation and the cadence modes run on the GPU and on the CPU,
   build its passes costs nothing but the speed. unreal-qt-tests `SmoothMotionGPU_Test` require the same field, blend,
   interpolation, extrapolation and masked composition bit for bit, and the engine's pictures on the GPU equal the
   CPU's (it needs a GL 3.3 core context: `UNREAL_QT_TEST_PLATFORM=cocoa` on macOS, it skips without one).
+- **Fields stay on the CPU (phase 5b, step 5).** The GPU's field search costs 4-10 ms per pair against 1-2 ms on the
+  CPU: three syncs (the votes are counted between the passes) and only one fragment per block; cutting the search
+  order into chunks of 9 vectors (one fragment per block and chunk, then the first of the fewest per block, the same
+  bits) took it from 4.9-8.5 to 4.4-6.2 ms at range 8, from 9.9-17 to 6.9-9.9 ms at range 16. The composition takes
+  the field from memory either way, so `SmoothMotionGPU` estimates only when asked (`setFieldsOnGpu`, the tests):
+  the screen in `gpu` mode composes on the GPU over the CPU's fields. Live (action.sna, 3 interleaved rounds of 25 s,
+  load 50-88): a refresh late 5-10 of ~595 presents in this hybrid, 8-108 with the fields on the GPU, 40-102 on the
+  CPU.
 - **Modes.** `EffectsDevice = gpu` takes the GPU where the presenter has one and the CPU otherwise (a software
   GL, a headless or offscreen instance, the video recording); `gpu` / `cpu` force it. The CPU path runs on the
   presenter's thread for the screen, and serves the readers that have no GPU (screenshots, recording, the video
@@ -646,7 +654,8 @@ Each phase lands on its own with tests and docs.
         scenes: GPU 3.9-6.2 ms wall per refresh against CPU 2.7-7.3 ms, the GPU work itself ~2.3 ms, the rest the
         waits and the CPU steps. Byte-identical to the CPU on all 12 scenes (118 refreshes each); unreal-qt-tests
         `SmoothMotionGPU_Test.LayerFlowOnTheGpuIsTheCpus` pins it on mixed scenes.
-   5. Live check through the WebAPI on the hold-out clips; then the owner looks.
+   5. Live check through the WebAPI on the hold-out clips; then the owner looks. The device split found here: fields
+      on the CPU, the composition on the GPU (section 6.5).
 6. **Automation planes.** Settings and `PresentStats` on CLI, Python, Lua, MCP, REST and WebSocket; docs chain per the
    guidelines. On the branch: `smooth_motion`, `effects_device` and the `present` report (section 6.4); not yet the
    policy and the lip-sync offset.

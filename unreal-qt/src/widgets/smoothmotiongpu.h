@@ -35,8 +35,11 @@ public:
     bool isCreated() const { return _gl != nullptr; }
     const QString& log() const { return _log; }
 
+    /// The motion field on the GPU only when asked (setFieldsOnGpu): it costs 4-10 ms against the CPU's 1-2 ms (three
+    /// syncs, few blocks to run in parallel), and the composition takes the field from memory either way
     bool Estimate(const smoothmotion::Picture& a, const smoothmotion::Picture& b, int range,
                   smoothmotion::MotionField& field) override;
+    void setFieldsOnGpu(bool on) { _fieldsOnGpu = on; }
     bool Blend(const smoothmotion::Picture& a, const smoothmotion::Picture& b, int w, uint32_t* out) override;
     bool Compose(const smoothmotion::MotionField& field, const smoothmotion::Picture& a, const smoothmotion::Picture& b,
                  int w, uint32_t* out, const uint8_t* mask) override;
@@ -61,7 +64,8 @@ private:
         Base,      // Compose: what stays outside the mask
         Mask,      // R8UI
         Order,     // the search order, RG32I, one row
-        FieldOne,  // pass 1, RGBA32I per block
+        FieldChunks,  // pass 1 per block and chunk of the search order, RGBA32I: vector, mismatches (capped)
+        FieldOne,     // pass 1, RGBA32I per block
         FieldPing,
         FieldPong,
         Output,  // RGBA8UI
@@ -127,6 +131,7 @@ private:
 
     QOpenGLExtraFunctions* _gl = nullptr;
     QOpenGLShaderProgram* _blend = nullptr;
+    QOpenGLShaderProgram* _searchChunks = nullptr;
     QOpenGLShaderProgram* _search = nullptr;
     QOpenGLShaderProgram* _refine = nullptr;
     QOpenGLShaderProgram* _compose = nullptr;
@@ -161,6 +166,7 @@ private:
     LayerCounts _layerCounts;
     std::vector<uint32_t> _readBack;
     std::vector<uint32_t> _frameCopies[3];
+    bool _fieldsOnGpu = false;
     int _orderRange = -1;
     int _orderCount = 0;
     QString _log;

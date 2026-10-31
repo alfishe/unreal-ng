@@ -128,6 +128,7 @@ TEST(SmoothMotionGPU_Test, TheGpuStepsAreTheCpuSteps)
         GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
     SmoothMotionGPU gpu;
     ASSERT_TRUE(gpu.create()) << gpu.log().toStdString();
+    gpu.setFieldsOnGpu(true);
 
     // An odd size (a partial block row and column), motion along both axes, both ranges
     struct Case

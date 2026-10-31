@@ -9,6 +9,8 @@ using smoothmotion::Picture;
 
 namespace
 {
+constexpr int kSearchChunk = 9;  // the search order's vectors per fragment of pass 1 (range 8: 289 in 17 chunks)
+
 // The quad over the viewport from the vertex index (a strip). Fragment (x, y) is pixel (x, y), rows top first as the
 // pictures are uploaded and read back: nothing is turned over
 const char* const kVertexShader = R"(
@@ -61,23 +63,48 @@ int Cost(ivec2 blk, ivec2 v, int limit) {
 }
 )";
 
-// Pass 1: the first vector of the search order with the fewest mismatches, at most kAccept
-const char* const kSearchShader = R"(
+// Pass 1 in two draws, the search order cut into chunks so every block searches in parallel: per block and chunk the
+// first vector of the chunk with the fewest mismatches (capped at kAccept + 1); then per block the first chunk with
+// the fewest. The first vector of the whole order with the fewest, as the reference's sequential search
+const char* const kSearchChunkShader = R"(
 uniform isampler2D order;
 uniform int orderCount;
+uniform int blocksWide;
+uniform int chunk;
 out ivec4 result;
 void main() {
-    ivec2 blk = ivec2(gl_FragCoord.xy);
+    ivec2 at = ivec2(gl_FragCoord.xy);
+    ivec2 blk = ivec2(at.x % blocksWide, at.y);
+    int first = at.x / blocksWide * chunk;
+    int last = min(first + chunk, orderCount);
     int best = kAccept + 1;
     ivec2 bestV = ivec2(0);
-    for (int i = 0; i < orderCount; i++) {
+    for (int i = first; i < last && best > 0; i++) {
         ivec2 v = texelFetch(order, ivec2(i, 0), 0).xy;
         int bad = Cost(blk, v, best - 1);
         if (bad < best) {
             best = bad;
             bestV = v;
-            if (best == 0)
-                break;
+        }
+    }
+    result = ivec4(bestV, best, 0);
+}
+)";
+
+const char* const kSearchShader = R"(
+uniform isampler2D chunks;
+uniform int chunkCount;
+uniform int blocksWide;
+out ivec4 result;
+void main() {
+    ivec2 blk = ivec2(gl_FragCoord.xy);
+    int best = kAccept + 1;
+    ivec2 bestV = ivec2(0);
+    for (int c = 0; c < chunkCount && best > 0; c++) {
+        ivec4 r = texelFetch(chunks, ivec2(c * blocksWide + blk.x, blk.y), 0);
+        if (r.z < best) {
+            best = r.z;
+            bestV = r.xy;
         }
     }
     bool matched = best <= kAccept;
@@ -686,7 +713,7 @@ SmoothMotionGPU::~SmoothMotionGPU()
 
 std::vector<QOpenGLShaderProgram*> SmoothMotionGPU::programs() const
 {
-    return {_blend, _search, _refine, _compose, _changed, _rowSums, _columnSums, _fit,
+    return {_blend, _searchChunks, _search, _refine, _compose, _changed, _rowSums, _columnSums, _fit,
             _explained, _rowCounts, _counts, _blockColours, _top, _own, _continues, _layers};
 }
 
@@ -702,6 +729,7 @@ bool SmoothMotionGPU::create()
     _log.clear();
     const QString common = QString::fromLatin1(kCommon);
     _blend = Build(common + kBlendShader, _log);
+    _searchChunks = Build(common + kCost + kSearchChunkShader, _log);
     _search = Build(common + kCost + kSearchShader, _log);
     _refine = Build(common + kCost + kRefineShader, _log);
     _compose = Build(common + kComposeShader, _log);
@@ -747,7 +775,7 @@ bool SmoothMotionGPU::create()
             allocate(texture, 1, 1, GL_RG32I, GL_RG_INTEGER, GL_INT, zero);
         else if (texture == AskAt || texture == Allowed || texture == RowCounts || texture == BlockColours)
             allocate(texture, 1, 1, GL_R32I, GL_RED_INTEGER, GL_INT, zero);
-        else if (texture == FieldOne || texture == FieldPing || texture == FieldPong || texture == Counts ||
+        else if (texture == FieldChunks || texture == FieldOne || texture == FieldPing || texture == FieldPong || texture == Counts ||
                  texture == Top || texture == OwnAnswers || texture == Edges || texture == EdgeAnswers ||
                  texture == BlockInfo)
             allocate(texture, 1, 1, GL_RGBA32I, GL_RGBA_INTEGER, GL_INT, zero);
@@ -772,7 +800,7 @@ void SmoothMotionGPU::destroy()
     _framebuffer = 0;
     for (QOpenGLShaderProgram* program : programs())
         delete program;
-    _blend = _search = _refine = _compose = nullptr;
+    _blend = _searchChunks = _search = _refine = _compose = nullptr;
     _changed = _rowSums = _columnSums = _fit = _explained = nullptr;
     _rowCounts = _counts = _blockColours = _top = _own = _continues = _layers = nullptr;
     if (_vao.isCreated())
@@ -923,7 +951,7 @@ bool SmoothMotionGPU::readPicture(int width, int height, uint32_t* out)
 
 bool SmoothMotionGPU::Estimate(const Picture& a, const Picture& b, int range, MotionField& field)
 {
-    if (!_gl || a.width <= 0 || a.height <= 0)
+    if (!_fieldsOnGpu || !_gl || a.width <= 0 || a.height <= 0)
         return false;
     GLint previousFramebuffer = 0;
     GLint viewport[4] = {};
@@ -954,17 +982,27 @@ bool SmoothMotionGPU::Estimate(const Picture& a, const Picture& b, int range, Mo
     for (Texture t : {FieldOne, FieldPing, FieldPong})
         allocate(t, blocksWide, blocksHigh, GL_RGBA32I, GL_RGBA_INTEGER, GL_INT, nullptr);
 
-    bool ok = true;
-    // Pass 1
-    _search->bind();
+    // Pass 1: the chunks, then the blocks
+    const int chunks = (_orderCount + kSearchChunk - 1) / kSearchChunk;
+    allocate(FieldChunks, blocksWide * chunks, blocksHigh, GL_RGBA32I, GL_RGBA_INTEGER, GL_INT, nullptr);
+    _searchChunks->bind();
     bindTexture(0, FrameA);
     bindTexture(1, FrameB);
     bindTexture(2, Order);
-    _search->setUniformValue("frameA", 0);
-    _search->setUniformValue("frameB", 1);
-    _search->setUniformValue("order", 2);
-    _search->setUniformValue("orderCount", _orderCount);
-    ok = drawInto(_search, FieldOne, blocksWide, blocksHigh);
+    _searchChunks->setUniformValue("frameA", 0);
+    _searchChunks->setUniformValue("frameB", 1);
+    _searchChunks->setUniformValue("order", 2);
+    _searchChunks->setUniformValue("orderCount", _orderCount);
+    _searchChunks->setUniformValue("blocksWide", blocksWide);
+    _searchChunks->setUniformValue("chunk", kSearchChunk);
+    bool ok = drawInto(_searchChunks, FieldChunks, blocksWide * chunks, blocksHigh);
+    _searchChunks->release();
+    _search->bind();
+    bindTexture(2, FieldChunks);
+    _search->setUniformValue("chunks", 2);
+    _search->setUniformValue("chunkCount", chunks);
+    _search->setUniformValue("blocksWide", blocksWide);
+    ok = ok && drawInto(_search, FieldOne, blocksWide, blocksHigh);
     std::vector<MotionField::Block> prev;
     ok = ok && readField(blocksWide, blocksHigh, prev);
     _search->release();
