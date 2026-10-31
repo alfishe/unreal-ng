@@ -158,6 +158,165 @@ struct Box
         return At(x1, y1) - At(x1, y0) - At(x0, y1) + At(x0, y0);
     }
 };
+/// carryFirst's test over a picture read clamped (Picture, View)
+template <typename Reader>
+bool ExplainsIn(const Reader& a, const Reader& b, int width, int height, int bi, int bj, V v)
+{
+    int changes = 0, explained = 0;
+    for (int y = bj * MotionField::kBlock; y < std::min((bj + 1) * MotionField::kBlock, height); y++)
+        for (int x = bi * MotionField::kBlock; x < std::min((bi + 1) * MotionField::kBlock, width); x++)
+            if (a.At(x, y) != b.At(x, y))
+            {
+                changes++;
+                explained += b.At(x, y) == a.At(x - v.x, y - v.y) || a.At(x, y) == b.At(x + v.x, y + v.y);
+            }
+    return explained * 2 >= changes;
+}
+
+/// The block decisions' answers from Compose's buffers, each worked out when asked
+class CpuEvidence final : public LayerFlow::Evidence
+{
+public:
+    CpuEvidence(const View& a, int blocksWide, int n, const uint8_t* fits, const uint16_t* support,
+                const uint8_t* fitCounts)
+        : _a(a), _blocksWide(blocksWide), _n(n), _pixels(static_cast<size_t>(a.width) * a.height), _fits(fits),
+          _support(support), _fitCounts(fitCounts), _blocks(static_cast<size_t>(blocksWide) *
+                                                            ((a.height + MotionField::kBlock - 1) / MotionField::kBlock)),
+          _topAt(static_cast<size_t>(MotionField::kBlock) * MotionField::kBlock)
+    {
+    }
+
+    int Own(size_t block, int c, int s) override
+    {
+        const int kb = MotionField::kBlock;
+        const int x0 = static_cast<int>(block % _blocksWide) * kb, x1 = std::min(x0 + kb, _a.width);
+        const int y0 = static_cast<int>(block / _blocksWide) * kb, y1 = std::min(y0 + kb, _a.height);
+        if (block != _topBlock)
+        {
+            // per pixel, the three fitting vectors with the most support: a vector other than c and s with more
+            // support than c's is among them if there is one
+            _topBlock = block;
+            for (int y = y0; y < y1; y++)
+                for (int x = x0; x < x1; x++)
+                {
+                    auto& top = _topAt[static_cast<size_t>(y - y0) * kb + (x - x0)];
+                    top = {};
+                    const size_t q = static_cast<size_t>(y) * _a.width + x;
+                    for (int u = 0; u < _n; u++)
+                    {
+                        const size_t uq = static_cast<size_t>(u) * _pixels + q;
+                        if (_fitCounts[u * _blocks + block] == 0 || !_fits[uq])
+                            continue;
+                        Top t{u, _support[uq]};
+                        for (auto& slot : top)
+                            if (t.support > slot.support)
+                                std::swap(t, slot);
+                    }
+                }
+        }
+        int count = 0;
+        for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++)
+            {
+                const size_t q = static_cast<size_t>(y) * _a.width + x;
+                if (!_fits[static_cast<size_t>(c) * _pixels + q] || (s >= 0 && _fits[static_cast<size_t>(s) * _pixels + q]))
+                    continue;
+                const int mine = _support[static_cast<size_t>(c) * _pixels + q];
+                bool other = false;
+                for (const Top& t : _topAt[static_cast<size_t>(y - y0) * kb + (x - x0)])
+                    other |= t.vector >= 0 && t.vector != c && t.vector != s && t.support > mine;
+                count += !other;
+            }
+        return count;
+    }
+
+    void Ask(const std::vector<std::pair<size_t, int>>& /*blocks*/, const std::vector<LayerFlow::Edge>& edges) override
+    {
+        _edges = &edges;
+    }
+
+    bool Continues(size_t index, int vector) override
+    {
+        // continued: a region takes a neighbour's vote only where the layer continues into it (its content pixels
+        // at the shared edge as ambiguous as the block: the same periodic content, not another layer):
+        // - (colours, own) every colour of the neighbour's edge, its paper too, is one the block has (a layer keeps
+        //   its ink);
+        // - (vote) the neighbour's own vector, not every tied one, fits most of its edge content (a dot row's end
+        //   decides its middle though the still look-alike breaks there)
+        const auto [bi, bj, di, dj] = (*_edges)[index];
+        const int kb = MotionField::kBlock, width = _a.width, height = _a.height;
+        int x0 = (bi + di) * kb, x1 = x0 + kb, y0 = (bj + dj) * kb, y1 = y0 + kb;
+        if (di < 0)
+            x0 = x1 - kb / 2;
+        if (di > 0)
+            x1 = x0 + kb / 2;
+        if (dj < 0)
+            y0 = y1 - kb / 2;
+        if (dj > 0)
+            y1 = y0 + kb / 2;
+        x1 = std::min(x1, width);
+        y1 = std::min(y1, height);
+        // the neighbour's paper: its most frequent colour
+        uint32_t paper = 0;
+        {
+            std::vector<std::pair<uint32_t, int>> seen;
+            for (int y = (bj + dj) * kb; y < std::min((bj + dj + 1) * kb, height); y++)
+                for (int x = (bi + di) * kb; x < std::min((bi + di + 1) * kb, width); x++)
+                {
+                    auto it = std::find_if(seen.begin(), seen.end(), [&](const auto& e) { return e.first == _a.At(x, y); });
+                    if (it == seen.end())
+                        seen.push_back({_a.At(x, y), 1});
+                    else
+                        it->second++;
+                }
+            int most = 0;
+            for (const auto& [colour, count] : seen)
+                if (count > most)
+                {
+                    most = count;
+                    paper = colour;
+                }
+        }
+        std::vector<uint32_t> own;
+        for (int y = bj * kb; y < std::min((bj + 1) * kb, height); y++)
+            for (int x = bi * kb; x < std::min((bi + 1) * kb, width); x++)
+                if (std::find(own.begin(), own.end(), _a.At(x, y)) == own.end())
+                    own.push_back(_a.At(x, y));
+        int content = 0, foreign = 0;
+        for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++)
+            {
+                foreign += std::find(own.begin(), own.end(), _a.At(x, y)) == own.end();
+                content += _a.At(x, y) != paper;
+            }
+        if (content == 0 || foreign > 0)
+            return false;
+        // the neighbour's own vector carries its content at the edge: the layer goes on with it
+        int carried = 0;
+        const uint8_t* fitsOf = _fits + static_cast<size_t>(vector) * _pixels;
+        for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++)
+                carried += _a.At(x, y) != paper && fitsOf[static_cast<size_t>(y) * width + x];
+        return carried * 4 >= content * 3;
+    }
+
+private:
+    struct Top
+    {
+        int vector = -1, support = -1;
+    };
+
+    const View& _a;
+    int _blocksWide, _n;
+    size_t _pixels;
+    const uint8_t* _fits;
+    const uint16_t* _support;
+    const uint8_t* _fitCounts;
+    size_t _blocks;
+    std::vector<std::array<Top, 3>> _topAt;
+    size_t _topBlock = static_cast<size_t>(-1);
+    const std::vector<LayerFlow::Edge>* _edges = nullptr;
+};
 }  // namespace
 
 std::vector<V> LayerFlow::CommonVectors(const MotionField& prev, const MotionField& next)
@@ -185,32 +344,238 @@ std::vector<V> LayerFlow::CommonVectors(const MotionField& prev, const MotionFie
     return common;
 }
 
-void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const Picture& pictureB, const MotionField& prev,
-                        const MotionField& next, int w, uint32_t* out)
+void LayerFlow::Prepare(const MotionField& prev, const MotionField& next, int width, int height, Layers& layers)
 {
-    const std::vector<V> common = CommonVectors(prev, next);
-    const int width = pictureA.width, height = pictureA.height, bw = next.BlocksWide(), bh = next.BlocksHigh();
-    // every vector some pixel may take
-    std::vector<V> all = common;
-    const auto add = [&](V v) {
-        if (std::find(all.begin(), all.end(), v) == all.end())
-            all.push_back(v);
-    };
+    auto& all = layers.all;
+    all = CommonVectors(prev, next);
+    layers.common = all.size();
+    const int bw = next.BlocksWide(), bh = next.BlocksHigh();
+    const auto indexOf = [&](V v) { return static_cast<int>(std::find(all.begin(), all.end(), v) - all.begin()); };
     for (const MotionField* f : {&next, &prev})
         for (int j = 0; j < bh; j++)
             for (int i = 0; i < bw; i++)
-                if (f->At(i, j).matched)
-                    add(f->At(i, j).v);
+                if (f->At(i, j).matched && indexOf(f->At(i, j).v) == static_cast<int>(all.size()))
+                    all.push_back(f->At(i, j).v);
+    layers.reach = 0;
+    for (const V& v : all)
+        layers.reach = std::max({layers.reach, std::abs(v.x), std::abs(v.y)});
+    layers.blocksWide = (width + MotionField::kBlock - 1) / MotionField::kBlock;
+    layers.blocksHigh = (height + MotionField::kBlock - 1) / MotionField::kBlock;
+    layers.allowed.resize(static_cast<size_t>(layers.blocksWide) * layers.blocksHigh);
+    for (int bj = 0; bj < layers.blocksHigh; bj++)
+        for (int bi = 0; bi < layers.blocksWide; bi++)
+        {
+            auto& allowed = layers.allowed[static_cast<size_t>(bj) * layers.blocksWide + bi];
+            allowed.clear();
+            for (int c = 0; c < static_cast<int>(layers.common); c++)
+                allowed.push_back(c);
+            for (const MotionField* f : {&next, &prev})
+                for (int dj = -1; dj <= 1; dj++)
+                    for (int di = -1; di <= 1; di++)
+                    {
+                        const int i = bi + di, j = bj + dj;
+                        if (i < 0 || j < 0 || i >= bw || j >= bh || !f->At(i, j).matched)
+                            continue;
+                        const int c = indexOf(f->At(i, j).v);
+                        if (std::find(allowed.begin(), allowed.end(), c) == allowed.end())
+                            allowed.push_back(c);
+                    }
+        }
+}
+
+void LayerFlow::Palette(const Picture& a, std::vector<uint32_t>& palette, uint8_t* colourAt)
+{
+    palette.clear();
+    for (int y = 0; y < a.height; y++)
+    {
+        // runs of a colour look it up once
+        const uint32_t* row = a.pixels + static_cast<size_t>(y) * a.width;
+        uint32_t last = row[0] + 1;
+        uint8_t lastIndex = 0;
+        for (int x = 0; x < a.width; x++)
+        {
+            const uint32_t colour = row[x];
+            if (colour != last)
+            {
+                auto it = std::find(palette.begin(), palette.end(), colour);
+                if (it == palette.end() && palette.size() < kPalette)
+                {
+                    palette.push_back(colour);
+                    it = palette.end() - 1;
+                }
+                last = colour;
+                lastIndex = static_cast<uint8_t>(it == palette.end() ? 255 : it - palette.begin());
+            }
+            if (colourAt)
+                colourAt[static_cast<size_t>(y) * a.width + x] = lastIndex;
+        }
+    }
+}
+
+bool LayerFlow::Explains(const Picture& a, const Picture& b, int bi, int bj, V v)
+{
+    return ExplainsIn(a, b, a.width, a.height, bi, bj, v);
+}
+
+void LayerFlow::Decide(const Layers& layers, const uint8_t* fitCounts, const uint8_t* usableCounts, Evidence& evidence,
+                       std::vector<int>& blockVector, std::vector<uint8_t>& tied)
+{
+    const std::vector<V>& all = layers.all;
+    const int n = static_cast<int>(all.size());
+    const int blocksWide = layers.blocksWide, blocksHigh = layers.blocksHigh;
+    const size_t blocks = static_cast<size_t>(blocksWide) * blocksHigh;
+    blockVector.assign(blocks, -1);
+    std::vector<std::vector<int>> tiedAt(blocks);  // the vectors equal to the block's best
+    std::vector<int> fitCountOf(n);
+    std::vector<std::pair<size_t, int>> asks;
+    for (size_t block = 0; block < blocks; block++)
+    {
+        // coherent: a block's pixels take the vector most of them fit when it fits them (no a/b mosaic);
+        // ties: the slowest (look-alikes everywhere: what the eye sees), then the earlier
+        int most = 0;
+        for (int c : layers.allowed[block])
+        {
+            const int count = usableCounts[c * blocks + block];
+            if (count > most)
+            {
+                most = count;
+                blockVector[block] = c;
+                tiedAt[block] = {c};
+            }
+            else if (count == most && count > 0)
+            {
+                tiedAt[block].push_back(c);
+                if (Slower(all[c], all[blockVector[block]]))
+                    blockVector[block] = c;
+            }
+        }
+        if (blockVector[block] < 0)
+            continue;
+        // fitTies: look-alikes fitting all of a block tie with or without support of their own (a dot row's
+        // middle: the static look-alike and the row's motion; its ends tell). The vectors fitting as many pixels
+        // of the block as the best does, support aside
+        for (int c = 0; c < n; c++)
+            fitCountOf[c] = fitCounts[c * blocks + block];
+        // over every vector of the frame, not the block's own list: the same tie all over a layer
+        int best = 0;
+        for (int c = 0; c < n; c++)
+            best = std::max(best, fitCountOf[c]);
+        // a vector fitting more of the block than the vote's does is evidence enough (a dot row's end fits its
+        // motion only; the support may be out of the window)
+        tiedAt[block].clear();
+        for (int c = 0; c < n; c++)
+            if (fitCountOf[c] == best)
+                tiedAt[block].push_back(c);
+        if (fitCountOf[blockVector[block]] < best)
+        {
+            blockVector[block] = tiedAt[block][0];
+            for (int c : tiedAt[block])
+                if (Slower(all[c], all[blockVector[block]]))
+                    blockVector[block] = c;
+        }
+        // a slower moving look-alike fitting some of the block, else the aliases rule keeps the vector
+        bool lookAlike = false;
+        for (int s = 1; s < n && blockVector[block] > 0; s++)
+            lookAlike |= fitCountOf[s] > 0 && Slower(all[s], all[blockVector[block]]);
+        if (lookAlike)
+            asks.push_back({block, blockVector[block]});
+    }
+    // spread, majority: a region of blocks tied alike takes what most decided blocks round it say. Regions of
+    // 4-connected blocks with the same tie set; the decided blocks bordering a region where their layer continues
+    // into it vote (a dot row's ends tell its motion to the row's middle, where the static look-alike fits as well).
+    // The bordering blocks are decided alone: no region changes their vectors
+    std::vector<int> region(blocks, -1);
+    std::vector<size_t> seeds, members, memberEnd, edgeEnd;
+    std::vector<Edge> edges;
+    for (size_t seed = 0; seed < blocks; seed++)
+    {
+        if (tiedAt[seed].size() < 2 || region[seed] >= 0)
+            continue;
+        const size_t first = members.size();
+        members.push_back(seed);
+        region[seed] = static_cast<int>(seed);
+        for (size_t m = first; m < members.size(); m++)
+        {
+            const int bi = static_cast<int>(members[m] % blocksWide), bj = static_cast<int>(members[m] / blocksWide);
+            for (const auto& [di, dj] : {std::pair{-1, 0}, {1, 0}, {0, -1}, {0, 1}})
+            {
+                const int i = bi + di, j = bj + dj;
+                if (i < 0 || j < 0 || i >= blocksWide || j >= blocksHigh)
+                    continue;
+                const size_t nb = static_cast<size_t>(j) * blocksWide + i;
+                if (tiedAt[nb] == tiedAt[seed])
+                {
+                    if (region[nb] < 0)
+                    {
+                        region[nb] = static_cast<int>(seed);
+                        members.push_back(nb);
+                    }
+                }
+                else if (tiedAt[nb].size() == 1)
+                    edges.push_back({bi, bj, di, dj});
+            }
+        }
+        seeds.push_back(seed);
+        memberEnd.push_back(members.size());
+        edgeEnd.push_back(edges.size());
+    }
+    evidence.Ask(asks, edges);
+    // aliases: a faster look-alike beats a slower one only on changes of its own: a change another vector explains
+    // with more support is that layer's (a period-8 dash fits +1 and -7; -7 also fits a few changes of the text
+    // under it by chance). The pixels c fits and s (if any) does not, the unchanged ones too (the block's still
+    // evidence), less those another vector explains with more support
+    for (const auto& [block, c] : asks)
+    {
+        int chosen = c;
+        for (int s = 0; s < n; s++)
+            if (!(all[s] == V{}) && Slower(all[s], all[chosen]) && evidence.Own(block, s, -1) > 0 &&
+                evidence.Own(block, c, s) == 0)
+                chosen = s;
+        blockVector[block] = chosen;
+    }
+    std::vector<int> border;
+    for (size_t r = 0, m0 = 0, e0 = 0; r < seeds.size(); m0 = memberEnd[r], e0 = edgeEnd[r], r++)
+    {
+        border.clear();
+        for (size_t e = e0; e < edgeEnd[r]; e++)
+        {
+            const int vote = blockVector[static_cast<size_t>(edges[e].bj + edges[e].dj) * blocksWide +
+                                         (edges[e].bi + edges[e].di)];
+            if (evidence.Continues(e, vote))
+                border.push_back(vote);
+        }
+        int bestVotes = 0, chosen = -1;
+        for (int c : tiedAt[seeds[r]])
+        {
+            const int votes = static_cast<int>(std::count(border.begin(), border.end(), c));
+            if (votes > bestVotes || (votes == bestVotes && votes > 0 && Slower(all[c], all[chosen])))
+            {
+                bestVotes = votes;
+                chosen = c;
+            }
+        }
+        if (chosen >= 0)
+            for (size_t m = m0; m < memberEnd[r]; m++)
+                blockVector[members[m]] = chosen;
+    }
+    tied.resize(blocks);
+    for (size_t block = 0; block < blocks; block++)
+        tied[block] = tiedAt[block].size() > 1;
+}
+
+void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const Picture& pictureB, const MotionField& prev,
+                        const MotionField& next, int w, uint32_t* out)
+{
+    Prepare(prev, next, pictureA.width, pictureA.height, _layers);
+    const std::vector<V>& all = _layers.all;
+    const int width = pictureA.width, height = pictureA.height;
     const int n = static_cast<int>(all.size());
     // the reads reach two vectors out (the cover's steady check)
-    int reach = 0;
-    for (const V& v : all)
-        reach = std::max({reach, std::abs(v.x), std::abs(v.y)});
+    const int reach = _layers.reach;
     const View p(pictureP, 2 * reach + 1, _paddedP), a(pictureA, 2 * reach + 1, _paddedA),
         b(pictureB, 2 * reach + 1, _paddedB);
     const size_t pixels = static_cast<size_t>(width) * height;
     // fits: per vector, the pixels it fits; score (window kRadius, at most 121) and support (window kSupportRadius).
-    // The buffers are written whole before they are read, explained excepted
     // The buffers are written whole before they are read, explained excepted; the hot loops go through raw pointers
     // (a byte store may alias a vector's own pointer, its reload would stop the vectorizer)
     auto &fits = _fits, &score = _score, &usableAt = _usable, &fitting = _fitting, &changes = _changes;
@@ -282,28 +647,7 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
     // vector's layer covers round here more than it goes under
     std::vector<uint32_t> palette;
     std::vector<uint8_t> colourAt(pixels);
-    for (int y = 0; y < height; y++)
-    {
-        // runs of a colour look it up once
-        uint32_t last = a.At(0, y) + 1;
-        uint8_t lastIndex = 0;
-        for (int x = 0; x < width; x++)
-        {
-            const uint32_t colour = a.At(x, y);
-            if (colour != last)
-            {
-                auto it = std::find(palette.begin(), palette.end(), colour);
-                if (it == palette.end() && palette.size() < kPalette)
-                {
-                    palette.push_back(colour);
-                    it = palette.end() - 1;
-                }
-                last = colour;
-                lastIndex = static_cast<uint8_t>(it == palette.end() ? 255 : it - palette.begin());
-            }
-            colourAt[static_cast<size_t>(y) * width + x] = lastIndex;
-        }
-    }
+    Palette(pictureA, palette, colourAt.data());
     // per moving vector and colour: the wins less the losses of the colour's pixels round a pixel. Summed at the
     // pixel while few pixels ask (a sprite's holes), a window image built once many do
     const auto balance = [&](V v, int col, int px, int py) {
@@ -345,12 +689,6 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
         }
         return balances[static_cast<size_t>(index)].Window(x, y) > 0;
     };
-    // per block: the common vectors and the vectors of the 3 x 3 blocks round it
-    const int blocksWide = (width + MotionField::kBlock - 1) / MotionField::kBlock;
-    const int blocksHigh = (height + MotionField::kBlock - 1) / MotionField::kBlock;
-    std::vector<std::vector<int>> allowedAt(static_cast<size_t>(blocksWide) * blocksHigh);
-    std::vector<int> blockVector(allowedAt.size(), -1);
-    std::vector<std::vector<int>> tiedAt(allowedAt.size());  // the vectors equal to the block's best
     // a fitting vector a pixel may take: zero, or a moving one with support that is credible
     usableAt.resize(pixels * n);
     std::copy(fits.begin(), fits.begin() + static_cast<ptrdiff_t>(pixels), usableAt.begin());
@@ -365,270 +703,32 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
     }
     const auto usable = [&](int c, size_t q) { return usableAt[static_cast<size_t>(c) * pixels + q] != 0; };
     // per vector and block, the pixels it fits and the ones it may take
-    const size_t blocks = allowedAt.size();
+    const size_t blocks = _layers.allowed.size();
     std::vector<uint8_t> fitCounts(blocks * n), usableCounts(blocks * n);
     for (int c = 0; c < n; c++)
     {
         BlockCounts(fits.data() + static_cast<size_t>(c) * pixels, width, height, fitCounts.data() + c * blocks);
         BlockCounts(usableAt.data() + static_cast<size_t>(c) * pixels, width, height, usableCounts.data() + c * blocks);
     }
-    std::vector<int> fitCountOf(n);
-    struct Top
-    {
-        int vector = -1, support = -1;
-    };
-    std::vector<std::array<Top, 3>> topAt(static_cast<size_t>(MotionField::kBlock) * MotionField::kBlock);
-    for (int bj = 0; bj < blocksHigh; bj++)
-        for (int bi = 0; bi < blocksWide; bi++)
-        {
-            const size_t block = static_cast<size_t>(bj) * blocksWide + bi;
-            auto& allowed = allowedAt[block];
-            for (int c = 0; c < static_cast<int>(common.size()); c++)
-                allowed.push_back(c);
-            for (const MotionField* f : {&next, &prev})
-                for (int dj = -1; dj <= 1; dj++)
-                    for (int di = -1; di <= 1; di++)
-                    {
-                        const int i = bi + di, j = bj + dj;
-                        if (i < 0 || j < 0 || i >= bw || j >= bh || !f->At(i, j).matched)
-                            continue;
-                        const int c = static_cast<int>(std::find(all.begin(), all.end(), f->At(i, j).v) - all.begin());
-                        if (std::find(allowed.begin(), allowed.end(), c) == allowed.end())
-                            allowed.push_back(c);
-                    }
-            // coherent: a block's pixels take the vector most of them fit when it fits them (no a/b mosaic);
-            // ties: the slowest (look-alikes everywhere: what the eye sees), then the earlier
-            const int x0 = bi * MotionField::kBlock, x1 = std::min(x0 + MotionField::kBlock, width);
-            const int y0 = bj * MotionField::kBlock, y1 = std::min(y0 + MotionField::kBlock, height);
-            int most = 0;
-            for (int c : allowed)
-            {
-                const int count = usableCounts[c * blocks + block];
-                if (count > most)
-                {
-                    most = count;
-                    blockVector[block] = c;
-                    tiedAt[block] = {c};
-                }
-                else if (count == most && count > 0)
-                {
-                    tiedAt[block].push_back(c);
-                    if (Slower(all[c], all[blockVector[block]]))
-                        blockVector[block] = c;
-                }
-            }
-            if (blockVector[block] >= 0)
-            {
-                // fitTies: look-alikes fitting all of a block tie with or without support of their own (a dot
-                // row's middle: the static look-alike and the row's motion; its ends tell). The vectors fitting as
-                // many pixels of the block as the best does, support aside
-                for (int c = 0; c < n; c++)
-                    fitCountOf[c] = fitCounts[c * blocks + block];
-                const auto fitCount = [&](int c) { return fitCountOf[c]; };
-                // over every vector of the frame, not the block's own list: the same tie all over a layer
-                int best = 0;
-                for (int c = 0; c < n; c++)
-                    best = std::max(best, fitCount(c));
-                // a vector fitting more of the block than the vote's does is evidence enough (a dot row's end
-                // fits its motion only; the support may be out of the window)
-                tiedAt[block].clear();
-                for (int c = 0; c < n; c++)
-                    if (fitCount(c) == best)
-                        tiedAt[block].push_back(c);
-                std::sort(tiedAt[block].begin(), tiedAt[block].end());
-                if (fitCount(blockVector[block]) < best)
-                {
-                    blockVector[block] = tiedAt[block][0];
-                    for (int c : tiedAt[block])
-                        if (Slower(all[c], all[blockVector[block]]))
-                            blockVector[block] = c;
-                }
-            }
-            // a slower moving look-alike fitting some of the block, else the aliases rule keeps the vector
-            bool lookAlike = false;
-            for (int s = 1; s < n && blockVector[block] > 0; s++)
-                lookAlike |= fitCountOf[s] > 0 && Slower(all[s], all[blockVector[block]]);
-            if (lookAlike)
-            {
-                // aliases: a faster look-alike beats a slower one only on changes of its own: a change another
-                // vector explains with more support is that layer's (a period-8 dash fits +1 and -7; -7 also fits
-                // a few changes of the text under it by chance). The pixels c fits and s (if any) does not, the
-                // unchanged ones too (the block's still evidence), less those another vector explains with more
-                // support
-                // per pixel, the three fitting vectors with the most support: a vector other than c and s with more
-                // support than c's is among them if there is one
-                for (int y = y0; y < y1; y++)
-                    for (int x = x0; x < x1; x++)
-                    {
-                        auto& top = topAt[static_cast<size_t>(y - y0) * MotionField::kBlock + (x - x0)];
-                        top = {};
-                        const size_t q = static_cast<size_t>(y) * width + x;
-                        for (int u = 0; u < n; u++)
-                        {
-                            const size_t uq = static_cast<size_t>(u) * pixels + q;
-                            if (fitCountOf[u] == 0 || !fits[uq])
-                                continue;
-                            Top t{u, support[uq]};
-                            for (auto& slot : top)
-                                if (t.support > slot.support)
-                                    std::swap(t, slot);
-                        }
-                    }
-                const auto own = [&](int c, int s) {
-                    int count = 0;
-                    for (int y = y0; y < y1; y++)
-                        for (int x = x0; x < x1; x++)
-                        {
-                            const size_t q = static_cast<size_t>(y) * width + x;
-                            if (!fits[static_cast<size_t>(c) * pixels + q] || (s >= 0 && fits[static_cast<size_t>(s) * pixels + q]))
-                                continue;
-                            const int mine = support[static_cast<size_t>(c) * pixels + q];
-                            bool other = false;
-                            for (const Top& t : topAt[static_cast<size_t>(y - y0) * MotionField::kBlock + (x - x0)])
-                                other |= t.vector >= 0 && t.vector != c && t.vector != s && t.support > mine;
-                            count += !other;
-                        }
-                    return count;
-                };
-                const int c = blockVector[block];
-                int chosen = c;
-                for (int s = 0; s < n; s++)
-                    if (!(all[s] == V{}) && Slower(all[s], all[chosen]) && own(s, -1) > 0 && own(c, s) == 0)
-                        chosen = s;
-                blockVector[block] = chosen;
-            }
-        }
-    // continued: a region takes a neighbour's vote only where the layer continues into it (its content pixels at
-    // the shared edge as ambiguous as the block: the same periodic content, not another layer):
-    // - (colours, own) every colour of the neighbour's edge, its paper too, is one the block has (a layer keeps its ink);
-    // - (vote) the neighbour's own vector, not every tied one, fits most of its edge content (a dot row's end
-    //   decides its middle though the still look-alike breaks there)
-    const auto continues = [&](size_t nbOf, int bi, int bj, int di, int dj) {
-        const int kb = MotionField::kBlock;
-        int x0 = (bi + di) * kb, x1 = x0 + kb, y0 = (bj + dj) * kb, y1 = y0 + kb;
-        if (di < 0)
-            x0 = x1 - kb / 2;
-        if (di > 0)
-            x1 = x0 + kb / 2;
-        if (dj < 0)
-            y0 = y1 - kb / 2;
-        if (dj > 0)
-            y1 = y0 + kb / 2;
-        x1 = std::min(x1, width);
-        y1 = std::min(y1, height);
-        // the neighbour's paper: its most frequent colour
-        uint32_t paper = 0;
-        {
-            std::vector<std::pair<uint32_t, int>> seen;
-            for (int y = (bj + dj) * kb; y < std::min((bj + dj + 1) * kb, height); y++)
-                for (int x = (bi + di) * kb; x < std::min((bi + di + 1) * kb, width); x++)
-                {
-                    auto it = std::find_if(seen.begin(), seen.end(), [&](const auto& e) { return e.first == a.At(x, y); });
-                    if (it == seen.end())
-                        seen.push_back({a.At(x, y), 1});
-                    else
-                        it->second++;
-                }
-            int most = 0;
-            for (const auto& [colour, count] : seen)
-                if (count > most)
-                {
-                    most = count;
-                    paper = colour;
-                }
-        }
-        std::vector<uint32_t> own;
-        for (int y = bj * kb; y < std::min((bj + 1) * kb, height); y++)
-            for (int x = bi * kb; x < std::min((bi + 1) * kb, width); x++)
-                if (std::find(own.begin(), own.end(), a.At(x, y)) == own.end())
-                    own.push_back(a.At(x, y));
-        int content = 0, foreign = 0;
-        for (int y = y0; y < y1; y++)
-            for (int x = x0; x < x1; x++)
-            {
-                foreign += std::find(own.begin(), own.end(), a.At(x, y)) == own.end();
-                content += a.At(x, y) != paper;
-            }
-        if (content == 0 || foreign > 0)
-            return false;
-        // the neighbour's own vector carries its content at the edge: the layer goes on with it
-        int carried = 0;
-        for (int y = y0; y < y1; y++)
-            for (int x = x0; x < x1; x++)
-                carried += a.At(x, y) != paper &&
-                           fits[static_cast<size_t>(blockVector[nbOf]) * pixels + static_cast<size_t>(y) * width + x];
-        return carried * 4 >= content * 3;
-    };
-    // spread, majority: a region of blocks tied alike takes what most decided blocks round it say. Regions of
-    // 4-connected blocks with the same tie set; the decided blocks bordering a region vote (a dot row's ends tell
-    // its motion to the row's middle, where the static look-alike fits as well)
-    std::vector<int> region(allowedAt.size(), -1);
-    for (size_t seed = 0; seed < allowedAt.size(); seed++)
-    {
-        if (tiedAt[seed].size() < 2 || region[seed] >= 0)
-            continue;
-        std::vector<size_t> members{seed}, border;
-        region[seed] = static_cast<int>(seed);
-        for (size_t m = 0; m < members.size(); m++)
-        {
-            const int bi = static_cast<int>(members[m] % blocksWide), bj = static_cast<int>(members[m] / blocksWide);
-            for (const auto& [di, dj] : {std::pair{-1, 0}, {1, 0}, {0, -1}, {0, 1}})
-            {
-                const int i = bi + di, j = bj + dj;
-                if (i < 0 || j < 0 || i >= blocksWide || j >= blocksHigh)
-                    continue;
-                const size_t nb = static_cast<size_t>(j) * blocksWide + i;
-                if (tiedAt[nb] == tiedAt[seed])
-                {
-                    if (region[nb] < 0)
-                    {
-                        region[nb] = static_cast<int>(seed);
-                        members.push_back(nb);
-                    }
-                }
-                else if (tiedAt[nb].size() == 1 && continues(nb, bi, bj, di, dj))
-                    border.push_back(nb);
-            }
-        }
-        int bestVotes = 0, chosen = -1;
-        for (int c : tiedAt[seed])
-        {
-            const int votes = static_cast<int>(std::count_if(border.begin(), border.end(), [&](size_t nb) { return blockVector[nb] == c; }));
-            if (votes > bestVotes || (votes == bestVotes && votes > 0 && Slower(all[c], all[chosen])))
-            {
-                bestVotes = votes;
-                chosen = c;
-            }
-        }
-        if (chosen >= 0)
-            for (size_t m : members)
-                blockVector[m] = chosen;
-    }
+    const int blocksWide = _layers.blocksWide;
+    std::vector<int> blockVector;
+    std::vector<uint8_t> tied;
+    CpuEvidence evidence(a, blocksWide, n, fits.data(), support.data(), fitCounts.data());
+    Decide(_layers, fitCounts.data(), usableCounts.data(), evidence, blockVector, tied);
     // carryFirst: the block's vector explains at least half of the block's changes (the motion of what is there,
     // not a chance match of content appearing)
     std::vector<int8_t> explainsAt(blockVector.size(), -1);
     const auto blockExplains = [&](size_t block) {
         if (explainsAt[block] < 0)
-        {
-            const int bi = static_cast<int>(block % blocksWide), bj = static_cast<int>(block / blocksWide);
-            const V v = all[blockVector[block]];
-            int changes = 0, explainedHere = 0;
-            for (int y = bj * MotionField::kBlock; y < std::min((bj + 1) * MotionField::kBlock, height); y++)
-                for (int x = bi * MotionField::kBlock; x < std::min((bi + 1) * MotionField::kBlock, width); x++)
-                    if (a.At(x, y) != b.At(x, y))
-                    {
-                        changes++;
-                        explainedHere += b.At(x, y) == a.At(x - v.x, y - v.y) || a.At(x, y) == b.At(x + v.x, y + v.y);
-                    }
-            explainsAt[block] = explainedHere * 2 >= changes;
-        }
+            explainsAt[block] = ExplainsIn(a, b, width, height, static_cast<int>(block % blocksWide),
+                                           static_cast<int>(block / blocksWide), all[blockVector[block]]);
         return explainsAt[block] == 1;
     };
     for (int y = 0; y < height; y++)
         for (int x = 0; x < width; x++)
         {
             const size_t block = static_cast<size_t>(y / MotionField::kBlock) * blocksWide + x / MotionField::kBlock;
-            const auto& allowed = allowedAt[block];
+            const auto& allowed = _layers.allowed[block];
             const size_t q = static_cast<size_t>(y) * width + x;
             if (a.At(x, y) == b.At(x, y) &&
                 !(blockVector[block] >= 0 && !(all[blockVector[block]] == V{}) && usable(blockVector[block], q)) &&
@@ -664,13 +764,13 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
             // the block's vector where it is usable, or (fitTies) fits a tied block
             if (blockVector[block] >= 0 &&
                 (usable(blockVector[block], q) ||
-                 (tiedAt[block].size() > 1 && fits[static_cast<size_t>(blockVector[block]) * pixels + q])))
+                 (tied[block] && fits[static_cast<size_t>(blockVector[block]) * pixels + q])))
             {
                 const V v = all[blockVector[block]];
                 out[q] = a.At(x - shift(v.x), y - shift(v.y));
                 continue;
             }
-            if (blockVector[block] >= 0 && !(all[blockVector[block]] == V{}) && tiedAt[block].size() == 1 &&
+            if (blockVector[block] >= 0 && !(all[blockVector[block]] == V{}) && !tied[block] &&
                 blockExplains(block) && !(p.At(x, y) == a.At(x, y) && a.At(x, y) != b.At(x, y)))
             {
                 // carryFirst: a decided moving block keeps a pixel its vector does not fit unless another vector

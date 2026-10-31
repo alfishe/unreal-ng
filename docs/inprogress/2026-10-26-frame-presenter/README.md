@@ -632,10 +632,20 @@ Each phase lands on its own with tests and docs.
       Flicker is held as before, the frame due over the composed picture. `Device::ComposeLayers` takes the step when
       a device has it; until step 4 it runs on the CPU. Done; unit tests for the scroller, a sprite over paper, a still
       picture and the pinned hashes. Known limit: a sprite over random background of few colours. The background it
-      left between k - 1 and k is not still3, and moving vectors fit the noise by chance there.
+      left between k - 1 and k is not still, and moving vectors fit the noise by chance there.
    4. The GPU passes in `SmoothMotionGPU`: the per-pixel fits and windows as passes, the per-block votes as a pass
       per block. The tied regions (44 x 36 blocks) need a sequential flood: either iterated on the GPU or read back
-      and done on the CPU, whichever is cheaper. The result is tested to the bit against the CPU.
+      and done on the CPU, whichever is cheaper. The result is tested to the bit against the CPU. Done:
+      - `LayerFlow` shares its steps (`Prepare`, `Palette`, `Decide`); the block decisions ask their per-pixel
+        answers through `LayerFlow::Evidence`, announced at once (`Ask`), so a device answers them in one pass;
+      - every vector's image is a tile of one 2D texture, all vectors in one draw: changed, window sums (row, then
+        column), fits, explained, per-vector sums, per-row and per-block counts;
+      - the counts are read back and `Decide` runs on the CPU (the flood is sequential and costs ~0.3 ms there); its
+        questions (aliases, region edges) go to the GPU in one pass each with one read; the final pass draws;
+      - three syncs per refresh (counts, answers, picture). On a loaded M1 Ultra, 352 x 288 with the suite's 12
+        scenes: GPU 3.9-6.2 ms wall per refresh against CPU 2.7-7.3 ms, the GPU work itself ~2.3 ms, the rest the
+        waits and the CPU steps. Byte-identical to the CPU on all 12 scenes (118 refreshes each); unreal-qt-tests
+        `SmoothMotionGPU_Test.LayerFlowOnTheGpuIsTheCpus` pins it on mixed scenes.
    5. Live check through the WebAPI on the hold-out clips; then the owner looks.
 6. **Automation planes.** Settings and `PresentStats` on CLI, Python, Lua, MCP, REST and WebSocket; docs chain per the
    guidelines. On the branch: `smooth_motion`, `effects_device` and the `present` report (section 6.4); not yet the

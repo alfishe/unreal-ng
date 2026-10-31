@@ -2,7 +2,9 @@
 
 #include "emulator/video/smoothmotion.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace smoothmotion
@@ -46,12 +48,60 @@ public:
     void Compose(const Picture& p, const Picture& a, const Picture& b, const MotionField& prev, const MotionField& next,
                  int w, uint32_t* out);
 
+    // Compose's steps a device shares: the CPU prepares the vectors and takes the block decisions from the counts
+    // and answers of the per-pixel passes, wherever they ran
+
+    /// The vectors of a refresh
+    struct Layers
+    {
+        std::vector<V> all;  ///< every vector some pixel may take: the common ones, then the blocks' (next, prev)
+        size_t common = 0;   ///< the common ones at the front of `all`
+        int reach = 0;       ///< the longest component of a vector
+        int blocksWide = 0, blocksHigh = 0;
+        std::vector<std::vector<int>> allowed;  ///< per block: the common vectors, then the 3 x 3 blocks' (next, prev)
+    };
+    static void Prepare(const MotionField& prev, const MotionField& next, int width, int height, Layers& layers);
+
+    /// The colours the cover rule tells apart: a's first kPalette colours row by row. `colourAt` (may be null): per
+    /// pixel its index, 255 past the palette
+    static void Palette(const Picture& a, std::vector<uint32_t>& palette, uint8_t* colourAt);
+
+    /// A block of a tied region and its neighbour at (di, dj), decided alone
+    struct Edge
+    {
+        int bi, bj, di, dj;
+    };
+
+    /// The per-pixel answers the block decisions ask (the CPU's buffers, a device's passes): every question announced
+    /// first, so a device answers all at once
+    class Evidence
+    {
+    public:
+        virtual ~Evidence() = default;
+        /// The questions: the blocks the aliases rule asks about, each with its vector; the regions' edges
+        virtual void Ask(const std::vector<std::pair<size_t, int>>& /*blocks*/, const std::vector<Edge>& /*edges*/) {}
+        /// The aliases rule's own(c, s) in `block` (s < 0: none): the pixels c fits and s does not, less those another
+        /// vector fitting them explains with more support
+        virtual int Own(size_t block, int c, int s) = 0;
+        /// Whether the neighbour's layer, its vector `vector`, continues into the block: edges[index]
+        virtual bool Continues(size_t index, int vector) = 0;
+    };
+
+    /// The block decisions: per block the vector its pixels take (-1: none) and whether others tie with it.
+    /// `fitCounts`, `usableCounts`: per vector c and block, the pixels c fits and may take, at c * blocks + block
+    static void Decide(const Layers& layers, const uint8_t* fitCounts, const uint8_t* usableCounts, Evidence& evidence,
+                       std::vector<int>& blockVector, std::vector<uint8_t>& tied);
+
+    /// carryFirst's test: `v` explains at least half of the block's changes from a to b
+    static bool Explains(const Picture& a, const Picture& b, int bi, int bj, V v);
+
 private:
     // kept from call to call: a refresh allocates nothing once the sizes settle
     std::vector<uint32_t> _paddedP, _paddedA, _paddedB;
     std::vector<uint8_t> _fits, _score, _usable, _fitting, _changes, _changed, _explained, _calm;
     std::vector<uint16_t> _support;
     std::vector<int> _column, _sums, _unexplained;
+    Layers _layers;
 };
 
 }  // namespace smoothmotion
