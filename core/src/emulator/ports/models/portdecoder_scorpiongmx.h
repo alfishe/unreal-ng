@@ -63,12 +63,20 @@ public:
     void OnMachineStep(uint32_t t) override;
     void OnMachineFrameRollover(uint32_t frameLength) override;
 
+    /// A Spectrum / Scorpion state comes in: the Scorpion scheme the loader hands over to (ROM plane 4, #7EFD = #40)
+    /// and the card's own pages off (#78FD, #DFFD), turbo off as after the hand-over
+    void EnterSpectrum128Paging(uint16_t pc) override;
+
     /// The #7FFD lock (bit 5) does not act while #7EFD bit 2 is set (manual 3.1)
     bool IsPagingLocked() const override;
 
     /// The Magic button was pressed: false = blocked by #7EFD bit 2. Otherwise latches the read-backs until the
     /// next IN #FF (manual section 2)
     bool OnMagicButton();
+
+    /// The host Scorpion's blobs plus GmxPaging (ttd::TTDGmxPaging)
+    std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
     /// endregion </Interface methods>
 
     /// region <Register file>
@@ -86,6 +94,8 @@ public:
     uint8_t Plane() const;
     /// RECONF requested and not run yet
     bool IsReconfigurationPending() const { return _reconfPending; }
+    /// TTD restore: the pending RECONF and its step hook
+    void RestoreReconfigurationPending(bool pending);
     /// endregion </Register file>
 
 protected:

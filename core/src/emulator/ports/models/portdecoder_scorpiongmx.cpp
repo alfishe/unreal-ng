@@ -5,6 +5,7 @@
 #include "portdecoder_scorpiongmx.h"
 
 #include "emulator/cpu/core.h"
+#include "debugger/ttd/gmx/ttdgmxpaging.h"
 #include "emulator/cpu/z80.h"
 
 /// region <Constructors / Destructors>
@@ -40,10 +41,6 @@ void PortDecoder_ScorpionGMX::reset()
 
     PortDecoder_Scorpion256::reset();
 
-    // The host reset selects the SOS ROM (#7FFD bit 4); the card's CPU starts at page 0 of the plane, the loader
-    // (MAME scorpiongmx_state::machine_reset, the web Unreal: 7FFD = 0)
-    state.p7FFD = 0x00;
-    state.flags &= ~CF_TRDOS;
     state.scorpion.p7EFD = keptPlane;
     state.scorpion.profromBank = Plane();
     _context->pMemory->UpdateZ80Banks();
@@ -196,6 +193,33 @@ bool PortDecoder_ScorpionGMX::OnMagicButton()
         gmx.magicLock = 1;
     }
     return true;
+}
+
+void PortDecoder_ScorpionGMX::EnterSpectrum128Paging(uint16_t pc)
+{
+    DecodePortOut(0x7EFD, 0x40, pc);
+    DecodePortOut(0x78FD, 0x00, pc);
+    DecodePortOut(0xDFFD, 0x00, pc);
+}
+
+std::vector<ttd::TTDDeviceType> PortDecoder_ScorpionGMX::GetTTDModelStateTypes() const
+{
+    std::vector<ttd::TTDDeviceType> types = PortDecoder_Scorpion256::GetTTDModelStateTypes();
+    types.push_back(ttd::TTDDeviceType::GmxPaging);
+    return types;
+}
+
+std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ScorpionGMX::CreateTTDSerializers() const
+{
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers = PortDecoder_Scorpion256::CreateTTDSerializers();
+    serializers.push_back(std::make_unique<ttd::TTDGmxPaging>(_context));
+    return serializers;
+}
+
+void PortDecoder_ScorpionGMX::RestoreReconfigurationPending(bool pending)
+{
+    _reconfPending = pending;
+    RefreshStepHook();
 }
 
 /// endregion </Interface methods>

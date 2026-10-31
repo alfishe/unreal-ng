@@ -156,6 +156,29 @@ MachineView DefaultView(EmulatorContext& context)
                 AddBanks(view, memory, {page});
             break;
         }
+        case MM_GMX:
+        {
+            // The card's own paging has no snapshot id in any format: while it is off the machine is a Scorpion 256
+            // (GMX design section 6)
+            std::string inUse;
+            const auto add = [&inUse](const std::string& what) { inUse += (inUse.empty() ? "" : ", ") + what; };
+            if (state.gmx.p78FD != 0)
+                add("#78FD pages RAM " + std::to_string((state.gmx.p78FD & 0x7F) ^ 2) + " at #8000");
+            if (state.pDFFD != 0)
+                add("#DFFD selects the pages above 15 at #C000");
+            if (state.p1FFD & 0x04)
+                add("#1FFD bit 2 maps the plane's TR-DOS page");
+            if (state.scorpion.p7EFD & 0x08)
+                add("the 640x200 screen is on");
+            if (!inUse.empty())
+                return Unavailable("extended GMX paging in use (" + inUse + "): a snapshot holds the Scorpion 256 view "
+                                   "only. Run a Scorpion program first",
+                                   "mode:scorpion256");
+            view.note = "the GMX card's paging is off: the machine is a Scorpion ZS 256 (RAM pages 0-15)";
+            view.model = MM_SCORP;
+            view.ramKb = 256;
+            [[fallthrough]];
+        }
         case MM_SCORP:
         case MM_PROFSCORP:
             view.machineHint = "scorpion256";
@@ -166,7 +189,7 @@ MachineView DefaultView(EmulatorContext& context)
             break;
         default:
             return Unavailable("this machine has no snapshot view yet (its memory is not the Spectrum 128K's, and no capture "
-                               "rule exists for it: Kay, Quorum, LSY256, Phoenix, GMX and ZX Next cannot be created yet)",
+                               "rule exists for it: Kay, Quorum, LSY256, Phoenix and ZX Next cannot be created yet)",
                                "capture_unsupported");
     }
 

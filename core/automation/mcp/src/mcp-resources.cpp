@@ -438,6 +438,44 @@ No ISA cards; the 21 MHz wait rule is MAME's (per-frame wait totals not reported
 shortcut.
 )md";
 
+const char* const kMachineGmx = R"md(# ZS Scorpion + GMX (model GMX)
+
+The GMX card (Graphic Memory eXpander, MOA 1998) sits in the CPU socket of a ZS Scorpion: its own Z80, 2 MB of RAM, a
+512 KB flash of eight 64 KB ROM planes and a register file on top of the host board (design:
+docs/inprogress/2026-10-07-gmx). `emulator_manage action=create model=GMX`: 2048K only, config `data/configs/gmx`, ROM
+`data/rom/gmx644.rom` (Loader V2.00 + shadow monitor 6.44su).
+
+## Boot
+The CPU always starts the loader (plane 0 page 0), whatever `RESET=` says. At power-on it runs a RECONF
+(`OUT (#00),#0A`), reads the magic byte, then hands over to plane 4 page 0, the Scorpion 128 menu (`#7EFD = #C0`,
+turbo on); the v6.44 firmware goes on into plane 5 with 640x200 on and waits for a key.
+
+## Ports
+| Port | Write | Read |
+|:--|:--|:--|
+| `#xx00` (A7-A0 = 0) | scheme (0-2), RECONF (3: reload + CPU reset), FIXROM (4), BLKEXT (5), BLKEX2 (6), ST/PENT (7) | host board |
+| `#78FD` | RAM page at `#8000` (stored ^ 2) | page, BRD1, the magic byte bit after RECONF |
+| `#7AFD` / `#7CFD` | scroll start = `(7CFD & #3F) << 8 \| (7AFD & #F0)` | paging status / - |
+| `#7EFD` | turbo (7), ROM plane (6-4), 640x200 (3), MagEnable (2: Magic blocked, `#7FFD` lock lifted) | card status |
+| `#DFFD` | RAM page bits 4-6 at `#C000` | - |
+
+`#C000` page = `DFFD[2:0] << 4 | 1FFD[4] << 3 | 7FFD[2:0]` (128 pages). `#1FFD` bit 2 maps the plane's TR-DOS page at
+`#0000`. RESET clears every card latch except `#00`; a hard reset (power-off) clears `#00` too. The Magic button freezes
+the `#7AFD` / `#7EFD` read-backs until an `IN #FF`. No Turbo+ host logic (no ProfROM strobe, no Even M1).
+
+## State
+`inspect_state aspects:["paging"]` reports `gmx`: `port_00` (scheme, fixrom, blkext, blkex2, pentagon_int,
+reconf_pending), `port_7efd` (rom_plane, turbo, video_640x200, magic_blocked), `page_8000`, `page_c000`,
+`scroll_start`, `trdos_page_1ffd`, `magic` (frozen, frozen_7afd, frozen_7efd); `banks[0].role` names the plane and
+page. `aspects:["ports"]` lists the card rows with decoded fields. TTD carries the card as GmxPaging (70) next to
+ScorpionProfROM (6) and the SMUC clock (Ds12887, 18).
+
+## Snapshots and state transfer
+With the card's paging off (`#78FD` = `#DFFD` = 0, `#1FFD` bit 2 clear, 640x200 off) the machine saves as a Scorpion
+ZS 256; otherwise `capture_unsupported` says what is in use. Scorpion snapshots load into the Scorpion scheme (ROM plane
+4); a Spectrum / Scorpion state moves into a GMX the same way. A GMX using its own paging moves only to a GMX.
+)md";
+
 struct StaticResource
 {
     const char* uri;
@@ -455,6 +493,7 @@ const StaticResource kStaticResources[] = {
     {"unreal://memory-map", "memory-map", "48K/128K/Pentagon memory maps, screen layout math, 0x7FFD paging bits", "text/markdown", kMemoryMap},
     {"unreal://machine/profi", "machine-profi", "Profi v3 (PROFI3) and v5 (PROFI): board differences, ROM pages, #7FFD/#DFFD/palette ports, 512x240 hi-res, sync PROM timing, limitations", "text/markdown", kMachineProfi},
     {"unreal://machine/tsconf", "machine-tsconf", "TS-Conf (ZX-Evo TS-Labs) machine: #nnAF registers, video modes, TSU, DMA, sound DAC, SPG loading, limitations", "text/markdown", kMachineTsConf},
+    {"unreal://machine/gmx", "machine-gmx", "ZS Scorpion + GMX: the card's ports, ROM planes and boot, 2 MB paging, state, TTD and snapshot rules", "text/markdown", kMachineGmx},
     {"unreal://machine/sprinter", "machine-sprinter", "Peters Plus Sprinter Sp2000: BIOS selection and start, the PLD port table and codes, windows and video RAM, video modes, DSS from floppy / HDD, accelerator, sound, TTD, limitations", "text/markdown", kMachineSprinter},
 };
 

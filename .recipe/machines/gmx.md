@@ -37,6 +37,27 @@ curl -s "$BASE/emulator/$EMU_ID/ports" | jq '{model, live, rows: [.entries[] | {
 curl -s "$BASE/emulator/$EMU_ID/state/paging" | jq '.banks[0] | {type, page, name, role}'
 ```
 
+## State, TTD, snapshots
+
+```bash
+# The card's register file (the same node on CLI `paging`, Lua / Python paging_state(), MCP inspect_state paging)
+curl -s "$BASE/emulator/$EMU_ID/state/paging" | jq '.gmx | {port_00, port_7efd, page_8000, page_c000, scroll_start, magic}'
+
+# TTD: the card rides as GmxPaging (70) next to ScorpionProfROM (6); seek restores the pages behind #78FD / #DFFD
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/start" | jq .
+```
+
+```text
+inspect_state {"aspects":["paging"]}         # .paging.gmx: the card's latches decoded
+time_travel  {"action":"seek","frame":N}    # the card's latches, the plane and the pages come back
+```
+
+- Snapshots: with the card's paging off (`#78FD` = `#DFFD` = 0, `#1FFD` bit 2 clear, 640x200 off) the machine
+  saves as a Scorpion ZS 256; otherwise every format answers `needs: mode:scorpion256` and names what is in use.
+- A Scorpion `.z80` / `.szx` (and any 48K / 128K snapshot) loads into the Scorpion scheme: ROM plane 4, card pages off.
+- State transfer: a Spectrum / Scorpion state moves into a GMX; a GMX moves to a Scorpion 256 while its paging is off
+  and pages 16-127 are empty; with `#78FD` / `#DFFD` / its own plane in use, only to another GMX.
+
 ## The card at a glance
 
 | Port | Write | Read |

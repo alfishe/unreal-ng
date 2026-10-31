@@ -7,7 +7,7 @@ real software and the current firmware; nothing implemented.** The model is not 
 ## Phases
 
 - [x] Phase 1: creatable machine (factory, `GmxState`, register file, RAM and ROM mapping, config folder with `gmx644.rom`, roles, recipe sections 1-2, parity on all surfaces)
-- [ ] Phase 2: TTD blob, snapshot capture policy, `MachineStateTransfer`, paging fields on all surfaces
+- [x] Phase 2: TTD blob (GmxPaging 70), snapshot capture policy, `MachineStateTransfer`, the `gmx` paging node on WebAPI, CLI, Lua, Python, MCP (+ resource `unreal://machine/gmx`)
 - [ ] Phase 3: 640x200 extended video, scroller, Qt, screenshots; Edge Grinder boot test
 - [ ] Phase 4: turbo, Magic latch and the `#7EFD` bit 2 gate, BLKEXT, `#00` RECONF, INT select (`#00` bit 7)
 - [ ] Phase 5: slots and media (General Sound incompatibility, SMUC disk list, Z-Controller SD); OSZ boot test

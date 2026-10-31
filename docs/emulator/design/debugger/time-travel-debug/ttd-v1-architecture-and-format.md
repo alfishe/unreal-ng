@@ -887,6 +887,7 @@ recording is refused (`tm.cpp:1349-1366`).
 | Model (`mem_model`) | Model serializers (ids) | Source |
 |---|---|---|
 | Scorpion, ProfROM Scorpion | ScorpionProfROM (6), Ds12887 (18, the SMUC clock) | `core/src/emulator/ports/portdecoder_scorpion256.cpp` `CreateTTDSerializers` |
+| Scorpion + GMX | ScorpionProfROM (6), Ds12887 (18), GmxPaging (70, the card's register file) | `core/src/emulator/ports/models/portdecoder_scorpiongmx.cpp` `CreateTTDSerializers` |
 | Profi | ProfiPaging (9), Ds12887 (18) | `portdecoder_profi.cpp` `CreateTTDSerializers` |
 | ATM 7.10 | AtmPaging (8), Atm2Kbc (26, the keyboard controller, when fitted), AtmIoBus (36, the INTERNAL I/O latch); MachineSerialPeer (27) and Atm2IoEsp (37) through the network peripherals when a peer / the card is fitted | `portdecoder_atm710.cpp` `CreateTTDSerializers`, `ttdmachineperipherals.cpp` |
 | ATM 4.50 | AtmPaging (8) | inherits the ATM 7.10 decoder without the v7.10 board logic |

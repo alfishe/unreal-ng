@@ -6996,6 +6996,9 @@ namespace PythonBindings
                 }
                 d["sprinter"] = StateNodeToPy(sprinter);
             }
+            // GMX: the card's register file (the /state/paging `gmx` view)
+            if (config.mem_model == MM_GMX)
+                d["gmx"] = StateNodeToPy(DeviceState::GmxPaging(context));
             d["banks"] = banks;
             return d;
         }, "Tagged paging latches + bank table (P1-2 design)")

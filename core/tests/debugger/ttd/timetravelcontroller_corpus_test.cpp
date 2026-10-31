@@ -267,7 +267,7 @@ TEST_F(TimeTravelControllerCorpus_Test, EveryFixtureLoadsRestoresAndContinuesExa
 TEST_F(TimeTravelControllerCorpus_Test, TheBaselineIntervalReplaysExactlyOnEveryModel)
 {
     const std::vector<const char*> all = {"48K",   "128k",   "PLUS2", "PLUS2A", "PLUS3", "PENTAGON", "SCORPION",
-                                          "PROFSCORP", "ATM710", "ATM450", "ATM3", "PROFI", "PROFI3", "TSL",
+                                          "PROFSCORP", "GMX", "ATM710", "ATM450", "ATM3", "PROFI", "PROFI3", "TSL",
                                           "TSL-VDAC2", "SPRINTER"};
     const std::vector<const char*> models =
         TestTier::Long() ? all : std::vector<const char*>{"48K", "PENTAGON", "SPRINTER"};

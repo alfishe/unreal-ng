@@ -6611,6 +6611,9 @@ public:
                 }
                 result["sprinter"] = StateNodeToLua(s, sprinter);
             }
+            // GMX: the card's register file (the /state/paging `gmx` view)
+            if (config.mem_model == MM_GMX)
+                result["gmx"] = StateNodeToLua(s, DeviceState::GmxPaging(context));
             result["banks"] = banks;
 
             results.push_back(sol::make_object(s, result));

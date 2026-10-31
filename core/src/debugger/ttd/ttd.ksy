@@ -746,7 +746,12 @@ types:
           the pending X mickeys (+ right), s2 the pending Y mickeys (+ up), u1 the buttons (D0 left, D1 right, D2
           middle, active low), per axis u8 frame and u4 T-state of the next strobe's earliest time; 50 bytes),
           69 KempstonInterface (a Kempston joystick interface card, slot-built, instance <slot>.kempston: u1 version 1;
-          the interface has no state, the stick byte is KempstonJoystick (23), carried while the card is fitted).
+          the interface has no state, the stick byte is KempstonJoystick (23), carried while the card is fitted),
+          70 GmxPaging (the Scorpion GMX card's register file, GMX only: u1 version 1, u1 #00 configuration, u1 #78FD
+          as stored (the page before the ^2), u1 #7AFD, u1 #7CFD, u1 #DFFD, u1 the magic byte bits not read yet,
+          u1 the Magic-button freeze (1 = the read-backs hold), u1 the frozen #7AFD read-back, u1 the frozen #7EFD
+          read-back, u1 a RECONF waiting for the end of its instruction, 5 x u1 reserved; 16 bytes; the host latches
+          #1FFD, #7EFD and the plane ride in ScorpionProfROM (6)).
           ScorpionProfROM (6) byte 5 is the Turbo+ latch (scorpion_turbo; 0 in sessions recorded before it).
           Plus3Paging (13): u1 p1FFD, u1 floating-bus byte (the gate array's last contended byte), u1 flags
           (bit 0: the byte is valid; 0 in sessions recorded before it), u1 reserved.

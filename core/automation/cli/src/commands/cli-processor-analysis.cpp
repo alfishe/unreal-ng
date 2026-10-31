@@ -359,6 +359,10 @@ void CLIProcessor::HandlePaging(const ClientSession& session, const std::vector<
     ss << "  #2  0x8000-0xBFFF  RAM p" << (int)memory.GetRAMPageForBank2() << contended(2) << NEWLINE;
     ss << "  #3  0xC000-0xFFFF  RAM p" << (int)memory.GetRAMPageForBank3() << contended(3) << NEWLINE;
 
+    // GMX: the card's register file (the /state/paging `gmx` view)
+    if (context->config.mem_model == MM_GMX)
+        ss << NEWLINE << "GMX card:" << NEWLINE << DeviceState::ToText(DeviceState::GmxPaging(context), 1);
+
     session.SendResponse(ss.str());
 }
 
