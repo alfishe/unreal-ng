@@ -20,8 +20,11 @@
 # Every death goes through the flag #FCE6 (set at #88C9 by a traffic car, at #70EF by a roadside object; #6EE2 then returns 3 to the
 # life-loss #6DF5): #70ED (ld a,#FF before the #70EF store, in the scenery loop #7000, ix+0 = object type) is the `object` event:
 # checked in real time (L held, steering right for 20 s): it fired once, at a cactus in the desert, the life was lost.
-# Known limits: the desert beside the road costs no speed; a cliff is not told apart from the other roadside objects (no later
-# stage reached), it is expected to take the same #70ED path.
+# The cliff / wall: #88F6 (reached by the two jumps #8857 and #8873 of the overlap test when the lateral position #F05D:#F05A passes
+# the limit on a side whose barrier flag in #FCEB is set; it zeroes the speed and returns 3 like a crash) is the `cliff` event. Reached by
+# skipping three sections (the distance byte #F05C set to #A7D4 ends a section), then steering off the road in section 4 (5.6 miles,
+# a red rock wall at the side): in 12 rounds `cliff` fired 23 times and the lives counter fell 23 times, one for one, with no `crash`.
+# Known limits: the desert beside the road costs no speed; `blown` and `ticket` were not reproduced in play (7 sections, no police car).
 schema: 1
 kind: play
 id: builtin/game/test-drive-ii
@@ -49,6 +52,7 @@ haptics:
     ticket: { probe: exec, address: "0x8DED" }
     dry:   { probe: exec, address: "0x9E4E" }
     object: { probe: exec, address: "0x70ED" }
+    cliff: { probe: exec, address: "0x88F6" }
   rules:
     - { on: speed, play: engine, target: handle.low }
     - { on: crash, play: explosion, scale: 0.9 }
@@ -56,3 +60,4 @@ haptics:
     - { on: ticket, play: hit, scale: 0.5 }
     - { on: dry, play: thump, scale: 0.4 }
     - { on: object, play: explosion, scale: 0.8 }
+    - { on: cliff, play: explosion, scale: 0.7 }
