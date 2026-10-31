@@ -279,3 +279,52 @@ TEST_F(GmxBoot_Test, LoaderSchemeFourIsAPentagon128)
     EXPECT_GT(std::count_if(first, first + pixels, [&](uint32_t px) { return px != first[0]; }), 1000)
         << "the stripes are drawn";
 }
+
+/// @brief The SMUC peripherals the v6.44 monitor's fast test probes, at the ports it uses: the 8259 (page 23 #1F92), the
+///        16550 of the ISA slot's modem at COM1 (#7AFE = ISA #3FA, #2021) and the ISA window's DOS-port gate
+TEST_F(GmxBoot_Test, SmucPeripheralsAnswerTheFastTestProbes)
+{
+    PortDecoder* decoder = _context->pPortDecoder;
+    EmulatorState& state = _context->emulatorState;
+
+    // 8259: ICW1 #F3, ICW2 #C5, ICW4 #01, the IMR reads 0 or 1; ICW1 #F2, ICW2 #C5, OCW1 #FF, it reads #FF
+    decoder->DecodePortOut(0x7EBE, 0xF3, 0x1FA2);
+    decoder->DecodePortOut(0x7FBE, 0xC5, 0x1FA2);
+    decoder->DecodePortOut(0x7FBE, 0x01, 0x1FA2);
+    EXPECT_LE(decoder->DecodePortIn(0x7FBE, 0x1FB4), 1);
+    decoder->DecodePortOut(0x7EBE, 0xF2, 0x1FC9);
+    decoder->DecodePortOut(0x7FBE, 0xC5, 0x1FC9);
+    decoder->DecodePortOut(0x7FBE, 0xFF, 0x1FC9);
+    EXPECT_EQ(decoder->DecodePortIn(0x7FBE, 0x1FC9), 0xFF);
+
+    // COM1 through the ISA window: only with the DOS ports on (the window shares its pattern with the keyboard rows)
+    const unsigned flags = state.flags;
+    state.flags |= CF_DOSPORTS;
+    decoder->DecodePortOut(0x7FFE, 0x5A, 0x2024);
+    EXPECT_NE(decoder->DecodePortIn(0x7FFE, 0x2024), 0x5A) << "#FFBA D2 / D1 = 0: ISA #27F, no card there";
+    decoder->DecodePortOut(0xFFBA, 0xF7, 0x2024);   // the firmware's power-on value: D2 / D1 = 1, ISA #380-#3FF
+    EXPECT_NE(decoder->DecodePortIn(0x7AFE, 0x2024), 0xFF) << "the 16550's IIR (#3FA)";
+    decoder->DecodePortOut(0x7FFE, 0x5A, 0x2024);   // ISA #3FF: the scratch register
+    EXPECT_EQ(decoder->DecodePortIn(0x7FFE, 0x2024), 0x5A);
+    decoder->DecodePortOut(0x7BFE, 0x83, 0x2024);   // LCR with DLAB: reads back
+    EXPECT_EQ(decoder->DecodePortIn(0x7BFE, 0x2024), 0x83);
+    decoder->DecodePortOut(0x7BFE, 0x03, 0x2024);
+    state.flags = flags & ~static_cast<unsigned>(CF_DOSPORTS | CF_TRDOS);
+    if ((state.p1FFD & 0x02) == 0 && !state.scorpion.dosTrigger)
+        EXPECT_NE(decoder->DecodePortIn(0x7FFE, 0x0000), 0x5A) << "outside DOS the row port is the keyboard";
+    state.flags = flags;
+}
+
+/// @brief A board without a saved NVRAM starts from the config's [SMUC] NvramInitial: the image the 6.44 monitor writes
+///        when it initializes blank cells, so the fast test finds the signatures (CMOS cell #0E, EEPROM byte 0 = #65)
+///        and valid checksums on the first power-on
+TEST_F(GmxBoot_Test, SmucNvramStartsFromTheShippedImage)
+{
+    auto* gmx = dynamic_cast<PortDecoder_ScorpionGMX*>(_context->pPortDecoder);
+    ASSERT_NE(gmx, nullptr);
+    _emulator->RunNFrames(1, true);
+    EXPECT_EQ(gmx->GetRtc().GetCell(0x0E), 0x65) << "CMOS signature";
+    EXPECT_EQ(gmx->GetSMUCNvram().GetEEPROMByte(0x000), 0x65) << "NVRAM signature";
+    EXPECT_EQ(gmx->GetSMUCNvram().GetEEPROMByte(0x0FE), 0xED) << "NVRAM checksum low";
+    EXPECT_EQ(gmx->GetSMUCNvram().GetEEPROMByte(0x0FF), 0x97) << "NVRAM checksum high";
+}

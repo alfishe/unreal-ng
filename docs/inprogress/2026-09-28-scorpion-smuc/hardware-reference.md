@@ -124,7 +124,7 @@ Write bits. The firmware evidence is ProfROM page 7; the power-on value it write
 | D5 | EEPROM write protect | (unused) | yes | yes | (unused) | `#0F3E` | WP |
 | D4 | EEPROM data (SDA) out | yes | yes | yes | yes | `#0EF7` | SDA |
 | D3 | interrupt enable (8259 output to the Z80 `/INT`) | - | - | - | - | set only around the 8259 test and cleared after (`#170C-#1716`, `#172A-#1734`, `#019E-#01A8`) | interrupt enable (firmware evidence only) |
-| D2, D1 | unknown; the firmware keeps them 1 | - | - | - | - | `OR #06` at `#15CD` (ISA reset path); `#F7` at power-on | keep, no effect |
+| D2, D1 | unknown; the firmware keeps them 1. unreal-ng (2026-10-31): ISA A8 / A7 of the ISA window (the `I`, `H` the `#18E6-#7FFE` pattern does not drive) - an inference: set, the window is COM1 `#380-#3FF` where the GMX 6.44 / ProfROM probe at `#7AFE` looks; clear (the loader, the 128 menu), the keyboard rows that share the pattern reach no card | - | - | - | - | `OR #06` at `#15CD` (ISA reset path); `#F7` at power-on | ISA A8 / A7 (inference) |
 | D0 | **IDE reset** (Q3, §5.6) | 1 resets | not modeled | **0 resets** | 1 resets | 0 then 1 pulse; 1 in normal use | **0 = reset** (§5.6) |
 
 Read bits:

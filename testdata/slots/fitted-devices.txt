@@ -137,7 +137,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 15:39 18:48 23:14 35:52 54:34 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 15:39 17:50 18:48 20:39 23:14 35:52 45:var 54:44 56:22 notRecorded 0
 == next
 model 16
 mixer [Beeper] [Next AY 1] [Next AY 2] [Next AY 3] [Next DAC]
@@ -298,7 +298,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:34 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:44 56:22 notRecorded 0
 == scorpion
 model 9
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -329,7 +329,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:34 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:44 56:22 notRecorded 0
 == spectrum128
 model 2
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]

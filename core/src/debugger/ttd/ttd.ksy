@@ -688,9 +688,12 @@ types:
           divider, per envelope generator 11 bytes, u8 host time, u8 clock-ratio remainder, u8 gated and u8 ungated
           chip clocks, s4 left and s4 right output level (held while the clock gate is stopped); layout in
           saa1099.cpp; only inside a card that carries the chip),
-          54 Smuc (the Scorpion SMUC board, 36 bytes: u1 version 1, u1 pFFBA, u1 p7FBA, u1 x 8 IDE window registers,
+          54 Smuc (the Scorpion SMUC board, 48 bytes: u1 version 2, u1 pFFBA, u1 p7FBA, u1 x 8 IDE window registers,
           then the serial EEPROM link: u1 mode, u1 flags (bit 0 stable, 1 tx, 2 rx, 3 ack), u1 bitCount, u1 data,
-          u1 addressLow, u1 addressHigh, u1 writePos, u1 sda, u1 scl, u1 x 16 writeBuffer; not the EEPROM contents),
+          u1 addressLow, u1 addressHigh, u1 writePos, u1 sda, u1 scl, u1 x 16 writeBuffer; not the EEPROM contents;
+          then the 8259 (Pic8259::State): u1 irr, u1 isr, u1 imr, u1 icw1, u1 icw2, u1 icw3, u1 icw4, u1 initStep,
+          u1 IR pin levels, u1 lowest-priority level, u1 mode (bit 0 read ISR, 1 poll, 2 special mask, 3 rotate in
+          AEOI), u1 reserved),
           55 EvoAvrVolatile (the ZX-Evo AVR's volatile state on TS-Conf and the ATM3, 20 bytes: u1 version 2,
           u1 extType, u1 eepromPage, u1 flags (bit 0 EEPROM mode, 1 Caps LED, 2 tape-out mode), then the /WAIT
           ports' timing shared by #xxEF and #BFF7 (EvoAvrWait): u8 AVR cycle the main loop resumed its pass, u8 AVR

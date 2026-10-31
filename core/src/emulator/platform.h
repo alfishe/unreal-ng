@@ -660,6 +660,9 @@ struct CONFIG
 	uint32_t romsize;
 	RamPowerOn ramPowerOn = RamPowerOn::Random;	// [MISC] RAMPowerOn: RAM contents at creation
 	ScorpionTurboLogic scorpionTurboLogic = ScorpionTurboLogic::SC151;	// [MISC] ScorpionTurboLogic (Scorpion models)
+	/// [SMUC] Isa / IsaBase / IsaIrq / IsaPeer: the card in the SMUC's ISA-8 slot (a Scorpion with [HDD] Scheme=SMUC):
+	/// NONE (default) | MODEM | DUAL16552 (sprinterisa::CardKind; the same card models as the Sprinter's slots)
+	sprinterisa::SlotConfig smucIsa{};
 
 	IDE_SCHEME ide_scheme;			// [HDD] Scheme: the machine's IDE board (implementation-plan.md D8)
 	uint8_t ide_stall = 1;			// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (1 = on, the default, as the RTL; 0 = bypass)
@@ -901,6 +904,11 @@ struct CONFIG
 	// Profi RTC battery-backed cells image ([PROFI] NvramFile=); empty = kept
 	// for the session only
 	char profi_nvram_path[FILENAME_MAX];
+	// SMUC clock cells + serial EEPROM image ([SMUC] NvramFile=); empty = kept for the session only
+	char smuc_nvram_path[FILENAME_MAX];
+	// [SMUC] NvramInitial=: the image a board without a saved one starts from (read only; relative to the config
+	// file); empty = blank cells and EEPROM
+	char smuc_nvram_initial_path[FILENAME_MAX];
 
 	// Sprinter Sp2000 ([SPRINTER] section, Sprinter tdd-integration §1.1)
 	struct

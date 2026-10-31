@@ -16,6 +16,13 @@ real software and the current firmware; nothing implemented.** The model is not 
 - [x] Phase 6: evidence-driven corrections: Q12, Q21, Q22 closed by live runs (Edge Grinder in game at 25 fps, its
   frame against the author's screenshot; OSZ from the SD into the None Commander: [evidence/](evidence/)). No
   table changed; Q8-Q10, Q17 stay as decided (no source or no request)
+- [x] Phase 7: the SMUC board the monitor's fast test probes, all found: 8259 (`#7EBE` / `#7FBE`, IR0 = the
+  DS1685's /IRQ, INT through `#FFBA` D3), the ISA-8 slot through the DOS ports (`#18E6-#7FFE`, A8 / A7 = `#FFBA`
+  D2 / D1) with a modem or a dual 16552 as network slot `smuc.isa`, the clock's periodic flag, the clock cells and
+  the 24C16 kept in `[SMUC] NvramFile` (the settings folder), a first power-on starts from `NvramInitial`
+  (`data/configs/gmx/smuc-nvram-initial.bin`, what the monitor itself writes into blank cells, so CMOS and NVRAM
+  checksums pass). The fast test lists "128 bytes CMOS found, NVRAM found, Interrupt controller found, Modem
+  found"; HDD and SD "not found" only while no medium is inserted ([evidence/](evidence/))
 
 Done so far:
 - [x] Source survey 2026-10-07: Unreal Speccy (zx-evo fork), MAME, pico-speccy, the 1999 and 2004 articles, the Black_Cat

@@ -336,6 +336,8 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// PROFI section: battery-backed RTC cells
 	config.profi_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("PROFI", "NvramFile", nullptr), config.profi_nvram_path, sizeof config.profi_nvram_path);
+	config.smuc_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
+	CopyStringValue(inimanager.GetValue("SMUC", "NvramFile", nullptr), config.smuc_nvram_path, sizeof config.smuc_nvram_path);
 	{
 		// The board's video sync PROM (2026-10-01-profi-v3-v5 design section 5.1)
 		const char* syncProm = inimanager.GetValue("PROFI", "SyncProm", nullptr);
@@ -531,6 +533,63 @@ bool Config::ParseConfig(IniFile& inimanager)
 			else
 				MLOGWARNING("Config: [ISA] %sPeerB=%s: %s - NONE used", prefix.c_str(), v, error.c_str());
 		}
+	}
+
+	// [SMUC] Isa: the card in the SMUC's ISA-8 slot (SMUC hardware reference §5.1, the ISA window). A UART card only:
+	// the window is ISA #200-#3FF, the firmware probes COM1
+	config.smucIsa = sprinterisa::SlotConfig{};
+	if (const char* v = inimanager.GetValue("SMUC", "Isa", nullptr))
+	{
+		sprinterisa::CardKind kind;
+		if (sprinterisa::ParseKind(v, kind) &&
+		    (kind == sprinterisa::CardKind::None || kind == sprinterisa::CardKind::Modem || kind == sprinterisa::CardKind::Dual16552))
+			config.smucIsa.kind = static_cast<uint8_t>(kind);
+		else
+			MLOGWARNING("Config: [SMUC] Isa=%s: NONE | MODEM | DUAL16552, NONE used", v);
+	}
+	if (config.smucIsa.kind == static_cast<uint8_t>(sprinterisa::CardKind::Modem))
+	{
+		config.smucIsa.base = sprinterisa::kModemDefaultBase;
+		config.smucIsa.irq = sprinterisa::kModemDefaultIrq;
+		if (const char* v = inimanager.GetValue("SMUC", "IsaBase", nullptr))
+		{
+			uint16_t base = 0;
+			if (sprinterisa::ParseModemBase(v, base))
+				config.smucIsa.base = base;
+			else
+				MLOGWARNING("Config: [SMUC] IsaBase=%s: the modem's COM base is 0x3F8 | 0x2F8 | 0x3E8 | 0x2E8, 0x3F8 used", v);
+		}
+		const auto irq = static_cast<uint8_t>(inimanager.GetLongValue("SMUC", "IsaIrq", config.smucIsa.irq) & 0x0F);
+		if (sprinterisa::ValidModemIrq(irq))
+			config.smucIsa.irq = irq;
+		else
+			MLOGWARNING("Config: [SMUC] IsaIrq=%u: the modem's IRQ is 2 | 3 | 4 | 5 | 7, 4 used", irq);
+	}
+	else if (config.smucIsa.kind == static_cast<uint8_t>(sprinterisa::CardKind::Dual16552))
+	{
+		config.smucIsa.base = sprinterisa::kSerialCom1Base;
+		config.smucIsa.irq = sprinterisa::kSerialDefaultIrqA;
+	}
+	if (const char* v = inimanager.GetValue("SMUC", "IsaPeer", nullptr))
+	{
+		ComPortSpec spec;
+		std::string error;
+		if (ComPortSpec::Parse(v, spec, error) && spec.ToString().size() < sizeof(config.smucIsa.peer))
+			std::snprintf(config.smucIsa.peer, sizeof(config.smucIsa.peer), "%s", spec.ToString().c_str());
+		else
+			MLOGWARNING("Config: [SMUC] IsaPeer=%s: %s - the card's default used", v, error.c_str());
+	}
+
+	// [SMUC] NvramInitial: relative to the config file (a shipped image beside it)
+	config.smuc_nvram_initial_path[0] = '\0';
+	if (const char* v = inimanager.GetValue("SMUC", "NvramInitial", nullptr); v && v[0] != '\0')
+	{
+		std::filesystem::path initial = FileHelper::ToFsPath(v);
+		if (initial.is_relative() && !_configFilePath.empty())
+			initial = FileHelper::ToFsPath(_configFilePath).parent_path() / initial;
+		const auto text = initial.u8string();
+		CopyStringValue(std::string(text.begin(), text.end()).c_str(), config.smuc_nvram_initial_path,
+		                sizeof config.smuc_nvram_initial_path);
 	}
 
 	// [ZC] (the Z-Controller SD card) is read by MediaConfig with the rest of the media set
