@@ -11,7 +11,7 @@
 # Checked in real time (Q held 60 s, random O / P every 1.2 s): the position went 4TH -> 12TH (the car lost 8 places, 12 `passed`
 # fires, 4 `overtake`: two of them are the dip to 2 the byte makes at a crash and back, which fires both rules next to the explosion).
 # Earlier check (Q held 6 s, then 3 s each of P and O alternating): 2 crashes, the speed and off-road levels follow the
-# car; known limits: the pickup of score marks is not an event, brake is not checked (A is a guess from the other Sega ports).
+# car; known limits: the score is not an event (it climbs steadily with the speed, 0001154 -> 0003475 in 14 s of driving, and stops when the car stops; there is no pickup), brake is not checked (A is a guess from the other Sega ports).
 schema: 1
 kind: play
 id: builtin/game/power-drift
