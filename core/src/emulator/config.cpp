@@ -1841,9 +1841,11 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
     {
         // The Scorpion boards' Even M1 wait (z80.cpp) is part of the model, like its frame: only there, and only
         // with the SC15.1 logic firmware ([MISC] ScorpionTurboLogic). Not on the GMX: the fitting disconnects the
-        // host logic's WAIT line (GMX design 2.6)
+        // host logic's WAIT line, the card's own logic waits in turbo instead (GMX design 2.6)
         config.even_M1 = ((config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP) &&
-                          config.scorpionTurboLogic == ScorpionTurboLogic::SC151) ? 1 : 0;
+                          config.scorpionTurboLogic == ScorpionTurboLogic::SC151) ? EVEN_M1_NORMAL : 0;
+        if (config.mem_model == MM_GMX)
+            config.even_M1 = EVEN_M1_TURBO;
 
         switch (config.mem_model)
         {

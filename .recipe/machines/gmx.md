@@ -81,6 +81,17 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/keyboard/tap" -H 'Content-Type: applicat
 sources are the pixel and attribute bytes after the scroll. Verified 2026-10-30 (wt-gmx-impl): the monitor's test
 screen, the Scorpion GMX 128 menu, Edge Grinder's attract mode in 640x200.
 
+## Turbo, frame, Magic
+
+- `#7EFD` bit 7: 7 MHz (`hw_turbo_ratio` 2). The card's own wait: an opcode fetch from RAM that starts on an odd
+  7 MHz T waits one T (`even_M1` = 2, turbo only); ROM code runs exactly 2x, a byte copy loop from RAM 1.93x.
+  No Turbo+ `IN` strobes, no host waits.
+- `#00` bit 7 (ST/PENT): the Pentagon frame, 320 lines (71680 T) with INT 17988 T before the paper; 0 = the
+  Scorpion's 312 lines (69888 T). `#00` survives RESET, power-off clears it. Check with
+  `inspect_state aspects:["paging"]` (`gmx.port_00.pentagon_int`) and the frame length in the timing state.
+- Magic (NMI, the CLI `nmi` / WebAPI `nmi` routes): ignored while `#7EFD` bit 2 is set; otherwise the read-backs of
+  `#7AFD` / `#7EFD` stay frozen until an `IN #FF` (`gmx.magic.frozen`).
+
 ## The card at a glance
 
 | Port | Write | Read |

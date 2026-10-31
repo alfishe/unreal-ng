@@ -235,6 +235,29 @@ TEST_F(ScorpionGmx_Test, TurboFrom7EFDAndNoTurboPlusStrobes)
     EXPECT_EQ(State().hw_turbo_ratio, 1) << "IN from the #7FFD family does not set it";
 }
 
+/// @brief #00 bit 7 ST/PENT (manual, Q13): the Pentagon's 320-line frame with INT 80 lines before the paper; read
+///        back in #7EFD bit 4; it lives in #00, so RESET keeps it and power-off clears it
+TEST_F(ScorpionGmx_Test, Port00Bit7SelectsThePentagonFrame)
+{
+    const CONFIG& config = _context->config;
+    EXPECT_EQ(config.frame, 69888u);
+    EXPECT_EQ(config.intstart, 1815u);
+
+    Out(0x0000, 0x80);
+    EXPECT_EQ(config.frame, 71680u);
+    EXPECT_EQ(config.t_line, 224u);
+    EXPECT_EQ(config.intstart, 69843u);
+    EXPECT_EQ(config.frame - (config.intstart + 1) + 16152u, 17988u) << "the Pentagon's INT-to-paper distance";
+    EXPECT_NE(In(0x7EFD) & 0x10, 0);
+
+    _gmx->reset();
+    EXPECT_EQ(config.frame, 71680u) << "#00 survives RESET";
+    _gmx->PowerCycle();
+    EXPECT_EQ(config.frame, 69888u);
+    EXPECT_EQ(config.intstart, 1815u);
+    EXPECT_EQ(In(0x7EFD) & 0x10, 0);
+}
+
 TEST_F(ScorpionGmx_Test, MagicButtonGateAndReadBackLatch)
 {
     Out(0x7EFD, 0x04);

@@ -36,6 +36,15 @@ public:
 
     /// The magic byte a RECONF arms: #88 | scheme, read LSB first through IN #78FD bit 0
     static constexpr uint8_t MAGIC_BASE = 0x88;
+
+    /// The frames #00 bit 7 selects (manual, Q13), on the same raster origin (paper at T 16152). ST: the Scorpion's
+    /// 312 lines, INT at the end of frame sync, 14336 T before the paper. PENT: 320 lines, INT at the start of frame
+    /// sync, 17988 T before the paper as on the Pentagon (its intstart 71635, paper at 17944)
+    static constexpr uint32_t kScorpionFrame = 69888;      // 224 * 312
+    static constexpr uint32_t kScorpionIntStart = 1815;    // INT fires at 1816
+    static constexpr uint32_t kPentagonFrame = 71680;      // 224 * 320
+    static constexpr uint32_t kPentagonIntStart = 69843;   // INT fires at 69844 = 16152 + 71680 - 17988
+    static constexpr uint32_t kIntLength = 32;
     /// endregion </Constants>
 
     /// region <Constructors / Destructors>
@@ -57,7 +66,8 @@ public:
 
     void SetRAMPage(uint8_t page) override;
 
-    /// The card's turbo: #7EFD bit 7 alone, no host Turbo+ waits or /INT stretches
+    /// The card's turbo: #7EFD bit 7 alone, no host Turbo+ waits or /INT stretches; the card's Even M1 wait in turbo
+    /// (EVEN_M1_TURBO) and the frame #00 bit 7 selects. Called by reset and the TTD restores
     void SyncTurboWaits() override;
     /// Runs the CPU reset a RECONF write asked for, at the end of that instruction
     void OnMachineStep(uint32_t t) override;
@@ -102,6 +112,8 @@ protected:
     void Out00(uint8_t value);
     void Out7EFD(uint8_t value);
     void ApplyTurbo();
+    /// The frame length and INT position of #00 bit 7 (kScorpion* / kPentagon*)
+    void SyncFrame();
     void RunReconfiguration();
     void RefreshStepHook();
 

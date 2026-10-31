@@ -469,6 +469,11 @@ the `#7AFD` / `#7EFD` read-backs until an `IN #FF`. No Turbo+ host logic (no Pro
 `#79` (`#7B`), the scroll start from `#7AFD` / `#7CFD` with the wrap at 16000 bytes. Without bit 3 the Scorpion
 352x288 picture. Without an IDE drive the monitor's probe times out (~75 s to the 128 menu, as on the board).
 
+## Turbo, frame, Magic
+`#7EFD` bit 7 = 7 MHz; an opcode fetch from RAM on an odd 7 MHz T waits one T (ROM code 2x, RAM loops ~1.9x).
+`#00` bit 7 = the Pentagon frame (320 lines, 71680 T), else the Scorpion's 312 (69888 T); `#00` survives RESET.
+The Magic button (NMI) is ignored while `#7EFD` bit 2 is set.
+
 ## State
 `inspect_state aspects:["paging"]` reports `gmx`: `port_00` (scheme, fixrom, blkext, blkex2, pentagon_int,
 reconf_pending), `port_7efd` (rom_plane, turbo, video_640x200, magic_blocked), `page_8000`, `page_c000`,

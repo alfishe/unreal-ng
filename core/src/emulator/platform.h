@@ -565,6 +565,12 @@ struct NeoGSConfig
 
 struct zxkeymap;
 
+/// CONFIG::even_M1 bits: the clock an opcode fetch from RAM that starts on an odd T-state waits one T at. The
+/// Scorpion SC15.1 logic: at 3.5 MHz only (its turbo bypasses the wait). The GMX card's own logic: at 7 MHz only
+/// (GMX design 2.6, Q21: the host WAIT is cut, the card's DRAM slot holds turbo fetches from RAM)
+constexpr uint8_t EVEN_M1_NORMAL = 0x01;
+constexpr uint8_t EVEN_M1_TURBO = 0x02;
+
 struct CONFIG
 {
 	unsigned t_line;	// t-states per line
@@ -606,7 +612,7 @@ struct CONFIG
 	unsigned framexsize;
 	unsigned framey;
 	unsigned frameysize;
-	uint8_t even_M1, border_4T;
+	uint8_t even_M1, border_4T;  // even_M1: EVEN_M1_* bits, the clocks the Even M1 wait acts at (z80.cpp)
 
 	uint8_t floatbus, floatdos;
 	

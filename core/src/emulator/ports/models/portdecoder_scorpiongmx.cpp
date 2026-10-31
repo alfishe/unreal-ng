@@ -7,6 +7,7 @@
 #include "emulator/cpu/core.h"
 #include "debugger/ttd/gmx/ttdgmxpaging.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/sound/audio.h"
 #include "emulator/video/screen.h"
 
 /// region <Constructors / Destructors>
@@ -172,8 +173,33 @@ void PortDecoder_ScorpionGMX::SetRAMPage(uint8_t page)
 
 void PortDecoder_ScorpionGMX::SyncTurboWaits()
 {
-    // No host wait states and no /INT stretch: only the hook for a pending RECONF
+    // No host wait states and no /INT stretch. The card's DRAM slot: an opcode fetch from RAM on an odd 7 MHz T
+    // waits one T, at 3.5 MHz none (GMX design 2.6, Q21). Set here as well as by the model's timing defaults: an INI
+    // run reads [ULA] EvenM1, which describes the host board
+    _context->config.even_M1 = EVEN_M1_TURBO;
+    SyncFrame();
     RefreshStepHook();
+}
+
+void PortDecoder_ScorpionGMX::SyncFrame()
+{
+    CONFIG& config = _context->config;
+    const bool pentagon = (_state->gmx.p00 & P00_PENTAGON_INT) != 0;
+    const uint32_t frame = pentagon ? kPentagonFrame : kScorpionFrame;
+    const uint32_t intstart = pentagon ? kPentagonIntStart : kScorpionIntStart;
+    if (config.frame == frame && config.intstart == intstart && config.intlen == kIntLength)
+        return;
+
+    config.frame = frame;
+    config.t_line = 224;
+    config.intstart = intstart;
+    config.intlen = kIntLength;
+    config.frame_duration_us = CalculateFrameDurationUs(frame);
+    if (_context->pCore && _context->pCore->GetZ80())
+        _context->pCore->GetZ80()->RecomputeFrameTiming();
+    // The raster keeps the Scorpion's 312 lines: the 8 more of the Pentagon frame are blanking
+    if (_context->pScreen)
+        _context->pScreen->InitRaster();
 }
 
 void PortDecoder_ScorpionGMX::OnMachineStep([[maybe_unused]] uint32_t t)
@@ -233,6 +259,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ScorpionGMX::Crea
 void PortDecoder_ScorpionGMX::RestoreReconfigurationPending(bool pending)
 {
     _reconfPending = pending;
+    SyncFrame();  // the restored #00 bit 7
     RefreshStepHook();
 }
 
@@ -313,6 +340,7 @@ void PortDecoder_ScorpionGMX::Out00(uint8_t value)
 {
     GmxState& gmx = _state->gmx;
     gmx.p00 = value;
+    SyncFrame();  // bit 7 ST/PENT
 
     // RECONF reloads scheme CONF0-2: the loader learns which one through the magic byte. With FIXROM the scheme is
     // not reloaded and the CPU runs on. A write without bit 3 only stores (the firmware and OSZ write #02 around
