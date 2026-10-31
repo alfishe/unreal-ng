@@ -6,9 +6,12 @@
 # show the state: #C9B2 / #CA0C slow the car (-12 / -8 per 5 frames), #CA0C only while #E46C is set; #E46C is the off-road flag
 # (255 when the lateral position #E43C leaves the road, recomputed by #CA12 every frame), #CEB5 is the entry of the wreck
 # (it sets the wreck state #E446 and the screen shake #C20C), run once per crash (three crashes in the recording, three runs).
-# Checked in real time (Q held 6 s, then 3 s each of P and O alternating): 2 crashes, the speed and off-road levels follow the
-# car; known limits: the pickup of score marks and the rival hits are
-# not events yet, brake is not checked (A is a guess from the other Sega ports).
+# The race position (the POS field of the HUD, 12 cars) is the byte #E435 in page 0, zero based (9 = 10TH): one writer, #678B, so a
+# write probe tells the direction: it decreases when the car passes one (overtake) and increases when one passes the car.
+# Checked in real time (Q held 60 s, random O / P every 1.2 s): the position went 4TH -> 12TH (the car lost 8 places, 12 `passed`
+# fires, 4 `overtake`: two of them are the dip to 2 the byte makes at a crash and back, which fires both rules next to the explosion).
+# Earlier check (Q held 6 s, then 3 s each of P and O alternating): 2 crashes, the speed and off-road levels follow the
+# car; known limits: the pickup of score marks is not an event, brake is not checked (A is a guess from the other Sega ports).
 schema: 1
 kind: play
 id: builtin/game/power-drift
@@ -33,7 +36,11 @@ haptics:
     speed:   { probe: value, address: "0xE7EE", scale: 1.1 }
     offroad: { probe: value, address: "0xE46C", scale: 0.6 }
     crash:   { probe: exec, address: "0xCEB5" }
+    overtake: { probe: write, address: "page:0:0xE435", when: decreased }
+    passed:   { probe: write, address: "page:0:0xE435", when: increased }
   rules:
     - { on: speed, play: engine, target: handle.low }
     - { on: offroad, play: rumble-strip }
     - { on: crash, play: explosion, scale: 0.9 }
+    - { on: overtake, play: tick, target: handle.low }
+    - { on: passed, play: hit, scale: 0.4 }

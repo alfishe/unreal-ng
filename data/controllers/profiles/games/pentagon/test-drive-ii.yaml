@@ -8,7 +8,12 @@
 # The traffic collision: #88C7 (ld a,#FF / ld (#FCE6),a, in the per-car overlap test #8890..#88EC) sets the collision flag
 # once per crash, then the game shows "You have N Lives Left." and the per-car reset loop #88D8 zeroes the speed.
 # Checked in real time (L held 32 s, random Q / W every 0.8 s): the level follows the dial (0.71 to 0.81 at cruise).
-# Known limits: the desert beside the road costs no speed; cliff and police hits are not mapped.
+# The other incidents are found from their messages (the strings in RAM, then the code that loads them): #8230 (ld hl,#8272 "You
+# have blown your engine", then it jumps to the life-loss #6E0B), #8DED (ld hl,#8E71 "You have been given a ticket for
+# speeding", the police), #9E4E (ld hl,#FC48 "You ran out of gas"); each is run once per incident. Checked in real time
+# (L held 90 s): #9E4E fired once at the "You ran out of gas" screen; the ticket and the blown engine did not occur in the run, so
+# those two rest on the message-pointer loads only.
+# Known limits: the desert beside the road costs no speed; a cliff fall is not mapped.
 schema: 1
 kind: play
 id: builtin/game/test-drive-ii
@@ -32,6 +37,12 @@ haptics:
   sources:
     speed: { probe: value, address: "0xF058", scale: 9 }
     crash: { probe: exec, address: "0x88C7" }
+    blown: { probe: exec, address: "0x8230" }
+    ticket: { probe: exec, address: "0x8DED" }
+    dry:   { probe: exec, address: "0x9E4E" }
   rules:
     - { on: speed, play: engine, target: handle.low }
     - { on: crash, play: explosion, scale: 0.9 }
+    - { on: blown, play: explosion, scale: 0.6 }
+    - { on: ticket, play: hit, scale: 0.5 }
+    - { on: dry, play: thump, scale: 0.4 }
