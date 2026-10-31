@@ -50,6 +50,10 @@ struct SaltedHash
         x ^= x >> 33;
         return static_cast<size_t>(x);
     }
+    size_t operator()(uint64_t key) const
+    {
+        return (*this)(static_cast<uint32_t>(key)) ^ (*this)(static_cast<uint32_t>(key >> 32)) * 31u;
+    }
 };
 
 struct Succ
@@ -494,6 +498,10 @@ struct Origin
     uint32_t node = 0xFFFFFFFFu;
     uint16_t value = 0;   ///< imm16: nn; imm8: n; memory: the Z80 address it was loaded from
     PhysKey key = 0;      ///< memory: the byte's physical key
+    /// The memory byte whose value the register holds, loaded or worked on (AND n, SUB n, a shift, ADD HL,rr): an
+    /// index (IndexUse), whatever the kind says of pointers
+    PhysKey index = kNoKey;
+    uint16_t indexZ80 = 0;
 };
 constexpr uint8_t kOriginImm16Lo = 1;
 constexpr uint8_t kOriginImm16Hi = 2;
@@ -547,6 +555,18 @@ struct PointerAcc
     PointerUse use;
     bool seen = false;
 };
+
+/// An IndexUse being folded
+struct IndexAcc
+{
+    PhysKey selector = 0;
+    uint32_t node = 0;
+    uint16_t selectorZ80 = 0;
+    uint16_t lo = 0;
+    uint16_t hi = 0;
+    uint64_t count = 0;
+};
+constexpr size_t kMaxIndexes = 65536;
 
 }  // namespace
 
@@ -709,6 +729,8 @@ struct L1Builder::Impl
         c.dstKey = MakeKey(pageOf(dst), dst);
     }
     std::unordered_map<PhysKey, uint32_t, SaltedHash> wordPtrs;
+    /// (selector, node) -> the index use, kMaxIndexes at most
+    std::unordered_map<uint64_t, IndexAcc, SaltedHash> indexUses;
 
     Pending pending;
     bool first = true;
@@ -717,7 +739,8 @@ struct L1Builder::Impl
     uint64_t tstates = 0;
 
     Impl(PageOf pageOfIn, uint64_t saltIn)
-        : pageOf(std::move(pageOfIn)), salt(saltIn), loops(64, SaltedHash{saltIn}), wordPtrs(64, SaltedHash{saltIn})
+        : pageOf(std::move(pageOfIn)), salt(saltIn), loops(64, SaltedHash{saltIn}), wordPtrs(64, SaltedHash{saltIn}),
+          indexUses(64, SaltedHash{saltIn})
     {
         Frame root;
         stack.push_back(root);
@@ -868,6 +891,31 @@ struct L1Builder::Impl
         PointerFrom(origins[2 * pair], origins[2 * pair + 1], pair, address, value, pc, code);
     }
 
+    /// A read of @p address through register pair @p pair by @p node: an index use when one byte's value is in the
+    /// pair (in one half or both; two bytes, one in each half, are a pointer word)
+    void IndexAccess(int pair, uint16_t address, uint32_t node)
+    {
+        const Origin& hi = origins[2 * pair];
+        const Origin& lo = origins[2 * pair + 1];
+        if (hi.index != kNoKey && lo.index != kNoKey && hi.index != lo.index)
+            return;
+        const Origin& from = lo.index != kNoKey ? lo : hi;
+        if (from.index == kNoKey)
+            return;
+        const uint64_t id = (static_cast<uint64_t>(from.index) << 32) | node;
+        auto it = indexUses.find(id);
+        if (it == indexUses.end())
+        {
+            if (indexUses.size() >= kMaxIndexes)
+                return;
+            it = indexUses.emplace(id, IndexAcc{from.index, node, from.indexZ80, address, address, 0}).first;
+        }
+        IndexAcc& acc = it->second;
+        acc.lo = std::min(acc.lo, address);
+        acc.hi = std::max(acc.hi, address);
+        ++acc.count;
+    }
+
     /// The same for a value whose halves came from @p hi and @p lo (a register pair, or two stack slots)
     void PointerFrom(const Origin& hi, const Origin& lo, int pair, uint16_t address, uint16_t value, uint16_t pc,
                      bool code)
@@ -968,10 +1016,27 @@ struct L1Builder::Impl
             std::swap(origins[3], origins[5]);
             return;
         }
-        // INC rr / DEC rr / ADD HL,rr, INC / DEC of one half: the register still holds its pointer
+        // INC rr / DEC rr / ADD HL,rr, INC / DEC of one half: the register still holds its pointer. ADD HL,DE adds
+        // the index in DE to a table's base (LD E,A / LD D,0 / LD HL,table)
         if ((op.cls == OpClass::IncDec || op.cls == OpClass::Alu) && op.mem == MemForm::None && op.immBytes == 0 &&
             (PairOfMask(wNoF) >= 0 || (op.cls == OpClass::IncDec && SingleBit(wNoF))))
+        {
+            const int pair = PairOfMask(wNoF);
+            const int other = PairOfMask(static_cast<uint16_t>(op.regsRead & ~wNoF & ~reg::kF));
+            if (op.cls == OpClass::Alu && pair >= 0 && other >= 0 && origins[2 * pair].index == kNoKey &&
+                origins[2 * pair + 1].index == kNoKey)
+            {
+                const Origin& hi = origins[2 * other];
+                const Origin& lo = origins[2 * other + 1];
+                if (hi.index == kNoKey || lo.index == kNoKey || hi.index == lo.index)
+                {
+                    const Origin& from = lo.index != kNoKey ? lo : hi;
+                    origins[2 * pair + 1].index = from.index;
+                    origins[2 * pair + 1].indexZ80 = from.indexZ80;
+                }
+            }
             return;
+        }
         if (op.cls == OpClass::Load && op.immBytes == 2 && !op.immIsAddress && PairOfMask(op.immDest) >= 0)
         {
             const int pair = PairOfMask(op.immDest);
@@ -996,7 +1061,8 @@ struct L1Builder::Impl
             }
             if (SingleBit(op.loadDest) && OriginSlot(op.loadDest) >= 0)
             {
-                origins[OriginSlot(op.loadDest)] = Origin{kOriginMemory, kNone, readZ80[0], readKey[0]};
+                origins[OriginSlot(op.loadDest)] =
+                    Origin{kOriginMemory, kNone, readZ80[0], readKey[0], readKey[0], readZ80[0]};
                 return;
             }
         }
@@ -1006,9 +1072,51 @@ struct L1Builder::Impl
             origins[OriginSlot(op.copyDest)] = src >= 0 ? origins[src] : Origin{};
             return;
         }
+        // An 8-bit ALU operation, a shift or a rotate of one register: no pointer any more, but still the byte it
+        // worked on (a character code less 32, doubled: the index of its glyph). XOR A, SUB A, SBC A,A: a constant
+        int worked = -1;
+        PhysKey index = kNoKey;
+        uint16_t indexZ80 = 0;
+        if (op.aluOp != 0xFF && op.aluOp != 7)
+        {
+            const Origin& a = origins[OriginSlot(reg::kA)];
+            const uint16_t operand = static_cast<uint16_t>(op.regsRead & ~(reg::kA | reg::kF));
+            const int other = op.immBytes == 0 && !op.memRead && SingleBit(operand) ? OriginSlot(operand) : -1;
+            const bool self = op.immBytes == 0 && !op.memRead && operand == 0;
+            worked = OriginSlot(reg::kA);
+            if (self && (op.aluOp == 2 || op.aluOp == 3 || op.aluOp == 5))
+                index = kNoKey;
+            else if (a.index != kNoKey)
+            {
+                index = a.index;
+                indexZ80 = a.indexZ80;
+            }
+            else if (op.memRead && reads > 0)
+            {
+                index = readKey[0];
+                indexZ80 = readZ80[0];
+            }
+            else if (other >= 0)
+            {
+                index = origins[other].index;
+                indexZ80 = origins[other].indexZ80;
+            }
+        }
+        else if ((op.cls == OpClass::Rotate || op.cls == OpClass::Alu) && op.mem == MemForm::None && SingleBit(wNoF) &&
+                 OriginSlot(wNoF) >= 0)
+        {
+            worked = OriginSlot(wNoF);
+            index = origins[worked].index;
+            indexZ80 = origins[worked].indexZ80;
+        }
         for (int slot = 0; slot < kOriginSlots; ++slot)
             if ((w & kOriginBits[slot]) != 0)
                 origins[slot] = Origin{};
+        if (worked >= 0)
+        {
+            origins[worked].index = index;
+            origins[worked].indexZ80 = indexZ80;
+        }
     }
 
     void AddSucc(Node& from, uint32_t to, EdgeKind kind)
@@ -1527,6 +1635,8 @@ struct L1Builder::Impl
             const int pair = memPairOf(op.mem);
             const uint16_t base = static_cast<uint16_t>(RegValue(p.regs, pair));
             PointerAccess(pair, ptrRead ? ptrReadAddress : ptrWriteAddress, base, p.pc, false);
+            if (ptrRead)
+                IndexAccess(pair, ptrReadAddress, p.node);
         }
         else if (op.flow == Flow::JpIndirect)
         {
@@ -1980,6 +2090,7 @@ size_t L1Builder::MemoryBytes() const
         if (table)
             bytes += 0x4000 * sizeof(UseAcc);
     bytes += impl.ptrs.capacity() * sizeof(PointerAcc) + impl.wordPtrs.size() * 16;
+    bytes += impl.indexUses.size() * (sizeof(IndexAcc) + 24);
     bytes += impl.valueFlow.MemoryBytes();
     return bytes;
 }
@@ -2538,6 +2649,17 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
     });
 
     out.drawn = valueFlow.Build();
+    out.drawnFrames = valueFlow.BuildFrames();
+
+    for (const auto& [id, acc] : indexUses)
+    {
+        (void)id;
+        const Node& n = nodes[acc.node];
+        out.indexes.push_back(IndexUse{acc.selector, n.key, acc.selectorZ80, n.z80, acc.lo, acc.hi, acc.count});
+    }
+    std::sort(out.indexes.begin(), out.indexes.end(), [](const IndexUse& a, const IndexUse& b) {
+        return std::make_pair(a.selector, a.instruction) < std::make_pair(b.selector, b.instruction);
+    });
 
     // Pointer uses, sorted by form and origin
     for (const PointerAcc& acc : ptrs)

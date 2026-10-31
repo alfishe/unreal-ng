@@ -95,7 +95,7 @@ Code: `core/src/debugger/analyzers/analysis/` (`replaytracer.h`, `l1builder.h`, 
 | RoutineProfile | read / write / execute ranges as merged intervals (physical, with the Z80 address), ports in and out (16-bit), own and inclusive T-states, entries, frames active, call depth, live-in registers (read before written; a PUSH that saves a register is no use), live-out (written, then read by the caller after the return), registers written and not restored |
 | LoopInfo | per back edge target: instances, passes, a trip histogram, induction registers (constant change per pass; a pair moving by 256s shows as its high byte, DJNZ's `B -1`), the stride of every memory operand in the body (constant or not), `delay` (a body with no memory or port access) |
 | BaseOffsetPattern | per routine and base (IX, IY, HL): the offsets used (HL: from the HL a walk started at), the bases seen, the most common step between bases, reads / writes |
-| DataFlow | one block plus one hop: an immediate later used as an address (`LD HL,nn` .. `LD A,(HL)`), a constant compared with a loaded value (`LD A,(nn)` .. `CP n`, with the load's address), a page table (`LD H,n` .. `(HL)`: the table at n * 256); the origins of BC, DE and HL follow `EXX` into the alternate set and back, so a pointer loaded before an `EXX` and used after the one that restores it is still the immediate's |
+| DataFlow | one block plus one hop: an immediate later used as an address (`LD HL,nn` .. `LD A,(HL)`), a constant compared with a loaded value (`LD A,(nn)` .. `CP n`, with the load's address), a page table (`LD H,n` .. `(HL)`: the table at n * 256), an index (`indexes`: a byte whose value was part of an address another instruction read through, loaded or worked on by AND / SUB / a shift / `ADD HL,rr`, a pair whose halves came from two bytes being a pointer, no index: a character code that `LD L,A / LD H,n / LD A,(HL)` turns into its glyph); the origins of BC, DE and HL follow `EXX` into the alternate set and back, so a pointer loaded before an `EXX` and used after the one that restores it is still the immediate's |
 | BranchCondition | per conditional branch: taken / not taken, the instruction that set the flags, what it looked at (memory address, port, constant), whether that varied |
 
 The same Z80 address in two pages is two instructions and two routines (`PagedRoutinesSeparate`).
@@ -193,12 +193,12 @@ gives the same bytes everywhere.
 |----------|--------|------|
 | `signatures` | ROM routines (the 48K ROM catalog, `signatures/rom48.cpp`; masked patterns matched with `MemorySearch`, a check at the entry) as code with their names | the start image |
 | `code_map` | executed code (observed); code reached from it over a branch never taken, a call never made or a fall-through never seen (inferred, decoded until executed code, an unconditional transfer or a data byte); self-modifying code; data and untouched fallbacks. Entries: L1's, the call targets in inferred code, and a jump target after an unconditional transfer that only a tail jump or a backward branch reaches | L1 uses, the start image |
-| `text` | printed text (printable runs read by a routine on a print path: a font read, a glyph blit (one byte by 8 rows to the pixels, three or more frames on one lattice of 8: the game's own font, named by the font rule only once the text is known) or the ROM print, two calls deep; terminator zero, bit 7, a length byte or the count in code); text drawn from a buffer that only block copies wrote (the copied bytes, printable in every source; claimed in the buffer and in each source, evidence `copy`; buffers copied to the screen hold pictures, no text; a run whose first or last reader also reads a font's glyphs or is a glyph blit's read is a picture drawn by the print routine, no text); source remnants (untouched tokenized assembler source) as `unused` with the decoded lines | L1 readers, call graph |
+| `text` | printed text (printable runs read by a routine on a print path: a font read, a glyph blit (one byte by 8 rows to the pixels, three or more frames on one lattice of 8: the game's own font, named by the font rule only once the text is known) or the ROM print, two calls deep; terminator zero, bit 7, a length byte, a control code the printing routine read next or the count in code); text through its glyphs' index, no print path needed: an instruction that read through an index (L1 `indexes`) taken from bytes no code wrote, at least 8 distinct codes, 95 % printable (bit 7 aside) and 75 % letters or spaces, reads a font of any layout (a proportional font's widths, a pixel column a page), the bytes whose values it took are text (evidence `glyph`), with a terminator of their own and letters for at least half of the run's non-space characters (a tile map's or a tune's codes are no words, nor are blank fillers, digits or BASIC expressions); a routine that read more than 16 K in all (a random number generator walking memory) reads no glyphs and prints nothing; text drawn from a buffer that only block copies wrote (the copied bytes, printable in every source; claimed in the buffer and in each source, evidence `copy`; buffers copied to the screen hold pictures, no text; a run whose first or last reader also reads a font's glyphs or is a glyph blit's read is a picture drawn by the print routine, no text); source remnants (untouched tokenized assembler source) as `unused` with the decoded lines | L1 readers, call graph |
 | `init_tables` | tables one routine built and others read, and tables as loaded (a page table read as `LD H,n / LD L,A / LD A,(HL)`, a run read through a pointer), checked against the generators (screen rows, `x*n`, shifts, sine shape, bit reverse) | L1 writers, data flow |
 | `pointer_tables` | word tables whose words the code used as addresses (`LD E,(HL) / INC HL / LD D,(HL)`, `LD A,(HL) / INC HL / LD H,(HL) / LD L,A`, then an access, `JP (rr)` or `PUSH` + `RET`); handler tables (words jumped to) grow over the neighbouring words that point at code, their targets become entries | L1 word pointers |
 | `records` | record arrays from a base + offset pattern on one lattice (`(IX+d)`, `(IY+d)`, an `(HL)` walk): size the step, count the bases, a terminator test ends it; buffers (block copy destinations the code used) with the copy sources as instances; a buffer with text gets more sources on the lattice of the copied ones (the step: their smallest distance) between, below and above them in one 16 K bank, while a slot holds no code, no other claim and printable text at the buffer's text offsets (inferred, evidence `lattice`; the text is claimed there too) | L1 patterns, block copies |
 | `variables` | bytes and words addressed directly that nothing else explains, with a role (counter, flag, pointer, word, value); then strided variables (four or more one-byte variables a constant step apart: an array of records) and groups (adjacent variables that share a routine, routines touching more than an eighth of the surroundings aside: one record) | L1 uses, profiles |
-| `graphics` | fonts, sprites and tiles drawn by blit loops (below): width, height, frames, the step from frame to frame, an interleaved mask, the bytes before each frame (a tile's attribute); a font when the glyphs drawn are the characters of the printed text (96 characters from the space; three or more codes that are not one contiguous run: drawn codes 0-3 are user graphics; not when the walk around each of its blits read a map and no text: tiles drawn by the print routine); frames in RAM drawn by the ROM's character loop (`PR_ALL`, $0B7F) are a font with no text: the 21 user-defined graphics at (UDG), the 96 characters at (CHARS)+256, or the frames drawn; the display a blit writes includes back buffers copied by short rows (8 bytes or more a copy to the screen when the copier moved 512 bytes in all); copied to the buffers of the records detector (observed where the replay read the copy, inferred elsewhere) | L1 loop strides, block copies, text claims |
+| `graphics` | fonts, sprites and tiles drawn by blit loops (below): width, height, frames, the step from frame to frame, an interleaved mask, the bytes before each frame (a tile's attribute); a font when the glyphs drawn are the characters of the printed text (the codes drawn, from the first to the last: the rest of a 96-character set is a guess the title names; the ROM's set at $3D00 is 96; three or more codes that are not one contiguous run: drawn codes 0-3 are user graphics; not when the walk around each of its blits read a map and no text: tiles drawn by the print routine); frames in RAM drawn by the ROM's character loop (`PR_ALL`, $0B7F) are a font with no text: the 21 user-defined graphics at (UDG), the 96 characters at (CHARS)+256, or the frames drawn; the display a blit writes includes back buffers copied by short rows (8 bytes or more a copy to the screen when the copier moved 512 bytes in all); copied to the buffers of the records detector (observed where the replay read the copy, inferred elsewhere) | L1 loop strides, block copies, text claims |
 | `level_maps` | maps the loop around a tile blit walked one byte a cell: 32 cells a row when the map is (or is copied to) attributes or its tiles go to the pixels, else the walk's trip count; maps side by side: one walk of the map loop reads several rows, every walk began on that lattice and the tile writes of the run cover less than two walks' worth of tiles (each map drawn over one place in turn, unlike the parts of one map drawn to different places), each walk's bytes are a map | L1 loops |
 | `screens` | pictures and back buffers block-copied to the screen (or to a buffer copied there): pixels 256 wide in display file order, attributes 32 cells a row; a buffer copied a row at a time (one copier, sources a row or less apart, copies of 256 bytes at most) is one claim of rows of the most frequent source step | L1 block copies |
 | `rng` | the state of a random number generator: a byte or word one short routine (64 instructions at most) reads and writes with three or more values, with `LD A,R` or an XOR and a rotate; the routine is `RANDOM` | L1 uses, routines |
@@ -213,25 +213,36 @@ stride (half of it with a mask: twice as many reads as display writes, with an A
 instances began reading (`Stride::starts`), grouped by shape and laid on one lattice (the first gap up to one frame
 past the frame size sets the step; frames drawn between two seen ones are filled in, inferred).
 
-Drawn pieces: graphics drawn without a blit loop (unrolled LDI chains, stack copies, back buffers) are found from the
-value flow (`l1valueflow.h`). Every byte written to the screen's pixels names the memory byte its value came from (a
-copy keeps its source; a copied byte whose value goes to more than two places before it is written again is a table, the
-source itself; a buffer's byte goes to one place, two with both screens), and at each frame end each drawn source byte
-votes for the source bytes shown to its right and below it (`DrawStep`: the majority delta, steady at two or more frame
-ends). Bytes linked by steady steps form a piece (a right step longer than a mask's links only when every byte between
-is drawn too: the letters of a text are no column picture), then again by the set's most common pair of steps only
-(tiles a map stacks stay apart). The pair is the layout: right 1 (2 with a mask) and down the row pitch, stored in rows;
-down 1 (2) and right the column pitch, in columns. A line starts at a byte the one a stride back does not step to along
-the line (rows stored back to back: the end of the line before has no step right), the most common residue of those
-modulo the pitch; the cells drawn give the width and height. Two lines no step down (right, in columns) links, drawn a
-different number of times or one twice as wide as the other, are two pictures: frames stored back to back that a shifted
-sprite's spill byte, read past the row, put side by side. Pieces in a page not mapped at the start are read with that
-page in bank 3; a piece seen through a buffer is claimed in the page the block copy into the buffer read it from. A
-working buffer is no picture: a byte drawn more than twice a frame and written at least as often (a line buffer filled,
-shifted and printed for each row) holds a value made for each draw. An object whose frames are all one value in every
-byte (a back buffer's blank) is no picture. 8 x 8 frames on one lattice are a font of the game's own codes when eight or
-more different ones are drawn, not picked by a map, and the routine writing them to the screen reads them itself
-(printed straight to the screen; tiles composed in a back buffer and copied to the screen are sprites).
+Drawn frames: the pictures come from the value flow (`l1valueflow.h`), with or without a blit loop (unrolled LDI
+chains, stack copies, back buffers). Every byte written to the screen's pixels names the memory byte its value came
+from (a copy keeps its source; a copied byte whose value goes to more than two places before it is written again is a
+table, the source itself; a byte that came in as an AND's operand is a mask, not the picture). The screen writes form a
+drawing pass until a screen byte is written again (a shifted sprite's carry into the next column aside) or after two
+screens' worth of writes; not at a frame's end. In a pass, consecutive pixel lines of one byte column whose sources
+lie a constant step apart are a column piece; pieces of neighbouring columns join when one model, base + line x row
+step + column x column step, holds for every byte: a picture drawn as a whole (`drawn_frames`: base, width, height,
+row and column step, the mask's offset, the passes that drew it). Steps are Z80 address steps: a set stored a pixel
+row a page on runs past $C000 into the next bank.
+
+The detector cuts the frames into pictures (`FramePieces`). First it stitches a frame a pass's end cut in two (a
+screen byte rewritten while it drew): the lower part's source goes on from the upper's last line, both were drawn as
+often, and they were last seen one under the other. Then each frame's columns (a column over the bytes of a column
+left of it in the same frame is a shifted sprite's spill: the frame ends before it) merge, per row step and residue,
+while they share bytes (a sprite drawn clipped, a tile drawn from a later line); a run is cut again where more draws
+began or ended than ran through (tiles stacked on a map) and where a blit loop began reading a frame. Two such segments
+join left to right only when every frame drew them side by side and neither ever had another neighbour (tiles of a map,
+a sprite beside a wall: no join). The layout: column step 1 (2 with the mask between) and the row step its pitch, in
+rows; row step 1 (2) and the columns back to back, in columns; one column alone, one byte wide (a set a pixel row a
+page on: pitch 256 or 512, a byte from frame to frame). Any other column step is the glyphs of one text printed the
+same way every time: one column each. Memory counters reject buffers: a picture most of whose bytes a block copy wrote,
+or which were written at least once for every four draws (a cavern's copy, a line composed for each draw), is none.
+Frames of one shape then form sets: one stride (holes of up to 8 frames between frames of an interleaved set, never
+drawn in the run, are filled in), footprints never overlapping. An object whose frames are all one value in every byte
+(a back buffer's blank) is no picture. 8 x 8 frames on one lattice of glyphs (8 bytes apart, or one byte with a pitch)
+are a font: of the text's characters at base + step x code, or of the game's own codes when eight or more different
+ones are drawn, not picked by a map, and the routine writing them to the screen reads them itself (printed straight
+to the screen; tiles composed in a back buffer and copied to the screen are sprites). An L1 without drawn frames falls
+back to the per-byte votes of the steps right and below (`DrawStep`).
 
 At the end each buffer gets its field list (`FinishBufferFields`): one field per claim inside it, a group followed by
 its variables, the spans between as `unclaimed` (split where a page the code named by its high byte starts).
@@ -257,7 +268,7 @@ A return address built from two byte immediates (a `dispatch` edge) gets them as
 
 A graphics entry's description starts with a SkoolKit image macro inside `#UDGTABLE { ... } TABLE#` (skool2asm
 drops the table: the assembly does not change; skool2html draws it): one `#UDGARRAY` a frame (at most 16; the mask
-taken as the byte before each graphic byte, a tile's attribute from its prefix byte), `#FONT` for a font, `#SCR` for
+taken as the byte before each graphic byte, a tile's attribute from its prefix byte), `#FONT` for a font (one stored a pixel row a page on: `#UDGARRAY` a frame), `#SCR` for
 pixels in display file order. Addresses are decimal (the export turns `$nnnn` in comments into `#R` references).
 
 ### The gallery

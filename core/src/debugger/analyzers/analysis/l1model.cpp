@@ -787,6 +787,20 @@ StateNode L1Result::ToStateNode() const
         tables.push(std::move(node));
     }
     flow["page_tables"] = std::move(tables);
+    StateNode indexList = StateNode::Array();
+    for (const IndexUse& u : indexes)
+    {
+        StateNode node = StateNode::Object();
+        node["selector"] = Hex4(u.selectorZ80);
+        node["selector_page"] = static_cast<unsigned>(KeyPage(u.selector));
+        node["at"] = Hex4(u.z80);
+        node["page"] = static_cast<unsigned>(KeyPage(u.instruction));
+        node["lo"] = Hex4(u.lo);
+        node["hi"] = Hex4(u.hi);
+        node["count"] = u.count;
+        indexList.push(std::move(node));
+    }
+    flow["indexes"] = std::move(indexList);
     StateNode pointerList = StateNode::Array();
     for (const PointerUse& u : pointers)
     {
@@ -852,7 +866,7 @@ StateNode L1Result::ToStateNode() const
     doc["instructions"] = std::move(insList);
 
     // The source bytes drawn to the screen: [page, offset, draws, frames, positions, x, y, screen, writer page,
-    // writer offset, then delta, count, seen of the step right and of the step down]
+    // writer offset, then delta, count, seen of the step right and of the step down, then the byte's writes]
     StateNode drawnList = StateNode::Array();
     for (const DrawnByte& d : drawn)
     {
@@ -873,9 +887,71 @@ StateNode L1Result::ToStateNode() const
             node.push(static_cast<uint64_t>(step->count));
             node.push(static_cast<uint64_t>(step->seen));
         }
+        const ByteUse* use = UseAt(d.key);
+        node.push(static_cast<uint64_t>(use != nullptr ? use->writes : 0));
         drawnList.push(std::move(node));
     }
     doc["drawn"] = std::move(drawnList);
+
+    // Drawn frames, the blocks one drawing pass copied with one source lattice: [page, offset, width, height, row
+    // step, column step, mask delta, bytes, count, x, y, screen, writer page, writer offset]
+    StateNode frameList = StateNode::Array();
+    for (const DrawnFrame& f : drawnFrames)
+    {
+        StateNode node = StateNode::Array();
+        node.push(static_cast<unsigned>(KeyPage(f.base)));
+        node.push(static_cast<unsigned>(KeyOffset(f.base)));
+        node.push(static_cast<unsigned>(f.width));
+        node.push(static_cast<unsigned>(f.height));
+        node.push(static_cast<int64_t>(f.rowStep));
+        node.push(static_cast<int64_t>(f.colStep));
+        node.push(static_cast<int64_t>(f.maskDelta));
+        node.push(static_cast<unsigned>(f.bytes));
+        node.push(static_cast<uint64_t>(f.count));
+        node.push(static_cast<unsigned>(f.x));
+        node.push(static_cast<unsigned>(f.y));
+        node.push(static_cast<unsigned>(f.screen));
+        node.push(static_cast<unsigned>(f.writer == kNoKey ? 0xFFFFu : KeyPage(f.writer)));
+        node.push(static_cast<unsigned>(f.writer == kNoKey ? 0u : KeyOffset(f.writer)));
+        frameList.push(std::move(node));
+    }
+    doc["drawn_frames"] = std::move(frameList);
+
+    // The bytes' uses, run-length: [page, offset, length, flags, first reader page, offset, last reader page,
+    // offset, written] for each run of bytes alike in those
+    StateNode useList = StateNode::Array();
+    for (const BytePage& bp : bytePages)
+    {
+        const auto same = [](const ByteUse& a, const ByteUse& b) {
+            return a.flags == b.flags && a.firstReader == b.firstReader && a.lastReader == b.lastReader &&
+                   (a.writes != 0) == (b.writes != 0);
+        };
+        const auto keyNode = [](StateNode& node, PhysKey key) {
+            node.push(static_cast<unsigned>(key == kNoKey ? 0xFFFFu : KeyPage(key)));
+            node.push(static_cast<unsigned>(key == kNoKey ? 0u : KeyOffset(key)));
+        };
+        for (size_t at = 0; at < bp.bytes.size();)
+        {
+            size_t end = at + 1;
+            while (end < bp.bytes.size() && same(bp.bytes[at], bp.bytes[end]))
+                ++end;
+            const ByteUse& u = bp.bytes[at];
+            if (u.flags != 0)
+            {
+                StateNode node = StateNode::Array();
+                node.push(static_cast<unsigned>(bp.page));
+                node.push(static_cast<uint64_t>(at));
+                node.push(static_cast<uint64_t>(end - at));
+                node.push(static_cast<unsigned>(u.flags));
+                keyNode(node, u.firstReader);
+                keyNode(node, u.lastReader);
+                node.push(static_cast<unsigned>(u.writes != 0 ? 1 : 0));
+                useList.push(std::move(node));
+            }
+            at = end;
+        }
+    }
+    doc["byte_use"] = std::move(useList);
     return doc;
 }
 

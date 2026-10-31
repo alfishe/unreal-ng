@@ -1,6 +1,7 @@
-/// The graphics detector: fonts, sprites and tiles, from what the blit loops (media.h) drew.
+/// The graphics detector: fonts, sprites and tiles, from the pictures the drawing passes drew (L1 drawn frames,
+/// FramePieces), else from what the blit loops (media.h) drew.
 ///
-/// Every frame start of every blit, grouped by shape (bytes a row, rows, mask), sorted, becomes objects: frames a
+/// Every frame start, grouped by shape (bytes a row, rows, mask, pitch), sorted, becomes objects: frames a
 /// constant step apart (the frame size, or up to 8 bytes more: a tile's attribute before its rows) are one object;
 /// a start inside the previous frame is a partial draw and is dropped. Two neighbouring frames split where the code
 /// named one of them with a pointer (an immediate, a page byte, a word whose value addressed it) and named neither
@@ -8,11 +9,12 @@
 /// with the same step around the frames gives the object its extent (frames the replay did not draw included).
 ///
 /// Kinds: a tile when a loop around the blit walked a map one byte a pass; a font when 8 x 8 frames sit on the
-/// lattice of one character set: base + 8 * code for the characters of the text the detectors found (at least three,
-/// three quarters of the frames, not one run of consecutive codes; no font when the walk around each of its blits read
-/// a map and no text), the claim then covers the 96 characters 32..127 (neighbouring objects on one lattice of 8, gaps
-/// of at most 32 codes, are tried as one set too: a pointer into the set splits its glyphs, and each part alone is a
-/// run of consecutive codes); 8 x 8 frames in RAM the ROM's character loop
+/// lattice of one character set: base + 8 * code (base + code for a set stored a pixel row a page on) for the
+/// characters of the text the detectors found (at least three, three quarters of the frames, not one run of
+/// consecutive codes; no font when the walk around each of its blits read a map and no text), the claim then covers
+/// the codes drawn, the ROM's set all 96 characters 32..127 (neighbouring objects on one lattice of glyphs, gaps of at
+/// most 32 codes, are tried as one set too: a pointer into the set splits its glyphs, and each part alone is a run of
+/// consecutive codes); 8 x 8 frames in RAM the ROM's character loop
 /// (PR_ALL) drew are a font with no text needed: the 21 user-defined graphics at (UDG), the 96 characters at (CHARS) +
 /// 256, or else the frames drawn;
 /// a sprite otherwise. An object inside a buffer is also claimed in each of the buffer's sources at the same offset:
@@ -20,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <set>
 #include <string>
@@ -58,6 +61,35 @@ struct Shape
         const uint32_t length = columns ? height : rowBytes;
         const uint32_t step = pitch != 0 ? pitch : length * pair;
         return lines == 0 ? 0 : (lines - 1u) * step + length * pair;
+    }
+    /// The bytes of one line (a row, or a column in layout "columns"), the mask bytes included
+    uint32_t Line() const { return (columns ? height : rowBytes) * (mask ? 2u : 1u); }
+    /// From one glyph of a character set to the next: 8 bytes back to back, or one byte (each pixel row a page on)
+    uint32_t GlyphStep() const { return pitch != 0 ? 1u : 8u; }
+    /// From a frame's first byte to its last
+    uint32_t Tail() const { return Bytes() - 1u; }
+    /// The offsets of a frame's bytes from its start (the mask bytes included)
+    std::vector<uint32_t> Offsets() const
+    {
+        const uint32_t pair = mask ? 2u : 1u;
+        const uint32_t lines = columns ? rowBytes : height;
+        const uint32_t length = columns ? height : rowBytes;
+        const uint32_t step = pitch != 0 ? pitch : length * pair;
+        std::vector<uint32_t> out;
+        for (uint32_t l = 0; l < lines; ++l)
+            for (uint32_t c = 0; c < length * pair; ++c)
+                out.push_back(l * step + c);
+        return out;
+    }
+    /// Two frames @p shift bytes apart share a byte (frames of a page-strided set interleave: one byte apart, each
+    /// line a page further)
+    bool Overlaps(uint32_t shift) const
+    {
+        if (shift >= Bytes())
+            return false;
+        const std::vector<uint32_t> offsets = Offsets();
+        const std::set<uint32_t> own(offsets.begin(), offsets.end());
+        return std::any_of(offsets.begin(), offsets.end(), [&](uint32_t o) { return own.count(o + shift) != 0; });
     }
 };
 
@@ -105,6 +137,7 @@ struct Piece
 };
 
 constexpr uint32_t kMinPieceBytes = 4;
+constexpr uint32_t kMaxHole = 8;     ///< frames never drawn between two drawn ones of an interleaved set
 constexpr size_t kMinGlyphs = 8;  ///< different glyphs drawn: a font of the game's own codes
 
 /// A neighbour step most of a byte's neighbours agreed on, at two or more frame ends (one is a redraw caught halfway:
@@ -317,6 +350,360 @@ std::vector<Piece> Pieces(const std::vector<DrawnByte>& drawn)
     return out;
 }
 
+/// A byte the run rewrites as it draws it: a buffer (a copy of a level's data, a save area, a line composed for each
+/// draw), not a picture's source. Copied in by a block copy, or written at least once for every four draws
+bool BufferByte(const L1Result& l1, PhysKey key)
+{
+    const ByteUse* u = l1.UseAt(key);
+    constexpr uint16_t kWrites = use::kWrite | use::kBlockWrite | use::kWordWrite | use::kIncDec | use::kOtherWrite;
+    if (u == nullptr || (u->flags & kWrites) == 0)
+        return false;
+    if ((u->flags & use::kBlockWrite) != 0)
+        return true;
+    const auto it = std::lower_bound(l1.drawn.begin(), l1.drawn.end(), key,
+                                     [](const DrawnByte& d, PhysKey k) { return d.key < k; });
+    const uint64_t draws = it != l1.drawn.end() && it->key == key ? it->draws : 0;
+    return static_cast<uint64_t>(u->writes) * 4 >= draws;
+}
+
+/// @p key's address in the start's paging; a page it did not show lies past 64 K, 16 K each (lines a page on run past
+/// $C000 into the next page as the Z80 sees them)
+uint32_t Linear(const L1Result& l1, PhysKey key)
+{
+    for (uint32_t b = 0; b < 4; ++b)
+        if (l1.startBanks[b] == KeyPage(key))
+            return b * 0x4000u + KeyOffset(key);
+    return 0x10000u + KeyPage(key) * 0x4000u + KeyOffset(key);
+}
+
+PhysKey KeyAt(const L1Result& l1, uint32_t linear)
+{
+    if (linear < 0x10000u)
+        return MakeKey(l1.startBanks[linear >> 14], static_cast<uint16_t>(linear));
+    return MakeKey(static_cast<uint16_t>((linear - 0x10000u) >> 14), static_cast<uint16_t>(linear));
+}
+
+/// The drawing passes' frames (l1valueflow.h) cut into pictures. A frame's columns are pieces of a column: lines of one
+/// row step from a base; the pieces of one row step that share a byte are one segment (a sprite drawn clipped, a tile
+/// drawn from a later line: the longest run of lines seen). Frames sit side by side by chance (the tiles of a map, a
+/// sprite next to a wall), so two segments join left to right only when every frame that drew them side by side joined
+/// them so and neither ever had another neighbour; a chain of joined segments with one shape and one column step is a
+/// picture. Its layout: column step 1 (2 with the mask between) and the row step its pitch, stored in rows; row step 1
+/// (2) and the columns back to back, in columns; one column alone, one byte wide. Any other column step is the glyphs
+/// of one text printed the same way every time (each glyph has one neighbour, never a picture): one column each. A
+/// picture most of whose bytes are a buffer's is none; nor is one whose lines go up through memory (stored bottom up: a
+/// known limit), one line high, or one as wide as the screen. Addresses are the start's (Linear): a set stored a pixel
+/// row a page on runs past $C000 as the Z80 sees it
+std::vector<Piece> FramePieces(const L1Result& l1, const std::set<PhysKey>& starts)
+{
+    // A frame cut in two by a pass's end (a screen byte rewritten while it drew): the lower part's source goes on from
+    // the upper's last line, both drawn as often, last seen one under the other on the screen
+    std::vector<DrawnFrame> frames = l1.drawnFrames;
+    {
+        using Lattice = std::tuple<uint32_t, uint8_t, int16_t, int16_t, int16_t, uint32_t, uint8_t, uint8_t, uint8_t>;
+        const auto latticeOf = [](const DrawnFrame& f, uint32_t base, uint8_t y) {
+            return Lattice{base, f.width, f.rowStep, f.colStep, f.maskDelta, f.count, f.x, y, f.screen};
+        };
+        std::map<Lattice, size_t> below;
+        for (size_t i = 0; i < frames.size(); ++i)
+            if (frames[i].height > 1 && frames[i].rowStep > 0)
+                below.emplace(latticeOf(frames[i], Linear(l1, frames[i].base), frames[i].y), i);
+        std::vector<bool> merged(frames.size(), false);
+        for (size_t i = 0; i < frames.size(); ++i)
+        {
+            DrawnFrame& f = frames[i];
+            while (!merged[i] && f.height > 1 && f.rowStep > 0 && f.y + f.height < 256)
+            {
+                const auto it = below.find(latticeOf(f, Linear(l1, f.base) + f.height * static_cast<uint32_t>(f.rowStep),
+                                                     static_cast<uint8_t>(f.y + f.height)));
+                if (it == below.end() || it->second == i || merged[it->second] ||
+                    f.height + frames[it->second].height > 192)
+                    break;
+                merged[it->second] = true;
+                f.height = static_cast<uint8_t>(f.height + frames[it->second].height);
+                f.bytes = static_cast<uint16_t>(f.bytes + frames[it->second].bytes);
+            }
+        }
+        size_t kept = 0;
+        for (size_t i = 0; i < frames.size(); ++i)
+            if (!merged[i])
+                frames[kept++] = frames[i];
+        frames.resize(kept);
+    }
+    struct Column
+    {
+        uint32_t base = 0;  ///< Linear
+        int32_t row = 0;
+        uint32_t lines = 0;
+        int32_t maskDelta = 0;
+        bool operator<(const Column& o) const
+        {
+            return std::tie(base, row, lines, maskDelta) < std::tie(o.base, o.row, o.lines, o.maskDelta);
+        }
+    };
+    struct Use
+    {
+        uint64_t draws = 0;
+        std::set<PhysKey> writers;
+    };
+    // The frames' columns
+    std::map<Column, Use> columns;
+    // A column's bytes in the 64 K the start showed, or in the one page it did not show
+    const auto columnOf = [&l1](const DrawnFrame& f, uint32_t c, Column& out) {
+        const int64_t base = Linear(l1, f.base);
+        const int64_t lo = base < 0x10000 ? 0 : base - KeyOffset(f.base);
+        const int64_t hi = base < 0x10000 ? 0x10000 : lo + 0x4000;
+        const int64_t at = base + static_cast<int64_t>(c) * f.colStep;
+        const int64_t top = at + static_cast<int64_t>(f.height - 1) * f.rowStep;
+        if (at < lo || at >= hi || top < lo || top >= hi)
+            return false;
+        out = Column{static_cast<uint32_t>(at), f.height > 1 ? f.rowStep : 0, f.height, f.maskDelta};
+        return true;
+    };
+    // A column over the bytes of a column left of it in one frame is a shifted sprite's spill (the byte read past the
+    // row, its bits shifted in): the frame ends before it
+    std::vector<uint32_t> widths;
+    widths.reserve(frames.size());
+    for (const DrawnFrame& f : frames)
+    {
+        uint32_t width = f.width;
+        for (uint32_t c = 1; c < width && f.height > 1 && f.rowStep != 0; ++c)
+        {
+            const int64_t d = static_cast<int64_t>(c) * f.colStep;
+            for (uint32_t k = 0; k < c; ++k)
+            {
+                const int64_t apart = d - static_cast<int64_t>(k) * f.colStep;
+                if (apart % f.rowStep == 0 && std::abs(apart / f.rowStep) < f.height)
+                {
+                    width = c;
+                    break;
+                }
+            }
+        }
+        widths.push_back(width);
+    }
+    for (size_t i = 0; i < frames.size(); ++i)
+        for (uint32_t c = 0; c < widths[i]; ++c)
+            if (Column col; columnOf(frames[i], c, col))
+            {
+                const DrawnFrame& f = frames[i];
+                Use& u = columns[col];
+                u.draws += f.count;
+                if (f.writer != kNoKey && u.writers.size() < 8)
+                    u.writers.insert(f.writer);
+            }
+
+    // Segments: one row step's columns merged while they share a byte, cut again where more draws began or ended a
+    // column than ran through it (tiles stacked on a map, the next one's bytes right after: a column of both, now and
+    // then), and where a blit loop began reading a frame (tiles stacked so on every cell: the loop drew them one by
+    // one)
+    struct Segment
+    {
+        uint32_t first = 0;  ///< Linear
+        uint32_t step = 0;  ///< 0: one line
+        uint32_t lines = 1;
+        int32_t maskDelta = 0;
+        Use use;
+    };
+    std::vector<Segment> segments;
+    std::map<Column, size_t> segmentOf;
+    {
+        std::map<std::pair<uint32_t, uint32_t>, std::vector<std::pair<Column, const Use*>>> lattices;
+        for (const auto& [col, u] : columns)
+            if (col.row > 0)
+                lattices[{static_cast<uint32_t>(col.row), col.base % static_cast<uint32_t>(col.row)}].emplace_back(col,
+                                                                                                                  &u);
+        for (auto& [lattice, items] : lattices)
+        {
+            const uint32_t step = lattice.first;
+            std::sort(items.begin(), items.end(),
+                      [](const auto& a, const auto& b) { return a.first.base < b.first.base; });
+            // Clusters of columns sharing bytes
+            std::vector<std::vector<std::pair<Column, const Use*>>> clusters;
+            uint32_t hi = 0;
+            for (const auto& item : items)
+            {
+                const uint32_t top = item.first.base + (item.first.lines - 1) * step;
+                if (clusters.empty() || item.first.base > hi)
+                    clusters.emplace_back();
+                hi = clusters.back().empty() ? top : std::max(hi, top);
+                clusters.back().push_back(item);
+            }
+            for (const auto& cluster : clusters)
+            {
+                const uint32_t lo = cluster.front().first.base;
+                uint32_t lines = 0;
+                for (const auto& [col, u] : cluster)
+                    lines = std::max(lines, (col.base - lo) / step + col.lines);
+                std::vector<uint64_t> cross(lines + 1, 0), split(lines + 1, 0);
+                for (const auto& [col, u] : cluster)
+                {
+                    const uint32_t first = (col.base - lo) / step, end = first + col.lines;
+                    split[first] += u->draws;
+                    split[end] += u->draws;
+                    for (uint32_t b = first + 1; b < end; ++b)
+                        cross[b] += u->draws;
+                }
+                std::vector<size_t> segmentAt(lines);
+                uint32_t from = 0;
+                for (uint32_t b = 1; b <= lines; ++b)
+                    if (b == lines || split[b] > cross[b] || starts.count(KeyAt(l1, lo + b * step)) != 0)
+                    {
+                        segments.push_back(Segment{lo + from * step, step, b - from, cluster.front().first.maskDelta, {}});
+                        for (uint32_t l = from; l < b; ++l)
+                            segmentAt[l] = segments.size() - 1;
+                        from = b;
+                    }
+                for (const auto& [col, u] : cluster)
+                {
+                    const size_t at = segmentAt[(col.base - lo) / step];
+                    segments[at].use.draws += u->draws;
+                    segments[at].use.writers.insert(u->writers.begin(), u->writers.end());
+                    segmentOf[col] = at;
+                }
+            }
+        }
+        // Single lines: part of the segment holding the byte, else one of their own
+        std::map<uint32_t, size_t> holder;
+        for (size_t i = 0; i < segments.size(); ++i)
+            for (uint32_t l = 0; l < segments[i].lines; ++l)
+                holder.emplace(segments[i].first + l * segments[i].step, i);
+        for (const auto& [col, u] : columns)
+        {
+            if (col.row != 0)
+                continue;
+            const auto it = holder.find(col.base);
+            size_t i = 0;
+            if (it != holder.end())
+                i = it->second;
+            else
+            {
+                segments.push_back(Segment{col.base, 0, 1, col.maskDelta, {}});
+                i = segments.size() - 1;
+                holder.emplace(col.base, i);
+            }
+            segments[i].use.draws += u.draws;
+            segments[i].use.writers.insert(u.writers.begin(), u.writers.end());
+            segmentOf[col] = i;
+        }
+    }
+
+    // Joins: a segment's right neighbour, when it is the only one either ever had
+    constexpr size_t kNone = ~size_t{0};
+    std::vector<std::set<size_t>> right(segments.size()), left(segments.size());
+    for (size_t i = 0; i < frames.size(); ++i)
+    {
+        const DrawnFrame& f = frames[i];
+        size_t before = kNone;
+        for (uint32_t c = 0; c < widths[i]; ++c)
+        {
+            Column col;
+            const auto it = columnOf(f, c, col) ? segmentOf.find(col) : segmentOf.end();
+            const size_t s = it != segmentOf.end() ? it->second : kNone;
+            if (before != kNone && s != kNone && before != s)
+            {
+                right[before].insert(s);
+                left[s].insert(before);
+            }
+            before = s;
+        }
+    }
+    std::vector<size_t> next(segments.size(), kNone);
+    std::vector<bool> joined(segments.size(), false);
+    for (size_t i = 0; i < segments.size(); ++i)
+        if (right[i].size() == 1 && left[*right[i].begin()].size() == 1)
+        {
+            next[i] = *right[i].begin();
+            joined[next[i]] = true;
+        }
+
+    std::vector<Piece> out;
+    const auto emit = [&](const std::vector<size_t>& chain) {
+        const Segment& s = segments[chain.front()];
+        const uint32_t cols = static_cast<uint32_t>(chain.size());
+        int64_t colStep = 0;
+        bool even = true;
+        for (size_t k = 1; k < chain.size(); ++k)
+        {
+            const Segment& a = segments[chain[k - 1]];
+            const Segment& b = segments[chain[k]];
+            const int64_t d = static_cast<int64_t>(b.first) - static_cast<int64_t>(a.first);
+            even = even && b.step == s.step && b.lines == s.lines && (b.first < 0x10000u) == (a.first < 0x10000u) &&
+                   (k == 1 || d == colStep);
+            colStep = d;
+        }
+        if (!even)
+            return false;
+        const bool masked = s.maskDelta == 1 || s.maskDelta == -1;
+        Piece p;
+        p.first = KeyAt(l1, s.first);
+        p.height = static_cast<uint16_t>(s.lines);
+        p.width = static_cast<uint16_t>(cols);
+        if (cols == 1)
+        {
+            if (s.step == 2 && masked)
+                p.stride = 2, p.pitch = 0;
+            else
+                p.stride = 1, p.pitch = s.lines > 1 && s.step != 1 ? s.step : 0;
+        }
+        else if (colStep == 1 || (colStep == 2 && masked))
+        {
+            p.stride = static_cast<uint32_t>(colStep);
+            p.pitch = s.lines > 1 && s.step != cols * p.stride ? s.step : 0;
+        }
+        else if ((s.step == 1 || (s.step == 2 && masked)) && s.lines > 1 &&
+                 static_cast<uint64_t>(colStep) == static_cast<uint64_t>(s.lines) * s.step)
+        {
+            p.columns = true;
+            p.stride = s.step;
+            p.pitch = 0;
+            p.width = static_cast<uint16_t>(cols);
+            p.height = static_cast<uint16_t>(s.lines);
+        }
+        else
+            return false;
+        // The bytes: a buffer's for the most part, no picture
+        uint32_t bytes = 0, buffered = 0;
+        uint32_t last = s.first;
+        for (const size_t k : chain)
+            for (uint32_t l = 0; l < segments[k].lines; ++l)
+            {
+                const uint32_t at = segments[k].first + l * segments[k].step;
+                last = std::max(last, at);
+                ++bytes;
+                buffered += BufferByte(l1, KeyAt(l1, at)) ? 1 : 0;
+            }
+        // As in Pieces: a strip as wide as the screen is a picture (the screens detector's), one line no frame
+        const uint32_t across = p.width, down = p.height;
+        if (2 * buffered > bytes || bytes < kMinPieceBytes || across >= 32 || down <= 1 || down > 192)
+            return true;
+        p.last = KeyAt(l1, last);
+        for (const size_t k : chain)
+        {
+            p.draws += segments[k].use.draws;
+            for (const PhysKey w : segments[k].use.writers)
+                if (p.writers.size() < 8)
+                    p.writers.insert(w);
+        }
+        out.push_back(p);
+        return true;
+    };
+    for (size_t i = 0; i < segments.size(); ++i)
+    {
+        if (joined[i])
+            continue;
+        std::vector<size_t> chain{i};
+        while (next[chain.back()] != kNone && chain.size() < 32 &&
+               std::find(chain.begin(), chain.end(), next[chain.back()]) == chain.end())
+            chain.push_back(next[chain.back()]);
+        if (!emit(chain))
+            for (const size_t k : chain)
+                emit({k});
+    }
+    std::sort(out.begin(), out.end(), [](const Piece& a, const Piece& b) { return a.first < b.first; });
+    return out;
+}
+
 std::vector<PointerRange> PointerRanges(const L1Result& l1)
 {
     std::vector<PointerRange> out;
@@ -383,7 +770,12 @@ public:
         {
             // The pieces in the pages the start's paging shows, then those of each page it did not (a bank switched
             // in later: scenery in another 128 K page), seen at bank 3
-            _pieces = Pieces(Pictures(_context.l1.drawn));
+            std::set<PhysKey> starts;
+            for (const Blit& b : _blits)
+                for (const uint16_t z80 : b.starts)
+                    starts.insert(_context.Key(z80));
+            _pieces = _context.l1.drawnFrames.empty() ? Pieces(Pictures(_context.l1.drawn))
+                                                      : FramePieces(_context.l1, starts);
             std::set<int> views{-1};
             for (const Piece& p : _pieces)
                 if (std::find(std::begin(_context.l1.startBanks), std::end(_context.l1.startBanks), KeyPage(p.first)) ==
@@ -486,11 +878,11 @@ private:
             if (bank < 0 || p.stride > 2)
                 continue;
             const auto z80 = static_cast<uint32_t>(bank * 0x4000 + KeyOffset(p.first));
-            const uint32_t lastZ80 = z80 + (p.last - p.first);
             // One value in every byte is no picture on its own (a back buffer's blank, never drawn into); among frames
             // of its shape with a picture it is one (a tile set's space)
             const uint32_t lines = p.columns ? p.width : p.height, length = p.columns ? p.height : p.width;
             const uint32_t lineStep = p.pitch != 0 ? p.pitch : length * p.stride;
+            const uint32_t lastZ80 = z80 + (lines - 1) * lineStep + (length - 1) * p.stride;
             uint8_t first = 0, value = 0;
             bool blank = EndAt(static_cast<uint16_t>(z80), first);
             for (uint32_t l = 0; l < lines && blank; ++l)
@@ -516,14 +908,14 @@ private:
             starts.push_back(Start{shape, static_cast<uint16_t>(start), size, &p, blank});
         }
         std::stable_sort(starts.begin(), starts.end(), [](const Start& a, const Start& b) { return a.size > b.size; });
-        std::map<uint32_t, uint32_t> taken;  // lo -> hi
+        std::set<uint32_t> taken;  // the bytes of the frames kept
         for (const Start& s : starts)
         {
-            const uint32_t lo = s.start, hi = s.start + s.size - 1;
-            auto it = taken.upper_bound(hi);
-            if (it != taken.begin() && std::prev(it)->second >= lo)
+            const std::vector<uint32_t> offsets = s.shape.Offsets();
+            if (std::any_of(offsets.begin(), offsets.end(), [&](uint32_t o) { return taken.count(s.start + o) != 0; }))
                 continue;
-            taken[lo] = hi;
+            for (const uint32_t o : offsets)
+                taken.insert(s.start + o);
             Frame& f = frames[s.shape][s.start];
             f.blank = s.blank;
             f.writers.insert(s.piece->writers.begin(), s.piece->writers.end());
@@ -577,12 +969,24 @@ private:
                 bool joined = false;
                 if (cur.step == 0)
                 {
-                    if (gap >= size && gap <= size + 8 && !Split(cur.last, start))
+                    // Frames of an interleaved set (each line a page on) sit a line's width apart, those between
+                    // never drawn
+                    const uint32_t line = shape.Line();
+                    if (shape.pitch != 0 && gap < size && gap % line == 0 && !shape.Overlaps(gap) &&
+                        gap / line <= (glyphs ? 32u : kMaxHole + 1u) && !Split(cur.last, start))
+                    {
+                        cur.step = line;
+                        cur.filled += gap / line - 1;
+                        cur.sparse = glyphs;
+                        joined = true;
+                    }
+                    else if (((gap >= size && gap <= size + 8) || (gap < size && !shape.Overlaps(gap))) &&
+                             !Split(cur.last, start))
                     {
                         cur.step = gap;
                         joined = true;
                     }
-                    else if (glyphs && gap % 8 == 0 && gap <= 32 * 8 && !Split(cur.last, start))
+                    else if (glyphs && shape.pitch == 0 && gap % 8 == 0 && gap <= 32 * 8 && !Split(cur.last, start))
                     {
                         cur.step = 8;
                         cur.sparse = true;
@@ -594,8 +998,11 @@ private:
                 }
                 else
                 {
+                    // Frames of an interleaved set (each line a page further) leave the frames never drawn between
                     const uint32_t n = gap / cur.step;
-                    if (gap % cur.step == 0 && (n == 1 || (cur.sparse && n <= 32)) && !Split(cur.last, start))
+                    const bool interleaved = cur.step < size;
+                    if (gap % cur.step == 0 && (n == 1 || (cur.sparse && n <= 32) || (interleaved && n <= kMaxHole + 1)) &&
+                        !Split(cur.last, start))
                     {
                         cur.filled += n - 1;
                         joined = true;
@@ -630,7 +1037,8 @@ private:
         {
             const Object& o = objects[i];
             std::pair<uint32_t, uint32_t> range;
-            if (glyphs && (((o.sparse || o.step == 8) && Font(shape, o, range)) || RomCharacters(shape, o, range)))
+            if (glyphs &&
+                (((o.sparse || o.step == shape.GlyphStep()) && Font(shape, o, range)) || RomCharacters(shape, o, range)))
             {
                 fonts.push_back(range);
                 _fonts.push_back(range);
@@ -639,24 +1047,25 @@ private:
         }
         if (glyphs)
         {
-            // Neighbouring objects on one lattice of 8, the gaps the size of a character set's unused codes
+            // Neighbouring objects on one lattice of glyphs, the gaps the size of a character set's unused codes
+            const uint32_t g = shape.GlyphStep();
             size_t i = 0;
             while (i < objects.size())
             {
                 Object group = objects[i];
                 size_t j = i + 1;
-                while (j < objects.size() && (objects[j].step == 0 || objects[j].step == 8) &&
-                       (group.step == 0 || group.step == 8) && (objects[j].first - group.last) % 8 == 0 &&
-                       objects[j].first - group.last <= 32u * 8)
+                while (j < objects.size() && (objects[j].step == 0 || objects[j].step == g) &&
+                       (group.step == 0 || group.step == g) && (objects[j].first - group.last) % g == 0 &&
+                       objects[j].first - group.last <= 32u * g)
                 {
-                    group.filled += (objects[j].first - group.last) / 8 - 1 + objects[j].filled;
+                    group.filled += (objects[j].first - group.last) / g - 1 + objects[j].filled;
                     group.seen += objects[j].seen;
                     group.last = objects[j].last;
                     group.blits.insert(objects[j].blits.begin(), objects[j].blits.end());
                     group.writers.insert(objects[j].writers.begin(), objects[j].writers.end());
                     group.drawn.insert(group.drawn.end(), objects[j].drawn.begin(), objects[j].drawn.end());
                     group.draws += objects[j].draws;
-                    group.step = 8;
+                    group.step = g;
                     group.sparse = true;
                     ++j;
                 }
@@ -675,7 +1084,8 @@ private:
         {
             Object& o = objects[i];
             if (done[i] || std::any_of(fonts.begin(), fonts.end(), [&](const auto& f) {
-                    return o.first >= f.first && o.last + 7u <= f.second && (o.first - f.first) % 8 == 0;
+                    return o.first >= f.first && o.last + shape.Tail() <= f.second &&
+                           (o.first - f.first) % shape.GlyphStep() == 0;
                 }))
                 continue;
             if (o.sparse)
@@ -683,12 +1093,12 @@ private:
                 // Not a character set: each run of adjacent frames is an object of its own
                 std::vector<uint16_t> drawn;
                 for (const auto& [start, frame] : starts)
-                    if (start >= o.first && start <= o.last && (start - o.first) % 8 == 0)
+                    if (start >= o.first && start <= o.last && (start - o.first) % shape.GlyphStep() == 0)
                         drawn.push_back(start);
                 Object part;
                 for (size_t i = 0; i < drawn.size(); ++i)
                 {
-                    if (i == 0 || drawn[i] - drawn[i - 1] != 8)
+                    if (i == 0 || drawn[i] - drawn[i - 1] != shape.GlyphStep())
                     {
                         if (i != 0)
                             _pending.push_back(Pending{shape, part, size});
@@ -701,7 +1111,7 @@ private:
                     }
                     part.drawn.push_back(drawn[i]);
                     part.last = drawn[i];
-                    part.step = 8;
+                    part.step = shape.GlyphStep();
                     ++part.seen;
                 }
                 if (!drawn.empty())
@@ -735,24 +1145,27 @@ private:
         return true;
     }
 
-    /// A character set: the frames on base + 8 * code for the text's characters
+    /// A character set: the frames on base + 8 * code for the text's characters (base + code: each pixel row a page
+    /// on). The claim spans the codes drawn: the rest of the 96 is a guess (a set's frames that fit the text's codes
+    /// on some base by chance; a font that starts past the space), named in the title only. The ROM's set is 96
     bool Font(const Shape& shape, const Object& o, std::pair<uint32_t, uint32_t>& range)
     {
         if (_text.empty() || o.seen < 3 || PickedByMap(o))
             return false;
+        const int64_t g = shape.GlyphStep();
         const std::vector<uint16_t>& drawn = o.drawn;
         int64_t bestBase = -1;
         uint32_t bestCount = 0;
         for (const uint16_t s : drawn)
             for (const uint8_t c : _text)
             {
-                const int64_t base = static_cast<int64_t>(s) - 8 * c;
+                const int64_t base = static_cast<int64_t>(s) - g * c;
                 if (base < 0)
                     continue;
                 uint32_t count = 0;
                 for (const uint16_t t : drawn)
                 {
-                    const int64_t code = (static_cast<int64_t>(t) - base) / 8;
+                    const int64_t code = (static_cast<int64_t>(t) - base) / g;
                     count += (code >= 32 && code < 128 && _text.count(static_cast<uint8_t>(code)) != 0) ? 1 : 0;
                 }
                 if (count > bestCount || (count == bestCount && base < bestBase))
@@ -766,10 +1179,10 @@ private:
         uint32_t drawnText = 0, drawnAll = 0;
         std::set<int64_t> codes;
         for (const uint16_t s : o.drawn)
-            if (s >= o.first && s <= o.last && (s - o.first) % 8 == 0)
+            if (s >= o.first && s <= o.last && (s - o.first) % g == 0)
             {
                 ++drawnAll;
-                const int64_t code = (static_cast<int64_t>(s) - bestBase) / 8;
+                const int64_t code = (static_cast<int64_t>(s) - bestBase) / g;
                 const bool text = code >= 32 && code < 128 && _text.count(static_cast<uint8_t>(code)) != 0;
                 drawnText += text ? 1 : 0;
                 if (text)
@@ -778,24 +1191,33 @@ private:
         if (bestBase < 0 || drawnText < 3 || drawnText * 4 < drawnAll * 3 || codes.size() < 3 ||
             *codes.rbegin() - *codes.begin() + 1 == static_cast<int64_t>(codes.size()))
             return false;
-        const uint32_t lo = static_cast<uint32_t>(bestBase) + 32 * 8;
-        const uint32_t hi = static_cast<uint32_t>(bestBase) + 128 * 8 - 1;
-        if (hi > 0xFFFF || (lo >> 14) != (hi >> 14) || o.first < lo || o.last + 7u > hi)
+        const uint32_t setLo = static_cast<uint32_t>(bestBase + 32 * g);
+        const uint32_t setHi = static_cast<uint32_t>(bestBase + 127 * g) + shape.Tail();
+        if (setHi > 0xFFFF || (setLo >> 14) != (setHi >> 14) || o.first < setLo || o.last + shape.Tail() > setHi)
             return false;
+        const bool rom = setHi < 0x4000;
+        const uint32_t lo = rom ? setLo : o.first;
+        const uint32_t hi = rom ? setHi : o.last + shape.Tail();
+        const auto firstCode = static_cast<uint32_t>((lo - bestBase) / g);
+        const auto lastCode = static_cast<uint32_t>((static_cast<int64_t>(hi - shape.Tail()) - bestBase) / g);
         Region r;
         r.kind = RegionKind::Font;
         r.detector = DetectorId::Graphics;
         r.status = RegionStatus::Observed;
         r.geometry.width = 8;
         r.geometry.height = 8;
-        r.geometry.frames = 96;
-        r.geometry.stride = 8;
+        r.geometry.frames = static_cast<uint16_t>(lastCode - firstCode + 1);
+        r.geometry.stride = static_cast<uint16_t>(g);
+        r.geometry.pitch = shape.pitch;
         r.geometry.layout = "rows";
         r.confidence = confidence::FromCount(700, 950, drawnText, 8);
-        r.title = "Font, 96 characters of 8 x 8 (codes 32-127)";
+        r.title = rom ? "Font, 96 characters of 8 x 8 (codes 32-127)"
+                      : "Font, " + std::to_string(r.geometry.frames) + " characters of 8 x 8 (codes " +
+                            std::to_string(firstCode) + "-" + std::to_string(lastCode) + " of a set at " +
+                            Hex(static_cast<uint16_t>(bestBase)) + " + " + std::to_string(g) + " x code)";
         Evidence(r, o, shape);
-        r.evidence.push_back(analysis::Evidence{"characters", static_cast<uint16_t>(bestBase + 256), drawnText,
-                                                "glyphs drawn at base + 8 x the code of a text character"});
+        r.evidence.push_back(analysis::Evidence{"characters", static_cast<uint16_t>(bestBase + 32 * g), drawnText,
+                                                "glyphs drawn at base + step x the code of a text character"});
         Add(std::move(r), static_cast<uint16_t>(lo), static_cast<uint16_t>(hi));
         range = {lo, hi};
         return true;
@@ -826,7 +1248,7 @@ private:
         if (glyphs.size() < kMinGlyphs || PickedByMap(o) || o.first < 0x4000 || !PrintedDirectly(o))
             return false;
         const uint32_t lo = o.first;
-        const uint32_t hi = static_cast<uint32_t>(o.last) + 7;
+        const uint32_t hi = static_cast<uint32_t>(o.last) + shape.Tail();
         if (hi > 0xFFFF || (lo >> 14) != (hi >> 14))
             return false;
         Region r;
@@ -835,14 +1257,15 @@ private:
         r.status = RegionStatus::Observed;
         r.geometry.width = 8;
         r.geometry.height = 8;
-        r.geometry.frames = static_cast<uint16_t>((hi - lo + 1) / 8);
-        r.geometry.stride = 8;
+        r.geometry.frames = static_cast<uint16_t>((o.last - o.first) / shape.GlyphStep() + 1);
+        r.geometry.stride = static_cast<uint16_t>(shape.GlyphStep());
+        r.geometry.pitch = shape.pitch;
         r.geometry.layout = "rows";
         r.confidence = confidence::FromCount(500, 800, glyphs.size(), 16);
         r.title = "Font, " + std::to_string(r.geometry.frames) + " characters of 8 x 8 (the game's own codes)";
         Evidence(r, o, shape);
         r.evidence.push_back(analysis::Evidence{"glyphs", o.first, static_cast<uint32_t>(glyphs.size()),
-                                                "different glyphs drawn, one lattice of 8 bytes"});
+                                                "different glyphs drawn, one lattice of glyphs"});
         Add(std::move(r), static_cast<uint16_t>(lo), static_cast<uint16_t>(hi));
         range = {lo, hi};
         return true;
@@ -852,7 +1275,7 @@ private:
     /// 144), 21 of them, or the character set at (CHARS) + 8 x code, 96; what lies in neither, the frames drawn
     bool RomCharacters(const Shape& shape, const Object& o, std::pair<uint32_t, uint32_t>& range)
     {
-        if (_romPrint == kNoKey || o.first < 0x4000)
+        if (_romPrint == kNoKey || o.first < 0x4000 || shape.pitch != 0)
             return false;
         for (const PhysKey w : o.writers)
             if (KeyPage(w) != KeyPage(_romPrint) || KeyOffset(w) < kPrAll || KeyOffset(w) >= kPrAllEnd)

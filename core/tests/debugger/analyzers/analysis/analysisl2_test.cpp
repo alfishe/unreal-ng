@@ -345,6 +345,26 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorText_Test)
     EXPECT_TRUE(NoStrongClaim(At("plain"), static_cast<uint16_t>(At("plain") + 4), RegionKind::Text));
 }
 
+/// Text printed through a proportional font no detector knows: the codes are the index of their glyphs
+TEST_F(AnalysisL2_Test, AnalysisDetectorText_GlyphIndex)
+{
+    Run("print-proportional.asm", 16);
+    ASSERT_FALSE(HasFailure());
+    const Region* message = StartsAt(At("message"), RegionKind::Text);
+    ASSERT_NE(message, nullptr);
+    EXPECT_EQ(message->geometry.text, "PROPORTIONAL TEXT");
+    EXPECT_EQ(message->geometry.terminator, "zero");
+    EXPECT_TRUE(std::any_of(message->evidence.begin(), message->evidence.end(),
+                            [this](const Evidence& e) { return e.what == "glyph" && e.z80 == At("width"); }));
+    // The walk over memory read the ROM font (claimed) and the message with one instruction: no glyph reader
+    EXPECT_NE(StartsAt(0x3D00, RegionKind::Font), nullptr);
+    // Negative: printable tile codes looked up the same way, no words; digits through the font; the glyph bytes the
+    // readers read
+    EXPECT_TRUE(NoStrongClaim(At("map"), static_cast<uint16_t>(At("map") + 15), RegionKind::Text));
+    EXPECT_TRUE(NoStrongClaim(At("score"), static_cast<uint16_t>(At("score") + 5), RegionKind::Text));
+    EXPECT_TRUE(NoStrongClaim(0xC100, 0xC1FF, RegionKind::Text));
+}
+
 TEST_F(AnalysisL2_Test, AnalysisDetectorText_SourceRemnant)
 {
     Run("source-remnant.asm");
@@ -799,6 +819,28 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorTiles_Test)
     EXPECT_TRUE(NoStrongClaim(At("plain"), static_cast<uint16_t>(At("plain") + 35), RegionKind::Sprite));
 }
 
+/// Tiles stored a pixel row per page pair (picture, then its mask a page up), as Skool Daze and its kin keep them: one
+/// set with the picture page's pitch, a byte from tile to tile, the mask page no tile of its own
+TEST_F(AnalysisL2_Test, AnalysisDetectorTiles_PageStrided)
+{
+    const Built& b = Run("strided-tiles.asm", 4);
+    ASSERT_FALSE(HasFailure());
+    const Region* set = nullptr;
+    for (const Region& r : b.l2.store.Regions())
+        if (r.z80 == At("tiles") && r.detector == DetectorId::Graphics &&
+            (r.kind == RegionKind::Tile || r.kind == RegionKind::Sprite))
+            set = &r;
+    ASSERT_NE(set, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(set->geometry.width, 8u) << MediaClaims(b.l2);
+    EXPECT_EQ(set->geometry.height, 8u);
+    EXPECT_EQ(set->geometry.pitch, 512u);
+    EXPECT_EQ(set->geometry.stride, 1u);
+    EXPECT_EQ(set->geometry.frames, 6u);
+    EXPECT_TRUE(StartsAt(static_cast<uint16_t>(At("tiles") + 0x100), RegionKind::Tile) == nullptr &&
+                StartsAt(static_cast<uint16_t>(At("tiles") + 0x100), RegionKind::Sprite) == nullptr)
+        << MediaClaims(b.l2);
+}
+
 TEST_F(AnalysisL2_Test, AnalysisDetectorLevelMaps_Test)
 {
     const Built& b = Run("tiles-level.asm", 8);
@@ -901,9 +943,18 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorFonts_OwnFontThroughTheGlyphBlit)
     const Region* text = StartsAt(At("message"), RegionKind::Text);
     ASSERT_NE(text, nullptr) << MediaClaims(b.l2);
     EXPECT_EQ(text->geometry.text, "PRESS FIRE");
-    const Region* font = StartsAt(At("font"), RegionKind::Font, DetectorId::Graphics);
+    // The glyphs drawn, "I" to "S" at least (the space is blank): the rest of the set is a guess the claim leaves out
+    const auto glyph = [&](char c) { return static_cast<uint16_t>(At("font") + (c - 32) * 8); };
+    const Region* font = nullptr;
+    for (const Region* r : Claims(glyph('S'), RegionKind::Font))
+        if (r->detector == DetectorId::Graphics)
+            font = r;
     ASSERT_NE(font, nullptr) << MediaClaims(b.l2);
-    EXPECT_EQ(font->Size(), 768u);
+    EXPECT_LE(font->z80, glyph('I')) << MediaClaims(b.l2);
+    EXPECT_GE(font->z80, At("font"));
+    EXPECT_EQ((font->z80 - At("font")) % 8, 0);
+    EXPECT_LE(font->Z80End(), At("font") + 767u);
+    EXPECT_EQ(font->geometry.stride, 8u);
     EXPECT_TRUE(NoStrongClaim(At("font"), static_cast<uint16_t>(At("font") + 767), RegionKind::Text)) << MediaClaims(b.l2);
 }
 
