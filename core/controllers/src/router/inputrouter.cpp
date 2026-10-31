@@ -1211,8 +1211,13 @@ void InputRouter::Dispatch(const std::vector<ActionEvent>& actions) const
     LayerSink layerSink;
     std::vector<std::pair<HostDeviceId, StepsOut>> feel;
     std::vector<LayerChange> layers;
+    std::vector<ActionEvent> routed;
     {
         std::lock_guard<std::mutex> lock(_mutex);
+        // Each action names its device's instance: a pad pinned to another one acts on that one, not the window's
+        routed = actions;
+        for (ActionEvent& action : routed)
+            action.instance = InstanceLocked(action.device);
         sink = _actions;
         outputs = _outputs;
         layerSink = _layers;
@@ -1229,7 +1234,7 @@ void InputRouter::Dispatch(const std::vector<ActionEvent>& actions) const
             layerSink(change.device, change.instance, change.up);
     if (!sink)
         return;
-    for (const ActionEvent& action : actions)
+    for (const ActionEvent& action : routed)
         sink(action);
 }
 

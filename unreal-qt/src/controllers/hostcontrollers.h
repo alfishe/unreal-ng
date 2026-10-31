@@ -41,6 +41,7 @@ struct HostActionEvent
     bool turn = false;  ///< an encoder's turn: `value` steps at `rate` steps/s
     double rate = 0;
     QString params;     ///< the binding's `curve` object as JSON (the action's parameters); empty when none
+    QString instance;   ///< the emulator the device drives (pinned, else the followed one); empty: the window's
 };
 class EmulatorBinding;
 class QKeyEvent;

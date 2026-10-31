@@ -216,6 +216,7 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
         out.rate = event.rate;
         if (!event.params.IsNull())
             out.params = QString::fromStdString(event.params.Dump());
+        out.instance = QString::fromStdString(event.instance);
         QMetaObject::invokeMethod(this, [this, out] { emit actionTriggered(out); }, Qt::QueuedConnection);
     });
     // A pad's layer key takes the instance into the debugger: every surface follows, not only that pad
@@ -689,6 +690,7 @@ void HostControllers::onUnbound()
     _hapticFeed.reset();
     _hapticsKey.clear();
     _attached.reset();
+    _service->Router().SetFocus({});  // a following device drives no machine now: its actions say so
 #endif
 }
 

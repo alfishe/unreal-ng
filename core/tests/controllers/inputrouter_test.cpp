@@ -656,6 +656,30 @@ TEST_F(InputRouter_Test, Context_APinnedPadFollowsItsOwnInstance)
     EXPECT_EQ(_router.Layers("fake:2"), (std::vector<std::string>{kPlayLayer}));
 }
 
+/// An action names the instance of the device that sent it: a pinned pad's runs on its own instance, a following
+/// one's on the followed instance, none without a focus
+TEST_F(InputRouter_Test, Actions_NameTheDevicesInstance)
+{
+    _router.OnDeviceAdded(kPad);
+    _router.OnDeviceAdded(kPad2);
+    _router.SetFocus("emu-1");
+    _router.SetInstanceMode("fake:2", InstanceMode::Pinned, "emu-2");
+    SetBindings({To({"north"}, ActionTarget("run.pause_toggle"))});
+
+    Set("fake:1", "north", 1);
+    Set("fake:2", "north", 1);
+    ASSERT_EQ(_actions.size(), 2u);
+    EXPECT_EQ(_actions[0].device, "fake:1");
+    EXPECT_EQ(_actions[0].instance, "emu-1") << "the followed instance";
+    EXPECT_EQ(_actions[1].device, "fake:2");
+    EXPECT_EQ(_actions[1].instance, "emu-2") << "the pinned one, not the window's";
+    _router.SetFocus({});
+    Set("fake:1", "north", 0);
+    ASSERT_EQ(_actions.size(), 3u);
+    EXPECT_FALSE(_actions[2].pressed);
+    EXPECT_TRUE(_actions[2].instance.empty()) << "no focus: no instance";
+}
+
 /// A pad's layer key tells the owner its `debug` layer went up and down (the owner sets the instance's context so
 /// the other surfaces follow the pad); once each way, and down when the pad goes with the key held
 TEST_F(InputRouter_Test, Context_TheLayerKeyReportsTheDebugLayer)

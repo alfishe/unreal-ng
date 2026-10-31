@@ -307,8 +307,12 @@ scrubs and debugs as well): the Stream Deck, the Dial, the ShuttlePRO, the pads 
 - Tests: `InputRouter_Test.Context_*` (the rule, a pad following its instance and back, a pinned pad following its
   own, the layer key reported once each way and on removal); `acceptance.py` ACC-2 checks the pads follow the deck's
   Debugger and Time pages and come back home.
-- Left: actions of a device pinned to another instance still run on the window's bound instance (the GUI's action
-  dispatch); headless there is no owner of `HostInputService` (Q-3).
+- An action runs on its device's instance (fixed 2026-10-31): the router names it in `ActionEvent::instance` (the
+  pinned instance, else the followed one; none while the window has no machine), and the GUI submits it there, so a
+  pad pinned to another instance steps and seeks that instance under that instance's context. The GUI's own actions
+  (`gui`: the debugger panes, the screenshot, the windows) act on this window's machine only and are refused, with a
+  notice, for a device that drives another. Test: `InputRouter_Test.Actions_NameTheDevicesInstance`.
+- Left: headless there is no owner of `HostInputService` (Q-3).
 - One client owns the devices (owner 2026-10-29, after a Dial buzzing in the debugger: three unreal-qt processes
   had it open, one of them in `ttd` with its `edge` / `barrier` buzz marks). Every windowed client opens the same
   devices, so the one the user activated last owns them: `ClientQueue` is the list of process ids, the last
