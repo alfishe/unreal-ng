@@ -123,7 +123,7 @@ struct TTDJournalBuildResult
     bool cancelled = false;       ///< the progress callback asked to stop; the frames built so far are kept
     uint64_t framesBuilt = 0;     ///< replayed, their writes added to the journal
     uint64_t framesCovered = 0;   ///< already inside a journal segment, left as they were
-    uint64_t framesRefused = 0;   ///< hold a v1 marker without its data: cannot be replayed
+    uint64_t framesRefused = 0;   ///< hold a marker without its data (a barrier): cannot be replayed
     uint64_t records = 0;         ///< writes added
 };
 
@@ -268,7 +268,7 @@ struct TTDSessionInfo
 
     /// D8 (the engine's controller): a navigation while recording paused the
     /// recording; state is detached, and resuming at the paused end, or running
-    /// into it, continues the same recording. Always false on v1
+    /// into it, continues the same recording
     bool recordingPaused = false;
 
     /// Why time travel is not available for this instance at all (for example

@@ -4,7 +4,7 @@
 // then run on and must stay identical: the SD card's protocol, the decoder's
 // FIFO and minimp3 state, the DMA modules' phase and FIFOs all travel in the
 // blob. The card RAM and the flash are not in the blob (the engine records them as
-// regions 4 and 5; v1 records neither): the test copies
+// regions 4 and 5): the test copies
 // them itself, standing in for those regions, so the blob is checked for
 // everything else. The replay through the TTD engine itself is in
 // debugger/ttd/ttdneogs_test.cpp.
@@ -81,7 +81,7 @@ struct Card
 /// Runs `a` and a copy made from its blob side by side
 void expectContinuesIdentically(Card& a, Card& b, int frames, const std::string& from)
 {
-    ASSERT_LT(a.save().size(), a.chip->getRamSizeKB() * 1024) << from << ": the blob must leave the card memory out (TTD v1)";
+    ASSERT_LT(a.save().size(), a.chip->getRamSizeKB() * 1024) << from << ": the blob must leave the card memory out";
     b.copyMemoriesFrom(a);
     b.chip->TTDLoadState(a.save().data());
     ASSERT_EQ(b.chip->TTDHashState(), a.chip->TTDHashState()) << from;

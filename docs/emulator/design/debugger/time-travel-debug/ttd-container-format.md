@@ -2,12 +2,29 @@
 
 | | |
 |---|---|
-| **Status** | Section 2 describes what ships today. Section 4 onwards is a proposal, not implemented. |
-| **Last updated** | 2026-08-20 |
+| **Status** | History. Section 2 describes v1's file, which nothing reads since v1 was deleted (2026-10-30). Sections 4-6 are the proposal that led to the engine's container, built differently: see [As built](#as-built-2026-10-31) |
+| **Last updated** | 2026-10-31 (as-built note; text 2026-08-20) |
 | **Parent TDD** | [time-travel-debugging-tdd.md](./time-travel-debugging-tdd.md) §6, §9 |
-| **Schema** | `core/src/debugger/ttd/ttd.ksy` (authoritative for the current layout) |
+| **Schema** | `core/src/debugger/ttd/ttd.ksy` (authoritative for the current layout: the engine's schema 2, not the layout in section 2) |
 
 ---
+
+### As built (2026-10-31)
+
+The engine's session file is a container of numbered streams, as proposed here, built in
+`core/src/debugger/ttd/engine/ttdcontainer.*` (schema 2, [`ttd.ksy`](../../../../../core/src/debugger/ttd/ttd.ksy)):
+
+- a header (magic `TTDD`, schema 2, session UUID, stream table, session tables), then records grouped into parts,
+  each part closed by a part-end record naming its frames and the parts it depends on, then an index and a trailer
+  (finished files only);
+- every stream is required or ancillary: an unknown required stream refuses the file, an unknown ancillary one is
+  skipped;
+- CRC32C on the header, on each record's header and payload, and on the index; a file without its trailer opens by
+  scanning its records, and a damaged part is a hole (it and the parts that depend on it are unreachable);
+- a recording is written as it records, one file per segment in its recording folder (`engine/ttdrecordingwriter.*`).
+
+Design: [phase-4-session-file-tdd.md](../../../../inprogress/2026-09-25-ttd-v2-migration/phase-4-session-file-tdd.md),
+[integrity-and-versioning.md](../../../../inprogress/2026-09-25-ttd-v2-migration/integrity-and-versioning.md). The text below is kept as written.
 
 ## 1. Why this document exists
 
@@ -24,7 +41,7 @@ borrowed deliberately: **streams** (independent kinds of data), **frames**
 (the unit each stream is chunked into), and **muxing** (how those chunks are
 laid out relative to each other in the file).
 
-## 2. What the format is today
+## 2. What the format was (v1, history)
 
 Strictly ordered sections, written in one pass:
 

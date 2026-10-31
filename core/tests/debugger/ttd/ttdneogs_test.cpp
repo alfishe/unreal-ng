@@ -28,7 +28,7 @@
 
 /// NeoGS under the TTD engine (neogs-tdd.md §7.4). The card's registers and
 /// device state are its blob; its RAM (2-4 MB) and flash (512 KB) are the
-/// engine's regions 4 and 5 (a v1 session records neither). The card boots its
+/// engine's regions 4 and 5. The card boots its
 /// firmware from an SD card image while the recording runs - SD protocol, SPI
 /// masters, card CPU and RAM all busy.
 ///

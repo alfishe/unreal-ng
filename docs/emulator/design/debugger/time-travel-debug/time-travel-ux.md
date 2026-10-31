@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft for review |
+| **Status** | Design (2026-07-19). The panel as built is `unreal-qt/src/widgets/ttdwidget.*`, on the engine (`TimeTravelController`). The engine keeps a checkpoint for every frame and never thins, so the thinning tiers, the density strip and `budget_mb` below were not built; a history limit drops whole segments instead (parent TDD §0) |
 | **Version** | 1.0 |
 | **Last updated** | 2026-07-19 |
 | **Scope** | Qt debugger UI (unreal-qt) |
@@ -141,7 +141,7 @@ Implementation: `unreal-qt/src/widgets/ttdwidget.cpp`, the band in `widgets/jour
 
 ### 3.5 Session Invalidation Feedback
 
-When a session-invalidating event occurs (TDD §4.2 — reset, snapshot load, disk write in v1, speed change), the timeline clears and a non-modal toast explains *why*: `TTD history cleared: disk write at frame 13,001 (see docs)`. The previous session's bookmarks are offered for export before clearing. Silent history loss is forbidden (Principle 2).
+When a session-invalidating event occurs (TDD §4.2 — reset, snapshot load, disk write in v1, speed change; on the engine a reset or a snapshot load ends the recording and keeps the history browsable, and disk writes do not end it, TDD §4.2), the timeline clears and a non-modal toast explains *why*: `TTD history cleared: disk write at frame 13,001 (see docs)`. The previous session's bookmarks are offered for export before clearing. Silent history loss is forbidden (Principle 2).
 
 ---
 
@@ -348,7 +348,7 @@ Hold Backspace ~1.5 s watching the HUD, release just before the jump, replay the
 ## 11. Implementation Notes for unreal-qt
 
 - New widgets under `unreal-qt/src/debugger/widgets/`: `timelinewidget` (lanes+ruler custom-painted, QAbstractScrollArea-based), `eventinspectorwidget` (QTableView over a lazily-populated model backed by journal queries), `framecomparewidget` (two framebuffer views + diff shader in QPainter), `rewindhud` (translucent overlay on the screen widget).
-- All engine access goes through `TTDManager` public API + `GetTimelineSummary()` (TDD §10.2) — widgets never touch stores directly (mirrors how existing widgets consume tracker pointers).
+- All engine access goes through `TTDManager` public API + `GetTimelineSummary()` (TDD §10.2; built: `TimeTravelController`, whose observers read `GetPublishedSessionInfo()`) — widgets never touch stores directly (mirrors how existing widgets consume tracker pointers).
 - Seek requests from UI marshal through the existing pause discipline; the timeline widget owns a single-slot "pending seek" to implement coalescing (§3.2).
 - Lane rendering budget: the summary struct delivers per-frame aggregates (write count, paging-OUT count, input count, marks) — O(visible pixels) redraw, no journal iteration on paint.
 - Event Inspector pages journal queries in chunks (e.g., 1,000 rows) to keep multi-second replay-backed queries responsive.

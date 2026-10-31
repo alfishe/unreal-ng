@@ -4,9 +4,9 @@
 /// go to its own TimeTravelEngine (C1-C4,
 /// docs/inprogress/2026-09-25-ttd-v2-migration/phase-5-switchover-tdd.md).
 ///
-/// Per parent TDD §6.3, §7.1. The hot path is OnFrameBoundary: dirty pages
-/// are freshly Intern'd, clean pages AddRef the previous checkpoint's slot,
-/// CPU/chipset are field-copied via the helpers in ttdcheckpoint.cpp.
+/// Per parent TDD §6.3, §7.1. The hot path is OnFrameBoundary: the frame's
+/// dirty pieces, device states and CPU/chipset (field-copied via the helpers in
+/// ttdcheckpoint.cpp) go to the engine's capture (FeedShadow).
 
 #include "timetravelcontroller.h"
 
@@ -76,13 +76,12 @@
 #include "debugger/debugmanager.h"
 #include "debugger/targets/gscardtarget.h"
 
-// Static assertion: the .ttd v1 format assumes a little-endian host. Every
-// multi-byte field in the header / cpu_state / chipset_state is written in
-// host order. If we ever port to a big-endian platform we must either add
+// Static assertion: the .ttd format assumes a little-endian host. The CPU and
+// chipset states are written in host order. If we ever port to a big-endian platform we must either add
 // byte-swapping or bump the schema version and document the new convention.
 #if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__)
 static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
-              ".ttd v1 schema assumes little-endian host; add endian conversion if porting");
+              ".ttd format assumes little-endian host; add endian conversion if porting");
 #elif defined(_MSC_VER)
 // MSVC on Windows is always little-endian (x86/x64/ARM)
 #else
@@ -363,7 +362,7 @@ bool TimeTravelController::StartRecording()
 
     // Capture the baseline checkpoint so the timeline always has at least
     // one entry. This is the only place we pay the full model-RAM copy cost
-    // up front (v1 strategy — see the header doc for the v2 fast-path plan).
+    // up front (see the header doc).
     TTDCheckpoint baseline;
     if (!CaptureNow(baseline))
     {
@@ -1184,7 +1183,7 @@ TTDHeapBreakdown TimeTravelController::GetHeapBreakdown() const
 
     // The engine (Phase 5, C4a): its piece store, reference tables and
     // capture state; checkpoints with the frame table; device state is in its
-    // pieces. Its copies of the journals are counted with v1's below
+    // pieces. Its copies of the journals are counted with the controller's below
     const TTDEngineHeapBreakdown e = _engine->HeapBreakdown();
     h.pageStoreTable = e.pieceVersions + e.referenceTables + e.deltaBase + e.bookkeeping;
     h.ramPayload = e.piecePayload;
@@ -1968,7 +1967,7 @@ std::optional<TTDExternalEvent> TimeTravelController::FirstBarrierBetween(const 
     const TTDEvent* ev = _engine->Events().FirstBarrierIn(GlobalT(from), GlobalT(to));
     if (!ev)
         return std::nullopt;
-    // As a v1 marker: kind 0x0100 + TTDExternalEventKind, the reason as payload
+    // As a marker (TTDExternalEvent): kind 0x0100 + TTDExternalEventKind, the reason as payload
     TTDExternalEvent out;
     out.time = TimePointAt(ev->machineTime);
     const uint16_t kind = static_cast<uint16_t>(ev->kind);
@@ -2314,7 +2313,7 @@ enum : uint8_t
     kEditChipset = 5,
     kEditClock = 6,
     kEditBanks = 7,
-    kEditDeviceStateAt = 8,   ///< a device state by its index in the session's device table (D23; kind 3: by v1 id)
+    kEditDeviceStateAt = 8,   ///< a device state by its index in the session's device table (D23; kind 3: by legacy id)
     kEditCpuBytes = 9,        ///< bytes through the CPU's view (RecordScriptEdit)
     kEditCardEdit = 10,       ///< a card hook's write (RecordCardEdits): id cpu | kind << 8, index the address,
                               ///< bytes the frame (8), the card time (8), the edit's bytes
@@ -2722,7 +2721,7 @@ std::vector<TTDPortContext> TimeTravelController::PortAccessContexts(const std::
 
 // A tool edit's bytes, as records: kind u8, id u16, index u32, length u32, bytes.
 // Kinds: 1 a machine RAM page (index = page), 2 a device-memory piece (id =
-// TTDRegionId, index = piece), 3 a device's whole state (id = v1 id), 4 the
+// TTDRegionId, index = piece), 3 a device's whole state (id = legacy id), 4 the
 // CPU (TTDCpuState), 5 the chipset latches (TTDChipsetState; its counters are
 // the machine time and stay as they are, the paging is decoded from it), 6 the
 // CPU time the edit spent (a fast loader's trap: u32, Z80::tt units), 7 the
@@ -2984,7 +2983,7 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
         }
         else if (kind == kEditDeviceState || kind == kEditDeviceStateAt)
         {
-            // Kind 3 (sessions before D23) names the device by its v1 id; kind 8 by its index in the session's
+            // Kind 3 (sessions before D23) names the device by its legacy id; kind 8 by its index in the session's
             // device table, bound to this machine's device
             TTDSerializable* device = nullptr;
             if (kind == kEditDeviceState)
@@ -3589,7 +3588,7 @@ bool TimeTravelController::SeekToInternal(const TTDTimePoint& target, TTDSeekRes
     // replay, the chosen checkpoint already reflects any markers at or
     // before that frame boundary.
     // ------------------------------------------------------------------
-    // The engine's data: a sealed replay has no barrier but a v1 record without its data
+    // The engine's data: a sealed replay has no barrier but a record without its data (converted from a v1 file)
     if (target.tInFrame > restoredTInFrame)
     {
         // A replay: every setting and medium counts (Phase 3, Step 4); after
@@ -4028,7 +4027,7 @@ bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
     ClipJournalSegments(GlobalT(cut));
 
     // The checkpoints after `from` and the engine's records after `cut` go
-    // last: the engine's cursors into v1's journals follow their new ends
+    // last: the engine's cursors into the controller's journals follow their new ends
     TruncateTimelineAfter(from, cut);
 
     // ------------------------------------------------------------------
@@ -4567,7 +4566,7 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
         for (const TTDDeviceRegion& r : _shadowDeviceRegions)
             regions.push_back(r.desc);
 
-        // The device table, from the same registry v1 records from (checked
+        // The device table, from the peripheral registry (checked
         // when recording started: CheckDeviceTable)
         if (!engine.BeginSession(regions, _peripherals.DeviceEntries(), error))
         {
@@ -4577,7 +4576,7 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
         }
         ArmShadowRegions(true);
         _shadowRescan = true;
-        // Events and bus data the engine gets from here on: what v1 journals after this point
+        // Events and bus data the engine gets from here on: what the controller journals after this point
         _shadowEvents.input = _inputJournal.Size();
         _shadowEvents.external = _externalEvents.Size();
         _shadowEvents.facts = 0;
@@ -4620,7 +4619,7 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
     // Machine time from the frame table (Phase 3, Step 3): a frame starts where
     // the last captured one started plus its measured length - the base
     // T-states the machine ran since (emulatorState.t_states grows by each
-    // closed frame) in TTD units. frame x the current length (v1's GlobalT)
+    // closed frame) in TTD units. frame x the current length (v1's time base)
     // goes backwards when a frame's length changes (Sprinter 320 / 312 lines)
     const bool freshShadow = engine.CheckpointCount() == 0;
     const uint64_t baseNow = _context->emulatorState.t_states;
@@ -4698,7 +4697,7 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
     }
     // The write journal's new records and its spans (D40)
     DrainWritesToEngine();
-    // What v1 journaled up to this boundary: input, network, markers (Phase 3, Step 1)
+    // What the controller journaled up to this boundary: input, network, markers (Phase 3, Step 1)
     FeedV1Events(engine, _inputJournal, _externalEvents, _shadowEvents, out.time.frame, nullptr, &_toolEditPayloads,
                  &_shadowFacts);
     _shadowFacts.erase(_shadowFacts.begin(), _shadowFacts.begin() + static_cast<std::ptrdiff_t>(_shadowEvents.facts));
@@ -4780,7 +4779,7 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
     }
     else
     {
-        // The engine's cursors into v1's journals, at their new ends
+        // The engine's cursors into the controller's journals, at their new ends
         _shadowEvents.input = std::min(_shadowEvents.input, _inputJournal.Size());
         _shadowEvents.external = std::min(_shadowEvents.external, _externalEvents.Size());
         for (auto it = _shadowFacts.begin(); it != _shadowFacts.end();)

@@ -2227,9 +2227,7 @@ std::string FormatTtdStatus(const Json::Value& status)
     }
     if (state == "recording")
     {
-        out << (status["backend"].asString() == "v1" ? " - speed held at 1x, turbo and fast tape/disk off until stop"
-                                                     : " - speed held at 1x and fast disk off until stop (turbo and "
-                                                       "fast tape stay: a tape loads in turbo)");
+        out << " - speed held at 1x and fast disk off until stop (turbo and fast tape stay: a tape loads in turbo)";
     }
     else if (state == "detached")
     {
@@ -5325,7 +5323,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "session end), 'markers' (replay barriers: tape control, disk writes, tool memory edits made while recording; "
         "the hardware_reset kind is reserved and never written - a reset stops the recording instead). "
         "Navigate (while recording they pause the recording: state detached, status recording_paused; 'resume' at the "
-        "paused point continues it, 'stop' ends it; on backend v1 they return an error while recording): "
+        "paused point continues it, 'stop' ends it): "
         "'seek' (frame + optional tinframe), "
         "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
         "'reverse_step' (count instructions, tstates OR scanlines back), 'reverse_continue' (run backward until PC hits one of pcs; "
@@ -5561,10 +5559,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "'start' -> run the program (control_execution) -> 'stop' -> 'find_last' / 'reverse_continue' / 'seek' / step "
         "actions to inspect the past (inspect_state shows the machine at that point) -> 'resume' to continue live from "
         "there. While recording, the host speed is held at 1x and fast disk is off; turbo, turbo tape and fast tape stay "
-        "on (a tape from zero loads in turbo inside the recording; v1 holds them off). A tape or disk load while "
+        "on (a tape from zero loads in turbo inside the recording). A tape or disk load while "
         "recording is an event of the recording, and wipes a stopped session's history; a reset or a snapshot load "
-        "ends the session and keeps its history; a ROM reload or model switch ends it and drops it (v1 refuses all of "
-        "these while recording); seek / step / find_last while recording pause it (the engine). Also: agent bookmarks and coverage index queries.",
+        "ends the session and keeps its history; a ROM reload or model switch ends it and drops it; seek / step / "
+        "find_last while recording pause it. Also: agent bookmarks and coverage index queries.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();

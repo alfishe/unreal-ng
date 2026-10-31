@@ -457,8 +457,7 @@ public:
     void SetSpeedChangeInterceptor(std::function<bool(uint8_t)> interceptor);
 
     /// @brief Why a recording-destructive action is refused right now (empty when allowed) -
-    /// ITimeTravelHooks::RecordingGuard: the TTD v1 backend's refusals, which the coordinator's owner of the
-    /// emulator's operations reports (goes with v1). Surfaces ask the coordinator instead (Ask*)
+    /// ITimeTravelHooks::RecordingGuard. Surfaces ask the coordinator instead (Ask*)
     std::string RecordingGuard(ttd::TTDGuardedAction action) const;
 
     /// @brief Run an edit of the machine made by a tool (a script, a debugger surface: memory, registers, ports,
@@ -528,7 +527,7 @@ public:
     /// Why @p change would be refused right now (empty: it would go ahead), asked of the machine state coordinator:
     /// a refusal is logged with the caller's source and the sentence the operation itself gives. For a surface about
     /// to prepare the change (an upload, a staged file, a dialog). While a TTD recording runs the engine says empty
-    /// (the change will be an event of the recording); TTD v1 refuses. @p drive: the floppy drive; @p what: the file
+    /// (the change will be an event of the recording). @p drive: the floppy drive; @p what: the file
     std::string AskMediaChange(MediaChange change, uint8_t drive = 0, const std::string& what = {});
     /// Why replacing this machine by another model, or moving another machine's state into it, would be refused right
     /// now (empty: it would go ahead), asked of the machine state coordinator (a refusal is logged). @p what: for the
@@ -656,10 +655,9 @@ public:
     /// A tape file (any TapeLoaderRegistry format) or a folder into the tape
     /// slot, at once; the deck stops and plays the new tape from its start.
     /// While a TTD recording runs it is an event of the recording: it lands at the next frame boundary
-    /// (TTD v1: refused)
     bool LoadTape(const std::string& path, std::string* error = nullptr);
     /// The tape out of the deck. While a TTD recording runs it is an event of the recording: it lands at the next frame
-    /// boundary (TTD v1: refused)
+    /// boundary
     bool EjectTape(std::string* error = nullptr);
     /// `ext` (no dot, any case) is a format a tape loader reads
     static bool IsTapeExtension(const std::string& ext);
@@ -671,8 +669,7 @@ public:
     ///               drive 0 today (unreal-qt/src/mainwindow.cpp) - that is a UI default, not a
     ///               limitation of this method; every other caller (WebAPI, CLI, MCP, Lua, Python)
     ///               must pass the drive the caller actually asked for.
-    /// While a TTD recording runs the insert is an event of the recording: it lands at the next frame boundary (TTD v1:
-    /// refused)
+    /// While a TTD recording runs the insert is an event of the recording: it lands at the next frame boundary
     bool LoadDisk(const std::string& path, uint8_t drive = 0, std::string* error = nullptr);
 
     /// Take the disk out of `drive` (0-3, A-D) and free it; the other drives are untouched.
@@ -680,7 +677,7 @@ public:
     ///              dirty disk stays in and `error` says so
     /// @param error When non-null and the call fails, receives a human-readable reason
     /// An empty drive is not an error. Like LoadDisk, while a TTD recording runs it is an event of the recording: it
-    /// lands at the next frame boundary (TTD v1: refused)
+    /// lands at the next frame boundary
     bool EjectDisk(uint8_t drive, bool force = false, std::string* error = nullptr);
 
     /// Layout of a blank disk from CreateBlankDisk()
@@ -702,8 +699,7 @@ public:
     /// @param sides 1 or 2; 0 = the format's default (Unformatted / Trdos 2, Plus3 1)
     /// @param error When non-null and the call fails, receives a human-readable reason
     /// @param resolved When non-null, receives the format and geometry actually used
-    /// While a TTD recording runs the insert is an event of the recording: it lands at the next frame boundary (TTD v1:
-    /// refused)
+    /// While a TTD recording runs the insert is an event of the recording: it lands at the next frame boundary
     struct BlankDiskResult
     {
         BlankDiskFormat format = BlankDiskFormat::Unformatted;

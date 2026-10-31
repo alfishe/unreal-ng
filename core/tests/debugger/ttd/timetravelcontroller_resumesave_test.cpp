@@ -147,8 +147,7 @@ TEST_F(TimeTravelController_ResumeSave_Test, ResumingALoadedSessionCollectsCover
 /// NeoGS stores its RAM (up to 4 MB) and flash in every blob until TTD v2
 /// memory regions: with incompressible RAM contents (MP3 data, a random fill
 /// here) the blob exceeds 1 MiB, which the reader used to refuse while the
-/// writer wrote it. The reader and the writer now share one cap
-/// (kMaxPeripheralBlobBytes), and a saved session loads.
+/// writer wrote it. A saved session with such a card loads.
 TEST_F(TimeTravelController_ResumeSave_Test, NeoGSSessionWithIncompressibleRamLoads)
 {
     ASSERT_TRUE(FitGeneralSoundCard(_context->pSoundManager, GSTypeKind::NGS));

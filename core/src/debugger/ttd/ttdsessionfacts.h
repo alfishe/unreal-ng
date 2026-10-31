@@ -28,7 +28,7 @@ class TTDBookmarkJournal;
 namespace holderstream
 {
 constexpr uint16_t kFacts = sessionstream::kHolderFirstFree;   ///< 17
-constexpr uint16_t kCoverage = sessionstream::kCoverage;       ///< 8: the whole index, v1's coverage format
+constexpr uint16_t kCoverage = sessionstream::kCoverage;       ///< 8: the whole index, in the coverage format kept from v1
 constexpr uint16_t kBookmarks = sessionstream::kBookmarks;     ///< 12
 }  // namespace holderstream
 
@@ -40,7 +40,7 @@ struct TTDSessionFacts
     uint64_t capturedAtUnixMs = 0;
     std::string recordedBy;           ///< the recording instance's symbolic id
     /// Fitted, not recorded by design (the lightweight General Sound). The recorded devices are the session's
-    /// device table (version 1 also kept them as a mask of v1 ids; read, not kept)
+    /// device table (versions 1-2 also kept them as a mask of legacy ids; read, not kept)
     std::vector<TTDDeviceKey> notRecorded;
     bool inputHistoryComplete = false;
     bool portJournalValid = false;    ///< the bus journals hold every IN of the history

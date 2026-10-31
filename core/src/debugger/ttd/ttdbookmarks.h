@@ -47,9 +47,8 @@
 ///     history would dangle);
 ///   - ResumeRecordingFrom — DropAfter(from) (bookmarks in the discarded
 ///     future are dead; bookmarks exactly at `from` are kept);
-///   - SerializeSession / DeserializeSession — persisted as a flag-gated
-///     section (ttd::dump::kFlagsHasBookmarks), schema-additive like the
-///     coverage index.
+///   - SerializeSession / DeserializeSession — persisted as the session
+///     file's "bookmarks" holder stream (ttdcontrollersessionfile.cpp).
 
 #include <cstddef>
 #include <cstdint>

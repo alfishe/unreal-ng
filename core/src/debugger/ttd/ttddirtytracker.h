@@ -18,7 +18,7 @@
 ///   - Two bitmaps: `_dirty` (per-frame, cleared by CollectAndClear) and
 ///     `_everDirty` (session-scoped, never cleared within a session).
 ///   - `_everDirty` distinguishes "never touched in this session" pages,
-///     which carry the kNeverTouchedSlot sentinel across all 4 sub-page
+///     which carry the TTDPageRef::kNeverTouched sentinel across all 4 sub-page
 ///     slots in their TTDPageRef and cost nothing to capture or restore.
 ///   - MarkDirty is hot-path code: one predictable branch + one atomic OR
 ///     when the feature is enabled; zero cost when disabled.

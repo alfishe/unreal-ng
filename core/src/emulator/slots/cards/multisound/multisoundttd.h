@@ -8,8 +8,8 @@
 //   Sam2695      (59) "<slot>.multisound.sam2695"   the General MIDI synthesizer (Sam2695Ttd below)
 //   MultiSoundGs (60) "<slot>.multisound.gs"        the board's General Sound (SoundChip_GeneralSound, its GS profile
 //                                                    names the id and the RAM region MultiSoundGsRam)
-// A v1 checkpoint holds one blob per id, so one card of this kind per machine: the slot planner refuses a second one
-// (its functions clash), and a GS card next to it keeps the GS card's own id 5.
+// One card of this kind per machine (the legacy ids are one per kind, a v1 checkpoint held one blob per id): the slot
+// planner refuses a second one (its functions clash), and a GS card next to it keeps the GS card's own id 5.
 
 #include <cstddef>
 #include <cstdint>

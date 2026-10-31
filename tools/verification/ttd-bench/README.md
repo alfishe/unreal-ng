@@ -2,7 +2,7 @@
 
 This directory holds the tools for running, comparing and baselining the time-travel (TTD) benchmark matrix (PLAN #40 Phase 0, Step 2, [TTD v2 requirements §5](../../../docs/inprogress/2026-09-25-ttd-v2-migration/requirements.md)).
 
-The same emulation runs under every TTD engine, so the numbers compare engine against engine and commit against commit. Today there is one: `controller`, the `TimeTravelController` the application runs. v1 (`TimeTravelManager`) and `engine` (the engine in v1's shadow) went with Phase 6 of the [TTD v2 migration](../../../docs/inprogress/2026-09-25-ttd-v2-migration/TODO.md) (2026-10-30); their figures stay in the stored baselines.
+The same emulation runs under every TTD engine, so the numbers compare engine against engine and commit against commit. Today there is one: `controller`, the `TimeTravelController` the application runs. v1 (`TimeTravelManager`) and `engine` (the engine in v1's shadow) went with Phase 6 of the [TTD v2 migration](../../../docs/inprogress/2026-09-25-ttd-v2-migration/DONE.md) (2026-10-30); their figures stay in the stored baselines.
 
 | Piece | Where |
 |---|---|

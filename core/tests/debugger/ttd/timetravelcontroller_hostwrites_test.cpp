@@ -1,6 +1,6 @@
 /// @file timetravelcontroller_hostwrites_test.cpp
 /// @brief FR-20: while time travel replays history, nothing the machine does
-/// writes a host file. v1's replay holds the media manager's host writes
+/// writes a host file. The replay holds the media manager's host writes
 /// (MediaManager::HoldHostWrites) for exactly as long as it runs.
 ///
 /// A guest loop writes to a test port; the port's handler notes whether the

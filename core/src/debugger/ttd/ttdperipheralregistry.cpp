@@ -17,7 +17,7 @@ std::string Describe(const TTDDeviceKey& key)
     return key.instance + " (type " + std::to_string(static_cast<uint16_t>(key.type)) + ")";
 }
 
-/// The divergence hash's rotation for a device: its v1 id (the values v1 always used), else its type
+/// The divergence hash's rotation for a device: its legacy id (the values always used), else its type
 unsigned HashShift(const TTDRegistryEntry& e)
 {
     const unsigned basis = e.legacyId != PeripheralId::None ? static_cast<unsigned>(e.legacyId)
@@ -46,7 +46,7 @@ bool TTDPeripheralRegistry::Register(TTDSerializable* device, const std::string&
                                   " (a session holds one state per device)");
             return false;
         }
-        // Two keys under one v1 id are kept: the engine records both, v1 cannot (V1Recordable names them)
+        // Two keys under one legacy id are kept: the engine records both
     }
     _entries.push_back({key, d.legacyId, device, nullptr});
     PairRegionSources();
@@ -158,8 +158,9 @@ bool TTDPeripheralRegistry::CheckDeviceTable(std::string& error) const
         const TTDDeviceDescriptor d = e.device->TTDDescribe();
         if (d.legacyId != e.device->TTDPeripheralId())
         {
-            error = "device " + name + " describes itself as v1 id " + std::to_string(static_cast<unsigned>(d.legacyId)) +
-                    " but names itself v1 id " + std::to_string(static_cast<unsigned>(e.device->TTDPeripheralId()));
+            error = "device " + name + " describes itself as legacy id " +
+                    std::to_string(static_cast<unsigned>(d.legacyId)) + " but names itself legacy id " +
+                    std::to_string(static_cast<unsigned>(e.device->TTDPeripheralId()));
             return false;
         }
         if (d.type != e.key.type)
@@ -179,49 +180,6 @@ bool TTDPeripheralRegistry::CheckDeviceTable(std::string& error) const
     return table.Build(DeviceEntries(), error);
 }
 
-bool TTDPeripheralRegistry::V1Recordable(std::string& why) const
-{
-    for (size_t i = 0; i < _entries.size(); ++i)
-    {
-        const TTDRegistryEntry& e = _entries[i];
-        if (!e.device || e.device->TTDStateSize() == 0)
-            continue;
-        if (e.legacyId == PeripheralId::None)
-        {
-            why = "device " + Describe(e.key) + " has no v1 id: record with the engine";
-            return false;
-        }
-        for (size_t j = 0; j < i; ++j)
-            if (_entries[j].device && _entries[j].legacyId == e.legacyId)
-            {
-                why = "devices " + Describe(_entries[j].key) + " and " + Describe(e.key) + " share v1 id " +
-                      std::to_string(static_cast<unsigned>(e.legacyId)) + ": record with the engine";
-                return false;
-            }
-    }
-    return true;
-}
-
-TTDDeviceStates TTDPeripheralRegistry::StatesOfV1Blobs(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs) const
-{
-    TTDDeviceStates states;
-    for (const auto& [id, blob] : blobs)
-    {
-        std::vector<uint8_t> state = DecodeBlob(id, blob);
-        if (state.empty())
-            continue;
-        TTDDeviceKey key{static_cast<TTDDeviceType>(id), {}};
-        for (const TTDRegistryEntry& e : _entries)
-            if (static_cast<uint8_t>(e.legacyId) == id)
-            {
-                key = e.key;
-                break;
-            }
-        states.emplace(std::move(key), std::move(state));
-    }
-    return states;
-}
-
 std::vector<TTDDeviceKey> TTDPeripheralRegistry::KeysOfV1Mask(const PeripheralMask& mask)
 {
     std::vector<TTDDeviceKey> keys;
@@ -229,15 +187,6 @@ std::vector<TTDDeviceKey> TTDPeripheralRegistry::KeysOfV1Mask(const PeripheralMa
         if (mask.Test(static_cast<uint8_t>(id)))
             keys.push_back({static_cast<TTDDeviceType>(id), {}});
     return keys;
-}
-
-PeripheralMask TTDPeripheralRegistry::V1MaskOf(const std::vector<TTDDeviceKey>& keys)
-{
-    PeripheralMask mask;
-    for (const TTDDeviceKey& key : keys)
-        if (static_cast<uint16_t>(key.type) < static_cast<uint16_t>(PeripheralId::None))
-            mask.Set(static_cast<uint8_t>(key.type));
-    return mask;
 }
 
 void TTDPeripheralRegistry::SaveLive(std::vector<std::vector<uint8_t>>& out) const
@@ -430,7 +379,7 @@ TTDRestoreReport TTDPeripheralRegistry::RestoreAll(const std::unordered_map<uint
     // a divergence with no error anywhere. Driving from the devices lets us at
     // least name the device that is about to be left stale.
     //
-    // In ascending v1 id order, whatever the registration order: a serializer
+    // In ascending legacy id order, whatever the registration order: a serializer
     // that completes another device's state (Wd1793Context after BetaDisk)
     // takes a higher id and finds that device already loaded.
     std::vector<std::pair<uint8_t, TTDSerializable*>> ordered;

@@ -178,13 +178,12 @@ public:
     void Clear();
 
     // -----------------------------------------------------------------------
-    // Serialization (.ttd v3 — see ttddumpformat.h)
+    // Serialization (the v1 file's journal section; v1 was deleted, only tests call these)
     // -----------------------------------------------------------------------
 
     /// @brief Write the live records as a length-prefixed block.
     ///
     /// Format: u8 count, then count * sizeof(TTDWriteRecord) bytes.
-    /// Called by TimeTravelController::SerializeSession under pause.
     bool Serialize(std::ostream& out) const;
 
     /// @brief Read records written by Serialize.

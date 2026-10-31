@@ -4,7 +4,7 @@
 |---|---|
 | **Audience** | Anyone debugging ZX Spectrum software with Unreal-NG |
 | **Scope** | Operations available today, on every control surface |
-| **Last updated** | 2026-08-21 |
+| **Last updated** | 2026-10-31 (the engine; the costs in §9 were measured on v1, deleted 2026-10-30) |
 | **Related** | [time-travel-debugging-tdd.md](./time-travel-debugging-tdd.md) (design), [ttd-container-format.md](./ttd-container-format.md) (file layout), [overhead-and-gating.md](./overhead-and-gating.md) (cost) |
 
 A `.ttd` file is a complete recording of a machine: every frame's state, every
@@ -38,12 +38,13 @@ Same operations on every surface:
 
 Two things worth knowing before you record:
 
-* **Recording must be stopped before you can scrub.** Seeking while recording
-  would overwrite the live state the timeline is still being built from, so it
-  is refused with a clear error rather than silently corrupting history.
-* **The write journal is optional** (`ttd record --journal` / `--no-journal`).
-  It is what makes "who wrote this byte" instant; without it the same question
-  falls back to replay. It is also the largest thing in the file — see §9.
+* **Scrubbing pauses the recording.** A seek, step or reverse query while
+  recording pauses it (state detached); `ttd resume` goes on from the position,
+  dropping the history after it.
+* **The write journal is optional and off by default** (`ttd record --journal`,
+  or `ttd journal on|off` at any moment). It is what makes "who wrote this byte"
+  instant; without it the same question uses the coverage index and replay.
+  It is the largest stream of an active recording — see §9.
 
 ---
 
@@ -55,7 +56,7 @@ ttd pos                  # where am I?
 ttd back                 # one frame earlier
 ttd forward              # one frame later
 ttd reverse-step -n 100  # 100 instructions back
-ttd s                    # one instruction forward
+ttd si-forward           # one instruction forward
 ```
 
 | Operation | CLI | WebAPI | Cost |
@@ -65,7 +66,7 @@ ttd s                    # one instruction forward
 | Step back 1 instruction | `ttd reverse-step -n 1` | `POST /ttd/reverse-step` | 1.2 ms |
 | Step back N instructions | `ttd reverse-step -n N` | `POST /ttd/reverse-step` | 45 ms at N=256 |
 | Step back T t-states | `ttd reverse-step --tstates T` | `POST /ttd/reverse-step` | 0.2–4 ms |
-| Step forward 1 instruction | `ttd s` | `POST /ttd/step-instruction` | ~1 ms |
+| Step forward 1 instruction | `ttd si-forward` | `POST /ttd/step-instruction` | ~1 ms |
 
 Seeking is cheap because a checkpoint is captured **every frame**, so the engine
 never replays more than one frame to land anywhere. Stepping backwards by
@@ -224,24 +225,14 @@ rather than deciding to count before you run.
 **Count writes to an address in a window** — iterate `write_history` above and
 stop at the window's lower bound.
 
-**Per-frame activity across a whole session** — the analyzer reports it directly:
-
-```sh
-tools/verification/ttd-analyzer/run.sh report session.ttd -o report.md
-```
-
-The report carries, per checkpoint: dirty page count, unique sub-page slots,
-`PC`, `SP`, screen bank, border, and the paging latch. That is a frame-by-frame
-activity profile without writing any code.
-
 **Whole-session shape:**
 
 ```sh
 tools/verification/ttd-analyzer/run.sh info session.ttd
 ```
 
-reports the write-journal record count, the coverage index's per-kind frame
-coverage, page-store composition and compression ratios.
+reports the regions, checkpoints, events and bytes per stream. (v1's analyzer
+also had a per-frame `report`; it was deleted with v1.)
 
 ---
 
@@ -275,15 +266,18 @@ ttd markers                 # list them
 ttd barriers                # same, emphasising the blocking role
 ```
 
-This matters for anything non-deterministic. A disk write, for example, cannot
-be replayed truthfully, so the engine refuses to search past it rather than
-producing a confident wrong answer.
+This matters for anything non-deterministic: the engine refuses to search past
+what it cannot replay rather than producing a confident wrong answer. Tape and
+disk markers are crossed (the journals carry the data), and debugger edits with
+their bytes are replayed; a debugger edit without its bytes, a reset and an
+unclassified marker stop a search.
 
 ---
 
 ## 9. What a `.ttd` costs
 
-Measured on 300-frame recordings (`testdata/ttd/`):
+*History:* measured on v1's 300-frame recordings (the v1 fixtures, deleted with v1). The engine's figures, per
+configuration: the [TTD v2 migration](../../../../inprogress/2026-09-25-ttd-v2-migration/README.md) phase results.
 
 | Recording | File | Write journal | Coverage index | Per hour |
 |---|---|---|---|---|
@@ -293,11 +287,11 @@ Measured on 300-frame recordings (`testdata/ttd/`):
 | Heavy demo (across-the-edge) | 3.48 MB | 2.46 MB | 13.9 KB | ~2.1 GB |
 
 The write journal dominates. If you do not need instant "who wrote this byte",
-recording with `--no-journal` cuts the file by 40–70%; reverse watchpoints then
-fall back to replay, which still works.
+recording without it (the default on the engine) cut v1's file by 40–70%;
+reverse watchpoints then fall back to replay, which still works.
 
-Recording costs about **470 µs per frame**, i.e. 2.4% of a frame's 20 ms
-real-time budget. You will not feel it.
+v1's recording cost about **470 µs per frame**, i.e. 2.4% of a frame's 20 ms
+real-time budget.
 
 ---
 
@@ -332,15 +326,12 @@ and for looking at a recording someone sent you:
 
 ```sh
 cd tools/verification/ttd-analyzer
-./run.sh info session.ttd         # header, sections, sizes, compression
+./run.sh info session.ttd         # regions, checkpoints, events, bytes per stream
 ./run.sh validate session.ttd     # integrity checks; exit 1 on error
-./run.sh analyze session.ttd      # integrity + anomalies + timeline
-./run.sh report session.ttd -o report.md
-./run.sh render session.ttd --frame 200 -o frame200.png
-./run.sh render-all session.ttd -o frames/
-./run.sh heatmap session.ttd -o heatmap.png
+./run.sh parts session.ttd        # parts, bytes per stream, dependencies
+./run.sh recover session.ttd      # what a scan keeps of an unfinished file
 ```
 
-`render` is often the fastest way to answer "what was on screen at frame N"
-without launching anything, and `heatmap` shows at a glance which frames were
-busy — a good place to start when you do not yet know where the problem is.
+The analyzer reads the engine's files (schema 2). v1's analyzer commands
+(`analyze`, `report`, `render`, `render-all`, `heatmap`) read v1's files and
+were deleted with v1.

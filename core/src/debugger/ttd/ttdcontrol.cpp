@@ -161,7 +161,7 @@ StateNode RecordedMachineNodeImpl(const TTDRecordedMachine& m)
     v["ram_page_bound"] = static_cast<unsigned>(m.ramPageBound);
     // A string: a 64-bit hash does not survive a JSON number (doubles)
     v["rom_signature"] = m.romSignature == 0 ? StateNode() : StateNode("0x" + HashToString(m.romSignature));
-    // The devices with a v1 id as that id's set, as before D23 (`peripherals` names every device): ids 0..63 as one
+    // The devices with a legacy id as that id's set, as before D23 (`peripherals` names every device): ids 0..63 as one
     // number, `peripheral_mask_words` every 64-id word (ids 64.. in words 1..3)
     const PeripheralMask mask = m.V1Mask();
     v["peripheral_mask"] = static_cast<uint64_t>(mask.Low());

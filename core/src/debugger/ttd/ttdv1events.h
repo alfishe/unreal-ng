@@ -1,11 +1,12 @@
 #pragma once
 
 /// @file ttdv1events.h
-/// @brief v1's input journal (with its network records and received bytes)
-/// and external events into the engine's event log (Phase 3, Step 1): the
-/// shadow session feeds what v1 journaled since the last frame, the v1 file
-/// reader feeds a whole session. Kinds keep their numbers (a marker adds
-/// 0x0100); network bytes and a marker's reason become payloads.
+/// @brief The controller's input journal (with its network records and
+/// received bytes) and external events into the engine's event log (Phase 3,
+/// Step 1): the controller feeds what it journaled since the last frame. The
+/// journals' record formats and the "V1" names are v1's. Kinds keep their
+/// numbers (a marker adds 0x0100); network bytes and a marker's reason become
+/// payloads.
 
 #include <cstddef>
 #include <cstdint>
@@ -22,7 +23,7 @@ class TimeTravelEngine;
 class TTDInputJournal;
 class TTDExternalEventJournal;
 
-/// How far each v1 journal has been fed
+/// How far each journal has been fed
 struct TTDV1EventCursor
 {
     size_t input = 0;
@@ -44,7 +45,7 @@ struct TTDPendingFact
 /// refuses (before its first frame) is skipped and counted in @p refused
 /// @p editData: a debugger edit's bytes by marker index (live recording,
 /// TimeTravelController::ToolEditPayloads); such an edit becomes input with its
-/// bytes, one without them (v1 files) a barrier. @p facts: the live
+/// bytes, one without them a barrier. @p facts: the live
 /// machine's facts, merged in after input and markers at the same instant
 size_t FeedV1Events(TimeTravelEngine& engine, const TTDInputJournal& input, const TTDExternalEventJournal& external,
                     TTDV1EventCursor& cursor, uint64_t throughFrame, size_t* refused = nullptr,
