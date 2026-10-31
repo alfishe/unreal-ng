@@ -1,7 +1,7 @@
 // SlotManager and time travel (core/src/emulator/slots/slotttd.cpp; ZX-bus slots SL-5,
 // docs/inprogress/2026-10-03-zx-bus-slots/tdd.md §2.4, architecture.md §8): the slot set in the session's
 // configuration fingerprint, the slot-set guard on a session load, slot cards keeping their blob ids, device
-// instances named by slot, two instances of one module refused by the v1 registry, no slot change while recording.
+// instances named by slot, two instances of one module recorded side by side, no slot change while recording.
 
 #include <gtest/gtest.h>
 
@@ -17,11 +17,11 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
-#include "_helpers/ttdv1tests.h"
+#include "_helpers/ttdrecordedstate.h"
+#include "_helpers/ttdslotcards.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdconfigcapture.h"
 #include "debugger/ttd/ttdfileinfo.h"
@@ -143,20 +143,6 @@ private:
     fs::path _path;
     std::unique_ptr<Emulator> _emulator;
     bool _ok = false;
-};
-
-/// Instances created in its scope record on the engine's controller (core-tests select v1 by default)
-class EngineBackend
-{
-public:
-    EngineBackend() : _was(Emulator::DefaultTimeTravelBackend())
-    {
-        Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::Engine);
-    }
-    ~EngineBackend() { Emulator::SetDefaultTimeTravelBackend(_was); }
-
-private:
-    Emulator::TimeTravelBackend _was;
 };
 
 /// A registry stand-in for one chip module (the SAA1099 two cards could carry)
@@ -349,7 +335,6 @@ TEST(TtdSlots_Test, SocketBoardsToldApartByTheInstance)
 /// machine creation dominates)
 TEST(TtdSlots_Test, EngineSessionLoadRunsTheSlotSetGuard)
 {
-    EngineBackend engine;
     auto record = [](const std::string& slots, std::stringstream& out) {
         StagedMachine recorder("pentagon128k", slots);
         ASSERT_TRUE(recorder.Ok());
@@ -389,13 +374,13 @@ TEST(TtdSlots_Test, EngineSessionLoadRunsTheSlotSetGuard)
 }
 
 /// tdd.md §2.4: the cards that moved onto slots in SL-4 keep the blob ids and layouts the corpus was recorded with.
-/// The Pentagon fixture with TurboSound FM and the classic GS (testdata/ttd, recorded before the slots) loads into a
-/// machine planned from [SLOTS] on v1; its slot cards' blobs carry the ids the live devices register under, each of the
-/// live device's state size. The engine names them by slot. ~40 ms: one machine and a real 300-frame fixture
+/// The Pentagon fixture with TurboSound FM and the classic GS (testdata/ttd/engine, converted from a session recorded
+/// before the slots) loads into its machine, the cards planned from [SLOTS]; its slot cards' states carry the ids the live devices
+/// register under, each of the live device's state size. The engine names them by slot. ~40 ms: one machine and a real
+/// 300-frame fixture
 TEST(TtdSlots_Test, MigratedCardsKeepBlobIds)
 {
-    const ttdtest::V1Scope v1;   // the fixture is a v1 file, read by v1
-    const fs::path fixture = TestPathHelper::FindProjectRoot() / "testdata/ttd/tsfm_tech_support.ttd";
+    const fs::path fixture = TestPathHelper::FindProjectRoot() / "testdata/ttd/engine/tsfm_tech_support.ttd";
     ttd::TTDFileInfo info;
     std::string err;
     ASSERT_TRUE(ttd::ReadTTDFileInfo(fixture.string(), info, err)) << err;
@@ -406,21 +391,31 @@ TEST(TtdSlots_Test, MigratedCardsKeepBlobIds)
     ASSERT_TRUE(mask.Test(static_cast<uint8_t>(PeripheralId::TSFM))) << "the fixture records the TurboSound FM under id 4";
     ASSERT_TRUE(mask.Test(static_cast<uint8_t>(PeripheralId::GeneralSound))) << "the fixture records the classic GS under id 5";
 
-    std::string slots = "ay-socket = tsfm\nzxbus.1 = gs";
-    if (mask.Test(static_cast<uint8_t>(PeripheralId::MoonSound)))
-        slots += "\nzxbus.2 = moonsound";
-    StagedMachine machine("pentagon128k", slots);
-    ASSERT_TRUE(machine.Ok());
-    machine.Get()->GetFeatureManager()->setFeature(Features::kSoundHQ, true);
-    machine.Get()->GetFeatureManager()->setFeature(Features::kScreenHQ, true);
+    // The machine the file was recorded on, its cards planned into [SLOTS] (ttdslotcards.h)
+    SoundCardScope everySound{TestSound::All};
+    Emulator* emulator = ttdtest::CreateRecordedMachine(info.machine, err);
+    ASSERT_NE(emulator, nullptr) << err;
+    struct Cleanup
+    {
+        Emulator* e;
+        ~Cleanup() { EmulatorTestHelper::CleanupEmulator(e); }
+    } cleanup{emulator};
+    EmulatorContext* context = emulator->GetContext();
+    FeatureManager* features = emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    features->setFeature(Features::kSoundHQ, true);
+    features->setFeature(Features::kScreenHQ, true);
+    context->pMemory->UpdateFeatureCache();
 
+    ttd::TimeTravelController* controller = context->pTimeTravelController;
+    ASSERT_NE(controller, nullptr);
     std::ifstream in(fixture, std::ios::binary);
-    ASSERT_TRUE(machine.Context()->pTimeTravelManager->DeserializeSession(in, err)) << err;
-    const ttd::TTDCheckpoint* baseline = machine.Context()->pTimeTravelManager->GetCheckpoint(0);
-    ASSERT_NE(baseline, nullptr);
+    ASSERT_TRUE(controller->DeserializeSession(in, err)) << err;
+    ASSERT_GT(controller->GetCheckpointCount(), 0u);
 
-    const ttd::TTDPeripheralRegistry& registry = machine.Context()->pTimeTravelManager->GetPeripheralRegistry();
-    const SlotManager* slotManager = machine.Context()->pSlotManager;
+    const ttd::TTDPeripheralRegistry& registry = controller->GetPeripheralRegistry();
+    const SlotManager* slotManager = context->pSlotManager;
     ASSERT_NE(slotManager, nullptr);
     struct Card
     {
@@ -438,10 +433,14 @@ TEST(TtdSlots_Test, MigratedCardsKeepBlobIds)
         const uint8_t id = static_cast<uint8_t>(card.id);
         ttd::TTDSerializable* device = registry.FindLegacy(card.id);
         ASSERT_NE(device, nullptr) << "id " << int(id);
-        const auto blob = baseline->peripheralBlobs.find(id);
-        ASSERT_NE(blob, baseline->peripheralBlobs.end()) << "id " << int(id);
-        const std::vector<uint8_t> state = ttd::TTDPeripheralRegistry::DecodeBlob(id, blob->second);
-        EXPECT_EQ(state.size(), device->TTDStateSize()) << device->TTDDeviceName() << ": layout changed";
+        const std::vector<uint8_t> state = ttdtest::RecordedDeviceState(*controller, 0, card.id);
+        ASSERT_FALSE(state.empty()) << "id " << int(id);
+        // The GS card's RAM is part of its state and an engine region of its own (gs.ram); the engine keeps the rest
+        size_t regionBytes = 0;
+        for (const auto& r : controller->GetEngine().Regions())
+            if (card.id == PeripheralId::GeneralSound && r.name == "gs.ram")
+                regionBytes += r.bytes;
+        EXPECT_EQ(state.size() + regionBytes, device->TTDStateSize()) << device->TTDDeviceName() << ": layout changed";
 
         // The engine's device key: the module named by its slot
         const std::string expected = slotManager->TtdInstance(card.group, device->TTDDeviceName());

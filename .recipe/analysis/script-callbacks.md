@@ -132,8 +132,7 @@ lives = on_tap({write = 0x5C78, ["if"] = "MDT < MDT@prev"}, [[return function(hi
 
 - `peek` inside the same call still sees the old byte: the write is not made yet.
 - `callbacks()` shows `role = "logic"`; the CLI line says `sync, logic`.
-- A view hook's `poke` while recording raises `... (role logic does)`; TTD v1 (`UNREAL_TTD_BACKEND=v1`) refuses
-  logic writes too.
+- A view hook's `poke` while recording raises `... (role logic does)`.
 
 ## From outside the script: REST, CLI, MCP, WebSocket
 

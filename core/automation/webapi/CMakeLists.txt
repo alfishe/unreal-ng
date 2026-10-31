@@ -323,7 +323,7 @@ else () # Called from upper level CMake => build static library
         drogon
         jsoncpp_static
         # zstd::libzstd is required because core's ttd_compression.h (pulled
-        # in transitively via timetravelmanager.h -> ttd_codec_page_store.h)
+        # in by the TTD headers, e.g. ttd_codec_page_store.h)
         # #includes <zstd.h>, and we use core/src via raw include paths
         # rather than target_link_libraries(unrealng::core). zstd::libzstd
         # is an INTERFACE IMPORTED target so this does NOT add any link

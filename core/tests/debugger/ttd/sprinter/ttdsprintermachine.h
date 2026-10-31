@@ -97,7 +97,7 @@ protected:
         _z80 = _context->pCore->GetZ80();
         _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
         // Pinned to BIOS 3.04 (the shipped default is 3.06 Hotfix 2; its cold start is the corpus fixture
-        // testdata/machines/sprinter/ttd/boot.ttd, TTD_Corpus_Test)
+        // testdata/ttd/engine/sprinter_boot.ttd, TimeTravelControllerCorpus_Test)
         if (!SprinterFixture::SelectBios(_context, BiosFile()))  // PowerOn resets
             GTEST_SKIP() << "data/rom/sprinter/" << BiosFile() << " not found";
 

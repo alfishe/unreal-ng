@@ -2,7 +2,7 @@
 
 /// @file timetravelcontroller.h
 /// @brief TimeTravelController — the engine's playback controller (Phase 5, item 2): a
-/// copy of v1's TimeTravelManager that records into and restores from its own
+/// copy of v1's manager (deleted in Phase 6) that records into and restores from its own
 /// TimeTravelEngine: the engine holds the history (checkpoints, pieces, events,
 /// bus and write journals) and writes the session file; v1's page store and file
 /// format are gone (Phase 5, C1-C4). Parts of the description below are still v1's.
@@ -355,10 +355,9 @@ public:
     /// @return false with @p err set when there is no session or a write fails
     bool SerializeSession(std::ostream& out, std::string& err);
 
-    /// @brief Replace the session by the one in @p in: an engine session file,
-    /// or a v1 .ttd file (read by v1's manager and converted on the way in,
-    /// until v1 files are retired). Refused, leaving the current session as it
-    /// was, when the file is unreadable, recorded on another model or ROM set,
+    /// @brief Replace the session by the one in @p in, an engine session file.
+    /// Refused, leaving the current session as it was, when the file is
+    /// unreadable or a v1 file, recorded on another model or ROM set,
     /// or with devices this machine lacks. The session is Idle afterwards;
     /// SeekTo browses it, ResumeRecordingFrom continues it
     bool DeserializeSession(std::istream& in, std::string& err);

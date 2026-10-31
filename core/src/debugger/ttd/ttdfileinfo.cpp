@@ -33,104 +33,6 @@ bool Read(std::istream& in, T& value, const char* what, std::string& err)
     return true;
 }
 
-bool Skip(std::istream& in, uint64_t bytes, const char* what, std::string& err)
-{
-    in.seekg(static_cast<std::streamoff>(bytes), std::ios::cur);
-    if (!in)
-    {
-        err = std::string("truncated file (") + what + ")";
-        return false;
-    }
-    return true;
-}
-
-/// A mask field of the header: one u64 up to schema 2 (ids 0..63), from schema
-/// 3 a u8 word count (1..4) and that many u64 words (ids 64 * word + bit).
-bool ReadMask(std::istream& in, uint16_t schema, PeripheralMask& mask, const char* what, std::string& err)
-{
-    mask = PeripheralMask{};
-    if (schema < dump::kSchemaVersionWideMask)
-    {
-        uint64_t low = 0;
-        if (!Read(in, low, what, err))
-            return false;
-        mask = PeripheralMask::FromLow(low);
-        return true;
-    }
-    uint8_t words = 0;
-    if (!Read(in, words, what, err))
-        return false;
-    if (words == 0 || words > PeripheralMask::kWords)
-    {
-        err = std::string("implausible ") + what + " word count " + std::to_string(words);
-        return false;
-    }
-    for (uint8_t w = 0; w < words; ++w)
-    {
-        uint64_t value = 0;
-        if (!Read(in, value, what, err))
-            return false;
-        mask.SetWord(w, value);
-    }
-    return true;
-}
-
-/// The device set of a file written before the header mask: walk the page
-/// store's slot headers (payloads skipped) to the first checkpoint and read
-/// its peripheral blob ids. The stream is positioned right after the header.
-bool ScanPeripherals(std::istream& in, const TTDFileInfo& info, PeripheralMask& mask, std::string& err)
-{
-    mask = PeripheralMask{};
-    if (info.checkpointCount == 0)
-        return true;   // an empty session records no device
-    for (uint32_t i = 0; i < info.pageStoreCount; ++i)
-    {
-        uint8_t encoding = 0;
-        uint32_t refcount = 0, prevSlot = 0, crc = 0, payloadSize = 0;
-        if (!Read(in, encoding, "page slot", err) || !Read(in, refcount, "page slot", err) ||
-            !Read(in, prevSlot, "page slot", err) || !Read(in, crc, "page slot", err) ||
-            !Read(in, payloadSize, "page slot", err))
-            return false;
-        if (payloadSize > dump::kSubPageSize * 2)
-        {
-            err = "page slot " + std::to_string(i) + ": implausible payload size " + std::to_string(payloadSize);
-            return false;
-        }
-        if (!Skip(in, payloadSize, "page slot payload", err))
-            return false;
-    }
-    // First checkpoint: frame u64, globalT u64, frame kind u8, keyframe anchor
-    // u64, CPU and chipset state, RAM page refs, then the peripheral blobs
-    const uint64_t fixed = 8 + 8 + 1 + 8 + uint64_t(info.cpuStateSize) + info.chipsetStateSize;
-    const uint64_t refs = uint64_t(info.machine.ramPageBound) * dump::kSubPagesPerEmuPage * sizeof(uint32_t);
-    if (!Skip(in, fixed + refs, "first checkpoint", err))
-        return false;
-    uint16_t blobCount = 0;
-    if (!Read(in, blobCount, "peripheral blob count", err))
-        return false;
-    if (blobCount > dump::kMaxPeripheralBlobsPerCheckpoint)
-    {
-        err = "implausible peripheral blob count " + std::to_string(blobCount);
-        return false;
-    }
-    for (uint16_t b = 0; b < blobCount; ++b)
-    {
-        uint8_t id = 0;
-        uint32_t size = 0;
-        if (!Read(in, id, "peripheral blob", err) || !Read(in, size, "peripheral blob", err))
-            return false;
-        if (size > dump::kMaxPeripheralBlobBytes)
-        {
-            err = "implausible peripheral blob size " + std::to_string(size);
-            return false;
-        }
-        mask.Set(id);
-        if (!Skip(in, size, "peripheral blob", err))
-            return false;
-    }
-    return true;
-}
-
 }  // namespace
 
 std::string PeripheralIdName(uint8_t id)
@@ -317,65 +219,13 @@ bool ReadTTDFileInfo(std::istream& in, TTDFileInfo& info, std::string& err)
         const TTDMemorySource source(std::vector<uint8_t>(std::istreambuf_iterator<char>(in), {}));
         return ReadEngineFileInfo(source, info, err);
     }
-    if (!dump::IsReadableSchema(info.schemaVersion))
-    {
+    if (dump::IsReadableSchema(info.schemaVersion))
+        err = "a v1 .ttd file (schema v" + std::to_string(info.schemaVersion) +
+              "): this build reads session files in the engine's format only (record the session again)";
+    else
         err = "unsupported .ttd schema v" + std::to_string(info.schemaVersion) + " (this build reads v" +
-              std::to_string(dump::kSchemaVersionFirst) + " and v" + std::to_string(dump::kSchemaVersion) + ")";
-        return false;
-    }
-    if (!Read(in, info.flags, "flags", err) || !Read(in, info.machine.modelId, "model", err) ||
-        !Read(in, info.machine.ramPageBound, "RAM page bound", err) ||
-        !Read(in, info.cpuStateSize, "CPU state size", err) ||
-        !Read(in, info.chipsetStateSize, "chipset state size", err) ||
-        !Read(in, info.machine.romSignature, "ROM signature", err) ||
-        !Read(in, info.capturedAtUnixMs, "capture time", err))
-        return false;
-    uint8_t idLen = 0;
-    if (!Read(in, idLen, "emulator id", err))
-        return false;
-    info.emulatorId.resize(idLen);
-    if (idLen)
-    {
-        in.read(&info.emulatorId[0], idLen);
-        if (!in)
-        {
-            err = "truncated file (emulator id)";
-            return false;
-        }
-    }
-    PeripheralMask headerMask;
-    if (!Read(in, info.sessionState, "session state", err) || !Read(in, info.startFrame, "start frame", err) ||
-        !Read(in, info.endFrame, "end frame", err) || !Read(in, info.pageStoreCount, "page store count", err) ||
-        !Read(in, info.checkpointCount, "checkpoint count", err) ||
-        !ReadMask(in, info.schemaVersion, headerMask, "peripheral mask", err))
-        return false;
-    PeripheralMask notRecordedMask;
-    if ((info.flags & dump::kFlagsHasNotRecordedMask) &&
-        !ReadMask(in, info.schemaVersion, notRecordedMask, "not-recorded mask", err))
-        return false;
-    info.machine.notRecordedDevices = DevicesOfV1Mask(notRecordedMask);
-
-    const uint16_t f = info.flags;
-    info.hasWriteJournal = f & dump::kFlagsHasWriteJournal;
-    info.writeJournalComplete = f & dump::kFlagsWriteJournalComplete;
-    info.hasCoverageIndex = f & dump::kFlagsHasCoverageIndex;
-    info.hasBookmarks = f & dump::kFlagsHasBookmarks;
-    info.hasInputJournal = f & dump::kFlagsHasInputJournal;
-    info.hasExternalEvents = f & dump::kFlagsHasExternalEvents;
-    info.hasPortJournals = f & dump::kFlagsHasPortJournals;
-    info.topClockTime = f & dump::kFlagsTopClockTime;
-
-    PeripheralMask peripheralMask;
-    if (f & dump::kFlagsHasPeripheralMask)
-    {
-        peripheralMask = headerMask;
-        info.peripheralsFromHeader = true;
-    }
-    else if (!ScanPeripherals(in, info, peripheralMask, err))
-        return false;
-    info.machine.devices = DevicesOfV1Mask(peripheralMask);
-    DescribeRecordedMachine(info.machine);
-    return true;
+              std::to_string(kEngineFileSchema) + ")";
+    return false;
 }
 
 bool ReadTTDFileInfo(const std::string& path, TTDFileInfo& info, std::string& err)

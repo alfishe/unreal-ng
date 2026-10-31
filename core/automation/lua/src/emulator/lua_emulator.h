@@ -90,7 +90,7 @@
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
 #include "debugger/asm/asmcontrol.h"
-#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/timetravelcontroller.h>
 #include <debugger/ttd/machinestatehash.h>
 #include <debugger/ttd/ttdfileinfo.h>
 #include <tuple>

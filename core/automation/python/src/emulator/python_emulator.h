@@ -81,7 +81,7 @@
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
 #include <debugger/joystick/debugjoystickmanager.h>
-#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/timetravelcontroller.h>
 #include <debugger/ttd/machinestatehash.h>
 #include <debugger/ttd/ttdfileinfo.h>
 #include <debugger/ttd/ttdprobe.h>

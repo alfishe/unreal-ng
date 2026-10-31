@@ -430,7 +430,7 @@ public:
     /// Holds are taken only through a HostOutputHold guard, keyed by the reason that holds:
     ///  - DirectRun: Emulator::DirectStepScope, for the duration of one direct run (run_frames, run_tstates,
     ///    run_to_*, step, step_n...), on whatever thread runs it
-    ///  - TtdReplay: TimeTravelManager, EnterReplayMode .. ExitReplayMode (seek, replay, history browsing)
+    ///  - TtdReplay: TimeTravelController, EnterReplayMode .. ExitReplayMode (seek, replay, history browsing)
     ///  - Turbo: Core, EnableTurboMode .. DisableTurboMode (one hold per turbo span)
     ///  - Unpaced: ScriptCallbackManager, while frame and sync callbacks of the unpaced policy keep the frames over
     ///    their period (the machine runs slower than real time; its sound would break up)

@@ -89,7 +89,7 @@ tools/verification/ttd-analyzer/run.sh validate scratch/sprinter.ttd
 #   → scratch/sprinter.ttd: OK (121 checkpoints, 1300 pages)
 ```
 
-The corpus fixture `testdata/machines/sprinter/ttd/boot.ttd` (the cold full start: PLD load, BIOS
+The corpus fixture `testdata/ttd/engine/sprinter_boot.ttd` (the cold full start: PLD load, BIOS
 POST of the shipped default, 3.06 Hotfix 2 since 2026-10-03) is re-recorded with `record_fixtures.py --only sprinter_boot` ([testdata/ttd/README.md](../../testdata/ttd/README.md)).
 
 Ground truth: [debugger/ttd/sprinter/ttdsprinter.h](../../core/src/debugger/ttd/sprinter/ttdsprinter.h),

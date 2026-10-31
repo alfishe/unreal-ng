@@ -14,7 +14,7 @@
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
 #include "debugger/ttd/timetravelhooks.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdportjournal.h"
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"

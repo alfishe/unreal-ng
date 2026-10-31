@@ -5,9 +5,8 @@
 ///
 /// The core (loaders, devices, MainLoop, the CPU's input gate, the feature
 /// manager) talks to time travel only through this interface and
-/// EmulatorContext::pTimeTravelHooks, so the object behind it can change - v1's
-/// TimeTravelManager today, the engine after the switch - without touching the
-/// core. Every call is per frame, on a rare event, or behind the CPU's step-work
+/// EmulatorContext::pTimeTravelHooks (the TimeTravelController), so the object
+/// behind it can change without touching the core. Every call is per frame, on a rare event, or behind the CPU's step-work
 /// bit; per-event recording (memory and port writes, coverage) is not here.
 ///
 /// Surfaces (WebAPI, CLI, Lua, Python, GDB, DeZog, Qt) and lockstep groups that

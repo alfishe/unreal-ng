@@ -357,7 +357,7 @@ chains, the DSD bit byte, the duplicate-breakpoint leak and the test fixtures' l
 - **A green normal run says nothing about memory**: the teardown use-after-free and the GIF overflow passed every
   normal test for weeks.
 - **Timing changes under sanitizers**: tests with time budgets or "work happens while X runs" can fail or pass by
-  luck (`ExecutionArbiterMachine_Test.ReadingTheVideoLog...`, `TimeTravelManager_JournalSegments_Test.Switching...`).
+  luck (`ExecutionArbiterMachine_Test.ReadingTheVideoLog...`, `TimeTravelController_JournalSegments_Test.Switching...`).
   Rerun alone before blaming a change.
 - **Shards stop at the first finding**: after a fix, rerun everything - the next bug may have been behind it.
 - **zsh**: an unmatched glob is an error (`rm scratch/x/asan.*` with no file aborts the command); quote patterns

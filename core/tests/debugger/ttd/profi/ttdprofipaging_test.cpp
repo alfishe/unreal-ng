@@ -169,7 +169,7 @@ TEST_F(TTDProfiPaging_Test, RestoreRebuildsBankMap)
     EXPECT_EQ(BankTag(0xC000), tagC000);
 }
 
-/// End-to-end through the real TimeTravelManager on a real PROFI machine: recording must be accepted
+/// End-to-end through the real TimeTravelController on a real PROFI machine: recording must be accepted
 /// (the declared model state has a serializer), and a seek must restore #DFFD, the palette and the
 /// bank map derived from them. Without the serializer the seek keeps the CURRENT #DFFD and the machine
 /// silently lands in the wrong memory and video mode.

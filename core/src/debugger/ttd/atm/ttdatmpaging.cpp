@@ -109,7 +109,7 @@ void TTDAtmPaging::TTDLoadState(const uint8_t* src)
 
     // The caller re-runs the paging decode (Memory::UpdateZ80Banks) after every
     // serializer has loaded, so the restored map takes effect there rather than
-    // here - see TimeTravelManager::RestoreCheckpoint.
+    // here - see TimeTravelController::RestoreCheckpoint.
 }
 
 uint64_t TTDAtmPaging::TTDHashState() const

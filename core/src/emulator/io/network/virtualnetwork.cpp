@@ -6,7 +6,7 @@
 
 #include "common/network/dnsmessage.h"
 #include "common/network/hostframebridge.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdinputjournal.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"

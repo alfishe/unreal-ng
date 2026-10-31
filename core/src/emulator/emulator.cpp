@@ -32,7 +32,6 @@
 #include <cstdlib>
 
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdinputapply.h"
 #include "debugger/ttd/ttdsessionport.h"
 #include "emulator/coordinator/machinecoordinator.h"
@@ -460,35 +459,21 @@ bool Emulator::Init()
     if (result)
         ApplySymbolBundles();
 
-    // Create TTD manager (per parent TDD §10.2). Always constructed; the
+    // Create the time travel controller (per parent TDD §10.2). Always constructed; the
     // per-frame capture cost is gated by the cached _feature_ttd_enabled
-    // bool in Memory (no work when timetravel feature is off). The manager
+    // bool in Memory (no work when timetravel feature is off). The controller
     // also exposes GetState() == Idle until StartRecording() is called.
     if (result)
     {
-        // Both implementations exist; the selected one is what the core and the
-        // verbs drive (Phase 5): the engine's controller by default
-        ttd::TimeTravelManager* ttdManager = new ttd::TimeTravelManager(_context);
-        _context->pTimeTravelManager = ttdManager;
-        if (DefaultTimeTravelBackend() == TimeTravelBackend::Engine)
+        ttd::TimeTravelController* controller = new ttd::TimeTravelController(_context);
         {
-            ttd::TimeTravelController* controller = new ttd::TimeTravelController(_context);
-            {
-                std::lock_guard<std::mutex> lock(g_ttdRecordingRootMutex);
-                if (!g_ttdRecordingRoot.empty())
-                    controller->SetShadowRecordingRoot(g_ttdRecordingRoot);
-            }
-            _context->pTimeTravelController = controller;
-            _context->pTimeTravelHooks = controller;
-            _context->ttdWriteSink = controller;
-            MLOGDEBUG("Emulator::Init - time travel: the engine's controller");
+            std::lock_guard<std::mutex> lock(g_ttdRecordingRootMutex);
+            if (!g_ttdRecordingRoot.empty())
+                controller->SetShadowRecordingRoot(g_ttdRecordingRoot);
         }
-        else
-        {
-            _context->pTimeTravelHooks = ttdManager;
-            _context->ttdWriteSink = ttdManager;
-            MLOGDEBUG("Emulator::Init - time travel: v1's manager");
-        }
+        _context->pTimeTravelController = controller;
+        _context->pTimeTravelHooks = controller;
+        _context->ttdWriteSink = controller;
     }
 
     /// region <Sanity checks>
@@ -734,11 +719,6 @@ void Emulator::ReleaseNoGuard()
     {
         delete _context->pTimeTravelController;   // clears the sinks it set
         _context->pTimeTravelController = nullptr;
-    }
-    if (_context->pTimeTravelManager)
-    {
-        delete _context->pTimeTravelManager;
-        _context->pTimeTravelManager = nullptr;
     }
     _context->ttdWriteSink = nullptr;
 
@@ -1907,7 +1887,7 @@ bool Emulator::StopFor(std::chrono::milliseconds timeout)
     // inside _asyncThread->join() - IsRunning() already read false at that
     // point, so a concurrent EmulatorManager::RemoveEmulatorInstance() (gated
     // on IsRunning()) could skip its own Stop() call and run straight into
-    // Release(), freeing Core's Screen / SoundManager / TimeTravelManager
+    // Release(), freeing Core's Screen / SoundManager / TimeTravelController
     // while MainLoop::Run() was still mid-frame on the still-running thread
     // (observed as a SIGSEGV / pointer-authentication failure in
     // MainLoop::OnFrameStart() and SoundManager::handleFrameStart(),
@@ -2378,32 +2358,10 @@ rzx::RzxSession* Emulator::LoadedRzxSession()
     return _rzxSession && _rzxSession->Status().loaded ? _rzxSession.get() : nullptr;
 }
 
-namespace
-{
-/// The engine unless the process is started with UNREAL_TTD_BACKEND=v1 (the
-/// previous recorder: re-recording v1's fixture corpus, a comparison, a fallback)
-Emulator::TimeTravelBackend InitialTimeTravelBackend()
-{
-    const char* value = std::getenv("UNREAL_TTD_BACKEND");
-    return value && std::string(value) == "v1" ? Emulator::TimeTravelBackend::V1 : Emulator::TimeTravelBackend::Engine;
-}
-std::atomic<Emulator::TimeTravelBackend> g_defaultTimeTravelBackend{InitialTimeTravelBackend()};
-}
-
 void Emulator::SetDefaultTtdRecordingRoot(const std::string& root)
 {
     std::lock_guard<std::mutex> lock(g_ttdRecordingRootMutex);
     g_ttdRecordingRoot = root;
-}
-
-void Emulator::SetDefaultTimeTravelBackend(TimeTravelBackend backend)
-{
-    g_defaultTimeTravelBackend.store(backend);
-}
-
-Emulator::TimeTravelBackend Emulator::DefaultTimeTravelBackend()
-{
-    return g_defaultTimeTravelBackend.load();
 }
 
 bool Emulator::IsRzxExtension(const std::string& ext)

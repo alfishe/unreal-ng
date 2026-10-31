@@ -20,7 +20,7 @@
 #include <chrono>
 #include <cmath>
 
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"

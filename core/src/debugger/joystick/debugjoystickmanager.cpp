@@ -2,7 +2,7 @@
 
 #include <cctype>
 
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdinputapply.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/joystick/joystick.h"
@@ -23,7 +23,7 @@ Joystick* DebugJoystickManager::Device() const
 bool DebugJoystickManager::IsReplaying() const
 {
     // The TTD journal owns input: a replay, or the machine re-executing recorded history
-    // (TimeTravelManager::OwnsInput), or an RZX playback
+    // (TimeTravelController::OwnsInput), or an RZX playback
     if (_context && _context->rzxPlayer)
         return true;
     return _context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->OwnsInput();
@@ -84,7 +84,7 @@ JoystickInjectResult DebugJoystickManager::Invalid(const std::string& message) c
     return result;
 }
 
-// Every joystick mutation goes through TimeTravelManager::SubmitLiveInput when TTD is present:
+// Every joystick mutation goes through TimeTravelController::SubmitLiveInput when TTD is present:
 // refused while the journal owns input, applied on the machine's thread at an instruction boundary
 // and journaled there while recording (same as the mouse and the keyboard)
 bool DebugJoystickManager::Submit(uint8_t state, Joystick& joystick)

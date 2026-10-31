@@ -10,16 +10,12 @@
 /// that wants to provision the right instance BEFORE the load - pick the
 /// model, fit the recorded General Sound card - reads the file's info first.
 ///
-/// Reading parses headers only:
-///   - the fixed file header (model, ROM signature, frame range, counts,
-///     section flags);
-///   - the recorded device set: the header's peripheral mask (files written
-///     since the mask exists, flag kFlagsHasPeripheralMask); older files are
-///     walked to the first checkpoint instead - page slot headers are read and
-///     their payloads skipped, nothing is decompressed.
+/// Reading parses the engine's session file index and its facts stream (model,
+/// ROM signature, frame range, counts, recorded devices); nothing else is
+/// decompressed. A v1 file is refused with a reason (v1 was deleted in Phase 6).
 ///
 /// The recorded machine of the CURRENT session (loaded or being recorded) is
-/// TimeTravelManager::GetSessionInfo().machine - the same TTDRecordedMachine.
+/// TimeTravelController::GetSessionInfo().machine - the same TTDRecordedMachine.
 
 #include <cstdint>
 #include <istream>
@@ -97,8 +93,8 @@ struct TTDFileInfo
     bool hasPortJournals = false;
     bool topClockTime = false;
 
-    /// v1 file: true when the device set came from the header's mask; false:
-    /// found by walking to the first checkpoint (a file written before the mask)
+    /// The device set came from the file's own list (always, since v1 files are
+    /// no longer read; the surfaces keep the field)
     bool peripheralsFromHeader = false;
 
     TTDRecordedMachine machine;

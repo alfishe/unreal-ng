@@ -151,7 +151,7 @@ Useful benchmarks:
 | `BM_SprinterDemo_<demo>_{Bare,Shipped}` | `core/benchmarks/emulator/machines/sprinter_demo_benchmark.cpp` | the Sprinter under a real heavy load: demos from the system disk (needs `UNREAL_SPRINTER_HDD`; [its README](../../core/benchmarks/emulator/machines/README.md)) |
 | `z80_overhead_attribution.cpp` | `core/benchmarks/emulator/` | isolated costs: member-pointer calls, `std::function` tests, dereferences |
 | `turbo_frame_benchmark.cpp`, `contention_benchmark.cpp` | `core/benchmarks/emulator/` | turbo mode, ULA contention |
-| `TTDBench_Test` (TTD CI gate) | `core/tests/debugger/ttd/bench/ttdbench_test.cpp` | TTD bytes per stream and counted capture work against `testdata/ttd/bench/v1-ci-gate.txt`; no clock, so host load cannot fail it ([`tools/verification/ttd-bench/`](../../tools/verification/ttd-bench/README.md)) |
+| `TTDBench_Test` (TTD CI gate) | `core/tests/debugger/ttd/bench/ttdbench_test.cpp` | TTD bytes per stream and counted capture work against `testdata/ttd/bench/ci-gate.txt`; no clock, so host load cannot fail it ([`tools/verification/ttd-bench/`](../../tools/verification/ttd-bench/README.md)) |
 
 ## 5. Worked example: the per-step work gate
 

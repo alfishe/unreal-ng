@@ -3,9 +3,8 @@
 /// @file ttdsessiontypes.h
 /// @brief The types a time-travel session reports and takes - status
 /// (TTDSessionInfo), seek / reverse / coverage / journal-build results, clip
-/// export options and frames, performance and heap counters. Shared by v1's
-/// TimeTravelManager and the engine's controller (Phase 5), so neither depends
-/// on the other's header; TTDControl and the surfaces use them by these names.
+/// export options and frames, performance and heap counters, kept apart from
+/// the controller's header; TTDControl and the surfaces use them by these names.
 
 #include <cstddef>
 #include <cstdint>
@@ -143,7 +142,7 @@ struct TTDSessionInfo
     uint64_t historyLimitFrames = 0;  ///< Oldest frames released beyond this many checkpoints (0 = no limit)
     uint64_t historyLimitBytes  = 0;  ///< ... or beyond this many bytes of checkpoint data (0 = no limit)
     uint64_t evictedCheckpoints = 0;  ///< Checkpoints the history limit released since the session started
-    uint64_t historyBytes       = 0;  ///< What the byte limit measures (TimeTravelManager::HistoryBytes)
+    uint64_t historyBytes       = 0;  ///< What the byte limit measures (TimeTravelController::HistoryBytes)
     uint64_t baselineFramesCaptured = 0;  ///< Live page slots (distinct RAM snapshots in store)
 
     /// @brief Total heap footprint of the recorded session, in bytes.

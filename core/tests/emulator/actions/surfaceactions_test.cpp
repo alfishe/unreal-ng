@@ -1,5 +1,5 @@
 // The control-surface actions of phase S2 (docs/inprogress/2026-10-18-control-surfaces/actions.md §2-§4,
-// architecture §6): ttd.seek_by (the curve, the clamp to the history, the marks) on both time-travel backends,
+// architecture §6): ttd.seek_by (the curve, the clamp to the history, the marks) on the time-travel controller,
 // run.step_by (step in forward, back through the history, the 16 cap, a breakpoint ends it), and ctx.set with the
 // context state (the last setter wins, the default `ttd` with a history, NC_SURFACE_CONTEXT)
 
@@ -17,7 +17,6 @@
 #include "_helpers/testwaithelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdcursorcell.h"
 #include "emulator/actions/actionregistry.h"
@@ -173,15 +172,15 @@ TEST(SeekCurve_Test, ParametersOutOfRangeAreRefused)
 
 /// endregion </ttd.seek_by: the curve>
 
-/// region <ttd.seek_by and ctx.set on both backends>
+/// region <ttd.seek_by and ctx.set>
 
-class SurfaceActions_Test : public ::testing::TestWithParam<bool>
+class SurfaceActions_Test : public ::testing::Test
 {
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
     ttd::ITimeTravelHooks* _ttd = nullptr;
-    std::unique_ptr<ttd::TimeTravelController> _controller;
+    ttd::TimeTravelController* _controller = nullptr;
     std::unique_ptr<TestRegistry> _registry;
 
     void SetUp() override
@@ -189,13 +188,8 @@ protected:
         _emulator = new Emulator(LoggerLevel::LogError);
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
-        if (GetParam())
-        {
-            _controller = std::make_unique<ttd::TimeTravelController>(_context);
-            _context->pTimeTravelHooks = _controller.get();
-            _context->ttdWriteSink = _controller.get();
-            _context->pTimeTravelController = _controller.get();
-        }
+        _controller = _context->pTimeTravelController;
+        ASSERT_NE(_controller, nullptr);
         _ttd = _context->pTimeTravelHooks;
         _registry = std::make_unique<TestRegistry>(_emulator);
     }
@@ -206,13 +200,7 @@ protected:
         if (_emulator)
             ContextState::Instance().Drop(_emulator->GetId());
         if (_controller)
-        {
             _controller->StopRecording();
-            _context->pTimeTravelHooks = _context->pTimeTravelManager;
-            _context->ttdWriteSink = _context->pTimeTravelManager;
-            _context->pTimeTravelController = nullptr;
-            _controller.reset();
-        }
         if (_emulator)
         {
             _emulator->Stop();
@@ -240,10 +228,7 @@ protected:
     }
 };
 
-INSTANTIATE_TEST_SUITE_P(Backends, SurfaceActions_Test, ::testing::Values(false, true),
-                         [](const ::testing::TestParamInfo<bool>& info) { return info.param ? "Engine" : "V1"; });
-
-TEST_P(SurfaceActions_Test, SeekByWithoutAHistoryIsNotNowRecordFirst)
+TEST_F(SurfaceActions_Test, SeekByWithoutAHistoryIsNotNowRecordFirst)
 {
     EXPECT_EQ(_registry->Unavailable("ttd.seek_by", Delta(-1)), "record first");
     const ActionResult result = _registry->Run("ttd.seek_by", Delta(-1));
@@ -254,7 +239,7 @@ TEST_P(SurfaceActions_Test, SeekByWithoutAHistoryIsNotNowRecordFirst)
 
 // A deck greys a key out by the host's reason: the verbs that move through or mark a history have none to act on
 // before a recording, and get one once a history is recorded (running or stopped)
-TEST_P(SurfaceActions_Test, HistoryVerbsAreUnavailableUntilAHistoryIsRecorded)
+TEST_F(SurfaceActions_Test, HistoryVerbsAreUnavailableUntilAHistoryIsRecorded)
 {
     ActionValue press;
     press.kind = ValueKind::Press;
@@ -277,7 +262,7 @@ TEST_P(SurfaceActions_Test, HistoryVerbsAreUnavailableUntilAHistoryIsRecorded)
     EXPECT_EQ(_registry->Unavailable("ttd.bookmark_add", press), "") << "on a stopped history";
 }
 
-TEST_P(SurfaceActions_Test, SeekByMovesByTheCurveAndClampsToTheHistoryWithAnEdgeMark)
+TEST_F(SurfaceActions_Test, SeekByMovesByTheCurveAndClampsToTheHistoryWithAnEdgeMark)
 {
     uint64_t first = 0;
     uint64_t end = 0;
@@ -323,7 +308,7 @@ TEST_P(SurfaceActions_Test, SeekByMovesByTheCurveAndClampsToTheHistoryWithAnEdge
     EXPECT_EQ(Int(result.body, "frames"), 0);
 }
 
-TEST_P(SurfaceActions_Test, SeekByMarksABookmarkItCrossesAndTakesTheRateAsAParameter)
+TEST_F(SurfaceActions_Test, SeekByMarksABookmarkItCrossesAndTakesTheRateAsAParameter)
 {
     uint64_t first = 0;
     uint64_t end = 0;
@@ -382,7 +367,7 @@ struct ContextNotes
 };
 }  // namespace
 
-TEST_P(SurfaceActions_Test, CtxSetPostsTheChangeAndTheLastSetterWins)
+TEST_F(SurfaceActions_Test, CtxSetPostsTheChangeAndTheLastSetterWins)
 {
     const std::string id = _emulator->GetId();
     ContextNotes notes(id);
@@ -425,7 +410,7 @@ TEST_P(SurfaceActions_Test, CtxSetPostsTheChangeAndTheLastSetterWins)
     EXPECT_EQ(notes.At(2), "debug.disasm>play gui");
 }
 
-TEST_P(SurfaceActions_Test, TheDefaultContextIsTtdOnceAHistoryExists)
+TEST_F(SurfaceActions_Test, TheDefaultContextIsTtdOnceAHistoryExists)
 {
     ContextNotes notes(_emulator->GetId());
     uint64_t first = 0;
@@ -440,7 +425,7 @@ TEST_P(SurfaceActions_Test, TheDefaultContextIsTtdOnceAHistoryExists)
     EXPECT_EQ(notes.At(0), "play>ttd default");
 }
 
-TEST_P(SurfaceActions_Test, ASetContextDoesNotFollowTheHistory)
+TEST_F(SurfaceActions_Test, ASetContextDoesNotFollowTheHistory)
 {
     const std::string id = _emulator->GetId();
     ContextNotes notes(id);
@@ -454,7 +439,7 @@ TEST_P(SurfaceActions_Test, ASetContextDoesNotFollowTheHistory)
     ContextState::Instance().Set(id, _emulator, "", "gui", error);
 }
 
-/// endregion </ttd.seek_by and ctx.set on both backends>
+/// endregion </ttd.seek_by and ctx.set>
 
 /// region <run.step_by>
 

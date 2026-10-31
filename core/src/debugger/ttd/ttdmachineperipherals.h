@@ -18,7 +18,7 @@ namespace ttd
 ///          (TurboSound slot, Covox, General Sound / NeoGS, MoonSound, tape,
 ///          Kempston mouse, Beta 128, IDE board) and the model-specific
 ///          serializers the port decoder supplies. Used by the TTD session
-///          (TimeTravelManager) and by MachineStateTransfer, so both see the
+///          (TimeTravelController) and by MachineStateTransfer, so both see the
 ///          same device set.
 ///
 ///          The registry is cleared first. Devices owned by the emulator are

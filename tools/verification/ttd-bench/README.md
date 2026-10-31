@@ -2,7 +2,7 @@
 
 This directory holds the tools for running, comparing and baselining the time-travel (TTD) benchmark matrix (PLAN #40 Phase 0, Step 2, [TTD v2 requirements §5](../../../docs/inprogress/2026-09-25-ttd-v2-migration/requirements.md)).
 
-The same emulation runs under every TTD engine (today only `v1`, the current `TimeTravelManager`), so the numbers compare engine against engine and commit against commit.
+The same emulation runs under every TTD engine, so the numbers compare engine against engine and commit against commit. Today there is one: `controller`, the `TimeTravelController` the application runs. v1 (`TimeTravelManager`) and `engine` (the engine in v1's shadow) went with Phase 6 of the [TTD v2 migration](../../../docs/inprogress/2026-09-25-ttd-v2-migration/TODO.md) (2026-10-30); their figures stay in the stored baselines.
 
 | Piece | Where |
 |---|---|
@@ -36,7 +36,7 @@ ninja -C cmake-build-agent-release core-benchmarks
 ./cmake-build-agent-release/bin/core-benchmarks --benchmark_filter='TTDMatrix/' \
     --benchmark_format=json --benchmark_out=scratch/ttd-ci.json
 
-# The configurations that decide whether V1b is needed (turbo, heavy peripherals)
+# The turbo and heavy-peripheral configurations
 UNREAL_TTD_BENCH_SET=turbo ./cmake-build-agent-release/bin/core-benchmarks \
     --benchmark_filter='TTDMatrix/' --benchmark_format=json --benchmark_out=scratch/ttd-turbo.json
 
@@ -50,7 +50,7 @@ The following environment variables control a run:
 | Variable | Values | Default |
 |---|---|---|
 | `UNREAL_TTD_BENCH_SET` | `ci`, `turbo`, `full` | `ci` |
-| `UNREAL_TTD_BENCH_ENGINE` | `v1`, `all`, or a comma-separated list | `v1` |
+| `UNREAL_TTD_BENCH_ENGINE` | `controller`, `all`, or a comma-separated list | `controller` |
 | `UNREAL_TTD_BENCH_PERIPHERALS` | an overlay applied to every configuration: `none`, or a list such as `ay+gs512+moon` (items: `ay`/`ts`, `tsfm`, `gs128`, `gs512`, `moon`, `covox`, `beta`, `mouse`) | the matrix's own sets |
 | `UNREAL_TTD_BENCH_FRAMES` | the number of recorded frames, replacing every workload's own count | the workload's count |
 | `UNREAL_TTD_BENCH_SEEKS` | the number of random seek positions (BM-5) | 40 for `ci`, 200 otherwise |
@@ -85,8 +85,8 @@ Each seek position is measured three times (`seekRepeats`) and the fastest run i
 ```bash
 T=tools/verification/ttd-bench/ttd_bench_compare.py
 
-python3 $T compare testdata/ttd/bench/v1-full.json scratch/ttd-full.json   # baseline vs now
-python3 $T compare run.json run.json --base-engine v1 --new-engine v2     # two engines, one file
+python3 $T compare testdata/ttd/bench/engine-phase5-full.json scratch/ttd-full.json --base-engine controller   # baseline vs now
+python3 $T compare run.json run.json --base-engine a --new-engine b     # two engines, one file
 python3 $T summary scratch/ttd-turbo.json --markdown                        # one row per case
 ```
 
@@ -110,36 +110,15 @@ Byte metrics measured as container capacity (`bm3_coverage_bpf`, `bm3_total_bpf`
 Update a baseline when a change to capture or to the file format is intended, and include the reason in the commit message:
 
 ```bash
-# CI gate (core-tests reads it)
+# CI gate (core-tests reads it; the file name: testdata/ttd/bench/README.md)
 UNREAL_TTD_BENCH_OVERHEAD=0 ./cmake-build-agent-release/bin/core-benchmarks \
-    --benchmark_filter='TTDMatrix/v1/' --benchmark_format=json --benchmark_out=scratch/ttd-ci.json
-python3 tools/verification/ttd-bench/ttd_bench_compare.py export-gate scratch/ttd-ci.json \
-    testdata/ttd/bench/v1-ci-gate.txt
+    --benchmark_filter='TTDMatrix/controller/' --benchmark_format=json --benchmark_out=scratch/ttd-ci.json
+python3 tools/verification/ttd-bench/ttd_bench_compare.py export-gate scratch/ttd-ci.json <the gate file>
 
-# Reference runs (drops the local executable path from the context)
-for set in ci turbo full; do
-    python3 tools/verification/ttd-bench/ttd_bench_compare.py export-baseline scratch/ttd-v1-$set.json \
-        testdata/ttd/bench/v1-$set.json
-done
+# A reference run (drops the local executable path from the context)
+python3 tools/verification/ttd-bench/ttd_bench_compare.py export-baseline scratch/ttd-full.json \
+    testdata/ttd/bench/<name>.json
 ```
 
-## The engine's quality bar (`ttd_engine_d33.py`)
-
-Checks a run of the matrix with both engines against engine decision 33
-(`docs/inprogress/2026-09-25-ttd-v2-migration/engine-decisions.md`, section G):
-recorded bytes, memory and counted capture work per frame, the engine never
-above v1, with the decision's exceptions applied (memory v1 does not record at
-all; the engine's fixed delta base and arena slack printed apart). Exit status
-1 when a condition fails. `--timings` adds the capture and memory-restore
-timings and judges them too: capture p99 at most 1 ms (PR-3), memory restore
-p99 at most 5 ms (PR-5); run on an idle host (load < 12).
-
-```bash
-UNREAL_TTD_BENCH_ENGINE=all UNREAL_TTD_BENCH_SET=full UNREAL_TTD_BENCH_FRAMES=600 UNREAL_TTD_BENCH_SEEKS=0 \
-    ./cmake-build-agent-release/bin/core-benchmarks --benchmark_filter='TTDMatrix/' \
-    --benchmark_format=json --benchmark_out=scratch/engine-full.json
-python3 tools/verification/ttd-bench/ttd_engine_d33.py scratch/engine-full.json
-```
-
-The Phase 1 baseline is `testdata/ttd/bench/engine-phase1-full.json`.
-
+The engine's quality bar against v1 (engine decision 33, `ttd_engine_d33.py`) was checked at every phase of the
+migration and went with v1; its results are in the phase results of the migration folder.

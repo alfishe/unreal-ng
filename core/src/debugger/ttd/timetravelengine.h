@@ -1,12 +1,12 @@
 #pragma once
 
 /// @file timetravelengine.h
-/// @brief TimeTravelEngine: the time-travel engine that replaces TimeTravelManager (v1).
+/// @brief TimeTravelEngine: the time-travel engine that replaced v1 (deleted in Phase 6).
 ///
-/// Built next to v1 and checked against it byte for byte; users switch to it
+/// Built next to v1 and checked against it byte for byte; users switched to it
 /// in Phase 5 (docs/inprogress/2026-09-25-ttd-v2-migration/README.md). The
-/// engine is fed one frame input per frame boundary (live capture, or the v1
-/// file feeder in verification) and restores any recorded position.
+/// engine is fed one frame input per frame boundary (live capture) and
+/// restores any recorded position.
 ///
 /// Phase 1, Steps 1-3 (this version): time, positions, regions, checkpoints
 /// with their parent, optional streams, memory accounting, the piece store

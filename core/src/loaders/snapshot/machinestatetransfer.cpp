@@ -10,7 +10,7 @@
 
 #include "common/stringhelper.h"
 #include "emulator/coordinator/ports.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdmachineperipherals.h"
 #include "emulator/config.h"

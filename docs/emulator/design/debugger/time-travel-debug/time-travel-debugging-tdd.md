@@ -2,12 +2,12 @@
 
 | | |
 |---|---|
-| **Status** | Active development |
+| **Status** | Active development. Passages naming `TimeTravelManager` describe v1, deleted on 2026-10-30 (TTD v2 migration, Phase 6); the engine (`TimeTravelController`) replaced it |
 | **Version** | 2.2 |
 | **Last updated** | 2026-09-10 |
 | **Scope** | UnrealSpeccy-NG core + Qt debugger UI |
-| **Companion docs** | [time-travel-ux.md](./time-travel-ux.md) (GUI/UX), [overhead-and-gating.md](./overhead-and-gating.md) (budgets & runtime gates), [gdb-reverse-debugging-tdd.md](./gdb-reverse-debugging-tdd.md) (RSP integration), [ttd.ksy](../../../../../core/src/debugger/ttd/ttd.ksy) (Kaitai schema) |
-| **As-built reference** | [ttd-v1-architecture-and-format.md](./ttd-v1-architecture-and-format.md) — TTD v1 architecture, data streams and `.ttd` file format as implemented |
+| **Companion docs** | [time-travel-ux.md](./time-travel-ux.md) (GUI/UX), [overhead-and-gating.md](./overhead-and-gating.md) (budgets & runtime gates), [gdb-reverse-debugging-tdd.md](./gdb-reverse-debugging-tdd.md) (RSP integration), [ttd.ksy](../../../../../core/src/debugger/ttd/ttd.ksy) (Kaitai schema of the session file, schema 2) |
+| **As-built reference** | [ttd-v1-architecture-and-format.md](./ttd-v1-architecture-and-format.md) — TTD v1 as it was built (historical: v1 was deleted on 2026-10-30; the engine, `TimeTravelController`, is the only recorder, see the [TTD v2 migration](../../../../inprogress/2026-09-25-ttd-v2-migration/README.md)) |
 
 ---
 

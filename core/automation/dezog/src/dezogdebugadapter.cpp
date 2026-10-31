@@ -6,7 +6,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/coordinator/machineop.h"
 #include "debugger/ttd/ttdsession.h"
 #include "debugger/ttd/ttdcheckpoint.h"

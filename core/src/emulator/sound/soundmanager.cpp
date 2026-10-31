@@ -1,5 +1,5 @@
 #include "soundmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 
 #include <algorithm>
 #include <cmath>
@@ -2385,7 +2385,7 @@ bool SoundManager::switchGeneralSoundCardNow(GSTypeKind target, GSCardImplementa
     //     TurboSound/TSFM slots) so a checkpoint recorded on one personality
     //     cannot silently restore into the other - UpdatePeripheral drops the
     //     outgoing card's type and registers the new card under its own key.
-    //     Safe to call unconditionally: a null TimeTravelManager (TTD
+    //     Safe to call unconditionally: a null TimeTravelController (TTD
     //     unavailable) no-ops.
     if (_context && _context->pTimeTravelHooks)
         _context->pTimeTravelHooks->UpdatePeripheral(outgoingTtdType, _gs);

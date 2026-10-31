@@ -9,7 +9,7 @@ TTDMatrix/<engine>/<configuration>/<workload> benchmarks
                                  reported as a change in percent
     summary RUN.json             one table of the key metrics per case
     export-gate RUN.json OUT     the byte baseline the core-tests CI gate reads
-                                 (testdata/ttd/bench/v1-ci-gate.txt)
+                                 (testdata/ttd/bench/, see its README)
     export-baseline RUN.json OUT a run as a stored baseline (testdata/ttd/bench/):
                                  the TTDMatrix entries, no local paths
 
@@ -35,9 +35,11 @@ BENCHMARK_KEYS = {
 }
 
 # Byte metrics measured as container capacity: they follow the allocator's
-# growth policy (libc++ and libstdc++ double, MSVC grows by half), so they are
-# exact on one platform but not across platforms
-HEAP_METRICS = {"bm3_coverage_bpf", "bm3_total_bpf", "bm4_resident_bytes", "bm4_resident_bpf"}
+# growth policy (libc++ and libstdc++ double, MSVC grows by half) and the
+# standard library's sizeof of its containers, so they are exact on one
+# platform but not across platforms
+HEAP_METRICS = {"bm3_coverage_bpf", "bm3_total_bpf", "bm3_page_refs_bpf", "bm3_checkpoint_core_bpf",
+                "bm3_write_journal_bpf", "bm4_resident_bytes", "bm4_resident_bpf"}
 # BM-4 split (bm4_heap_<part>_bpf): allocator-dependent parts, compared with the
 # heap tolerance; the CI gate keeps only their total (bm4_resident_*)
 HEAP_SPLIT_PREFIX = "bm4_heap_"

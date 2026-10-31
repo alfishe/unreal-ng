@@ -110,7 +110,8 @@ void BM_Analysis_CoverageScan_Oldest(benchmark::State& state)
         const ttd::TTDCoverageScanResult r =
             s.ttd->QueryCoverageScan(0, UINT64_MAX, ttd::TTDCoverageKind::Executed, 0x8200, 0x8200, ttd::PhysPage(2), 10000);
         matches = r.frames.size();
-        benchmark::DoNotOptimize(r.lastMatch);
+        uint64_t lastMatch = r.lastMatch;
+        benchmark::DoNotOptimize(lastMatch);
     }
     state.counters["frames_listed"] = static_cast<double>(matches);
 }

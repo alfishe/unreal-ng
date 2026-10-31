@@ -7,6 +7,8 @@ History: added as `tools/poc/02-ttd-gui/` in `d4b5789a3` (2026-08-04), renamed t
 `add_subdirectory` in `tools/poc/CMakeLists.txt` was commented out in `06afdb117` (2026-09-11) and is
 still commented out.
 
+**Retired 2026-10-30:** it reads v1 session files only, and v1 was deleted in Phase 6 of the TTD v2 migration.
+
 ## Goals
 
 From `CMakeLists.txt`: "a standalone Qt6 app for offline .ttd file scrubbing with video-editor-style

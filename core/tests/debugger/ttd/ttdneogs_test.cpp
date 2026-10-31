@@ -108,11 +108,9 @@ protected:
 /// The recording is re-executed from a session start, a per-frame checkpoint
 /// and a mid-frame seek; each run must reach the recorded end with the card's
 /// blob identical byte for byte. Needs the card RAM restored with the
-/// checkpoint - kept for TTD v2 memory regions
+/// checkpoint (the engine's device memory regions)
 TEST_F(TTD_NeoGS_Test, SdBootReplaysExactlyFromEveryKindOfRestorePoint)
 {
-    GTEST_SKIP() << "TTD v2: NeoGS card RAM and flash are not in v1 checkpoints, so the firmware re-executes over "
-                    "the live (later) RAM after a seek";
     ASSERT_TRUE(card()->sdCardPresent());
     _emulator->RunNFrames(1);
     _emulator->RunNCPUCycles(2345); // the baseline lands mid-frame

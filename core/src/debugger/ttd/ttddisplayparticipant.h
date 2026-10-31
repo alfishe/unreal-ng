@@ -6,7 +6,7 @@
 /// position shows (display rule, docs/inprogress/2026-09-28-ttd-positioning-and-display/design.md §3;
 /// VDAC2: docs/inprogress/2026-10-01-tsconf-vdac2/line-budget-metrics.md §3.4).
 ///
-/// TimeTravelManager::ComposeDisplay replays the machine to the position in a
+/// TimeTravelController::ComposeDisplay replays the machine to the position in a
 /// sandbox and copies what the Screen shows (the external picture while one is
 /// active). The participant:
 ///   - asks for one more replayed machine frame before a frame-number target,
