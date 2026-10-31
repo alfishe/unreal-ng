@@ -1818,6 +1818,40 @@ TEST_F(McpTools_Test, InspectState_DeviceAspect_UnavailableIsReportedNotFatal)
     EXPECT_NE(result.text.find("[audio_fm] TurboSound slot device is not TSFM"), std::string::npos) << result.text;
 }
 
+TEST_F(McpTools_Test, InspectState_DevicesAspect_ListsTheReportsWithTheirAspects)
+{
+    // The device catalog: the text names each report, its summary and the aspect that shows it
+    Json::Value catalog;
+    catalog["available"] = true;
+    Json::Value ay;
+    ay["id"] = "ay";
+    ay["title"] = "AY sound chips";
+    ay["summary"] = "TurboSound FM (2 x YM2203, SSG halves)";
+    ay["mcp"] = "audio_ay";
+    catalog["reports"].append(ay);
+    Json::Value fdc;
+    fdc["id"] = "fdc";
+    fdc["title"] = "Disk controller";
+    fdc["summary"] = "";
+    fdc["mcp"] = "fdc";
+    catalog["reports"].append(fdc);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/devices"] = {200, catalog};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("devices");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/devices"));
+    EXPECT_EQ(result.structured["devices"]["reports"].size(), 2u);
+    EXPECT_NE(result.text.find("[devices] 2 reports"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ay: AY sound chips (TurboSound FM (2 x YM2203, SSG halves)), aspect audio_ay"), std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("fdc: Disk controller, aspect fdc"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_MouseAspect_FetchesMouseStatus)
 {
     // One endpoint; the summary names fitment, counters and the routing answer (D-2)

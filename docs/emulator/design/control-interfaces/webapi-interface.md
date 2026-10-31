@@ -528,6 +528,7 @@ GET  /api/v1/emulator/{id}/state/audio/multisound ZX-MultiSound: slot, options, 
 GET  /api/v1/emulator/{id}/state/audio/midi     MIDI line + SAM2695: parts[16] (program, preset, volume, pan, voices, keys / notes sounding), polyphony, effects, counters, bank; 404 without a synthesizer
 POST /api/v1/emulator/{id}/control/audio/midi   {"action": "panic"}: every voice stops (a TTD live input); 404 without a synthesizer, 409 while a TTD replay owns input
 GET  /api/v1/emulator/{id}/state/audio/channels  Audio overview (DeviceState::AudioChannels): beeper (peak, active, muted), AY tone generators, GS / Covox subsets, master (muted, sample_rate_hz, channels, bit depth), mixer[] devices
+GET  /api/v1/emulator/{id}/state/devices       The device catalog: {available, reports[{id, title, available, summary, route, cli, script, mcp}]}, the reports this machine has; ?all=1 the absent ones too, with description (why)
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
 GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)
 GET  /api/v1/emulator/{id}/state/cdaudio       CD drives' audio: disc and tracks, status (11h-15h), head (LBA, MSF, track, index), play range, page 0Eh volume, mixer row (available=false without a CD drive)

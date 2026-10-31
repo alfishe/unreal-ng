@@ -499,6 +499,11 @@ def companion_revoke(id: str) -> int:
         timers, register banks) or the wavetable half (part='pcm': 24 slots with envelopes).
         available=False without the card; ValueError for another part"""
 
+    def devices_state(self, all: bool = False) -> dict:
+        """The device catalog: {available, reports[{id, title, available, summary, route, cli, script, mcp}]},
+        the state reports this machine has; `script` names the method here that returns each.
+        all=True: the absent ones too, available False with description (why)"""
+
     def fdc_state(self) -> dict:
         """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
         signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""

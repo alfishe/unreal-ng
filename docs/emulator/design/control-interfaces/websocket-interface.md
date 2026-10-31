@@ -156,6 +156,9 @@ when their runs are done, on their own analysis instances (the socket's other ca
 
 Each module adds its topics here (automation planes guidelines §3).
 
+The device catalog (`GET .../state/devices`, a `call` here) has no topic: its set changes only with the machine's
+devices, and a slot change makes a new instance, which `instances` announces (`emulator_gone`, then `emulator`).
+
 ### 3.1 The surface topic
 
 The control surfaces protocol ([protocol.md](../../../inprogress/2026-10-18-control-surfaces/protocol.md)): a process

@@ -111,6 +111,7 @@
 #include <emulator/io/sprinter/isa/isaaccess.h>
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
+#include <emulator/state/devicecatalog.h>
 #include <emulator/state/devicestate.h>
 #include <common/stringhelper.h>
 #include <debugger/ports/nextregwrite.h>
@@ -5362,6 +5363,11 @@ public:
             return isaCycle(s, "latch", 0, sol::make_object(s, 0), value);
         });
 
+        // The device catalog: the state reports this machine has, each with its function here (DeviceState::Catalog)
+        lua.set_function("devices_state", [this](sol::this_state s, sol::optional<bool> all) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Catalog(ctx, all.value_or(false)));
+        });
         lua.set_function("fdc_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Fdc(ctx));

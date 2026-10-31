@@ -405,6 +405,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundActive, "/api/v1/emulator/state/audio/moonsound", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundPartActive, "/api/v1/emulator/state/audio/moonsound/{part}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateFdcActive, "/api/v1/emulator/state/fdc", drogon::Get);
+    // The device catalog: the state reports this machine has (api/state_device_api.cpp, DeviceState::Catalog)
+    ADD_METHOD_TO(EmulatorAPI::getStateDevices, "/api/v1/emulator/{id}/state/devices", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateDevicesActive, "/api/v1/emulator/state/devices", drogon::Get);
     // ZX-MultiSound and its MIDI synthesizer (api/state_device_api.cpp, DeviceState::MultiSound / Midi, MidiControl)
     ADD_METHOD_TO(EmulatorAPI::getStateAudioMultiSound, "/api/v1/emulator/{id}/state/audio/multisound", drogon::Get);
     // The Sprinter's ISA Wild Sound (api/state_device_api.cpp, DeviceState::WildSound)
@@ -1548,6 +1551,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                     const std::string& chip) const;
     void getStateFdcActive(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getStateDevices(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateDevicesActive(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getStateIde(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateIdeActive(const drogon::HttpRequestPtr& req,

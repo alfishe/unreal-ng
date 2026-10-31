@@ -133,6 +133,7 @@
 #include <emulator/io/sprinter/isa/isaaccess.h>
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
+#include <emulator/state/devicecatalog.h>
 #include <emulator/state/devicestate.h>
 #include <common/stringhelper.h>
 #include <debugger/ports/nextregwrite.h>
@@ -5071,6 +5072,11 @@ namespace PythonBindings
                  "One RESET DRV pulse to both ISA slots")
             .def("isa_latch", [](Emulator& self, int value) { return PyIsaCycle(self, "latch", 0, py::int_(0), value); },
                  py::arg("value"), "Write the #9FBD latch (A19-A14, AEN bit 6, RESET bit 7)")
+            .def("devices_state", [](Emulator& self, bool all) -> py::object {
+                return StateNodeToPy(DeviceState::Catalog(self.GetContext(), all));
+            }, py::arg("all") = false,
+               "The state reports this machine has: id, title, summary, REST route, CLI command, Lua / Python function, "
+               "MCP aspect; all=True: the absent ones too, each with why")
             .def("fdc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Fdc(self.GetContext()));
             }, "Beta Disk WD1793 state report: registers, status bits, FSM, signals, drives")

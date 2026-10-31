@@ -545,6 +545,7 @@ ok, msg = midi_panic()     -- every voice stops (a TTD live input)
 ms  = audio_moonsound_state()       -- MoonSound OPL4: NEW/NEW2, latches, mix, wave_memory, keyed channels/slots
 msf = audio_moonsound_state("fm")   -- its 18 FM channels, timers, register banks
 msp = audio_moonsound_state("pcm")  -- its 24 wavetable slots, envelopes, register file
+dev = devices_state()       -- the reports this machine has: reports[i] = {id, title, available, summary, route, cli, script, mcp}; devices_state(true): the absent ones too, with description
 fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
 ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (task_file, command, atapi)
 cd = cdaudio_state()        -- CD drives' audio: drives[] (slot, disc + tracks, audio status / head / track / index, drive_volume, mixer)
