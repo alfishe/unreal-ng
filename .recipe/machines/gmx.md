@@ -86,6 +86,7 @@ screen, the Scorpion GMX 128 menu, Edge Grinder's attract mode in 640x200.
 - `#7EFD` bit 7: 7 MHz (`hw_turbo_ratio` 2). The card's own wait: an opcode fetch from RAM that starts on an odd
   7 MHz T waits one T (`even_M1` = 2, turbo only); ROM code runs exactly 2x, a byte copy loop from RAM 1.93x.
   No Turbo+ `IN` strobes, no host waits.
+  Check: Edge Grinder in game, key R shows the frame rate: 25 (the real board's figure; 16 = too slow, 50 = too fast).
 - `#00` bit 7 (ST/PENT): the Pentagon frame, 320 lines (71680 T) with INT 17988 T before the paper; 0 = the
   Scorpion's 312 lines (69888 T). `#00` survives RESET, power-off clears it. Check with
   `inspect_state aspects:["paging"]` (`gmx.port_00.pentagon_int`) and the frame length in the timing state.
