@@ -1554,6 +1554,11 @@ StateNode ScreenMode(EmulatorContext* context)
         case M_PMC: ret["eff7_hwmc"] = true; break;
         case M_PHR: ret["eff7_512"] = true; break;
         case M_P384: ret["overscan"] = true; break;
+        case M_GMX:
+            ret["gmx_640x200"] = true;
+            ret["framebuffer"] = "736x288";
+            ret["raster"] = "312 lines x 224 T (69888 T frame), 5 pixels per T in the paper window";
+            break;
         case M_PROFIHR:
             ret["profi_hires"] = true;
             ret["framebuffer"] = "608x288";

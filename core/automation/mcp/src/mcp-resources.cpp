@@ -463,6 +463,12 @@ turbo on); the v6.44 firmware goes on into plane 5 with 640x200 on and waits for
 `#0000`. RESET clears every card latch except `#00`; a hard reset (power-off) clears `#00` too. The Magic button freezes
 the `#7AFD` / `#7EFD` read-backs until an `IN #FF`. No Turbo+ host logic (no ProfROM strobe, no Even M1).
 
+## Video
+`#7EFD` bit 3: 640x200 in a 736x288 frame (video mode GMX), 80 linear bytes per line from page `#39` (`#3B` with
+`#7FFD` bit 3), the standard attribute byte (ink, paper, bright, flash) per 8x1 pixels at the same offset in page
+`#79` (`#7B`), the scroll start from `#7AFD` / `#7CFD` with the wrap at 16000 bytes. Without bit 3 the Scorpion
+352x288 picture. Without an IDE drive the monitor's probe times out (~75 s to the 128 menu, as on the board).
+
 ## State
 `inspect_state aspects:["paging"]` reports `gmx`: `port_00` (scheme, fixrom, blkext, blkex2, pentagon_int,
 reconf_pending), `port_7efd` (rom_plane, turbo, video_640x200, magic_blocked), `page_8000`, `page_c000`,

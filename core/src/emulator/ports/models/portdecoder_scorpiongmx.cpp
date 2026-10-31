@@ -7,6 +7,7 @@
 #include "emulator/cpu/core.h"
 #include "debugger/ttd/gmx/ttdgmxpaging.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/video/screen.h"
 
 /// region <Constructors / Destructors>
 
@@ -45,6 +46,10 @@ void PortDecoder_ScorpionGMX::reset()
     state.scorpion.profromBank = Plane();
     _context->pMemory->UpdateZ80Banks();
     RefreshStepHook();
+
+    // RESET clears #7EFD bit 3: back to the Scorpion raster
+    if (_context->pScreen)
+        _context->pScreen->InitRaster();
 }
 
 void PortDecoder_ScorpionGMX::PowerCycle()
@@ -128,10 +133,19 @@ void PortDecoder_ScorpionGMX::DecodePortOut(uint16_t port, uint8_t value, uint16
             memory.UpdateZ80Banks();
             break;
         case 0x7A:
+            // The scroller moves the 640x200 picture: the beam draws up to this T with the old start first
+            if (Screen* screen = _context->pScreen)
+                screen->UpdateScreen();
             gmx.p7AFD = static_cast<uint8_t>(value & 0xF0);  // the low four bits are reset in hardware (manual)
+            if (Screen* screen = _context->pScreen)
+                screen->NoteVideoWrite();
             break;
         case 0x7C:
+            if (Screen* screen = _context->pScreen)
+                screen->UpdateScreen();
             gmx.p7CFD = static_cast<uint8_t>(value & 0x3F);
+            if (Screen* screen = _context->pScreen)
+                screen->NoteVideoWrite();
             break;
         case 0x7E:
             Out7EFD(value);
@@ -322,10 +336,15 @@ void PortDecoder_ScorpionGMX::Out7EFD(uint8_t value)
     if (state.gmx.p00 & P00_FIXROM)
         value = static_cast<uint8_t>((value & ~P7EFD_PLANE_MASK) | (state.scorpion.p7EFD & P7EFD_PLANE_MASK));
 
+    const uint8_t changed = static_cast<uint8_t>(state.scorpion.p7EFD ^ value);
     state.scorpion.p7EFD = value;
     state.scorpion.profromBank = Plane();
     _context->pMemory->UpdateZ80Banks();
     ApplyTurbo();
+
+    // Bit 3 switches the 640x200 extended mode (Screen::DetectModeGMX)
+    if ((changed & P7EFD_GFX) && _context->pScreen)
+        _context->pScreen->InitRaster();
 }
 
 void PortDecoder_ScorpionGMX::ApplyTurbo()

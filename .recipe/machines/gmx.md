@@ -58,6 +58,29 @@ time_travel  {"action":"seek","frame":N}    # the card's latches, the plane and 
 - State transfer: a Spectrum / Scorpion state moves into a GMX; a GMX moves to a Scorpion 256 while its paging is off
   and pages 16-127 are empty; with `#78FD` / `#DFFD` / its own plane in use, only to another GMX.
 
+## Video: 640x200 and Edge Grinder
+
+`#7EFD` bit 3 turns the extended mode on: 640x200 in a 736x288 frame (48 px borders), 80 linear bytes per line from
+page `#39` (`#3B` with `#7FFD` bit 3), the standard attribute byte per 8x1 pixels at the same offset in page `#79`
+(`#7B`), scrolled by the start address `(#7CFD & #3F) << 8 | (#7AFD & #F0)` with the wrap at 16000 bytes.
+
+```bash
+# The monitor's fast test is already in 640x200 a few seconds after power-on
+curl -s "$BASE/emulator/$EMU_ID/state/screen" | jq '{video_mode, framebuffer, gmx_640x200}'
+curl -s "$BASE/emulator/$EMU_ID/capture/screen" | jq -r .data | base64 -d > gmx.png     # 736x288
+
+# Edge Grinder: insert, wait for the 128 menu (#7EFD = #40, ~75 s: the monitor's IDE probe times out without a
+# drive, as on the board and in Unreal), Enter = "128 TR-DOS", any key on the controls screen, then #7EFD = #C8
+curl -s -X POST "$BASE/emulator/$EMU_ID/disk/A/insert" -H 'Content-Type: application/json' \
+     -d "{\"path\": \"$PWD/testdata/machines/gmx/edgegrinder/EGGMX.TRD\"}"
+curl -s "$BASE/emulator/$EMU_ID/state/paging" | jq -r '.gmx.port_7efd.value'               # wait for 0x40
+curl -s -X POST "$BASE/emulator/$EMU_ID/keyboard/tap" -H 'Content-Type: application/json' -d '{"key":"ENTER"}'
+```
+
+`inspect_state aspects:["video"]` and the video map (`/video/layout`, `/video/pixel`, `/video/address`, family `gmx`) follow the same geometry: a pixel's
+sources are the pixel and attribute bytes after the scroll. Verified 2026-10-30 (wt-gmx-impl): the monitor's test
+screen, the Scorpion GMX 128 menu, Edge Grinder's attract mode in 640x200.
+
 ## The card at a glance
 
 | Port | Write | Read |
