@@ -727,6 +727,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::stepInstructionTTD, "/api/v1/emulator/{id}/ttd/step-instruction", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseStepTTD, "/api/v1/emulator/{id}/ttd/reverse-step", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseContinueTTD, "/api/v1/emulator/{id}/ttd/reverse-continue", drogon::Post);
+    // Feedback item 7: the frames a game profile's probes fired in (a replay of the window)
+    ADD_METHOD_TO(EmulatorAPI::probeFramesTTD, "/api/v1/emulator/{id}/ttd/probe-frames", drogon::Post);
     // TD-4 — agent bookmarks: advisory annotations beside the timeline,
     // explicitly NOT replay barriers (unlike external-event markers).
     ADD_METHOD_TO(EmulatorAPI::getTTDBookmarks, "/api/v1/emulator/{id}/ttd/bookmarks", drogon::Get);
@@ -2291,6 +2293,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void reverseContinueTTD(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void probeFramesTTD(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // TD-4 — agent bookmarks (advisory annotations, never replay barriers).
     void getTTDBookmarks(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;

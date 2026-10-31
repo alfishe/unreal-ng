@@ -310,6 +310,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
         else
             HandleTTDReverseStep(session, context, args);
     }
+    else if (subcommand == "probe-frames" || subcommand == "pf")
+    {
+        HandleTTDProbeFrames(session, context, args);
+    }
     else if (subcommand == "coverage" || subcommand == "cov")
     {
         HandleTTDCoverage(session, context, args);
@@ -405,7 +409,10 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "      [--phys-page P|rom] [--all] [--limit N] [--before-frame F [--before-tin T] | --before T] [--from-frame F]"
        << NEWLINE;
     ss << "    [--pc <B> ...]                    (repeat --pc for multiple breakpoints)" << NEWLINE;
-    ss << "  Aliases: rs=reverse-step, rc=reverse-continue" << NEWLINE;
+    ss << "  ttd probe-frames <exec|read|write|port-in|port-out> <address>   The frames a profile probe fired in" << NEWLINE;
+    ss << "      [--end A] [--page N] [--port-mask M] [--if \"COND\"] | --probes '[{...}, ...]'" << NEWLINE;
+    ss << "      [--from-frame F] [--to-frame F] [--limit N]   (replays the window; the machine stays)" << NEWLINE;
+    ss << "  Aliases: rs=reverse-step, rc=reverse-continue, pf=probe-frames" << NEWLINE;
     ss << NEWLINE;
     ss << "Notes:" << NEWLINE;
     ss << "  - Seek/step/resume require the emulator to be paused." << NEWLINE;
@@ -1491,6 +1498,81 @@ void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, Emulat
         ss << "TTD: Reverse-continue found no match (reached session start)" << NEWLINE;
     }
     ss << FormatSearchWindow(b) << FormatCheck(b);
+    session.SendResponse(ss.str());
+}
+
+/// `ttd probe-frames <kind> <address> [--end A] [--page N] [--port-mask M] [--if "COND"]` or `--probes JSON`, with
+/// `[--from-frame F] [--to-frame F] [--limit N]`: the frames a game profile's probes fired in (a replay of the window)
+void CLIProcessor::HandleTTDProbeFrames(const ClientSession& session, EmulatorContext* context,
+                                        const std::vector<std::string>& args)
+{
+    static const std::map<std::string, std::string> flags = {
+        {"--end", "end"},           {"--page", "page"},         {"--port-mask", "port_mask"}, {"--if", "if"},
+        {"--probes", "probes"},     {"--from-frame", "from_frame"}, {"--to-frame", "to_frame"}, {"--limit", "limit"}};
+    std::map<std::string, std::string> options;
+    std::vector<std::string> positional;
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        const auto flag = flags.find(args[i]);
+        if (flag != flags.end() && i + 1 < args.size())
+            options[flag->second] = args[++i];
+        else
+            positional.push_back(args[i]);
+    }
+    if (positional.size() >= 1)
+        options["probe"] = positional[0];
+    if (positional.size() >= 2)
+        options["address"] = positional[1];
+    if (!options.count("probes") && positional.size() != 2)
+    {
+        session.SendResponse(std::string("Usage: ttd probe-frames <exec|read|write|port-in|port-out> <address> [--end A] "
+                                         "[--page N] [--port-mask M] [--if \"COND\"] | --probes '[{...}]' "
+                                         "[--from-frame F] [--to-frame F] [--limit N]") + NEWLINE);
+        return;
+    }
+
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"probe-frames", options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    const StateNode& b = reply.body;
+    std::stringstream ss;
+    ss << "Frames " << b.find("from_frame")->i << ".." << b.find("to_frame")->i << ": " << b.find("replayed_frames")->i
+       << " replayed, " << b.find("pruned_frames")->i << " pruned by the coverage index";
+    if (const StateNode* barriers = b.find("barrier_frames"); barriers && !barriers->items.empty())
+        ss << ", " << barriers->items.size() << " behind a replay barrier (not searched)";
+    ss << NEWLINE;
+    for (const StateNode& probe : b.find("probes")->items)
+    {
+        ss << "  " << probe.find("probe")->s << " " << probe.find("address")->s;
+        if (const StateNode* end = probe.find("end"))
+            ss << ".." << end->s;
+        if (const StateNode* page = probe.find("page"))
+            ss << " page=" << page->i;
+        if (const StateNode* mask = probe.find("port_mask"))
+            ss << " mask=" << mask->s;
+        if (const StateNode* cond = probe.find("if"))
+            ss << " if " << cond->s;
+        if (const StateNode* error = probe.find("error"))
+        {
+            ss << ": not armed (" << error->s << ")" << NEWLINE;
+            continue;
+        }
+        ss << ": " << probe.find("frame_count")->i << " frames, " << probe.find("hit_count")->i << " hits";
+        const std::vector<StateNode>& frames = probe.find("frames")->items;
+        const std::vector<StateNode>& hits = probe.find("hits")->items;
+        if (!frames.empty())
+            ss << ":";
+        for (size_t i = 0; i < frames.size(); ++i)
+            ss << " " << frames[i].i << (hits[i].i > 1 ? "x" + std::to_string(hits[i].i) : "");
+        if (probe.find("truncated")->b)
+            ss << " ...";
+        ss << NEWLINE;
+    }
+    if (const StateNode* next = b.find("next_from_frame"))
+        ss << "More: --from-frame " << next->i << NEWLINE;
     session.SendResponse(ss.str());
 }
 
