@@ -391,11 +391,23 @@ void GuiActions::Trigger(const HostActionEvent& event)
         Notice(Tr("%1: unknown action").arg(action));
         return;
     }
+    // The device's own instance (pinned to one, or the followed one); the window's when the router names none
     Emulator* emulator = _binding != nullptr ? _binding->emulator() : nullptr;
-    if (emulator == nullptr)
+    std::string instance = event.instance.toStdString();
+    if (instance.empty() && emulator != nullptr)
+        instance = emulator->GetId();
+    if (instance.empty())
     {
         if (pressed)
             Notice(Tr("%1: no machine").arg(QString::fromStdString(info->label)));
+        return;
+    }
+    // The GUI's actions (the debugger's panes, the screenshot, the windows) act on this window's machine only
+    if (info->gui && (emulator == nullptr || instance != emulator->GetId()))
+    {
+        if (pressed)
+            Notice(Tr("%1: the device drives another machine than this window's")
+                       .arg(QString::fromStdString(info->label)));
         return;
     }
     actions::ActionValue actionValue;
@@ -443,9 +455,9 @@ void GuiActions::Trigger(const HostActionEvent& event)
             {
                 actions::ActionValue press = actionValue;
                 press.pressed = down;
-                registry.Submit(id, std::move(press), emulator->GetId(), origin, done);
+                registry.Submit(id, std::move(press), instance, origin, done);
             }
         return;
     }
-    registry.Submit(id, std::move(actionValue), emulator->GetId(), std::move(origin), std::move(done));
+    registry.Submit(id, std::move(actionValue), instance, std::move(origin), std::move(done));
 }

@@ -47,6 +47,9 @@ struct ActionEvent
     double rate = 0;
     /// The binding's `curve` object (the action's parameters, `ttd.seek_by`'s scrub curve); null when it has none
     JsonValue params{};
+    /// The instance the device drives (its pinned one, else the followed one; "" none): the action runs there. Set by
+    /// the router as it dispatches
+    std::string instance{};
 };
 
 /// The speed of an encoder (control surfaces controls-and-feedback.md §2): the Stream Deck bridge's rule, retuned for
