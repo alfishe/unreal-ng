@@ -314,6 +314,14 @@ not which. `key a` therefore counts only reads that select A's half-row
 alone - what the ROM's KEY-SCAN and most games do. `key` with no name finds
 the all-rows reads too.
 
+**Who read it.** A hit names more than the record: a ULA read the half-rows
+its address selects and the keys it saw down (one half-row only), taken from
+the record; and, by default (`context`; off while a recording runs, refused
+for a file), the registers at the instruction's M1 and the word at SP - the
+caller of a key routine - found by a replay to each hit, the machine put back
+(`TimeTravelController::PortAccessContexts`). The journal stays as it is: the
+registers are not recorded, so the search itself still replays nothing.
+
 **The AY register** of a read or write is followed through the OUT journal:
 the last #FFFD write before the access selects it (values #F0-#FF are
 TurboSound / TSFM control and keep the selection).

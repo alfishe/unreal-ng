@@ -64,5 +64,5 @@
     paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["responses"]["404"]["description"] =
         "Unknown emulator id or unknown setting";
     paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["responses"]["409"]["description"] =
-        "Refused while a time-travel (TTD) recording runs: speed other than 1, or turbo_mode true";
+        "Refused while a time-travel (TTD) recording runs: speed other than 1 (and turbo_mode true while a v1 recording runs)";
 

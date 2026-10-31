@@ -64,6 +64,7 @@
 #include "controllers/guiactions.h"
 #include "emulator/actions/actionregistry.h"
 #include "controllers/hostcontrollers.h"
+#include "platform/windowlesssession.h"
 #include "controllers/surfacestatusicon.h"
 #include "controllers/streamdeckpage.h"
 #include "controllers/surfacetargets.h"
@@ -323,6 +324,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     {
         QMutexLocker locker(&_audioMutex);
+        // A windowless session is heard by nobody (agents, tests): silent, the device still the clock
+        _soundManager->setSilent(!WindowlessSessionUses("sound"));
         if (_soundManager->init())
         {
             _audioInitialized = true;
@@ -5492,6 +5495,15 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
                  << QString::fromStdString(_emulator->GetId());
         _emulator->ClearAudioCallback();
     }
+
+    // An instance starts muted (SoundManager). The interactive GUI unmutes the instance it binds, once; a headless
+    // process (offscreen / minimal platform) leaves it muted: only an automation plane (audio/mixer/master) unmutes it.
+    // Binding the same instance again keeps whatever mute state the user set.
+    const QString platform = QGuiApplication::platformName();
+    const bool headless = platform == QLatin1String("offscreen") || platform == QLatin1String("minimal");
+    if (!headless && _audioBoundId != emulator->GetId())
+        emulator->SetHostAudioMuted(false);
+    _audioBoundId = emulator->GetId();
 
     // Bind the audio callback to the new emulator
     qDebug() << "MainWindow::bindEmulatorAudio() - Binding audio callback to emulator"

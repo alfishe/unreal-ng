@@ -85,6 +85,7 @@
 #include <tuple>
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
+#include "debugger/analyzers/analysis/analysiscontrol.h"
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
@@ -110,6 +111,7 @@
 #include <emulator/io/sprinter/isa/isaaccess.h>
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
+#include <emulator/state/devicecatalog.h>
 #include <emulator/state/devicestate.h>
 #include <common/stringhelper.h>
 #include <debugger/ports/nextregwrite.h>
@@ -5361,6 +5363,11 @@ public:
             return isaCycle(s, "latch", 0, sol::make_object(s, 0), value);
         });
 
+        // The device catalog: the state reports this machine has, each with its function here (DeviceState::Catalog)
+        lua.set_function("devices_state", [this](sol::this_state s, sol::optional<bool> all) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Catalog(ctx, all.value_or(false)));
+        });
         lua.set_function("fdc_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Fdc(ctx));
@@ -5994,7 +6001,8 @@ public:
         // "out"; arg: a key name or an AY register; options: a table of
         // ttd::ApplyPortQueryOption names (limit, newest, from, to, port,
         // port_mask, value, value_mask, match, trigger, ay_register; file = a
-        // .ttd path searched without loading it)
+        // .ttd path searched without loading it; context = each hit's
+        // registers at its instruction, default on except while recording)
         lua.set_function("ttd_port_events", [this](sol::this_state ts, const std::string& event, sol::object argObj,
                                                      sol::object optionsObj) -> sol::object {
             std::map<std::string, std::string> options{{"event", event}};
@@ -6097,7 +6105,7 @@ public:
             return reply.Ok() && reply.body.find("reached")->b;
         });
 
-        // ttd_reverse_continue({pcs}, {phys_page=, all=, limit=, before_frame=, before_tin=, before=, from_frame=})
+        // ttd_reverse_continue({pcs}, {phys_page=, all=, first_per_pc=, limit=, before_frame=, before_tin=, before=, from_frame=})
         lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable,
                                                         sol::optional<sol::table> optionsTable) -> sol::object {
             std::string pcs;
@@ -6126,6 +6134,13 @@ public:
             for (const auto& [key, value] : argsTable)
                 options[key.as<std::string>()] = TtdOptionText(value);
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-scan", options)));
+        });
+
+        lua.set_function("ttd_coverage_rare", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-rare", options)));
         });
 
         lua.set_function("ttd_coverage_summary", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
@@ -6890,6 +6905,43 @@ public:
             StateNode value = reply.body;
             if (!reply.Ok())
             {
+                value["ok"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+        // The analysis layers through analysis::Execute (analysiscontrol.h): analysis(action, opts) with action start |
+        // stop | status | build | cancel | explain | query | export | gallery | findings | review | experiment | cover; opts a table ({level=, mode=, record=} /
+        // {frames=, path=, wait=} / {address=, page=, what=} / {kind=, range=, limit=} / {format=, path=, ranges=,
+        // width=} / {address=, kind=, scale=, path=, limit=}) or, for explain and gallery, the address, for start the
+        // level, for build the frames, for query the kind, for export the format. The answer: the reply's fields plus
+        // text (gallery: the PNG base64 in png); a refusal: ok = false, error = why. L3: findings {op=, kind=, status=,
+        // format=, path=}, review {op=, id=, verdict=, label=, title=, comment=, kind=, names=<JSON text>, reason=,
+        // offset=, limit=, experiment=<JSON text>} (or the op), experiment {spec=<JSON text>, path=, finding=} (or the
+        // spec's JSON text), cover {budget=, frames=, ranges=} (or the budget)
+        lua.set_function("analysis", [this](sol::this_state ts, sol::optional<std::string> action,
+                                            sol::optional<sol::object> opts) -> sol::object {
+            const std::string verb = action.value_or("status");
+            Emulator* emulator = effectiveEmulator();
+            analysis::Reply reply;
+            if (!emulator)
+                reply.error = analysis::Error::NotAvailable, reply.message = "no emulator";
+            else
+                reply = analysis::Execute(*emulator, verb,
+                                          opts ? SymbolOptions(*opts, verb == "explain" || verb == "gallery" ? "address"
+                                                             : verb == "start" ? "level"
+                                                             : verb == "build" ? "frames"
+                                                             : verb == "query" ? "kind"
+                                                             : verb == "export" ? "format"
+                                                             : verb == "findings" || verb == "review" ? "op"
+                                                             : verb == "experiment" ? "spec"
+                                                             : verb == "cover" ? "budget"
+                                                                               : "")
+                                               : analysis::Options{});
+            StateNode value = reply.ToValue();
+            if (!reply.Ok())
+            {
+                value = StateNode::Object();
                 value["ok"] = false;
                 value["error"] = reply.message;
             }

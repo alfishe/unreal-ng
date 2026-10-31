@@ -399,7 +399,9 @@ TEST_F(DezogDebugAdapter_test, WatchpointClampsAt64K)
     ASSERT_EQ(bpManager->GetBreakpointsCount(), before + 1);
     for (const auto& [id, desc] : bpManager->GetAllBreakpoints())
         if (desc->z80address == 0xFFFE)
+        {
             EXPECT_EQ(desc->z80addressEnd, 0xFFFF);
+        }
 
     _adapter->removeWatchpoint(0xFFFE, 0, 8, dzrp::WatchAccess::WRITE);
     EXPECT_EQ(bpManager->GetBreakpointsCount(), before);

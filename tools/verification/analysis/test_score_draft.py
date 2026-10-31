@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+"""Unit tests for score_draft.py on tiny synthetic fixtures (testdata/)."""
+import io
+import json
+import os
+import sys
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import score_draft as sd  # noqa: E402
+
+DATA = os.path.join(HERE, 'testdata')
+
+
+def path(name):
+    return os.path.join(DATA, name)
+
+
+class DefSizeTest(unittest.TestCase):
+    def test_sizes(self):
+        self.assertEqual(sd.def_size('DEFB 1,2,3'), 3)
+        self.assertEqual(sd.def_size('DEFW $8000,0'), 4)
+        self.assertEqual(sd.def_size('DEFS 512'), 512)
+        self.assertEqual(sd.def_size('DEFS $20,255'), 32)
+        self.assertEqual(sd.def_size('DEFM "AB",13'), 3)
+        self.assertEqual(sd.def_size(r'DEFM "\"a\\",1'), 4)
+        self.assertEqual(sd.def_size('DEFM "a,b;c"'), 5)
+        self.assertIsNone(sd.def_size('LD A,1'))
+
+    def test_comment_split_keeps_quoted_semicolon(self):
+        self.assertEqual(sd.strip_comment('DEFM "H;",13 ; note'), ('DEFM "H;",13', 'note'))
+
+
+class ParseTest(unittest.TestCase):
+    def test_isub_block_skipped_by_default(self):
+        ref = sd.build_skool(path('ref.skool'))
+        self.assertNotIn(32760, [e.address for e in ref.entries])
+        ref_isub = sd.build_skool(path('ref.skool'), isub=True)
+        self.assertIn(32760, [e.address for e in ref_isub.entries])
+
+    def test_ref_byte_map_and_sections(self):
+        ref = sd.build_skool(path('ref.skool'))
+        self.assertEqual(ref.entry_cat[0x8000], 'code')
+        self.assertEqual(ref.entry_cat[0x8002], 'code')
+        self.assertEqual(ref.entry_cat[0x8003], 'data')
+        self.assertEqual(ref.entry_cat[0x8025], 'text')
+        self.assertEqual(ref.entry_cat[0x802F], 'unused')
+        self.assertNotIn(0x8030, ref.entry_cat)
+        self.assertEqual([(a, b) for a, b, _ in ref.graphic_claims], [(0x8003, 0x8013), (0x8013, 0x8023)])
+
+    def test_hex_skool_draft(self):
+        d = sd.load_draft(path('draft.skool'))
+        self.assertEqual(d.format, 'skool')
+        self.assertEqual(d.line_cat[0x8013], 'text')
+        self.assertEqual(d.line_cat[0x801C], 'text')
+        self.assertEqual(d.line_cat[0x801D], 'data')
+
+    def test_ctl_draft(self):
+        d = sd.load_draft(path('draft.ctl'))
+        self.assertEqual(d.format, 'ctl')
+        self.assertEqual(d.entry_cat[0x8013], 'data')
+        self.assertEqual(d.line_cat[0x8013], 'text')
+        self.assertEqual(d.entry_cat[0x802C], 'unknown')
+
+
+class ScoreTest(unittest.TestCase):
+    def test_ctl_scores(self):
+        rep = sd.score(path('draft.ctl'), path('ref.skool'), expected_path=path('expected.json'),
+                       fields_path=path('fields.json'), geometry_path=path('geometry.json'))
+        self.assertEqual(rep['range'], [0x8000, 0x8030])
+        ce = rep['categories_entry']
+        self.assertEqual((ce['bytes_agree'], ce['bytes_scored']), (42, 48))
+        self.assertEqual(ce['confusion']['data']['code'], 2)
+        self.assertEqual(ce['confusion']['unknown']['unused'], 4)
+        self.assertEqual(rep['categories_line']['bytes_agree'], 26)
+        self.assertEqual(rep['code_entries']['matched'], 1)
+        self.assertEqual(rep['code_entries']['misses'], ['$802A'])
+        g = rep['graphics']
+        self.assertEqual((g['total'], g['covered'], g['with_draft_boundary']), (2, 2, 2))
+        self.assertEqual((g['geometry_checked'], g['geometry_match']), (2, 1))
+        rec = rep['records']
+        self.assertEqual(rec['complete'], 0)
+        self.assertEqual(rec['records'][0]['matched'], 2)
+        self.assertEqual(rec['records'][0]['layouts'][0]['missing'], ['+3/1 length'])
+
+    def test_skool_scores_and_na(self):
+        rep = sd.score(path('draft.skool'), path('ref.skool'), expected_path=path('expected.json'))
+        self.assertEqual(rep['categories_entry']['agree_pct'], 100.0)
+        self.assertEqual(rep['categories_line']['bytes_agree'], 48 - 10)
+        self.assertEqual(rep['code_entries']['matched'], 2)
+        self.assertIsNone(rep['records']['complete'])
+        self.assertEqual(rep['graphics']['geometry_checked'], 0)
+        self.assertEqual(rep['graphics']['with_draft_boundary'], 1)
+
+    def test_split_vars(self):
+        rep = sd.score(path('draft.skool'), path('ref.skool'), start=0x8000, end=0x8030, split_vars=True)
+        self.assertEqual(rep['categories_entry']['confusion']['vars']['vars'], 4)
+
+    def test_cli_text_and_json(self):
+        out = io.StringIO()
+        old = sys.stdout
+        sys.stdout = out
+        try:
+            sd.main([path('draft.ctl'), path('ref.skool'), '--expected', path('expected.json'), '--json', '-'])
+        finally:
+            sys.stdout = old
+        rep = json.loads(out.getvalue())
+        self.assertEqual(rep['records']['status'], 'n/a (draft provides no fields)')
+        text = io.StringIO()
+        sd.report_text(rep, text)
+        self.assertIn('Code entries: 1 of 2', text.getvalue())
+
+
+class ExpectedFileTest(unittest.TestCase):
+    def test_manic_miner_fields_tile_each_record(self):
+        exp = sd.load_json(os.path.join(HERE, 'expected', 'manic-miner-records.json'))
+        self.assertEqual([r['name'] for r in exp['records']],
+                         ['cavern_buffer', 'guardians', 'items', 'conveyor', 'willy_state'])
+        for rec in exp['records']:
+            for layout in rec['layouts']:
+                pos = 0
+                for f in layout['fields']:
+                    self.assertEqual(f['offset'], pos, (rec['name'], f))
+                    pos += f['size']
+                self.assertEqual(pos, rec['size'], rec['name'])
+
+    def test_jet_set_willy_fields_stay_inside_each_record(self):
+        exp = sd.load_json(os.path.join(HERE, 'expected', 'jet-set-willy-records.json'))
+        self.assertEqual([r['name'] for r in exp['records']],
+                         ['room_buffer', 'conveyor', 'ramp', 'room_exits', 'entity_specs', 'entity_buffer',
+                          'items', 'willy_state', 'writetyper'])
+        for rec in exp['records']:
+            for layout in rec['layouts']:
+                pos = 0
+                for f in layout['fields']:
+                    self.assertGreaterEqual(f['offset'], pos, (rec['name'], f))   # sorted, no overlap
+                    pos = f['offset'] + f['size']
+                # tiles the record exactly, or ends at the layout's stated span (the rope, the item table)
+                self.assertEqual(pos, layout.get('span', rec['size']), (rec['name'], layout['name']))
+                if 'span' not in layout:
+                    self.assertEqual(sum(f['size'] for f in layout['fields']), rec['size'], rec['name'])
+
+
+MM_SKOOL = '/Volumes/TB4-4Tb/Projects/emulators/github/skoolkid-manicminer/sources/mm.skool'
+JSW_SKOOL = '/Volumes/TB4-4Tb/Projects/emulators/github/skoolkid-jetsetwilly/sources/jsw.skool'
+
+
+class MacroGeometryTest(unittest.TestCase):
+    def test_udgarray_counts_like_skoolkit(self):
+        self.assertEqual(sd.udg_count('32771-32786-1-16', 2), 2)
+        self.assertEqual(sd.udg_count('32768-32799-1-16', 2), 4)
+        self.assertEqual(sd.udg_count('100;101;102x3', 2), 5)
+        self.assertEqual(sd.udg_count('40000-40031-8', 1), 4)
+
+    def test_defs_for_and_let_expand(self):
+        defs = sd.parse_defs('#DEF(#PAIR(a)\n  #LET(b=$a+8)\n  #UDG({b}) | #UDG({b}+8)\n)\n'
+                             '#DEF(#ROW(n) #FOR(1,$n)(k,#UDG(k), | ))\n')
+        self.assertEqual(set(defs), {'PAIR', 'ROW'})
+        text = sd.expand_macros('{ #PAIR1000 }', defs)
+        self.assertEqual(text.count('#UDG('), 2)
+        self.assertIn('#UDG(1008)', text)
+        self.assertEqual(sd.expand_macros('#ROW3', defs).count('#UDG'), 3)
+
+    def test_section_shapes(self):
+        self.assertEqual(sd.section_geometry('#UDGTABLE { #UDG1 | #UDG9 | #UDG17 } TABLE#', 24, {}),
+                         {'kind': 'graphic', 'width': 8, 'height': 8, 'frames': 3})
+        self.assertEqual(sd.section_geometry('#UDGTABLE { #UDG1 } TABLE# #UDGTABLE { #UDG2 | #UDG3 } TABLE#', 8, {}),
+                         {'kind': 'graphic', 'width': 8, 'height': 8, 'frames': 1})
+        self.assertEqual(sd.section_geometry('#SCR(1,0,0,32,8) #SCR(1,0,8,32,8)', 4096, {}),
+                         {'kind': 'screen', 'width': 256, 'height': 128, 'frames': 1})
+        self.assertEqual(sd.section_geometry('#UDGARRAY32,,,(1-512)(*bg) #OVER(0,0)(sprite)', 512, {}),
+                         {'kind': 'map', 'width': 32, 'height': 16, 'frames': 1})
+        self.assertIsNone(sd.section_geometry('no picture', 8, {}))
+
+    def test_geometry_lookup_prefers_largest_overlap(self):
+        geometry = [{'start': '$5E00', 'end': '$5E02'}, {'start': '$5E00', 'end': '$6000', 'width': 32}]
+        self.assertEqual(sd.geometry_lookup(geometry, 0x5E00, 0x6000)['width'], 32)
+
+    @unittest.skipUnless(os.path.exists(MM_SKOOL), 'skoolkid Manic Miner sources not present')
+    def test_manic_miner_macros_give_the_handwritten_geometry(self):
+        ref = sd.build_skool(MM_SKOOL)
+        defs = sd.load_defs(sd.default_refs(MM_SKOOL), MM_SKOOL)
+        exp = sd.load_json(os.path.join(HERE, 'expected', 'manic-miner-records.json'))['graphics']
+        self.assertEqual(len(exp), 106)
+        self.assertEqual(len(ref.graphic_claims), 106)
+        for g in exp:
+            start, end = sd.addr_of(g['start']), sd.addr_of(g['end'])
+            got = sd.section_geometry(ref.graphic_text.get(start, ''), end - start, defs)
+            self.assertIsNotNone(got, g['start'])
+            self.assertEqual((got['width'], got['height'], got['frames']),
+                             (g['width'], g['height'], g['frames']), g['start'])
+
+    def test_picture_of_graphics_stored_elsewhere_is_no_region(self):
+        defs = sd.parse_defs('#DEF(#GUARD(page,index)\n  #LET(a=$page*256+$index*32)\n'
+                             '  #UDGARRAY(2,7,,2)(({a})-({a}+17)-1-16)(g*)\n)\n')
+        page = '#UDGTABLE { #GUARD171,0 | #GUARD171,1 } TABLE#'
+        self.assertEqual(sd.image_reads(sd.expand_macros(page, defs)), [(43776, 43800), (43808, 43832)])
+        # the sprite page holds the data; an 8-byte definition elsewhere only draws it
+        self.assertFalse(sd.shows_graphics_elsewhere(page, 43776, 43840, defs))
+        self.assertTrue(sd.shows_graphics_elsewhere(page, 40976, 40984, defs))
+        # unknown reads (#PEEK, a frame the game's own code builds) keep the region
+        self.assertIsNone(sd.image_reads('#UDG(#PEEK(30000))'))
+        self.assertFalse(sd.shows_graphics_elsewhere('#UDGTABLE { #ROOM0(r) } TABLE#', 49152, 49280, defs))
+        self.assertIsNone(sd.section_geometry('#RFRAME(0) #COPY(0,0,32,17,2)(0,room) #UDG(49377)(*item) '
+                                              '#OVER(1,2)(room,item)', 128, {}))
+        self.assertTrue(sd.GRAPHIC_MACROS.search('{ #ROOM12(tree_top) }'))
+        self.assertTrue(sd.GRAPHIC_MACROS.search('{ #GUARDIAN171,0,5 }'))
+
+    def test_level_map_matches_on_cells(self):
+        ref = {'kind': 'level_map', 'width': 32, 'height': 16, 'frames': 1}
+        self.assertTrue(sd.geometry_matches({'width': 32, 'height': 16, 'frames': 2}, ref))
+        self.assertFalse(sd.geometry_matches({'width': 32, 'height': 4, 'frames': 1}, ref))
+
+    @unittest.skipUnless(os.path.exists(JSW_SKOOL), 'skoolkid Jet Set Willy sources not present')
+    def test_jet_set_willy_regions_and_geometry(self):
+        expected = os.path.join(HERE, 'expected', 'jet-set-willy-records.json')
+        exp = sd.load_json(expected)
+        rep = sd.score(JSW_SKOOL, JSW_SKOOL, expected_path=expected)
+        g = rep['graphics']
+        self.assertEqual((g['total'], g['covered'], g['views_skipped']), (224, 224, 106))
+        self.assertEqual([r['start'] for r in g['regions']], [x['start'] for x in exp['graphics']])
+        for r, x in zip(g['regions'], exp['graphics']):
+            self.assertEqual(sd.addr_of(r['end']) + 1, sd.addr_of(x['end']), x['start'])
+            if x['kind'] == 'level_map':
+                # the room picture is a frame the game's Python macro builds: no macro geometry
+                self.assertNotIn('macro_geometry', r, x['start'])
+                continue
+            m = r['macro_geometry']
+            self.assertEqual((m['width'], m['height'], m['frames']), (x['width'], x['height'], x['frames']),
+                             x['start'])
+
+    def test_macro_geometry_mode_scores_without_expected(self):
+        rep = sd.score(path('draft.ctl'), path('ref.skool'), geometry_path=path('geometry.json'), ref_files=[])
+        g = rep['graphics']
+        self.assertEqual((g['geometry_known'], g['geometry_match']), (2, 1))
+        self.assertEqual(g['geometry_match_pct'], 50.0)
+        self.assertEqual(g['regions'][1]['reference_geometry']['width'], 16)
+
+
+if __name__ == '__main__':
+    unittest.main()
+
+
+class NamesTest(unittest.TestCase):
+    def setUp(self):
+        self.vocab = sd.Vocabulary()
+
+    def test_classes(self):
+        v = self.vocab
+        self.assertEqual(sd.name_class(v, 0x8000, None, 'X', ''), 'missing')
+        self.assertEqual(sd.name_class(v, 0x8ABB, 'sub_8ABB', 'Move', ''), 'auto')
+        self.assertEqual(sd.name_class(v, 0x8029, 'L8029', 'Move', ''), 'auto')
+        self.assertEqual(sd.name_class(v, 0x8000, 'cavern_name', 'CAVERNNAME', ''), 'exact')
+        self.assertEqual(sd.name_class(v, 0x8000, 'MoveHorizontalGuardians', 'MOVEHG',
+                                       'Move the horizontal guardians'), 'normalized')
+        self.assertEqual(sd.name_class(v, 0x8000, 'HGuards', 'HGUARDS', ''), 'exact')
+        self.assertEqual(sd.name_class(v, 0x8000, 'GuardianTable', 'HGUARDS', ''), 'judge')
+        self.assertEqual(sd.name_class(v, 0x8000, 'Banana', 'TUNE', 'Theme tune'), 'judge')
+
+    def test_split_and_stem(self):
+        self.assertEqual(sd.split_words('HGuardianTable'), ['H', 'Guardian', 'Table'])
+        self.assertEqual(sd.split_words('move_willy2'), ['move', 'willy', '2'])
+        self.assertEqual(sd.stem('guardians'), 'guardian')
+        self.assertEqual(sd.stem('entries'), 'entry')
+
+    def test_scores_and_pairs(self):
+        rep = sd.score(path('names-draft.skool'), path('names-ref.skool'))
+        n = rep['names']
+        self.assertEqual((n['all']['total'], n['all']['exact'], n['all']['normalized'], n['all']['judge'],
+                          n['all']['auto'], n['all']['missing']), (6, 1, 2, 1, 2, 0))
+        self.assertEqual((n['entries']['total'], n['points']['total'], n['points']['auto']), (5, 1, 1))
+        self.assertEqual(n['all']['same_pct'], 50.0)
+        judge = [r for r in n['pairs'] if r['class'] == 'judge']
+        self.assertEqual([r['address'] for r in judge], ['$8006'])
+        tmp = os.path.join(DATA, '..', '__pycache__', 'names-pairs.tsv')
+        os.makedirs(os.path.dirname(tmp), exist_ok=True)
+        sd.write_pairs(tmp, n['pairs'])
+        with open(tmp) as f:
+            lines = f.read().splitlines()
+        self.assertEqual(lines[0].split('\t'), sd.PAIR_COLUMNS)
+        # the judge fills its column: the judged rows count on top of the deterministic ones
+        filled = [line + 'same' if line.startswith('$8006') else line for line in lines]
+        with open(tmp, 'w') as f:
+            f.write('\n'.join(filled) + '\n')
+        judged = sd.score(path('names-draft.skool'), path('names-ref.skool'), names_judged=tmp)['names']['all']
+        self.assertEqual((judged['judged'], judged['same_with_judge']), (1, 4))
+        os.remove(tmp)

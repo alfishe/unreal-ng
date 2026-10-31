@@ -61,7 +61,8 @@ Json::Value SessionJson(const EmulatorContext::RunControlState& state, const std
 /// Body (optional): {client: "<name>", surface: "webapi" | "mcp", lease_seconds: 60 (0 = none)}. 200: {session, ...};
 /// 409 held_by_other (another surface holds it) or revoked_cooldown (the user took control back from this client a
 /// short while ago) - both with retry: false. An implicit session of another client gives way (took_over names it):
-/// it only made that client visible; an explicit session is never taken over
+/// it only made that client visible; an explicit session is never taken over. The holder's own session in the
+/// X-Unreal-Session header takes it again: 200 with the same id
 void EmulatorAPI::postControlSession(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                      const std::string& id) const
 {
@@ -89,7 +90,10 @@ void EmulatorAPI::postControlSession(const HttpRequestPtr& req, std::function<vo
     context->ReleaseImplicitRunControl(webapi_session::GateClientOf(req).identity);
     // Another client's implicit session gives way too (the take says whose)
     const EmulatorContext::RunControlState before = context->GetRunControlState();
-    const unreal::UUID session = unreal::UUID::Generate();
+    // The holder taking control again (an MCP server sends its session on every call, a new MCP connection included)
+    // keeps its session: a fresh id would be refused as held by another
+    const std::optional<unreal::UUID> asked = webapi_session::SessionOf(req);
+    const unreal::UUID session = asked && context->HasRunControl(*asked) ? *asked : unreal::UUID::Generate();
     std::string reason;
     if (!context->TakeRunControl(session, surface, &reason, client, std::chrono::milliseconds(uint64_t(leaseSeconds) * 1000),
                                  peer))

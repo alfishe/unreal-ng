@@ -598,6 +598,18 @@ public:
     /// log2 of a slot of the CPU address space: 14 (16K windows), 13 on the Next (8K MMU slots)
     virtual uint8_t PhysicalSlotShift() const { return 14; }
 
+    /// The CPU's four 16K windows as offsets into the whole memory block and their modes, for a reader that holds
+    /// the pages' bytes elsewhere (a TTD checkpoint read from its store). False where the windows are not what the
+    /// CPU reads: a bus redirect, slots smaller than 16K
+    bool GetWindowMap(uint32_t offsets[4], uint8_t modes[4]) const;
+    /// The page a window mapping @p mode at @p offset (GetWindowMap) shows: MapZ80AddressToPhysicalPage's answer
+    /// for such a live window, addressInPage 0
+    MemoryPageDescriptor DescribeWindow(uint8_t mode, uint32_t offset);
+    /// The name GetCurrentBankName gives such a window
+    std::string WindowName(uint8_t mode, uint32_t offset);
+    /// The bytes at @p offset into the whole memory block (ROM pages a window map points at)
+    const uint8_t* BlockAt(uint32_t offset) const { return _memory + offset; }
+
     MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
     /// Window 0-3 maps ROM: the hot-path form for bus logic that tells ROM from RAM (EvoTurboOverlay)
     bool IsWindowRom(uint8_t window) const { return _bank_mode[window & 0x03] == BANK_ROM; }

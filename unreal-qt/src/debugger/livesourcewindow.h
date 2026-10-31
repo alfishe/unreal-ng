@@ -58,6 +58,7 @@ private:
     bool _ownWatch = false;                 ///< this window started the watch (and stops it)
     bool _ownPush = false;                  ///< this window started the push watch (and stops it)
     uint64_t _shownGeneration = 0;
+    uint64_t _shownHintsGeneration = 0;
     int _shownCursor = -2;
     QLabel* _status = nullptr;
     QPlainTextEdit* _text = nullptr;

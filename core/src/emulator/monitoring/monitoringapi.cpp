@@ -10,6 +10,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/processstats.h"
+#include "debugger/analyzers/analysis/analysisjobs.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/analyzers/aylog/ayloganalyzer.h"
 #include "debugger/analyzers/coverage/coverageanalyzer.h"
@@ -159,6 +160,19 @@ StateNode HostClients()
         entry["opened"] = static_cast<int64_t>(counts.opened);
         entry["requests"] = static_cast<int64_t>(counts.requests);
         entry["dropped"] = static_cast<int64_t>(counts.dropped);
+    }
+    // MCP calls per tool and action ("" = a call without an action argument)
+    StateNode& tools = node[ClientPlaneName(ClientPlane::Mcp)]["tools"];
+    tools = StateNode::Object();
+    for (const auto& [tool, calls] : ClientStats::Instance().ReadToolCalls())
+    {
+        StateNode& entry = tools[tool];
+        entry = StateNode::Object();
+        entry["calls"] = static_cast<int64_t>(calls.calls);
+        StateNode& actions = entry["actions"];
+        actions = StateNode::Object();
+        for (const auto& [action, count] : calls.actions)
+            actions[action.empty() ? "(none)" : action] = static_cast<int64_t>(count);
     }
     node["companions"] = static_cast<int64_t>(companion::CompanionRegistry::Instance().List().size());
     node["instances"] = static_cast<int64_t>(EmulatorManager::GetInstance()->GetEmulatorIds().size());
@@ -777,7 +791,8 @@ const std::vector<std::string>& InstanceNames()
     static const std::vector<std::string> names = {"emulator.stats", "debug.breakpoints", "media.slots",
                                                    "recording.state", "debug.labels",     "ttd.status",
                                                    "debug.analyzers", "controllers.state", "debug.buffers",
-                                                   "game.events",     "debug.watches"};
+                                                   "game.events",     "debug.watches",     "analysis.progress",
+                                                   "analysis.ready"};
     return names;
 }
 
@@ -829,6 +844,10 @@ StateNode ReadInstance(const std::string& name, Emulator& emulator)
         return GameEvents(emulator);
     if (name == "debug.watches")
         return Watches(emulator);
+    if (name == "analysis.progress")
+        return analysis::L1Jobs::Instance().View(emulator.GetId()).ProgressNode();
+    if (name == "analysis.ready")
+        return analysis::L1Jobs::Instance().View(emulator.GetId()).ReadyNode();
     return {};
 }
 

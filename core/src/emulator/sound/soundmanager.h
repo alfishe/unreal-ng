@@ -63,7 +63,7 @@ protected:
     EmulatorContext* _context;
     ModuleLogger* _logger;
 
-    volatile bool _mute = false;  // MUST initialize - sound unmuted by default
+    volatile bool _mute = true;   // MUST initialize - an instance starts muted; the GUI (its bound instance) or an automation plane unmutes it
     bool _soundEnabled = true;
 
     // The core audio rate all chip DSP is designed for (multirate plan phase

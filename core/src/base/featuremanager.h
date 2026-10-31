@@ -211,8 +211,9 @@ public:
     /// @brief True while the machine is bound to a TTD timeline: recording, replaying
     /// history (seek/step) or positioned in it (Detached). Features that change what
     /// the guest code does (fasttape, turbotape, fastdisk) are off for all of it, or a
-    /// replay would diverge from what was recorded. Pacing-only acceleration (turbo
-    /// mode, speed) is locked by isTtdRecordingActive() alone.
+    /// replay would diverge from what was recorded - except fasttape and turbotape in the
+    /// engine's recording at its live head, which records the tape trap as an edit. Pacing-only acceleration (turbo
+    /// mode, speed) is locked by isTtdRecordingActive() alone (the engine keeps turbo).
     bool isTtdTimelineBound() const;
     /// @brief True while an RZX recording plays: fasttape, turbotape and fastdisk
     /// read as off (they change the CPU path the recording follows)
@@ -231,6 +232,12 @@ public:
     /// off takes effect too). Emulation thread or CPU held
     void setTapDebugHold(bool on);
     bool tapDebugHold() const;
+    /// @brief A collector that runs on the debug path is on (memory tracking, call trace, opcode profiler): with
+    /// debug mode off it stops and the tracker frees what it gathered. Whoever gives debug mode back without having
+    /// asked for these (a TTD recording that stops, the BASIC editor monitor, the Qt debugger window going away)
+    /// leaves it on while this holds. Breakpoints do not hold it: they gather nothing
+    bool debugCaptureOn() const;
+
     /// @brief An active stopping breakpoint exists (BreakpointManager::ApplyTapDemand): while 'breakpoints' is on, the
     /// CPU runs the debug path whatever 'debugmode' says, so the breakpoint fires (a hidden debugger window switching
     /// 'debugmode' off cannot leave it accepted and inert). No breakpoints: 'debugmode' alone decides
@@ -246,6 +253,14 @@ private:
     /// True when TTD or an RZX playback forces this feature off (see isTtdTimelineBound /
     /// isTtdRecordingActive / isRzxPlaying)
     bool isMaskedByTtd(const std::string& id) const;
+    /// The TTD backend keeps turbo mode and the fast loaders in a recording (ITimeTravelHooks::RecordsShortcuts)
+    bool ttdRecordsShortcuts() const;
+    /// Turbo mode is held off: a recording that locks acceleration and does not keep it (v1)
+    bool ttdLocksTurboMode() const;
+    /// Fast tape, turbo tape or fast disk (@p id) is held off: bound to a timeline, except fast tape and turbo tape
+    /// in the engine's recording at its live head (the tape trap is a recorded edit there); fast disk also while a
+    /// black box records
+    bool ttdLocksFastLoader(const std::string& id) const;
 
     /// Find a feature by id or alias. Caller must hold _mutex.
     FeatureInfo* findFeature(const std::string& idOrAlias);

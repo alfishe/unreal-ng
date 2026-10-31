@@ -1,0 +1,3 @@
+{"regions": [
+ {"start": "$8003", "end": "$8013", "kind": "sprite", "width": 16, "height": 8, "frames": 1},
+ {"start": "$8013", "end": "$8023", "kind": "sprite", "width": 8, "height": 16, "frames": 1}]}

@@ -66,6 +66,16 @@ public:
     /// Stop every backend: their devices are removed
     void Stop();
 
+    /// This client owns the host's controllers (the default). Several clients on one machine open the same devices;
+    /// the one the user activated last owns them (the client's ClientQueue). Not the owner: the router is suspended
+    /// (InputRouter::SetSuspended), every motor stops, and nothing is written to a device (rumble, patterns, clicks,
+    /// steps, lights: a light keeps the colour asked for). The owner again: each device gets its feel and its light back
+    void SetOwner(bool owner);
+    bool Owner() const
+    {
+        return _owner.load();
+    }
+
     /// endregion </Backends>
 
     InputRouter& Router()
@@ -237,6 +247,7 @@ private:
     /// Last member: destroyed first, while the backends it writes to still exist
     std::unique_ptr<HapticMixer> _haptics;
     std::atomic<bool> _hapticsDsp{false};
+    std::atomic<bool> _owner{true};
 };
 
 }  // namespace controllers

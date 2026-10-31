@@ -502,6 +502,13 @@ void MainLoop::CompleteFrame()
     if (_context->pCore)
         _context->pCore->OnNetworkFrameDevices();
 
+    // Board devices on their own clock (the ATM Turbo 2+ and Profi keyboard controllers, a COM peer, flash timers)
+    // catch up to the frame end here, before the checkpoint: it holds them caught up, so a restore at the frame
+    // start equals the machine that ran into it (a lazy device behind its clock is the same machine, not the same
+    // bytes)
+    if (_context->pPortDecoder)
+        _context->pPortDecoder->OnFrameEnd();
+
     if (_context->pTimeTravelHooks)
     {
         try
@@ -550,9 +557,6 @@ void MainLoop::CompleteFrame()
         _context->pCore->OnNetworkFrame();
     }
 
-    // Board devices on their own clock (ATM Turbo 2+ keyboard controller)
-    if (_context->pPortDecoder)
-        _context->pPortDecoder->OnFrameEnd();
 }
 
 void MainLoop::RestartFrame()

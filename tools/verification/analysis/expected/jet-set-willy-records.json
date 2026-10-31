@@ -1,0 +1,3297 @@
+{
+ "game": "Jet Set Willy (Software Projects)",
+ "reference": "skoolkid jsw.skool (SkoolKit 10.x, decimal)",
+ "note": "Written once from the reference comments; record offsets are relative to the live copy (base); instances are the other copies (room definitions at $C000 + $100 n, n = 0-60; entity definitions at $A000 + 8 n by type). A layout \"span\" is the extent its fields cover when it exceeds the record size.",
+ "range": [
+  "$8000",
+  "$10000"
+ ],
+ "records": [
+  {
+   "name": "room_buffer",
+   "base": "$8000",
+   "size": 256,
+   "count": 1,
+   "instances": [
+    "$C000",
+    "$C100",
+    "$C200",
+    "$C300",
+    "$C400",
+    "$C500",
+    "$C600",
+    "$C700",
+    "$C800",
+    "$C900",
+    "$CA00",
+    "$CB00",
+    "$CC00",
+    "$CD00",
+    "$CE00",
+    "$CF00",
+    "$D000",
+    "$D100",
+    "$D200",
+    "$D300",
+    "$D400",
+    "$D500",
+    "$D600",
+    "$D700",
+    "$D800",
+    "$D900",
+    "$DA00",
+    "$DB00",
+    "$DC00",
+    "$DD00",
+    "$DE00",
+    "$DF00",
+    "$E000",
+    "$E100",
+    "$E200",
+    "$E300",
+    "$E400",
+    "$E500",
+    "$E600",
+    "$E700",
+    "$E800",
+    "$E900",
+    "$EA00",
+    "$EB00",
+    "$EC00",
+    "$ED00",
+    "$EE00",
+    "$EF00",
+    "$F000",
+    "$F100",
+    "$F200",
+    "$F300",
+    "$F400",
+    "$F500",
+    "$F600",
+    "$F700",
+    "$F800",
+    "$F900",
+    "$FA00",
+    "$FB00",
+    "$FC00"
+   ],
+   "evidence": "jsw.skool g32768-g33023 (ROOMLAYOUT..ENTITIES); room definitions b49152+256n (rooms 0-60, room 47 unused): \"The next N bytes are copied to #R...\" mid-block comments; routine 35090 copies 256 bytes",
+   "layouts": [
+    {
+     "name": "room",
+     "fields": [
+      {
+       "offset": 0,
+       "size": 128,
+       "name": "room layout: 32x16 cells, 2 bits each (background, floor, wall, nasty)"
+      },
+      {
+       "offset": 128,
+       "size": 32,
+       "name": "room name"
+      },
+      {
+       "offset": 160,
+       "size": 54,
+       "name": "tiles: background, floor, wall, nasty, ramp, conveyor (attribute + 8 rows)",
+       "count": 6,
+       "stride": 9
+      },
+      {
+       "offset": 214,
+       "size": 4,
+       "name": "conveyor (conveyor)"
+      },
+      {
+       "offset": 218,
+       "size": 4,
+       "name": "ramp (ramp)"
+      },
+      {
+       "offset": 222,
+       "size": 1,
+       "name": "border colour"
+      },
+      {
+       "offset": 223,
+       "size": 2,
+       "name": "unused"
+      },
+      {
+       "offset": 225,
+       "size": 8,
+       "name": "item graphic"
+      },
+      {
+       "offset": 233,
+       "size": 4,
+       "name": "room exits (room_exits)"
+      },
+      {
+       "offset": 237,
+       "size": 3,
+       "name": "unused"
+      },
+      {
+       "offset": 240,
+       "size": 16,
+       "name": "entity specifications (entity_specs)",
+       "count": 8,
+       "stride": 2
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "conveyor",
+   "base": "$80D6",
+   "size": 4,
+   "count": 1,
+   "instances": [
+    "$C0D6",
+    "$C1D6",
+    "$C2D6",
+    "$C3D6",
+    "$C4D6",
+    "$C5D6",
+    "$C6D6",
+    "$C7D6",
+    "$C8D6",
+    "$C9D6",
+    "$CAD6",
+    "$CBD6",
+    "$CCD6",
+    "$CDD6",
+    "$CED6",
+    "$CFD6",
+    "$D0D6",
+    "$D1D6",
+    "$D2D6",
+    "$D3D6",
+    "$D4D6",
+    "$D5D6",
+    "$D6D6",
+    "$D7D6",
+    "$D8D6",
+    "$D9D6",
+    "$DAD6",
+    "$DBD6",
+    "$DCD6",
+    "$DDD6",
+    "$DED6",
+    "$DFD6",
+    "$E0D6",
+    "$E1D6",
+    "$E2D6",
+    "$E3D6",
+    "$E4D6",
+    "$E5D6",
+    "$E6D6",
+    "$E7D6",
+    "$E8D6",
+    "$E9D6",
+    "$EAD6",
+    "$EBD6",
+    "$ECD6",
+    "$EDD6",
+    "$EED6",
+    "$EFD6",
+    "$F0D6",
+    "$F1D6",
+    "$F2D6",
+    "$F3D6",
+    "$F4D6",
+    "$F5D6",
+    "$F6D6",
+    "$F7D6",
+    "$F8D6",
+    "$F9D6",
+    "$FAD6",
+    "$FBD6",
+    "$FCD6"
+   ],
+   "evidence": "jsw.skool g32982 CONVDIR / CONVLOC / CONVLEN",
+   "layouts": [
+    {
+     "name": "conveyor",
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "direction (0 = left, 1 = right)"
+      },
+      {
+       "offset": 1,
+       "size": 2,
+       "name": "address of the location in the attribute buffer at 24064"
+      },
+      {
+       "offset": 3,
+       "size": 1,
+       "name": "length"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ramp",
+   "base": "$80DA",
+   "size": 4,
+   "count": 1,
+   "instances": [
+    "$C0DA",
+    "$C1DA",
+    "$C2DA",
+    "$C3DA",
+    "$C4DA",
+    "$C5DA",
+    "$C6DA",
+    "$C7DA",
+    "$C8DA",
+    "$C9DA",
+    "$CADA",
+    "$CBDA",
+    "$CCDA",
+    "$CDDA",
+    "$CEDA",
+    "$CFDA",
+    "$D0DA",
+    "$D1DA",
+    "$D2DA",
+    "$D3DA",
+    "$D4DA",
+    "$D5DA",
+    "$D6DA",
+    "$D7DA",
+    "$D8DA",
+    "$D9DA",
+    "$DADA",
+    "$DBDA",
+    "$DCDA",
+    "$DDDA",
+    "$DEDA",
+    "$DFDA",
+    "$E0DA",
+    "$E1DA",
+    "$E2DA",
+    "$E3DA",
+    "$E4DA",
+    "$E5DA",
+    "$E6DA",
+    "$E7DA",
+    "$E8DA",
+    "$E9DA",
+    "$EADA",
+    "$EBDA",
+    "$ECDA",
+    "$EDDA",
+    "$EEDA",
+    "$EFDA",
+    "$F0DA",
+    "$F1DA",
+    "$F2DA",
+    "$F3DA",
+    "$F4DA",
+    "$F5DA",
+    "$F6DA",
+    "$F7DA",
+    "$F8DA",
+    "$F9DA",
+    "$FADA",
+    "$FBDA",
+    "$FCDA"
+   ],
+   "evidence": "jsw.skool g32986 RAMPDIR / RAMPLOC / RAMPLEN",
+   "layouts": [
+    {
+     "name": "ramp",
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "direction (0 = up to the left, 1 = up to the right)"
+      },
+      {
+       "offset": 1,
+       "size": 2,
+       "name": "address of the bottom of the ramp in the attribute buffer at 24064"
+      },
+      {
+       "offset": 3,
+       "size": 1,
+       "name": "length"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "room_exits",
+   "base": "$80E9",
+   "size": 4,
+   "count": 1,
+   "instances": [
+    "$C0E9",
+    "$C1E9",
+    "$C2E9",
+    "$C3E9",
+    "$C4E9",
+    "$C5E9",
+    "$C6E9",
+    "$C7E9",
+    "$C8E9",
+    "$C9E9",
+    "$CAE9",
+    "$CBE9",
+    "$CCE9",
+    "$CDE9",
+    "$CEE9",
+    "$CFE9",
+    "$D0E9",
+    "$D1E9",
+    "$D2E9",
+    "$D3E9",
+    "$D4E9",
+    "$D5E9",
+    "$D6E9",
+    "$D7E9",
+    "$D8E9",
+    "$D9E9",
+    "$DAE9",
+    "$DBE9",
+    "$DCE9",
+    "$DDE9",
+    "$DEE9",
+    "$DFE9",
+    "$E0E9",
+    "$E1E9",
+    "$E2E9",
+    "$E3E9",
+    "$E4E9",
+    "$E5E9",
+    "$E6E9",
+    "$E7E9",
+    "$E8E9",
+    "$E9E9",
+    "$EAE9",
+    "$EBE9",
+    "$ECE9",
+    "$EDE9",
+    "$EEE9",
+    "$EFE9",
+    "$F0E9",
+    "$F1E9",
+    "$F2E9",
+    "$F3E9",
+    "$F4E9",
+    "$F5E9",
+    "$F6E9",
+    "$F7E9",
+    "$F8E9",
+    "$F9E9",
+    "$FAE9",
+    "$FBE9",
+    "$FCE9"
+   ],
+   "evidence": "jsw.skool g33001 LEFT / RIGHT / ABOVE / BELOW",
+   "layouts": [
+    {
+     "name": "exits",
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "room to the left"
+      },
+      {
+       "offset": 1,
+       "size": 1,
+       "name": "room to the right"
+      },
+      {
+       "offset": 2,
+       "size": 1,
+       "name": "room above"
+      },
+      {
+       "offset": 3,
+       "size": 1,
+       "name": "room below"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "entity_specs",
+   "base": "$80F0",
+   "size": 2,
+   "count": 8,
+   "terminator": 255,
+   "instances": [
+    "$C0F0",
+    "$C1F0",
+    "$C2F0",
+    "$C3F0",
+    "$C4F0",
+    "$C5F0",
+    "$C6F0",
+    "$C7F0",
+    "$C8F0",
+    "$C9F0",
+    "$CAF0",
+    "$CBF0",
+    "$CCF0",
+    "$CDF0",
+    "$CEF0",
+    "$CFF0",
+    "$D0F0",
+    "$D1F0",
+    "$D2F0",
+    "$D3F0",
+    "$D4F0",
+    "$D5F0",
+    "$D6F0",
+    "$D7F0",
+    "$D8F0",
+    "$D9F0",
+    "$DAF0",
+    "$DBF0",
+    "$DCF0",
+    "$DDF0",
+    "$DEF0",
+    "$DFF0",
+    "$E0F0",
+    "$E1F0",
+    "$E2F0",
+    "$E3F0",
+    "$E4F0",
+    "$E5F0",
+    "$E6F0",
+    "$E7F0",
+    "$E8F0",
+    "$E9F0",
+    "$EAF0",
+    "$EBF0",
+    "$ECF0",
+    "$EDF0",
+    "$EEF0",
+    "$EFF0",
+    "$F0F0",
+    "$F1F0",
+    "$F2F0",
+    "$F3F0",
+    "$F4F0",
+    "$F5F0",
+    "$F6F0",
+    "$F7F0",
+    "$F8F0",
+    "$F9F0",
+    "$FAF0",
+    "$FBF0",
+    "$FCF0"
+   ],
+   "evidence": "jsw.skool g33008 ENTITIES (\"eight pairs of bytes\"); room definitions +240 (\"Terminator (#R41976)\" = first byte 255)",
+   "layouts": [
+    {
+     "name": "entity_spec",
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "entity definition number (index into the definitions at 40960; 255 = terminator)"
+      },
+      {
+       "offset": 1,
+       "size": 1,
+       "name": "base sprite index and x-coordinate of a guardian, y-coordinate of an arrow, x-coordinate of the top of a rope"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "entity_buffer",
+   "base": "$8100",
+   "size": 8,
+   "count": 8,
+   "terminator": 255,
+   "evidence": "jsw.skool g33024 ENTITYBUF tables (horizontal / vertical guardian, arrow, rope; terminator at 33088); definitions b40960+8n (128, copied by routine 35090), layout instances by entity type (bits 0-2 of the first byte)",
+   "layouts": [
+    {
+     "name": "horizontal",
+     "instances": [
+      "$A060",
+      "$A068",
+      "$A0A0",
+      "$A0A8",
+      "$A0B0",
+      "$A0B8",
+      "$A0C0",
+      "$A0C8",
+      "$A0D0",
+      "$A0E0",
+      "$A100",
+      "$A108",
+      "$A110",
+      "$A118",
+      "$A120",
+      "$A128",
+      "$A130",
+      "$A138",
+      "$A170",
+      "$A178",
+      "$A1A0",
+      "$A1A8",
+      "$A1B0",
+      "$A1B8",
+      "$A1C0",
+      "$A1C8",
+      "$A1D8",
+      "$A1E8",
+      "$A200",
+      "$A208",
+      "$A210",
+      "$A218",
+      "$A220",
+      "$A250",
+      "$A258",
+      "$A260",
+      "$A268",
+      "$A270",
+      "$A278",
+      "$A280",
+      "$A288",
+      "$A2C0",
+      "$A2D0",
+      "$A2D8",
+      "$A2E0",
+      "$A2E8",
+      "$A2F0",
+      "$A2F8",
+      "$A310",
+      "$A318",
+      "$A338",
+      "$A340",
+      "$A348",
+      "$A350",
+      "$A358",
+      "$A360",
+      "$A368",
+      "$A370",
+      "$A378"
+     ],
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "bit 7 direction (0 = left, 1 = right), bits 5-6 animation frame index, bits 3-4 unused, bits 0-2 entity type (001)"
+      },
+      {
+       "offset": 1,
+       "size": 1,
+       "name": "bits 5-7 animation frame index mask, bit 4 unused, bit 3 BRIGHT, bits 0-2 INK"
+      },
+      {
+       "offset": 2,
+       "size": 1,
+       "name": "bits 5-7 base sprite index, bits 0-4 x-coordinate"
+      },
+      {
+       "offset": 3,
+       "size": 1,
+       "name": "pixel y-coordinate x2 (index into the screen buffer address table at 33280)"
+      },
+      {
+       "offset": 4,
+       "size": 1,
+       "name": "unused"
+      },
+      {
+       "offset": 5,
+       "size": 1,
+       "name": "page containing the sprite graphic data"
+      },
+      {
+       "offset": 6,
+       "size": 1,
+       "name": "minimum x-coordinate"
+      },
+      {
+       "offset": 7,
+       "size": 1,
+       "name": "maximum x-coordinate"
+      }
+     ]
+    },
+    {
+     "name": "vertical",
+     "instances": [
+      "$A010",
+      "$A018",
+      "$A020",
+      "$A028",
+      "$A030",
+      "$A038",
+      "$A040",
+      "$A048",
+      "$A050",
+      "$A058",
+      "$A070",
+      "$A078",
+      "$A080",
+      "$A088",
+      "$A090",
+      "$A098",
+      "$A0D8",
+      "$A0E8",
+      "$A0F0",
+      "$A0F8",
+      "$A140",
+      "$A148",
+      "$A150",
+      "$A158",
+      "$A160",
+      "$A168",
+      "$A180",
+      "$A188",
+      "$A190",
+      "$A198",
+      "$A1D0",
+      "$A1F0",
+      "$A230",
+      "$A238",
+      "$A240",
+      "$A248",
+      "$A290",
+      "$A298",
+      "$A2A0",
+      "$A2A8",
+      "$A2B0",
+      "$A2B8",
+      "$A2C8",
+      "$A300",
+      "$A308",
+      "$A320",
+      "$A328",
+      "$A330"
+     ],
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "bits 5-7 animation frame index, bits 3-4 animation frame update flags, bits 0-2 entity type (010)"
+      },
+      {
+       "offset": 1,
+       "size": 1,
+       "name": "bits 5-7 animation frame index mask, bit 4 unused, bit 3 BRIGHT, bits 0-2 INK"
+      },
+      {
+       "offset": 2,
+       "size": 1,
+       "name": "bits 5-7 base sprite index, bits 0-4 x-coordinate"
+      },
+      {
+       "offset": 3,
+       "size": 1,
+       "name": "pixel y-coordinate x2 (index into the screen buffer address table at 33280)"
+      },
+      {
+       "offset": 4,
+       "size": 1,
+       "name": "pixel y-coordinate increment"
+      },
+      {
+       "offset": 5,
+       "size": 1,
+       "name": "page containing the sprite graphic data"
+      },
+      {
+       "offset": 6,
+       "size": 1,
+       "name": "minimum y-coordinate"
+      },
+      {
+       "offset": 7,
+       "size": 1,
+       "name": "maximum y-coordinate"
+      }
+     ]
+    },
+    {
+     "name": "arrow",
+     "instances": [
+      "$A1E0",
+      "$A228"
+     ],
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "bit 7 direction (0 = left, 1 = right), bits 3-6 unused, bits 0-2 entity type (100)"
+      },
+      {
+       "offset": 1,
+       "size": 1,
+       "name": "unused"
+      },
+      {
+       "offset": 2,
+       "size": 1,
+       "name": "pixel y-coordinate x2 (index into the screen buffer address table at 33280)"
+      },
+      {
+       "offset": 3,
+       "size": 1,
+       "name": "unused"
+      },
+      {
+       "offset": 4,
+       "size": 1,
+       "name": "x-coordinate"
+      },
+      {
+       "offset": 5,
+       "size": 1,
+       "name": "collision detection byte (0 = off, 255 = on)"
+      },
+      {
+       "offset": 6,
+       "size": 1,
+       "name": "top/bottom pixel row (drawn either side of the shaft)"
+      },
+      {
+       "offset": 7,
+       "size": 1,
+       "name": "unused"
+      }
+     ]
+    },
+    {
+     "name": "rope",
+     "span": 12,
+     "instances": [
+      "$A008"
+     ],
+     "note": "the rope also uses the second and fourth bytes of the following buffer",
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "bit 7 direction (0 = left, 1 = right), bits 3-6 unused, bits 0-2 entity type (011)"
+      },
+      {
+       "offset": 1,
+       "size": 1,
+       "name": "animation frame index"
+      },
+      {
+       "offset": 2,
+       "size": 1,
+       "name": "x-coordinate of the top of the rope"
+      },
+      {
+       "offset": 3,
+       "size": 1,
+       "name": "x-coordinate of the segment of rope being drawn"
+      },
+      {
+       "offset": 4,
+       "size": 1,
+       "name": "length (32)"
+      },
+      {
+       "offset": 5,
+       "size": 1,
+       "name": "segment drawing byte"
+      },
+      {
+       "offset": 6,
+       "size": 1,
+       "name": "unused"
+      },
+      {
+       "offset": 7,
+       "size": 1,
+       "name": "animation frame at which the rope changes direction (54)"
+      },
+      {
+       "offset": 9,
+       "size": 1,
+       "name": "index of the segment of rope being drawn (0-32)"
+      },
+      {
+       "offset": 11,
+       "size": 1,
+       "name": "bit 0 Willy is on the rope, bits 1-7 unused"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "items",
+   "base": "$A4AD",
+   "size": 1,
+   "count": 83,
+   "evidence": "jsw.skool b41984 ITEMTABLE1 / b42240 ITEMTABLE2: item N (173-255) is the byte pair at 41984+N and 42240+N; first item index at 41983; routines 34762 and 37841",
+   "layouts": [
+    {
+     "name": "item",
+     "span": 257,
+     "note": "two parallel byte tables 256 bytes apart",
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "bit 7 MSB of the y-coordinate, bit 6 collection flag (reset = collected), bits 0-5 room"
+      },
+      {
+       "offset": 256,
+       "size": 1,
+       "name": "bits 5-7 LSBs of the y-coordinate, bits 0-4 x-coordinate"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "willy_state",
+   "base": "$85CF",
+   "size": 7,
+   "count": 1,
+   "instances": [
+    "$85D7"
+   ],
+   "evidence": "jsw.skool g34255-g34261 (WILLY_Y, DMFLAGS, AIRBORNE, FRAME, LOCATION, JUMPING); copy at g34263 INITSTATE (routines 35090 and 35841)",
+   "layouts": [
+    {
+     "name": "willy",
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "y-coordinate: LSB into the screen buffer address table at 33280 (pixel y x2)"
+      },
+      {
+       "offset": 1,
+       "size": 1,
+       "name": "direction and movement flags: bit 0 facing left, bit 1 moving"
+      },
+      {
+       "offset": 2,
+       "size": 1,
+       "name": "airborne status: 0 no, 1 jumping, 2-11 falling, 12-15 fallen too far, 255 collided"
+      },
+      {
+       "offset": 3,
+       "size": 1,
+       "name": "animation frame 0-3"
+      },
+      {
+       "offset": 4,
+       "size": 2,
+       "name": "address of the location in the attribute buffer at 23552"
+      },
+      {
+       "offset": 6,
+       "size": 1,
+       "name": "jumping animation counter"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "writetyper",
+   "base": "$85E5",
+   "size": 2,
+   "count": 11,
+   "evidence": "jsw.skool b34277 WRITETYPER: \"In each pair of bytes here ...\" (no keys pressed, then W-R-I-T-E-T-Y-P-E-R); routine 35591",
+   "layouts": [
+    {
+     "name": "keys",
+     "fields": [
+      {
+       "offset": 0,
+       "size": 1,
+       "name": "bits 0-4 keys Q-W-E-R-T (0 = pressed)"
+      },
+      {
+       "offset": 1,
+       "size": 1,
+       "name": "bits 0-4 keys P-O-I-U-Y (0 = pressed)"
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "graphics": [
+  {
+   "start": "$8431",
+   "end": "$8451",
+   "macro": "#UDG",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 4,
+   "note": "triangles"
+  },
+  {
+   "start": "$9B00",
+   "end": "$9B80",
+   "macro": "#UDGARRAY",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "number keys"
+  },
+  {
+   "start": "$9C40",
+   "end": "$9C60",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "foot"
+  },
+  {
+   "start": "$9C60",
+   "end": "$9C80",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 1,
+   "note": "barrel"
+  },
+  {
+   "start": "$9C80",
+   "end": "$9D00",
+   "macro": "#UDGARRAY",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "Maria"
+  },
+  {
+   "start": "$9D00",
+   "end": "$9E00",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "Willy, 4 right + 4 left"
+  },
+  {
+   "start": "$A600",
+   "end": "$A680",
+   "macro": "#SPRITE",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "toilet"
+  },
+  {
+   "start": "$AB00",
+   "end": "$AB80",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 171"
+  },
+  {
+   "start": "$AB80",
+   "end": "$AC00",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 171"
+  },
+  {
+   "start": "$AC00",
+   "end": "$AC80",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 172"
+  },
+  {
+   "start": "$AC80",
+   "end": "$AD00",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 172"
+  },
+  {
+   "start": "$AD00",
+   "end": "$AD80",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 173"
+  },
+  {
+   "start": "$AD80",
+   "end": "$AE00",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 173"
+  },
+  {
+   "start": "$AE00",
+   "end": "$AE80",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 174"
+  },
+  {
+   "start": "$AE80",
+   "end": "$AF00",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 174"
+  },
+  {
+   "start": "$AF00",
+   "end": "$AF80",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 175"
+  },
+  {
+   "start": "$AF80",
+   "end": "$B000",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 175"
+  },
+  {
+   "start": "$B000",
+   "end": "$B080",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 176"
+  },
+  {
+   "start": "$B080",
+   "end": "$B0C0",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 2,
+   "note": "guardian page 176"
+  },
+  {
+   "start": "$B0C0",
+   "end": "$B100",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 2,
+   "note": "guardian page 176"
+  },
+  {
+   "start": "$B100",
+   "end": "$B200",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardian page 177"
+  },
+  {
+   "start": "$B200",
+   "end": "$B280",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 178"
+  },
+  {
+   "start": "$B280",
+   "end": "$B300",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 178"
+  },
+  {
+   "start": "$B400",
+   "end": "$B500",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardian page 180"
+  },
+  {
+   "start": "$B500",
+   "end": "$B600",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardian page 181"
+  },
+  {
+   "start": "$B600",
+   "end": "$B700",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardian page 182"
+  },
+  {
+   "start": "$B700",
+   "end": "$B740",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 2,
+   "note": "guardian page 183"
+  },
+  {
+   "start": "$B740",
+   "end": "$B780",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 2,
+   "note": "guardian page 183"
+  },
+  {
+   "start": "$B780",
+   "end": "$B800",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 183"
+  },
+  {
+   "start": "$B800",
+   "end": "$B900",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardian page 184"
+  },
+  {
+   "start": "$B900",
+   "end": "$B980",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 185"
+  },
+  {
+   "start": "$B980",
+   "end": "$BA00",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 185"
+  },
+  {
+   "start": "$BA00",
+   "end": "$BA80",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 186"
+  },
+  {
+   "start": "$BA80",
+   "end": "$BB00",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 186"
+  },
+  {
+   "start": "$BB00",
+   "end": "$BB80",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 187"
+  },
+  {
+   "start": "$BB80",
+   "end": "$BC00",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 187"
+  },
+  {
+   "start": "$BC00",
+   "end": "$BD00",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardian page 188"
+  },
+  {
+   "start": "$BD00",
+   "end": "$BE00",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 8,
+   "note": "guardian page 189"
+  },
+  {
+   "start": "$BE00",
+   "end": "$BE80",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 190"
+  },
+  {
+   "start": "$BE80",
+   "end": "$BF00",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 190"
+  },
+  {
+   "start": "$BF00",
+   "end": "$BF80",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 4,
+   "note": "guardian page 191"
+  },
+  {
+   "start": "$BF80",
+   "end": "$BFC0",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 2,
+   "note": "guardian page 191"
+  },
+  {
+   "start": "$BFC0",
+   "end": "$C000",
+   "macro": "#GUARDIAN",
+   "kind": "sprite",
+   "width": 16,
+   "height": 16,
+   "frames": 2,
+   "note": "guardian page 191"
+  },
+  {
+   "start": "$C000",
+   "end": "$C080",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$C0A0",
+   "end": "$C0D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$C0E1",
+   "end": "$C0E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$C100",
+   "end": "$C180",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$C1A0",
+   "end": "$C1D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$C1E1",
+   "end": "$C1E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$C200",
+   "end": "$C280",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$C2A0",
+   "end": "$C2D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$C2E1",
+   "end": "$C2E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$C300",
+   "end": "$C380",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$C3A0",
+   "end": "$C3D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$C3E1",
+   "end": "$C3E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$C400",
+   "end": "$C480",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$C4A0",
+   "end": "$C4D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$C4E1",
+   "end": "$C4E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$C500",
+   "end": "$C580",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$C5A0",
+   "end": "$C5D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$C5E1",
+   "end": "$C5E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$C600",
+   "end": "$C680",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$C6A0",
+   "end": "$C6D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$C6E1",
+   "end": "$C6E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$C700",
+   "end": "$C780",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$C7A0",
+   "end": "$C7D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$C7E1",
+   "end": "$C7E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$C800",
+   "end": "$C880",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$C8A0",
+   "end": "$C8D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$C8E1",
+   "end": "$C8E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$C900",
+   "end": "$C980",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$C9A0",
+   "end": "$C9D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$C9E1",
+   "end": "$C9E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$CA00",
+   "end": "$CA80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$CAA0",
+   "end": "$CAD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$CAE1",
+   "end": "$CAE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$CB00",
+   "end": "$CB80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$CBA0",
+   "end": "$CBD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$CBE1",
+   "end": "$CBE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$CC00",
+   "end": "$CC80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$CCA0",
+   "end": "$CCD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$CCE1",
+   "end": "$CCE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$CD00",
+   "end": "$CD80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$CDA0",
+   "end": "$CDD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$CDE1",
+   "end": "$CDE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$CE00",
+   "end": "$CE80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$CEA0",
+   "end": "$CED6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$CEE1",
+   "end": "$CEE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$CF00",
+   "end": "$CF80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$CFA0",
+   "end": "$CFD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$CFE1",
+   "end": "$CFE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$D000",
+   "end": "$D080",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$D0A0",
+   "end": "$D0D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$D0E1",
+   "end": "$D0E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$D100",
+   "end": "$D180",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$D1A0",
+   "end": "$D1D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$D1E1",
+   "end": "$D1E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$D200",
+   "end": "$D280",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$D2A0",
+   "end": "$D2D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$D2E1",
+   "end": "$D2E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$D300",
+   "end": "$D380",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$D3A0",
+   "end": "$D3D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$D3E1",
+   "end": "$D3E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$D400",
+   "end": "$D480",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$D4A0",
+   "end": "$D4D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$D4E1",
+   "end": "$D4E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$D500",
+   "end": "$D580",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$D5A0",
+   "end": "$D5D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$D5E1",
+   "end": "$D5E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$D600",
+   "end": "$D680",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$D6A0",
+   "end": "$D6D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$D6E1",
+   "end": "$D6E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$D700",
+   "end": "$D780",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$D7A0",
+   "end": "$D7D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$D7E1",
+   "end": "$D7E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$D800",
+   "end": "$D880",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$D8A0",
+   "end": "$D8D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$D8E1",
+   "end": "$D8E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$D900",
+   "end": "$D980",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$D9A0",
+   "end": "$D9D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$D9E1",
+   "end": "$D9E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$DA00",
+   "end": "$DA80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$DAA0",
+   "end": "$DAD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$DAE1",
+   "end": "$DAE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$DB00",
+   "end": "$DB80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$DBA0",
+   "end": "$DBD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$DBE1",
+   "end": "$DBE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$DC00",
+   "end": "$DC80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$DCA0",
+   "end": "$DCD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$DCE1",
+   "end": "$DCE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$DD00",
+   "end": "$DD80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$DDA0",
+   "end": "$DDD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$DDE1",
+   "end": "$DDE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$DE00",
+   "end": "$DE80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$DEA0",
+   "end": "$DED6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$DEE1",
+   "end": "$DEE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$DF00",
+   "end": "$DF80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$DFA0",
+   "end": "$DFD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$DFE1",
+   "end": "$DFE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$E000",
+   "end": "$E080",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$E0A0",
+   "end": "$E0D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$E0E1",
+   "end": "$E0E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$E100",
+   "end": "$E180",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$E1A0",
+   "end": "$E1D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$E1E1",
+   "end": "$E1E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$E200",
+   "end": "$E280",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$E2A0",
+   "end": "$E2D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$E2E1",
+   "end": "$E2E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$E300",
+   "end": "$E380",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$E3A0",
+   "end": "$E3D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$E3E1",
+   "end": "$E3E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$E400",
+   "end": "$E480",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$E4A0",
+   "end": "$E4D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$E4E1",
+   "end": "$E4E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$E500",
+   "end": "$E580",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$E5A0",
+   "end": "$E5D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$E5E1",
+   "end": "$E5E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$E600",
+   "end": "$E680",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$E6A0",
+   "end": "$E6D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$E6E1",
+   "end": "$E6E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$E700",
+   "end": "$E780",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$E7A0",
+   "end": "$E7D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$E7E1",
+   "end": "$E7E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$E800",
+   "end": "$E880",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$E8A0",
+   "end": "$E8D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$E8E1",
+   "end": "$E8E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$E900",
+   "end": "$E980",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$E9A0",
+   "end": "$E9D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$E9E1",
+   "end": "$E9E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$EA00",
+   "end": "$EA80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$EAA0",
+   "end": "$EAD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$EAE1",
+   "end": "$EAE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$EB00",
+   "end": "$EB80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$EBA0",
+   "end": "$EBD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$EBE1",
+   "end": "$EBE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$EC00",
+   "end": "$EC80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$ECA0",
+   "end": "$ECD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$ECE1",
+   "end": "$ECE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$ED00",
+   "end": "$ED80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$EDA0",
+   "end": "$EDD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$EDE1",
+   "end": "$EDE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$EE00",
+   "end": "$EE80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$EEA0",
+   "end": "$EED6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$EEE1",
+   "end": "$EEE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$EF00",
+   "end": "$EF80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$F000",
+   "end": "$F080",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$F0A0",
+   "end": "$F0D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$F0E1",
+   "end": "$F0E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$F100",
+   "end": "$F180",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$F1A0",
+   "end": "$F1D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$F1E1",
+   "end": "$F1E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$F200",
+   "end": "$F280",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$F2A0",
+   "end": "$F2D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$F2E1",
+   "end": "$F2E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$F300",
+   "end": "$F380",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$F3A0",
+   "end": "$F3D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$F3E1",
+   "end": "$F3E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$F400",
+   "end": "$F480",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$F4A0",
+   "end": "$F4D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$F4E1",
+   "end": "$F4E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$F500",
+   "end": "$F580",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$F5A0",
+   "end": "$F5D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$F5E1",
+   "end": "$F5E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$F600",
+   "end": "$F680",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$F6A0",
+   "end": "$F6D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$F6E1",
+   "end": "$F6E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$F700",
+   "end": "$F780",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$F7A0",
+   "end": "$F7D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$F7E1",
+   "end": "$F7E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$F800",
+   "end": "$F880",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$F8A0",
+   "end": "$F8D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$F8E1",
+   "end": "$F8E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$F900",
+   "end": "$F980",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$F9A0",
+   "end": "$F9D6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$F9E1",
+   "end": "$F9E9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$FA00",
+   "end": "$FA80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$FAA0",
+   "end": "$FAD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$FAE1",
+   "end": "$FAE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$FB00",
+   "end": "$FB80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$FBA0",
+   "end": "$FBD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$FBE1",
+   "end": "$FBE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  },
+  {
+   "start": "$FC00",
+   "end": "$FC80",
+   "macro": "#ROOM",
+   "kind": "level_map",
+   "width": 32,
+   "height": 16,
+   "frames": 1,
+   "unit": "cells",
+   "bits_per_cell": 2,
+   "note": "2 bits per cell (background, floor, wall, nasty)"
+  },
+  {
+   "start": "$FCA0",
+   "end": "$FCD6",
+   "macro": "#TILES",
+   "kind": "tiles",
+   "width": 8,
+   "height": 8,
+   "frames": 6,
+   "stride": 9,
+   "note": "attribute + 8 rows each"
+  },
+  {
+   "start": "$FCE1",
+   "end": "$FCE9",
+   "macro": "#ITEM",
+   "kind": "sprite",
+   "width": 8,
+   "height": 8,
+   "frames": 1
+  }
+ ]
+}

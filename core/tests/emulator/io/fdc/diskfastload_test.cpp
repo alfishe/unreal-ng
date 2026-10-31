@@ -99,6 +99,8 @@ TEST_F(DiskFastLoad_Test, IsArmed_ReturnsFalseWhenFeatureDisabled)
     EXPECT_TRUE(_fastLoad->IsArmed());
 }
 
+/// Fast disk compresses the WD1793's timing outside its trap, which no edit records: it stays held while TTD records.
+/// The tape shortcuts stay on (phase 2, D4: the tape trap is a recorded edit, turbo tape only drops the pacing)
 TEST_F(DiskFastLoad_Test, IsArmed_DisabledDuringTTDRecordingAndRestoredOnStop)
 {
     EnableTRDOSMode();
@@ -120,16 +122,16 @@ TEST_F(DiskFastLoad_Test, IsArmed_DisabledDuringTTDRecordingAndRestoredOnStop)
     // Start TTD recording
     ASSERT_TRUE(ttd->StartRecording());
 
-    // Shortcuts must be reported disabled
+    // Fast disk reported disabled, the tape shortcuts kept
     EXPECT_FALSE(fm->isEnabled(Features::kFastDisk));
-    EXPECT_FALSE(fm->isEnabled(Features::kFastTape));
-    EXPECT_FALSE(fm->isEnabled(Features::kTurboTape));
+    EXPECT_TRUE(fm->isEnabled(Features::kFastTape));
+    EXPECT_TRUE(fm->isEnabled(Features::kTurboTape));
     EXPECT_FALSE(_fastLoad->IsArmed());
 
-    // API changes to shortcuts during recording must be rejected
+    // Enabling fast disk during recording must be rejected
     EXPECT_FALSE(fm->setFeature(Features::kFastDisk, true));
-    EXPECT_FALSE(fm->setFeature(Features::kFastTape, true));
-    EXPECT_FALSE(fm->setFeature(Features::kTurboTape, true));
+    EXPECT_FALSE(fm->refusalReason(Features::kFastDisk, true).empty());
+    EXPECT_TRUE(fm->refusalReason(Features::kFastTape, true).empty());
 
     // Stop TTD recording
     ttd->StopRecording();

@@ -392,6 +392,9 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "    options: limit=N newest=true from=F[:T] to=F[:T] match=any|equals|any-clear|any-set" << NEWLINE;
     ss << "             trigger=every|rising|change stream_mask=M ay_register=R" << NEWLINE;
     ss << "             file=<path.ttd>  search a saved session without loading it" << NEWLINE;
+    ss << "             context=true|false  each hit's HL DE BC SP and (SP) at its instruction, replayed" << NEWLINE;
+    ss << "                      (default on; off while a recording runs, true pauses it; not with file=)" << NEWLINE;
+    ss << "    a keyboard read shows the half-rows it selects (rows) and the keys it saw down" << NEWLINE;
     ss << "  ttd step-instruction <back|fwd>  Step one instruction (aliases: si-back, si-forward)" << NEWLINE;
     ss << NEWLINE;
     ss << "Phase 4 — Reverse Execution:" << NEWLINE;
@@ -1197,6 +1200,26 @@ void CLIProcessor::HandleTTDPortEvents(const ClientSession& session, EmulatorCon
            << h.find("port")->i << "  value #" << std::setw(2) << h.find("value")->i << std::dec << std::setfill(' ');
         if (const StateNode* r = h.find("ay_register"))
             ss << "  R" << r->i;
+        if (const StateNode* rows = h.find("rows"))
+        {
+            ss << "  rows #" << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << rows->i << std::dec
+               << std::setfill(' ');
+            std::string keys;
+            for (const StateNode& k : h.find("keys")->items)
+                keys += (keys.empty() ? "" : "+") + k.s;
+            if (!keys.empty())
+                ss << "  keys " << keys;
+        }
+        if (const StateNode* regs = h.find("registers"))
+        {
+            ss << std::hex << std::uppercase << std::setfill('0');
+            for (const char* name : {"hl", "de", "bc", "sp"})
+                ss << "  " << static_cast<char>(std::toupper(name[0])) << static_cast<char>(std::toupper(name[1]))
+                   << " #" << std::setw(4) << regs->find(name)->i;
+            ss << "  (SP) #" << std::setw(4) << h.find("stack_top")->i << std::dec << std::setfill(' ');
+        }
+        else if (const StateNode* err = h.find("context_error"))
+            ss << "  (no context: " << err->s << ")";
         ss << NEWLINE;
     }
     session.SendResponse(ss.str());
@@ -1406,13 +1429,15 @@ void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, Emulat
             pcs += (pcs.empty() ? "" : ",") + args[++i];
         else if (args[i] == "--all")
             options["all"] = "true";
+        else if (args[i] == "--first-per-pc")
+            options["first_per_pc"] = "true";   // the list, each PC's newest hit only
         else if (flag != flags.end() && i + 1 < args.size())
             options[flag->second] = args[++i];
     }
     if (pcs.empty())
     {
         session.SendResponse(std::string("Error: --pc is required (at least one)") + NEWLINE +
-                             "Usage: ttd reverse-continue --pc <A> [--pc <B> ...] [--phys-page P|rom] [--all] [--limit N] "
+                             "Usage: ttd reverse-continue --pc <A> [--pc <B> ...] [--phys-page P|rom] [--all | --first-per-pc] [--limit N] "
                              "[--before-frame F [--before-tin T] | --before T] [--from-frame F]" + NEWLINE);
         return;
     }
@@ -1473,13 +1498,13 @@ void CLIProcessor::HandleTTDCoverage(const ClientSession& session, EmulatorConte
 {
     if (args.size() < 2)
     {
-        session.SendResponse(std::string("Usage: ttd coverage [probe|scan|summary] [options]") + NEWLINE);
+        session.SendResponse(std::string("Usage: ttd coverage [probe|scan|rare|summary] [options]") + NEWLINE);
         return;
     }
     const std::string sub = args[1];
-    if (sub != "probe" && sub != "scan" && sub != "summary")
+    if (sub != "probe" && sub != "scan" && sub != "rare" && sub != "summary")
     {
-        session.SendResponse("Unknown coverage subcommand '" + sub + "'. Expected: probe, scan, summary" + NEWLINE);
+        session.SendResponse("Unknown coverage subcommand '" + sub + "'. Expected: probe, scan, rare, summary" + NEWLINE);
         return;
     }
 
@@ -1492,7 +1517,8 @@ void CLIProcessor::HandleTTDCoverage(const ClientSession& session, EmulatorConte
         {"--page", "phys_page"},      {"--phys-page", "phys_page"}, {"-p", "phys_page"},
         {"--space", "space"},
         {"--limit", "limit"},         {"-l", "limit"},           {"--bucket", "bucket_size"},
-        {"--bucket-size", "bucket_size"}, {"--order", "order"}};
+        {"--bucket-size", "bucket_size"}, {"--order", "order"},  {"--max-frames", "max_frames"},
+        {"-n", "max_frames"}};
     std::map<std::string, std::string> options;
     for (size_t i = 2; i < args.size(); ++i)
     {
@@ -1571,6 +1597,33 @@ void CLIProcessor::HandleTTDCoverage(const ClientSession& session, EmulatorConte
         if (!b.find("exact")->b && b.find("matching_frames")->i > 0)
             ss << "Not exact: without --page the offset matched on every page; give --page N (or rom)" << NEWLINE;
     }
+    else if (sub == "rare")
+    {
+        // A block: its CPU address where the page was mapped, else the page and its offsets
+        ss << "Scanned " << b.find("scanned_frames")->i << " frames: " << b.find("distinct_keys")->i << " keys, "
+           << b.find("rare_keys")->i << " in at most " << b.find("max_frames")->i << " frames, "
+           << b.find("rare_blocks")->i << " blocks";
+        if (b.find("unindexed_frames")->i)
+            ss << " (" << b.find("unindexed_frames")->i << " frames not indexed)";
+        if (b.find("truncated")->b)
+            ss << " [TRUNCATED]";
+        ss << NEWLINE;
+        for (const StateNode& block : b.find("blocks")->items)
+        {
+            if (const StateNode* addr = block.find("addr_from"))
+                ss << "  " << addr->s << ".." << block.find("addr_to")->s;
+            else
+                ss << "  page offset " << block.find("page_offset_from")->s << ".." << block.find("page_offset_to")->s;
+            if (const StateNode* page = block.find("phys_page"))
+                ss << " page=" << (page->kind == StateNode::Kind::String ? page->s : std::to_string(page->i));
+            else if (const StateNode* space = block.find("space"))
+                ss << " space=" << space->s << " offset=" << block.find("offset_from")->s;
+            ss << " keys=" << block.find("keys")->i << " frames:";
+            for (const StateNode& f : block.find("frames")->items)
+                ss << " " << f.i;
+            ss << NEWLINE;
+        }
+    }
     else
     {
         ss << "Coverage summary (" << b.find("from_frame")->i << ".." << b.find("to_frame")->i << ", index covers "
@@ -1608,7 +1661,8 @@ void CLIProcessor::HandleTTDMemoryAt(const ClientSession& session, EmulatorConte
         session.SendResponse("Error: " + reply.message + NEWLINE +
                              (reply.error == ttd::TTDControlError::BadRequest
                                   ? std::string(diff ? "Usage: ttd memory-diff --space S --from F1 --to F2 [--limit N]"
-                                                     : "Usage: ttd memory-at --space S --frame F [--tinframe T] [--offset O] [--length N]") +
+                                                     : "Usage: ttd memory-at --space S --frame F [--tinframe T] [--offset O] [--length N] "
+                                                       "(--space cpu without --frame: the machine now)") +
                                         NEWLINE
                                   : std::string()));
         return;
@@ -1628,10 +1682,16 @@ void CLIProcessor::HandleTTDMemoryAt(const ClientSession& session, EmulatorConte
     else
     {
         const std::string& hex = b.find("hex")->s;
-        ss << b.find("space")->s << " at frame " << b.find("at_frame")->i
-           << (b.find("tinframe")->i ? " t=" + std::to_string(b.find("tinframe")->i) : std::string())
-           << (b.find("exact")->b ? "" : " (the checkpoint at or before frame " + std::to_string(b.find("frame")->i) + ")")
-           << ":" << NEWLINE;
+        // space cpu without --frame (or at the machine's own frame past the history): the machine now
+        const StateNode* live = b.find("live");
+        if (live && live->b)
+            ss << "cpu at frame " << b.find("at_frame")->i << " t=" << b.find("at_tinframe")->i << " (the machine now"
+               << (b.find("exact")->b ? "" : ", not the asked T-state") << "):" << NEWLINE;
+        else
+            ss << b.find("space")->s << " at frame " << b.find("at_frame")->i
+               << (b.find("tinframe")->i ? " t=" + std::to_string(b.find("tinframe")->i) : std::string())
+               << (b.find("exact")->b ? "" : " (the checkpoint at or before frame " + std::to_string(b.find("frame")->i) + ")")
+               << ":" << NEWLINE;
         const int64_t offset = b.find("offset")->i;
         for (size_t i = 0; i < hex.size(); i += 32)
         {

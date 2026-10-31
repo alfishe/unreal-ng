@@ -1131,6 +1131,17 @@ const AudioDeviceDescriptor* Emulator::GetAudioDeviceDescriptor() const
     return _context->pAudioDeviceDescriptor.load(std::memory_order_acquire);
 }
 
+void Emulator::SetHostAudioMuted(bool muted)
+{
+    if (!_context || !_context->pSoundManager)
+        return;
+
+    if (muted)
+        _context->pSoundManager->mute();
+    else
+        _context->pSoundManager->unmute();
+}
+
 void Emulator::ClearAudioCallback()
 {
     // A released instance has no context and no audio path left to clear

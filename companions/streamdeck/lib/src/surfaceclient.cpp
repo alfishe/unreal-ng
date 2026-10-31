@@ -170,7 +170,13 @@ public:
         {
             std::lock_guard l(_alive->m);
             if (!_alive->client || !_alive->client->Joined(_serial))
+            {
+                // the deck's context before its join: the join gives it to the instance (no REST call to a host
+                // that may not listen yet)
+                if (_alive->client && _alive->client->Paired() && call.id == "ctx.set")
+                    return {true, "the join carries it"};
                 return notSent;
+            }
         }
         _loop.Post([alive = _alive, serial = _serial, call, promise] {
             std::lock_guard l(alive->m);
@@ -208,6 +214,7 @@ Client::Client(net::EventLoop& loop, Options options)
     : _loop(loop), _options(std::move(options)), _alive(std::make_shared<Alive>())
 {
     _alive->client = this;
+    _paired = !_options.token.empty();
     const std::filesystem::path file =
         _options.catalogueFile.empty() ? cat::DefaultFile() : std::filesystem::path(_options.catalogueFile);
     if (!file.empty())
@@ -616,6 +623,7 @@ void Client::CheckFile()
     {
         Say("a new companion token in " + _options.companionFile + ": connecting again");
         _options.token = c->token;
+        _paired = !_options.token.empty();
         _revoked = false;
         for (auto& [serial, deck] : _decks)
             deck.sink->SetNotice("");

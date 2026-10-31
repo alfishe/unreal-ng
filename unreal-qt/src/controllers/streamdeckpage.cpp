@@ -26,6 +26,7 @@
 #include "emulator/companions/streamdecksupervisor.h"
 #include "emulator/execution/companionregistry.h"
 
+#include "platform/windowlesssession.h"
 #ifdef ENABLE_CONTROLLERS
 #include "usbpresence.h"
 #endif
@@ -153,9 +154,10 @@ StreamDeckSupervision::StreamDeckSupervision(QObject* parent, bool attach) : QOb
             if (const QString pack = store.value(serial).toString(); !pack.isEmpty())
                 s.pack[serial.toStdString()] = pack.toStdString();
     }
-    // UNREAL_STREAMDECK_SUPERVISOR=off: this run starts no daemon whatever the setting (test harnesses, a second
-    // unreal-qt); the setting itself is kept
-    if (qEnvironmentVariable("UNREAL_STREAMDECK_SUPERVISOR") == QLatin1String("off"))
+    // UNREAL_STREAMDECK_SUPERVISOR=off, or a windowless session (agents, tests; UNREAL_WINDOWLESS_DEVICES=streamdeck
+    // lets one): this run starts no daemon whatever the setting; the setting itself is kept
+    if (qEnvironmentVariable("UNREAL_STREAMDECK_SUPERVISOR") == QLatin1String("off") ||
+        !WindowlessSessionUses("streamdeck"))
         s.mode = Mode::Off;
     Host host;
     host.webapiPort = 8090;

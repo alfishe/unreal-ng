@@ -349,6 +349,36 @@ struct TTDCoverageScanResult
     bool indexAvailable = false;
 };
 
+/// @brief One block of a rare-coverage query: neighbouring keys of one page touched in the same few frames.
+struct TTDCoverageRareBlock
+{
+    uint32_t pageField = 0;      ///< The keys' page field: RAM page 0..255, kCoverageNoPageField, or a space's page
+    uint16_t offsetFrom = 0;     ///< First key's offset in the 16 KB page
+    uint16_t offsetTo = 0;       ///< Last key's offset in the page
+    uint32_t keys = 0;           ///< Keys in the block (addresses touched, instruction starts for executed)
+    std::vector<uint64_t> frames;  ///< The frames that touched them, oldest first
+    /// Where the page sat in the CPU's address space at the start of the first frame, when exactly one window
+    /// showed it (a RAM page, or the one ROM window for the ROM bucket)
+    std::optional<uint16_t> z80From;
+};
+
+/// @brief Result of a rare-coverage query: the keys of a window touched in at most `maxFrames` frames.
+struct TTDCoverageRareResult
+{
+    TTDCoverageKind kind = TTDCoverageKind::Executed;
+    uint32_t maxFrames = 1;
+    uint64_t scannedFrames = 0;
+    uint64_t unindexedFrames = 0;  ///< Frames of the window the index holds no set for (their keys are not counted)
+    uint64_t distinctKeys = 0;     ///< Keys of the range touched anywhere in the window
+    uint64_t rareKeys = 0;         ///< Of them, touched in at most maxFrames frames
+    uint64_t rareBlocks = 0;       ///< Blocks they form, also when the list is cut
+    std::vector<TTDCoverageRareBlock> blocks;  ///< Rarest first, then by page and offset
+    uint64_t coveredFrom = 0;
+    uint64_t coveredTo = 0;
+    bool truncated = false;
+    bool indexAvailable = false;
+};
+
 /// @brief One bucket in a coverage summary query (TD-7 §3.1.3).
 struct TTDCoverageSummaryBucket
 {
@@ -499,6 +529,8 @@ struct TTDReverseContinueQuery
     uint64_t fromFrame = 0;               ///< Not older than this frame's start
     bool all = false;                     ///< Collect up to `limit` hits and leave the machine where it is
     size_t limit = 100;                   ///< all: most hits returned
+    /// The list as `all`, one hit per PC (its newest); the walk ends once every PC has one
+    bool firstPerPc = false;
 };
 
 /// @brief One instruction start a reverse search found.

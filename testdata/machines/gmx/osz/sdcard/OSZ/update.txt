@@ -1,0 +1,16 @@
+Update list OSZ
+w909591u.beget.tech
+/Release/OSZ/update.txt
+/Release/OSZ/artview.apg
+/Release/OSZ/moonr.apg
+/Release/OSZ/nc.apg
+/Release/OSZ/gp_gzip.bin
+/Release/OSZ/net.apg
+/Release/OSZ/os.$c
+/Release/OSZ/radio.apg
+/Release/OSZ/ReadMe.txt
+/Release/OSZ/sys.osg
+/Release/OSZ/terminal.apg
+/Release/OSZ/tetris.apg
+/Release/OSZ/update.apg
+

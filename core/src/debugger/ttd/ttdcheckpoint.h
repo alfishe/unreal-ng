@@ -307,6 +307,17 @@ struct TTDBankOverrides
     uint16_t page[2] = {0xFFFF, 0xFFFF};  ///< [0] = window 1, [1] = window 2
 };
 
+/// The CPU's four 16K windows at a capture (Memory::GetWindowMap): offsets into the whole memory block and their
+/// modes. memory-at space cpu at a checkpoint reads the mapped pages from the store with it, without a replay.
+/// valid is false where the windows are not what the CPU reads (a bus redirect, the Next's 8K slots) and in a
+/// session loaded from a file
+struct TTDCpuWindows
+{
+    uint32_t offset[4] = {0, 0, 0, 0};
+    uint8_t mode[4] = {0, 0, 0, 0};
+    bool valid = false;
+};
+
 struct TTDCheckpoint
 {
     TTDTimePoint time;
@@ -323,6 +334,7 @@ struct TTDCheckpoint
     TTDCpuState     cpu;
     TTDChipsetState chipset;
     TTDBankOverrides bankOverrides;  ///< debugger-forced windows 1/2 (see TTDBankOverrides)
+    TTDCpuWindows    cpuWindows;     ///< the CPU's mapping at the capture, overrides included
 
     // --- Peripheral state (TTDPeripheralRegistry) ---
     /// Map of PeripheralId → serialized state. Only devices actually connected

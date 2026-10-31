@@ -229,7 +229,7 @@ TEST(Mb02Fs, SystemDiskTreeAndBodiesMatchItsTapes)
 
 namespace
 {
-/// An MB-01 DD disk (80 x 2 x 5) as mb02form.htm lays it out, built here (no MB-01 disk survives): the boot sector
+/// An MB-01 DD disk (80 x 2 x 5) as mb02form.htm lays it out: the boot sector
 /// at id 2 (LSN 1; id 1 bad), its backup, FAT1 at 3-4 chained in itself, FAT2 at 5-6, the directory list at 7, the
 /// file list at 8; "hello" (1500 bytes over 9, 10) at the root, "game" in directory 1 "Games", a deleted entry and a
 /// headerless body

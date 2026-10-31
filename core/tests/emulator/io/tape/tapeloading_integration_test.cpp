@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -620,22 +621,21 @@ TEST_F(TapeLoading_Integration_Test, SustainedPollStartsPlaybackWithoutRomAnchor
     MessageCenter::DisposeDefaultMessageCenter();
 }
 
-/// §12.2-5: TTD round-trip across a fast load — record a session that crosses
-/// the trap, then SeekTo on both sides of the load boundary. Three contracts:
-///   1. Restored state matches the recorded checkpoints (architectural hash).
-///   2. The tape consumption cursor restores with the checkpoint's subsystem
-///      blob (design §9.4: cursor is the single serialized source of truth).
-///   3. Seeking is never blocked by an external-event marker for the trap —
-///      the fast-load path is pure CPU-visible state, so it needs no replay
-///      barrier (unlike signal playback, whose markers live in startTape /
-///      stopTape / stopPlayback).
+/// §12.2-5: TTD round-trip across a fast load — LOAD "" recorded from the
+/// prompt in turbo (phase 2, D4: the engine's recording keeps turbo mode and
+/// the tape trap, so a tape from zero no longer loads at 1x), then SeekTo
+/// before, inside and after the load. Contracts:
+///   1. The recording keeps fast tape and turbo; fast disk stays held (its
+///      compressed FDC timing is no recorded edit).
+///   2. The trap serves the load (no signal playback) as a recorded edit.
+///   3. A seek to each side lands on the machine state the run had there
+///      (RAM, CPU, tape cursor: the architectural hash) and is never blocked.
 TEST_F(TapeLoading_Integration_Test, TTDRoundTripAcrossFastLoad)
 {
     MessageCenter::DisposeDefaultMessageCenter();
     Emulator* emulator = MakeTapeEmulator();
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
-    Memory* memory = context->pMemory;
     ttd::TimeTravelController* ttdMgr = context->pTimeTravelController;
     ASSERT_NE(ttdMgr, nullptr);
 
@@ -645,50 +645,54 @@ TEST_F(TapeLoading_Integration_Test, TTDRoundTripAcrossFastLoad)
     ASSERT_NE(fm, nullptr);
     fm->setFeature(Features::kDebugMode, true);
     fm->setFeature(Features::kTimeTravel, true);
-    memory->UpdateFeatureCache();
+    fm->setFeature(Features::kFastTape, true);
+    fm->setFeature(Features::kFastDisk, true);
+    fm->setFeature(Features::kTurboMode, true);   // the switch a user turns (the core's turbo follows it)
+    context->pMemory->UpdateFeatureCache();
 
     auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
     for (int i = 0; i < 100; i++)
         mainLoop->RunFrame();
+    context->coreState.tapeFilePath = WriteTAPFile("ttd-roundtrip.tap", MakeProgramTAP());
+    auto typed = BasicEncoder::runCommand(emulator, "LOAD \"\"");
+    ASSERT_TRUE(typed.success) << typed.message;
 
-    // Record across the whole load; the pre-load bookmark sits a couple of
-    // frames into the session (past the baseline, so the backward seek is a
-    //     // Verify shortcuts are auto-disabled during active TTD recording to preserve timeline determinism
     ASSERT_TRUE(ttdMgr->StartRecording());
-    EXPECT_FALSE(fm->isEnabled(Features::kFastTape));
-    EXPECT_FALSE(fm->isEnabled(Features::kFastDisk));
-    EXPECT_FALSE(fm->isEnabled(Features::kTurboTape));
+    EXPECT_TRUE(context->pCore->IsTurboMode()) << "the recording keeps turbo";
+    EXPECT_TRUE(fm->isEnabled(Features::kFastTape)) << "and the tape trap";
+    EXPECT_FALSE(fm->isEnabled(Features::kFastDisk)) << "fast disk is held";
+    EXPECT_FALSE(fm->setFeature(Features::kFastDisk, true));
 
-    // Verify API changes to enable shortcuts are blocked during active TTD recording
-    fm->setFeature(Features::kFastTape, true);
-    fm->setFeature(Features::kFastDisk, true);
-    fm->setFeature(Features::kTurboTape, true);
-    EXPECT_FALSE(fm->isEnabled(Features::kFastTape));
-    EXPECT_FALSE(fm->isEnabled(Features::kFastDisk));
-    EXPECT_FALSE(fm->isEnabled(Features::kTurboTape));
-
-    for (int i = 0; i < 5; i++)
+    std::map<uint64_t, uint64_t> liveHash;   // frame -> the state at its start
+    bool playbackEverStarted = false;
+    int framesUsed = 0;
+    for (; framesUsed < 30 && !ProgramLoaded(context->pMemory); framesUsed++)
+    {
+        liveHash[ttdMgr->CurrentPosition().frame] = HashMachineState(context);
         mainLoop->RunFrame();
-    const uint64_t frameBefore = ttdMgr->CurrentPosition().frame;
-
-    for (int i = 0; i < 10; i++)
+        playbackEverStarted |= context->pTape->IsPlaying();
+    }
+    ASSERT_TRUE(ProgramLoaded(context->pMemory)) << "not loaded after " << framesUsed << " frames";
+    EXPECT_FALSE(playbackEverStarted) << "the trap served the load";
+    EXPECT_EQ(context->pTape->GetConsumptionCursor(), 2u);
+    for (int i = 0; i < 3; i++)
+    {
+        liveHash[ttdMgr->CurrentPosition().frame] = HashMachineState(context);
         mainLoop->RunFrame();
-    const uint64_t frameAfter = ttdMgr->CurrentPosition().frame;
-
+    }
     ttdMgr->StopRecording();
+    EXPECT_TRUE(fm->isEnabled(Features::kFastDisk)) << "fast disk back once the session is idle";
+    ASSERT_GE(liveHash.size(), 4u);
 
-    // Verify shortcut states are restored back after TTD recording finishes
-    EXPECT_TRUE(fm->isEnabled(Features::kFastTape));
-    EXPECT_TRUE(fm->isEnabled(Features::kFastDisk));
-    EXPECT_TRUE(fm->isEnabled(Features::kTurboTape));
-    ASSERT_GT(ttdMgr->GetCheckpointCount(), 0u) << "Session recorded no checkpoints";
-
-    ttd::TimeTravelController::TTDSeekResult result;
-    EXPECT_TRUE(ttdMgr->SeekTo({frameBefore, 0}, &result));
-    EXPECT_EQ(result.haltReason, ttd::TimeTravelController::TTDSeekHaltReason::Target);
-
-    EXPECT_TRUE(ttdMgr->SeekTo({frameAfter, 0}, &result));
-    EXPECT_EQ(result.haltReason, ttd::TimeTravelController::TTDSeekHaltReason::Target);
+    for (const auto& [frame, hash] : liveHash)
+    {
+        if (frame == liveHash.begin()->first)
+            continue;   // the baseline itself
+        ttd::TimeTravelController::TTDSeekResult result;
+        ASSERT_TRUE(ttdMgr->SeekTo({frame, 0}, &result)) << "frame " << frame;
+        EXPECT_EQ(result.haltReason, ttd::TimeTravelController::TTDSeekHaltReason::Target) << "frame " << frame;
+        EXPECT_EQ(HashMachineState(context), hash) << "frame " << frame;
+    }
 
     EmulatorTestHelper::CleanupEmulator(emulator);
     MessageCenter::DisposeDefaultMessageCenter();

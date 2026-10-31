@@ -101,11 +101,10 @@ void EmulatorAPI::getSettings(const HttpRequestPtr& req, std::function<void(cons
     io_accel["fast_disk"] = featureManager && featureManager->isEnabled(Features::kFastDisk);
     settings["io_acceleration"] = io_accel;
 
-    // Turbo (max speed) mode - also FeatureManager-backed, forced off and blocked
-    // from re-enabling while TTD recording is active (same gate as io_acceleration)
+    // Turbo (max speed) mode - also FeatureManager-backed; a v1 TTD recording holds it off (the engine's keeps it)
     settings["turbo_mode"] = featureManager && featureManager->isEnabled(Features::kTurboMode);
     // Host speed control, and whether the engine runs unthrottled right now
-    // (turbo_mode, or turbo tape warping a load); both locked while TTD records
+    // (turbo_mode, or turbo tape warping a load); the speed is locked while TTD records
     settings["speed"]        = static_cast<unsigned>(context->pCore ? context->pCore->GetHostSpeedMultiplier() : 1);
     settings["turbo_active"] = config.turbo_mode.Get();
     // Host speed x the machine's own hardware turbo (TS-Conf 7/14 MHz...): the CPU clock the guest sees.
@@ -217,7 +216,7 @@ void EmulatorAPI::getSetting(const HttpRequestPtr& req, std::function<void(const
         FeatureManager* featureManager = context->pFeatureManager;
         ret["name"] = "turbo_mode";
         ret["value"] = featureManager && featureManager->isEnabled(Features::kTurboMode);
-        ret["description"] = "Turbo (max speed) mode. Forced off and blocked from re-enabling while TTD recording is active.";
+        ret["description"] = "Turbo (max speed) mode. A TTD recording keeps it (v1: forced off while it records).";
     }
     else if (name == "speed")
     {

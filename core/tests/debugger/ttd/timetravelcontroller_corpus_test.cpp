@@ -103,6 +103,13 @@ protected:
         std::string why;
         _emulator = ttdtest::CreateRecordedMachine(machine, why, /*fitGeneralSound=*/false);
         ASSERT_NE(_emulator, nullptr) << why;
+        ASSERT_NO_FATAL_FAILURE(AttachController());
+        ASSERT_TRUE(FitGeneralSoundCard(_context->pSoundManager, machine.generalSound));
+    }
+
+    /// The engine's controller as the recorder of _emulator, in the recorder's modes
+    void AttachController()
+    {
         _context = _emulator->GetContext();
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
@@ -112,7 +119,6 @@ protected:
         features->setFeature(Features::kScreenHQ, true);
         _context->pMemory->UpdateFeatureCache();
         _context->pSoundManager->UpdateFeatureCache();
-        ASSERT_TRUE(FitGeneralSoundCard(_context->pSoundManager, machine.generalSound));
         _controller = std::make_unique<ttd::TimeTravelController>(_context);
         _context->pTimeTravelHooks = _controller.get();
         _context->ttdWriteSink = _controller.get();
@@ -176,7 +182,11 @@ protected:
             size_t first = 0;
             while (first < state.size() && first < it->second.size() && it->second[first] == state[first])
                 ++first;
-            EXPECT_TRUE(it->second == state) << where << ": device " << int(id) << " differs from byte " << first;
+            std::string diff;   // " @byte:actual/expected" of the first differing bytes
+            for (size_t b = first; b < state.size() && b < it->second.size() && diff.size() < 400; ++b)
+                if (it->second[b] != state[b])
+                    diff += " @" + std::to_string(b) + ":" + std::to_string(it->second[b]) + "/" + std::to_string(state[b]);
+            EXPECT_TRUE(it->second == state) << where << ": device " << int(id) << " differs from byte " << first << diff;
         }
         ASSERT_EQ(actual.ram.size(), expected.ram.size()) << where;
         for (size_t page = 0; page < expected.ram.size(); ++page)
@@ -244,6 +254,55 @@ TEST_F(TimeTravelControllerCorpus_Test, EveryFixtureLoadsRestoresAndContinuesExa
         {
             ASSERT_NO_FATAL_FAILURE(SeekToCheckpoint(kFrom + step));
             ExpectSame(Live(), recorded[step - 1], "replay " + std::to_string(kFrom) + " + " + std::to_string(step));
+            if (HasFailure())
+                return;   // the first divergence is the useful one
+        }
+    }
+}
+
+/// POC 038 step 1: the baseline interval on every model. The baseline checkpoint is taken inside a frame, right
+/// after the machine came up (its sound chips may not have adopted the CPU's clock yet, F1): a replay from it
+/// reaches the next checkpoint's CPU, chipset, devices and RAM exactly, and so does the next interval. A TurboSound
+/// FM where the model's config stages one. About 50 ms a model; three in the quick tier, all in the long one
+TEST_F(TimeTravelControllerCorpus_Test, TheBaselineIntervalReplaysExactlyOnEveryModel)
+{
+    const std::vector<const char*> all = {"48K",   "128k",   "PLUS2", "PLUS2A", "PLUS3", "PENTAGON", "SCORPION",
+                                          "PROFSCORP", "ATM710", "ATM450", "ATM3", "PROFI", "PROFI3", "TSL",
+                                          "TSL-VDAC2", "SPRINTER"};
+    const std::vector<const char*> models =
+        TestTier::Long() ? all : std::vector<const char*>{"48K", "PENTAGON", "SPRINTER"};
+    for (const char* model : models)
+    {
+        SCOPED_TRACE(model);
+        StopMachine();
+        _emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind(model, TurboSoundKind::FM);
+        if (!_emulator)
+            _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr) << "cannot create " << model;
+        ASSERT_NO_FATAL_FAILURE(AttachController());
+
+        // Inside the first frame, the machine just reset
+        _emulator->RunNCPUCycles(12345, /*skipBreakpoints=*/true);
+        ASSERT_TRUE(_controller->StartRecording());
+        _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+        _controller->StopRecording();
+        ASSERT_GE(_controller->GetCheckpointCount(), 3u);
+
+        // A checkpoint is named by its frame; the baseline's CPU stands inside it. The interval runs to the
+        // frame boundary itself, not a T-state count: a Profi's ROM leaves hi-res inside the frame, and the clock
+        // change rescales the frame length the restore started with
+        for (size_t index = 0; index < 2; ++index)
+        {
+            ASSERT_NO_FATAL_FAILURE(SeekToCheckpoint(index));
+            if (index == 0)
+                ASSERT_GT(_context->pCore->GetZ80()->t, 0u) << "the baseline is inside a frame";
+            const uint64_t frame = _context->emulatorState.frame_counter;
+            _emulator->RunUntilCondition([&](const Z80State&) { return _context->emulatorState.frame_counter != frame; },
+                                         /*maxTStates=*/10'000'000, /*notifyDebugger=*/false);
+            ASSERT_EQ(_context->emulatorState.frame_counter, frame + 1);
+            const LiveMachine replayed = Live();
+            ASSERT_NO_FATAL_FAILURE(SeekToCheckpoint(index + 1));
+            ExpectSame(replayed, Live(), "interval " + std::to_string(index));
             if (HasFailure())
                 return;   // the first divergence is the useful one
         }

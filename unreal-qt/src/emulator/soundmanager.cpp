@@ -258,8 +258,11 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
     const size_t samplesRequested = frameCount * 2;
     const size_t samplesDequeued = obj->_ringBuffer.dequeue((int16_t*)pOutput, samplesRequested);
 
-    // Zero any unfilled portion to prevent audio glitches on underrun
-    if (samplesDequeued < samplesRequested)
+    // Zero any unfilled portion to prevent audio glitches on underrun; all of it when silent (consumed as played:
+    // the device's pace is the emulation's)
+    if (obj->_silent.load(std::memory_order_relaxed))
+        std::memset(pOutput, 0, samplesRequested * sizeof(int16_t));
+    else if (samplesDequeued < samplesRequested)
     {
         int16_t* outSamples = static_cast<int16_t*>(pOutput);
         std::memset(outSamples + samplesDequeued, 0, (samplesRequested - samplesDequeued) * sizeof(int16_t));

@@ -184,7 +184,7 @@ of its own stepping every 250 ms; the process is `childprocess::Child` (posix_sp
 | No binary | `missing` (a build without `-DUNREAL_STREAMDECK=ON`, the default with the Qt apps): the reason in `error`, no countdown; a daemon on the port is still adopted (looked for every 5 s); Start, Restart or a binary setting tries again |
 | Crash | Restarted after 1 s, 2 s, 4 s; the fourth end in a row: `failed`, tried again after 60 s; 30 s healthy starts the count again. A clean end within 5 s counts too (a second start that found one running: after the backoff that one is adopted) |
 | Hang | Three failed checks: killed, then the crash path. Not answering within 10 s of the start: the same |
-| Adopt | A daemon answering on the port with this emulator as `host`: `POST /api/v1/parents {pid}`, state `adopted`; another host's: `foreign`, left alone |
+| Adopt | A daemon answering on the port with this emulator as `host`: `POST /api/v1/parents {pid}`, state `adopted`; another host's: `foreign`, left alone (a new `api_port` setting leaves it: ours starts on that port) |
 | Quit | `DELETE /api/v1/parents/<pid>`: the daemon ends unless the studio still holds a lease; never killed |
 | Mode off | The lease back, as at quit (a daemon another starter holds stays) |
 | Applied | The activity look (`PUT /api/v1/activity`) and each deck's kept brightness once per daemon |

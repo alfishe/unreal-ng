@@ -1,9 +1,12 @@
 #include "pch.h"
 #include "stdafx.h"
 
+#include <algorithm>
+
 #include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testwaithelper.h"
+#include "base/featuremanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -232,5 +235,34 @@ TEST(ScreenModeSwitch_Test, SameSizeSwitchKeepsTheFramesAndStaysQuiet)
     EXPECT_EQ(notifications.load(), 1) << "only the change of size is announced";
 
     mc.RemoveObserverById(NC_VIDEO_MODE_CHANGED, observer);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// A step that ends far past the frame end (the TS-Conf arbiter holding the CPU while DMA owns the bus, a long wait):
+/// the beam still drew the frame's tail up to the end. The period used to be dropped whole, the bottom of the frame
+/// left undrawn
+TEST(ScreenDrawPeriod_Test, APeriodPastTheFrameEndDrawsTheTail)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    Screen* screen = context->pScreen;
+    context->pFeatureManager->setFeature(Features::kScreenHQ, true);   // the per-T-state renderer draws the period
+    emulator->RunNFrames(1);
+    ASSERT_TRUE(screen->IsScreenHQEnabled());
+
+    const FramebufferDescriptor fb = screen->GetFramebufferDescriptor();
+    uint32_t* pixels = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
+    const size_t lastLine = size_t(fb.height - 1) * fb.width;
+    std::fill(pixels + lastLine, pixels + lastLine + fb.width, 0u);
+
+    const uint32_t frame = context->config.frame;
+    screen->DrawPeriod(frame - 2000, frame + 500);   // a step 500 T past the end, beyond the overshoot tolerance
+
+    size_t drawn = 0;
+    for (size_t x = 0; x < fb.width; ++x)
+        drawn += pixels[lastLine + x] != 0u;
+    EXPECT_EQ(drawn, size_t(fb.width)) << "the last visible line is drawn";
+
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

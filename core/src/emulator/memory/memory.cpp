@@ -1641,28 +1641,49 @@ uint8_t* Memory::MapZ80AddressToPhysicalAddress(uint16_t address)
 /// \return memory page descriptor
 MemoryPageDescriptor Memory::MapZ80AddressToPhysicalPage(uint16_t address)
 {
+    const uint8_t bank = (address >> 14) & 0b0000'0000'0000'0011;
     MemoryPageDescriptor result;
+    if (_bank_read[bank])
+        result = DescribeWindow(_bank_mode[bank], static_cast<uint32_t>(_bank_read[bank] - _memory));
+    result.addressInPage = address & 0b0011'1111'1111'1111;
 
-    uint8_t bank = (address >> 14) & 0b0000'0000'0000'0011;
-    uint16_t addressInBank = address & 0b0011'1111'1111'1111;
+    return result;
+}
 
-    result.mode = _bank_mode[bank];
+bool Memory::GetWindowMap(uint32_t offsets[4], uint8_t modes[4]) const
+{
+    if (_toolReadRedirect || PhysicalSlotShift() != 14)
+        return false;
+    for (uint8_t w = 0; w < 4; w++)
+    {
+        offsets[w] = static_cast<uint32_t>(_bank_read[w] - _memory);
+        modes[w] = static_cast<uint8_t>(_bank_mode[w]);
+    }
+    return true;
+}
+
+MemoryPageDescriptor Memory::DescribeWindow(uint8_t mode, uint32_t offset)
+{
+    MemoryPageDescriptor result;
+    uint8_t* read = _memory + offset;
+
+    result.mode = static_cast<MemoryBankModeEnum>(mode);
     switch (result.mode)
     {
         case BANK_ROM:
-            result.page = GetROMPageFromAddress(_bank_read[bank]);
+            result.page = GetROMPageFromAddress(read);
             break;
         case BANK_RAM:
-            result.page = GetRAMPageFromAddress(_bank_read[bank]);
+            result.page = GetRAMPageFromAddress(read);
             break;
         case BANK_CACHE:
         {
             // The Sprinter's fast RAM: page 0..MAX_CACHE_PAGES-1 counted from the cache base (a page-bound
             // breakpoint keys on it; left unset, it matched or missed at random)
-            const ptrdiff_t offset = _bank_read[bank] - _cacheBase;
+            const ptrdiff_t cacheOffset = read - _cacheBase;
             const ptrdiff_t pageSize = static_cast<ptrdiff_t>(PAGE_SIZE);
-            if (_bank_read[bank] && offset >= 0 && offset < static_cast<ptrdiff_t>(MAX_CACHE_PAGES) * pageSize)
-                result.page = static_cast<uint8_t>(offset / pageSize);
+            if (cacheOffset >= 0 && cacheOffset < static_cast<ptrdiff_t>(MAX_CACHE_PAGES) * pageSize)
+                result.page = static_cast<uint8_t>(cacheOffset / pageSize);
             else
                 result.mode = BANK_INVALID;
             break;
@@ -1671,8 +1692,6 @@ MemoryPageDescriptor Memory::MapZ80AddressToPhysicalPage(uint16_t address)
             result.mode = BANK_INVALID;  // page stays 0xFF: matches no page-bound breakpoint
             break;
     }
-
-    result.addressInPage = addressInBank;
 
     return result;
 }
@@ -2096,19 +2115,22 @@ std::string Memory::GetBankNameForAddress(uint16_t address)
 /// @return bank name string (e.g., "ROM 0", "RAM 5")
 std::string Memory::GetCurrentBankName(uint8_t bank)
 {
-    std::string result = "<UNKNOWN>";
-
     if (bank > 3)
     {
         throw std::logic_error("ZX-Spectrum can only have 4 banks [0:3], 16KiB each");
     }
 
-    bool isROM = _bank_mode[bank] == BANK_ROM;
-    uint16_t bankPage = 0;
+    return WindowName(static_cast<uint8_t>(_bank_mode[bank]), static_cast<uint32_t>(_bank_read[bank] - _memory));
+}
 
-    if (isROM)
+std::string Memory::WindowName(uint8_t mode, uint32_t offset)
+{
+    std::string result = "<UNKNOWN>";
+    uint8_t* read = _memory + offset;
+
+    if (mode == BANK_ROM)
     {
-        bankPage = GetROMPageFromAddress(_bank_read[bank]);
+        const uint16_t bankPage = GetROMPageFromAddress(read);
         if (bankPage != MEMORY_UNMAPPABLE)
         {
             result = StringHelper::Format("ROM %d", bankPage);
@@ -2116,7 +2138,7 @@ std::string Memory::GetCurrentBankName(uint8_t bank)
     }
     else
     {
-        bankPage = GetRAMPageFromAddress(_bank_read[bank]);
+        const uint16_t bankPage = GetRAMPageFromAddress(read);
         if (bankPage != MEMORY_UNMAPPABLE)
         {
             result = StringHelper::Format("RAM %d", bankPage);

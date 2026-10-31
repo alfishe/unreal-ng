@@ -229,6 +229,12 @@ private:
     uint64_t _droppedBlocks = 0;     ///< sealed blocks dropped from the front (DropBefore)
     uint64_t _sealedRecords = 0;     ///< records in sealed blocks, dropped ones included (absolute)
     std::vector<TTDPortRecord> _open;
+    /// Counts the open block's edits other than an append (a seal, a cut, a clear): with its size it names the
+    /// block's records, so SerializedBytes compresses the open block once for a session publish after another
+    uint64_t _openEdits = 0;
+    mutable uint64_t _openBytesEdits = UINT64_MAX;
+    mutable size_t _openBytesRecords = 0;
+    mutable size_t _openBytes = 0;
 
     // Decoded copy of one sealed block (playback reads sequentially)
     mutable ReadCache _cache;

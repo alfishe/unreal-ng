@@ -77,7 +77,8 @@ The black box (the engine) is for "always on" recording: it keeps only the
 last minutes and never holds the machine at real speed - turbo or a host
 speed above 1x stops it first (history kept, `last_stop_reason:
 "acceleration"`), and it starts a new session once nothing accelerates. No
-acceleration lock below applies to it, and it refuses no load: inserting a
+acceleration lock below applies to it (only fast disk reads as off while it
+records), and it refuses no load: inserting a
 tape, a disk or another medium ends its session (the recording up to there
 stays in its folder) and the next one starts at the next frame. The same
 holds for the history DeZog starts for reverse debugging. Same on the other surfaces: CLI
@@ -102,12 +103,17 @@ enabled it; `timetravel` stays on. Idempotent: starting twice is a no-op
 `"... the machine reports no RAM pages to record"`), every surface alike.
 
 While recording (and while the machine sits in `detached`) the
-**acceleration lock** holds: host speed forced to 1x (2x-16x refused),
-turbo mode off, fast tape / turbo tape / fast disk read as off (feature
-lists show them off; `PUT /feature/{name} {"enabled": true}` on one answers
-`409`, `PUT /settings/speed` other than 1 and `PUT /settings/turbo_mode true`
-answer `409` too). The previous settings come back when the session returns
-to `idle`. Full
+**acceleration lock** holds the host speed at 1x (`PUT /settings/speed`
+other than 1 answers `409`) and fast disk off (it also compresses the FDC's
+timing, which a replay cannot repeat). Turbo mode, turbo tape and fast tape
+stay on while the engine records: turbo only drops the host's pacing, and the
+tape trap is a recorded edit the replay applies. **Load a tape from
+zero inside the recording at full speed**: `PUT /settings/turbo_mode true`
+(or let turbo tape warp the load; the ROM loader's blocks load at once
+through fast tape), then turbo off for the part you want to watch in real
+time. A replay or the machine in `detached` reads the fast loaders as off.
+With `backend: v1` turbo and the tape shortcuts are held off too (`409`). The
+previous settings come back when the session returns to `idle`. Full
 rules: [command-interface.md → TTD Session Rules](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-session-rules).
 
 ### Watch it record
@@ -296,7 +302,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: appli
   `in`, `out`; `arg` (MCP: `event_arg`) is the key name or AY register. `in`/`out` narrow with `port` /
   `port_mask` / `value` / `value_mask`; `newest` returns the last hits first. The reply has `event`,
   `direction`, `count`, `truncated`, `scanned` and `hits[]` (`index`, `frame`, `tinframe`, `port`, `value`,
-  `pc`, plus `ay_register` for AY events).
+  `pc`, plus `ay_register` for AY events). A keyboard read adds `rows` (the half-rows selected) and `keys` (the
+  keys it saw down, one half-row only). `context` (default on, off while a recording runs; `true` pauses it) adds
+  `registers` (`af` `bc` `de` `hl` `ix` `iy` `sp`) at the IN / OUT instruction and `stack_top` (the word at SP:
+  the caller's return address when the key routine pushed nothing) - replayed, the machine put back.
 - `export-clip` takes `from`, `to` (frames), `path` (an absolute directory, as seen by the emulator process) and
   optional `chunk` (frames per chunk). It is synchronous, pauses the emulator, and is refused while recording.
   The same export on the other surfaces: MCP `time_travel` action `export_clip` (`from_frame`, `to_frame`,

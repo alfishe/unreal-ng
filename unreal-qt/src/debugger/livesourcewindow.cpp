@@ -127,6 +127,7 @@ void LiveSourceWindow::setEmulator(std::shared_ptr<Emulator> emulator)
     stopOwnPush();
     _emulatorId = id;
     _shownGeneration = 0;
+    _shownHintsGeneration = 0;
     _shownCursor = -2;
     _text->clear();
     _hints->clear();
@@ -280,8 +281,13 @@ void LiveSourceWindow::refresh()
         _status->setText(tr("No emulator instance"));
         return;
     }
+    // The text before the hints: a build published between the two reads leaves hints newer than the text, never
+    // the text with the hints of the build before it
+    uint64_t generation = 0;
+    const std::string text = sync->LastText(generation);
     const StateNode status = sync->StatusValue();
     const StateNode hints = sync->HintsValue();
+    const uint64_t hintsGeneration = static_cast<uint64_t>(Number(hints, "generation"));
     const bool watching = Member(status, "watching") && Member(status, "watching")->b;
     {
         const QSignalBlocker blocker(_watch);
@@ -295,9 +301,7 @@ void LiveSourceWindow::refresh()
     }
 
     // The text and hints of a newer build
-    uint64_t generation = 0;
-    const std::string text = sync->LastText(generation);
-    if (generation != _shownGeneration)
+    if (generation != _shownGeneration || hintsGeneration != _shownHintsGeneration)
     {
         const int top = _text->cursorForPosition(QPoint(0, 0)).blockNumber();
         _text->setPlainText(QString::fromStdString(text));
@@ -323,6 +327,7 @@ void LiveSourceWindow::refresh()
                     _hintLines.append({line, QString::fromStdString(severity)});
             }
         _shownGeneration = generation;
+        _shownHintsGeneration = hintsGeneration;
         _shownCursor = -2;
     }
 
