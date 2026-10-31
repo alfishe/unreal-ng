@@ -43,7 +43,7 @@ class BreakpointManager;
 
 namespace ttd
 {
-enum class TTDGuardedAction : uint8_t;  // debugger/ttd/timetravelmanager.h
+enum class TTDGuardedAction : uint8_t;  // debugger/ttd/timetravelhooks.h
 class TTDSessionPort;                   // debugger/ttd/ttdsessionport.h
 }
 
@@ -298,7 +298,7 @@ private:
     // in flight) before the emulation thread has left MainLoop::Run() - a second
     // caller that skips its own Stop() because IsRunning() already reads false
     // (e.g. EmulatorManager::RemoveEmulatorInstance()) could free Core's Screen /
-    // SoundManager / TimeTravelManager while that thread is still mid-frame.
+    // SoundManager / TimeTravelController while that thread is still mid-frame.
     std::mutex _stopMutex;
     volatile bool _isDebug = false;
     std::atomic<bool> _isReleased{false};
@@ -641,23 +641,10 @@ public:
     /// `ext` (no dot, any case) is an RZX recording
     static bool IsRzxExtension(const std::string& ext);
 
-    /// Which time-travel implementation records and replays on instances
-    /// created from now on (Phase 5): the engine's controller (the default) or
-    /// v1's manager. Both objects exist on every instance; the selected one is
-    /// what the core (hooks, write sink) and the verbs (TTDControl) drive. The
-    /// core-tests binary selects V1 (v1's own tests, the reference); tests of
-    /// the engine select it per test
-    enum class TimeTravelBackend : uint8_t
-    {
-        Engine,
-        V1
-    };
-    static void SetDefaultTimeTravelBackend(TimeTravelBackend backend);
     /// Where the engine writes each recording as it records (a folder per session under it,
     /// ttdrecordingfolders.h) for instances created from now on. The application sets
     /// ~/.unreal-ng/ttd (ttd::RecordingsRoot); empty (the default, tests): nothing is written
     static void SetDefaultTtdRecordingRoot(const std::string& root);
-    static TimeTravelBackend DefaultTimeTravelBackend();
     /// Save the machine's snapshot view as .sna, .z80 or .szx (by the extension): pauses, waits until the machine has parked, writes.
     /// False = refused or failed, and LastSaveResult() says why (the machine's state is untouched); nothing is written then
     bool SaveSnapshot(const std::string& path);

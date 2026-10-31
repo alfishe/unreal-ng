@@ -34,7 +34,7 @@
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/storage/sessionwritemap.h"

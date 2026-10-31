@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | Reference. Describes the code on master, 2026-09-29, including the saved replay inputs, the port journals and NeoGS layout 4 (commits `0a8236fa`, `280e4ae2`). |
+| **Status** | **Historical.** TTD v1 (`TimeTravelManager`) and its file reader were deleted on 2026-10-30 (TTD v2 migration, Phase 6); the engine (`TimeTravelController`) is the only recorder, its file is schema 2 ([`ttd.ksy`](../../../../../core/src/debugger/ttd/ttd.ksy)). Kept as the record of v1 as built. Described the code on master, 2026-09-29, including the saved replay inputs, the port journals and NeoGS layout 4 (commits `0a8236fa`, `280e4ae2`). |
 | **Scope** | Time-travel debugging (TTD) v1 in `core/src/debugger/ttd/`: recording, in-memory storage, compression, restore/seek/replay, and the `.ttd` file (serialization and deserialization). |
 | **Source of truth** | The code. Where an older document disagrees, this document follows the code and lists the difference in [Appendix A](#appendix-a-discrepancies-with-older-documents). |
-| **Schema** | [`ttd.ksy`](../../../../../core/src/debugger/ttd/ttd.ksy) (Kaitai), [`ttddumpformat.h`](../../../../../core/src/debugger/ttd/ttddumpformat.h) (C++ constants) |
+| **Schema** | v1's Kaitai schema (schema 1) was deleted with v1; `core/src/debugger/ttd/ttd.ksy` is now the engine's schema 2. Its peripheral id table (0-65, frozen, D23) lives on there as `legacy_id` |
 | **Related** | [time-travel-debugging-tdd.md](./time-travel-debugging-tdd.md) (design intent), [ttd-container-format.md](./ttd-container-format.md) (proposed chunked container), [overhead-and-gating.md](./overhead-and-gating.md) (measured costs), [TTD v2 migration](../../../../inprogress/2026-09-25-ttd-v2-migration/README.md) |
 
 Citations have the form `file:line`. They were taken on master before the
@@ -591,7 +591,9 @@ variant configuration, decode scratch (`ttdcheckpoint.h:21-28`,
 | 112 | 1 | `current_z80_frequency_multiplier` | 0 in old files is read as 1 (`ttdcheckpoint.cpp:215`) |
 | 113 | 1 | `next_z80_frequency_multiplier` | |
 | 114 | 3 | `cpu_t_in_frame` | `z80.t` at capture, 24-bit little-endian (the overshoot) |
-| 117 | 3 | `reserved` | always 0 |
+| 117 | 1 | `hw_clock_den` | clock ratio denominator; 0 = the usual 1 (only the Profi in hi-res writes 7) |
+| 118 | 1 | `hw_clock_den_applied` | the denominator the frame runs with, same encoding |
+| 119 | 1 | `cpu_t_fraction` | `z80.t_l` at capture: the T-state fraction of a CPU above the base clock (0 at the base clock) |
 
 Everything model-specific (ATM, Profi, Scorpion, +3 latches, video modes) lives
 in device blobs, not here (`ttdcheckpoint.h:151`).
@@ -1669,7 +1671,7 @@ by tests and fixed in `0a8236fa`.
    later delta slot could get a lower index than the slot it XORs against; the
    file was refused on load ("invalid prev_slot"). The writer now numbers the
    slots in dependency order (each XorPrev slot after its chain). Test:
-   `TimeTravelManager_ResumeSave_Test.SessionSavedAfterAResumeFromThePastLoads`.
+   `TimeTravelController_ResumeSave_Test.SessionSavedAfterAResumeFromThePastLoads`.
 2. **Fixed: the coverage index was not cut on resume and not cleared by
    `StartRecording`.** `ResumeRecordingFrom` now drops the index from the
    resume frame on (`TTDCoverageIndex::DropFramesFrom`; a mid-frame resume
@@ -1708,7 +1710,7 @@ The format has not shipped. It is amended **in place** without a version bump
 (`ttddumpformat.h:37-47`, `ttd.ksy:38-42`). Examples of past in-place changes:
 `model_ram_pages` widened from u8 to u16; the chipset struct shrank to 120 bytes;
 checkpoints moved to after the new frame's start; `boundary`,
-`int_acked_in_pulse` and `cpu_t_in_frame` took former padding bytes. Older files
+`int_acked_in_pulse`, `cpu_t_in_frame`, `hw_clock_den` and `cpu_t_fraction` took former padding bytes. Older files
 either fail the size checks or load with a different meaning; they must be
 re-recorded.
 

@@ -2,15 +2,14 @@
 /// @brief Time travel on the ZX Next: the peers of the UARTs. The UART state is in the NextState image (the FIFOs, the shifters, the
 /// break state); the other end of a line is a peer with a state of its own: UART 0's is the machine serial peer's blob (27), UART 1's
 /// (the Pi's, ComPort2=) is MachineSerialPeer2 (id 64), the joystick connector's device (ComPortJoy=) JoystickSerialPeer (id 65). Ids from
-/// 64 on need the wide peripheral mask of the session files: the tests also read the device set back from a written file, in the engine's
-/// format and in the v1 dump (schema 3), and load a v1 dump of schema 1.
+/// 64 on need the wide peripheral mask of the session files: the tests also read the device set back from a written file in the engine's
+/// format.
 ///
 /// Boots a Next and records a few frames: slower than the 50 ms guideline, an acceptance check.
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <cstring>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -19,8 +18,6 @@
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
-#include "debugger/ttd/ttddumpformat.h"
 #include "debugger/ttd/ttdfileinfo.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/emulator.h"
@@ -105,12 +102,6 @@ bool Has(const ttd::TTDRecordedMachine& machine, const char* name)
 {
     return std::find(machine.peripherals.begin(), machine.peripherals.end(), name) != machine.peripherals.end();
 }
-
-template <typename T>
-void Put(std::string& out, T value)
-{
-    out.append(reinterpret_cast<const char*>(&value), sizeof(T));
-}
 }  // namespace
 
 TEST(TTDNextUartPeers_Test, TheSecondPortAndTheConnectorPeersHaveBlobsOfTheirOwnAndRestoreOnASeek)
@@ -188,81 +179,4 @@ TEST(TTDNextUartPeers_Test, TheSecondPortAndTheConnectorPeersHaveBlobsOfTheirOwn
     EXPECT_TRUE(info.machine.V1Mask().Test(kIdPeer2));
     EXPECT_TRUE(info.machine.V1Mask().Test(kIdJoystick));
     EXPECT_TRUE(Has(info.machine, "machine-serial-peer-2"));
-}
-
-TEST(TTDNextUartPeers_Test, TheV1DumpNamesDevicesAboveSixtyThreeAndOlderFilesStillLoad)
-{
-    NextWithPeers n;
-    ASSERT_TRUE(n.Ready());
-    ttd::TimeTravelManager* manager = n.context->pTimeTravelManager;
-    ASSERT_NE(manager, nullptr);
-    ASSERT_TRUE(manager->StartRecording());
-    manager->OnFrameBoundary();
-    std::ostringstream out(std::ios::binary);
-    std::string err;
-    ASSERT_TRUE(manager->SerializeSession(out, err)) << err;
-    const std::string bytes = out.str();
-
-    ttd::TTDFileInfo info;
-    {
-        std::istringstream in(bytes, std::ios::binary);
-        ASSERT_TRUE(ttd::ReadTTDFileInfo(in, info, err)) << err;
-    }
-    EXPECT_EQ(info.schemaVersion, ttd::dump::kSchemaVersion) << "the dump writes the schema with word-list masks";
-    EXPECT_TRUE(info.machine.V1Mask().Test(kIdPeer2)) << "id 64 is named in the header";
-    EXPECT_TRUE(info.machine.V1Mask().Test(kIdJoystick));
-    EXPECT_TRUE(info.machine.V1Mask().Test(static_cast<uint8_t>(ttd::PeripheralId::NextState)));
-    EXPECT_TRUE(info.peripheralsFromHeader);
-    EXPECT_TRUE(Has(info.machine, "joystick-serial-peer"));
-    manager->StopRecording();
-
-    // The same file loads
-    {
-        std::istringstream in(bytes, std::ios::binary);
-        ASSERT_TRUE(manager->DeserializeSession(in, err)) << err;
-    }
-
-    // A schema 1 file: the same session with the masks as one u64 each (ids above 63 cannot be named in it). Built from the bytes above:
-    // the header up to the checkpoint count is the same; then u8 word count + words become one u64
-    constexpr size_t kFixed = 4 + 2 + 2 + 1 + 2 + 2 + 2 + 8 + 8;   // magic .. captured_at
-    ASSERT_GT(bytes.size(), kFixed + 1);
-    const size_t idLength = static_cast<uint8_t>(bytes[kFixed]);
-    size_t at = kFixed + 1 + idLength + 1 + 8 + 8 + 4 + 4;   // id, state, start, end, page count, checkpoint count
-    uint16_t flags = 0;
-    std::memcpy(&flags, bytes.data() + 6, sizeof flags);
-    ASSERT_NE(flags & ttd::dump::kFlagsHasPeripheralMask, 0);
-    auto takeMask = [&](uint64_t& low) {
-        const uint8_t words = static_cast<uint8_t>(bytes[at++]);
-        ASSERT_GE(words, 1);
-        ASSERT_LE(words, 4);
-        std::memcpy(&low, bytes.data() + at, sizeof low);
-        at += words * sizeof(uint64_t);
-    };
-    uint64_t lowMask = 0, lowNotRecorded = 0;
-    ASSERT_NO_FATAL_FAILURE(takeMask(lowMask));
-    const bool hasNotRecorded = (flags & ttd::dump::kFlagsHasNotRecordedMask) != 0;
-    if (hasNotRecorded)
-    {
-        ASSERT_NO_FATAL_FAILURE(takeMask(lowNotRecorded));
-    }
-    std::string v1 = bytes.substr(0, kFixed + 1 + idLength + 1 + 8 + 8 + 4 + 4);
-    const uint16_t schema1 = 1;
-    std::memcpy(v1.data() + 4, &schema1, sizeof schema1);
-    Put(v1, lowMask);
-    if (hasNotRecorded)
-        Put(v1, lowNotRecorded);
-    v1.append(bytes, at, std::string::npos);
-
-    ttd::TTDFileInfo old;
-    {
-        std::istringstream in(v1, std::ios::binary);
-        ASSERT_TRUE(ttd::ReadTTDFileInfo(in, old, err)) << err;
-    }
-    EXPECT_EQ(old.schemaVersion, 1u);
-    EXPECT_TRUE(old.machine.V1Mask().Test(static_cast<uint8_t>(ttd::PeripheralId::NextState)));
-    EXPECT_FALSE(old.machine.V1Mask().Test(kIdPeer2)) << "a schema 1 header cannot name it";
-    {
-        std::istringstream in(v1, std::ios::binary);
-        EXPECT_TRUE(manager->DeserializeSession(in, err)) << "an older file still loads: " << err;
-    }
 }

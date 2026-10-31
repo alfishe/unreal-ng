@@ -162,7 +162,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" -H 'Content-Type: appl
   instruction boundary (while paused: when execution continues); `done`
   means it already ran. Poll `ngs.sd.present` to confirm.
 - **TTD.** While a TTD recording runs, SD insert and eject are events of the
-  recording: they land at the next frame boundary (TTD v1: `409`). The
+  recording: they land at the next frame boundary. The
   personality switch ends the recording. `422` means the path is empty or no file or
   folder is there (`no SD image or folder at that path`).
 - **`path` is read by the emulator process**, like every media path. For

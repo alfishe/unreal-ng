@@ -111,11 +111,11 @@ void ReadUnwritten(const L1Result& l1, const L2Result& l2, std::vector<Finding>&
                  a <= std::min<uint32_t>(0xFFFF, hi + kStaticWindow) && !staticData; ++a)
             {
                 const PhysKey key = l1.StartKey(static_cast<uint16_t>(a));
-                const ByteUse* near = l1.UseAt(key);
+                const ByteUse* nearby = l1.UseAt(key);
                 uint8_t v = 0;
-                staticData = near != nullptr && (near->flags & (use::kRead | use::kWordRead)) != 0 &&
-                             (near->flags & (use::kWrite | use::kBlockWrite)) == 0 &&
-                             (near->lastReader == u->lastReader || near->firstReader == u->lastReader) &&
+                staticData = nearby != nullptr && (nearby->flags & (use::kRead | use::kWordRead)) != 0 &&
+                             (nearby->flags & (use::kWrite | use::kBlockWrite)) == 0 &&
+                             (nearby->lastReader == u->lastReader || nearby->firstReader == u->lastReader) &&
                              l1.StartByte(key, v) && v != 0;
             }
         if (staticData)

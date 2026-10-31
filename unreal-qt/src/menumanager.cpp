@@ -29,7 +29,7 @@
 // Avoid Qt 'signals' and 'slots' macro conflicts with core struct members
 #undef signals
 #undef slots
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/fdc/fdd.h"
 #define signals Q_SIGNALS

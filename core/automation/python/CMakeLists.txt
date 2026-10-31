@@ -249,8 +249,7 @@ else()
     endif()
 
     # zstd::libzstd is required because core's ttd_compression.h (pulled in
-    # transitively via python_emulator.h -> timetravelmanager.h ->
-    # ttd_codec_page_store.h) #includes <zstd.h>, and this target uses
+    # by the TTD headers, e.g. ttd_codec_page_store.h) #includes <zstd.h>, and this target uses
     # core/src via raw include paths rather than linking unrealng::core.
     # zstd::libzstd is an INTERFACE IMPORTED target, so this only propagates
     # zstd's include directory (same fix as automation_webapi).

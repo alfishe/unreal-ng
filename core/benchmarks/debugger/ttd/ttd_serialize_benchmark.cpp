@@ -5,7 +5,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdinputjournal.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -29,7 +29,7 @@ constexpr unsigned kFrames = 300;
 struct Session
 {
     Emulator* emulator = nullptr;
-    ttd::TimeTravelManager* ttd = nullptr;
+    ttd::TimeTravelController* ttd = nullptr;
     std::string file;
     size_t inputEvents = 0;
 
@@ -42,7 +42,7 @@ struct Session
         if (!emulator->LoadSnapshot(actionSna))
             BenchmarkPathHelper::FailSetup("cannot load " + actionSna);
         EmulatorContext* context = emulator->GetContext();
-        ttd = context->pTimeTravelManager;
+        ttd = context->pTimeTravelController;
         FeatureManager* fm = emulator->GetFeatureManager();
         fm->setFeature(Features::kDebugMode, true);
         fm->setFeature(Features::kTimeTravel, true);

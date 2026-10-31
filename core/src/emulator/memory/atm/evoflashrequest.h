@@ -5,7 +5,7 @@
 /// The CLI (`romflash`), the WebAPI (`/memory/rom/flash`, MCP `emulator_manage` rom_flash_*), Lua and Python share
 /// these, as the NeoGS card's flash save (neogsmedia.h).
 ///
-/// Save and discard run on the machine's thread at an instruction boundary (TimeTravelManager::SubmitMachineTask;
+/// Save and discard run on the machine's thread at an instruction boundary (TimeTravelController::SubmitMachineTask;
 /// while paused: at once). Neither is TTD input: they touch only the file, never the machine. While a TTD replay
 /// owns the machine they are refused. Discard deletes the file and asks for a ROM reload at the next reset, which
 /// brings the shipped image back.

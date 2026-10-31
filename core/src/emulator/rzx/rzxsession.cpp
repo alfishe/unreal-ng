@@ -20,7 +20,7 @@
 #include "loaders/snapshot/szx/loaderszx.h"
 #include "loaders/snapshot/szx/szxreader.h"
 #include "loaders/snapshot/szx/szxwriter.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/coordinator/ports.h"
 
 namespace rzx

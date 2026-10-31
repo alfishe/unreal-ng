@@ -104,7 +104,7 @@ multicolor. Root causes, all fixed in the core:
    ROM slot, so replays after a seek could run with the previous position's
    page mapped. Every model's decoder now completes the bank rebuild.
 
-Tests: `core/tests/debugger/ttd/timetravelmanager_display_test.cpp` (TTD
+Tests: `core/tests/debugger/ttd/timetravelcontroller_display_test.cpp` (TTD
 position ≡ live machine, pixel for pixel), full suite 4162/4162.
 
 ## 6. Analyze

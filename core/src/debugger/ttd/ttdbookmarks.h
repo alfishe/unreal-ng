@@ -41,7 +41,7 @@
 /// are guarded by an internal mutex; Snapshot() returns a stable copy under
 /// the lock so WebAPI/Lua/Python/CLI threads never iterate live storage.
 ///
-/// Lifecycle (owned by TimeTravelManager, same discipline as the other
+/// Lifecycle (owned by TimeTravelController, same discipline as the other
 /// journals):
 ///   - StartRecording / InvalidateSession — Clear() (a bookmark into wiped
 ///     history would dangle);

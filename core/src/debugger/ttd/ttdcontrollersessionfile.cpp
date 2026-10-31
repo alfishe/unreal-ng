@@ -74,8 +74,7 @@ bool IsV1File(const std::vector<uint8_t>& bytes)
 }
 
 constexpr const char* kV1Refused =
-    "a v1 .ttd file: this build reads session files in the engine's format only (record the session again; "
-    "the verification tools convert v1 files)";
+    "a v1 .ttd file: this build reads session files in the engine's format only (record the session again)";
 }  // namespace
 
 std::vector<TTDHolderStream> TimeTravelController::SessionHolderStreams(bool declareAll) const

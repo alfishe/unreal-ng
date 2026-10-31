@@ -1,8 +1,7 @@
 /// @file timetravelcontroller.cpp
 /// @brief TimeTravelController — the engine's playback controller (Phase 5, item 2).
-/// Started as a copy of v1's TimeTravelManager (timetravelmanager.cpp, which stays
-/// unchanged as the byte-exact reference); recording and restore go to its own
-/// TimeTravelEngine, and v1's own storage leaves this class step by step (C1-C4,
+/// Started as a copy of v1's manager (deleted in Phase 6); recording and restore
+/// go to its own TimeTravelEngine (C1-C4,
 /// docs/inprogress/2026-09-25-ttd-v2-migration/phase-5-switchover-tdd.md).
 ///
 /// Per parent TDD §6.3, §7.1. The hot path is OnFrameBoundary: dirty pages
@@ -1625,7 +1624,7 @@ bool TimeTravelController::CaptureNow(TTDCheckpoint& out)
         out.cpu     = CaptureCpuState(*static_cast<Z80State*>(cpu));
         out.cpu.nmi_pending = cpu->IsNmiPending() ? 1 : 0;
     }
-    out.chipset = CaptureChipsetState(st, cpu ? static_cast<uint32_t>(cpu->t) : 0u);
+    out.chipset = CaptureChipsetState(st, cpu ? static_cast<uint32_t>(cpu->t) : 0u, cpu ? static_cast<uint8_t>(cpu->t_l) : 0);
     CaptureBankOverrides(out.bankOverrides);
     out.cpuWindows.valid = _memory->GetWindowMap(out.cpuWindows.offset, out.cpuWindows.mode);
 
@@ -1798,6 +1797,7 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
     if (cpu)
     {
         cpu->t = GetChipsetCpuTInFrame(engineCp->chipset);
+        cpu->t_l = engineCp->chipset.cpu_t_fraction;
         static_cast<Z80*>(cpu)->RecomputeFrameTiming();
     }
 
@@ -6788,7 +6788,8 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
         out.cpu = CaptureCpuState(*static_cast<Z80State*>(z80));
         out.cpu.nmi_pending = z80->IsNmiPending() ? 1 : 0;
     }
-    out.chipset = CaptureChipsetState(_context->emulatorState, z80 ? static_cast<uint32_t>(z80->t) : 0u);
+    out.chipset = CaptureChipsetState(_context->emulatorState, z80 ? static_cast<uint32_t>(z80->t) : 0u,
+                                      z80 ? static_cast<uint8_t>(z80->t_l) : 0);
     CaptureBankOverrides(out.bankOverrides);
     if (_context->pScreen)
     {
@@ -6883,6 +6884,7 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
     if (z80)
     {
         z80->t = snap.z80TInFrame;
+        z80->t_l = snap.chipset.cpu_t_fraction;
         z80->RecomputeFrameTiming();  // geometry follows the restored multiplier
     }
     _peripherals.LoadLive(snap.deviceStates);

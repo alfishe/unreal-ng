@@ -294,7 +294,7 @@ followed by `LD-BYTES` entry (`#0556`), which proves the command reached the tap
 | Syntax error | `syntaxResult`, ERR_NR | `syntax_error` + position |
 | Runtime error | `errorRaised`, `report` | `error` + report code and text |
 | TR-DOS rejects the line | `error` before `found` | `trdos_rejected` + ERR_NR (26: no disk) |
-| TTD replay owns input | `TimeTravelManager::OwnsInput` | `input_locked` |
+| TTD replay owns input | `TimeTravelController::OwnsInput` | `input_locked` |
 | Other keys still queued | `DebugKeyboardManager::IsSequenceRunning` | `keyboard_busy` |
 | Text already on the edit line | 48K: E_LINE / K_CUR; 128K: cursor row of the edit buffer | cleared with verified cursor-right / DELETE; a multi-row 128K line: `line_not_empty` |
 | A report on screen (128K, +3) | `reportShown` instead of `idle` | nothing cleared: the buffer still shows the old line, but the key that clears the report redraws an empty one and is then taken as the first key |

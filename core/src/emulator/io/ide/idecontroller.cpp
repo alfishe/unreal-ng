@@ -13,7 +13,7 @@
 #include "emulator/media/mediamanager.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 
 IdeController::IdeController(EmulatorContext* context) : _context(context)
 {

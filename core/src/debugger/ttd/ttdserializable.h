@@ -405,7 +405,7 @@ public:
     /// that affects determinism (e.g., Scorpion ProfROM quadrant).
     virtual uint64_t TTDHashState() const { return 0; }
 
-    /// Recording starts / returns to idle (TimeTravelManager's recording lock).
+    /// Recording starts / returns to idle (TimeTravelController's recording lock).
     /// Called before the baseline checkpoint is captured, so a device that
     /// switches to a deterministic time base here has the switch in its first
     /// blob. Default: nothing (most devices have no host-time dependence)

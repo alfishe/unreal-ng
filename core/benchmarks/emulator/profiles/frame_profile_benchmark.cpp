@@ -35,7 +35,7 @@
 #include <string>
 
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -205,8 +205,8 @@ void RunFrameProfile(benchmark::State& state, const char* model, RunProfile prof
         if (context->pTimeTravelController)
             started = context->pTimeTravelController->StartRecording();
 #endif
-        if (!started && context->pTimeTravelManager)
-            context->pTimeTravelManager->StartRecording();
+        if (!started && context->pTimeTravelController)
+            context->pTimeTravelController->StartRecording();
 
         // Let the recording settle (first checkpoints intern every page)
         for (int i = 0; i < 20; i++)

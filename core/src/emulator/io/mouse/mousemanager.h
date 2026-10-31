@@ -10,7 +10,7 @@
 ///     input to DebugMouseManager's host methods;
 ///   - automation (WebAPI, MCP, CLI, Lua, Python) calls DebugMouseManager.
 /// DebugMouseManager journals the input and submits it through
-/// TimeTravelManager; ttd::ApplyInputEvent then calls Apply* here, on the
+/// TimeTravelController; ttd::ApplyInputEvent then calls Apply* here, on the
 /// emulator thread, and the manager fans the input out to its sinks. Replayed
 /// input takes the same Apply* path.
 ///

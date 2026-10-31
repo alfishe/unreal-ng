@@ -8,7 +8,7 @@
 #include "emulator/emulatorcontext.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/notifications.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/keyboard/pckey.h"

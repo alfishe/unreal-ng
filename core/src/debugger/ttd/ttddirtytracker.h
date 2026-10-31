@@ -9,7 +9,7 @@
 ///     banks in, and write traps fire per 16 KB page. Sub-page splitting
 ///     happens later, at the codec-store level — see ttdcodecpagestore.h
 ///     (kPageSize = 4096, 4 sub-pages per emulator page) and the P-frame
-///     path in TimeTravelManager::UpdateRamPages.
+///     path of v1's UpdateRamPages (deleted in Phase 6).
 ///   - Why not track at 4 KB here? Measured: per-page dirty cost is already
 ///     <1 % of the frame budget at 16 KB granularity, and 4 KB bit-tracking
 ///     would force the write-protect trap path in Memory to fire 4× more

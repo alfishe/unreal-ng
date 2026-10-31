@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cctype>
 
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdinputapply.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mouse.h"
@@ -36,7 +36,7 @@ Mouse* DebugMouseManager::Device() const
 bool DebugMouseManager::IsReplaying() const
 {
     // The TTD journal owns input: a replay, or the machine re-executing
-    // recorded history (TimeTravelManager::OwnsInput), or an RZX playback
+    // recorded history (TimeTravelController::OwnsInput), or an RZX playback
     if (_context && _context->rzxPlayer)
         return true;
     return _context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->OwnsInput();
@@ -96,7 +96,7 @@ MouseInjectResult DebugMouseManager::CheckDevice(const std::string& deviceId) co
     return result;
 }
 
-// Every mouse mutation goes through TimeTravelManager::SubmitLiveInput when TTD is
+// Every mouse mutation goes through TimeTravelController::SubmitLiveInput when TTD is
 // present: refused while the journal owns input, applied on the machine's thread at an
 // instruction boundary and journalled there while recording (same as keyboard)
 bool DebugMouseManager::Submit(const ttd::TTDInputEvent& ev, Mouse& mouse)

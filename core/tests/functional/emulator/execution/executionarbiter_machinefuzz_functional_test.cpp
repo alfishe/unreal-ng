@@ -290,11 +290,7 @@ TEST(ExecutionArbiterMachineFuzz_Functional, TtdRecordingUnderConcurrentControl)
         emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
         emulator->GetContext()->pMemory->UpdateFeatureCache();
         ttd::TimeTravelController* ttdc = emulator->GetContext()->pTimeTravelController;
-        if (!ttdc)
-        {
-            EmulatorTestHelper::CleanupEmulator(emulator);
-            GTEST_SKIP() << "the TTD engine is not the backend (UNREAL_TTD_BACKEND=v1)";
-        }
+        ASSERT_NE(ttdc, nullptr);
         emulator->EnableTurboMode();
         emulator->StartAsync();
         TestWait::For([&]() { return Frame(emulator) > 1; });

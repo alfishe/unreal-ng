@@ -2,6 +2,10 @@
 
 Research POC for TTD v2 format design decisions: page-granular capture, codec selection, indexing overhead, model scalability, peripheral serialization, and seek latencies.
 
+> **Retired 2026-10-30.** Its data and two benchmarks are v1's (`TimeTravelManager`, v1 session files), deleted in
+> Phase 6 of the TTD v2 migration; `tools/poc/CMakeLists.txt` no longer builds it. Its conclusions fixed the engine's
+> parameters and stay valid; the scripts and experiments are kept as the record of how they were reached.
+
 > **Audit Status:** 2026-09-11  
 > Core findings verified against benchmark output. Some claims removed pending measurement.  
 > See [AUDIT.md](AUDIT.md) for details.

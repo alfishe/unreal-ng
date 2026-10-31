@@ -27,7 +27,6 @@
 #include <cstdint>
 
 #include "debugger/ttd/ttdcheckpoint.h"
-#include "debugger/ttd/timetravelmanager.h"
 
 // ===========================================================================
 // TTDTimePoint comparison operators

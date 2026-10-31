@@ -291,10 +291,9 @@ call.
 
 1. **One emulator can own port 8090.** Kill stale instances before starting a
    fresh one (see [setup](_common/setup.md)).
-2. **Scrubbing during TTD recording pauses it** (`backend: engine`) — the
+2. **Scrubbing during TTD recording pauses it** — the
    state becomes `detached` with `recording_paused: true`; `POST /ttd/resume`
-   at the paused point continues, `POST /ttd/stop` ends it. On
-   `backend: v1` it is a 409: `POST /ttd/stop` first.
+   at the paused point continues, `POST /ttd/stop` ends it.
 3. **Disk autostart is drive A only** — a hard error elsewhere, never silent.
 4. **Port trace needs its runtime feature on** —
    `PUT /feature/porttrace {"enabled": true}` (or let the capture tools do it).
