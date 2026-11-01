@@ -13,7 +13,7 @@ namespace ttd
 namespace
 {
 /// 3 (D23): the not-recorded devices as keys, no mask of the recorded ones (the session's device table lists them);
-/// 2: two masks of v1 ids as word lists (u8 count, u64 words: any u8 id); 1: one u64 each (ids 0..63). The masks of
+/// 2: two masks of legacy ids as word lists (u8 count, u64 words: any u8 id); 1: one u64 each (ids 0..63). The masks of
 /// versions 1 and 2 are read: the recorded one dropped, the not-recorded one as keys {type of the id, ""}
 constexpr uint16_t kFactsVersion = 3;
 constexpr uint16_t kFactsVersionFirst = 1;

@@ -1,8 +1,8 @@
 /// @file timetravelhooks_test.cpp
 /// @brief Phase 5, Step 1 (layer 2): the core reaches time travel through
-/// EmulatorContext::pTimeTravelHooks. Until the engine takes over, the hooks are
-/// v1's manager, and the typed load / configuration / model-transfer hooks keep
-/// v1's behavior: they drop a stopped session's history and keep the reason
+/// EmulatorContext::pTimeTravelHooks (the engine's controller; v1's manager until
+/// Phase 6). The typed load / configuration / model-transfer hooks drop a
+/// stopped session's history and keep the reason
 
 #include <gtest/gtest.h>
 

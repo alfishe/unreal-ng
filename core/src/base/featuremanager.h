@@ -255,7 +255,7 @@ private:
     bool isMaskedByTtd(const std::string& id) const;
     /// The TTD backend keeps turbo mode and the fast loaders in a recording (ITimeTravelHooks::RecordsShortcuts)
     bool ttdRecordsShortcuts() const;
-    /// Turbo mode is held off: a recording that locks acceleration and does not keep it (v1)
+    /// Turbo mode is held off: a recording that locks acceleration and does not keep it (RecordsShortcuts false)
     bool ttdLocksTurboMode() const;
     /// Fast tape, turbo tape or fast disk (@p id) is held off: bound to a timeline, except fast tape and turbo tape
     /// in the engine's recording at its live head (the tape trap is a recorded edit there); fast disk also while a

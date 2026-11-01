@@ -295,9 +295,9 @@ public:
     void runFor(int64_t ticks) { runTo(_runner.now() + ticks); }
     /// endregion
 
-    /// TTD blob (neogs-tdd.md §7.4, TTD v1: every checkpoint carries it all):
-    /// the fixed card state, the SD card's protocol, the decoder, the DMA
-    /// modules, ZX-DMA, then RAM and flash contents
+    /// TTD blob (neogs-tdd.md §7.4): the fixed card state, the SD card's
+    /// protocol, the decoder, the DMA modules, ZX-DMA; RAM and flash are the
+    /// engine's regions (layout 4)
     static constexpr size_t TTD_FIXED_STATE_SIZE = 256;
     static constexpr size_t TTD_SD_OFFSET = TTD_FIXED_STATE_SIZE;
     static constexpr size_t TTD_MP3_OFFSET = TTD_SD_OFFSET + SdCardSpi::STATE_SIZE;
@@ -305,8 +305,8 @@ public:
     static constexpr size_t TTD_ZX_OFFSET = TTD_DMA_OFFSET + NeoGSDma::STATE_SIZE;
     static constexpr size_t TTD_DEVICE_STATE_END = TTD_ZX_OFFSET + NeoGSZxDma::STATE_SIZE;
     /// 3: + ZX-DMA (neogs-zxdma-design.md §5.9). 4: card RAM and flash left
-    /// out - large memories are not snapshotted in TTD v1 checkpoints (every
-    /// checkpoint carried up to 4.5 MB); they become TTD v2 memory regions
+    /// out - they are the engine's memory regions (a v1 checkpoint carried up
+    /// to 4.5 MB of them)
     static constexpr uint8_t TTD_LAYOUT = 4;
 
 private:

@@ -389,7 +389,7 @@ TEST(TTD_WD1793_ManagerIntegration_Test, CaptureNow_PopulatesFdcStateBlob_OnBeta
 
     // pBetaDisk is populated by Init() only on Beta Disk models (Pentagon,
     // Scorpion, etc.). The default test model may or may not have one —
-    // either outcome is a valid v1 result.
+    // either outcome is a valid result.
     WD1793* fdc = context->pBetaDisk;
 
     ASSERT_TRUE(context->pTimeTravelController->StartRecording());

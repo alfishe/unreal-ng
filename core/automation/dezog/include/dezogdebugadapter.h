@@ -207,11 +207,9 @@ private:
     void leaveHistory(Emulator& emulator);
     void leaveHistoryIfBrowsing();
     // Out-of-band mutation (register/memory/slot/bank write from the debugger).
-    // The engine (backend engine) records it as an event with what it changed,
-    // so replay reproduces it and no history is lost (D9). v1 reconstructs
-    // history by deterministic replay, which such edits break: it records the
-    // marker, then restarts recording from the edited state (history before
-    // the edit is dropped; marker-only handling is UNSOUND there, §6.4).
+    // The engine records it as an event with what it changed, so replay
+    // reproduces it and no history is lost (D9). Without the controller
+    // (no session) the edit is applied as it comes.
     void editMachine(Emulator& emulator, const char* what, const std::function<void()>& edit);
     void subscribe();
     void unsubscribe();

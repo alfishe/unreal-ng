@@ -748,7 +748,7 @@ namespace
         }
 
         std::vector<uint8_t> buffer;
-        // In ascending v1 id (a device that completes another one's state follows it: Wd1793Context after
+        // In ascending legacy id (a device that completes another one's state follows it: Wd1793Context after
         // BetaDisk), the devices without one last
         std::vector<const ttd::TTDRegistryEntry*> ordered;
         for (const ttd::TTDRegistryEntry& e : src.registry.Entries())
@@ -1276,7 +1276,7 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
         return report;
     }
 
-    // The target's coordinator: its rules (TTD v1 refuses while recording, D26), its session's end, its log
+    // The target's coordinator: its rules, its session's end, its log
     coordinator::MachineOp op;
     op.kind = coordinator::OpKind::StateTransfer;
     op.summary = "state from " + source.GetId();

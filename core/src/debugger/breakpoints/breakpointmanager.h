@@ -416,6 +416,8 @@ protected:
     std::array<IBreakpointTapSink*, 256> _tapSinks{};
     BreakpointTapDemand _tapDemand;
     uint8_t* _replace = nullptr;  // the byte of the read being resolved that a tap may replace (BreakpointTapHit::replace)
+    uint8_t _replaySink = BRK_NO_TAP;  // SetReplayTapSink
+    bool _replayWalk = false;          // the resolve under way is a TTD replay's: only _replaySink's taps are told
 
     // Batch: mutations inside it repaint once, at the end
     int _batchDepth = 0;
@@ -685,6 +687,10 @@ public:
     void UnregisterTapSink(uint8_t sinkId);
     /// What the armed taps need of the machine now
     BreakpointTapDemand GetTapDemand() const { return _tapDemand; }
+    /// The TTD replay's own sink (a replay query such as TimeTravelController::ProbeFrames): while set, a TTD replay
+    /// tells this sink's memory and port taps and nothing else; every other breakpoint and tap stays silent, nothing
+    /// stops and no read is replaced. BRK_NO_TAP (the default): a replay tells no one. Set with the CPU held
+    void SetReplayTapSink(uint8_t sinkId) { _replaySink = sinkId; }
     std::string GetBreakpointListAsStringByGroup(const std::string& groupName) const;
     void ActivateBreakpointGroup(const std::string& groupName);
     void DeactivateBreakpointGroup(const std::string& groupName);
@@ -851,6 +857,9 @@ protected:
     /// A filter "maybe": the candidates of the CPU address and of the page the slot shows; the slot filter,
     /// the hit policy (counting), the TTD-replay suppression. The id of the first candidate that stops
     uint16_t ResolveSpace(uint16_t spacePage, uint16_t offset, bool write);
+    /// A TTD replay or a tool's access: true when nothing may fire (the resolve answers BRK_INVALID at once); a
+    /// replay with its own sink set answers false and walks that sink's taps only (_replayWalk)
+    bool Silenced();
     uint16_t ResolveMemory(int kind, uint16_t address, int value = -1);
     uint16_t ResolvePage(int kind, MemoryBankModeEnum mode, uint8_t page, uint16_t offset, int value);
     uint16_t ResolvePort(int direction, uint16_t port, int value = -1);

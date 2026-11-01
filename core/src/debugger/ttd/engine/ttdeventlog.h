@@ -18,8 +18,8 @@ namespace ttd
 struct TTDInputEvent;
 struct TTDNetInput;
 
-/// Stable: stored in files, appended, never reused. A v1 input kind keeps its
-/// number; a v1 marker adds 0x0100
+/// Stable: stored in files, appended, never reused. An input kind
+/// (TTDInputKind) keeps its number; a marker (TTDExternalEventKind) adds 0x0100
 enum class TTDEventKind : uint16_t
 {
     // 0x0000-0x00FF: input, the value of TTDInputKind (Key = 0 ... FrontPanelSwitch = 15)
@@ -27,7 +27,7 @@ enum class TTDEventKind : uint16_t
     TapeControl = 0x0100,
     MediaWrite = 0x0101,
     DebuggerEdit = 0x0102,
-    HardwareReset = 0x0103,   ///< v1 files only: a reset ends the session (D39)
+    HardwareReset = 0x0103,   ///< only in sessions converted from v1 files: a reset ends the session (D39)
     OtherMarker = 0x01FF,
     // 0x0200-0x02FF: frame-boundary cuts (0x0203 reserved: device-set changes, D38)
     SnapshotLoad = 0x0200,
@@ -69,8 +69,8 @@ enum class TTDApplyPoint : uint8_t
 /// off from the outside world and fed only what the session recorded, until
 /// the replay ends. Input drives the machine at its point; a Cut ends the
 /// frame and is followed by a checkpoint; a Fact is produced by the emulation
-/// and compared. Barrier exists only for records read from v1 files that lack
-/// their data (an edit without its bytes, a v1 reset, an unclassified
+/// and compared. Barrier is a marker without the data a replay needs (an edit
+/// without its bytes, a reset from a converted v1 file, an unclassified
 /// marker): a seek stops before it
 enum class TTDEventRole : uint8_t
 {
@@ -91,7 +91,7 @@ enum class TTDCpuId : uint16_t
 };
 
 /// args[0] of a DebuggerEdit whose payload is the edit itself (target and
-/// bytes); a v1 edit's payload is only its reason text
+/// bytes); an edit without it carries only its reason text
 constexpr uint8_t kEditCarriesData = 1;
 
 struct TTDEvent
@@ -132,7 +132,7 @@ public:
     /// machine); a media write is a fact (the replay writes again, into the
     /// held overlay, FR-20; what the CPU read from the medium comes from the
     /// bus journals); a debugger edit is input with its bytes. A barrier is
-    /// only a v1 record without its data
+    /// only a marker without its data
     static TTDEventRole RoleOf(const TTDEvent& ev);
 
     /// Drop every event, releasing their payloads
@@ -142,7 +142,7 @@ public:
     /// Drop the events after @p t (a recording resumed from the past), releasing their payloads
     void DropAfter(TTDMachineTime t);
 
-    /// Pack / unpack v1's records (kind numbers equal, fields in args)
+    /// Pack / unpack the controller's journal records (kind numbers equal, fields in args)
     static TTDEvent FromInput(TTDMachineTime t, const TTDInputEvent& in);
     static void ToInput(const TTDEvent& ev, TTDInputEvent& out);
     static void PackNet(const TTDNetInput& net, TTDEvent& ev);

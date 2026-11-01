@@ -15,7 +15,7 @@
 /// Refused while the journal owns input. While TTD records they wait for the frame boundary (ApplyPending, before
 /// the checkpoint), so the checkpoint holds them and the configuration fingerprint (`controllers.<connector>`) gives
 /// the recording a ConfigChange cut there: a replay crossing that frame takes the checkpoint, a seek before it
-/// unplugs again. TTD v1 keeps no configuration changes: there plugs are refused while it records. The keyboard
+/// unplugs again. The keyboard
 /// joysticks' devices, options and held controls are the blob of TTDDeviceType::Controllers, on every machine.
 
 #include <array>
@@ -96,7 +96,7 @@ public:
 
     /// region <Plugs (configuration)>
     /// Plug @p device into the connector: fails when the connector does not accept it, is fixed, or replay owns
-    /// input (TTD v1: also while it records). While TTD records the plug waits for the frame boundary (HasPending).
+    /// input. While TTD records the plug waits for the frame boundary (HasPending).
     /// Replacing a device releases what the old one held
     ControllerResult Plug(size_t index, RetroDeviceKind device, const OverlayOptions& options);
     ControllerResult Unplug(size_t index);

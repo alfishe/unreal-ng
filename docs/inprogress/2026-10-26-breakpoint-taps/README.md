@@ -37,7 +37,8 @@ the hit-count policies (F5) are.
 - Armed: cost proportional to what is watched. An exec tap costs one bit test per instruction; a write tap costs one
   byte test per write to its 16K bank, not the debug memory path.
 - Conditions and hit policies of the conditional-breakpoint model apply to taps unchanged.
-- TTD replay mutes every tap in one place.
+- TTD replay mutes every tap in one place, apart from a replay query's own sink
+  (`BreakpointManager::SetReplayTapSink`): TTD's probe-frames arms its probes as taps of that sink and hears only them.
 
 Non-goals: per-access callbacks for every byte of memory (coverage keeps its own path), changing what a stopping
 breakpoint does.
@@ -239,7 +240,7 @@ Each phase lands on its own with its tests; phases 1-2 hold the performance clai
   the fast one and `IdleStepsInert` holds.
 - Light write path: a tap in bank 2 does not route bank 1 writes through the hook; a bank switch moves the hook;
   `before` is the replaced byte; the video watch's catch-up still runs (the event-rule screen tests).
-- TTD replay: no sink is told.
+- TTD replay: no sink is told, apart from the replay's own sink (`TTDAnalysisQueries_Test.ProbeFramesReplayIsHeardOnlyByTheQuery`).
 - Analyzers: TR-DOS analyzer tests pass with debug mode off; `requestMemoryBreakpoint` does not stop and is hidden.
 - Game events: Dizzy X's play test publishes `jump`, `land` as events; the haptic feed plays them from the event
   list.

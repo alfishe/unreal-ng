@@ -86,7 +86,7 @@ public:
 	void SetLinkState(const LinkState& state);
 
 	/// The 2 KB EEPROM: the time-travel engine's region SmucEeprom (compared at
-	/// each capture: one write path, 2 KB). v1 does not record it
+	/// each capture: one write path, 2 KB)
 	void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
 	void TTDArmRegions(bool) override {}
 

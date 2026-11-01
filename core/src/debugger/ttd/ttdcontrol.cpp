@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <fstream>
@@ -32,6 +33,7 @@
 #include "emulator/media/mediamanager.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
+#include "emulator/state/statenodejson.h"
 #include "platform/processinfo.h"
 
 namespace ttd
@@ -161,7 +163,7 @@ StateNode RecordedMachineNodeImpl(const TTDRecordedMachine& m)
     v["ram_page_bound"] = static_cast<unsigned>(m.ramPageBound);
     // A string: a 64-bit hash does not survive a JSON number (doubles)
     v["rom_signature"] = m.romSignature == 0 ? StateNode() : StateNode("0x" + HashToString(m.romSignature));
-    // The devices with a v1 id as that id's set, as before D23 (`peripherals` names every device): ids 0..63 as one
+    // The devices with a legacy id as that id's set, as before D23 (`peripherals` names every device): ids 0..63 as one
     // number, `peripheral_mask_words` every 64-id word (ids 64.. in words 1..3)
     const PeripheralMask mask = m.V1Mask();
     v["peripheral_mask"] = static_cast<uint64_t>(mask.Low());
@@ -350,6 +352,8 @@ private:
     /// find-last's list mode and changes_only (the controller's FindAccesses): the machine stays
     TTDReply FindAll(const TTDSearchQuery& q, const TTDFindOptions& find);
     TTDReply ReverseContinue(const TTDRequest& request);
+    /// probe-frames: the frames a game profile's probes fired in (the controller's ProbeFrames); the machine stays
+    TTDReply ProbeFrames(const TTDRequest& request);
     TTDReply CoverageProbe(const TTDRequest& request);
     TTDReply CoverageScan(const TTDRequest& request);
     TTDReply CoverageRare(const TTDRequest& request);
@@ -430,7 +434,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "status", "start", "stop", "invalidate", "history-limit", "journal", "journal-build", "journal-build-cancel",
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-delete",
-        "port-events", "find-last", "reverse-continue", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
+        "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
         "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
     return verbs;
 }
@@ -457,6 +461,8 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"coverage-probe", {"frame", "kind", "addr_from", "addr_to", "phys_page", "space"}},
         {"coverage-scan", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "space", "limit",
                            "order", "ranges"}},
+        {"probe-frames", {"probe", "address", "end", "page", "port_mask", "if", "probes", "from_frame", "to_frame",
+                          "limit"}},
         {"coverage-rare", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "space",
                            "max_frames", "limit"}},
         {"memory-at", {"space", "offset", "length", "frame", "tinframe"}},
@@ -569,6 +575,8 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return PortEvents(request);
     if (verb == "find-last")
         return FindLast(request);
+    if (verb == "probe-frames")
+        return ProbeFrames(request);
     if (verb == "reverse-continue")
         return AsOperation(OpKind::TimelineSeek, verb, request, [&]() { return WithCheck(ReverseContinue(request)); });
     if (verb == "dump")
@@ -1886,6 +1894,189 @@ std::string CoverageWindow(const TTDRequest& request, uint64_t& fromFrame, uint6
     return "";
 }
 }  // namespace
+
+namespace
+{
+const char* const kProbeKinds[] = {"exec", "read", "write", "port-in", "port-out"};
+
+/// One probe of probe-frames as a game profile writes it (haptics.md §5): `probe` (exec, read, write, port-in,
+/// port-out), `address` (a CPU address, or the port), `end` (inclusive, memory), `page` (a RAM page: `address` is
+/// then its offset), `port_mask` (ports), `if` (the core condition language). @p field gives a field's text or null.
+/// Empty: all good; otherwise the 400 text
+std::string ProbeFromFields(const std::function<const std::string*(const char*)>& field, controllers::HapticProbe& probe)
+{
+    const std::string* kind = field("probe");
+    const std::string* address = field("address");
+    if (!kind || !address)
+        return "a probe needs probe (exec, read, write, port-in, port-out) and address";
+    size_t k = 0;
+    while (k < std::size(kProbeKinds) && *kind != kProbeKinds[k])
+        ++k;
+    if (k == std::size(kProbeKinds))
+        return "Invalid probe: '" + *kind + "' (expected exec, read, write, port-in or port-out)";
+    probe.kind = static_cast<controllers::HapticProbeKind>(k);
+    const bool port = probe.kind == controllers::HapticProbeKind::PortIn || probe.kind == controllers::HapticProbeKind::PortOut;
+    uint64_t v = 0;
+    if (!ParseUpTo(*address, 0xFFFF, v))
+        return "Invalid address: '" + *address + "' (expected 0..65535, decimal or hex)";
+    probe.address = probe.end = static_cast<uint16_t>(v);
+    if (const std::string* t = field("end"))
+    {
+        if (port)
+            return "end is for memory probes (a port probe takes port_mask)";
+        if (!ParseUpTo(*t, 0xFFFF, v) || v < probe.address)
+            return "Invalid end: '" + *t + "' (expected address..65535)";
+        probe.end = static_cast<uint16_t>(v);
+    }
+    if (const std::string* t = field("page"))
+    {
+        if (port)
+            return "page is for memory probes";
+        if (!ParseUpTo(*t, 255, v))
+            return "Invalid page: '" + *t + "' (expected a RAM page 0..255)";
+        probe.page = static_cast<uint16_t>(v);
+    }
+    if (const std::string* t = field("port_mask"))
+    {
+        if (!port)
+            return "port_mask is for port probes";
+        if (!ParseUpTo(*t, 0xFFFF, v))
+            return "Invalid port_mask: '" + *t + "' (expected 0..65535)";
+        probe.portMask = static_cast<uint16_t>(v);
+    }
+    if (const std::string* t = field("if"))
+        probe.condition = *t;
+    return "";
+}
+
+/// `probes`: a JSON array of probe objects (the fields of ProbeFromFields; numbers or strings)
+std::string ProbesFromJson(const std::string& text, std::vector<controllers::HapticProbe>& probes)
+{
+    StateNode list;
+    std::string error;
+    if (!StateNodeFromJsonText(text, list, &error) || !list.isArray())
+        return "Invalid probes: expected a JSON array of probe objects" + (error.empty() ? std::string() : " (" + error + ")");
+    for (const StateNode& item : list.items)
+    {
+        if (!item.isObject())
+            return "Invalid probes: every entry is an object such as {\"probe\": \"exec\", \"address\": \"0x8000\"}";
+        // One string per field asked: ProbeFromFields holds several pointers at once
+        std::deque<std::string> texts;
+        auto field = [&](const char* name) -> const std::string* {
+            const StateNode* n = item.find(name);
+            if (!n || n->kind == StateNode::Kind::Null)
+                return nullptr;
+            texts.push_back(n->kind == StateNode::Kind::String ? n->s
+                      : n->kind == StateNode::Kind::Int  ? std::to_string(n->i)
+                      : n->kind == StateNode::Kind::Bool ? std::string(n->b ? "true" : "false")
+                                                         : std::to_string(static_cast<int64_t>(n->d)));
+            return &texts.back();
+        };
+        controllers::HapticProbe probe;
+        if (std::string err = ProbeFromFields(field, probe); !err.empty())
+            return "probes[" + std::to_string(probes.size()) + "]: " + err;
+        probes.push_back(std::move(probe));
+    }
+    return "";
+}
+}  // namespace
+
+TTDReply TTDControlBackend::ProbeFrames(const TTDRequest& request)
+{
+    // The probes: `probes` (a JSON list, at most 16), or one probe from the flat fields
+    std::vector<controllers::HapticProbe> probes;
+    if (const std::string* list = Option(request, "probes"))
+    {
+        for (const char* flat : {"probe", "address", "end", "page", "port_mask", "if"})
+            if (Option(request, flat))
+                return Fail(TTDControlError::BadRequest, std::string("give probes or the fields of one probe, not both (") + flat + ")");
+        if (std::string err = ProbesFromJson(*list, probes); !err.empty())
+            return Fail(TTDControlError::BadRequest, err);
+    }
+    else
+    {
+        controllers::HapticProbe probe;
+        if (std::string err = ProbeFromFields([&](const char* name) { return Option(request, name); }, probe); !err.empty())
+            return Fail(TTDControlError::BadRequest, err);
+        probes.push_back(std::move(probe));
+    }
+    if (probes.empty() || probes.size() > controllers::HapticFrame::kMaxProbes)
+        return Fail(TTDControlError::BadRequest,
+                    "probe-frames takes 1.." + std::to_string(controllers::HapticFrame::kMaxProbes) + " probes");
+    uint64_t fromFrame = 0;
+    uint64_t toFrame = UINT64_MAX;
+    size_t limit = 1000;
+    if (std::string err = CoverageWindow(request, fromFrame, toFrame, limit); !err.empty())
+        return Fail(TTDControlError::BadRequest, err);
+    if (limit > TimeTravelController::kProbeFramesLimitMax)
+        return Fail(TTDControlError::BadRequest,
+                    "Invalid limit: at most " + std::to_string(TimeTravelController::kProbeFramesLimitMax));
+
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    const TTDProbeFramesResult r = _manager->ProbeFrames(probes, fromFrame, toFrame, limit);
+    if (!r.error.empty())
+        return Fail(TTDControlError::Conflict, "probe-frames: " + r.error);
+
+    TTDReply reply;
+    reply.body["from_frame"] = r.fromFrame;
+    reply.body["to_frame"] = r.toFrame;
+    reply.body["replayed_frames"] = r.replayedFrames;
+    reply.body["pruned_frames"] = r.prunedFrames;
+    StateNode list = StateNode::Array();
+    for (size_t p = 0; p < probes.size(); ++p)
+    {
+        const controllers::HapticProbe& probe = probes[p];
+        const TTDProbeFrames& found = r.probes[p];
+        const bool port = probe.kind == controllers::HapticProbeKind::PortIn || probe.kind == controllers::HapticProbeKind::PortOut;
+        StateNode item = StateNode::Object();
+        item["probe"] = kProbeKinds[static_cast<size_t>(probe.kind)];
+        item["address"] = Hex4(probe.address);
+        if (probe.end != probe.address)
+            item["end"] = Hex4(probe.end);
+        if (probe.page != 0xFFFF)
+            item["page"] = static_cast<unsigned>(probe.page);
+        if (port)
+            item["port_mask"] = Hex4(probe.portMask);
+        if (!probe.condition.empty())
+            item["if"] = probe.condition;
+        if (!found.error.empty())
+            item["error"] = found.error;
+        item["frame_count"] = found.frameCount;
+        item["hit_count"] = found.hitCount;
+        StateNode frames = StateNode::Array();
+        StateNode hits = StateNode::Array();
+        for (size_t i = 0; i < found.frames.size(); ++i)
+        {
+            frames.push(found.frames[i]);
+            hits.push(static_cast<unsigned>(found.hits[i]));
+        }
+        item["frames"] = frames;
+        item["hits"] = hits;
+        item["truncated"] = found.frameCount > found.frames.size();
+        list.push(item);
+    }
+    reply.body["probes"] = list;
+    StateNode barriers = StateNode::Array();
+    for (uint64_t f : r.barrierFrames)
+        barriers.push(f);
+    reply.body["barrier_frames"] = barriers;
+    if (!r.barrierFrames.empty())
+    {
+        StateNode m = StateNode::Object();
+        m["kind"] = TTDExternalEventKindToString(r.firstBarrier.kind);
+        m["reason"] = std::string(r.firstBarrier.reason);
+        m["frame"] = r.firstBarrier.time.frame;
+        m["tinframe"] = static_cast<unsigned>(r.firstBarrier.time.tInFrame);
+        reply.body["blocked_by_marker"] = m;
+    }
+    reply.body["truncated"] = r.truncated;
+    // The next page: pass it back as from_frame
+    if (r.truncated)
+        reply.body["next_from_frame"] = r.nextFromFrame;
+    return reply;
+}
 
 TTDReply TTDControlBackend::CoverageProbe(const TTDRequest& request)
 {

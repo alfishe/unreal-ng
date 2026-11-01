@@ -313,16 +313,9 @@ ControllerResult ControllerManager::PlugRefused(bool& defer) const
     defer = false;
     if (InputOwnedByReplay())
         return ControllerResult::Fail(ControllerError::OwnedByReplay, "recorded input drives the machine");
+    // A plug decides what the journal records: while recording it lands at the boundary, where the recording keeps it
     if (hooks && hooks->IsRecording())
-    {
-        // A plug decides what the journal records: it lands at the boundary, where the recording keeps it
-        if (!hooks->RecordsMediaChanges())
-        {
-            return ControllerResult::Fail(ControllerError::Recording,
-                                          "TTD v1 keeps no configuration changes: plug before the recording starts");
-        }
         defer = true;
-    }
     return ControllerResult::Success();
 }
 

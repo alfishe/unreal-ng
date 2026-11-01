@@ -137,16 +137,6 @@ std::string DeviceDisplayName(const TTDRecordedDevice& device)
                                        : device.key.instance;
 }
 
-std::vector<TTDRecordedDevice> DevicesOfV1Mask(const PeripheralMask& mask)
-{
-    std::vector<TTDRecordedDevice> devices;
-    for (unsigned id = 0; id < static_cast<unsigned>(PeripheralId::None); ++id)   // every u8 id a file may name
-        if (mask.Test(static_cast<uint8_t>(id)))
-            devices.push_back({{static_cast<TTDDeviceType>(id), PeripheralIdName(static_cast<uint8_t>(id))},
-                               static_cast<PeripheralId>(id)});
-    return devices;
-}
-
 GSTypeKind GeneralSoundOf(const TTDRecordedMachine& machine)
 {
     if (machine.Fits(TTDDeviceType::GeneralSound))
@@ -177,7 +167,7 @@ void DescribeRecordedMachine(TTDRecordedMachine& machine)
     if (machine.modelId < N_MM_MODELS)
         if (const TMemModel* m = Config::FindModelByEnum(static_cast<MEM_MODEL>(machine.modelId)))
             machine.model = m->ShortName ? m->ShortName : "";
-    // Ascending v1 id (the order sessions always listed), then type, then instance
+    // Ascending legacy id (the order sessions always listed), then type, then instance
     auto order = [](const TTDRecordedDevice& a, const TTDRecordedDevice& b) {
         const auto la = static_cast<uint16_t>(a.legacyId), lb = static_cast<uint16_t>(b.legacyId);
         return la != lb ? la < lb : a.key < b.key;

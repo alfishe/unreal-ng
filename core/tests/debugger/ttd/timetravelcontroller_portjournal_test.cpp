@@ -17,7 +17,6 @@
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
-#include "debugger/ttd/ttddumpformat.h"
 #include "debugger/ttd/ttdportjournal.h"
 #include "debugger/ttd/ttdportsearch.h"
 #include "emulator/cpu/core.h"

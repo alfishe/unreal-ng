@@ -133,22 +133,8 @@ public:
         return time;
     }
 
-    /// A change of the machine itself (a model switch, a state transfer, a ROM load, a General Sound card switch, a
-    /// slot change): the TTD v1 backend refuses it while recording (D26); the engine never does (the change ends the
-    /// session). Goes with v1
-    std::string Refusal(const coordinator::MachineOp& op) const override
-    {
-        switch (op.kind)
-        {
-            case coordinator::OpKind::ModelSwitch:
-            case coordinator::OpKind::StateTransfer:
-                return _emulator.RecordingGuard(ttd::TTDGuardedAction::SwitchModel);
-            case coordinator::OpKind::RomLoad: return _emulator.RecordingGuard(ttd::TTDGuardedAction::LoadRom);
-            case coordinator::OpKind::GsCardSwitch: return _emulator.RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard);
-            case coordinator::OpKind::SlotChange: return _emulator.RecordingGuard(ttd::TTDGuardedAction::ChangeSlots);
-            default: return {};
-        }
-    }
+    // No Refusal: TTD refuses no change of the machine itself (a model switch, a state transfer, a ROM load, a
+    // General Sound card switch, a slot change); the change ends the session (owner rule 2026-10-05)
 
     bool Commit(const coordinator::MachineOp& op, coordinator::OpStage& stage) override
     {
@@ -944,7 +930,7 @@ std::string Emulator::EditMemoryFromTool(const char* source, const std::function
         if (session && !onEmulationThread)
             hold.emplace(*this, "memory edit");
         stage.CommitPoint();
-        // v1 keeps a marker; the edit's bytes go with it, so the engine's replay applies it
+        // The recording keeps a marker with the edit's bytes, so the engine's replay applies it
         if (session)
             ttd->BeginToolEdit();
         edit();
@@ -2800,7 +2786,7 @@ bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
         return fail(std::string("drive ") + static_cast<char>('A' + drive) + " is not present on this machine");
 
     // A medium leaving is a media set change, like a load: while a TTD recording
-    // runs an event of the recording at the next frame boundary (TTD v1 refuses it)
+    // runs an event of the recording at the next frame boundary
     EjectOptions options;
     options.disposition = force ? Disposition::Discard : Disposition::None;
 
@@ -3916,7 +3902,7 @@ bool Emulator::LoadROM(std::string path)
     op.summary = path;
     op.sessionReason = "rom-reload";
 
-    // Asked before pausing: a refusal (TTD v1 while recording) leaves the machine as it was
+    // Asked before pausing: a refusal leaves the machine as it was
     const coordinator::OpResult asked = _coordinator->Ask(op);
     if (!asked.Ok())
     {

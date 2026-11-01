@@ -279,7 +279,7 @@ void CLIProcessor::HandleTapeLoad(const ClientSession& session, std::shared_ptr<
 
     std::string filepath = args[1];
 
-    // The coordinator may refuse a tape insert (TTD v1 while recording); a refusal is logged
+    // The coordinator may refuse a tape insert; a refusal is logged
     if (const std::string refusal = emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, filepath); !refusal.empty())
     {
         session.SendResponse("Error: " + refusal + NEWLINE);

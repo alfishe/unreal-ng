@@ -131,7 +131,6 @@ TEST_F(TapeSlot_Test, EjectEmptiesTheDeck)
     EXPECT_TRUE(_emulator->EjectTape(&error)) << "an empty deck ejects again without complaint";
 }
 
-/// The media set is fixed while TTD records: a tape insert or eject is refused
 /// M3 (Q4): while TTD records, a tape change is an event of the recording at the next frame boundary
 TEST_F(TapeSlot_Test, RecordingTakesTapeChangesAtTheFrameBoundary)
 {

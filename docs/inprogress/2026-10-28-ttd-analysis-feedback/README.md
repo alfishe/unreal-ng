@@ -4,6 +4,10 @@ A game-analysis agent used TTD v2 to find event addresses (coverage scan over ra
 reverse-continue). It works, and the answers reproduce across two independent recordings. The loop around each
 query costs too much, though. This folder holds the fixes.
 
+**Status 2026-10-31: done.** Phase 1 (items 1-6) and phase 2 (blocks B-F, item 7 as block F) have landed. Deferred
+by design, each waiting for a measurement that asks for it: the clone pool of POC 038 ([phase-2-plan.md](phase-2-plan.md#why-no-clone-pool-now))
+and incremental consecutive seeks (memory known across operations, phase 2 block B).
+
 Order (owner, 2026-10-28):
 
 1. **Phase 1:** query fixes 1-6 below, full tests, regression check, land on master and push.
@@ -25,7 +29,7 @@ clients keep their answers (QR-8).
 | 4 | find-last returns writes of the same value | The write record has no old value: memory passes a literal 0. A loop must dedupe the results and step `before_tin` back itself. |
 | 5 | memory-at offsets are physical; 64 KB per call | Physical by design (memory spaces). There is no Z80 view and no paging in the reply. |
 | 6 | port-events works only on a stopped recording | Since b8c8d6f34 the v2 code answers a live recording: it holds the CPU and reads the bus journals. The MCP description, the WebAPI / command-interface docs and the recipe still say "stopped". |
-| 7 | Profile probes fire only in real time | Deliberate (breakpoint taps design). Owner decision 2026-10-28: TTD answers "in which frames did probe X fire" as a query. Replays never drive haptics, sound or the deck. This is phase 2, on the engine. |
+| 7 | Profile probes fire only in real time | Deliberate (breakpoint taps design). Owner decision 2026-10-28: TTD answers "in which frames did probe X fire" as a query. Replays never drive haptics, sound or the deck. Done in phase 2: `probe-frames` ([block F](phase-2-plan.md#f-probe-frames-feedback-item-7)). |
 
 ## Phase 1 changes
 

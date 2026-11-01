@@ -1,5 +1,12 @@
 # TTD v1: architecture, data streams and the .ttd file format (as built)
 
+> **History.** This is the description of TTD v1 (`TimeTravelManager`), deleted on 2026-10-30 (TTD v2
+> migration, Phase 6, `d4d7bc34a`). Nothing reads its file format any more: no reader, analyzer or test is left
+> for it. Its peripheral id table survives as `legacy_id` in [`ttd.ksy`](../../../../../core/src/debugger/ttd/ttd.ksy).
+> The time-travel implementation now is the engine `ttd::TimeTravelEngine`, driven by `ttd::TimeTravelController`:
+> see [time-travel-debugging-tdd.md §0](./time-travel-debugging-tdd.md#0-as-built-2026-10-31) and the
+> [TTD v2 migration](../../../../inprogress/2026-09-25-ttd-v2-migration/README.md). The body below is kept as written.
+
 | | |
 |---|---|
 | **Status** | **Historical.** TTD v1 (`TimeTravelManager`) and its file reader were deleted on 2026-10-30 (TTD v2 migration, Phase 6); the engine (`TimeTravelController`) is the only recorder, its file is schema 2 ([`ttd.ksy`](../../../../../core/src/debugger/ttd/ttd.ksy)). Kept as the record of v1 as built. Described the code on master, 2026-09-29, including the saved replay inputs, the port journals and NeoGS layout 4 (commits `0a8236fa`, `280e4ae2`). |
@@ -1753,7 +1760,7 @@ missing configuration fingerprint, section 9.2).
   the page store and the checkpoints. It does **not** model the trailing
   sections; it documents their layouts in the `flags` field's text, and the C++
   writer is authoritative for them.
-- [`ttd_format.py`](../../../../../tools/verification/ttd-analyzer/src/ttd_format.py)
+- `ttd_format.py` (`tools/verification/ttd-analyzer/src/`, deleted with v1)
   is a hand-written reader. It parses all sections, including the journal
   directory, the coverage blocks and the bookmarks, decodes device blob
   headers, and verifies slot CRCs. It caps a slot payload at 16 MiB
@@ -1849,7 +1856,7 @@ the coverage index and the frame cache (`tm.cpp:683-727`).
 - `docs/inprogress/2026-09-28-debugger-family/ttd-offline-analysis.md` — O-1 and the offline-analysis program.
 - [ttd-port-read-journal.md](./ttd-port-read-journal.md) — the port journals and the port-events search.
 - [testdata/ttd/README.md](../../../../../testdata/ttd/README.md) — fixture corpus and re-recording.
-- Code: [`core/src/debugger/ttd/`](../../../../../core/src/debugger/ttd/), [`ttd.ksy`](../../../../../core/src/debugger/ttd/ttd.ksy), [`ttd_format.py`](../../../../../tools/verification/ttd-analyzer/src/ttd_format.py).
+- Code: [`core/src/debugger/ttd/`](../../../../../core/src/debugger/ttd/), [`ttd.ksy`](../../../../../core/src/debugger/ttd/ttd.ksy), `ttd_format.py` (deleted with v1).
 - CRC32C (Castagnoli): RFC 3720 appendix B.4. FNV-1a: draft-eastlake-fnv. zstd: RFC 8878.
 
 ---

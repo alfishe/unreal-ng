@@ -7,6 +7,7 @@
 | **Last updated** | 2026-07-19 |
 | **Scope** | `core/automation/` — new GDB transport |
 | **Depends on** | [time-travel-debugging-tdd.md](./time-travel-debugging-tdd.md) (TTDManager: seek, step-back, reverse search); existing `BreakpointManager`, `Emulator` control API |
+| **As built** | The stub is in `core/automation/gdb/`. `TTDManager` below is the design name of the TTD facade; the built one is `ttd::TimeTravelController`, and the stub reaches it through the `ttd::TTDControl` verbs (`step-instruction`, `reverse-continue`, `find-last`, `seek`, `resume`) |
 
 ---
 

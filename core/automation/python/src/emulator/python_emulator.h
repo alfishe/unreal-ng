@@ -14,6 +14,7 @@
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
+#include "emulator/state/statenodejson.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
 #include <algorithm>
@@ -3056,10 +3057,10 @@ namespace PythonBindings
             // Tape operations
             .def("tape_load", [](Emulator& self, const std::string& path) -> bool {
                 if (std::string refusal = self.AskMediaChange(Emulator::MediaChange::LoadTape, 0, path); !refusal.empty())
-                    throw std::runtime_error(refusal);  // refused (TTD v1 while recording): RuntimeError with the reason
+                    throw std::runtime_error(refusal);  // refused: RuntimeError with the reason
                 return self.LoadTape(path);
             }, "Load tape file (while TTD records: an event of the recording at the next frame boundary; "
-               "RuntimeError on TTD v1)", py::arg("path"))
+               "RuntimeError when the change is refused, with the reason)", py::arg("path"))
             .def("tape_is_inserted", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
                 return ctx && ctx->pTape && !ctx->coreState.tapeFilePath.empty();
@@ -6173,13 +6174,13 @@ namespace PythonBindings
             }, "Drop all TTD history (RuntimeError while recording)", py::arg("reason") = "python invalidate")
 
             .def("ttd_seek", [](Emulator& self, uint64_t frame, std::optional<uint32_t> tInFrame) -> py::object {
-                // Without a T-state: the frame's end on the engine (D13), its start on v1
+                // Without a T-state: the frame's end (D13)
                 std::map<std::string, std::string> options{{"frame", std::to_string(frame)}};
                 if (tInFrame)
                     options["tinframe"] = std::to_string(*tInFrame);
                 return TtdSeekPy(TtdRunPy(self, "seek", options));
             }, "Seek to a point in the timeline (the machine stays paused there; ttd_resume continues). "
-               "Without tinframe the engine lands at the frame's end, v1 at its start",
+               "Without tinframe it lands at the frame's end (D13)",
                py::arg("frame"), py::arg("tinframe") = py::none())
 
             .def("ttd_step_back", [](Emulator& self) -> bool {
@@ -6487,8 +6488,45 @@ namespace PythonBindings
                 py::arg("kind") = "executed", py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF,
                 py::arg("phys_page") = py::none(), py::arg("limit") = 200, py::arg("space") = py::none())
 
+            // probe-frames: a game profile's probes (a dict, or a list of up to 16) over the history, a replay
+            .def("ttd_probe_frames", [](Emulator& self, py::object probesObj, uint64_t fromFrame, py::object toFrameObj,
+                                        size_t limit) -> py::object {
+                py::list list;
+                if (py::isinstance<py::dict>(probesObj))
+                    list.append(probesObj);
+                else
+                    list = py::list(probesObj);
+                StateNode probes = StateNode::Array();
+                for (const py::handle& item : list)
+                {
+                    if (!py::isinstance<py::dict>(item))
+                        throw py::value_error("probes: each probe is a dict such as {'probe': 'exec', 'address': 0x8000}");
+                    StateNode probe = StateNode::Object();
+                    for (const auto& [key, value] : item.cast<py::dict>())
+                        if (!value.is_none())
+                            probe[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                    probes.push(probe);
+                }
+                std::map<std::string, std::string> options{
+                    {"probes", StateNodeToJsonText(probes)}, {"from_frame", std::to_string(fromFrame)},
+                    {"limit", std::to_string(limit)}};
+                if (!toFrameObj.is_none())
+                    options["to_frame"] = TtdOptionTextPy(toFrameObj);
+                const ttd::TTDReply reply = TtdRunPy(self, "probe-frames", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The frames of from_frame..to_frame each probe fired in (a game profile's probe shape: probe "
+               "exec|read|write|port-in|port-out, address, end, page, port_mask, if), replayed with the machine put "
+               "back: {probes: [{frames, hits, frame_count, hit_count, ...}], replayed_frames, truncated, "
+               "next_from_frame?}; no history is a dict with error",
+                py::arg("probes"), py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("limit") = 1000)
+
             // A memory at a past checkpoint and what changed between two, from the store (no seek). A bad
-            // argument raises ValueError; a refusal (no history, backend v1) is a dict with error
+            // argument raises ValueError; a refusal (no history) is a dict with error
             .def("ttd_memory_at", [](Emulator& self, const std::string& space, py::object frameObj, py::object offsetObj,
                                      uint32_t length, uint32_t tinframe) -> py::object {
                 std::map<std::string, std::string> options{

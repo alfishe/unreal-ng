@@ -11,6 +11,8 @@ These are the "answer the question backwards" primitives:
 - *Who wrote this memory?* → `find-last`
 - *What ran just before the crash?* → `reverse-step` / `reverse-continue`
 - *Which frames touched this address range?* → coverage probe/scan/summary
+- *In which frames did a game profile's probe fire?* → `probe-frames` (MCP `probe_frames`: the probes as the profile
+  writes them, `if:` included; a replay of the window, the machine stays)
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred — the
 > `time_travel` tool covers find-last, reverse-step/continue and the coverage
@@ -27,6 +29,10 @@ time_travel {"action":"coverage_probe","frame":11782,"kind":"executed",
 time_travel {"action":"coverage_scan","from_frame":11000,"to_frame":12000,"kind":"written",
              "addr_from":"0x8000","addr_to":"0xBFFF","phys_page":5,"limit":200}
 time_travel {"action":"coverage_summary","kind":"executed"}
+# a profile's probes over the history ("shot" and "died" of a haptic profile):
+time_travel {"action":"probe_frames","from_frame":11000,"to_frame":12000,
+             "probes":[{"probe":"exec","address":"0x8A14"},
+                       {"probe":"write","address":"0x5F20","if":"VAL < MDT"}]}
 
 # reverse travel (pauses a running recording):
 time_travel {"action":"find_last","addr":16384,"access":"write"}

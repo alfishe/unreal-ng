@@ -419,7 +419,7 @@ TEST(TimeTravelController_JournalSegments_Test, BuildingIsRefusedWhileRecording_
     EXPECT_NE(refused.error.find("recording"), std::string::npos) << refused.error;
 
     m.TStates(3000);
-    m.ttd->RecordExternalEvent(ttd::TTDExternalEventKind::Other, "test marker");   // a v1 barrier: no data
+    m.ttd->RecordExternalEvent(ttd::TTDExternalEventKind::Other, "test marker");   // a barrier: no data
     m.Frames(3);
     m.ttd->StopRecording();
     const ttd::TTDJournalBuildResult r = m.ttd->BuildWriteJournal(0, UINT64_MAX);

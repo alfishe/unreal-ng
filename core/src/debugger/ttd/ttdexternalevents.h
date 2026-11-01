@@ -2,7 +2,7 @@
 
 /// @file ttdexternalevents.h
 /// @brief TTD external-event journal — replay barriers for sources of
-///        nondeterminism that aren't covered by an input journal in v1.
+///        nondeterminism that aren't covered by the input journal.
 ///
 /// Per parent TDD §5.1 (External-Event Markers):
 ///   "Any nondeterministic event that is not covered by a journal gets an

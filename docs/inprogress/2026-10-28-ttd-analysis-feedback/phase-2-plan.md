@@ -26,7 +26,7 @@ Next steps if measurements on real agent questions ask for it, in this order:
 
 ## Blocks
 
-Order: B, C, D, with E along the way and at the end.
+Order: B, C, D, F, with E along the way and at the end.
 
 ### B. In-place replay (POC 040 causes 1-4, 6)
 
@@ -56,7 +56,15 @@ Status:
   4193 → 3082, W3 1815 → 1543 (no sound card memory there); mid-frame seek W1 2704 → 1807, W2 5026 → 3742, W3
   2799 → 2348. Next candidate: the picture's replay of the frame
   before lands exactly on a frame-start target, so the seek's own restore and the live state save and put back
-  can go (one restore and one frame); needs a machine-state equality test on every model and the barrier case.
+  can go (one restore and one frame); needs a machine-state equality test on every model and the barrier case. **Measured
+  2026-10-31, not done:** a sampled seek loop on W1 (POC 040 `--loop seek`, 1000 frames, 7426 samples) puts 63 % in
+  the seek's own restore (a full decode: the live state put back at the end of the previous seek forgets what memory
+  holds), 24 % in the picture's run of the frame before and about 11 % in what this candidate removes (the picture's
+  incremental restore, the live state save and put back). The candidate moves the full restore to the picture's
+  restore instead of removing it, so it saves about 11 % of a frame seek for a second path to keep equal to the first
+  on every model. Dropped. The lever is the full restore: keeping memory known across operations (the trackers armed
+  between them, every untracked writer - the live state put back, loads, tool edits - forgetting it) would make
+  consecutive seeks incremental; a design change of its own, not started.
 - B5 done. Live input and machine tasks raise an atomic flag; the per-instruction playback takes no
   mutex while it is clear and looks the frame start up once a frame. The step-work flag is set again when a
   producer queued between the check and the clear (a lost wake before). W3 (input playback): continuous replay
@@ -160,6 +168,25 @@ seeks there under one replay and puts the machine back verbatim. Test:
 `TTDControllerPortJournals_Test.PortEventsCarryTheCallersRegisters` (a CALLed key routine: SP, A, the return
 address, HL counting the calls, the machine unmoved), `TTDPortSearch_Test.KeyboardRowsAndKeysOfARead`.
 
+### F. Probe frames (feedback item 7)
+
+Owner decision 2026-10-28: a profile's probes fire only in real time; TTD answers "in which frames did probe X fire"
+as a query, and a replay never drives haptics, sound or the deck.
+
+Done: `probe-frames` (CLI `ttd probe-frames` / `ttd pf`, `POST /ttd/probe-frames`, Lua `ttd_probe_frames`, Python
+`ttd_probe_frames`, MCP `time_travel probe_frames`). It takes up to 16 probes in the game profile's shape (`probe`
+exec / read / write / port-in / port-out, `address`, `end`, `page`, `port_mask`, `if`), as a JSON list or one probe's
+flat fields, and a frame window. `TimeTravelController::ProbeFrames` arms the probes as the taps of a sink of its
+own and replays each complete frame of the window in place (one restore, one frame, no present); the breakpoint
+manager's TTD replay silence lets exactly that sink through (`BreakpointManager::SetReplayTapSink`): no other tap,
+breakpoint or read replacement hears a replay, so haptics stay silent. Per probe: the frames it fired in with the
+hits of each, the counts, and its own error (a bad condition fails that probe only). A frame in which the coverage
+index shows that no probe can fire is not replayed (`pruned_frames`; memory probes only, a port probe replays every frame); a frame with a barrier marker is skipped and listed;
+`limit` frames per probe (default 1000, at most 10000), then `truncated` and `next_from_frame` continue the walk.
+The machine is put back as it was. Tests: `TTDAnalysisQueries_Test.ProbeFrames*` (the frames equal the access
+queries' for every kind, the live probes hear nothing, the cursor, the pruning, a bad condition, the verb's shapes),
+`McpTools_Test.TimeTravel_ProbeFrames_PostsTheProbesAndListsTheFrames`, the live MCP script.
+
 ### E. Checks
 
 - `tools/build/test.sh`, zero warnings; gcc, MSVC and MinGW before landing.
@@ -183,4 +210,9 @@ address, HL counting the calls, the machine unmoved), `TTDPortSearch_Test.Keyboa
     the bottom were left undrawn. It now draws to the end.
   - Not a defect: a Profi ROM leaves hi-res inside the frame, and the clock change rescales the frame, so the test
     runs to the frame boundary, not a T-state count taken at the seek.
-- A/B benchmarks for every hot-path change (C, B5).
+- A/B benchmarks for every hot-path change (C, B5). **Done 2026-10-31:** `frame_profile_benchmark` (the same source in both trees), 53359b552 (before) against
+  5cb3594c2 (B5 and C1/C2, the two consecutive commits), Release, 4 interleaved rounds, the minimum of CPU time per
+  row, on a loaded host (load 50-65): every row within ±1.6 % (the A/A bias is 1.8 %) - Pentagon `WorstNormal` (TTD
+  recording) 308 → 305 µs, `ShipTurboDebugHud` 185 → 183, `ShipNormal` on 128K, Pentagon, Scorpion, Sprinter,
+  TS-Conf, Next 0.986-1.016. No row's machine halts at its prompt, so the idle's gain shows only on halting software
+  (POC 040 W2 above); on the rest the change costs nothing. C3 (replay) is not in these rows; POC 040 measured it.
