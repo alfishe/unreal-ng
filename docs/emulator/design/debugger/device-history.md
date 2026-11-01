@@ -26,6 +26,12 @@ status): when the next one comes, or the stream stops.
 **Pause** holds a history in any mode: nothing is recorded, what it has stays readable; resume goes on with it. A
 configuration starts unpaused.
 
+A device path takes the history's lock per record (`Push`). A history fed at instruction rate takes `PushFast`
+instead (`EnableFastPush`): one writer, no lock; the record goes into a stage of 1024 slots with a release store, and
+whoever takes the lock next (a reader, a configuration, the writer on a full stage) moves the staged records into the
+history in order. A history may tell its gate when it turns on or off (`OnSwitch`): the main CPU's raises a step-work
+bit, so the processor pays nothing while it is off.
+
 Nothing is recorded while TTD replays silently (a seek re-executes what the history already holds).
 
 A configuration starts afresh: the records, the counts and the stream file (opened again, truncated). Fields a request
@@ -52,6 +58,7 @@ leaves out keep their value.
 | `ts-registers.dma` | DMA transfers, one record a launch | off | `frame`, `tacts`, `pc`, `device` (`ram`, `spi-in` / `spi-out`, `ide-in` / `ide-out`, `fill`, `blt1` / `blt2`, `cram`, `sfile`), `flags`, `source`, `destination`, `burst`, `blocks`; at the end `done`, `end_frame`, or `aborted` |
 | `vdac2` (the TSL-VDAC2 build) | FT812 SPI transactions, one record a chip select window | off | `frame`, `clock`, `type` (`read` / `write` / `command`), `address` or `command` + `parameter`, `length`, `data` (the first 8 bytes, hex) |
 | `<device>.ports` for every registry device (`beta128.ports`, `ay.ports`, `zxbus.1.ports`), `board.ports` for the ports no device claims | port accesses (IN / OUT of the main CPU), each device apart | off | `frame`, `tacts`, `pc`, `dir` (`in` / `out`), `port`, `value`, `dos` (the TR-DOS ROM was paged). The owner is the registry's (`slots::PortOwners`, the same as the port trace's `owner`). Off, all of them: one relaxed load of the count of those on an IN / OUT. On: one table load (port, direction, DOS gate to the device; built at the first access after the machine's devices change) and a push into that device's history only; an access whose owner's history is off costs the load and the test. The machine-wide port trace (`porttrace`) stays the decode-debugging tool |
+| `cpu` (the machine's main CPU) | instructions it starts | off | `frame`, `pc`, `kind` (`rom` / `ram` / `cache`), `page` (the physical page its window showed). Its own step-work bit (`kStepWorkExecHistory`) while on, beside the debugger's PC history (`/debug/pchist`) on the same hook; `PushFast`; a ring of 65536 without a limit |
 
 A device whose history is its own holds a `history::Registered<Record>`: listed in the machine's histories while it
 lives. A card with several modules names the others `<slot>.<module>` (as the time-travel instances do).

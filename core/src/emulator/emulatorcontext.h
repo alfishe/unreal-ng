@@ -340,7 +340,8 @@ public:
         kStepWorkEngine = 1u << 5,           ///< the machine runs on its own instruction engine (Z80::SetEngine)
         kStepWorkPcHistory = 1u << 6,        ///< a debugger records the PC history (PcHistory::Arm)
         kStepWorkScriptEdits = 1u << 7,      ///< a logic callback's writes wait for the boundary (ScriptCallbackManager)
-        // Next free: 1u << 8
+        kStepWorkExecHistory = 1u << 8,      ///< the main CPU's execution history `cpu` is on (PcHistory, exechistory.h)
+        // Next free: 1u << 9
     };
     std::atomic<uint32_t> stepWork{0};
 

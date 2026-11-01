@@ -157,3 +157,27 @@ TEST(DeviceHistory_Test, RegistryFindsByDevice)
     registry.Remove(&b);
     EXPECT_FALSE(registry.With("zxbus.1", [](history::IDeviceHistory&) {}));
 }
+
+/// PushFast (one writer, no lock): the records wait in the stage and reach the history in order, whoever drains them
+/// (the writer on a full stage, a reader); the switch callback tells on and off once each
+TEST(DeviceHistory_Test, FastPushKeepsTheOrder)
+{
+    TestHistory h("dev", "things");
+    h.EnableFastPush(4);
+    std::vector<bool> switches;
+    h.OnSwitch([&](bool on) { switches.push_back(on); });
+    std::string error;
+    ASSERT_TRUE(h.Configure({ .mode = history::Mode::Ring, .limit = 6 }, error));
+    for (int i = 1; i <= 10; i++)
+        h.PushFast({ i });
+    EXPECT_EQ(Values(h), (std::vector<int>{ 5, 6, 7, 8, 9, 10 })) << "the writer drained the full stage itself";
+    EXPECT_EQ(h.GetStats().written, 10u);
+    h.PushFast({ 11 });
+    h.UpdateLast([](TestRecord& r) { r.done = true; });
+    EXPECT_EQ(h.Snapshot().back().value, 11);
+    EXPECT_TRUE(h.Snapshot().back().done) << "a staged record is the newest for UpdateLast";
+    ASSERT_TRUE(h.Configure({ .mode = history::Mode::Off }, error));
+    h.PushFast({ 12 });
+    EXPECT_EQ(h.GetStats().written, 0u) << "off: a staged record goes nowhere";
+    EXPECT_EQ(switches, (std::vector<bool>{ true, false }));
+}

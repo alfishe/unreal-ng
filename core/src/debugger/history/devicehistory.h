@@ -275,6 +275,7 @@ public:
     ~DeviceHistory() override
     {
         std::lock_guard lock(_mutex);
+        DrainLocked();
         FlushOpen();
         _stream.Close();
         SetOn(false);
@@ -291,6 +292,52 @@ public:
     void Push(const Record& record)
     {
         std::lock_guard lock(_mutex);
+        DrainLocked();
+        PushLocked(record);
+    }
+
+    /// A history fed at instruction rate (an execution history): Push without a lock. The records wait in a stage of
+    /// `stage` slots for whoever takes the lock next (a reader, a configuration, the writer itself when the stage is
+    /// full). One writer only (the emulation thread). Set once, before any configuration
+    void EnableFastPush(size_t stage = 1024)
+    {
+        _stage.resize(stage ? stage : 1);
+    }
+
+    /// One writer, no lock: a copy into the stage and a release store (EnableFastPush; else Push)
+    void PushFast(const Record& record)
+    {
+        if (_stage.empty()) [[unlikely]]
+        {
+            Push(record);
+            return;
+        }
+        const size_t head = _stageHead.load(std::memory_order_relaxed);
+        if (head - _stageTail.load(std::memory_order_acquire) >= _stage.size()) [[unlikely]]
+        {
+            std::lock_guard lock(_mutex);
+            DrainLocked();
+        }
+        _stage[head % _stage.size()] = record;
+        _stageHead.store(head + 1, std::memory_order_release);
+    }
+
+private:
+    /// The staged records into the history, in order (under the lock)
+    void DrainLocked() const
+    {
+        if (_stage.empty())
+            return;
+        auto* self = const_cast<DeviceHistory*>(this);
+        const size_t head = _stageHead.load(std::memory_order_acquire);
+        size_t tail = _stageTail.load(std::memory_order_relaxed);
+        for (; tail != head; tail++)
+            self->PushLocked(_stage[tail % _stage.size()]);
+        _stageTail.store(tail, std::memory_order_release);
+    }
+
+    void PushLocked(const Record& record)
+    {
         if (_config.mode == Mode::Off)
         {
             return;
@@ -324,11 +371,14 @@ public:
         }
     }
 
+public:
+
     /// Completes the newest record (a command's end): `f(Record&)`; nothing when there is none
     template <typename F>
     void UpdateLast(F&& f)
     {
         std::lock_guard lock(_mutex);
+        DrainLocked();
         if (Record* last = Newest())
         {
             f(*last);
@@ -351,6 +401,7 @@ public:
     bool Configure(const Config& config, std::string& error) override
     {
         std::lock_guard lock(_mutex);
+        DrainLocked();
         FlushOpen();
         _stream.Close();
         if (config.mode != Mode::Off && !config.stream.empty() && !_stream.Open(config.stream, config.streamLimit, error))
@@ -382,6 +433,13 @@ public:
         SetOn(_config.mode != Mode::Off && !_paused);
     }
 
+    /// Told when the history turns on or off (a configuration, a pause), under its lock: raises the gate that feeds it
+    /// (a step-work bit). Set before any configuration
+    void OnSwitch(std::function<void(bool)> switched)
+    {
+        _switched = std::move(switched);
+    }
+
     /// A group of histories behind one test (the port histories of a machine): `counter` counts the ones that are on.
     /// Set before any configuration
     void CountOnIn(std::atomic<int>* counter)
@@ -392,6 +450,7 @@ public:
     void Clear() override
     {
         std::lock_guard lock(_mutex);
+        DrainLocked();
         FlushOpen();
         ResetLocked();
     }
@@ -399,6 +458,7 @@ public:
     Stats GetStats() const override
     {
         std::lock_guard lock(_mutex);
+        DrainLocked();
         Stats stats;
         stats.config = _config;
         if (_config.mode == Mode::Ring && _config.limit == 0)
@@ -433,6 +493,7 @@ public:
     std::vector<Record> Snapshot(size_t last = 0) const
     {
         std::lock_guard lock(_mutex);
+        DrainLocked();
         const size_t count = last == 0 || last > _records.size() ? _records.size() : last;
         std::vector<Record> copy;
         copy.reserve(count);
@@ -492,11 +553,17 @@ private:
     std::atomic<bool> _on{ false };
     std::atomic<int>* _onCount = nullptr;
 
+    std::function<void(bool)> _switched;
+
     void SetOn(bool on)
     {
         const bool was = _on.exchange(on, std::memory_order_relaxed);
-        if (_onCount && was != on)
+        if (was == on)
+            return;
+        if (_onCount)
             _onCount->fetch_add(on ? 1 : -1, std::memory_order_relaxed);
+        if (_switched)
+            _switched(on);
     }
     mutable std::mutex _mutex;
     Config _config;
@@ -510,6 +577,9 @@ private:
     Record _overflow{};             ///< a capture's newest record over its cap: streamed, not kept
     bool _hasOverflow = false;
     detail::StreamFile<Record> _stream;
+    std::vector<Record> _stage;                  ///< PushFast's records waiting for the lock (EnableFastPush)
+    std::atomic<size_t> _stageHead{ 0 };         ///< written by the one writer
+    mutable std::atomic<size_t> _stageTail{ 0 }; ///< advanced under the lock
 };
 
 /// A device's own history, listed in its machine's histories while it lives: the member a device holds

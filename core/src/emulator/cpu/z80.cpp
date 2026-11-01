@@ -1177,8 +1177,10 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
         }
         else
         {
-            // A debugger's PC history (PcHistory::Arm): the instruction about to run and its window's page
-            if ((work & EmulatorContext::kStepWorkPcHistory) && _context->pDebugManager) [[unlikely]]
+            // A debugger's PC history (PcHistory::Arm) or the execution history `cpu`: the instruction about to run
+            // and its window's page
+            if ((work & (EmulatorContext::kStepWorkPcHistory | EmulatorContext::kStepWorkExecHistory)) &&
+                _context->pDebugManager) [[unlikely]]
                 _context->pDebugManager->GetPcHistory()->Record(pc);
             if ((work & EmulatorContext::kStepWorkEngine) && _engine)
             {
