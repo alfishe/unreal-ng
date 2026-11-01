@@ -1,7 +1,7 @@
 #pragma once
 
-// MCP smart tool: device_history — the history of each device's own state machine (FDC commands, ...), by the
-// device's registry id: list, read, config (off / ring / capture with any limit, a stream to a JSON Lines file),
+// MCP smart tool: device_history — the histories of each device (its events, its port accesses, a processor's
+// execution), by the device's registry id: list, read, config (off / ring / capture with any limit, a stream to a JSON Lines file),
 // clear. A thin adapter over the WebAPI /history routes (HistoryControl, core/src/debugger/history/historycontrol.h).
 // Design: docs/inprogress/2026-10-31-debugger-device-io/README.md
 

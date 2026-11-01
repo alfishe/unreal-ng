@@ -98,11 +98,14 @@ void RegisterDeviceHistory(ToolRegistry& registry)
 
     registry.Register(
         "device_history",
-        "Device histories: the events of each peripheral's own state machine, by the device's registry id (beta128: WD1793 "
-        "commands with track, sector, drive, side, PC, start / end T-state and the final status). Each history is off (zero "
-        "cost), a ring (the standby mode; the FDC runs one of 64 commands from the start) or a capture with any limit, and "
-        "may stream every record to a JSON Lines file. A config starts afresh (records, counts, the stream file). Actions: "
-        "list, read, config, clear, pause (hold: nothing recorded, the records kept), resume.",
+        "Device histories: one per device and kind, by the device's registry id; action=list shows the machine's. Device "
+        "events (beta128: WD1793 commands with track, sector, drive, side, PC, T-states, final status; ay / chips: register "
+        "writes; sd-zc / sd0: SD commands and blocks; zxbus.1: the GS card's host traffic; ts-registers, vdac2, nextreg, "
+        "copper, dma, uart ...), port accesses (`<device>.ports`, `board.ports`: what the registry's claims give each "
+        "device) and execution (`cpu`: the main CPU's instructions; `<slot>.cpu`: a GS / NeoGS card's Z80; `copper`). Each "
+        "history is off (zero cost), a ring (the standby mode; the FDC runs one of 64 commands from the start) or a capture "
+        "with any limit, and may stream every record to a JSON Lines file. A config starts afresh (records, counts, the "
+        "stream file). Actions: list, read, config, clear, pause (hold: nothing recorded, the records kept), resume.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
