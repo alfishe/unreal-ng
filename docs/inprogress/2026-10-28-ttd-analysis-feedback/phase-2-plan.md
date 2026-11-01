@@ -26,7 +26,7 @@ Next steps if measurements on real agent questions ask for it, in this order:
 
 ## Blocks
 
-Order: B, C, D, with E along the way and at the end.
+Order: B, C, D, F, with E along the way and at the end.
 
 ### B. In-place replay (POC 040 causes 1-4, 6)
 
@@ -167,6 +167,25 @@ was): `TimeTravelController::PortAccessContexts` finds each hit's M1 (the last a
 seeks there under one replay and puts the machine back verbatim. Test:
 `TTDControllerPortJournals_Test.PortEventsCarryTheCallersRegisters` (a CALLed key routine: SP, A, the return
 address, HL counting the calls, the machine unmoved), `TTDPortSearch_Test.KeyboardRowsAndKeysOfARead`.
+
+### F. Probe frames (feedback item 7)
+
+Owner decision 2026-10-28: a profile's probes fire only in real time; TTD answers "in which frames did probe X fire"
+as a query, and a replay never drives haptics, sound or the deck.
+
+Done: `probe-frames` (CLI `ttd probe-frames` / `ttd pf`, `POST /ttd/probe-frames`, Lua `ttd_probe_frames`, Python
+`ttd_probe_frames`, MCP `time_travel probe_frames`). It takes up to 16 probes in the game profile's shape (`probe`
+exec / read / write / port-in / port-out, `address`, `end`, `page`, `port_mask`, `if`), as a JSON list or one probe's
+flat fields, and a frame window. `TimeTravelController::ProbeFrames` arms the probes as the taps of a sink of its
+own and replays each complete frame of the window in place (one restore, one frame, no present); the breakpoint
+manager's TTD replay silence lets exactly that sink through (`BreakpointManager::SetReplayTapSink`): no other tap,
+breakpoint or read replacement hears a replay, so haptics stay silent. Per probe: the frames it fired in with the
+hits of each, the counts, and its own error (a bad condition fails that probe only). A frame in which the coverage
+index shows that no probe can fire is not replayed (`pruned_frames`; memory probes only, a port probe replays every frame); a frame with a barrier marker is skipped and listed;
+`limit` frames per probe (default 1000, at most 10000), then `truncated` and `next_from_frame` continue the walk.
+The machine is put back as it was. Tests: `TTDAnalysisQueries_Test.ProbeFrames*` (the frames equal the access
+queries' for every kind, the live probes hear nothing, the cursor, the pruning, a bad condition, the verb's shapes),
+`McpTools_Test.TimeTravel_ProbeFrames_PostsTheProbesAndListsTheFrames`, the live MCP script.
 
 ### E. Checks
 

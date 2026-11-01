@@ -5307,7 +5307,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"status", "start", "stop", "invalidate", "position", "markers", "seek", "step_back_frame",
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
-                               "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "file_info",
+                               "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary",
                                "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
@@ -5333,6 +5333,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "'find_last' (latest write/read/execute/io at an address before the current point, or before before_frame; "
         "changes_only=true skips writes that store the byte already there and gives old_value; all=true lists the hits "
         "newest first up to limit, the machine stays; next_before pages on). "
+        "'probe_frames' (in which frames did a game profile's probe fire: probes, a list of up to 16 {probe: exec|read|"
+        "write|port-in|port-out, address, end?, page?, port_mask?, if?}, the profile's shape; each complete frame of "
+        "from_frame..to_frame is replayed with the probes armed as in real time, the coverage index skipping frames no "
+        "memory probe can hit; per probe its frames and hits there; the machine stays; limit frames per probe, "
+        "next_from_frame pages on; replays never drive haptics, sound or the deck). "
         "'port_events' answers 'when did the program ...' from the port journals without replay (also while recording: "
         "it holds the CPU for the search; works on a loaded file): event 'key' (saw a key down; event_arg a key name such as 'a', "
         "'enter', 'space'), 'ear' (saw the tape signal change), 'ay-read' / 'ay-write' / 'ay-select' (event_arg an AY "
@@ -5521,11 +5526,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["before_tin"]["description"] = "find_last / reverse_continue: T-states within before_frame (default 0)";
     schema["properties"]["from_frame"]["type"] = "integer";
     schema["properties"]["from_frame"]["description"] =
-        "Starting frame for coverage_scan / coverage_rare / coverage_summary / port_events / journal_build / export_clip; the oldest "
+        "Starting frame for coverage_scan / coverage_rare / coverage_summary / port_events / probe_frames / journal_build / export_clip; the oldest "
         "frame find_last / reverse_continue look at";
     schema["properties"]["to_frame"]["type"] = "integer";
     schema["properties"]["to_frame"]["description"] =
-        "Ending frame for coverage_scan / coverage_rare / coverage_summary / port_events / journal_build / export_clip";
+        "Ending frame for coverage_scan / coverage_rare / coverage_summary / port_events / probe_frames / journal_build / export_clip";
     schema["properties"]["chunk"]["type"] = "integer";
     schema["properties"]["chunk"]["description"] = "export_clip: frames per zstd chunk (default 500)";
     schema["properties"]["kind"]["type"] = "string";
@@ -5545,12 +5550,19 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["limit"]["type"] = "integer";
     schema["properties"]["limit"]["description"] =
         "Max results for coverage_scan and blocks for coverage_rare (default 200, at most 10000), port_events (default 100), find_last / "
-        "reverse_continue with all (default 100, at most 10000), or max buckets for coverage_summary (default 100)";
+        "reverse_continue with all (default 100, at most 10000), frames per probe for probe_frames (default 1000, at most "
+        "10000), or max buckets for coverage_summary (default 100)";
     schema["properties"]["max_frames"]["type"] = "integer";
     schema["properties"]["max_frames"]["description"] =
         "coverage_rare: an address is rare when at most this many frames touched it (default 1, at most 1000)";
     schema["properties"]["bucket_size"]["type"] = "integer";
     schema["properties"]["bucket_size"]["description"] = "Frames per bucket for coverage_summary (default: auto)";
+    schema["properties"]["probes"]["type"] = "array";
+    schema["properties"]["probes"]["items"]["type"] = "object";
+    schema["properties"]["probes"]["description"] =
+        "probe_frames: the probes, as a game profile writes them - {probe: 'exec'|'read'|'write'|'port-in'|'port-out', "
+        "address (a Z80 address, a RAM page offset with page, or the port), end (memory, inclusive), page (a RAM page), "
+        "port_mask (ports), if (a condition such as 'VAL == 1' or 'A > 3')}; at most 16";
     schema["required"].append("action");
 
     registry.Register(
@@ -5729,6 +5741,22 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     done(ToolResult::Error("'changes_only' is a find_last option"));
                     return;
                 }
+            }
+            else if (action == "probe_frames")
+            {
+                if (!args["probes"].isArray() || args["probes"].empty())
+                {
+                    done(ToolResult::Error("Action 'probe_frames' requires 'probes': a non-empty array such as "
+                                           "[{\"probe\": \"exec\", \"address\": \"0x8A14\"}]"));
+                    return;
+                }
+                (*body)["probes"] = args["probes"];
+                for (const char* field : {"from_frame", "to_frame", "limit"})
+                    if (!CopyNumber(args, field, *body, error))
+                    {
+                        done(ToolResult::Error(error));
+                        return;
+                    }
             }
             else if (action == "memory_at" || action == "memory_diff")
             {
@@ -6045,6 +6073,45 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             text += " - blocked by marker " + FormatMarker(b["blocked_by_marker"]);
                         }
                         return text + "." + FormatSearchWindow(b) + FormatCheck(b);
+                    }, done);
+                }
+                else if (action == "probe_frames")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/probe-frames"), body.get(), caller, [](const Json::Value& b) {
+                        // Every probe's frames in the text: an agent may read only this
+                        std::ostringstream out;
+                        out << "Frames " << b["from_frame"].asUInt64() << ".." << b["to_frame"].asUInt64() << ": "
+                            << b["replayed_frames"].asUInt64() << " replayed, " << b["pruned_frames"].asUInt64()
+                            << " ruled out by the coverage index; the machine did not move";
+                        for (const Json::Value& p : b["probes"])
+                        {
+                            out << "\n" << p["probe"].asString() << " " << p["address"].asString();
+                            if (p.isMember("end"))
+                                out << ".." << p["end"].asString();
+                            if (p.isMember("page"))
+                                out << " page " << p["page"].asUInt();
+                            if (p.isMember("port_mask"))
+                                out << " mask " << p["port_mask"].asString();
+                            if (p.isMember("if"))
+                                out << " if " << p["if"].asString();
+                            if (p.isMember("error"))
+                            {
+                                out << ": not armed - " << p["error"].asString();
+                                continue;
+                            }
+                            out << ": " << p["frame_count"].asUInt64() << " frame(s), " << p["hit_count"].asUInt64()
+                                << " hit(s)";
+                            if (p["frames"].size() > 0)
+                                out << "; frames " << FormatFrameRuns(p["frames"]);
+                            if (p["truncated"].asBool())
+                                out << " (the first " << p["frames"].size() << " listed)";
+                        }
+                        if (b["barrier_frames"].size() > 0)
+                            out << "\nNot searched: " << b["barrier_frames"].size() << " frame(s) a replay barrier cuts ("
+                                << FormatFrameRuns(b["barrier_frames"]) << "; first " << FormatMarker(b["blocked_by_marker"]) << ")";
+                        if (b["truncated"].asBool())
+                            out << "\n[TRUNCATED] every list is full: go on with from_frame=" << b["next_from_frame"].asUInt64();
+                        return out.str();
                     }, done);
                 }
                 else if (action == "memory_at")

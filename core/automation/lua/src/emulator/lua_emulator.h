@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/base64.h"
+#include "emulator/state/statenodejson.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runpacer.h"
@@ -6114,6 +6115,31 @@ public:
             if (!value.find("matched"))
                 value["matched"] = false;
             return StateNodeToLua(ts, value);
+        });
+
+        // ttd_probe_frames(probe or {probe, ...}, {from_frame=, to_frame=, limit=}): a game profile's probes over the
+        // history ({probe="exec", address=0x8000, page=, end=, port_mask=, ["if"]=}), replayed, the machine put back
+        lua.set_function("ttd_probe_frames", [this](sol::this_state ts, sol::table probesTable,
+                                                    sol::optional<sol::table> optionsTable) -> sol::object {
+            StateNode probes = StateNode::Array();
+            auto add = [&](const sol::table& probe) {
+                StateNode node = StateNode::Object();
+                for (const auto& [key, value] : probe)
+                    node[key.as<std::string>()] = TtdOptionText(value);
+                probes.push(node);
+            };
+            if (probesTable["probe"].valid())
+                add(probesTable);
+            else
+                for (const auto& [index, probe] : probesTable)
+                    if (probe.is<sol::table>())
+                        add(probe.as<sol::table>());
+            std::map<std::string, std::string> options;
+            if (optionsTable)
+                for (const auto& [key, value] : *optionsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            options["probes"] = StateNodeToJsonText(probes);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("probe-frames", options)));
         });
 
         lua.set_function("ttd_coverage_probe", [this](sol::this_state ts, sol::table argsTable) -> sol::object {

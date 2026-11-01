@@ -519,6 +519,31 @@ struct TTDFindResult
     TTDSearchWindow window{};
 };
 
+/// @brief One probe's answer of a probe-frames query (TimeTravelController::ProbeFrames)
+struct TTDProbeFrames
+{
+    std::string error;                ///< Its condition does not compile on this machine: never armed, no frames
+    std::vector<uint64_t> frames;     ///< The frames it fired in, oldest first, the first `limit`
+    std::vector<uint32_t> hits;       ///< Per listed frame, its hits there (65535 at most)
+    uint64_t frameCount = 0;          ///< Frames it fired in over the searched window, also past the list
+    uint64_t hitCount = 0;            ///< Its hits over the searched window
+};
+
+/// @brief ProbeFrames' answer: per probe the frames it fired in, and the window the replay covered.
+struct TTDProbeFramesResult
+{
+    std::string error;                ///< Set when nothing was searched (no history, no probe, an empty window)
+    uint64_t fromFrame = 0;           ///< The searched window, inclusive: every frame of it replayed, pruned or
+    uint64_t toFrame = 0;             ///< behind a barrier (barrierFrames)
+    uint64_t replayedFrames = 0;
+    uint64_t prunedFrames = 0;        ///< Proven by the coverage index to hold no hit: not replayed
+    std::vector<uint64_t> barrierFrames;  ///< Frames a replay barrier cut: not searched (their hits are unknown)
+    TTDExternalEvent firstBarrier{};  ///< The first of them, when any
+    std::vector<TTDProbeFrames> probes;   ///< In the order asked
+    bool truncated = false;           ///< Every probe's list is full and the window goes on: ask again from nextFromFrame
+    uint64_t nextFromFrame = 0;
+};
+
 /// @brief What ReverseContinue looks for and how far.
 struct TTDReverseContinueQuery
 {

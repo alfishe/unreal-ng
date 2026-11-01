@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """time_travel: record, stop, the history in status, seek back, the machine state follows, rare coverage,
-port events with their context, reverse-continue first per PC, memory-at the machine now"""
+port events with their context, reverse-continue first per PC, memory-at the machine now, probe frames"""
 
 import re
 import sys
@@ -94,6 +94,25 @@ def test_port_events_carry_rows_and_registers(s):
     expect(not r.is_error and ' HL 0x' not in r.text and r.structured.get('context') is False,
            'context=false: no registers', r.text)
 
+
+
+def test_probe_frames_lists_each_probes_frames_in_the_text(s):
+    # The history of test_record_stop_seek: the ROM's IM 1 handler runs every frame, its KEY-SCAN reads #FE, 0xFFF0
+    # (UDG data) never runs
+    r = s.call('time_travel', {'action': 'probe_frames', 'probes': [
+        {'probe': 'exec', 'address': '0x0038'}, {'probe': 'port-in', 'address': '0xFE', 'port_mask': '0xFF'},
+        {'probe': 'exec', 'address': 0xFFF0}, {'probe': 'read', 'address': '0x5C00', 'if': 'VAL =='}]})
+    probes = r.structured.get('probes', [])
+    expect(not r.is_error and len(probes) == 4, 'four probes answered', r.text)
+    frames = r.structured.get('to_frame', 0) - r.structured.get('from_frame', 0) + 1
+    expect(probes[0].get('frame_count') == frames and probes[1].get('frame_count') == frames,
+           'IM 1 and the keyboard scan in every frame', r.structured)
+    expect(probes[2].get('frame_count') == 0 and 'error' in probes[3], 'one never ran, one did not compile',
+           r.structured)
+    expect('exec 0x0038: ' in r.text and 'frames ' in r.text and 'not armed' in r.text and
+           'the machine did not move' in r.text, 'the frames and the error in the text', r.text)
+    r = s.call('time_travel', {'action': 'probe_frames'}, ok=False)
+    expect(r.is_error and 'probes' in r.text, 'no probes named', r.text)
 
 if __name__ == '__main__':
     sys.exit(main(globals()))

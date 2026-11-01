@@ -101,7 +101,7 @@ archive.org (`zx_*` items) when a tape image is damaged.
   road: poking `#A724` through 46 segments did not run the time-extension code, so the checkpoint is not reachable that way.
 - **Stale instance trap**: `launch` attaches to a live instance on the port instead of starting a new one, so a "new" run
   can begin in a game-over state. Check what answers the port before a run, and kill the previous instance by its path
-  (`pkill -f "<worktree>/cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt "`), not only by port: a helper
+  (`pkill -f "^<absolute worktree>/cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt$"`: a pattern with a trailing space matches nothing, the process line ends at the path; check with `ps aux | grep unreal-qt`), not only by port: a helper
   module that sets its own port (one session lost an hour to a library that rewrote `PORT` on import) leaves instances on a
   port nobody looks at.
 - **Snapshots**: a denied or damaged tape is often on archive.org as `zx_*` `.z80`; store it in the collection with its
