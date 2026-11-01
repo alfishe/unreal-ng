@@ -10,7 +10,7 @@
       "controls": ["south", "east", "west", "north", "dpad.*", "lb", "rb", "lt", "rt", "lstick.*", "rstick.*", "view", "menu", "guide", "paddle.p1", "paddle.p2", "paddle.p3", "paddle.p4"] },
     { "id": "xbox-elite-1", "name": "Xbox Elite Wireless Controller", "vendor": "Microsoft",
       "match": [ { "bus": "usb", "vid": "045e", "pid": ["02e3"] } ],
-      "layout": "xbox", "images": "xbox-elite-2", "glyphs": "xbox",
+      "layout": "xbox", "images": "xbox-elite-1", "glyphs": "xbox",
       "controls": ["south", "east", "west", "north", "dpad.*", "lb", "rb", "lt", "rt", "lstick.*", "rstick.*", "view", "menu", "guide", "paddle.p1", "paddle.p2", "paddle.p3", "paddle.p4"] },
     { "id": "xbox-360", "name": "Xbox 360 Controller", "vendor": "Microsoft",
       "match": [ { "vid": "045e", "pid": ["028e", "02a1"] } ],

@@ -12,15 +12,15 @@
       "label": "L2",
       "shape": {
         "rect": [
-          150,
-          290,
-          260,
-          90
+          93,
+          104,
+          214,
+          23
         ]
       },
       "anchor": [
-        280,
-        335
+        200,
+        116
       ],
       "callout": "left",
       "analog": {
@@ -34,15 +34,15 @@
       "label": "L1",
       "shape": {
         "rect": [
-          130,
-          392,
-          300,
-          44
+          83,
+          122,
+          262,
+          19
         ]
       },
       "anchor": [
-        280,
-        414
+        214,
+        131
       ],
       "callout": "left",
       "order": 1
@@ -52,15 +52,15 @@
       "label": "R2",
       "shape": {
         "rect": [
-          1638,
-          290,
-          260,
-          90
+          1741,
+          104,
+          214,
+          23
         ]
       },
       "anchor": [
-        1768,
-        335
+        1848,
+        116
       ],
       "callout": "right",
       "analog": {
@@ -74,491 +74,491 @@
       "label": "R1",
       "shape": {
         "rect": [
-          1618,
-          392,
-          300,
-          44
+          1702,
+          122,
+          262,
+          19
         ]
       },
       "anchor": [
-        1768,
-        414
+        1834,
+        131
       ],
       "callout": "right",
       "order": 3
+    },
+    {
+      "control": "view",
+      "label": "View",
+      "shape": {
+        "rect": [
+          254,
+          159,
+          67,
+          29
+        ]
+      },
+      "anchor": [
+        287,
+        174
+      ],
+      "callout": "left",
+      "order": 4
+    },
+    {
+      "control": "menu",
+      "label": "Menu",
+      "shape": {
+        "rect": [
+          1728,
+          159,
+          67,
+          29
+        ]
+      },
+      "anchor": [
+        1761,
+        174
+      ],
+      "callout": "right",
+      "order": 5
     },
     {
       "control": "dpad.up",
       "label": "D-pad",
       "shape": {
         "rect": [
-          215,
-          515,
-          70,
-          70
+          160,
+          181,
+          46,
+          49
         ]
       },
       "anchor": [
-        250,
-        550
-      ],
-      "callout": "left",
-      "group": "dpad",
-      "order": 4
-    },
-    {
-      "control": "dpad.down",
-      "label": "D-pad",
-      "shape": {
-        "rect": [
-          215,
-          655,
-          70,
-          70
-        ]
-      },
-      "anchor": [
-        250,
-        690
-      ],
-      "callout": "left",
-      "group": "dpad",
-      "order": 5
-    },
-    {
-      "control": "dpad.left",
-      "label": "D-pad",
-      "shape": {
-        "rect": [
-          145,
-          585,
-          70,
-          70
-        ]
-      },
-      "anchor": [
-        180,
-        620
+        183,
+        205
       ],
       "callout": "left",
       "group": "dpad",
       "order": 6
     },
     {
-      "control": "dpad.right",
+      "control": "dpad.down",
       "label": "D-pad",
       "shape": {
         "rect": [
-          285,
-          585,
-          70,
-          70
+          160,
+          275,
+          46,
+          49
         ]
       },
       "anchor": [
-        320,
-        620
+        183,
+        300
       ],
       "callout": "left",
       "group": "dpad",
       "order": 7
     },
     {
+      "control": "dpad.left",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          111,
+          229,
+          49,
+          46
+        ]
+      },
+      "anchor": [
+        135,
+        252
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 8
+    },
+    {
+      "control": "dpad.right",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          206,
+          229,
+          49,
+          46
+        ]
+      },
+      "anchor": [
+        230,
+        252
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 9
+    },
+    {
       "control": "north",
       "label": "Y",
       "shape": {
         "circle": [
-          1798,
-          542,
-          42
+          1867,
+          196,
+          29
         ]
       },
       "anchor": [
-        1798,
-        542
+        1867,
+        196
       ],
       "callout": "right",
-      "order": 8
-    },
-    {
-      "control": "south",
-      "label": "A",
-      "shape": {
-        "circle": [
-          1798,
-          698,
-          42
-        ]
-      },
-      "anchor": [
-        1798,
-        698
-      ],
-      "callout": "right",
-      "order": 9
+      "order": 10
     },
     {
       "control": "west",
       "label": "X",
       "shape": {
         "circle": [
-          1720,
-          620,
-          42
+          1811,
+          252,
+          29
         ]
       },
       "anchor": [
-        1720,
-        620
+        1811,
+        252
       ],
       "callout": "right",
-      "order": 10
+      "order": 11
     },
     {
       "control": "east",
       "label": "B",
       "shape": {
         "circle": [
-          1876,
-          620,
-          42
+          1923,
+          252,
+          29
         ]
       },
       "anchor": [
-        1876,
-        620
+        1923,
+        252
       ],
       "callout": "right",
-      "order": 11
+      "order": 12
+    },
+    {
+      "control": "south",
+      "label": "A",
+      "shape": {
+        "circle": [
+          1867,
+          308,
+          29
+        ]
+      },
+      "anchor": [
+        1867,
+        308
+      ],
+      "callout": "right",
+      "order": 13
     },
     {
       "control": "lstick.x",
       "label": "LS",
       "shape": {
         "circle": [
-          500,
-          600,
-          95
+          366,
+          285,
+          60
         ]
       },
       "anchor": [
-        500,
-        600
+        366,
+        285
       ],
       "callout": "left",
       "analog": {
         "kind": "stick",
         "pair": "lstick.y",
-        "radius": 60
+        "radius": 42
       },
       "group": "lstick",
-      "order": 12
+      "order": 14
     },
     {
       "control": "lstick.click",
-      "label": "LS press",
+      "label": "LS",
       "shape": {
         "circle": [
-          500,
-          600,
-          52
+          366,
+          285,
+          36
         ]
       },
       "anchor": [
-        500,
-        600
+        366,
+        285
       ],
       "callout": "left",
       "group": "lstick",
-      "order": 13
+      "order": 15
     },
     {
       "control": "lstick.touch",
       "label": "LS touch",
       "shape": {
-        "rect": [
-          450,
-          712,
-          100,
-          28
+        "circle": [
+          366,
+          285,
+          52
         ]
       },
       "anchor": [
-        500,
-        726
+        366,
+        285
       ],
       "callout": "left",
-      "quiet": true,
       "group": "lstick",
-      "order": 14
+      "quiet": true,
+      "order": 16
     },
     {
       "control": "rstick.x",
       "label": "RS",
       "shape": {
         "circle": [
-          1548,
-          600,
-          95
+          1682,
+          285,
+          60
         ]
       },
       "anchor": [
-        1548,
-        600
+        1682,
+        285
       ],
       "callout": "right",
       "analog": {
         "kind": "stick",
         "pair": "rstick.y",
-        "radius": 60
+        "radius": 42
       },
       "group": "rstick",
-      "order": 15
+      "order": 17
     },
     {
       "control": "rstick.click",
-      "label": "RS press",
+      "label": "RS",
       "shape": {
         "circle": [
-          1548,
-          600,
-          52
+          1682,
+          285,
+          36
         ]
       },
       "anchor": [
-        1548,
-        600
+        1682,
+        285
       ],
       "callout": "right",
       "group": "rstick",
-      "order": 16
+      "order": 18
     },
     {
       "control": "rstick.touch",
       "label": "RS touch",
       "shape": {
-        "rect": [
-          1498,
-          712,
-          100,
-          28
+        "circle": [
+          1682,
+          285,
+          52
         ]
       },
       "anchor": [
-        1548,
-        726
+        1682,
+        285
       ],
       "callout": "right",
-      "quiet": true,
       "group": "rstick",
-      "order": 17
+      "quiet": true,
+      "order": 19
     },
     {
       "control": "ltouchpad.x",
       "label": "Left trackpad",
       "shape": {
         "rect": [
-          325,
-          765,
-          230,
-          230
+          241,
+          391,
+          212,
+          212
         ]
       },
       "anchor": [
-        440,
-        880
+        347,
+        497
       ],
       "callout": "left",
       "analog": {
         "kind": "stick",
         "pair": "ltouchpad.y",
-        "radius": 100
+        "radius": 90
       },
       "group": "ltouchpad",
-      "order": 18
+      "order": 20
     },
     {
       "control": "ltouchpad.click",
       "label": "Left trackpad press",
       "shape": {
         "rect": [
-          345,
-          785,
-          190,
-          190
+          254,
+          404,
+          186,
+          186
         ]
       },
       "anchor": [
-        440,
-        880
+        347,
+        497
       ],
       "callout": "left",
       "group": "ltouchpad",
-      "order": 19
+      "order": 21
     },
     {
       "control": "ltouchpad.touch",
       "label": "Left trackpad touch",
       "shape": {
         "rect": [
-          345,
-          785,
-          190,
-          190
+          254,
+          404,
+          186,
+          186
         ]
       },
       "anchor": [
-        440,
-        880
+        347,
+        497
       ],
       "callout": "left",
-      "quiet": true,
       "group": "ltouchpad",
-      "order": 20
+      "quiet": true,
+      "order": 22
     },
     {
       "control": "ltouchpad.pressure",
       "label": "Left trackpad pressure",
       "shape": {
         "rect": [
-          340,
-          1005,
-          200,
-          14
+          260,
+          610,
+          173,
+          8
         ]
       },
       "anchor": [
-        440,
-        1012
+        347,
+        614
       ],
       "callout": "left",
       "analog": {
         "kind": "trigger",
         "fill": "down"
       },
-      "quiet": true,
       "group": "ltouchpad",
-      "order": 21
+      "quiet": true,
+      "order": 23
     },
     {
       "control": "rtouchpad.x",
       "label": "Right trackpad",
       "shape": {
         "rect": [
-          1493,
-          765,
-          230,
-          230
+          1595,
+          391,
+          212,
+          212
         ]
       },
       "anchor": [
-        1608,
-        880
+        1701,
+        497
       ],
       "callout": "right",
       "analog": {
         "kind": "stick",
         "pair": "rtouchpad.y",
-        "radius": 100
+        "radius": 90
       },
       "group": "rtouchpad",
-      "order": 22
+      "order": 24
     },
     {
       "control": "rtouchpad.click",
       "label": "Right trackpad press",
       "shape": {
         "rect": [
-          1513,
-          785,
-          190,
-          190
+          1608,
+          404,
+          186,
+          186
         ]
       },
       "anchor": [
-        1608,
-        880
+        1701,
+        497
       ],
       "callout": "right",
       "group": "rtouchpad",
-      "order": 23
+      "order": 25
     },
     {
       "control": "rtouchpad.touch",
       "label": "Right trackpad touch",
       "shape": {
         "rect": [
-          1513,
-          785,
-          190,
-          190
+          1608,
+          404,
+          186,
+          186
         ]
       },
       "anchor": [
-        1608,
-        880
+        1701,
+        497
       ],
       "callout": "right",
-      "quiet": true,
       "group": "rtouchpad",
-      "order": 24
+      "quiet": true,
+      "order": 26
     },
     {
       "control": "rtouchpad.pressure",
       "label": "Right trackpad pressure",
       "shape": {
         "rect": [
-          1508,
-          1005,
-          200,
-          14
+          1614,
+          610,
+          173,
+          8
         ]
       },
       "anchor": [
-        1608,
-        1012
+        1701,
+        614
       ],
       "callout": "right",
       "analog": {
         "kind": "trigger",
         "fill": "down"
       },
-      "quiet": true,
       "group": "rtouchpad",
-      "order": 25
-    },
-    {
-      "control": "view",
-      "label": "View",
-      "shape": {
-        "circle": [
-          560,
-          478,
-          24
-        ]
-      },
-      "anchor": [
-        560,
-        478
-      ],
-      "callout": "left",
-      "order": 26
-    },
-    {
-      "control": "menu",
-      "label": "Menu",
-      "shape": {
-        "circle": [
-          1488,
-          478,
-          24
-        ]
-      },
-      "anchor": [
-        1488,
-        478
-      ],
-      "callout": "right",
+      "quiet": true,
       "order": 27
     },
     {
@@ -566,15 +566,15 @@
       "label": "Steam",
       "shape": {
         "rect": [
-          195,
-          1000,
-          110,
-          46
+          343,
+          635,
+          113,
+          50
         ]
       },
       "anchor": [
-        250,
-        1023
+        399,
+        660
       ],
       "callout": "left",
       "order": 28
@@ -584,89 +584,89 @@
       "label": "\u00b7\u00b7\u00b7",
       "shape": {
         "rect": [
-          1743,
-          1000,
-          110,
-          46
+          1593,
+          635,
+          113,
+          50
         ]
       },
       "anchor": [
-        1798,
-        1023
+        1649,
+        660
       ],
       "callout": "right",
       "order": 29
-    },
-    {
-      "control": "paddle.p3",
-      "label": "L4",
-      "shape": {
-        "rect": [
-          150,
-          1275,
-          170,
-          52
-        ]
-      },
-      "anchor": [
-        235,
-        1301
-      ],
-      "callout": "left",
-      "order": 30
-    },
-    {
-      "control": "paddle.p4",
-      "label": "L5",
-      "shape": {
-        "rect": [
-          150,
-          1345,
-          170,
-          52
-        ]
-      },
-      "anchor": [
-        235,
-        1371
-      ],
-      "callout": "left",
-      "order": 31
     },
     {
       "control": "paddle.p1",
       "label": "R4",
       "shape": {
         "rect": [
-          1728,
-          1275,
-          170,
-          52
+          1343,
+          1082,
+          61,
+          63
         ]
       },
       "anchor": [
-        1813,
-        1301
+        1374,
+        1114
       ],
       "callout": "right",
-      "order": 32
+      "order": 30
     },
     {
       "control": "paddle.p2",
       "label": "R5",
       "shape": {
         "rect": [
-          1728,
-          1345,
-          170,
-          52
+          1343,
+          1009,
+          61,
+          63
         ]
       },
       "anchor": [
-        1813,
-        1371
+        1374,
+        1041
       ],
       "callout": "right",
+      "order": 31
+    },
+    {
+      "control": "paddle.p3",
+      "label": "L4",
+      "shape": {
+        "rect": [
+          644,
+          1082,
+          61,
+          63
+        ]
+      },
+      "anchor": [
+        674,
+        1114
+      ],
+      "callout": "left",
+      "order": 32
+    },
+    {
+      "control": "paddle.p4",
+      "label": "L5",
+      "shape": {
+        "rect": [
+          644,
+          1009,
+          61,
+          63
+        ]
+      },
+      "anchor": [
+        674,
+        1041
+      ],
+      "callout": "left",
       "order": 33
     }
   ]

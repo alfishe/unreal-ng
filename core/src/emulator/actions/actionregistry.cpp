@@ -403,7 +403,7 @@ ActionResult Availability(const ActionRegistry::Entry& entry, Emulator& emulator
         if (std::string why = entry.rules.unavailable(emulator, value); !why.empty())
             return ActionResult::Failure(entry.rules.unavailableError, std::move(why));
     if (entry.rules.needsPause && !emulator.IsPaused())
-        return ActionResult::Failure("not_now", "needs a pause");
+        return ActionResult::Failure("not_now", kNeedsPause);
     return ActionResult::Success();
 }
 }  // namespace

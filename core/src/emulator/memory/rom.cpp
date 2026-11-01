@@ -154,7 +154,7 @@ std::string ROM::GetROMFilename()
             result = config.next_rom_path;
             break;
         case MM_GMX:
-            assert("Not implemented");
+            result = config.gmx_rom_path;
             break;
         default:
             break;
@@ -319,8 +319,14 @@ bool ROM::LoadROM()
 			romname = config.next_rom_path;
 			break;
 	    case MM_GMX:
-            assert("Not implemented");
-            break;
+			// The 512 KB flash, eight 64 KB planes in the Scorpion page order; the plane at power-on is 0 (the GMX
+			// loader). ScorpionMemory repoints the four roles at the plane #7EFD selects (design 2.4)
+			memory.base_128_rom = memory.ROMPageHostAddress(0);
+			memory.base_sos_rom = memory.ROMPageHostAddress(1);
+			memory.base_sys_rom = memory.ROMPageHostAddress(2);
+			memory.base_dos_rom = memory.ROMPageHostAddress(3);
+			romname = config.gmx_rom_path;
+			break;
 	    default:
 	        break;
 
@@ -753,6 +759,21 @@ std::string ROM::GetROMPageRole(uint8_t page) const
         case MM_PROFSCORP:
             return (page < 4) ? PENTAGON_SCORP_ROLES[page]
                               : StringHelper::Format("ROM Page %d", static_cast<int>(page));
+        case MM_GMX:
+        {
+            // gmx644.rom / gmx.rom plane map (roms.md 1.1): 0 = the loader and the FPGA schemes, 1 = the Pentagon
+            // scheme's ROMs, 4 and 7 = the Scorpion scheme's, 5 = the shadow monitor, the rest firmware utilities
+            // Scorpion page order inside a plane: 128 editor, 48 BASIC, service, TR-DOS (rom.cpp MM_SCORP)
+            static const char* const SCORPION_ORDER_ROLES[4] = {"128K Editor/Menu ROM", "48K BASIC ROM", "Service ROM",
+                                                                "TR-DOS ROM"};
+            const int plane = (page / 4) & 7;
+            const int role = page % 4;
+            if (plane == 1 || plane == 4 || plane == 7)
+                return StringHelper::Format("GMX plane %d: %s", plane, SCORPION_ORDER_ROLES[role]);
+            static const char* const PLANE_NAMES[8] = {"loader / FPGA schemes", "", "GMX test", "data",
+                                                       "", "shadow monitor", "monitor utilities", ""};
+            return StringHelper::Format("GMX plane %d page %d: %s", plane, role, PLANE_NAMES[plane]);
+        }
         case MM_ATM450:
             return (page < 4) ? ATM450_ROLES[page]
                               : StringHelper::Format("ROM Page %d", static_cast<int>(page));

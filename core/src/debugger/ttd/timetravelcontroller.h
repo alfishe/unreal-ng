@@ -61,6 +61,7 @@
 #include "emulator/execution/executionarbiter.h"
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard::InputState (display sandbox)
+#include "emulator/io/controllers/ihapticfeed.h"  // controllers::HapticProbe (probe-frames)
 #include "common/modulelogger.h"    // ModuleLogger
 #include "debugger/ttd/timetravelhooks.h"  // ITimeTravelHooks, TTDSessionState, TTDGuardedAction
 #include "debugger/ttd/ttdcursorcell.h"   // the published cursor
@@ -1382,6 +1383,19 @@ public:
     /// Most hits an all-mode reverse search or find-last returns
     static constexpr size_t kReverseHitLimitMax = 10000;
 
+    /// @brief In which frames of [fromFrame, toFrame] each of @p probes fired (feedback item 7 of
+    /// docs/inprogress/2026-10-28-ttd-analysis-feedback): the probes of a game profile (exec, read, write, port in /
+    /// out, a page, a port mask, an `if:` condition), armed as taps of the replay's own sink, so they match as they
+    /// do in real time. Each complete recorded frame of the window is replayed from its checkpoint, unless the
+    /// coverage index proves it holds no hit of a memory probe; a frame a barrier cuts is skipped and named. The
+    /// live haptics, the user's breakpoints and the deck hear nothing; the machine is put back exactly where it
+    /// stood. At most HapticFrame::kMaxProbes probes; the list keeps each probe's first @p limit frames.
+    TTDProbeFramesResult ProbeFrames(const std::vector<controllers::HapticProbe>& probes, uint64_t fromFrame,
+                                     uint64_t toFrame, size_t limit = 1000);
+
+    /// Most frames a probe-frames list returns per probe
+    static constexpr size_t kProbeFramesLimitMax = 10000;
+
     /// @brief Read-only accessor for the write journal (for serialization
     /// and tests).
     inline const TTDWriteJournal* GetWriteJournal() const { return _writeJournal.get(); }
@@ -2186,6 +2200,8 @@ private:
 
     /// True while inside EnterReplayMode / ExitReplayMode, so nested calls are safe
     bool _inReplayMode = false;
+    /// A probe-frames query runs: the replay steps with the instruction-start check, so its exec taps are told
+    bool _replayTaps = false;
 
     /// The host audio hold of the replay (reason TtdReplay): taken by EnterReplayMode after the replay flag is
     /// set, released by ExitReplayMode before it clears it (and with the manager). Replay runs as fast as the

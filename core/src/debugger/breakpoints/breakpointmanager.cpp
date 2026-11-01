@@ -2419,14 +2419,24 @@ void BreakpointManager::RemovePortBreakpointsByType(uint8_t ioType)
 /// region <Runtime methods>
 
 /// The out-of-line half of HandlePCChange / HandleMemoryRead / HandleMemoryWrite: the filter said "maybe"
+bool BreakpointManager::Silenced()
+{
+    _replayWalk = false;
+    if (!_context || !(_context->ttdReplayActive || _context->toolAccessActive))
+        return false;
+    // TTD silent-replay suppression (parent TDD 8.2 + Appendix C): the replay re-executes known history. Only a
+    // replay query's own sink hears it
+    _replayWalk = _replaySink != BRK_NO_TAP && _context->ttdReplayActive && !_context->toolAccessActive;
+    return !_replayWalk;
+}
+
 uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address, int value)
 {
-    // TTD silent-replay suppression (parent TDD 8.2 + Appendix C): the replay re-executes known history
-    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+    if (Silenced())
         return BRK_INVALID;
 
     // Stepping on from the execution breakpoint the emulator is stopped at: no hit, no count
-    if (kind == BRK_KIND_EXEC && _execPassArmed && address == _execPassAddress)
+    if (kind == BRK_KIND_EXEC && !_replayWalk && _execPassArmed && address == _execPassAddress)
     {
         _execPassArmed = false;
         return BRK_INVALID;
@@ -2458,7 +2468,7 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address, int value)
 
 uint16_t BreakpointManager::ResolvePage(int kind, MemoryBankModeEnum mode, uint8_t page, uint16_t offset, int value)
 {
-    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+    if (Silenced())
         return BRK_INVALID;
     const size_t pageId = (static_cast<size_t>(mode) << 8) | page;
     if (pageId >= kPageIds || !_pageSlices[kind][pageId])
@@ -2500,7 +2510,7 @@ uint16_t BreakpointManager::ResolveSpace(uint16_t spacePage, uint16_t offset, bo
 
 uint16_t BreakpointManager::ResolvePort(int direction, uint16_t port, int value)
 {
-    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+    if (Silenced())
         return BRK_INVALID;
     if (_portHeads[direction].empty())
         return BRK_INVALID;
@@ -2738,6 +2748,9 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slotShift, uint16_t
         return first;
     for (BreakpointDescriptor* bp : _candidateSets[set])
     {
+        // A replay query's walk: its own taps only, before anything is counted
+        if (_replayWalk && bp->tapSink != _replaySink) [[unlikely]]
+            continue;
         // A slot-only physical breakpoint fires only through the slot it was set in
         if (bp->slotOnly && slotShift >= 0 && (address >> slotShift) != (bp->z80address >> slotShift))
             continue;
@@ -2768,7 +2781,7 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slotShift, uint16_t
                     hit.address = address;
                     hit.value = value;
                     hit.kind = kind;
-                    if (kind == BRK_TAP_READ || kind == BRK_TAP_PORT_IN)
+                    if ((kind == BRK_TAP_READ || kind == BRK_TAP_PORT_IN) && !_replayWalk)
                         hit.replace = _replace;
                     sink->OnTap(hit);
                 }
@@ -3343,6 +3356,8 @@ void BreakpointManager::UnregisterTapSink(uint8_t sinkId)
             RemoveBreakpointByID(id);
     }
     _tapSinks[sinkId] = nullptr;
+    if (_replaySink == sinkId)
+        _replaySink = BRK_NO_TAP;
 }
 
 BreakpointManager::Batch::Batch(BreakpointManager& manager) : _manager(manager), _scope(std::make_unique<ChangeScope>(manager))

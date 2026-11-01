@@ -14,6 +14,7 @@
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
+#include "emulator/state/statenodejson.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
 #include <algorithm>
@@ -6487,6 +6488,43 @@ namespace PythonBindings
                 py::arg("kind") = "executed", py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF,
                 py::arg("phys_page") = py::none(), py::arg("limit") = 200, py::arg("space") = py::none())
 
+            // probe-frames: a game profile's probes (a dict, or a list of up to 16) over the history, a replay
+            .def("ttd_probe_frames", [](Emulator& self, py::object probesObj, uint64_t fromFrame, py::object toFrameObj,
+                                        size_t limit) -> py::object {
+                py::list list;
+                if (py::isinstance<py::dict>(probesObj))
+                    list.append(probesObj);
+                else
+                    list = py::list(probesObj);
+                StateNode probes = StateNode::Array();
+                for (const py::handle& item : list)
+                {
+                    if (!py::isinstance<py::dict>(item))
+                        throw py::value_error("probes: each probe is a dict such as {'probe': 'exec', 'address': 0x8000}");
+                    StateNode probe = StateNode::Object();
+                    for (const auto& [key, value] : item.cast<py::dict>())
+                        if (!value.is_none())
+                            probe[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                    probes.push(probe);
+                }
+                std::map<std::string, std::string> options{
+                    {"probes", StateNodeToJsonText(probes)}, {"from_frame", std::to_string(fromFrame)},
+                    {"limit", std::to_string(limit)}};
+                if (!toFrameObj.is_none())
+                    options["to_frame"] = TtdOptionTextPy(toFrameObj);
+                const ttd::TTDReply reply = TtdRunPy(self, "probe-frames", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The frames of from_frame..to_frame each probe fired in (a game profile's probe shape: probe "
+               "exec|read|write|port-in|port-out, address, end, page, port_mask, if), replayed with the machine put "
+               "back: {probes: [{frames, hits, frame_count, hit_count, ...}], replayed_frames, truncated, "
+               "next_from_frame?}; no history is a dict with error",
+                py::arg("probes"), py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("limit") = 1000)
+
             // A memory at a past checkpoint and what changed between two, from the store (no seek). A bad
             // argument raises ValueError; a refusal (no history) is a dict with error
             .def("ttd_memory_at", [](Emulator& self, const std::string& space, py::object frameObj, py::object offsetObj,
@@ -6836,7 +6874,7 @@ namespace PythonBindings
             live["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
             live["mouse_ports_decoded"] = mouseDecoded;
             live["mouse_routing_note"] = mouseNote;
-            const bool scorpion = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP);
+            const bool scorpion = IsScorpionModel(config.mem_model);
             if (scorpion)
                 live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
             else
@@ -6996,6 +7034,9 @@ namespace PythonBindings
                 }
                 d["sprinter"] = StateNodeToPy(sprinter);
             }
+            // GMX: the card's register file (the /state/paging `gmx` view)
+            if (config.mem_model == MM_GMX)
+                d["gmx"] = StateNodeToPy(DeviceState::GmxPaging(context));
             d["banks"] = banks;
             return d;
         }, "Tagged paging latches + bank table (P1-2 design)")

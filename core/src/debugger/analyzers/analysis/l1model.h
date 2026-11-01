@@ -329,6 +329,21 @@ struct PointerUse
     uint8_t pair = 0;       ///< 0 BC, 1 DE, 2 HL, 3 IX, 4 IY
 };
 
+/// A memory byte whose value was part of an address another instruction read through: an index, not a pointer (a
+/// character code that LD L,A / LD H,n / LD A,(HL) turns into the address of its glyph, a counter that picks a table
+/// entry). The value counts when it reached the register pair directly or worked on (AND n, SUB n, a shift, ADD
+/// HL,rr); a pair whose two halves came from two bytes is a pointer word, no index
+struct IndexUse
+{
+    PhysKey selector = 0;     ///< the byte the index was read from
+    PhysKey instruction = 0;  ///< the access that read through it
+    uint16_t selectorZ80 = 0;
+    uint16_t z80 = 0;         ///< the access
+    uint16_t lo = 0;          ///< the Z80 addresses it read, the lowest and highest seen
+    uint16_t hi = 0;
+    uint64_t count = 0;
+};
+
 /// One block copy as it ran: LDIR / LDDR, or a chain of LDI / LDD, from src to dst (the run of consecutive
 /// LDx steps whose addresses moved on together; an interrupt between steps does not split it)
 struct BlockCopy
@@ -366,6 +381,25 @@ struct DrawnByte
     PhysKey writer = kNoKey;  ///< the instruction that last wrote it to the screen
     DrawStep right;           ///< the source byte shown in the byte column to the right
     DrawStep down;            ///< the source byte shown on the pixel line below
+};
+
+/// A picture drawn as a whole (l1valueflow.h): the source bytes one drawing pass put side by side on the screen, the
+/// byte at (column i, line j) of the picture coming from base + j * rowStep + i * colStep
+struct DrawnFrame
+{
+    PhysKey base = 0;          ///< the source of the top left byte
+    uint8_t width = 0;         ///< byte columns
+    uint8_t height = 0;        ///< pixel lines
+    int16_t rowStep = 0;       ///< from one line's byte to the one below it (0: one line); steps are Z80 address
+                               ///< steps: lines may run on into the page the next bank showed
+    int16_t colStep = 0;       ///< from one column's byte to the one right of it (0: one column)
+    int16_t maskDelta = 0;     ///< the mask byte merged with each graphic byte, less the graphic byte (0: none)
+    uint16_t bytes = 0;        ///< source bytes drawn (fewer than width x height: a draw that skipped blank bytes)
+    uint32_t count = 0;        ///< passes that drew it (saturating)
+    uint8_t x = 0;             ///< the last place: byte column, pixel line of the top left byte
+    uint8_t y = 0;
+    uint8_t screen = 0;        ///< the RAM page of the screen (5, 7)
+    PhysKey writer = kNoKey;   ///< an instruction that wrote it to the screen
 };
 
 /// DataFlow answers, one block plus one hop
@@ -455,7 +489,9 @@ struct L1Result
     std::vector<BranchCondition> branches;
     std::vector<PointerUse> pointers;       ///< sorted by (form, origin)
     std::vector<BlockCopy> copies;          ///< sorted by (instruction, src, dst, length); at most 65536
+    std::vector<IndexUse> indexes;          ///< sorted by (selector, instruction); at most 65536
     std::vector<DrawnByte> drawn;           ///< sorted by key
+    std::vector<DrawnFrame> drawnFrames;    ///< sorted by base, then shape
     /// Per physical byte: what the code did with it (pages with a data access or code, sorted by page). Not in ToJson
     std::vector<BytePage> bytePages;
     /// The mapped pages' contents at the start and the end of the replay (sorted by page). Not in ToJson

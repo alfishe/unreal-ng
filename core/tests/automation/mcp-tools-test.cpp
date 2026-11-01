@@ -3122,6 +3122,79 @@ TEST_F(McpTools_Test, TimeTravel_Start_PostsJournalAndReportsIt)
     EXPECT_NE(result.text.find("write journal on"), std::string::npos) << result.text;
 }
 
+/// probe_frames posts the probes as given and lists every probe's frames in the text (a condition error too); no
+/// probes is refused before any call
+TEST_F(McpTools_Test, TimeTravel_ProbeFrames_PostsTheProbesAndListsTheFrames)
+{
+    Json::Value reply;
+    reply["from_frame"] = 2;
+    reply["to_frame"] = 40;
+    reply["replayed_frames"] = 30;
+    reply["pruned_frames"] = 9;
+    reply["truncated"] = true;
+    reply["next_from_frame"] = 41;
+    reply["barrier_frames"].append(12);
+    reply["blocked_by_marker"]["kind"] = "tape_control";
+    reply["blocked_by_marker"]["reason"] = "tape play";
+    reply["blocked_by_marker"]["frame"] = 12;
+    reply["blocked_by_marker"]["tinframe"] = 100;
+    Json::Value shot;
+    shot["probe"] = "exec";
+    shot["address"] = "0x8A14";
+    shot["page"] = 3;
+    shot["frame_count"] = 4;
+    shot["hit_count"] = 5;
+    shot["truncated"] = false;
+    for (int f : {3, 4, 5, 20})
+        shot["frames"].append(f);
+    for (int h : {1, 2, 1, 1})
+        shot["hits"].append(h);
+    reply["probes"].append(shot);
+    Json::Value died;
+    died["probe"] = "write";
+    died["address"] = "0x5F20";
+    died["if"] = "VAL ==";
+    died["error"] = "expected an operand";
+    died["frame_count"] = 0;
+    died["hit_count"] = 0;
+    died["frames"] = Json::Value(Json::arrayValue);
+    died["hits"] = Json::Value(Json::arrayValue);
+    died["truncated"] = false;
+    reply["probes"].append(died);
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/probe-frames"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "probe_frames";
+    Json::Value probe;
+    probe["probe"] = "exec";
+    probe["address"] = "0x8A14";
+    probe["page"] = 3;
+    args["probes"].append(probe);
+    args["from_frame"] = 2;
+    args["limit"] = 4;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/probe-frames");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["probes"][0]["address"].asString(), "0x8A14");
+    EXPECT_EQ(call->body["probes"][0]["page"].asUInt(), 3u);
+    EXPECT_EQ(call->body["from_frame"].asUInt64(), 2u);
+    EXPECT_EQ(call->body["limit"].asUInt(), 4u);
+    EXPECT_NE(result.text.find("Frames 2..40: 30 replayed, 9 ruled out"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("exec 0x8A14 page 3: 4 frame(s), 5 hit(s); frames 3-5, 20"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("write 0x5F20 if VAL ==: not armed - expected an operand"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("Not searched: 1 frame(s)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("from_frame=41"), std::string::npos) << result.text;
+
+    const size_t before = _caller->calls.size();
+    args = Json::Value();
+    args["action"] = "probe_frames";
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("requires 'probes'"), std::string::npos) << result.text;
+    EXPECT_EQ(_caller->calls.size(), before);
+}
+
 TEST_F(McpTools_Test, TimeTravel_JournalOnAndBuild_PostAndSummarizeTheSpans)
 {
     Json::Value spans(Json::arrayValue);

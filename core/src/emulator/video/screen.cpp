@@ -16,6 +16,7 @@
 #include "emulator/video/screendigest.h"
 #include "emulator/video/atm/atmgeometry.h"
 #include "emulator/video/atm/screenatm.h"
+#include "emulator/video/gmx/gmxgeometry.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -462,14 +463,18 @@ Screen::ModeSelection Screen::DetectModeProfi(const EmulatorState& state) const
     return { M_PROFI, R_256_192 };
 }
 
-// GMX: 7EFD bit 3 selects the extended 320x200 mode; without it the model
-// keeps its current/legacy mode selection
+// GMX: #7EFD bit 3 selects the card's 640x200 extended mode (GMX design 2.5); without it the host Scorpion's raster
 Screen::ModeSelection Screen::DetectModeGMX(const EmulatorState& state) const
 {
     if (state.scorpion.p7EFD & 0x08)
         return { M_GMX, R_320_200 };
 
-    return { _vid.mode, R_256_192 };
+    // #00 bit 7 (ST/PENT): the Pentagon frame, 320 lines with 80 from INT to the active screen and the border
+    // without strobing (GMX manual, the Pentagon scheme): the Pentagon 128 raster
+    if (state.gmx.p00 & 0x80)
+        return { M_PENTAGON128K, R_256_192 };
+
+    return DetectModeScorpion(state);
 }
 
 // Unknown/legacy models: keep the current mode, standard ZX raster
@@ -589,6 +594,7 @@ void Screen::SetVideoMode(VideoModeEnum mode)
         case M_SCORPION:  // Scorpion ZS-256 - discrete-logic ULA, contention-free
         case M_PROFI:     // Profi - discrete-logic ULA, no contention
         case M_PROFIHR:
+        case M_GMX:       // the GMX extended mode on the Scorpion board
             _rasterState.borderUpdateTStates = 1;
             _rasterState.contentionEnabled = false;
             _rasterState.fetchType = ULA_DISCRETE_LOGIC;
@@ -733,6 +739,8 @@ videomap::VideoLatches Screen::CaptureVideoLatches() const
         l.pFE = _state->pFE;
         l.borderAttr = _state->border_attr;
         l.atmBorderBright = _state->atm.borderBright;
+        if (_context->config.mem_model == MM_GMX)
+            l.scrollStart = static_cast<uint16_t>(GmxGeometry::ScrollStart(_state->gmx.p7AFD, _state->gmx.p7CFD));
     }
     CaptureFamilyLatches(l);
     return l;
@@ -992,6 +1000,8 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         case M_ATMTL:   // ATM3 Linear Text
         case M_PROFI:   // Profi standard / hi-res
         case M_PROFIHR:
+        case M_GMX:     // GMX 640x200 (ScreenGmx)
+        case M_SCORPION:  // Scorpion ZS-256 (reached with a new size when the GMX leaves its 640x200 mode)
         case M_TS16:    // TS-Conf (ScreenTSConf)
         case M_TS256:
         case M_TSTX:
@@ -1788,6 +1798,11 @@ LineGeometry Screen::GetLineGeometry(VideoModeEnum mode, const RasterDescriptor&
         case M_SPRINTER:
             return {0, 184, 184, 4};
 
+        // GMX 640x200: the ZX paper window at 5 px/T, borders at 2 px/T (gmxgeometry.h)
+        case M_GMX:
+            return {static_cast<uint16_t>(GmxGeometry::kPaperStartT), static_cast<uint16_t>(GmxGeometry::kPaperTStates),
+                    static_cast<uint16_t>(GmxGeometry::kVisibleEndT), static_cast<uint8_t>(GmxGeometry::kPixelsPerT)};
+
         // Profi 512x240: the ZX paper window at 4 px/T, borders at 2 px/T
         case M_PROFIHR:
         {
@@ -1809,6 +1824,7 @@ const VideoModeInfo& Screen::GetVideoModeInfo(VideoModeEnum mode)
     static const VideoModeInfo pmc{"1 bpp bitmap + attribute per 8x1 cell", 16, 1, "8x1 pixels", 0, 0, 0, 6144, 6144, 12288};
     static const VideoModeInfo phr{"1 bpp (monochrome)", 2, 1, nullptr, 0, 0, 0, 0, 0, 0};
     static const VideoModeInfo p384{"2 colors per attribute block", 16, 1, "8x8 pixels", 0, 0, 0, 6144, 768, 6912};
+    static const VideoModeInfo gmx{"1 bpp bitmap + attribute per 8x1 cell", 16, 1, "8x1 pixels", 0, 0, 0, 16000, 16000, 32000};
     static const VideoModeInfo profiHr{"1 bpp, per-pixel palette (16 entries)", 16, 1, "8x1 pixels", 0, 0, 0, 0, 0, 0};
     static const VideoModeInfo atm16{"4 bpp (16 colors per pixel)", 16, 4, "per pixel pair (bit-planar)", 0, 0, 4, 16000, 0, 16000};
     static const VideoModeInfo atmHr{"1 bpp bitmap + attribute per 8x1 cell", 16, 1, "8x1 pixels", 0, 0, 0, 16000, 16000, 32000};
@@ -1825,6 +1841,7 @@ const VideoModeInfo& Screen::GetVideoModeInfo(VideoModeEnum mode)
         case M_PHR:     return phr;
         case M_P384:    return p384;
         case M_PROFIHR: return profiHr;
+        case M_GMX:     return gmx;
         case M_ATM16:   return atm16;
         case M_ATMHR:   return atmHr;
         case M_ATMTX:
@@ -1882,6 +1899,7 @@ std::vector<uint16_t> Screen::GetDisplayedRAMPages(VideoModeEnum mode, MEM_MODEL
         case M_P16:
         case M_PMC:
         case M_PROFIHR:
+        case M_GMX:
             return GetActiveSurfaceRAMPages(mode, effective7FFD, true);
         default:
             return {GetVideoRAMPage(model, p7FFD)};
@@ -1925,8 +1943,12 @@ std::vector<uint16_t> Screen::GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8
         case M_PROFIHR:
             return (p7FFD & 0x08) ? std::vector<uint16_t>{6, 0x3A} : std::vector<uint16_t>{4, 0x38};
 
+        // GMX 640x200: pixel page #39 (#3B with 7FFD.3), attribute page 64 above it (gmxgeometry.h)
+        case M_GMX:
+            return {GmxGeometry::PixelPage(p7FFD), GmxGeometry::AttrPage(p7FFD)};
+
         // ZX family and every other mode: fall back to the classic surface
-        // (Profi/GMX/TS renderers are stubbed on master until they define one)
+        // (TS renderers are stubbed on master until they define one)
         default:
         {
             if (bankedZX)

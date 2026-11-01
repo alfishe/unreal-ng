@@ -74,6 +74,8 @@
 #include "stdafx.h"
 #include "debugger/ttd/ttdsessionport.h"
 #include "debugger/debugmanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "emulator/io/controllers/hapticprobes.h"
 #include "debugger/targets/gscardtarget.h"
 
 // Static assertion: the .ttd format assumes a little-endian host. The CPU and
@@ -3171,7 +3173,7 @@ void TimeTravelController::RunToTInFrame(uint32_t targetTInFrame)
     for (uint32_t now = TInFrameNow(); _context->emulatorState.frame_counter == frame && now < targetTInFrame;)
     {
         const uint32_t perT = _context->emulatorState.TtdUnitsPerTState();
-        _context->pEmulator->RunTStates((targetTInFrame - now + perT - 1) / perT, /*skipBreakpoints=*/true);
+        _context->pEmulator->RunTStates((targetTInFrame - now + perT - 1) / perT, /*skipBreakpoints=*/!_replayTaps);
         const uint32_t next = TInFrameNow();
         if (_context->emulatorState.frame_counter == frame && next <= now)
             break;  // no progress - never spin
@@ -5852,6 +5854,171 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
         reportWindow(result.blockingMarker.time);
     else
         reportWindow(std::max(sessionStart, TTDTimePoint{options.fromFrame, 0}));
+    return result;
+}
+
+TTDProbeFramesResult TimeTravelController::ProbeFrames(const std::vector<controllers::HapticProbe>& probes,
+                                                       uint64_t fromFrame, uint64_t toFrame, size_t limit)
+{
+    // Replays checkpoints and puts the machine back: an operation that changes it
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    TTDProbeFramesResult result;
+    const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
+
+    // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
+    if (_state == TTDSessionState::Recording)
+        PauseRecordingForBrowsing();
+    BreakpointManager* breakpoints = _context && _context->pDebugManager
+                                         ? _context->pDebugManager->GetBreakpointsManager()
+                                         : nullptr;
+    if (probes.empty() || probes.size() > controllers::HapticFrame::kMaxProbes)
+    {
+        result.error = "probe-frames takes 1.." + std::to_string(controllers::HapticFrame::kMaxProbes) + " probes";
+        return result;
+    }
+    // A frame is complete when the next one's checkpoint ends it: the last checkpoint is the history's end
+    if (_timeline.size() < 2 || !_context || !_context->pEmulator || !breakpoints)
+    {
+        result.error = breakpoints ? "no complete recorded frame" : "no debugger on this machine";
+        return result;
+    }
+    const uint64_t firstFrame = _timeline.front().time.frame;
+    const uint64_t lastFrame = _timeline[_timeline.size() - 2].time.frame;
+    result.fromFrame = std::max(fromFrame, firstFrame);
+    result.toFrame = std::min(toFrame, lastFrame);
+    if (result.fromFrame > result.toFrame)
+    {
+        result.error = "the window holds no complete recorded frame (recorded: frames " + std::to_string(firstFrame) +
+                       ".." + std::to_string(lastFrame) + ")";
+        return result;
+    }
+    limit = std::clamp(limit, size_t{1}, kProbeFramesLimitMax);
+
+    // The probes as taps of the replay's own sink: the live haptics' taps and every breakpoint stay silent
+    controllers::HapticProbes sink(_context, "ttd-probe-frames", "TTD probe-frames query");
+    std::vector<std::string> errors;
+    sink.Arm(probes, &errors);
+    result.probes.resize(probes.size());
+    bool armed = false;
+    for (size_t p = 0; p < probes.size(); ++p)
+    {
+        result.probes[p].error = p < errors.size() ? errors[p] : std::string();
+        armed = armed || result.probes[p].error.empty();
+    }
+
+    // The coverage index prunes a frame when no memory probe may hit in it; a port probe needs every frame
+    std::vector<std::pair<TTDCoverageKind, TTDSearchQuery>> prune;
+    bool canPrune = true;
+    for (size_t p = 0; p < probes.size() && canPrune; ++p)
+    {
+        const controllers::HapticProbe& probe = probes[p];
+        if (!result.probes[p].error.empty())
+            continue;
+        TTDSearchQuery q;
+        q.addrFrom = probe.address;
+        q.addrTo = std::max(probe.end, probe.address);
+        q.access = probe.kind == controllers::HapticProbeKind::Exec    ? TTDAccessType::Execute
+                   : probe.kind == controllers::HapticProbeKind::Read  ? TTDAccessType::Read
+                   : probe.kind == controllers::HapticProbeKind::Write ? TTDAccessType::Write
+                                                                       : TTDAccessType::Io;
+        if (probe.page != 0xFFFF)
+        {
+            q.hasPhysPageFilter = true;
+            q.physPage = static_cast<PhysPage>(probe.page);
+        }
+        canPrune = CanPruneByCoverage(q);
+        const TTDCoverageKind kind = q.access == TTDAccessType::Execute ? TTDCoverageKind::Executed
+                                     : q.access == TTDAccessType::Write ? TTDCoverageKind::Written
+                                                                        : TTDCoverageKind::Read;
+        prune.emplace_back(kind, q);
+    }
+    auto pruned = [&](uint64_t frame) {
+        if (!canPrune)
+            return false;
+        for (const auto& [kind, q] : prune)
+            if (_coverageIndex.FrameMayContain(kind, frame, q.addrFrom & 0x3FFF, q.addrTo & 0x3FFF,
+                                               q.hasPhysPageFilter, q.physPage))
+                return false;
+        return true;
+    };
+
+    bool replayed = false;  // the live machine was saved before the first replay
+    const TTDSessionState stateBefore = _state;
+    if (armed)
+    {
+        breakpoints->SetReplayTapSink(sink.SinkId());
+        _replayTaps = true;
+        size_t i = 0;
+        while (i + 1 < _timeline.size() && _timeline[i].time.frame < result.fromFrame)
+            ++i;
+        for (; i + 1 < _timeline.size() && _timeline[i].time.frame <= result.toFrame; ++i)
+        {
+            const TTDCheckpoint& cp = _timeline[i];
+            const uint64_t frame = cp.time.frame;
+            if (const std::optional<TTDExternalEvent> barrier =
+                    FirstBarrierBetween(cp.time, TTDTimePoint{frame, FrameSpan()}))
+            {
+                if (result.barrierFrames.empty())
+                    result.firstBarrier = *barrier;
+                result.barrierFrames.push_back(frame);
+                continue;   // its replay would not be the recorded frame
+            }
+            if (pruned(frame))
+            {
+                ++result.prunedFrames;
+                continue;
+            }
+            if (!replayed)
+            {
+                SaveLiveState(_liveSnapshot);
+                replayed = true;
+            }
+            RestoreCheckpointForReplay(cp);
+            sink.Clear();
+            ReplayModeScope replay(*this);
+            ReplayWithinFrame(frame, FrameSpan());
+            replay.Exit();
+            ++result.replayedFrames;
+
+            controllers::HapticFrame hits;
+            sink.TakeFrame(hits);
+            bool full = true;
+            for (size_t p = 0; p < result.probes.size(); ++p)
+            {
+                TTDProbeFrames& entry = result.probes[p];
+                if (hits.probeHits[p] != 0)
+                {
+                    ++entry.frameCount;
+                    entry.hitCount += hits.probeHits[p];
+                    if (entry.frames.size() < limit)
+                    {
+                        entry.frames.push_back(frame);
+                        entry.hits.push_back(hits.probeHits[p]);
+                    }
+                }
+                full = full && (!entry.error.empty() || entry.frames.size() >= limit);
+            }
+            // Every list is full: the rest of the window is the next call's
+            if (full && frame < result.toFrame && i + 2 < _timeline.size())
+            {
+                result.truncated = true;
+                result.nextFromFrame = frame + 1;
+                result.toFrame = frame;
+                break;
+            }
+        }
+        _replayTaps = false;
+        breakpoints->SetReplayTapSink(BRK_NO_TAP);
+    }
+    sink.Disarm();
+
+    if (replayed)
+    {
+        ReplayModeScope restore(*this);
+        RestoreLiveState(_liveSnapshot);
+        restore.Exit();
+        SetState(stateBefore);
+    }
     return result;
 }
 

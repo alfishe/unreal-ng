@@ -228,7 +228,8 @@ enum class PagingLatch : uint8_t
     AFE, AFB,                       // ATM 4.50 system ports (atm branch)
     PFFF7Window0, PFFF7Window1,     // ATM 7.10/ATM3 per-window latches
     PFFF7Window2, PFFF7Window3,     // (reserved until the decoders land)
-    PFE                             // the ULA port #FE as last written: border, MIC, EAR
+    PFE,                            // the ULA port #FE as last written: border, MIC, EAR
+    PGmx00, P78FD, P7AFD, P7CFD     // Scorpion GMX: #xx00 configuration, #8000 page, scroll start low / high
     // TSConf's latches live in its own state (TsConfState, PLAN #41 phase 1):
     // its decoder reports them itself, they are not EmulatorState fields
 };

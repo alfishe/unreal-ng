@@ -6,6 +6,7 @@
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/video/alco/alcovideomapper.h"
 #include "emulator/video/atm/atmvideomapper.h"
+#include "emulator/video/gmx/gmxvideomapper.h"
 #include "emulator/video/profi/profivideomapper.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/sprinter/sprintervideomapper.h"
@@ -54,6 +55,7 @@ const IVideoMapper& VideoMapService::MapperFor(VideoFamily family)
     static const AlcoVideoMapper alco;
     static const AtmVideoMapper atm;
     static const ProfiVideoMapper profi;
+    static const GmxVideoMapper gmx;
     static const TsConfVideoMapper tsconf;
     static const SprinterVideoMapper sprinter;
     static const NullVideoMapper none;
@@ -63,6 +65,7 @@ const IVideoMapper& VideoMapService::MapperFor(VideoFamily family)
         case VideoFamily::Alco:  return alco;
         case VideoFamily::Atm:   return atm;
         case VideoFamily::Profi: return profi;
+        case VideoFamily::Gmx:   return gmx;
         case VideoFamily::TsConf: return tsconf;
         case VideoFamily::Sprinter: return sprinter;
         default:                 return none;
@@ -102,6 +105,7 @@ VideoState VideoMapService::StateFrom(const VideoLatches& latches, const VideoFr
     s.atmBorderBright = latches.atmBorderBright != 0;
     s.zxScreenPage = latches.activeScreen ? 7 : 5;  // the page the ZX renderer draws from
     s.profiMonochrome = ProfiMonochromeHires(config);
+    s.gmxScrollStart = latches.scrollStart;
     s.atmPalette = state.atm.palette;
     s.profiPalette = state.profi.palette;
     if (_context->pMemory)

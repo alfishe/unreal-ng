@@ -253,7 +253,7 @@ void CLIProcessor::HandlePorts(const ClientSession& session, const std::vector<s
     ss << "  TR-DOS active: " << (((state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0) ? "yes" : "no") << NEWLINE;
     ss << "  Mouse ports: " << (mouseDecoded ? "" : "shadowed - ") << mouseNote << NEWLINE;
 
-    const bool scorpion = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP);
+    const bool scorpion = IsScorpionModel(config.mem_model);
     if (scorpion)
         ss << "  Shadow monitor paged: " << (((state.p1FFD & 0x02) != 0) ? "yes" : "no") << NEWLINE;
     else
@@ -358,6 +358,10 @@ void CLIProcessor::HandlePaging(const ClientSession& session, const std::vector<
     ss << "  #1  0x4000-0x7FFF  RAM p" << (int)memory.GetRAMPageForBank1() << contended(1) << "  [Screen 0]" << NEWLINE;
     ss << "  #2  0x8000-0xBFFF  RAM p" << (int)memory.GetRAMPageForBank2() << contended(2) << NEWLINE;
     ss << "  #3  0xC000-0xFFFF  RAM p" << (int)memory.GetRAMPageForBank3() << contended(3) << NEWLINE;
+
+    // GMX: the card's register file (the /state/paging `gmx` view)
+    if (context->config.mem_model == MM_GMX)
+        ss << NEWLINE << "GMX card:" << NEWLINE << DeviceState::ToText(DeviceState::GmxPaging(context), 1);
 
     session.SendResponse(ss.str());
 }
