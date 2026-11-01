@@ -1,6 +1,6 @@
 # TTD v1 → v2 migration
 
-This folder plans the move of the time-travel debugger (TTD) from the engine on master today (**v1**) to the next one (**v2**). This page is the roadmap: the phases in order, and for each phase what it does, why, and how we know it is complete. The details sit one level down, in the [step notes](migration-trajectory.md) and in each phase's technical design (TDD). Progress is tracked in [TODO.md](TODO.md).
+**Done 2026-10-31:** v2 is the only engine, v1 is deleted ([DONE.md](DONE.md)). This folder planned the move of the time-travel debugger (TTD) from the engine on master then (**v1**) to the next one (**v2**). This page is the roadmap: the phases in order, and for each phase what it does, why, and how we know it is complete. The details sit one level down, in the [step notes](migration-trajectory.md) and in each phase's technical design (TDD). The record of what was done is [DONE.md](DONE.md).
 
 ## 1. Roadmap
 

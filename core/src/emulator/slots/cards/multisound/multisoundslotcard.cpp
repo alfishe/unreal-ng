@@ -340,7 +340,7 @@ void MultiSoundSlotCard::TtdFingerprint(std::vector<std::pair<std::string, uint6
 
 bool MultiSoundSlotCard::TtdSessionMatches(const ttd::TTDDeviceStates& states, std::string& why) const
 {
-    // This card's synthesizer, by the instance its slot names (a v1 file names none: the one there is)
+    // This card's synthesizer, by the instance its slot names (states without instances: the one there is)
     const ttd::TTDDeviceKey key{ttd::TTDDeviceType::Sam2695, SlotId() + "." + MultiSoundCard::kCardId + ".sam2695"};
     const auto found = states.find(key);
     const std::vector<uint8_t>* recordedState =

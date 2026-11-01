@@ -74,7 +74,9 @@ TEST_P(TTDCpuViewStore_Test, FrameStartViewEqualsTheMachineAfterASeek)
     // The models whose windows are what the CPU reads answer every frame start from the store
     const std::string model = GetParam();
     if (model != "NEXT" && model != "SPRINTER")
+    {
         EXPECT_EQ(fromStore, unsigned(last - first + 1));
+    }
     RecordProperty("fromStore", static_cast<int>(fromStore));
 }
 

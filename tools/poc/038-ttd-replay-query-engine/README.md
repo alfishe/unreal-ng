@@ -84,7 +84,7 @@ Observers, the same on every variant where the variant can run them:
   not linked into core or the apps (POC guidelines §4).
 - A clone never reaches host audio, a host file, the haptics feed, the deck or the activity log. Taps on a clone go
   to the POC sink only.
-- No v1 `TimeTravelManager` work. Raw data in `scratch/2026-10-28-poc-038/`.
+- No v1 `TimeTravelManager` work (v1 was deleted in Phase 6 of the TTD v2 migration, 2026-10-30). Raw data in `scratch/2026-10-28-poc-038/`.
 
 ## Acceptance criteria / expected results
 

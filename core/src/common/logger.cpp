@@ -87,39 +87,30 @@ void Logger::OutEnriched(const char* fmt, va_list args)
 void Logger::OutEnriched(string fmt, va_list args)
 {
     size_t time_len = 0;
-    struct tm* tm_info = nullptr;  // Initialize to nullptr
+    // Every thread logs (the emulator threads, the WebAPI, the main one): the time and the text in locals. A static
+    // tm shared by threads let one read it while another's localtime_s had set every field to -1 first (the UCRT
+    // does that before it converts), and MSVC's strftime takes an hour of -1 as an invalid parameter: a fast fail,
+    // 0xC0000409, of the whole process
+    struct tm tm_storage = {};
     struct timeval tv;
-    static char buffer[1024];
+    char buffer[1024];
 
     /// region <Print timestamp>
 
     gettimeofday(&tv, NULL);
 
-#if defined(_WIN32) && defined(_MSC_VER)
-    // MSVC: Use localtime_s (thread-safe)
     time_t rawtime = tv.tv_sec;
-    static struct tm tm_storage = {};
-    errno_t err = localtime_s(&tm_storage, &rawtime);
-    if (err == 0)
-    {
-        tm_info = &tm_storage;
-    }
-    else
-    {
-        // Fallback to zeroed struct
-        tm_info = &tm_storage;
-    }
-#elif defined(__GNUC__)
-    time_t currentTime = time(nullptr);
-    tm_info = localtime(&currentTime);
+#if defined(_WIN32) && defined(_MSC_VER)
+    if (localtime_s(&tm_storage, &rawtime) != 0)
+        tm_storage = {};
+#elif defined(_WIN32)
+    // MinGW: the CRT's localtime keeps its result per thread
+    if (const struct tm* local = localtime(&rawtime))
+        tm_storage = *local;
+#else
+    localtime_r(&rawtime, &tm_storage);
 #endif
-
-    // Fallback if tm_info is still nullptr
-    static struct tm fallback_tm = {};
-    if (tm_info == nullptr)
-    {
-        tm_info = &fallback_tm;
-    }
+    const struct tm* tm_info = &tm_storage;
 
     time_len += strftime(buffer, sizeof(buffer), "[%H:%M:%S", tm_info);
 

@@ -6,7 +6,7 @@
 ///
 /// A connector is to a retro device what a media slot is to a medium: a stable id, an alias, a kind:index
 /// selector, the devices it accepts. The manager builds the list for the machine (Rebuild), plugs devices, takes
-/// the host's samples at the frame boundary and routes every change through TimeTravelManager::SubmitLiveInput:
+/// the host's samples at the frame boundary and routes every change through TimeTravelController::SubmitLiveInput:
 /// Kempston as Joystick, the Next pads as NextPad, the keyboard joysticks as ConnectorState. The keyboard joysticks
 /// are an overlay on the matrix (Keyboard::SetOverlay), ANDed into the half-row reads like a stick wired in
 /// parallel with the keys.
@@ -15,7 +15,7 @@
 /// Refused while the journal owns input. While TTD records they wait for the frame boundary (ApplyPending, before
 /// the checkpoint), so the checkpoint holds them and the configuration fingerprint (`controllers.<connector>`) gives
 /// the recording a ConfigChange cut there: a replay crossing that frame takes the checkpoint, a seek before it
-/// unplugs again. TTD v1 keeps no configuration changes: there plugs are refused while it records. The keyboard
+/// unplugs again. The keyboard
 /// joysticks' devices, options and held controls are the blob of TTDDeviceType::Controllers, on every machine.
 
 #include <array>
@@ -96,7 +96,7 @@ public:
 
     /// region <Plugs (configuration)>
     /// Plug @p device into the connector: fails when the connector does not accept it, is fixed, or replay owns
-    /// input (TTD v1: also while it records). While TTD records the plug waits for the frame boundary (HasPending).
+    /// input. While TTD records the plug waits for the frame boundary (HasPending).
     /// Replacing a device releases what the old one held
     ControllerResult Plug(size_t index, RetroDeviceKind device, const OverlayOptions& options);
     ControllerResult Unplug(size_t index);
@@ -119,7 +119,7 @@ public:
     /// The controls held on the connector a card brought (ICard::Connectors): what the card's port answers from.
     /// 0 when the card has none
     uint16_t OwnedState(const void* owner) const;
-    /// Live input: the whole state of a connector, through TimeTravelManager::SubmitLiveInput (applied directly
+    /// Live input: the whole state of a connector, through TimeTravelController::SubmitLiveInput (applied directly
     /// without TTD). False when refused (the journal owns input) or the connector has no device
     bool Submit(size_t index, uint16_t mask);
     /// The TTD apply point of ConnectorState (live and replay): a keyboard joystick's or card socket's mask. False

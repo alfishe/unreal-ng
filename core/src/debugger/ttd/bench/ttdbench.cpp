@@ -13,11 +13,9 @@
 
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
-#include "debugger/ttd/bench/ttdv1feeder.h"
 #include "debugger/ttd/engine/ttdsessionfile.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelengine.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -29,27 +27,6 @@
 
 namespace ttd
 {
-
-namespace
-{
-/// Memory the engine records and v1 does not at all (D33 exception)
-bool V1Lacks(TTDRegionId id)
-{
-    switch (id)
-    {
-        case TTDRegionId::MoonSoundWaveMemory:
-        case TTDRegionId::NeoGSRam:
-        case TTDRegionId::NeoGSFlash:
-        case TTDRegionId::EvoAvrEeprom:
-        case TTDRegionId::SmucEeprom:
-        case TTDRegionId::EvoFlash:
-        case TTDRegionId::WildSoundFlash:
-            return true;
-        default:
-            return false;
-    }
-}
-}  // namespace
 
 namespace bench
 {
@@ -148,8 +125,6 @@ public:
                 c.input.mouse = set.mouse ? MOUSE_TYPE_KEMPSTON : MOUSE_TYPE_NONE;
         };
 
-        // The harness measures v1 with the engine in shadow: v1 must be the recorder
-        Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::V1);
         EmulatorManager* manager = EmulatorManager::GetInstance();
         _emulator = config.ramKB ? manager->CreateEmulatorWithModelAndRAM("ttd-bench", config.model, config.ramKB,
                                                                           LoggerLevel::LogError, &error, configOverride)
@@ -184,8 +159,6 @@ private:
 /// Start state, set-up actions and settle frames of a workload
 bool Prepare(Emulator& emulator, const Case& c, const Options& options, std::string& error)
 {
-    if (options.journalBytes && emulator.GetContext()->pTimeTravelManager)
-        emulator.GetContext()->pTimeTravelManager->SetWriteJournalCapacity(options.journalBytes);
     const Workload& w = c.workload;
     const std::string path = w.file.empty() || !options.resolveTestData ? w.file : options.resolveTestData(w.file);
     switch (w.start)
@@ -311,177 +284,10 @@ void RunFrames(Emulator& emulator, const Case& c, const Options& options, Engine
 
 /// endregion </Machine>
 
-/// region <Engine v1>
-
-class EngineV1 final : public Engine
-{
-public:
-    std::string Name() const override { return "v1"; }
-
-    bool Start(Emulator& emulator, Mode mode, std::string& error) override
-    {
-        _context = emulator.GetContext();
-        _ttd = _context->pTimeTravelManager;
-        if (!_ttd)
-        {
-            error = "no TimeTravelManager";
-            return false;
-        }
-        _context->pFeatureManager->setFeature(Features::kTimeTravel, true);
-        _ttd->SetEnableWriteJournal(mode != Mode::NoJournal);
-        _ttd->SetEnableCoverageIndex(mode == Mode::JournalCoverage);
-        if (!_ttd->StartRecording())
-        {
-            error = "StartRecording refused";
-            return false;
-        }
-        return true;
-    }
-
-    void Stop() override
-    {
-        if (_ttd)
-            _ttd->StopRecording();
-    }
-
-    uint64_t LastCaptureNs() const override { return _ttd ? _ttd->GetPerfCounters().lastCaptureNs : 0; }
-
-    CaptureWork LastCaptureWork() const override
-    {
-        CaptureWork w;
-        if (!_ttd)
-            return w;
-        const TTDCaptureWork& t = _ttd->GetPerfCounters().lastCaptureWork;
-        w.pagesVisited = t.pagesVisited;
-        w.deltaBaseBytes = t.deltaBaseBytes;
-        w.deviceBlobBytes = t.deviceBlobBytes;
-        w.deviceStateBytes = t.deviceStateBytes;
-        w.bytesScanned = t.bytesScanned;
-        w.compressCalls = t.compressCalls;
-        w.compressInputBytes = t.compressInputBytes;
-        w.slotsDecoded = t.slotsDecoded;
-        return w;
-    }
-    size_t Checkpoints() const override { return _ttd ? _ttd->GetCheckpointCount() : 0; }
-
-    uint64_t FirstFrame() const override
-    {
-        const TTDCheckpoint* cp = _ttd ? _ttd->GetCheckpoint(0) : nullptr;
-        return cp ? cp->time.frame : 0;
-    }
-
-    uint64_t LastFrame() const override
-    {
-        const size_t n = Checkpoints();
-        const TTDCheckpoint* cp = n ? _ttd->GetCheckpoint(n - 1) : nullptr;
-        return cp ? cp->time.frame : 0;
-    }
-
-    uint32_t FrameSpan() const override { return _ttd ? _ttd->FrameSpan() : 0; }
-
-    StreamBytes Bytes() const override
-    {
-        StreamBytes b;
-        if (!_ttd)
-            return b;
-        b.ramPayload = _ttd->GetPageStore().GetLivePayloadBytes();
-        for (size_t i = 0; i < _ttd->GetCheckpointCount(); i++)
-        {
-            const TTDCheckpoint* cp = _ttd->GetCheckpoint(i);
-            b.pageRefs += cp->ramPages.size() * sizeof(TTDPageRef);
-            for (const auto& blob : cp->peripheralBlobs)
-                b.deviceBlobs += blob.second.size();
-            b.checkpointCore += sizeof(TTDCpuState) + sizeof(TTDChipsetState);
-        }
-        if (const TTDWriteJournal* journal = _ttd->GetWriteJournal())
-        {
-            b.writeJournal = journal->Size() * sizeof(TTDWriteRecord);
-            b.journalWritesTotal = journal->SeqHead();
-        }
-        b.inputJournal = _ttd->GetInputJournal().Size() * sizeof(TTDInputEvent);
-        b.coverage = _ttd->GetCoverageIndex().HeapBytes();
-        return b;
-    }
-
-    uint64_t ResidentBytes() const override { return _ttd ? _ttd->GetSessionInfo().sessionHeapBytes : 0; }
-
-    std::vector<std::pair<std::string, uint64_t>> HeapParts() const override
-    {
-        if (!_ttd)
-            return {};
-        const TTDHeapBreakdown h = _ttd->GetHeapBreakdown();
-        return {
-            {"page_store_table", h.pageStoreTable}, {"ram_payload", h.ramPayload},
-            {"ram_payload_slack", h.ramPayloadSlack}, {"checkpoints", h.checkpoints},
-            {"page_refs", h.pageRefs}, {"device_blobs", h.deviceBlobs},
-            {"input_journals", h.inputJournals}, {"write_journal", h.writeJournal},
-            {"write_journal_slack", h.writeJournalSlack}, {"coverage", h.coverage},
-            {"coverage_slack", h.coverageSlack}, {"port_reads", h.portReads},
-            {"port_writes", h.portWrites}, {"port_journal_slack", h.portJournalSlack},
-            {"frame_cache", h.frameCache},
-        };
-    }
-
-    bool Seek(uint64_t frame, uint32_t tInFrame, SeekTiming& out) override
-    {
-        TTDTimePoint target;
-        target.frame = frame;
-        target.tInFrame = tInFrame;
-        const Clock::time_point start = Clock::now();
-        const bool ok = _ttd->SeekTo(target);
-        out.totalUs = ElapsedUs(start, Clock::now());
-        const TTDPerfCounters& perf = _ttd->GetPerfCounters();
-        out.cpuChipsetUs = static_cast<double>(perf.lastRestoreCpuChipsetNs) / 1000.0;
-        out.devicesUs = static_cast<double>(perf.lastRestoreDevicesNs) / 1000.0;
-        out.memoryUs = static_cast<double>(perf.lastRestoreMemoryNs) / 1000.0;
-        out.screenUs = static_cast<double>(perf.lastRestoreScreenNs) / 1000.0;
-        out.restoreUs = static_cast<double>(perf.lastRestoreTotalNs()) / 1000.0;
-        out.replayUs = static_cast<double>(perf.lastReplayNs) / 1000.0;
-        out.presentUs = static_cast<double>(perf.lastPresentNs) / 1000.0;
-        out.otherUs = std::max(0.0, out.totalUs - out.restoreUs - out.replayUs - out.presentUs);
-        return ok;
-    }
-
-    bool Save(const std::string& path, uint64_t& bytes, std::string& error) override
-    {
-        std::ofstream file(FileHelper::ToFsPath(path), std::ios::binary | std::ios::trunc);
-        if (!file || !_ttd->SerializeSession(file, error))
-            return false;
-        file.flush();
-        bytes = static_cast<uint64_t>(file.tellp());
-        return static_cast<bool>(file);
-    }
-
-    bool Load(Emulator& emulator, const std::string& path, std::string& error) override
-    {
-        _context = emulator.GetContext();
-        _ttd = _context->pTimeTravelManager;
-        _context->pFeatureManager->setFeature(Features::kTimeTravel, true);
-        std::ifstream file(FileHelper::ToFsPath(path), std::ios::binary);
-        return file && _ttd->DeserializeSession(file, error);
-    }
-
-    uint64_t CaptureNow() override
-    {
-        _ttd->OnFrameBoundary();
-        return _ttd->GetPerfCounters().lastCaptureNs;
-    }
-
-    /// The recorded v1 session (the time-travel engine records next to it)
-    TimeTravelManager* Manager() const { return _ttd; }
-
-private:
-    EmulatorContext* _context = nullptr;
-    TimeTravelManager* _ttd = nullptr;
-};
-
-/// endregion </Engine v1>
-
 /// region <Engine: the controller>
 
 /// The engine as the application runs it since the Phase 5 switch: the
-/// TimeTravelController records, seeks and saves on its own, with no v1 in the
-/// frame (PR-1 on the engine alone). Wired onto the machine the way
+/// TimeTravelController records, seeks and saves on its own (PR-1). Wired onto the machine the way
 /// Emulator::Init wires it (hooks, write sink, pTimeTravelController); the
 /// machine owns it
 namespace
@@ -643,12 +449,12 @@ public:
     }
 
 private:
-    /// The machine owns the controller (Emulator::Release deletes it), as it owns v1's
-    /// manager: this engine only points at the one of the machine it works on
+    /// The machine owns the controller (Emulator::Release deletes it): this engine
+    /// only points at the one of the machine it works on
     bool Wire(Emulator& emulator, std::string& error)
     {
         _context = emulator.GetContext();
-        if (!_context || !_context->pTimeTravelManager)
+        if (!_context)
         {
             error = "no time travel on this machine";
             return false;
@@ -669,182 +475,6 @@ private:
 };
 
 /// endregion </Engine: the controller>
-
-/// region <Engine: TimeTravelEngine>
-
-/// The time-travel engine (docs/inprogress/2026-09-25-ttd-v2-migration/).
-/// Phase 1, Step 4: it records the running emulator in shadow mode, next to
-/// v1 (TimeTravelManager::SetShadowEngine), so its capture time, counted
-/// work, bytes and memory are its own on every case; seek and file metrics
-/// come as the engine gains them
-class EngineTimeTravel final : public Engine
-{
-public:
-    std::string Name() const override { return "engine"; }
-
-    Capabilities Supports() const override
-    {
-        Capabilities c;
-        c.liveCapture = true;
-        c.seek = false;
-        c.seekMemory = true;
-        c.saveLoad = false;
-        c.save = true;   // the session file (Phase 4); loading into a machine comes with Phase 5
-        return c;
-    }
-
-    bool Start(Emulator& emulator, Mode mode, std::string& error) override
-    {
-        _engine.EndSession();
-        // UNREAL_TTD_ENGINE_SNAPSHOT_INTERVAL: full reference table every N checkpoints, to measure alternatives
-        if (const char* v = std::getenv("UNREAL_TTD_ENGINE_SNAPSHOT_INTERVAL"); v && *v)
-            _engine.SetSnapshotInterval(static_cast<uint32_t>(std::strtoul(v, nullptr, 10)));
-        _feedError.clear();
-        if (!_recorder.Start(emulator, mode, error))
-            return false;
-        _recorder.Manager()->SetShadowEngine(&_engine);
-        return true;
-    }
-
-    void Stop() override
-    {
-        if (TimeTravelManager* v1 = _recorder.Manager())
-            v1->SetShadowEngine(nullptr);
-        _recorder.Stop();
-        if (!_engine.IsSessionOpen())
-            _feedError = "the shadow engine holds no session";
-    }
-
-    uint64_t LastCaptureNs() const override { return _engine.LastCaptureNs(); }
-    CaptureWork LastCaptureWork() const override
-    {
-        const TTDEngineCaptureWork& e = _engine.LastCaptureWork();
-        CaptureWork w;
-        w.pagesVisited = e.piecesOffered / 4;   // pieces handed over, in 16 KB pages like v1's count
-        w.deltaBaseBytes = e.deltaBaseBytes;
-        w.bytesScanned = e.piecesOffered * kTTDPieceSize;
-        w.compressCalls = e.compressCalls;
-        w.compressInputBytes = e.compressInputBytes;
-        w.deviceBlobBytes = e.deviceBlobBytes;
-        w.deviceStateBytes = e.deviceStateBytes;
-        w.bytesScannedRam = uint64_t(_engine.LastPiecesOffered(0)) * kTTDPieceSize;
-        for (uint32_t r = 1; r < _engine.Regions().size(); ++r)
-            if (V1Lacks(_engine.Regions()[r].id))
-                w.bytesScannedV1Lacks += uint64_t(_engine.LastPiecesOffered(r)) * kTTDPieceSize;
-        return w;
-    }
-    size_t Checkpoints() const override { return _engine.CheckpointCount(); }
-    uint64_t FirstFrame() const override { return _engine.Frames().FirstFrame(); }
-    uint64_t LastFrame() const override { return _engine.Frames().LastFrame(); }
-    uint32_t FrameSpan() const override { return _recorder.FrameSpan(); }
-
-    std::vector<RegionStat> RegionStats() const override { return RegionStatsOf(_engine); }
-
-    StreamBytes Bytes() const override
-    {
-        StreamBytes b;
-        b.ramPayload = _engine.RegionPayloadBytes(0);   // machine RAM, as v1's ramPayload
-        b.versions = _engine.RegionVersionCount(0);
-        for (uint32_t r = 1; r < _engine.Regions().size(); ++r)
-        {
-            if (_engine.IsDeviceStateRegion(r))
-            {
-                // Device states (Phase 2): stored only when they change, as differences
-                b.deviceBlobs += _engine.RegionPayloadBytes(r);
-                b.versions += _engine.RegionVersionCount(r);
-                // UNREAL_TTD_BENCH_DEVICE_BYTES: each device's bytes (diagnostics, stderr)
-                if (std::getenv("UNREAL_TTD_BENCH_DEVICE_BYTES"))
-                    std::fprintf(stderr, "device bytes %s: %llu in %llu versions\n", _engine.Regions()[r].name.c_str(),
-                                 static_cast<unsigned long long>(_engine.RegionPayloadBytes(r)),
-                                 static_cast<unsigned long long>(_engine.RegionVersionCount(r)));
-                continue;
-            }
-            b.deviceRegions += _engine.RegionPayloadBytes(r);
-            if (V1Lacks(_engine.Regions()[r].id))
-            {
-                b.deviceRegionsV1Lacks += _engine.RegionPayloadBytes(r);
-                b.versionsV1Lacks += _engine.RegionVersionCount(r);
-            }
-            b.versions += _engine.RegionVersionCount(r);
-        }
-        b.pageRefs = _engine.ReferenceBytes();
-        for (size_t i = 0; i < _engine.CheckpointCount(); i++)
-        {
-            b.checkpointCore += sizeof(TTDCpuState) + sizeof(TTDChipsetState);
-        }
-        return b;
-    }
-
-    uint64_t ResidentBytes() const override { return _engine.HeapBreakdown().Total(); }
-
-    std::vector<std::pair<std::string, uint64_t>> HeapParts() const override
-    {
-        const TTDEngineHeapBreakdown h = _engine.HeapBreakdown();
-        return {
-            {"piece_versions", h.pieceVersions}, {"ram_payload", h.piecePayload},
-            {"arena_slack", h.arenaSlack}, {"reference_tables", h.referenceTables},
-            {"delta_base", h.deltaBase}, {"checkpoints", h.checkpoints},
-            {"device_blobs", h.deviceBlobs}, {"frame_table", h.frameTable},
-            {"event_log", h.eventLog}, {"port_reads", h.portReads},
-            {"port_writes", h.portWrites}, {"port_journal_slack", h.portJournalSlack},
-            {"media_reads", h.mediaReads},   // v1 has no such journal: not in D33's sum
-            {"bus_vectors", h.busVectors},   // nor this one
-            {"write_journal", h.writeJournal},
-        };
-    }
-
-    /// Frame-aligned memory restore only (Phase 1, Step 5): CPU, devices and
-    /// the picture come with the switch to the engine
-    bool Seek(uint64_t frame, uint32_t tInFrame, SeekTiming& out) override
-    {
-        const int64_t index = _engine.CheckpointIndexOf({0, frame, 0});
-        if (tInFrame != 0 || index < 0)
-            return false;
-        TTDRestoreStats stats;
-        const auto start = std::chrono::steady_clock::now();
-        const bool ok = _engine.RestoreToMemory(static_cast<size_t>(index), nullptr, &stats).Ok();
-        out = SeekTiming{};
-        out.memoryUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
-        out.restoreUs = out.memoryUs;
-        out.totalUs = out.memoryUs;
-        out.piecesDecoded = static_cast<double>(stats.piecesDecoded);
-        return ok;
-    }
-    bool Save(const std::string& path, uint64_t& bytes, std::string& error) override
-    {
-        std::error_code ec;
-        std::filesystem::remove(FileHelper::ToFsPath(path), ec);
-        TTDFileSink sink(path);
-        if (!sink.Valid())
-        {
-            error = sink.Error();
-            return false;
-        }
-        if (!TTDSessionFile::Save(_engine, sink, error))
-            return false;
-        bytes = sink.Size();
-        return true;
-    }
-    bool Load(Emulator&, const std::string&, std::string& error) override
-    {
-        error = "the engine has no file before Phase 4";
-        return false;
-    }
-    uint64_t CaptureNow() override
-    {
-        _recorder.CaptureNow();
-        return _engine.LastCaptureNs();
-    }
-
-    std::string LastError() const override { return _feedError; }
-
-private:
-    EngineV1 _recorder;
-    TimeTravelEngine _engine;
-    std::string _feedError;
-};
-
-/// endregion </Engine: TimeTravelEngine>
 
 /// region <Measurements>
 
@@ -1010,15 +640,11 @@ std::string PeripheralSet::Name() const
 
 std::vector<std::string> EngineNames()
 {
-    return {"v1", "engine", "controller"};
+    return {"controller"};
 }
 
 std::unique_ptr<Engine> CreateEngine(const std::string& name)
 {
-    if (name == "v1")
-        return std::make_unique<EngineV1>();
-    if (name == "engine")
-        return std::make_unique<EngineTimeTravel>();
     if (name == "controller")
         return std::make_unique<EngineController>();
     return nullptr;
@@ -1027,108 +653,6 @@ std::unique_ptr<Engine> CreateEngine(const std::string& name)
 /// endregion </Engines>
 
 /// region <Runner>
-
-Result RunE7(const Case& c, const std::string& sessionFile)
-{
-    Result r;
-    Machine machine(c.config, r.error);
-    Emulator* emulator = machine.Get();
-    std::unique_ptr<Engine> v1 = CreateEngine("v1");
-    if (!emulator || !v1 || !v1->Load(*emulator, sessionFile, r.error))
-    {
-        if (r.error.empty())
-            r.error = "cannot load " + sessionFile;
-        return r;
-    }
-    EmulatorContext* context = emulator->GetContext();
-    TimeTravelManager* ttd = context->pTimeTravelManager;
-    const TTDWriteJournal* journal = ttd->GetWriteJournal();
-    const size_t count = ttd->GetCheckpointCount();
-    if (!journal || journal->HasEvictedRecords() || count < 3)
-    {
-        r.error = "the session's write journal does not hold its whole history";
-        return r;
-    }
-    Metrics& m = r.metrics;
-    m["e7_frames"] = static_cast<double>(count);
-    using Clock = std::chrono::steady_clock;
-
-    // The coverage index walked over the whole session for an address no
-    // frame wrote (a page this machine does not have)
-    const uint64_t first = ttd->GetCheckpoint(0)->time.frame;
-    const uint64_t last = ttd->GetCheckpoint(count - 1)->time.frame;
-    double best = 0, firstWalk = 0;
-    uint64_t scanned = 0;
-    for (int repeat = 0; repeat < 3; ++repeat)
-    {
-        const Clock::time_point t0 = Clock::now();
-        const TTDCoverageScanResult scan =
-            ttd->QueryCoverageScan(first, last, TTDCoverageKind::Written, 0xC000, 0xC000, PhysPage(0xFE), 1);
-        const double ns = static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count());
-        scanned = scan.scannedFrames;
-        if (!scan.indexAvailable || scanned == 0)
-        {
-            r.error = "the session has no coverage index";
-            return r;
-        }
-        best = repeat == 0 ? ns : std::min(best, ns);
-        if (repeat == 0)
-            firstWalk = ns;
-    }
-    m["e7_walk_frames"] = static_cast<double>(scanned);
-    m["e7_walk_ns_per_frame"] = best / static_cast<double>(scanned);
-    m["e7_walk_ns_per_frame_first"] = firstWalk / static_cast<double>(scanned);
-
-    // One frame's writes regenerated by replay, against the journal's records
-    // of the frame: (from, to], where its checkpoint's CPU and the next one's stood
-    const uint64_t units = ttd->FrameSpan() / std::max(1u, context->config.frame);
-    auto at = [&](size_t index) {
-        const TTDCheckpoint* cp = ttd->GetCheckpoint(index);
-        return ttd->GlobalT(cp->time) + GetChipsetCpuTInFrame(cp->chipset) * units;
-    };
-    const size_t samples = std::min<size_t>(200, count - 1);
-    std::vector<double> regenUs;
-    std::vector<TTDSearchResult> hits;
-    std::vector<TTDWriteRecord> recorded;
-    uint64_t seq = journal->SeqTail();
-    size_t mismatches = 0, refused = 0, writes = 0;
-    for (size_t s = 0; s < samples; ++s)
-    {
-        const size_t i = s * (count - 1) / samples;
-        const uint64_t from = at(i), to = at(i + 1);
-        recorded.clear();
-        while (seq < journal->SeqHead() && journal->RecordAt(seq).globalT <= from)
-            ++seq;
-        for (uint64_t k = seq; k < journal->SeqHead() && journal->RecordAt(k).globalT <= to; ++k)
-            if (!journal->RecordAt(k).isIo)
-                recorded.push_back(journal->RecordAt(k));
-
-        const Clock::time_point t0 = Clock::now();
-        const bool ok = ttd->RegenerateFrameWrites(ttd->GetCheckpoint(i)->time.frame, hits);
-        const double us =
-            static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count()) / 1000.0;
-        if (!ok)
-        {
-            ++refused;
-            continue;
-        }
-        regenUs.push_back(us);
-        writes += hits.size();
-        bool same = hits.size() == recorded.size();
-        for (size_t k = 0; same && k < hits.size(); ++k)
-            same = ttd->GlobalT(hits[k].time) == recorded[k].globalT && hits[k].addr == recorded[k].addr &&
-                   hits[k].value == recorded[k].value && hits[k].pc == recorded[k].m1pc &&
-                   static_cast<uint8_t>(hits[k].physPage) == recorded[k].physPage;
-        mismatches += same ? 0 : 1;
-    }
-    m["e7_regen_frames"] = static_cast<double>(regenUs.size());
-    m["e7_regen_refused_frames"] = static_cast<double>(refused);
-    m["e7_regen_mismatch_frames"] = static_cast<double>(mismatches);
-    m["e7_regen_writes_per_frame"] = regenUs.empty() ? 0.0 : static_cast<double>(writes) / static_cast<double>(regenUs.size());
-    AddPercentiles(m, "e7_regen_us", regenUs);
-    r.ok = true;
-    return r;
-}
 
 bool IsByteMetric(const std::string& name)
 {
@@ -1188,7 +712,6 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
             m["bm2_work_delta_base_bpf"] = static_cast<double>(work.deltaBaseBytes) * perFrame;
             m["bm2_work_device_blobs_bpf"] = static_cast<double>(work.deviceBlobBytes) * perFrame;
             m["bm2_work_device_state_bpf"] = static_cast<double>(work.deviceStateBytes) * perFrame;
-            m["bm2_work_scanned_v1_lacks_bpf"] = static_cast<double>(work.bytesScannedV1Lacks) * perFrame;
             m["bm2_work_scanned_ram_bpf"] = static_cast<double>(work.bytesScannedRam) * perFrame;
             m["bm2_work_scanned_bpf"] = static_cast<double>(work.bytesScanned) * perFrame;
             m["bm2_work_compress_calls_opf"] = static_cast<double>(work.compressCalls) * perFrame;
@@ -1207,8 +730,6 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         m["bm3_input_journal_bpf"] = static_cast<double>(b.inputJournal) / n;
         m["bm3_coverage_bpf"] = static_cast<double>(b.coverage) / n;
         m["bm3_device_regions_bpf"] = static_cast<double>(b.deviceRegions) / n;
-        m["bm3_device_regions_v1_lacks_bpf"] = static_cast<double>(b.deviceRegionsV1Lacks) / n;
-        m["bm3_versions_v1_lacks_share"] = b.versions ? static_cast<double>(b.versionsV1Lacks) / b.versions : 0.0;
         m["bm3_total_bpf"] = static_cast<double>(b.Total()) / n;
         // Writes per frame over the whole session: the journal's bytes above
         // stop growing once its ring is full, this count does not

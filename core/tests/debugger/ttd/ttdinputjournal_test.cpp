@@ -390,9 +390,8 @@ class TTD_InputJournalGS_Test : public ::testing::Test
 {
 protected:
     // Keep the General Sound card the ATM710 config fits. The shipped config
-    // fits NeoGS (GSType=NGS); SetUp switches the slot to the classic card:
-    // NeoGS card memory is not in TTD v1 checkpoints, so its replay after a
-    // seek waits for TTD v2 memory regions
+    // fits NeoGS (GSType=NGS); SetUp switches the slot to the classic card
+    // (chosen when v1's checkpoints left the NeoGS card memory out)
     SoundCardScope _soundCards{TestSound::GeneralSound};
 
     Emulator* _emulator = nullptr;

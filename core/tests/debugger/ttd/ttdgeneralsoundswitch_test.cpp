@@ -13,7 +13,6 @@
 #include "_helpers/ttdrecordedstate.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/ttddumpformat.h"
 #include "debugger/ttd/ttdfileinfo.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "debugger/ttd/ttdserializable.h"
@@ -191,9 +190,8 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchWithoutRecordingIsUnaffected)
     EXPECT_EQ(context->pTimeTravelController->GetState(), ttd::TTDSessionState::Idle);
 }
 
-/// NeoGS records on TTD v1: every checkpoint carries the card's registers and
-/// device state, never its RAM or flash - v1 does not record them; the engine
-/// records them as regions 4 and 5 (neogs-tdd.md §7.4)
+/// NeoGS's blob carries the card's registers and device state, never its RAM
+/// or flash: the engine records them as regions 4 and 5 (neogs-tdd.md §7.4)
 TEST_F(TTDGeneralSoundSwitch_Test, NeoGSCheckpointsLeaveTheCardMemoryOut)
 {
     ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::NGS));

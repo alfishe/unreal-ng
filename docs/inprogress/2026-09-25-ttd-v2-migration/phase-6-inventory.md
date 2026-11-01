@@ -1,8 +1,11 @@
 # Phase 6 inventory: what still depends on TTD v1
 
+**Status: executed 2026-10-30** - v1 deleted with everything below; the v1 `.ttd` fixtures remain until no test
+names them ([TODO](DONE.md), Phase 6).
+
 What has to change when `TimeTravelManager` (v1) is deleted - not before 2026-10-22 (owner decision 2026-10-08: the
 engine runs as the default for two weeks first). Taken 2026-10-09 on master `2c61f1b7d` with the preparation done
-the same day (below), so the deletion itself is mechanical. [TODO](TODO.md), Phase 6.
+the same day (below), so the deletion itself is mechanical. [TODO](DONE.md), Phase 6.
 
 ## 1. Done ahead (2026-10-09)
 

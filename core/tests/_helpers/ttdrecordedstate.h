@@ -15,7 +15,7 @@
 
 namespace ttdtest
 {
-/// The recorded state of the device v1 knows as @p id at checkpoint @p index;
+/// The recorded state of the device with legacy id @p id at checkpoint @p index;
 /// empty when the device is not in the recording or had no state there
 inline std::vector<uint8_t> RecordedDeviceState(const ttd::TimeTravelController& controller, size_t index,
                                                 ttd::PeripheralId id)
@@ -27,7 +27,7 @@ inline std::vector<uint8_t> RecordedDeviceState(const ttd::TimeTravelController&
     return state;
 }
 
-/// The same for device @p key (a device without a v1 id, one of several instances of a type)
+/// The same for device @p key (a device without a legacy id, one of several instances of a type)
 inline std::vector<uint8_t> RecordedDeviceState(const ttd::TimeTravelController& controller, size_t index,
                                                 const ttd::TTDDeviceKey& key)
 {

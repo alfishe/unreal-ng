@@ -476,7 +476,7 @@ TEST(TTDPeripheralHashTest, EmptyRegistryContributesZero)
 
 namespace
 {
-/// A device added after the v1 ids froze: a type past them, no v1 id, its instance given
+/// A device added after the legacy ids froze: a type past them, no legacy id, its instance given
 class KeyedPeripheral : public TTDSerializable
 {
 public:
@@ -497,7 +497,7 @@ private:
     std::string _instance;
 };
 
-constexpr auto kNewType = static_cast<TTDDeviceType>(66);   // the first type without a v1 id
+constexpr auto kNewType = static_cast<TTDDeviceType>(66);   // the first type without a legacy id
 
 /// A device whose state carries memory it offers as engine regions: the registry pairs the two by object
 class RegionPeripheral : public MockPeripheral, public ITTDRegionSource
@@ -514,8 +514,8 @@ public:
 };
 }  // namespace
 
-/// The first device past the v1 ids records through the engine's capture: its state is kept per entry, v1 cannot
-/// take it and says which device
+/// The first device past the legacy ids records through the engine's capture: its state is kept per entry;
+/// the blob map by legacy id leaves it out
 TEST_F(TTDPeripheralRegistryTest, DeviceWithoutV1IdIsCapturedAndRefusedByV1)
 {
     MockPeripheral ay(32, PeripheralId::TurboSound);
@@ -534,13 +534,9 @@ TEST_F(TTDPeripheralRegistryTest, DeviceWithoutV1IdIsCapturedAndRefusedByV1)
     EXPECT_EQ(registry.LastCaptureState(1), next._state);
     EXPECT_EQ(registry.LastCaptureStateBytes(), 32u + 40u);
 
-    std::string why;
-    EXPECT_FALSE(registry.V1Recordable(why));
-    EXPECT_NE(why.find("next.uart0"), std::string::npos) << why;
-
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     registry.CaptureAll(blobs);
-    EXPECT_EQ(blobs.size(), 1u) << "v1's blobs hold only the devices with a v1 id";
+    EXPECT_EQ(blobs.size(), 1u) << "the blobs by legacy id hold only the devices with a legacy id";
 }
 
 /// Two instances of one type sit side by side under their instance names; one key twice is refused
@@ -592,7 +588,7 @@ TEST_F(TTDPeripheralRegistryTest, NotRecordedAndUnregisterType)
     EXPECT_TRUE(registry.NotRecorded().empty());
 }
 
-/// A live snapshot carries every device, those without a v1 id too
+/// A live snapshot carries every device, those without a legacy id too
 TEST_F(TTDPeripheralRegistryTest, LiveSnapshotCarriesDevicesWithoutV1Id)
 {
     MockPeripheral tape(8, PeripheralId::Tape);
@@ -622,23 +618,16 @@ TEST_F(TTDPeripheralRegistryTest, RegionSourcePairsWithItsDevice)
     EXPECT_EQ(registry.LastCaptureState(0), std::vector<uint8_t>(2, 0x5A));
 }
 
-/// v1 blobs as device states: under the live device's key
-TEST_F(TTDPeripheralRegistryTest, V1BlobsBecomeStatesByLiveKey)
+/// A not-recorded mask of session facts version 1-2 (a bit per legacy id): one key per bit, by the id's type
+TEST_F(TTDPeripheralRegistryTest, LegacyMaskGivesAKeyPerBit)
 {
-    MockPeripheral gs(16, PeripheralId::NeoGS);
-    ASSERT_TRUE(registry.Register(&gs, "zxbus.2.neogs"));
-    std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
-    registry.CaptureAll(blobs);
-    const std::vector<uint8_t> tape(4, 1);
-    blobs[static_cast<uint8_t>(PeripheralId::Tape)] =
-        TTDPeripheralRegistry::EncodeBlob(static_cast<uint8_t>(PeripheralId::Tape), tape.data(), tape.size());
-    const TTDDeviceStates states = registry.StatesOfV1Blobs(blobs);
-    ASSERT_EQ(states.size(), 2u);
-    EXPECT_EQ(states.count({TTDDeviceType::NeoGS, "zxbus.2.neogs"}), 1u);
-    EXPECT_EQ(states.at({TTDDeviceType::Tape, ""}), tape);
     PeripheralMask mask = PeripheralMask::FromLow(0x801);
     mask.Set(static_cast<uint8_t>(PeripheralId::JoystickSerialPeer));   // an id past 63: the mask's second word
-    EXPECT_EQ(TTDPeripheralRegistry::V1MaskOf(TTDPeripheralRegistry::KeysOfV1Mask(mask)), mask);
+    const std::vector<TTDDeviceKey> keys = TTDPeripheralRegistry::KeysOfV1Mask(mask);
+    ASSERT_EQ(keys.size(), 3u);
+    EXPECT_EQ(keys[0], (TTDDeviceKey{static_cast<TTDDeviceType>(0), {}}));
+    EXPECT_EQ(keys[1], (TTDDeviceKey{static_cast<TTDDeviceType>(11), {}}));
+    EXPECT_EQ(keys[2], (TTDDeviceKey{static_cast<TTDDeviceType>(PeripheralId::JoystickSerialPeer), {}}));
 }
 
 // endregion </D23>

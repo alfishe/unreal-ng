@@ -1,6 +1,6 @@
 #pragma once
 
-// MCP smart tools: debug_code + analyze_performance
+// MCP smart tools: debug_code + analyze_performance + analysis
 //
 // debug_code — low-level code workflows: disassemble, in-process assemble,
 //              byte-pattern search and one-shot call tracing.
@@ -18,5 +18,10 @@ void RegisterDebugCode(ToolRegistry& registry);
 
 /// Registers the analyze_performance tool
 void RegisterAnalyzePerformance(ToolRegistry& registry);
+
+/// Registers the analysis tool: the analysis layers (docs/emulator/analysis/analysis-layers.md), one tool with an
+/// action (start, stop, status, explain); the calls are counted per action (host.clients.mcp.tools) so a split into
+/// several tools can be decided on use
+void RegisterAnalysis(ToolRegistry& registry);
 
 } // namespace mcp

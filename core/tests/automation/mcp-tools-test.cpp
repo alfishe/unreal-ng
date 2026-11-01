@@ -4247,6 +4247,62 @@ TEST_F(McpTools_Test, TimeTravel_MemoryAtMemoryDiffAndCoverageSpace)
     args["tinframe"] = 100;
     EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "memory_diff takes no tinframe";
     EXPECT_EQ(_caller->calls.size(), calls);
+
+    // Space cpu without frame: the machine now, said so in the text
+    Json::Value now;
+    now["space"] = "cpu";
+    now["offset"] = 0x9000;
+    now["length"] = 2;
+    now["at_frame"] = 40;
+    now["at_tinframe"] = 1234;
+    now["live"] = true;
+    now["exact"] = true;
+    now["hex"] = "A15A";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/memory-at"] = {200, now};
+    args = Json::Value();
+    args["action"] = "memory_at";
+    args["space"] = "cpu";
+    args["offset"] = "0x9000";
+    args["length"] = 2;
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_FALSE(_caller->Last("POST", "/api/v1/emulator/emu-1/ttd/memory-at")->body.isMember("frame"));
+    EXPECT_NE(result.text.find("as at frame 40 t=1234 (the machine now): A15A"), std::string::npos) << result.text;
+}
+
+// reverse_continue first_per_pc reaches the WebAPI; the PCs without a hit are in the text; find_last refuses it
+TEST_F(McpTools_Test, TimeTravel_ReverseContinueFirstPerPc)
+{
+    Json::Value reply;
+    reply["matched"] = true;
+    reply["pc"] = 0x8200;
+    reply["count"] = 1;
+    reply["truncated"] = false;
+    Json::Value hit;
+    hit["frame"] = 12;
+    hit["tinframe"] = 300;
+    hit["t"] = 840300;
+    hit["pc"] = 0x8200;
+    hit["phys_page"] = 2;
+    reply["hits"].append(hit);
+    reply["pcs_without_hit"].append(0x9999);
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-continue"] = {200, reply};
+    Json::Value args;
+    args["action"] = "reverse_continue";
+    args["pcs"].append("0x8200");
+    args["pcs"].append("0x9999");
+    args["first_per_pc"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Last("POST", "/api/v1/emulator/emu-1/ttd/reverse-continue")->body["first_per_pc"].asBool());
+    EXPECT_NE(result.text.find("PC 0x8200"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("No hit in the window: 0x9999"), std::string::npos) << result.text;
+
+    args = Json::Value();
+    args["action"] = "find_last";
+    args["addr"] = "0x8000";
+    args["first_per_pc"] = true;
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError);
 }
 
 // The loopback client sends the path the tools built: their percent-encoding is kept, not
@@ -4826,6 +4882,45 @@ TEST_F(McpTools_Test, TimeTravel_AnalysisListsAreInTheText)
     EXPECT_NE(result.text.find("39-37, 33, 30"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("to_frame=29"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("Not exact"), std::string::npos) << result.text;
+
+    // coverage_rare: the blocks in the text, a CPU address or the page offsets
+    Json::Value rare;
+    rare["index_available"] = true;
+    rare["kind"] = "executed";
+    rare["max_frames"] = 2;
+    rare["scanned_frames"] = 40;
+    rare["unindexed_frames"] = 0;
+    rare["distinct_keys"] = 310;
+    rare["rare_keys"] = 12;
+    rare["rare_blocks"] = 2;
+    rare["truncated"] = false;
+    Json::Value routine;
+    routine["addr_from"] = "0x8200";
+    routine["addr_to"] = "0x8212";
+    routine["phys_page"] = 2;
+    routine["page_offset_from"] = "0x0200";
+    routine["page_offset_to"] = "0x0212";
+    routine["keys"] = 9;
+    for (int f : {3, 4, 5})
+        routine["frames"].append(f);
+    rare["blocks"].append(routine);
+    Json::Value unmapped;
+    unmapped["phys_page"] = 3;
+    unmapped["page_offset_from"] = "0x0000";
+    unmapped["page_offset_to"] = "0x0000";
+    unmapped["keys"] = 1;
+    unmapped["frames"].append(17);
+    rare["blocks"].append(unmapped);
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/coverage/rare?addr_from=0x8000&max_frames=2"] = {200, rare};
+    args = Json::Value();
+    args["action"] = "coverage_rare";
+    args["addr_from"] = "0x8000";
+    args["max_frames"] = 2;
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("12 of 310 executed addresses in at most 2 frames, 2 blocks"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("0x8200..0x8212 page 2 (9 addr): frames 3-5"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("offset 0x0000..0x0000 page 3 (1 addr): frames 17"), std::string::npos) << result.text;
 
     Json::Value at;
     at["space"] = "cpu";

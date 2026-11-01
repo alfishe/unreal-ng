@@ -1,0 +1,37 @@
+; Synthetic reference (decimal, SkoolKit skool syntax)
+
+@isub+begin
+c32760 JP 32768
+@isub+end
+
+; Start
+;
+; Sets A.
+@label=START
+c32768 LD A,1        ; one
+                     ; continuation line
+ 32770 RET
+
+; Sprite
+;
+; #UDGARRAY2,7,4,2(32771-32786-1-16)(sprite)
+b32771 DEFB 1,2,3,4,5,6,7,8
+ 32779 DEFB 1,2,3,4,5,6,7,8
+; Mask #UDGARRAY2,7,4,2(32787-32802-1-16)(mask)
+ 32787 DEFB 0,0,0,0,0,0,0,0
+ 32795 DEFB 0,0,0,0,0,0,0,0
+
+; Message
+t32803 DEFM "H;",13  ; quoted semicolon
+
+; Record
+g32806 DEFB 0        ; attribute
+ 32807 DEFW 0        ; address
+ 32809 DEFB 0        ; length
+
+; Second routine
+c32810 XOR A
+ 32811 RET
+
+; Leftover
+u32812 DEFS 4

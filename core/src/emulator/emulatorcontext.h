@@ -62,7 +62,7 @@ class IMachineOps;
 
 // TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
-namespace ttd { class TimeTravelManager; class TimeTravelController; class ITimeTravelHooks; class ITTDWriteSink; class TTDCoverageIndex; class TTDAccessProbe; class TTDPortJournal; class ITTDDisplayParticipant; }
+namespace ttd { class TimeTravelController; class ITimeTravelHooks; class ITTDWriteSink; class TTDCoverageIndex; class TTDAccessProbe; class TTDPortJournal; class ITTDDisplayParticipant; }
 namespace rzx { class RzxPlayer; }
 
 #include "debugger/ttd/ttdprobe.h"  // inline member - needs full definition
@@ -259,15 +259,11 @@ public:
     // Feature toggle manager
     FeatureManager* pFeatureManager = nullptr;
 
-    // Time-travel debugging manager (owned by Emulator, lives across the
-    // lifetime of the context). May be null on minimal builds without TTD.
-    ttd::TimeTravelManager* pTimeTravelManager = nullptr;
     /// What the core calls into time travel (frame boundary, loads, input, guards): the
-    /// same object as pTimeTravelManager until the engine takes over (Phase 5). Null when
-    /// time travel is not constructed. The core uses this pointer; surfaces use the manager
+    /// controller below. Null when time travel is not constructed
     ttd::ITimeTravelHooks* pTimeTravelHooks = nullptr;
-    /// The engine's controller when this instance runs one (Phase 5): then it is
-    /// also pTimeTravelHooks, and the verbs (TTDControl) drive it. Null otherwise
+    /// The time-travel controller (owned by Emulator, lives across the lifetime of the
+    /// context); the verbs (TTDControl) drive it. Null on a bare context
     ttd::TimeTravelController* pTimeTravelController = nullptr;
 
     // Media manager: every storage slot and the media in them (owned by
@@ -286,7 +282,7 @@ public:
 
     // TTD silent-replay mode flag (parent TDD 8.2 + Appendix C).
     //
-    // Set by TimeTravelManager::EnterReplayMode() before any intra-frame
+    // Set by TimeTravelController::EnterReplayMode() before any intra-frame
     // replay (SeekTo with tInFrame > 0, StepBackInstruction, reverse-search
     // probes). Cleared by ExitReplayMode(). Read by every suppression site
     // listed in Appendix C - breakpoints skip, analyzers dispatch no-op,
@@ -331,7 +327,7 @@ public:
     /// from other threads, machines raise theirs on the emulation thread.
     enum StepWorkBits : uint32_t
     {
-        kStepWorkTtdInput = 1u << 0,         ///< TTD journal playback armed or live input queued (TimeTravelManager::ServiceInput)
+        kStepWorkTtdInput = 1u << 0,         ///< TTD journal playback armed or live input queued (TimeTravelController::ServiceInput)
         kStepWorkInterruptSource = 1u << 1,  ///< the machine owns INT (Z80::SetInterruptSource)
         kStepWorkMachineStep = 1u << 2,      ///< a machine engine runs after every step (Z80::SetMachineStepHook)
         kStepWorkRzx = 1u << 3,              ///< an RZX recording plays (rzxPlayer: frame ends, fetch counting)
@@ -383,7 +379,7 @@ public:
 
     // Per-frame coverage collection (reverse-search index). Read on the
     // instruction-fetch path, so it is a plain bool rather than a call into
-    // TimeTravelManager: one predictable, almost-always-false branch. Set by
+    // TimeTravelController: one predictable, almost-always-false branch. Set by
     // StartRecording and cleared by StopRecording / InvalidateSession, all of
     // which run on the control thread with the emulator paused.
     bool ttdCoverageActive = false;
@@ -391,7 +387,7 @@ public:
     /// otherwise (Phase 5, C1d): the core records into it inline, like a direct call
     ttd::TTDCoverageIndex* ttdCoverage = nullptr;
     /// Who takes memory writes (debug write path) and port OUTs while time travel
-    /// records: v1's manager or the engine's controller (Phase 5, C1d)
+    /// records: the engine's controller (Phase 5, C1d)
     ttd::ITTDWriteSink* ttdWriteSink = nullptr;
     /// endregion </Child object references>
 

@@ -1,7 +1,7 @@
 /// @file ttd_source.cpp
 /// @brief Frames of a TTD file, replayed through the emulator core
-/// (VisitComposedFrames of the session that reads the file: the engine's
-/// controller, or v1 for a v1 file until v1 goes). Built only with the core.
+/// (VisitComposedFrames of the engine's controller that reads the file).
+/// Built only with the core.
 
 #include "frames.h"
 
@@ -20,7 +20,6 @@
 #include "common/filehelper.h"
 #include "debugger/ttd/engine/ttdcontainer.h"
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdsession.h"
 #include "debugger/ttd/ttdfileinfo.h"
 #include "emulator/emulator.h"
@@ -55,10 +54,10 @@ std::string createSessionEmulator(const std::string& path, const std::string& mo
     if (!model.empty() && model != recorded)
         return path + " was recorded on " + recorded + ", not " + model;
 
-    // A session file in the engine's format is read by the engine's controller; a v1 file by v1 (until v1 goes)
-    Emulator::SetDefaultTimeTravelBackend(info.schemaVersion == ttd::kContainerSchema
-                                              ? Emulator::TimeTravelBackend::Engine
-                                              : Emulator::TimeTravelBackend::V1);
+    // The engine's session file only: v1's format went with v1 (Phase 6)
+    if (info.schemaVersion != ttd::kContainerSchema)
+        return path + ": not an engine session file (schema " + std::to_string(info.schemaVersion) +
+               "); v1 files are no longer read";
     EmulatorManager* manager = EmulatorManager::GetInstance();
     emulator = manager->CreateEmulatorWithModel(id, recorded, LoggerLevel::LogError, &err);
     if (!emulator)

@@ -49,7 +49,7 @@ void TTDProfiPaging::TTDLoadState(const uint8_t* src)
 
     // The caller re-runs the paging decode (Memory::UpdateZ80Banks) after every
     // serializer has loaded, so the restored map takes effect there - see
-    // TimeTravelManager::RestoreCheckpoint. The video mode is re-derived from
+    // TimeTravelController::RestoreCheckpoint. The video mode is re-derived from
     // pDFFD by Screen::InitRaster on the next frame.
 }
 

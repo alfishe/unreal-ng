@@ -17,7 +17,7 @@
 #include "emulator/io/controllers/controllermanager.h"
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/callbacks/scriptcallbacks.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -502,6 +502,13 @@ void MainLoop::CompleteFrame()
     if (_context->pCore)
         _context->pCore->OnNetworkFrameDevices();
 
+    // Board devices on their own clock (the ATM Turbo 2+ and Profi keyboard controllers, a COM peer, flash timers)
+    // catch up to the frame end here, before the checkpoint: it holds them caught up, so a restore at the frame
+    // start equals the machine that ran into it (a lazy device behind its clock is the same machine, not the same
+    // bytes)
+    if (_context->pPortDecoder)
+        _context->pPortDecoder->OnFrameEnd();
+
     if (_context->pTimeTravelHooks)
     {
         try
@@ -510,7 +517,7 @@ void MainLoop::CompleteFrame()
         }
         catch (const std::exception& e)
         {
-            MLOGERROR("TimeTravelManager::OnFrameBoundary failed: %s", e.what());
+            MLOGERROR("TimeTravelController::OnFrameBoundary failed: %s", e.what());
         }
     }
 
@@ -550,9 +557,6 @@ void MainLoop::CompleteFrame()
         _context->pCore->OnNetworkFrame();
     }
 
-    // Board devices on their own clock (ATM Turbo 2+ keyboard controller)
-    if (_context->pPortDecoder)
-        _context->pPortDecoder->OnFrameEnd();
 }
 
 void MainLoop::RestartFrame()
@@ -695,7 +699,7 @@ void MainLoop::OnFrameEnd()
         //
         // TTD silent-replay suppression (parent TDD §8.2 + Appendix C, same
         // contract as the NC_VIDEO_FRAME_REFRESH gate below): a throwaway
-        // replay pass (ReplayWithinFrame / TimeTravelManager::
+        // replay pass (ReplayWithinFrame / TimeTravelController::
         // ComposeDisplay) can cross a real frame boundary while
         // ttdReplayActive is set. Latching there advances the present-slot
         // ring (Screen::_presentLatchCounter) for a frame nobody asked to

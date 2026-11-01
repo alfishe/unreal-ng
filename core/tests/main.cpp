@@ -10,7 +10,6 @@
 #include "emulator/mainloop.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
-#include "_helpers/ttdv1tests.h"
 #include "common/filehelper.h"
 #include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/media/mediamanager.h"
@@ -73,8 +72,6 @@ int main(int argc, char **argv)
   // Nor session deltas: a composite's writes are saved by writes.save when its emulator goes (D-8); a test that
   // checks that turns it on
   MediaManager::SetSaveOnRelease(false);
-  // The engine records, as in the application; v1's own tests select v1 (TtdBackendListener below)
-  Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::Engine);
   ::testing::InitGoogleTest(&argc, argv);
 
   // The settings folder (FileHelper::GetWritablePath) is this process's scratch folder: files a machine saves there
@@ -94,9 +91,6 @@ int main(int argc, char **argv)
   // out of every machine unless a test opts in with a SoundCardScope (see
   // soundcardscope.h for why)
   SoundCardScope::InstallPolicy();
-
-  // v1's own tests (the files in ttdv1tests.h) record with v1; every other test with the engine
-  ::testing::UnitTest::GetInstance()->listeners().Append(new ttdtest::TtdBackendListener());
 
   auto* leakGuard = new ManagerLeakGuard();  // owned by gtest once appended
   ::testing::UnitTest::GetInstance()->listeners().Append(leakGuard);

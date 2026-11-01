@@ -3,9 +3,8 @@
 /// @file ttdsessiontypes.h
 /// @brief The types a time-travel session reports and takes - status
 /// (TTDSessionInfo), seek / reverse / coverage / journal-build results, clip
-/// export options and frames, performance and heap counters. Shared by v1's
-/// TimeTravelManager and the engine's controller (Phase 5), so neither depends
-/// on the other's header; TTDControl and the surfaces use them by these names.
+/// export options and frames, performance and heap counters, kept apart from
+/// the controller's header; TTDControl and the surfaces use them by these names.
 
 #include <cstddef>
 #include <cstdint>
@@ -124,7 +123,7 @@ struct TTDJournalBuildResult
     bool cancelled = false;       ///< the progress callback asked to stop; the frames built so far are kept
     uint64_t framesBuilt = 0;     ///< replayed, their writes added to the journal
     uint64_t framesCovered = 0;   ///< already inside a journal segment, left as they were
-    uint64_t framesRefused = 0;   ///< hold a v1 marker without its data: cannot be replayed
+    uint64_t framesRefused = 0;   ///< hold a marker without its data (a barrier): cannot be replayed
     uint64_t records = 0;         ///< writes added
 };
 
@@ -143,7 +142,7 @@ struct TTDSessionInfo
     uint64_t historyLimitFrames = 0;  ///< Oldest frames released beyond this many checkpoints (0 = no limit)
     uint64_t historyLimitBytes  = 0;  ///< ... or beyond this many bytes of checkpoint data (0 = no limit)
     uint64_t evictedCheckpoints = 0;  ///< Checkpoints the history limit released since the session started
-    uint64_t historyBytes       = 0;  ///< What the byte limit measures (TimeTravelManager::HistoryBytes)
+    uint64_t historyBytes       = 0;  ///< What the byte limit measures (TimeTravelController::HistoryBytes)
     uint64_t baselineFramesCaptured = 0;  ///< Live page slots (distinct RAM snapshots in store)
 
     /// @brief Total heap footprint of the recorded session, in bytes.
@@ -269,7 +268,7 @@ struct TTDSessionInfo
 
     /// D8 (the engine's controller): a navigation while recording paused the
     /// recording; state is detached, and resuming at the paused end, or running
-    /// into it, continues the same recording. Always false on v1
+    /// into it, continues the same recording
     bool recordingPaused = false;
 
     /// Why time travel is not available for this instance at all (for example
@@ -345,6 +344,36 @@ struct TTDCoverageScanResult
     /// Truncated: the window the next call scans to go on (from/to frame), the list's last item excluded
     uint64_t nextFrom = 0;
     uint64_t nextTo = 0;
+    bool truncated = false;
+    bool indexAvailable = false;
+};
+
+/// @brief One block of a rare-coverage query: neighbouring keys of one page touched in the same few frames.
+struct TTDCoverageRareBlock
+{
+    uint32_t pageField = 0;      ///< The keys' page field: RAM page 0..255, kCoverageNoPageField, or a space's page
+    uint16_t offsetFrom = 0;     ///< First key's offset in the 16 KB page
+    uint16_t offsetTo = 0;       ///< Last key's offset in the page
+    uint32_t keys = 0;           ///< Keys in the block (addresses touched, instruction starts for executed)
+    std::vector<uint64_t> frames;  ///< The frames that touched them, oldest first
+    /// Where the page sat in the CPU's address space at the start of the first frame, when exactly one window
+    /// showed it (a RAM page, or the one ROM window for the ROM bucket)
+    std::optional<uint16_t> z80From;
+};
+
+/// @brief Result of a rare-coverage query: the keys of a window touched in at most `maxFrames` frames.
+struct TTDCoverageRareResult
+{
+    TTDCoverageKind kind = TTDCoverageKind::Executed;
+    uint32_t maxFrames = 1;
+    uint64_t scannedFrames = 0;
+    uint64_t unindexedFrames = 0;  ///< Frames of the window the index holds no set for (their keys are not counted)
+    uint64_t distinctKeys = 0;     ///< Keys of the range touched anywhere in the window
+    uint64_t rareKeys = 0;         ///< Of them, touched in at most maxFrames frames
+    uint64_t rareBlocks = 0;       ///< Blocks they form, also when the list is cut
+    std::vector<TTDCoverageRareBlock> blocks;  ///< Rarest first, then by page and offset
+    uint64_t coveredFrom = 0;
+    uint64_t coveredTo = 0;
     bool truncated = false;
     bool indexAvailable = false;
 };
@@ -499,6 +528,8 @@ struct TTDReverseContinueQuery
     uint64_t fromFrame = 0;               ///< Not older than this frame's start
     bool all = false;                     ///< Collect up to `limit` hits and leave the machine where it is
     size_t limit = 100;                   ///< all: most hits returned
+    /// The list as `all`, one hit per PC (its newest); the walk ends once every PC has one
+    bool firstPerPc = false;
 };
 
 /// @brief One instruction start a reverse search found.

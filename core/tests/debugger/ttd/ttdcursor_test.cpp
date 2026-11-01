@@ -1,5 +1,5 @@
-// The published TTD cursor (control surfaces architecture §7): a seqlock readers never see torn, written by both
-// backends at frame boundaries and at the end of every operation, and the position verb answered from it
+// The published TTD cursor (control surfaces architecture §7): a seqlock readers never see torn, written by the
+// controller at frame boundaries and at the end of every operation, and the position verb answered from it
 
 #include <gtest/gtest.h>
 
@@ -11,7 +11,6 @@
 #include <thread>
 
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdcursorcell.h"
 #include "emulator/emulator.h"
@@ -87,27 +86,22 @@ TEST(TTDCursorCell_Test, AnEqualCursorDoesNotMoveTheSequence)
     EXPECT_FALSE(cell.Read().paused);
 }
 
-/// Both backends (v1's TimeTravelManager and the engine's TimeTravelController), wired as ttdcontrol_test does
-class TTDCursor_Test : public ::testing::TestWithParam<bool>
+/// The engine's TimeTravelController, the machine's own, as ttdcontrol_test uses it
+class TTDCursor_Test : public ::testing::Test
 {
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
     ttd::ITimeTravelHooks* _ttd = nullptr;
-    std::unique_ptr<ttd::TimeTravelController> _controller;
+    ttd::TimeTravelController* _controller = nullptr;
 
     void SetUp() override
     {
         _emulator = new Emulator(LoggerLevel::LogError);
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
-        if (GetParam())
-        {
-            _controller = std::make_unique<ttd::TimeTravelController>(_context);
-            _context->pTimeTravelHooks = _controller.get();
-            _context->ttdWriteSink = _controller.get();
-            _context->pTimeTravelController = _controller.get();
-        }
+        _controller = _context->pTimeTravelController;
+        ASSERT_NE(_controller, nullptr);
         _ttd = _context->pTimeTravelHooks;
         ASSERT_NE(_ttd, nullptr);
     }
@@ -115,13 +109,7 @@ protected:
     void TearDown() override
     {
         if (_controller)
-        {
             _controller->StopRecording();
-            _context->pTimeTravelHooks = _context->pTimeTravelManager;
-            _context->ttdWriteSink = _context->pTimeTravelManager;
-            _context->pTimeTravelController = nullptr;
-            _controller.reset();
-        }
         if (_emulator)
         {
             _emulator->Stop();
@@ -136,10 +124,7 @@ protected:
     }
 };
 
-INSTANTIATE_TEST_SUITE_P(Backends, TTDCursor_Test, ::testing::Values(false, true),
-                         [](const ::testing::TestParamInfo<bool>& info) { return info.param ? "Engine" : "V1"; });
-
-TEST_P(TTDCursor_Test, TheCursorFollowsRecordingStopSeekAndSteps)
+TEST_F(TTDCursor_Test, TheCursorFollowsRecordingStopSeekAndSteps)
 {
     _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
     TTDCursor c = _ttd->PublishedCursor();
@@ -177,7 +162,7 @@ TEST_P(TTDCursor_Test, TheCursorFollowsRecordingStopSeekAndSteps)
     EXPECT_EQ(_ttd->PublishedCursor().frame, first + 2);
 }
 
-TEST_P(TTDCursor_Test, ThePositionVerbAnswersTheBoundsFromTheCursor)
+TEST_F(TTDCursor_Test, ThePositionVerbAnswersTheBoundsFromTheCursor)
 {
     ASSERT_TRUE(Run("start").Ok());
     _emulator->RunNFrames(4, /*skipBreakpoints=*/true);

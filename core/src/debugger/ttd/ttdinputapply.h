@@ -5,8 +5,8 @@
 ///
 /// The journal (ttdinputjournal.h) only stores events. This is the one place
 /// that knows which device each kind drives. Live input
-/// (TimeTravelManager::ApplyLiveInput), journal playback
-/// (TimeTravelManager::ServiceInput) and DebugMouseManager's no-TTD fallback
+/// (TimeTravelController::ApplyLiveInput), journal playback
+/// (TimeTravelController::ServiceInput) and DebugMouseManager's no-TTD fallback
 /// all go through ApplyInputEvent, so live and replayed input mutate the
 /// machine the same way.
 ///

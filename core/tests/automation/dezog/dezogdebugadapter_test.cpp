@@ -399,7 +399,9 @@ TEST_F(DezogDebugAdapter_test, WatchpointClampsAt64K)
     ASSERT_EQ(bpManager->GetBreakpointsCount(), before + 1);
     for (const auto& [id, desc] : bpManager->GetAllBreakpoints())
         if (desc->z80address == 0xFFFE)
+        {
             EXPECT_EQ(desc->z80addressEnd, 0xFFFF);
+        }
 
     _adapter->removeWatchpoint(0xFFFE, 0, 8, dzrp::WatchAccess::WRITE);
     EXPECT_EQ(bpManager->GetBreakpointsCount(), before);
@@ -1322,22 +1324,7 @@ TEST_F(DezogHistory_test, DebuggerEditStartsNewHistorySegment)
 
 /// The engine (Phase 5, D9): a debugger edit is recorded as an event with what
 /// it changed, so the history before it stays browsable and recording goes on
-class DezogHistoryEngine_test : public DezogHistory_test
-{
-protected:
-    void SetUp() override
-    {
-        Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::Engine);
-        DezogHistory_test::SetUp();
-    }
-    void TearDown() override
-    {
-        DezogHistory_test::TearDown();
-        Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::V1);
-    }
-};
-
-TEST_F(DezogHistoryEngine_test, DebuggerEditKeepsTheHistory)
+TEST_F(DezogHistory_test, DebuggerEditKeepsTheHistory)
 {
     ttd::TimeTravelController* controller = _emulator->GetContext()->pTimeTravelController;
     ASSERT_NE(controller, nullptr);

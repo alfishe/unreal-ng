@@ -233,7 +233,7 @@ The same writes with `MEM_CONFIG = #04` (no `W0_WE`) leave the ROM unchanged. TT
 | ZX-MultiSound card in a ZX-bus slot (the socketed YM2149 comes out; not in the shipped config): [multisound.md](../peripherals/multisound.md), [docs/features/multisound.md](../../docs/features/multisound.md) | implemented (TSFM, SAA via VGMPLAY, MIDI via GSPLAYER checked) |
 | Wild Commander from SD or the Nemo IDE master (TS-BIOS "BD boot.$c", Boot Device) | works (tests BOOT-3, BOOT-4); WC's panels use the drive in `WC/wc.ini` (`DRV=0` SD, `1` IDE master) |
 | PS/2 keyboard (the AVR's scan code log; Wild Commander reads only this) | implemented (host keys and automation typing) |
-| TTD: all TS-Conf state in blob 16, SD card 15, CMOS 18, IDE 17; DMA writes tracked | implemented (corpus fixture `testdata/machines/tsconf/ttd/sprites.ttd`) |
+| TTD: all TS-Conf state in blob 16, SD card 15, CMOS 18, IDE 17; DMA writes tracked | implemented (corpus fixture `testdata/ttd/engine/tsconf_sprites.ttd`) |
 | 14 MHz timing: DRAM waits on uncached reads / cache misses (zmem.v phase logic) and the DRAM arbiter (video refusing the CPU in the fetch window), 8-fclk AY / VG93 I/O stall; DMA word costs; DMA CRAM writes land at their dot | implemented (phase 8) |
 | TSU timing: line L drawn from ts_start of line L - 1 with that line's latches; on a busy line the objects after line_start of L take L's latches, as the RTL (a mid-line write acts from the next line or the one after) | implemented |
 | Firmware build: `[MISC] TS_VDAC` = NONE (default: STATUS VDAC_VER 0, PWM colours) or 3BIT / 4BIT / 5BIT, `TS_VDAC2=1` (VDAC curves, BLT2; the `TSL-VDAC2` variant model sets it with the card, see [tsconf-vdac2.md](tsconf-vdac2.md)); `/state/tsconf` `build{}` | implemented |

@@ -204,8 +204,7 @@ public:
     const Ps2State& GetPs2State() const { return _ps2; }
     void SetPs2State(const Ps2State& state) { _ps2 = state; }
     /// The 4 KiB EEPROM, battery-backed: the time-travel engine's region
-    /// EvoAvrEeprom (compared at each capture: one write path, 4 KiB). v1 does
-    /// not record it
+    /// EvoAvrEeprom (compared at each capture: one write path, 4 KiB)
     const uint8_t* EepromData() const { return _eeprom.data(); }
     /// "cmos" and the 4 KiB EEPROM as the device memory region "eeprom" (plain storage: a write is a byte in it,
     /// as the AVR firmware's EEPROM write leaves it)

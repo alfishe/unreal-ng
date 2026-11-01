@@ -1,5 +1,5 @@
 // The analysis queries (docs/inprogress/2026-10-28-ttd-analysis-feedback): coverage-scan lists every matching frame
-// (both orders, runs, a cursor), page filters (ROM, two banks behind one Z80 address), reverse-continue `all`,
+// (both orders, runs, a cursor), coverage-rare's blocks, page filters, reverse-continue first_per_pc, memory-at of the machine now (ROM, two banks behind one Z80 address), reverse-continue `all`,
 // find-last `changes_only` / `all` and the memory-at CPU view. Each answer is checked against a second way to get it:
 // a loop of single calls, a brute-force walk of every write, the live machine after a seek.
 //
@@ -184,9 +184,13 @@ protected:
                 EXPECT_EQ(found.hits[i].oldValue, expected[i].oldValue) << i;
             }
             if (addr == 0x8101)
+            {
                 EXPECT_EQ(found.hits.size(), 1u) << "set to 5 on every pass: it changed once";
+            }
             if (addr == 0x8103)
+            {
                 EXPECT_GT(found.hits.size(), 20u) << "it flips every 16 passes";
+            }
         }
     }
 };
@@ -304,8 +308,127 @@ TEST_F(TTDAnalysisQueries_Test, CoverageScanRomIsItsOwnPage)
 }
 
 // ---------------------------------------------------------------------------
+// coverage-rare
+// ---------------------------------------------------------------------------
+
+/// Every block's frames are the scan's frames of each of its ends; with a bound above every count each key is rare
+TEST_F(TTDAnalysisQueries_Test, CoverageRareBlocksHoldTheScansFrames)
+{
+    ASSERT_NO_FATAL_FAILURE(Record(false));
+    const ttd::TTDCoverageRareResult all =
+        _ttd->QueryCoverageRare(0, UINT64_MAX, ttd::TTDCoverageKind::Executed, 0, 0xFFFF, std::nullopt, 1000, 10000);
+    ASSERT_TRUE(all.indexAvailable);
+    EXPECT_EQ(all.rareKeys, all.distinctKeys);
+    EXPECT_EQ(all.rareBlocks, all.blocks.size());
+    EXPECT_FALSE(all.truncated);
+    EXPECT_EQ(all.unindexedFrames, 0u);
+    ASSERT_GT(all.blocks.size(), 3u);
+    for (size_t i = 0; i < all.blocks.size(); ++i)
+    {
+        const ttd::TTDCoverageRareBlock& b = all.blocks[i];
+        SCOPED_TRACE(i);
+        if (i > 0)
+        {
+            EXPECT_LE(all.blocks[i - 1].frames.size(), b.frames.size()) << "rarest first";
+        }
+        const ttd::PhysPage page = b.pageField == ttd::kCoverageNoPageField ? ttd::kPhysPageNone : ttd::PhysPage(b.pageField);
+        EXPECT_EQ(Scan(b.offsetFrom, page, 10000).frames, b.frames);
+        EXPECT_EQ(Scan(b.offsetTo, page, 10000).frames, b.frames);
+    }
+}
+
+/// The routine at 0x8200 is one block with the frames it ran in; under that count it is gone, and the code behind
+/// bank 3 (each page about half of those frames) is what is left, on its own page
+TEST_F(TTDAnalysisQueries_Test, CoverageRareFindsTheRoutineAndThePagedCode)
+{
+    ASSERT_NO_FATAL_FAILURE(Record(false));
+    const std::vector<uint64_t> truth = FramesOf(AllHits(0x8200));
+    ASSERT_GE(truth.size(), 5u);
+    const auto rare = [this](uint32_t maxFrames) {
+        return _ttd->QueryCoverageRare(0, UINT64_MAX, ttd::TTDCoverageKind::Executed, 0, 0xFFFF, std::nullopt, maxFrames,
+                                       10000);
+    };
+    const auto blockAt = [](const ttd::TTDCoverageRareResult& r, uint32_t pageField, uint16_t offset) {
+        for (const ttd::TTDCoverageRareBlock& b : r.blocks)
+            if (b.pageField == pageField && b.offsetFrom <= offset && offset <= b.offsetTo)
+                return &b;
+        return static_cast<const ttd::TTDCoverageRareBlock*>(nullptr);
+    };
+
+    const ttd::TTDCoverageRareResult withRoutine = rare(static_cast<uint32_t>(truth.size()));
+    const ttd::TTDCoverageRareBlock* routine = blockAt(withRoutine, 2, 0x0200);
+    ASSERT_NE(routine, nullptr);
+    EXPECT_EQ(routine->frames, truth);
+    EXPECT_EQ(routine->offsetFrom, 0x0200);
+    EXPECT_GE(routine->keys, 5u) << "the routine's instructions join one block";
+    ASSERT_TRUE(routine->z80From.has_value());
+    EXPECT_EQ(*routine->z80From, 0x8200);
+    EXPECT_EQ(blockAt(withRoutine, 2, 0x0008), nullptr) << "the loop runs in every frame";
+
+    const ttd::TTDCoverageRareResult paged = rare(static_cast<uint32_t>(truth.size() - 1));
+    EXPECT_EQ(blockAt(paged, 2, 0x0200), nullptr);
+    for (const uint32_t page : {1u, 3u})
+    {
+        const ttd::TTDCoverageRareBlock* code = blockAt(paged, page, 0x0000);
+        ASSERT_NE(code, nullptr) << "page " << page;
+        EXPECT_EQ(code->frames, Scan(0xC000, ttd::PhysPage(page), 10000).frames);
+        EXPECT_FALSE(code->frames.empty());
+    }
+
+    // The list cut keeps the totals; the verb answers with the block's CPU address and checks max_frames
+    const ttd::TTDCoverageRareResult cut =
+        _ttd->QueryCoverageRare(0, UINT64_MAX, ttd::TTDCoverageKind::Executed, 0, 0xFFFF, std::nullopt, 1000, 2);
+    EXPECT_TRUE(cut.truncated);
+    EXPECT_EQ(cut.blocks.size(), 2u);
+    EXPECT_EQ(cut.rareBlocks, rare(1000).rareBlocks);
+    const ttd::TTDReply reply = Run("coverage-rare", {{"max_frames", std::to_string(truth.size())},
+                                                      {"addr_from", "0x8200"}, {"addr_to", "0x8212"}, {"phys_page", "2"}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    ASSERT_EQ(reply.body.find("blocks")->items.size(), 1u);
+    const StateNode& block = reply.body.find("blocks")->items[0];
+    EXPECT_EQ(block.find("addr_from")->s, "0x8200");
+    EXPECT_EQ(block.find("phys_page")->i, 2);
+    EXPECT_EQ(block.find("frames")->items.size(), truth.size());
+    EXPECT_FALSE(Run("coverage-rare", {{"max_frames", "0"}}).Ok());
+    EXPECT_FALSE(Run("coverage-rare", {{"max_frames", "1001"}}).Ok());
+}
+
+// ---------------------------------------------------------------------------
 // reverse-continue
 // ---------------------------------------------------------------------------
+
+/// first_per_pc: each PC's newest hit, as the full list has it, in one walk; a PC that never ran is named
+TEST_F(TTDAnalysisQueries_Test, ReverseContinueFirstPerPcIsEachPcsNewestHit)
+{
+    ASSERT_NO_FATAL_FAILURE(Record(false));
+    const std::vector<uint16_t> pcs = {0x8200, 0x800C, 0xC000, 0x9999};
+    ttd::TTDReverseContinueQuery q;
+    q.pcs = pcs;
+    q.firstPerPc = true;
+    const ttd::TTDTimePoint before = _ttd->CurrentPosition();
+    const ttd::TTDReverseContinueResult r = _ttd->ReverseContinue(q);
+    EXPECT_EQ(_ttd->CurrentPosition(), before) << "the machine stays";
+    ASSERT_EQ(r.hits.size(), 3u);
+    EXPECT_FALSE(r.truncated);
+    for (const ttd::TTDReverseHit& h : r.hits)
+    {
+        SCOPED_TRACE(h.pc);
+        const std::vector<ttd::TTDReverseHit> every = AllHits(h.pc, std::nullopt, 1);
+        ASSERT_FALSE(every.empty());
+        EXPECT_EQ(h.globalT, every.front().globalT);
+        EXPECT_EQ(h.physPage, every.front().physPage);
+    }
+    for (size_t i = 1; i < r.hits.size(); ++i)
+        EXPECT_GT(r.hits[i - 1].globalT, r.hits[i].globalT) << "newest first";
+
+    const ttd::TTDReply reply = Run("reverse-continue", {{"pcs", "0x8200,0x800C,0x9999"}, {"first_per_pc", "true"}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("count")->i, 2);
+    const StateNode* none = reply.body.find("pcs_without_hit");
+    ASSERT_NE(none, nullptr);
+    ASSERT_EQ(none->items.size(), 1u);
+    EXPECT_EQ(none->items[0].i, 0x9999);
+}
 
 /// One Z80 address on two pages: phys_page splits the hits, and every hit names the page it ran on
 TEST_F(TTDAnalysisQueries_Test, ReverseContinuePhysPageSeparatesTwoBanks)
@@ -544,6 +667,75 @@ TEST_F(TTDAnalysisQueries_Test, MemoryAtCpuVerb)
     const ttd::TTDReply over = Run("memory-at", {{"space", "cpu"}, {"frame", std::to_string(frame)}, {"offset", "0xFFFF"},
                                                  {"length", "2"}});
     EXPECT_EQ(over.error, ttd::TTDControlError::BadRequest);
+}
+
+/// The machine now, without a recording or past a stopped one it ran on from: no frame, or its own frame. Any other
+/// point outside the history is refused, naming the history's end and the machine's frame
+TEST(TTDAnalysisQueriesLive_Test, MemoryAtCpuReadsTheMachineNow)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    context->pFeatureManager->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+    emulator->EnableTurboMode();
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
+    ASSERT_NE(ttd, nullptr);
+    Memory* memory = context->pMemory;
+    for (uint16_t i = 0; i < 4; ++i)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x9000 + i), static_cast<uint8_t>(0xA1 + i));
+    // di : jr $ - nothing but the test writes memory
+    for (const auto& [addr, byte] : std::vector<std::pair<uint16_t, uint8_t>>{{0x8000, 0xF3}, {0x8001, 0x18}, {0x8002, 0xFE}})
+        memory->DirectWriteToZ80Memory(addr, byte);
+    context->pCore->GetZ80()->pc = 0x8000;
+    const auto read = [context](std::map<std::string, std::string> options) {
+        options["space"] = "cpu";
+        options["offset"] = "0x9000";
+        options["length"] = "4";
+        return ttd::TTDControl(context).Execute({"memory-at", std::move(options)});
+    };
+
+    // No recording at all
+    const ttd::TTDReply none = read({});
+    ASSERT_TRUE(none.Ok()) << none.message;
+    EXPECT_TRUE(none.body.find("live")->b);
+    EXPECT_EQ(none.body.find("hex")->s, "A1A2A3A4");
+    EXPECT_EQ(none.body.find("banks")->items[2].find("page")->i, 2);
+
+    // A recording of three frames, stopped; the machine runs on and changes the bytes
+    ASSERT_TRUE(ttd->StartRecording());
+    emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    ttd->StopRecording();
+    const uint64_t end = ttd->SessionEndPosition().frame;
+    emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    memory->DirectWriteToZ80Memory(0x9001, 0x5A);
+    const ttd::TTDTimePoint now = ttd->CurrentPosition();
+    ASSERT_GT(now.frame, end + 1);
+
+    const ttd::TTDReply noFrame = read({});
+    ASSERT_TRUE(noFrame.Ok()) << noFrame.message;
+    EXPECT_EQ(noFrame.body.find("hex")->s, "A15AA3A4");
+    EXPECT_EQ(static_cast<uint64_t>(noFrame.body.find("at_frame")->i), now.frame);
+    EXPECT_EQ(static_cast<uint32_t>(noFrame.body.find("at_tinframe")->i), now.tInFrame);
+    EXPECT_TRUE(noFrame.body.find("exact")->b);
+
+    const ttd::TTDReply ownFrame = read({{"frame", std::to_string(now.frame)}});
+    ASSERT_TRUE(ownFrame.Ok()) << ownFrame.message;
+    EXPECT_TRUE(ownFrame.body.find("live")->b);
+    EXPECT_EQ(ownFrame.body.find("hex")->s, "A15AA3A4");
+    EXPECT_EQ(ownFrame.body.find("exact")->b, now.tInFrame == 0) << "the frame's start was asked";
+
+    const ttd::TTDReply between = read({{"frame", std::to_string(end + 1)}});
+    EXPECT_EQ(between.error, ttd::TTDControlError::Conflict);
+    EXPECT_NE(between.message.find("machine stands at frame " + std::to_string(now.frame)), std::string::npos)
+        << between.message;
+
+    const ttd::TTDReply recorded = read({{"frame", std::to_string(end)}});
+    ASSERT_TRUE(recorded.Ok()) << recorded.message;
+    EXPECT_FALSE(recorded.body.find("live")->b);
+    EXPECT_EQ(recorded.body.find("hex")->s, "A1A2A3A4") << "the recorded history, not the machine now";
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 // ---------------------------------------------------------------------------

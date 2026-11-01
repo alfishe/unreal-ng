@@ -46,7 +46,7 @@
 #include "emulator/mainloop.h"  // MainLoopCUT (needs _CODE_UNDER_TEST)
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdwritejournal.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -66,7 +66,7 @@ public:
     Emulator* emulator = nullptr;
     EmulatorContext* context = nullptr;
     MainLoopCUT* mainloop = nullptr;
-    ttd::TimeTravelManager* ttd = nullptr;
+    ttd::TimeTravelController* ttd = nullptr;
     Memory* memory = nullptr;
     FeatureManager* fm = nullptr;
 
@@ -79,7 +79,7 @@ public:
             BenchmarkPathHelper::FailSetup("Emulator::Init failed");
 
         context = emulator->GetContext();
-        ttd = context->pTimeTravelManager;
+        ttd = context->pTimeTravelController;
         memory = context->pMemory;
         fm = emulator->GetFeatureManager();
 

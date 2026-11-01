@@ -2,7 +2,7 @@
 
 #include "floppydriveslot.h"
 
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/media/mediamanager.h"

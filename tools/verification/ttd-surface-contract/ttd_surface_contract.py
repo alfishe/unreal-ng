@@ -223,47 +223,32 @@ def run_contract(c: Contract) -> None:
     print("[moving in the timeline: seek, steps, resume, position]")
     c.web("POST", "/ttd/start")
     run_frames(c.api, c.base, 8)
-    _, st = c.web("GET", "/ttd/status")
-    engine = st.get("backend") == "engine"
-    scrub = ""
-    if engine:
-        # The engine (D8): a seek while recording pauses the recording, the same way on every surface
-        def recording(frames: int = 8) -> int:
-            c.web("POST", "/ttd/stop")
-            c.web("POST", "/ttd/start")
-            run_frames(c.api, c.base, frames)
-            _, now = c.web("GET", "/ttd/status")
-            return int(now.get("session_start_frame", 0)) + 2
+    # D8: a seek while recording pauses the recording, the same way on every surface
+    def recording(frames: int = 8) -> int:
+        c.web("POST", "/ttd/stop")
+        c.web("POST", "/ttd/start")
+        run_frames(c.api, c.base, frames)
+        _, now = c.web("GET", "/ttd/status")
+        return int(now.get("session_start_frame", 0)) + 2
 
-        def paused_now() -> bool:
-            _, now = c.web("GET", "/ttd/status")
-            return now.get("state") == "detached" and now.get("recording_paused") is True
+    def paused_now() -> bool:
+        _, now = c.web("GET", "/ttd/status")
+        return now.get("state") == "detached" and now.get("recording_paused") is True
 
-        target = recording()
-        status, web = c.web("POST", "/ttd/seek", {"frame": target})
-        c.check(status == 200 and web.get("reached") is True and paused_now(),
-                f"WebAPI seek while recording pauses it ({status}, {web.get('reached')})")
-        target = recording()
-        lua = c.lua(f"local r = ttd_seek({target}); print(tostring(r.reached))")
-        c.check(lua == "true" and paused_now(), f"Lua seek while recording pauses it ({lua!r})")
-        target = recording()
-        cli = c.cli.run(f"ttd seek {target}")
-        c.check("Error" not in cli and paused_now(), f"CLI seek while recording pauses it ({cli.strip()!r})")
-        target = recording()
-        py = c.py_json(f"emu.ttd_seek({target})")
-        c.check(isinstance(py, dict) and py.get("reached") is True and paused_now(),
-                f"Python seek while recording pauses it ({py})")
-    else:
-        status, web = c.web("POST", "/ttd/seek", {"frame": 1})
-        scrub = web.get("message", "")
-        c.check(status == 409 and scrub != "", f"WebAPI seek while recording is 409 ({status})")
-        lua = c.lua("local r = ttd_seek(1); print(tostring(r.reached) .. '|' .. tostring(r.error))")
-        c.check(lua == "false|" + scrub, f"Lua seek while recording: reached false and the same message ({lua!r})")
-        cli = c.cli.run("ttd seek 1")
-        c.check(("Error: " + scrub) in cli, f"CLI seek while recording prints the same message ({cli.strip()!r})")
-        py = c.py_json("emu.ttd_seek(1)")
-        c.check(isinstance(py, dict) and py.get("reached") is False and py.get("error") == scrub,
-                f"Python seek while recording: reached False and the same message ({py})")
+    target = recording()
+    status, web = c.web("POST", "/ttd/seek", {"frame": target})
+    c.check(status == 200 and web.get("reached") is True and paused_now(),
+            f"WebAPI seek while recording pauses it ({status}, {web.get('reached')})")
+    target = recording()
+    lua = c.lua(f"local r = ttd_seek({target}); print(tostring(r.reached))")
+    c.check(lua == "true" and paused_now(), f"Lua seek while recording pauses it ({lua!r})")
+    target = recording()
+    cli = c.cli.run(f"ttd seek {target}")
+    c.check("Error" not in cli and paused_now(), f"CLI seek while recording pauses it ({cli.strip()!r})")
+    target = recording()
+    py = c.py_json(f"emu.ttd_seek({target})")
+    c.check(isinstance(py, dict) and py.get("reached") is True and paused_now(),
+            f"Python seek while recording pauses it ({py})")
     c.web("POST", "/ttd/stop")
     _, pos = c.web("GET", "/ttd/position")
     end = pos["session_end"]["frame"]
@@ -272,32 +257,31 @@ def run_contract(c: Contract) -> None:
     def paused() -> bool:
         return bool(c.api.instance_info(c.base.split("/")[-1]).get("is_paused", False))
 
-    if engine:
-        # D13: a frame without a T-state is the frame's end - named {target, its length},
-        # the machine at {target + 1, 0} - on every surface
-        # The machine stands at {target + 1, 0}; position shows the CPU's own T-state,
-        # past the instruction that crossed the frame boundary (at most 23 T-states)
-        def at_frame_end(cur) -> bool:
-            return cur["frame"] == target + 1 and cur["tinframe"] <= 23
-        status, web = c.web("POST", "/ttd/seek", {"frame": target})
-        _, pos = c.web("GET", "/ttd/position")
-        c.check(status == 200 and web.get("arrived_at", {}).get("frame") == target
-                and web.get("arrived_at", {}).get("tinframe", 0) > 0
-                and at_frame_end(pos["current"]),
-                f"WebAPI seek to a frame lands at its end ({web.get('arrived_at')}, at {pos['current']})")
-        lua = c.lua(f"local r = ttd_seek({target}); print(r.arrived_at.frame .. '|' .. tostring(r.arrived_at.tinframe > 0))")
-        _, pos = c.web("GET", "/ttd/position")
-        c.check(lua == f"{target}|true" and at_frame_end(pos["current"]),
-                f"Lua seek to a frame lands at its end ({lua!r}, at {pos['current']})")
-        c.cli.run(f"ttd seek {target}")
-        _, pos = c.web("GET", "/ttd/position")
-        c.check(at_frame_end(pos["current"]),
-                f"CLI seek to a frame lands at its end (at {pos['current']})")
-        py = c.py_json(f"emu.ttd_seek({target})")
-        _, pos = c.web("GET", "/ttd/position")
-        c.check(isinstance(py, dict) and py.get("arrived_at", {}).get("frame") == target
-                and at_frame_end(pos["current"]),
-                f"Python seek to a frame lands at its end ({py}, at {pos['current']})")
+    # D13: a frame without a T-state is the frame's end - named {target, its length},
+    # the machine at {target + 1, 0} - on every surface
+    # The machine stands at {target + 1, 0}; position shows the CPU's own T-state,
+    # past the instruction that crossed the frame boundary (at most 23 T-states)
+    def at_frame_end(cur) -> bool:
+        return cur["frame"] == target + 1 and cur["tinframe"] <= 23
+    status, web = c.web("POST", "/ttd/seek", {"frame": target})
+    _, pos = c.web("GET", "/ttd/position")
+    c.check(status == 200 and web.get("arrived_at", {}).get("frame") == target
+            and web.get("arrived_at", {}).get("tinframe", 0) > 0
+            and at_frame_end(pos["current"]),
+            f"WebAPI seek to a frame lands at its end ({web.get('arrived_at')}, at {pos['current']})")
+    lua = c.lua(f"local r = ttd_seek({target}); print(r.arrived_at.frame .. '|' .. tostring(r.arrived_at.tinframe > 0))")
+    _, pos = c.web("GET", "/ttd/position")
+    c.check(lua == f"{target}|true" and at_frame_end(pos["current"]),
+            f"Lua seek to a frame lands at its end ({lua!r}, at {pos['current']})")
+    c.cli.run(f"ttd seek {target}")
+    _, pos = c.web("GET", "/ttd/position")
+    c.check(at_frame_end(pos["current"]),
+            f"CLI seek to a frame lands at its end (at {pos['current']})")
+    py = c.py_json(f"emu.ttd_seek({target})")
+    _, pos = c.web("GET", "/ttd/position")
+    c.check(isinstance(py, dict) and py.get("arrived_at", {}).get("frame") == target
+            and at_frame_end(pos["current"]),
+            f"Python seek to a frame lands at its end ({py}, at {pos['current']})")
 
     # The frame's start: tinframe 0 on every surface
     c.api.set_running(c.base.split("/")[-1], True)
@@ -354,28 +338,20 @@ def run_contract(c: Contract) -> None:
     print("[reverse queries and port events]")
     c.web("POST", "/ttd/start", {"journal": True})
     run_frames(c.api, c.base, 6)
-    if engine:
-        # The engine (D8): find-last while recording pauses it and answers
-        status, web = c.web("POST", "/ttd/find-last", {"addr": "0x5C78"})
-        c.check(status == 200 and isinstance(web.get("found"), bool) and paused_now(),
-                f"WebAPI find-last while recording pauses it and answers ({status}, {web.get('found')})")
-        c.web("POST", "/ttd/stop")
-        c.web("POST", "/ttd/start", {"journal": True})
-        run_frames(c.api, c.base, 6)
-        lua = c.lua("local r = ttd_find_last(0x5C78); print(tostring(r.found) .. '|' .. tostring(r.error))")
-        c.check(lua in ("true|nil", "false|nil") and paused_now(), f"Lua find-last while recording pauses it and answers ({lua!r})")
-        c.web("POST", "/ttd/stop")
-        c.web("POST", "/ttd/start", {"journal": True})
-        run_frames(c.api, c.base, 6)
-        cli = c.cli.run("ttd find-last --addr 0x5C78")
-        c.check("Error" not in cli and paused_now(), f"CLI find-last while recording pauses it ({cli.strip()!r})")
-    else:
-        status, web = c.web("POST", "/ttd/find-last", {"addr": "0x5C78"})
-        c.check(status == 409 and web.get("message") == scrub, f"WebAPI find-last while recording: 409, the scrub message ({status})")
-        lua = c.lua("local r = ttd_find_last(0x5C78); print(tostring(r.found) .. '|' .. tostring(r.error))")
-        c.check(lua == "false|" + scrub, f"Lua find-last while recording: found false and the same message ({lua!r})")
-        cli = c.cli.run("ttd find-last --addr 0x5C78")
-        c.check(("Error: " + scrub) in cli, f"CLI find-last while recording prints the same message ({cli.strip()!r})")
+    # D8: find-last while recording pauses it and answers
+    status, web = c.web("POST", "/ttd/find-last", {"addr": "0x5C78"})
+    c.check(status == 200 and isinstance(web.get("found"), bool) and paused_now(),
+            f"WebAPI find-last while recording pauses it and answers ({status}, {web.get('found')})")
+    c.web("POST", "/ttd/stop")
+    c.web("POST", "/ttd/start", {"journal": True})
+    run_frames(c.api, c.base, 6)
+    lua = c.lua("local r = ttd_find_last(0x5C78); print(tostring(r.found) .. '|' .. tostring(r.error))")
+    c.check(lua in ("true|nil", "false|nil") and paused_now(), f"Lua find-last while recording pauses it and answers ({lua!r})")
+    c.web("POST", "/ttd/stop")
+    c.web("POST", "/ttd/start", {"journal": True})
+    run_frames(c.api, c.base, 6)
+    cli = c.cli.run("ttd find-last --addr 0x5C78")
+    c.check("Error" not in cli and paused_now(), f"CLI find-last while recording pauses it ({cli.strip()!r})")
     c.web("POST", "/ttd/stop")
     # FRAMES (0x5C78) changes every frame in the 128K ROM's interrupt
     _, web = c.web("POST", "/ttd/find-last", {"addr": "#5C78"})
@@ -469,10 +445,6 @@ def run_contract(c: Contract) -> None:
     c.web("POST", "/ttd/stop")
 
     print("[black box: every surface starts it with the same window]")
-    _, web = c.web("GET", "/ttd/status")
-    if web.get("backend") != "engine":
-        print("(backend v1: black box checks skipped)")
-        return
     c.web("POST", "/ttd/start", {"black_box": True, "minutes": 2})
     _, web = c.web("GET", "/ttd/status")
     window = web.get("history_limit_frames")

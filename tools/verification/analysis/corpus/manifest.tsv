@@ -1,0 +1,93 @@
+# Analysis corpus (corpus.py select): key	set	kind	entry	title	model	media	ay
+# Candidates: 6792 tapes, 11597 disks
+# media / ay paths are relative to --data
+dARFRMPHL	dev	disk	235	Fruit Machine	PENTAGON	vtrd/files/gamez/a/ARFRMPHL.zip	
+dARMY_VA	dev	disk	273	Army Moves	PENTAGON	vtrd/files/gamez/a/ARMY_VA.zip	
+dATEM2RWC	dev	disk	303	El Equipo A	PENTAGON	vtrd/files/gamez/a/ATEM2RWC.zip	
+dCTRU2AXL	dev	disk	802	Capitan Trueno	PENTAGON	vtrd/files/gamez/c/CTRU2AXL.zip	
+dC_CIRCS	dev	disk	1057	Continental Circus	PENTAGON	vtrd/files/gamez/c/C_CIRCS.ZIP	
+dDUNDASMS	dev	disk	1538	Dun Darach	PENTAGON	vtrd/files/gamez/d/DUNDASMS.zip	software/zxdb/files/zxdb/sinclair/entries/0001538/DunDarach.ay.zip
+dF16CPPHL	dev	disk	1704	F-16 Combat Pilot	PENTAGON	vtrd/files/gamez/f/F16CPPHL.zip	
+dFLINTPHL	dev	disk	1799	The Flintstones	PENTAGON	vtrd/files/gamez/f/FLINTPHL.zip	software/zxdb/files/pub/sinclair/music/ay/games/f/FlintstonesThe.ay.zip
+dGAZZA2DL	dev	disk	1997	Gazza's Super Soccer	PENTAGON	vtrd/files/gamez/g/GAZZA2DL.zip	
+dH-DRIVIN	dev	disk	2233	Hard Drivin'	PENTAGON	vtrd/files/gamez/h/H-DRIVIN.ZIP	software/zxdb/files/pub/sinclair/music/ay/games/h/HardDrivin.ay.zip
+dHYPKIL_S	dev	disk	30442	Hyperkill	PENTAGON	vtrd/files/gamez/h/HYPKIL_S.zip	
+dNEVERSIB	dev	disk	6740	The NeverEnding Story	PENTAGON	vtrd/files/gamez/n/NEVERSIB.zip	software/zxdb/files/pub/sinclair/music/ay/games/n/NeverEndingStoryThe.ay.zip
+dREX1_	dev	disk	4129	Rex	PENTAGON	vtrd/files/gamez/r/REX1_.ZIP	
+dSHORTFUS	dev	disk	4478	Bombscare	PENTAGON	vtrd/files/gamez/s/SHORTFUS.ZIP	
+dSH_MOLL	dev	disk	4452	Sharkeys Moll	PENTAGON	vtrd/files/gamez/s/SH_MOLL.ZIP	
+dSRHOOD_P	dev	disk	9432	Super Robin Hood	PENTAGON	vtrd/files/gamez/s/SRHOOD_P.ZIP	software/zxdb/files/zxdb/sinclair/entries/0009432/SuperRobinHood.ay.zip
+dSTTCGJ77	dev	disk	4836	Star Trek - The Computer Game	PENTAGON	vtrd/files/gamez/s/STTCGJ77.zip	
+dTET2ANDS	dev	disk	5213	Tetris 2	PENTAGON	vtrd/files/gamez/t/TET2ANDS.zip	software/zxdb/files/pub/sinclair/music/ay/games/t/Tetris2.ay.zip
+dTUAREG	dev	disk	5438	Tuareg	PENTAGON	vtrd/files/gamez/t/TUAREG.ZIP	
+dT_ECLIP2	dev	disk	5342	Total Eclipse 2: The Sphinx Jinx	PENTAGON	vtrd/files/gamez/t/T_ECLIP2.ZIP	
+t11413	dev	tape	11413	Galactic Jail Break	48K	software/zxdb/files/pub/sinclair/games/g/GalacticJailBreak.tzx.zip	
+t12887	dev	tape	12887	Kingdom of Grain	48K	software/zxdb/files/pub/sinclair/games/k/KingdomOfGrain.tzx.zip	
+t13217	dev	tape	13217	Locodriver 11	48K	software/zxdb/files/pub/sinclair/games/l/Locodriver11.tzx.zip	
+t14292	dev	tape	14292	City Bomber	48K	software/zxdb/files/pub/sinclair/games/c/CityBomber_2.tap.zip	
+t14298	dev	tape	14298	Lawn Mower	48K	software/zxdb/files/pub/sinclair/games/l/LawnMower.tap.zip	
+t14582	dev	tape	14582	Death Kalah	48K	software/zxdb/files/pub/sinclair/games/d/DeathKalah.tap.zip	
+t16734	dev	tape	16734	Nines	48K	software/zxdb/files/zxdb/sinclair/entries/0016734/Nines.tzx.zip	
+t18216	dev	tape	18216	La Presa	48K	software/zxdb/files/zxdb/sinclair/entries/0018216/PresaLa.tzx.zip	
+t18231	dev	tape	18231	Saturno Jet	48K	software/zxdb/files/zxdb/sinclair/entries/0018231/SaturnoJet.tzx.zip	
+t18371	dev	tape	18371	Lunar Lander	48K	software/zxdb/files/zxdb/sinclair/entries/0018371/LunarLander.tzx.zip	
+t20066	dev	tape	20066	Dominoes	48K	software/zxdb/files/zxdb/sinclair/entries/0020066/Dominoes.tzx.zip	
+t22799	dev	tape	22799	Chain Reaction	48K	software/zxdb/files/pub/sinclair/games/c/ChainReaction.tap.zip	
+t2308	dev	tape	2308	Hexcellent	48K	software/zxdb/files/pub/sinclair/games/h/Hexcellent.tzx.zip	
+t2397	dev	tape	2397	Hunter-Killer	48K	software/zxdb/files/pub/sinclair/games/h/Hunter-Killer.tap.zip	
+t24297	dev	tape	24297	Protector	48K	software/zxdb/files/pub/sinclair/games/p/Protector_3.tap.zip	
+t24310	dev	tape	24310	Stock Market	48K	software/zxdb/files/pub/sinclair/games/s/StockMarket_2.tap.zip	
+t24697	dev	tape	24697	Nodriza	48K	software/zxdb/files/zxdb/sinclair/entries/0024697/Nodriza.tzx.zip	
+t25008	dev	tape	25008	Battle Ship's	48K	software/zxdb/files/pub/sinclair/games/b/BattleShips_2.tzx.zip	
+t2516	dev	tape	2516	International Rugby	48K	software/zxdb/files/pub/sinclair/games/i/InternationalRugby(MicroValue).tzx.zip	
+t26015	dev	tape	26015	Alien Attack	48K	software/zxdb/files/pub/sinclair/games/a/AlienAttack_2.tap.zip	
+t26048	dev	tape	26048	Defend	48K	software/zxdb/files/pub/sinclair/games/d/Defend.tap.zip	
+t2650	dev	tape	2650	Juggernaut	48K	software/zxdb/files/pub/sinclair/games/j/Juggernaut.tap.zip	
+t26709	dev	tape	26709	Lightbulb	48K	software/zxdb/files/pub/sinclair/games/l/Lightbulb.tap.zip	
+t27317	dev	tape	27317	El Hundimiento del Titanic	48K	software/zxdb/files/zxdb/sinclair/entries/0027317/HundimientoDelTitanicEl.tap.zip	
+t27766	dev	tape	27766	Gnarly Simon	48K	software/zxdb/files/pub/sinclair/games/g/GnarlySimon.tap.zip	
+t2958	dev	tape	2958	Macaroids	48K	software/zxdb/files/zxdb/sinclair/entries/0002958/Macaroids.tzx.zip	
+t2959	dev	tape	2959	Mach 3	48K	software/zxdb/files/pub/sinclair/games/m/Mach3(ProeinSoftLine).tap.zip	
+t31066	dev	tape	31066	Mr Yellow Meets Mr Cyan	48K	software/zxdb/files/zxdb/sinclair/entries/0031066/MrYellowMeetsMrCyan.tap.zip	
+t3203	dev	tape	3203	Millimon	48K	software/zxdb/files/pub/sinclair/games/m/Millimon(Dixons).tzx.zip	
+t3317	dev	tape	3317	Mucroid Run	48K	software/zxdb/files/pub/sinclair/games/m/MucroidRun.tap.zip	
+t3344	dev	tape	3344	Mutations	48K	software/zxdb/files/pub/sinclair/games/m/Mutations.tap.zip	
+t4159	dev	tape	4159	Road Frog	48K	software/zxdb/files/pub/sinclair/games/r/RoadFrog(different).tzx.zip	
+t4884	dev	tape	4884	Star Trek	48K	software/zxdb/files/zxdb/sinclair/entries/0004884/StarTrek.tap.zip	
+t541	dev	tape	541	Bismark	48K	software/zxdb/files/pub/sinclair/games/b/Bismark.tzx.zip	
+t5487	dev	tape	5487	Twister - Fruit Machine	128K	software/zxdb/files/pub/sinclair/games/t/TwisterFruitMachine.tap.zip	
+t5705	dev	tape	5705	Wiz	48K	software/zxdb/files/pub/sinclair/games/w/Wiz.tzx.zip	software/zxdb/files/pub/sinclair/music/ay/games/w/Wiz.ay.zip
+t6058	dev	tape	6058	Camelot	48K	software/zxdb/files/pub/sinclair/games/c/Camelot.tap.zip	
+t6438	dev	tape	6438	The Hitch-Hikers Guide to the Galaxy	48K	software/zxdb/files/pub/sinclair/games/h/Hitch-HikersGuideToTheGalaxyThe.tap.zip	
+t668	dev	tape	668	Boxing Manager	48K	software/zxdb/files/pub/sinclair/games/b/BoxingManager(CultGames).tap.zip	
+t9866	dev	tape	9866	Jimmy's Super League	48K	software/zxdb/files/pub/sinclair/games/j/JimmysSuperLeague.tzx.zip	
+dCHAOS	holdout	disk	894	Chaos	PENTAGON	vtrd/files/gamez/c/CHAOS.ZIP	
+dCSAMCSSI	holdout	disk	1055	Contact Sam Cruise	PENTAGON	vtrd/files/gamez/c/CSAMCSSI.zip	
+dEGGHEAD1	holdout	disk	1579	Egghead	PENTAGON	vtrd/files/gamez/e/EGGHEAD1.ZIP	
+dFREECLMR	holdout	disk	1866	Free Climbing	PENTAGON	vtrd/files/gamez/f/FREECLMR.zip	
+dLO_CHAOS	holdout	disk	2930	Lords of Chaos	PENTAGON	vtrd/files/gamez/l/LO_CHAOS.ZIP	
+dRBCG_DS	holdout	disk	4252	Royal Birkdale: Championship Golf	PENTAGON	vtrd/files/gamez/r/RBCG_DS.zip	
+dSAV_MA	holdout	disk	4353	Savage	PENTAGON	vtrd/files/gamez/s/SAV_MA.zip	software/zxdb/files/pub/sinclair/music/ay/games/s/Savage.ay.zip
+dSCRUSULG	holdout	disk	4660	Space Crusade	PENTAGON	vtrd/files/gamez/s/SCRUSULG.zip	software/zxdb/files/pub/sinclair/music/ay/games/s/SpaceCrusade.ay.zip
+dSMASHTV_	holdout	disk	4576	Smash TV	PENTAGON	vtrd/files/gamez/s/SMASHTV_.ZIP	software/zxdb/files/pub/sinclair/music/ay/games/s/SmashTV.ay.zip
+dTOWDIBIS	holdout	disk	5352	Towdie	PENTAGON	vtrd/files/gamez/t/TOWDIBIS.zip	
+t10726	holdout	tape	10726	Assignment East Berlin	48K	software/zxdb/files/pub/sinclair/games/a/AssignmentEastBerlin.tap.zip	
+t1308	holdout	tape	1308	Deep Space	48K	software/zxdb/files/pub/sinclair/games/d/DeepSpace(Kryptronic).tzx.zip	
+t14078	holdout	tape	14078	Champions of Cricket + World Cup Cricket - Data Cassette 1994	48K	software/zxdb/files/pub/sinclair/games/c/ChampionsOfCricket+WorldCupCricket-DataCassette1994.tzx.zip	
+t1468	holdout	tape	1468	The Double	48K	software/zxdb/files/pub/sinclair/games/d/DoubleThe(EuropeanSuperLeague2011-2012)(JoeCabron).tap.zip	
+t16308	holdout	tape	16308	Senet	48K	software/zxdb/files/zxdb/sinclair/entries/0016308/Senet.tzx.zip	
+t17111	holdout	tape	17111	Chip Run	48K	software/zxdb/files/pub/sinclair/games/c/ChipRun.tzx.zip	
+t17879	holdout	tape	17879	Catastrophes	48K	software/zxdb/files/pub/sinclair/games/c/Catastrophes.tap.zip	
+t17932	holdout	tape	17932	Tron	48K	software/zxdb/files/zxdb/sinclair/entries/0017932/Tron.tzx.zip	
+t2148	holdout	tape	2148	Grid Trap	48K	software/zxdb/files/pub/sinclair/games/g/GridTrap.tap.zip	
+t2199	holdout	tape	2199	Habilit	48K	software/zxdb/files/pub/sinclair/games/h/Habilit.tap.zip	
+t24943	holdout	tape	24943	King of Pong	48K	software/zxdb/files/pub/sinclair/games/k/KingOfPong.tap.zip	
+t25696	holdout	tape	25696	Battlefield	48K	software/zxdb/files/pub/sinclair/games/b/Battlefield.tap.zip	
+t25796	holdout	tape	25796	Hallowe'en	48K	software/zxdb/files/pub/sinclair/games/h/Halloween_2.tzx.zip	
+t27124	holdout	tape	27124	Skippy's Jump	48K	software/zxdb/files/pub/sinclair/games/s/SkippysJump.tap.zip	
+t30591	holdout	tape	30591	Quake	48K	software/zxdb/files/zxdb/sinclair/entries/0030591/Quake.tap.zip	
+t4168	holdout	tape	4168	Road Toad	48K	software/zxdb/files/pub/sinclair/games/r/RoadToad(DKTronicsLtd).tap.zip	
+t4641	holdout	tape	4641	Solitario	48K	software/zxdb/files/zxdb/sinclair/entries/0004641/Solitario.tzx.zip	
+t4660	holdout	tape	4660	Space Crusade	128K	software/zxdb/files/pub/sinclair/games/s/SpaceCrusade(DroSoft).tzx.zip	software/zxdb/files/pub/sinclair/music/ay/games/s/SpaceCrusade.ay.zip
+t5178	holdout	tape	5178	Tempest	48K	software/zxdb/files/pub/sinclair/games/t/Tempest(G-Force)(Euro-ByteLtd).tap.zip	
+t6626	holdout	tape	6626	Magic	48K	software/zxdb/files/pub/sinclair/games/m/Magic.tap.zip	

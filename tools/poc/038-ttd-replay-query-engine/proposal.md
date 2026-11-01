@@ -64,7 +64,7 @@ The probe-fired query is an answer only. Replays never drive haptics, sound or t
 
 | Step | Content | Proof |
 |------|---------|-------|
-| 1 | first-interval corpus test (F1 and F2 are fixed) | `TimeTravelControllerCorpus_Test` with the baseline interval, every model |
+| 1 | first-interval corpus test (F1 and F2 are fixed). **Done 2026-10-30**, see [phase 2 plan E](../../../docs/inprogress/2026-10-28-ttd-analysis-feedback/phase-2-plan.md#e-checks) | `TimeTravelControllerCorpus_Test` with the baseline interval, every model |
 | 2 | `TtdClonePool`: create, load from the in-memory session, invalidate, idle release | unit tests; RSS and setup benchmark |
 | 3 | `TtdWindowQuery`: chunks, queue, exactness check, observers exec / read / write / port / profile | answers = today's verbs on the POC workloads (unit tests at 300 frames, long tier at 20k) |
 | 4 | probe-fired and AY timeline answers | tests against hand-computed frames |

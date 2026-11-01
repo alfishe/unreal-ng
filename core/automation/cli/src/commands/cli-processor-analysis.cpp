@@ -3,10 +3,12 @@
 // video recording. Mirrors the WebAPI handlers (analyzers_api, profiler_api,
 // state_screen_api, recording_api) so every interface exposes the same features.
 
+#include "cli-analysis.h"
 #include "cli-audio-mixer.h"
 #include "cli-processor.h"
 
 #include <3rdparty/tinywav/tinywav.h>
+#include <debugger/analyzers/analysis/analysiscontrol.h>
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
@@ -26,6 +28,7 @@
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/audio.h>
 #include <emulator/state/devicestate.h>
+#include <emulator/state/statenodejson.h>
 #include <emulator/video/screendigest.h>
 
 #include <algorithm>
@@ -727,6 +730,34 @@ void CLIProcessor::HandleFrameCost(const ClientSession& session, const std::vect
        << (state.tstates_frame_total ? totalActive * 100.0 / state.tstates_frame_total : 0.0) << "%)" << NEWLINE;
 
     session.SendResponse(ss.str());
+}
+
+// HandleAnalysis - the analysis layers through analysis::Execute (analysiscontrol.h), the same verbs as
+// POST /analysis/{start,stop}, GET /analysis/{status,explain} and MCP `analysis`
+void CLIProcessor::HandleAnalysis(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+    std::string action;
+    std::map<std::string, std::string> options;
+    bool json = false;
+    std::string error;
+    if (!CliAnalysis::ParseArgs(args, action, options, json, error))
+    {
+        session.SendResponse("Error: " + error + NEWLINE + CliAnalysis::kUsage + NEWLINE);
+        return;
+    }
+    const analysis::Reply reply = analysis::Execute(*emulator, action, options);
+    if (json)
+    {
+        session.SendResponse(StateNodeToJsonText(reply.ToValue()) + NEWLINE);
+        return;
+    }
+    session.SendResponse((reply.Ok() ? reply.text : "Error: " + reply.message) + NEWLINE);
 }
 
 // HandleCoverage — code coverage analyzer control and queries. Mirrors

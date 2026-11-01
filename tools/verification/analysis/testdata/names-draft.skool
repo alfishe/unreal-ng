@@ -1,0 +1,18 @@
+@start
+; Draft for the names metric (hex)
+@label=MoveHorizontalGuardians
+c$8000 LD A,$01
+@label=L8002
+ $8002 RET
+
+@label=LivesLeft
+g$8003 DEFB $03
+
+@label=Score
+g$8004 DEFB $00
+
+@label=data_8005
+b$8005 DEFB $01
+
+@label=Banana
+c$8006 RET

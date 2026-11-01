@@ -1,12 +1,12 @@
 /// @file timetravelcontroller_test.cpp
-/// @brief Phase 5, item 2: the engine's playback controller against v1. Two
-/// machines run the same program with the same key presses; one records with
-/// v1 (TimeTravelManager), the other with the controller (its own engine as
-/// the store). Seeks to the same points - at frame starts and inside frames,
-/// around the key events - must land both machines on the same state: CPU,
-/// all RAM and every device.
+/// @brief The engine's playback controller against the live machine: a machine
+/// runs a program with key presses while the controller records, and the test
+/// keeps what the machine was at points along the way - at frame starts and
+/// inside frames, around the key events. Seeks to those points must land on
+/// the same state: CPU, all RAM and every device. (Until Phase 6 v1's
+/// TimeTravelManager, recording a twin machine, was the reference.)
 ///
-/// Boots two machines and replays tens of frames: slower than the 50 ms
+/// Boots a machine and replays tens of frames: slower than the 50 ms
 /// guideline, one acceptance check per scenario.
 
 #include <gtest/gtest.h>
@@ -29,7 +29,6 @@
 #include "common/filehelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdfileinfo.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/cpu/core.h"
@@ -37,6 +36,8 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/memoryaccesstracker.h"
+#include "emulator/video/screen.h"
 #include "loaders/snapshot/machinestatetransfer.h"
 #include "emulator/coordinator/ports.h"
 #include "emulator/media/mediamanager.h"
@@ -64,29 +65,64 @@ MachineState CaptureState(EmulatorContext* context, Session& session)
     s.t = z80->t;
     const size_t pages = session.GetModelRamPages();
     s.ram.assign(context->pMemory->RAMPageAddress(0), context->pMemory->RAMPageAddress(0) + pages * 0x4000);
-    // A device past the v1 ids (D23: the controller manager's keyboard joysticks) has no counterpart in v1
+    // Keyed by the device's legacy id: a device without one (D23: the controller manager's keyboard joysticks) is
+    // left out
     for (const ttd::TTDRegistryEntry& e : session.GetPeripheralRegistry().Entries())
         if (e.device && e.device->TTDStateSize() != 0 && e.legacyId != ttd::PeripheralId::None)
             e.device->TTDSaveStateTo(s.devices[static_cast<uint8_t>(e.legacyId)]);
     return s;
 }
 
-/// The devices v1 can record: the engine also records the ones past the v1 ids (D23), which v1 leaves out
-std::vector<std::string> V1Devices(std::vector<std::string> peripherals)
+/// One TAP block (flag #FF and 256 bytes) in the tape slot and the ROM's LD-BYTES entry as the fast tape trap
+/// recognizes it; the block, or empty when the tape did not load
+std::vector<uint8_t> InsertFastTapeBlock(Emulator& emulator, const char* name)
 {
-    peripherals.erase(std::remove(peripherals.begin(), peripherals.end(), "controllers"), peripherals.end());
-    return peripherals;
+    std::vector<uint8_t> block(258);
+    block[0] = 0xFF;
+    uint8_t checksum = 0xFF;
+    for (size_t i = 1; i <= 256; ++i)
+    {
+        block[i] = static_cast<uint8_t>(i * 7 + 3);
+        checksum ^= block[i];
+    }
+    block[257] = checksum;
+    const std::string tap = TestPathHelper::GetUniqueTestScratchPath(name);
+    {
+        std::ofstream out(tap, std::ios::binary);
+        const uint8_t length[2] = {static_cast<uint8_t>(block.size() & 0xFF), static_cast<uint8_t>(block.size() >> 8)};
+        out.write(reinterpret_cast<const char*>(length), 2);
+        out.write(reinterpret_cast<const char*>(block.data()), static_cast<std::streamsize>(block.size()));
+    }
+    if (!emulator.LoadTape(tap))
+        return {};
+
+    uint8_t* rom = emulator.GetContext()->pMemory->GetPhysicalAddressForZ80Page(0);
+    const uint8_t signature1[8] = {0x14, 0x08, 0x15, 0xF3, 0x3E, 0x0F, 0xD3, 0xFE};
+    const uint8_t signature2[3] = {0xDB, 0xFE, 0x1F};
+    std::memcpy(rom + 0x0556, signature1, sizeof(signature1));
+    std::memcpy(rom + 0x0556 + 12, signature2, sizeof(signature2));
+    return block;
 }
+
+/// The loop's store: LD (HL),A at #8008
+constexpr uint16_t kLoopStorePc = 0x8008;
 }  // namespace
 
 class TimeTravelController_Test : public ::testing::Test
 {
 protected:
     SoundCardScope _soundCards;
-    Emulator* _a = nullptr;   ///< records with v1
-    Emulator* _b = nullptr;   ///< records with the controller
-    ttd::TimeTravelManager* _v1 = nullptr;
+    Emulator* _a = nullptr;   ///< a twin of _b (the same program and RAM), recording with its own controller
+    Emulator* _b = nullptr;   ///< records with _controller
     std::unique_ptr<ttd::TimeTravelController> _controller;
+
+    /// A position the machine was at live, and what it was there
+    struct LivePoint
+    {
+        ttd::TTDTimePoint at;
+        MachineState state;
+    };
+    std::vector<LivePoint> _live;
 
     Emulator* StartMachine()
     {
@@ -116,13 +152,13 @@ protected:
         _b = StartMachine();
         ASSERT_NE(_a, nullptr);
         ASSERT_NE(_b, nullptr);
-        _v1 = _a->GetContext()->pTimeTravelManager;
+        ASSERT_NE(_a->GetContext()->pTimeTravelController, nullptr);
         // Power-on RAM is randomized per machine: start both from the same bytes
         Memory* ma = _a->GetContext()->pMemory;
         Memory* mb = _b->GetContext()->pMemory;
         const size_t ramBytes = size_t(MAX_RAM_PAGES) * 0x4000;
         std::memcpy(mb->RAMPageAddress(0), ma->RAMPageAddress(0), ramBytes);
-        // Machine B's core calls the controller (its own v1 manager stays idle)
+        // Machine B's core calls the test's controller (its own stays idle)
         _controller = std::make_unique<ttd::TimeTravelController>(_b->GetContext());
         _b->GetContext()->pTimeTravelHooks = _controller.get();
         _b->GetContext()->ttdWriteSink = _controller.get();
@@ -133,8 +169,8 @@ protected:
         if (_b)
         {
             _controller->StopRecording();
-            _b->GetContext()->pTimeTravelHooks = _b->GetContext()->pTimeTravelManager;
-            _b->GetContext()->ttdWriteSink = _b->GetContext()->pTimeTravelManager;
+            _b->GetContext()->pTimeTravelHooks = _b->GetContext()->pTimeTravelController;
+            _b->GetContext()->ttdWriteSink = _b->GetContext()->pTimeTravelController;
             _controller.reset();
             EmulatorTestHelper::CleanupEmulator(_b);
         }
@@ -142,203 +178,223 @@ protected:
             EmulatorTestHelper::CleanupEmulator(_a);
     }
 
-    /// The same run on both machines: 24 frames, space pressed and released mid-frame
-    void RecordBoth(bool journal = false)
+    ttd::TimeTravelController* Twin() const { return _a->GetContext()->pTimeTravelController; }
+    uint32_t Span() const { return static_cast<uint32_t>(_controller->FrameSpan()); }
+
+    /// Keep what machine B is now
+    void KeepLive() { _live.push_back({_controller->CurrentPosition(), CaptureState(_b->GetContext(), *_controller)}); }
+
+    /// Run @p tStates on machine B (and its twin when it records) and keep where it got to
+    void RunAndKeep(uint32_t tStates, bool twin = false)
     {
-        _v1->SetEnableWriteJournal(journal);
-        _controller->SetEnableWriteJournal(journal);
-        ASSERT_TRUE(_v1->StartRecording());
-        ASSERT_TRUE(_controller->StartRecording());
+        if (twin)
+            _a->RunTStates(tStates, /*skipBreakpoints=*/true);
+        _b->RunTStates(tStates, /*skipBreakpoints=*/true);
+        KeepLive();
+    }
+
+    /// Space pressed or released now, on machine B (and its twin)
+    void Key(bool pressed, bool twin = false)
+    {
         ttd::TTDInputEvent key;
         key.kind = ttd::TTDInputKind::Key;
         key.key = ZXKEY_SPACE;
-        for (int f = 0; f < 24; ++f)
-        {
-            if (f == 5 || f == 13)
-            {
-                _a->RunTStates(20000, /*skipBreakpoints=*/true);   // mid-frame
-                _b->RunTStates(20000, /*skipBreakpoints=*/true);
-                key.pressed = f == 5;
-                ASSERT_TRUE(_v1->SubmitLiveInput(key));
-                ASSERT_TRUE(_controller->SubmitLiveInput(key));
-            }
-            _a->RunNFrames(1, /*skipBreakpoints=*/true);
-            _b->RunNFrames(1, /*skipBreakpoints=*/true);
-        }
-        _v1->StopRecording();
-        _controller->StopRecording();
+        key.pressed = pressed;
+        if (twin)
+            ASSERT_TRUE(Twin()->SubmitLiveInput(key));
+        ASSERT_TRUE(_controller->SubmitLiveInput(key));
     }
 
-    void ExpectSameSeek(const ttd::TTDTimePoint& target)
+    /// 24 frames, space pressed and released mid-frame (frames 5 and 13). Kept along the way: three points inside
+    /// frames 1, 8, 12 and 22, and points just before and after each key event. @p twin: machine A records the
+    /// same run with its own controller, the write journal on
+    void Record(bool journal = false, bool twin = false)
     {
-        SCOPED_TRACE("frame " + std::to_string(target.frame) + " T " + std::to_string(target.tInFrame));
-        ttd::TTDSeekResult a, b;
-        ASSERT_TRUE(_v1->SeekTo(target, &a));
-        ASSERT_TRUE(_controller->SeekTo(target, &b));
-        const MachineState fromV1 = CaptureState(_a->GetContext(), *_v1);
-        const MachineState fromController = CaptureState(_b->GetContext(), *_controller);
+        _controller->SetEnableWriteJournal(journal);
+        ASSERT_TRUE(_controller->StartRecording());
+        if (twin)
+        {
+            Twin()->SetEnableWriteJournal(true);   // the twin is the reference: its journal recorded
+            ASSERT_TRUE(Twin()->StartRecording());
+        }
+        const uint32_t quarter = Span() / 4;
+        for (int f = 0; f < 24; ++f)
+        {
+            if (f == 1 || f == 8 || f == 12 || f == 22)
+                for (int k = 0; k < 3; ++k)
+                    RunAndKeep(quarter, twin);
+            if (f == 5 || f == 13)
+            {
+                RunAndKeep(19500, twin);
+                if (twin)
+                    _a->RunTStates(500, /*skipBreakpoints=*/true);
+                _b->RunTStates(500, /*skipBreakpoints=*/true);
+                ASSERT_NO_FATAL_FAILURE(Key(f == 5, twin));
+                RunAndKeep(1, twin);
+                RunAndKeep(900, twin);
+            }
+            if (twin)
+                _a->RunNFrames(1, /*skipBreakpoints=*/true);
+            _b->RunNFrames(1, /*skipBreakpoints=*/true);
+        }
+        _controller->StopRecording();
+        if (twin)
+            Twin()->StopRecording();
+    }
 
-        EXPECT_EQ(a.arrivedAt, b.arrivedAt);
-        EXPECT_EQ(std::memcmp(&fromV1.cpu, &fromController.cpu, sizeof(fromV1.cpu)), 0) << "CPU";
-        EXPECT_EQ(fromV1.frame, fromController.frame);
-        EXPECT_EQ(fromV1.t, fromController.t);
-        ASSERT_EQ(fromV1.ram.size(), fromController.ram.size());
-        for (size_t i = 0; i < fromV1.ram.size(); ++i)
-            if (fromV1.ram[i] != fromController.ram[i])
+    /// A seek to @p point lands on what the machine was there live
+    void ExpectSeekShowsLive(const LivePoint& point)
+    {
+        SCOPED_TRACE("frame " + std::to_string(point.at.frame) + " T " + std::to_string(point.at.tInFrame));
+        ttd::TTDSeekResult r;
+        ASSERT_TRUE(_controller->SeekTo(point.at, &r));
+        EXPECT_EQ(r.arrivedAt, point.at);
+        ExpectState(point.state);
+    }
+
+    /// Machine B is @p expected
+    void ExpectState(const MachineState& expected)
+    {
+        const MachineState seen = CaptureState(_b->GetContext(), *_controller);
+        EXPECT_EQ(std::memcmp(&seen.cpu, &expected.cpu, sizeof(seen.cpu)), 0) << "CPU";
+        EXPECT_EQ(seen.frame, expected.frame);
+        EXPECT_EQ(seen.t, expected.t);
+        ASSERT_EQ(seen.ram.size(), expected.ram.size());
+        for (size_t i = 0; i < seen.ram.size(); ++i)
+            if (seen.ram[i] != expected.ram[i])
             {
                 ADD_FAILURE() << "RAM differs at " << i << " (page " << i / 0x4000 << ")";
                 break;
             }
-        ASSERT_EQ(fromV1.devices.size(), fromController.devices.size());
-        for (const auto& [id, bytes] : fromV1.devices)
-            EXPECT_TRUE(fromController.devices.at(id) == bytes) << "device " << int(id);
+        ASSERT_EQ(seen.devices.size(), expected.devices.size());
+        for (const auto& [id, bytes] : expected.devices)
+            EXPECT_TRUE(seen.devices.at(id) == bytes) << "device " << int(id);
     }
+
+    /// Every kept point, newest first, then the oldest again: the seeks go backwards and forwards
+    void ExpectEverySeekShowsLive()
+    {
+        ASSERT_FALSE(_live.empty());
+        for (auto it = _live.rbegin(); it != _live.rend(); ++it)
+            ASSERT_NO_FATAL_FAILURE(ExpectSeekShowsLive(*it));
+        ASSERT_NO_FATAL_FAILURE(ExpectSeekShowsLive(_live.front()));
+    }
+
+    /// Forget the kept points at or after @p from (a resume from there rewrites that future)
+    void DropLiveFrom(const ttd::TTDTimePoint& from)
+    {
+        _live.erase(std::remove_if(_live.begin(), _live.end(), [&](const LivePoint& p) { return !(p.at < from); }),
+                    _live.end());
+    }
+
+    /// The byte at Z80 address @p addr as the machine stands
+    uint8_t ByteAt(uint16_t addr) const { return _b->GetContext()->pMemory->DirectReadFromZ80Memory(addr); }
 };
 
-TEST_F(TimeTravelController_Test, SeeksLandOnV1sMachine)
+TEST_F(TimeTravelController_Test, SeeksLandOnTheLiveMachine)
 {
-    ASSERT_NO_FATAL_FAILURE(RecordBoth());
-    ASSERT_EQ(_controller->GetCheckpointCount(), _v1->GetCheckpointCount());
-    ASSERT_EQ(_controller->GetEngine().CheckpointCount(), _v1->GetCheckpointCount()) << "the controller's engine recorded";
+    ASSERT_NO_FATAL_FAILURE(Record());
+    ASSERT_EQ(_controller->GetEngine().CheckpointCount(), _controller->GetCheckpointCount()) << "the controller's engine recorded";
     ASSERT_EQ(_controller->GetReplaySource(), &_controller->GetEngine()) << "seeks restore from the controller's engine";
-
-    // Frames spread over the session, at three points inside each
-    const size_t count = _v1->GetCheckpointCount();
-    const uint32_t span = static_cast<uint32_t>(_v1->FrameSpan());
-    for (size_t i : {size_t(1), count / 3, count / 2, count - 2})
-    {
-        const uint64_t frame = _v1->GetCheckpoint(i)->time.frame;
-        for (uint32_t k = 1; k <= 3; ++k)
-            ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({frame, span * k / 4}));
-    }
-    // Around the key events
-    for (const ttd::TTDInputEvent& e : _v1->GetInputJournal().Events())
-        for (int32_t d : {-500, 1, 900})
-        {
-            if (int64_t(e.time.tInFrame) + d > 0 && int64_t(e.time.tInFrame) + d < span)
-            {
-                ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({e.time.frame, static_cast<uint32_t>(int64_t(e.time.tInFrame) + d)}));
-            }
-        }
+    EXPECT_EQ(_live.size(), 4u * 3u + 2u * 3u);
+    ASSERT_NO_FATAL_FAILURE(ExpectEverySeekShowsLive());
 }
 
-/// The queries answer from the same history the same way: the write journal and the
-/// coverage index reach the controller through the core's sinks (C1d)
-TEST_F(TimeTravelController_Test, QueriesAnswerAsV1)
+/// The queries answer from the recorded history: the write journal and the coverage index reach the controller
+/// through the core's sinks (C1d), and what they answer is what the machine did
+TEST_F(TimeTravelController_Test, QueriesAnswerFromTheHistory)
 {
-    ASSERT_NO_FATAL_FAILURE(RecordBoth(/*journal=*/true));
-    ASSERT_NE(_v1->GetWriteJournal(), nullptr);
+    ASSERT_NO_FATAL_FAILURE(Record(/*journal=*/true));
     ASSERT_NE(_controller->GetWriteJournal(), nullptr);
-    EXPECT_EQ(_controller->GetEngine().Writes().Size(), _v1->GetWriteJournal()->Size()) << "the controller got the writes";
-    EXPECT_GT(_controller->GetEngine().Writes().Size(), 0u);
+    EXPECT_GT(_controller->GetEngine().Writes().Size(), 0u) << "the controller got the writes";
     EXPECT_EQ(_controller->GetWriteJournal()->Size(), 0u) << "the live ring was drained into the engine";
-    EXPECT_EQ(_controller->GetCoverageIndex().SealedFrameCount(ttd::TTDCoverageKind::Executed),
-              _v1->GetCoverageIndex().SealedFrameCount(ttd::TTDCoverageKind::Executed)) << "the controller got the coverage";
+    EXPECT_GT(_controller->GetCoverageIndex().SealedFrameCount(ttd::TTDCoverageKind::Executed), 20u)
+        << "the controller got the coverage";
 
-    const ttd::TTDTimePoint end = _v1->SessionEndPosition();
+    const ttd::TTDTimePoint end = _controller->SessionEndPosition();
     ttd::TTDSeekResult r;
-    ASSERT_TRUE(_v1->SeekTo(end, &r));
     ASSERT_TRUE(_controller->SeekTo(end, &r));
 
-    // Who wrote these addresses last (the program stores the keyboard row at #C000..)
+    // Who wrote these addresses last (the program stores the keyboard row at #C000..): the loop's store, with the
+    // byte the memory holds at the end
     for (uint16_t addr : {uint16_t(0xC000), uint16_t(0xC010), uint16_t(0xC0FF)})
     {
         SCOPED_TRACE(addr);
         ttd::TTDSearchQuery q;
         q.addrFrom = q.addrTo = addr;
         q.access = ttd::TTDAccessType::Write;
-        const auto a = _v1->FindLastAccess(q);
         const auto b = _controller->FindLastAccess(q);
-        ASSERT_EQ(a.has_value(), b.has_value());
-        if (a)
-        {
-            EXPECT_EQ(a->time, b->time);
-            EXPECT_EQ(a->pc, b->pc);
-            EXPECT_EQ(a->value, b->value);
-        }
+        ASSERT_TRUE(b.has_value());
+        EXPECT_EQ(b->pc, kLoopStorePc);
+        EXPECT_EQ(b->value, ByteAt(addr));
+        EXPECT_FALSE(end < b->time);
     }
 
-    // Which frames ran the loop
-    const auto scanA = _v1->QueryCoverageScan(0, end.frame, ttd::TTDCoverageKind::Executed, 0x8000, 0x800B);
-    const auto scanB = _controller->QueryCoverageScan(0, end.frame, ttd::TTDCoverageKind::Executed, 0x8000, 0x800B);
-    EXPECT_TRUE(scanA.indexAvailable);
-    EXPECT_EQ(scanA.indexAvailable, scanB.indexAvailable);
-    EXPECT_EQ(scanA.frames, scanB.frames);
+    // Which frames ran the loop: every recorded one
+    const auto scan = _controller->QueryCoverageScan(0, end.frame, ttd::TTDCoverageKind::Executed, 0x8000, 0x800B);
+    EXPECT_TRUE(scan.indexAvailable);
+    EXPECT_GE(scan.frames.size(), 20u);
 
-    // Back to the IN of the loop, then a few instructions back
-    const auto rcA = _v1->ReverseContinue({0x8006});
-    const auto rcB = _controller->ReverseContinue({0x8006});
-    EXPECT_TRUE(rcA.matched);
-    EXPECT_EQ(rcA.matched, rcB.matched);
-    EXPECT_EQ(rcA.arrivedAt, rcB.arrivedAt);
-    EXPECT_TRUE(_v1->ReverseStepInstructions(5));
+    // Back to the IN of the loop, then a few instructions back: the same machine as a seek to that point
+    const auto rc = _controller->ReverseContinue({0x8006});
+    ASSERT_TRUE(rc.matched);
+    EXPECT_TRUE(rc.arrivedAt < end);
+    EXPECT_EQ(_b->GetContext()->pCore->GetZ80()->pc, 0x8006);
     EXPECT_TRUE(_controller->ReverseStepInstructions(5));
-    EXPECT_EQ(_v1->CurrentPosition(), _controller->CurrentPosition());
-    const MachineState a = CaptureState(_a->GetContext(), *_v1);
-    const MachineState b = CaptureState(_b->GetContext(), *_controller);
-    EXPECT_EQ(std::memcmp(&a.cpu, &b.cpu, sizeof(a.cpu)), 0) << "CPU after reverse steps";
-    EXPECT_TRUE(a.ram == b.ram) << "RAM after reverse steps";
+    const ttd::TTDTimePoint back = _controller->CurrentPosition();
+    EXPECT_TRUE(back < rc.arrivedAt);
+    const MachineState stepped = CaptureState(_b->GetContext(), *_controller);
+    ASSERT_TRUE(_controller->SeekTo(_controller->GetCheckpoint(2)->time, &r));
+    ASSERT_TRUE(_controller->SeekTo(back, &r));
+    ASSERT_NO_FATAL_FAILURE(ExpectState(stepped));
 }
 
-/// A recording resumed from the past (C2): both go back into the middle of
-/// frame 10, record on with a key pressed, and every seek - before the resume
-/// point, at it and after it - lands on the same machine
-TEST_F(TimeTravelController_Test, ResumeFromThePastContinuesAsV1)
+/// A recording resumed from the past (C2): back into the middle of frame 10, recorded on with a key pressed; every
+/// seek - before the resume point and after it - lands on what the machine was live
+TEST_F(TimeTravelController_Test, ResumeFromThePastContinuesAsTheMachineRan)
 {
-    ASSERT_NO_FATAL_FAILURE(RecordBoth());
-    const uint32_t span = static_cast<uint32_t>(_v1->FrameSpan());
-    const ttd::TTDTimePoint from{_v1->GetCheckpoint(10)->time.frame, span / 3};
+    ASSERT_NO_FATAL_FAILURE(Record());
+    const ttd::TTDTimePoint from{_controller->GetCheckpoint(10)->time.frame, Span() / 3};
     ttd::TTDSeekResult r;
-    ASSERT_TRUE(_v1->SeekTo(from, &r));
     ASSERT_TRUE(_controller->SeekTo(from, &r));
-    ASSERT_TRUE(_v1->ResumeRecordingFrom(from));
     ASSERT_TRUE(_controller->ResumeRecordingFrom(from));
-    ttd::TTDInputEvent key;
-    key.kind = ttd::TTDInputKind::Key;
-    key.key = ZXKEY_SPACE;
+    DropLiveFrom(from);
+    const size_t before = _live.size();
     for (int f = 0; f < 10; ++f)
     {
         if (f == 4)
         {
-            _a->RunTStates(15000, /*skipBreakpoints=*/true);
-            _b->RunTStates(15000, /*skipBreakpoints=*/true);
-            key.pressed = true;
-            ASSERT_TRUE(_v1->SubmitLiveInput(key));
-            ASSERT_TRUE(_controller->SubmitLiveInput(key));
+            RunAndKeep(15000);
+            ASSERT_NO_FATAL_FAILURE(Key(true));
+            RunAndKeep(1);
         }
-        _a->RunNFrames(1, /*skipBreakpoints=*/true);
+        if (f == 2 || f == 8)
+            RunAndKeep(Span() / 2);
         _b->RunNFrames(1, /*skipBreakpoints=*/true);
     }
-    _v1->StopRecording();
     _controller->StopRecording();
+    ASSERT_GT(before, 0u);
+    ASSERT_EQ(_live.size(), before + 4u);
 
-    const size_t count = _v1->GetCheckpointCount();
-    ASSERT_EQ(_controller->GetCheckpointCount(), count);
     const ttd::TimeTravelEngine& engine = _controller->GetEngine();
-    ASSERT_EQ(engine.CheckpointCount() - engine.FirstCheckpoint(), count) << "the engine holds the same history";
-    for (size_t i : {size_t(5), size_t(10), size_t(11), size_t(14), count - 2})
-    {
-        const uint64_t frame = _v1->GetCheckpoint(i)->time.frame;
-        for (uint32_t k = 1; k <= 3; ++k)
-            ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({frame, span * k / 4}));
-    }
+    ASSERT_EQ(engine.CheckpointCount() - engine.FirstCheckpoint(), _controller->GetCheckpointCount())
+        << "the engine holds the history";
+    ASSERT_NO_FATAL_FAILURE(ExpectEverySeekShowsLive());
 }
 
-/// A frame limit (C2): v1 holds exactly the last 16 frames, the controller's
-/// engine whole segments covering at least them; inside the window both land
-/// on the same machine, and the journals start where each history starts
+/// A frame limit (C2): the controller's engine holds whole segments covering at least the last 16 frames; inside
+/// the window seeks land on the live machine
 TEST_F(TimeTravelController_Test, HistoryLimitKeepsTheWindow)
 {
-    _v1->SetHistoryLimit(16, 0);
     _controller->SetHistoryLimit(16, 0);
-    ASSERT_TRUE(_v1->StartRecording());
     ASSERT_TRUE(_controller->StartRecording());
     for (int f = 0; f < 48; ++f)
     {
-        _a->RunNFrames(1, /*skipBreakpoints=*/true);
+        if (f == 34 || f == 42 || f == 47)
+            RunAndKeep(Span() / 2);
         _b->RunNFrames(1, /*skipBreakpoints=*/true);
     }
-    _v1->StopRecording();
+    const ttd::TTDTimePoint stoppedAt = _controller->CurrentPosition();
     _controller->StopRecording();
 
     const ttd::TimeTravelEngine& engine = _controller->GetEngine();
@@ -348,15 +404,12 @@ TEST_F(TimeTravelController_Test, HistoryLimitKeepsTheWindow)
     EXPECT_LE(held, 16u + 2u) << "segments of an eighth of the window";
     EXPECT_GT(engine.FirstCheckpoint(), 0u) << "the oldest segments were dropped";
     EXPECT_EQ(_controller->GetCheckpoint(0)->time.frame, engine.Checkpoint(engine.FirstCheckpoint())->position.frame);
-    // The engine's history reaches to where the recording stopped, inside v1's last frame
-    EXPECT_EQ(_controller->SessionEndPosition().frame, _v1->SessionEndPosition().frame);
-    EXPECT_FALSE(_controller->SessionEndPosition() < _v1->SessionEndPosition());
+    // The history reaches to where the recording stopped
+    EXPECT_EQ(_controller->SessionEndPosition(), stoppedAt);
 
-    const uint32_t span = static_cast<uint32_t>(_v1->FrameSpan());
-    const uint64_t last = _v1->SessionEndPosition().frame;
-    for (uint64_t frame : {last - 14, last - 6, last - 1})
-        ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({frame, span / 2}));
+    ASSERT_NO_FATAL_FAILURE(ExpectEverySeekShowsLive());
     // D12: a seek before the earliest kept position names it and moves nothing
+    const uint64_t last = stoppedAt.frame;
     const ttd::TTDTimePoint before = _controller->CurrentPosition();
     ttd::TTDSeekResult r;
     EXPECT_FALSE(_controller->SeekTo({last - 30, 0}, &r)) << "dropped history is not reachable";
@@ -366,6 +419,25 @@ TEST_F(TimeTravelController_Test, HistoryLimitKeepsTheWindow)
     EXPECT_EQ(r.arrivedAt, before);
     EXPECT_EQ(_controller->CurrentPosition(), before);
     EXPECT_EQ(_controller->GetSessionInfo().sessionStartFrame, r.earliest.frame);
+}
+
+/// A session recorded on one model is refused by an instance of another, with the reason
+TEST_F(TimeTravelController_Test, ALoadRefusesAnotherModelsSession)
+{
+    ASSERT_TRUE(_controller->StartRecording());
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    _controller->StopRecording();
+    std::stringstream file;
+    std::string err;
+    ASSERT_TRUE(_controller->SerializeSession(file, err)) << err;
+
+    // Pretend this instance is a different machine
+    EmulatorContext* context = _b->GetContext();
+    const MEM_MODEL original = context->config.mem_model;
+    context->config.mem_model = original == MM_SPECTRUM48 ? MM_PENTAGON : MM_SPECTRUM48;
+    EXPECT_FALSE(_controller->DeserializeSession(file, err)) << "a session from another model was accepted";
+    EXPECT_NE(err.find("model"), std::string::npos) << "the refusal does not name the model: " << err;
+    context->config.mem_model = original;
 }
 
 /// The controller's time is the engine's frame table (C3): on a Sprinter that
@@ -382,9 +454,8 @@ TEST(TimeTravelController_TimeBase_Test, MachineTimeFollowsTheFrameTable)
     context->pMemory->UpdateFeatureCache();
     auto* sprinter = dynamic_cast<PortDecoder_Sprinter*>(context->pPortDecoder);
     ASSERT_NE(sprinter, nullptr);
-    auto controller = std::make_unique<ttd::TimeTravelController>(context);
-    context->pTimeTravelHooks = controller.get();
-    context->ttdWriteSink = controller.get();
+    ttd::TimeTravelController* controller = context->pTimeTravelController;
+    ASSERT_NE(controller, nullptr);
 
     ASSERT_TRUE(controller->StartRecording());
     emulator->RunNFrames(5, /*skipBreakpoints=*/true);
@@ -410,35 +481,29 @@ TEST(TimeTravelController_TimeBase_Test, MachineTimeFollowsTheFrameTable)
             EXPECT_EQ(controller->TimePointAt(controller->GlobalT({f, t})), (ttd::TTDTimePoint{f, t})) << "frame " << f;
     }
     EXPECT_TRUE(shorter) << "some frames are not FrameSpan() long: frame x span would misplace them";
-
-    context->pTimeTravelHooks = context->pTimeTravelManager;
-    context->ttdWriteSink = context->pTimeTravelManager;
-    controller.reset();
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 namespace
 {
-/// Record 14 frames on both machines with a marker of @p kind in the middle of frame 8
-void RecordWithMarker(Emulator* a, Emulator* b, ttd::TimeTravelManager* v1, ttd::TimeTravelController* controller,
-                      ttd::TTDExternalEventKind kind)
+/// Record 14 frames with a marker of @p kind in the middle of frame 8; the marker's position
+ttd::TTDTimePoint RecordWithMarker(Emulator* emulator, ttd::TimeTravelController* controller, ttd::TTDExternalEventKind kind)
 {
-    ASSERT_TRUE(v1->StartRecording());
-    ASSERT_TRUE(controller->StartRecording());
+    ttd::TTDTimePoint at;
+    if (!controller->StartRecording())
+        return at;
     for (int f = 0; f < 14; ++f)
     {
         if (f == 8)
         {
-            a->RunTStates(30000, /*skipBreakpoints=*/true);
-            b->RunTStates(30000, /*skipBreakpoints=*/true);
-            v1->RecordExternalEvent(kind, "outside");
+            emulator->RunTStates(30000, /*skipBreakpoints=*/true);
+            at = controller->CurrentPosition();
             controller->RecordExternalEvent(kind, "outside");
         }
-        a->RunNFrames(1, /*skipBreakpoints=*/true);
-        b->RunNFrames(1, /*skipBreakpoints=*/true);
+        emulator->RunNFrames(1, /*skipBreakpoints=*/true);
     }
-    v1->StopRecording();
     controller->StopRecording();
+    return at;
 }
 
 /// A search for code that never ran: it walks back until something stops it
@@ -451,88 +516,109 @@ ttd::TTDSearchQuery NeverExecuted()
 }
 }  // namespace
 
-/// Barriers in queries come from the engine's event log (C3): a marker the
-/// replay cannot reproduce stops a backward search where v1's marker does,
-/// named the same way
-TEST_F(TimeTravelController_Test, QueriesStopAtTheSameBarrierAsV1)
+/// Barriers in queries come from the engine's event log (C3): a marker the replay cannot reproduce stops a
+/// backward search there, and the answer names it
+TEST_F(TimeTravelController_Test, AMarkerTheReplayCannotReproduceStopsASearch)
 {
-    ASSERT_NO_FATAL_FAILURE(RecordWithMarker(_a, _b, _v1, _controller.get(), ttd::TTDExternalEventKind::Other));
-    ttd::TTDExternalEvent markerA, markerB;
-    ttd::TTDSearchWindow windowA, windowB;
-    EXPECT_FALSE(_v1->FindLastAccess(NeverExecuted(), &markerA, &windowA).has_value());
-    EXPECT_FALSE(_controller->FindLastAccess(NeverExecuted(), &markerB, &windowB).has_value());
-    EXPECT_EQ(markerA.time, markerB.time);
-    EXPECT_EQ(markerA.kind, markerB.kind);
-    EXPECT_STREQ(markerA.reason, markerB.reason);
-    EXPECT_EQ(windowA.from, windowB.from);
-    EXPECT_EQ(windowA.to, windowB.to);
-    EXPECT_GT(windowB.from.frame, _controller->GetCheckpoint(0)->time.frame) << "stopped at the marker";
+    const ttd::TTDTimePoint at = RecordWithMarker(_b, _controller.get(), ttd::TTDExternalEventKind::Other);
+    ASSERT_GT(at.frame, 0u);
+    ttd::TTDExternalEvent marker;
+    ttd::TTDSearchWindow window;
+    EXPECT_FALSE(_controller->FindLastAccess(NeverExecuted(), &marker, &window).has_value());
+    EXPECT_EQ(marker.time, at);
+    EXPECT_EQ(marker.kind, ttd::TTDExternalEventKind::Other);
+    EXPECT_STREQ(marker.reason, "outside");
+    EXPECT_GT(window.from.frame, _controller->GetCheckpoint(0)->time.frame) << "stopped at the marker";
+    EXPECT_FALSE(window.from < at) << "the window starts at the marker";
+    EXPECT_EQ(window.to, _controller->SessionEndPosition());
 }
 
-/// Tape control is input the engine's replay applies, not a barrier: the
-/// controller searches across it to the session start, where v1 stops
+/// Tape control is input the engine's replay applies, not a barrier: the controller searches across it to the
+/// session start
 TEST_F(TimeTravelController_Test, TapeControlIsNoBarrierForTheController)
 {
-    ASSERT_NO_FATAL_FAILURE(RecordWithMarker(_a, _b, _v1, _controller.get(), ttd::TTDExternalEventKind::TapeControl));
-    ttd::TTDExternalEvent markerA;
-    ttd::TTDSearchWindow windowA, windowB;
-    EXPECT_FALSE(_v1->FindLastAccess(NeverExecuted(), &markerA, &windowA).has_value());
-    EXPECT_FALSE(_controller->FindLastAccess(NeverExecuted(), nullptr, &windowB).has_value());
-    EXPECT_GT(windowA.from.frame, _v1->GetCheckpoint(0)->time.frame) << "v1 stops at the tape marker";
-    EXPECT_EQ(windowB.from, _controller->GetCheckpoint(0)->time) << "the controller reaches the session start";
+    const ttd::TTDTimePoint at = RecordWithMarker(_b, _controller.get(), ttd::TTDExternalEventKind::TapeControl);
+    ASSERT_GT(at.frame, 0u);
+    ttd::TTDSearchWindow window;
+    EXPECT_FALSE(_controller->FindLastAccess(NeverExecuted(), nullptr, &window).has_value());
+    EXPECT_EQ(window.from, _controller->GetCheckpoint(0)->time) << "the controller reaches the session start";
 }
 
-/// The write journal built afterwards by replay (C3c): recorded without it,
-/// both build it for the whole session; the controller's engine index then
-/// covers the session and answers find-last as v1's journal does
-TEST_F(TimeTravelController_Test, BuiltJournalAnswersAsV1)
+/// The write journal built afterwards by replay (C3c): a twin records the same run with the journal on, machine B
+/// without it and builds it for the whole session afterwards; the built index answers find-last as the recorded one
+TEST_F(TimeTravelController_Test, TheBuiltJournalAnswersAsTheRecordedOne)
 {
-    ASSERT_NO_FATAL_FAILURE(RecordBoth(/*journal=*/false));
-    const ttd::TTDJournalBuildResult a = _v1->BuildWriteJournal(0, UINT64_MAX);
+    ASSERT_NO_FATAL_FAILURE(Record(/*journal=*/false, /*twin=*/true));
+    ttd::TimeTravelController* twin = Twin();
+    ASSERT_EQ(twin->GetCheckpointCount(), _controller->GetCheckpointCount());
+    ASSERT_GT(twin->GetEngine().Writes().Size(), 0u) << "the twin recorded its writes";
     const ttd::TTDJournalBuildResult b = _controller->BuildWriteJournal(0, UINT64_MAX);
-    ASSERT_TRUE(a.ok) << a.error;
     ASSERT_TRUE(b.ok) << b.error;
-    EXPECT_EQ(a.framesBuilt, b.framesBuilt);
-    EXPECT_EQ(a.records, b.records);
     EXPECT_GT(b.records, 0u);
     const ttd::TTDWriteIndex& writes = _controller->GetEngine().Writes();
     EXPECT_EQ(writes.Size(), b.records) << "the engine's index holds the built journal";
     ASSERT_EQ(writes.Segments().size(), 1u);
 
-    const ttd::TTDTimePoint end = _v1->SessionEndPosition();
+    // From the last checkpoint: the built journal covers the frames between checkpoints, not the tail after the last
+    ASSERT_EQ(twin->SessionEndPosition(), _controller->SessionEndPosition());
+    const ttd::TTDTimePoint end = _controller->GetCheckpoint(_controller->GetCheckpointCount() - 1)->time;
     ttd::TTDSeekResult r;
-    ASSERT_TRUE(_v1->SeekTo(end, &r));
     ASSERT_TRUE(_controller->SeekTo(end, &r));
+    ASSERT_TRUE(twin->SeekTo(end, &r));
+    const ttd::TTDTimePoint here = _controller->CurrentPosition();
     for (uint16_t addr : {uint16_t(0xC000), uint16_t(0xC07F), uint16_t(0xC0FF)})
     {
         SCOPED_TRACE(addr);
         ttd::TTDSearchQuery q;
         q.addrFrom = q.addrTo = addr;
         q.access = ttd::TTDAccessType::Write;
-        const auto x = _v1->FindLastAccess(q);
+        const auto x = twin->FindLastAccess(q);
         const auto y = _controller->FindLastAccess(q);
         ASSERT_TRUE(x.has_value());
         ASSERT_TRUE(y.has_value());
         EXPECT_EQ(x->time, y->time);
         EXPECT_EQ(x->pc, y->pc);
         EXPECT_EQ(x->value, y->value);
-        EXPECT_EQ(_controller->CurrentPosition(), end) << "answered from the index: the machine stays";
+        EXPECT_EQ(y->pc, kLoopStorePc);
+        EXPECT_EQ(_controller->CurrentPosition(), here) << "answered from the index: the machine stays";
+    }
+
+    // From the session end, inside the tail after the last checkpoint: the built journal does not cover it (no
+    // checkpoint closes the frame), so the search replays it - the recorded answer, the machine positioned at it
+    const ttd::TTDTimePoint tail = _controller->SessionEndPosition();
+    ASSERT_TRUE(end < tail);
+    ASSERT_TRUE(_controller->SeekTo(tail, &r));
+    ASSERT_TRUE(twin->SeekTo(tail, &r));
+    for (uint16_t addr : {uint16_t(0xC000), uint16_t(0xC07F), uint16_t(0xC0FF)})
+    {
+        SCOPED_TRACE(addr);
+        ttd::TTDSearchQuery q;
+        q.addrFrom = q.addrTo = addr;
+        q.access = ttd::TTDAccessType::Write;
+        const auto x = twin->FindLastAccess(q);
+        const auto y = _controller->FindLastAccess(q);
+        ASSERT_TRUE(x.has_value());
+        ASSERT_TRUE(y.has_value());
+        EXPECT_EQ(x->time, y->time);
+        EXPECT_EQ(x->pc, y->pc);
+        EXPECT_EQ(x->value, y->value);
+        EXPECT_EQ(_controller->CurrentPosition(), y->time) << "answered by replay: the machine is at the answer";
+        ASSERT_TRUE(_controller->SeekTo(tail, &r));
+        ASSERT_TRUE(twin->SeekTo(tail, &r));
     }
 }
 
-/// Status from the engine (C4a): the recorded machine described as v1
-/// describes it, the store's figures and key frames from the engine
-TEST_F(TimeTravelController_Test, StatusDescribesTheSessionAsV1)
+/// Status from the engine (C4a): the recorded machine, the store's figures and key frames from the engine
+TEST_F(TimeTravelController_Test, StatusDescribesTheSession)
 {
-    ASSERT_NO_FATAL_FAILURE(RecordBoth());
-    const ttd::TTDSessionInfo a = _v1->GetSessionInfo();
+    ASSERT_NO_FATAL_FAILURE(Record());
     const ttd::TTDSessionInfo b = _controller->GetSessionInfo();
-    EXPECT_EQ(a.checkpointCount, b.checkpointCount);
-    EXPECT_EQ(a.sessionStartFrame, b.sessionStartFrame);
-    EXPECT_EQ(a.currentEndFrame, b.currentEndFrame);
-    EXPECT_EQ(a.machine.peripherals, V1Devices(b.machine.peripherals)) << "the same devices recorded";
+    EXPECT_EQ(b.checkpointCount, _controller->GetCheckpointCount());
+    EXPECT_EQ(b.sessionStartFrame, _controller->GetCheckpoint(0)->time.frame);
+    EXPECT_EQ(b.currentEndFrame, _controller->GetCheckpoint(_controller->GetCheckpointCount() - 1)->time.frame);
     EXPECT_FALSE(b.machine.peripherals.empty());
-    EXPECT_EQ(a.inputEventCount, b.inputEventCount);
+    EXPECT_EQ(b.inputEventCount, _controller->GetInputJournal().Size());
+    EXPECT_GE(b.inputEventCount, 2u) << "the press and the release";
 
     const ttd::TimeTravelEngine& engine = _controller->GetEngine();
     EXPECT_EQ(b.pageStoreUsedBytes, engine.PieceStore().PayloadBytes());
@@ -543,106 +629,99 @@ TEST_F(TimeTravelController_Test, StatusDescribesTheSessionAsV1)
     EXPECT_GE(_controller->GetHeapBreakdown().Total(), engine.HeapBreakdown().Total()) << "the engine's memory is counted";
 }
 
-/// A saved session loads back (C4b): the engine's file with the controller's
-/// facts, coverage and bookmarks. Seeks into the loaded session land where
-/// v1's in-memory session lands, a v1 file is refused with the reason, and
-/// the loaded session continues: resumed from frame 12, both record on and
-/// seek alike
-TEST_F(TimeTravelController_Test, ASavedSessionLoadsAndContinuesAsV1)
+/// A saved session loads back (C4b): the engine's file with the controller's facts, coverage and bookmarks. Seeks
+/// into the loaded session land on the live machine, and the loaded session continues: resumed from frame 12, it
+/// records on and seeks land on the machine as it ran on
+TEST_F(TimeTravelController_Test, ASavedSessionLoadsAndContinues)
 {
-    ASSERT_NO_FATAL_FAILURE(RecordBoth(/*journal=*/true));
+    ASSERT_NO_FATAL_FAILURE(Record(/*journal=*/true));
     std::string err;
-    ASSERT_TRUE(_controller->AddBookmark(_v1->GetCheckpoint(7)->time, "seven", &err)) << err;
+    ASSERT_TRUE(_controller->AddBookmark(_controller->GetCheckpoint(7)->time, "seven", &err)) << err;
+    const size_t checkpoints = _controller->GetCheckpointCount();
+    const size_t inputs = _controller->GetInputJournal().Size();
     const size_t coveredFrames = _controller->GetCoverageIndex().SealedFrameCount(ttd::TTDCoverageKind::Executed);
     ASSERT_GT(coveredFrames, 0u);
+    ttd::TTDSearchQuery q;
+    q.addrFrom = q.addrTo = 0xC010;
+    q.access = ttd::TTDAccessType::Write;
+    // Both searches from the last checkpoint (a search runs back from where the machine is)
+    const ttd::TTDTimePoint searchFrom = _controller->GetCheckpoint(checkpoints - 1)->time;
+    ASSERT_TRUE(_controller->SeekTo(searchFrom));
+    const auto recorded = _controller->FindLastAccess(q);
+    ASSERT_TRUE(recorded.has_value());
     std::stringstream file;
     ASSERT_TRUE(_controller->SerializeSession(file, err)) << err;
-
-    std::stringstream v1File;
-    ASSERT_TRUE(_v1->SerializeSession(v1File, err)) << err;
-    EXPECT_FALSE(_controller->DeserializeSession(v1File, err));
-    EXPECT_NE(err.find("v1 .ttd file"), std::string::npos) << err;
 
     _controller->InvalidateSession("test");
     ASSERT_EQ(_controller->GetCheckpointCount(), 0u);
     ASSERT_TRUE(_controller->DeserializeSession(file, err)) << err;
-    EXPECT_EQ(_controller->GetCheckpointCount(), _v1->GetCheckpointCount());
+    EXPECT_EQ(_controller->GetCheckpointCount(), checkpoints);
     EXPECT_TRUE(_controller->GetSessionInfo().loadedFromFile);
     EXPECT_EQ(_controller->GetCoverageIndex().SealedFrameCount(ttd::TTDCoverageKind::Executed), coveredFrames);
     ASSERT_EQ(_controller->GetBookmarks().size(), 1u);
     EXPECT_EQ(_controller->GetBookmarks()[0].label, "seven");
-    EXPECT_EQ(_controller->GetInputJournal().Size(), _v1->GetInputJournal().Size()) << "the key events, as v1 counts them";
+    EXPECT_EQ(_controller->GetInputJournal().Size(), inputs) << "the key events";
 
-    const uint32_t span = static_cast<uint32_t>(_v1->FrameSpan());
-    for (size_t i : {size_t(3), size_t(14), _v1->GetCheckpointCount() - 2})
-        ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({_v1->GetCheckpoint(i)->time.frame, span / 2}));
-    ttd::TTDSearchQuery q;
-    q.addrFrom = q.addrTo = 0xC010;
-    q.access = ttd::TTDAccessType::Write;
-    const auto a = _v1->FindLastAccess(q);
-    const auto b = _controller->FindLastAccess(q);
-    ASSERT_TRUE(a && b);
-    EXPECT_EQ(a->time, b->time) << "the write journal came back";
+    ASSERT_NO_FATAL_FAILURE(ExpectEverySeekShowsLive());
+    ASSERT_TRUE(_controller->SeekTo(searchFrom));
+    const auto loaded = _controller->FindLastAccess(q);
+    ASSERT_TRUE(loaded.has_value());
+    EXPECT_EQ(loaded->time, recorded->time) << "the write journal came back";
+    EXPECT_EQ(loaded->value, recorded->value);
 
     // Continue the loaded session from frame 12
-    const ttd::TTDTimePoint from{_v1->GetCheckpoint(12)->time.frame, span / 3};
+    const ttd::TTDTimePoint from{_controller->GetCheckpoint(12)->time.frame, Span() / 3};
     ttd::TTDSeekResult r;
-    ASSERT_TRUE(_v1->SeekTo(from, &r));
     ASSERT_TRUE(_controller->SeekTo(from, &r));
-    ASSERT_TRUE(_v1->ResumeRecordingFrom(from));
     ASSERT_TRUE(_controller->ResumeRecordingFrom(from)) << "a loaded session continues";
+    DropLiveFrom(from);
     for (int f = 0; f < 6; ++f)
     {
-        _a->RunNFrames(1, /*skipBreakpoints=*/true);
+        if (f == 1 || f == 4)
+            RunAndKeep(Span() / 2);
         _b->RunNFrames(1, /*skipBreakpoints=*/true);
     }
-    _v1->StopRecording();
     _controller->StopRecording();
-    ASSERT_EQ(_controller->GetCheckpointCount(), _v1->GetCheckpointCount());
-    for (size_t i : {size_t(5), size_t(13), _v1->GetCheckpointCount() - 2})
-        ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({_v1->GetCheckpoint(i)->time.frame, span / 2}));
+    ASSERT_NO_FATAL_FAILURE(ExpectEverySeekShowsLive());
     // The write journal lost the old future and holds the new one
-    EXPECT_EQ(_controller->GetEngine().Writes().Size(), _v1->GetWriteJournal()->Size());
+    const ttd::TTDTimePoint end = _controller->SessionEndPosition();
+    ASSERT_TRUE(_controller->SeekTo(end, &r));
     for (uint16_t addr : {uint16_t(0xC010), uint16_t(0xC0F0)})
     {
         q.addrFrom = q.addrTo = addr;
-        const auto x = _v1->FindLastAccess(q);
-        const auto y = _controller->FindLastAccess(q);
-        ASSERT_TRUE(x && y);
-        EXPECT_EQ(x->time, y->time) << addr;
-        EXPECT_EQ(x->value, y->value) << addr;
+        const auto x = _controller->FindLastAccess(q);
+        ASSERT_TRUE(x.has_value()) << addr;
+        EXPECT_FALSE(x->time < from) << addr << ": a write of the new future";
+        EXPECT_EQ(x->value, ByteAt(addr)) << addr;
     }
 }
 
-/// A session file on disk (C4b): file-info describes the recorded machine as
-/// v1's file does without loading it, and a port search of the file finds
-/// what the session itself finds
+/// A session file on disk (C4b): file-info describes the recorded machine without loading it, and a port search
+/// of the file finds what the session itself finds
 TEST_F(TimeTravelController_Test, FileInfoAndPortSearchReadTheEngineFile)
 {
-    ASSERT_NO_FATAL_FAILURE(RecordBoth());
+    ASSERT_NO_FATAL_FAILURE(Record());
     std::string err;
-    ASSERT_TRUE(_controller->AddBookmark(_v1->GetCheckpoint(4)->time, "four", &err)) << err;
+    ASSERT_TRUE(_controller->AddBookmark(_controller->GetCheckpoint(4)->time, "four", &err)) << err;
     const std::string ours = TestPathHelper::GetUniqueTestScratchPath("controller-session.ttd");
-    const std::string theirs = TestPathHelper::GetUniqueTestScratchPath("v1-session.ttd");
     {
         std::ofstream out(FileHelper::ToFsPath(ours), std::ios::binary);
         ASSERT_TRUE(_controller->SerializeSession(out, err)) << err;
-        std::ofstream v1Out(FileHelper::ToFsPath(theirs), std::ios::binary);
-        ASSERT_TRUE(_v1->SerializeSession(v1Out, err)) << err;
     }
-    ttd::TTDFileInfo a, b;
-    ASSERT_TRUE(ttd::ReadTTDFileInfo(theirs, a, err)) << err;
+    ttd::TTDFileInfo b;
     ASSERT_TRUE(ttd::ReadTTDFileInfo(ours, b, err)) << err;
+    const ttd::TTDSessionInfo info = _controller->GetSessionInfo();
     EXPECT_EQ(b.schemaVersion, 2u);
-    EXPECT_EQ(a.machine.modelId, b.machine.modelId);
-    EXPECT_EQ(a.machine.model, b.machine.model);
-    EXPECT_EQ(a.machine.peripherals, V1Devices(b.machine.peripherals));
-    EXPECT_EQ(a.machine.romSignature, b.machine.romSignature);
-    EXPECT_EQ(a.machine.generalSound, b.machine.generalSound);
-    EXPECT_EQ(a.startFrame, b.startFrame);
-    EXPECT_EQ(a.endFrame, b.endFrame);
-    EXPECT_EQ(a.checkpointCount, b.checkpointCount);
-    EXPECT_EQ(a.hasPortJournals, b.hasPortJournals);
+    EXPECT_EQ(b.machine.modelId, info.machine.modelId);
+    EXPECT_EQ(b.machine.model, info.machine.model);
+    EXPECT_FALSE(b.machine.model.empty());
+    EXPECT_EQ(b.machine.peripherals, info.machine.peripherals);
+    EXPECT_EQ(b.machine.romSignature, info.machine.romSignature);
+    EXPECT_EQ(b.machine.generalSound, info.machine.generalSound);
+    EXPECT_EQ(b.startFrame, info.sessionStartFrame);
+    EXPECT_EQ(b.endFrame, info.currentEndFrame);
+    EXPECT_EQ(b.checkpointCount, info.checkpointCount);
+    EXPECT_TRUE(b.hasPortJournals);
     EXPECT_TRUE(b.hasCoverageIndex);
     EXPECT_TRUE(b.hasBookmarks);
     EXPECT_GT(b.fileBytes, 0u);
@@ -659,79 +738,80 @@ TEST_F(TimeTravelController_Test, FileInfoAndPortSearchReadTheEngineFile)
     EXPECT_GT(live.hits.size(), 0u);
     EXPECT_EQ(live.hits.size(), file.hits.size());
     EXPECT_EQ(live.scanned, file.scanned);
-    const ttd::TTDPortSearchResult refused = _controller->SearchPortEventsInFile(theirs, q);
-    EXPECT_FALSE(refused.ok);
-    EXPECT_NE(refused.error.find("v1 .ttd file"), std::string::npos) << refused.error;
     std::error_code ec;
     std::filesystem::remove(FileHelper::ToFsPath(ours), ec);
-    std::filesystem::remove(FileHelper::ToFsPath(theirs), ec);
 }
 
-/// Clip export walks the session on the engine (C4c): every frame's composed
-/// picture and its latches equal v1's
-TEST_F(TimeTravelController_Test, ClipFramesEqualV1s)
+/// Clip export walks the session on the engine (C4c): every frame's composed picture is the framebuffer the
+/// machine had live at the end of that frame
+TEST_F(TimeTravelController_Test, ClipFramesAreTheLivePictures)
 {
     // The loop sends the refresh register to the border (LD A,R; OUT (#FE),A
     // in place of the keyboard read): the border stripes differ every frame
-    for (Emulator* emulator : {_a, _b})
+    _b->GetFeatureManager()->setFeature(Features::kScreenHQ, true);   // the picture is drawn as the frame runs
+    Memory* memory = _b->GetContext()->pMemory;
+    const uint8_t patch[] = {0xED, 0x5F, 0xD3, 0xFE};
+    for (uint16_t i = 0; i < 4; ++i)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8004 + i), patch[i]);
+
+    // The picture at each frame boundary, by the frame it ends
+    std::map<uint64_t, std::vector<uint8_t>> pictures;
+    EmulatorContext* context = _b->GetContext();
+    ASSERT_TRUE(_controller->StartRecording());
+    for (int f = 0; f < 24; ++f)
     {
-        emulator->GetFeatureManager()->setFeature(Features::kScreenHQ, true);   // the picture is drawn as the frame runs
-        Memory* memory = emulator->GetContext()->pMemory;
-        const uint8_t patch[] = {0xED, 0x5F, 0xD3, 0xFE};
-        for (uint16_t i = 0; i < 4; ++i)
-            memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8004 + i), patch[i]);
+        _b->RunNFrames(1, /*skipBreakpoints=*/true);
+        const FramebufferDescriptor& fb = context->pScreen->GetFramebufferDescriptor();
+        pictures[context->emulatorState.frame_counter - 1].assign(fb.memoryBuffer, fb.memoryBuffer + fb.memoryBufferSize);
     }
-    ASSERT_NO_FATAL_FAILURE(RecordBoth());
-    const uint64_t first = _v1->GetCheckpoint(2)->time.frame;
-    const uint64_t last = _v1->GetCheckpoint(_v1->GetCheckpointCount() - 2)->time.frame;
-    std::vector<std::vector<uint8_t>> a, b;
-    std::vector<uint32_t> latchesA, latchesB;
-    auto collect = [](std::vector<std::vector<uint8_t>>& pictures, std::vector<uint32_t>& latches) {
-        return [&pictures, &latches](const ttd::TTDComposedFrame& f) {
-            pictures.emplace_back(f.rgba, f.rgba + f.rgbaBytes);
-            latches.push_back(uint32_t(f.p7FFD) | uint32_t(f.border) << 8 | uint32_t(f.activeScreen) << 16);
-            return true;
-        };
-    };
-    EXPECT_EQ(_v1->VisitComposedFrames(first, last, collect(a, latchesA)), "");
-    EXPECT_EQ(_controller->VisitComposedFrames(first, last, collect(b, latchesB)), "");
-    ASSERT_EQ(a.size(), last - first + 1);
-    ASSERT_EQ(a.size(), b.size());
-    EXPECT_EQ(latchesA, latchesB);
-    EXPECT_FALSE(a.front() == a.back()) << "the pictures change over the clip";
-    for (size_t i = 0; i < a.size(); ++i)
-        EXPECT_TRUE(a[i] == b[i]) << "frame " << first + i;
-    EXPECT_NE(_controller->VisitComposedFrames(last, last + 50, collect(b, latchesB)), "") << "past the session";
+    _controller->StopRecording();
+
+    const uint64_t first = _controller->GetCheckpoint(2)->time.frame;
+    const uint64_t last = _controller->GetCheckpoint(_controller->GetCheckpointCount() - 2)->time.frame;
+    std::vector<std::vector<uint8_t>> clip;
+    std::vector<uint64_t> frames;
+    EXPECT_EQ(_controller->VisitComposedFrames(first, last,
+                                               [&](const ttd::TTDComposedFrame& f) {
+                                                   clip.emplace_back(f.rgba, f.rgba + f.rgbaBytes);
+                                                   frames.push_back(f.frame);
+                                                   return true;
+                                               }),
+              "");
+    ASSERT_EQ(clip.size(), last - first + 1);
+    EXPECT_FALSE(clip.front() == clip.back()) << "the pictures change over the clip";
+    for (size_t i = 0; i < clip.size(); ++i)
+    {
+        ASSERT_EQ(pictures.count(frames[i]), 1u) << "frame " << frames[i];
+        EXPECT_TRUE(clip[i] == pictures[frames[i]]) << "frame " << frames[i];
+    }
+    EXPECT_NE(_controller->VisitComposedFrames(last, last + 50, [](const ttd::TTDComposedFrame&) { return true; }), "")
+        << "past the session";
 }
 
-/// D8: a seek while recording pauses the recording; resumed where it paused it
-/// goes on as one recording - the same history as v1 recording straight through
+/// D8: a seek while recording pauses the recording; resumed where it paused it goes on as one recording - every
+/// seek lands on what the machine was live, before the pause and after it
 TEST_F(TimeTravelController_Test, APausedRecordingContinuesWhereItPaused)
 {
-    ASSERT_TRUE(_v1->StartRecording());
     ASSERT_TRUE(_controller->StartRecording());
-    ttd::TTDInputEvent key;
-    key.kind = ttd::TTDInputKind::Key;
-    key.key = ZXKEY_SPACE;
-    auto frames = [&](int count, bool pressAt3) {
+    bool pressed = false;
+    auto frames = [&](int count) {
         for (int f = 0; f < count; ++f)
         {
-            if (pressAt3 && f == 3)
+            if (f == 3)
             {
-                _a->RunTStates(20000, /*skipBreakpoints=*/true);
-                _b->RunTStates(20000, /*skipBreakpoints=*/true);
-                key.pressed = !key.pressed;
-                ASSERT_TRUE(_v1->SubmitLiveInput(key));
-                ASSERT_TRUE(_controller->SubmitLiveInput(key));
+                RunAndKeep(20000);
+                pressed = !pressed;
+                ASSERT_NO_FATAL_FAILURE(Key(pressed));
+                RunAndKeep(1);
             }
-            _a->RunNFrames(1, /*skipBreakpoints=*/true);
+            if (f == 6)
+                RunAndKeep(Span() / 2);
             _b->RunNFrames(1, /*skipBreakpoints=*/true);
         }
     };
-    ASSERT_NO_FATAL_FAILURE(frames(10, true));
-    // Mid-frame, then a look back on the controller only
-    _a->RunTStates(31000, /*skipBreakpoints=*/true);
-    _b->RunTStates(31000, /*skipBreakpoints=*/true);
+    ASSERT_NO_FATAL_FAILURE(frames(10));
+    // Mid-frame, then a look back
+    RunAndKeep(31000);
     const ttd::TTDTimePoint pausedAt = _controller->CurrentPosition();
     ttd::TTDSeekResult r;
     ASSERT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(4)->time.frame, 9000}, &r));
@@ -742,51 +822,40 @@ TEST_F(TimeTravelController_Test, APausedRecordingContinuesWhereItPaused)
     EXPECT_TRUE(_controller->IsRecording());
     EXPECT_FALSE(_controller->GetSessionInfo().recordingPaused);
     EXPECT_EQ(_controller->CurrentPosition(), pausedAt);
-    ASSERT_NO_FATAL_FAILURE(frames(10, true));
-    _v1->StopRecording();
+    ASSERT_NO_FATAL_FAILURE(frames(10));
     _controller->StopRecording();
-
-    ASSERT_EQ(_controller->GetCheckpointCount(), _v1->GetCheckpointCount());
-    const uint32_t span = static_cast<uint32_t>(_v1->FrameSpan());
-    for (size_t i : {size_t(5), size_t(10), size_t(11), size_t(14), _v1->GetCheckpointCount() - 2})
-        ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({_v1->GetCheckpoint(i)->time.frame, span / 2}));
-    ASSERT_NO_FATAL_FAILURE(ExpectSameSeek(pausedAt));
+    ASSERT_NO_FATAL_FAILURE(ExpectEverySeekShowsLive());
 }
 
-/// D8: running forward through a paused recording, execution reaches where it
-/// paused and the recording goes on by itself - one history, as v1's straight run
+/// D8: running forward through a paused recording, execution reaches where it paused and the recording goes on by
+/// itself - one history: seeks land on the machine as it ran, before the pause and in the stretch recorded after it
 TEST_F(TimeTravelController_Test, RunningIntoThePausedEndContinuesTheRecording)
 {
-    ASSERT_TRUE(_v1->StartRecording());
     ASSERT_TRUE(_controller->StartRecording());
     for (int f = 0; f < 12; ++f)
     {
-        _a->RunNFrames(1, /*skipBreakpoints=*/true);
+        if (f == 3 || f == 10)
+            RunAndKeep(Span() / 3);
         _b->RunNFrames(1, /*skipBreakpoints=*/true);
     }
-    _a->RunTStates(25000, /*skipBreakpoints=*/true);
-    _b->RunTStates(25000, /*skipBreakpoints=*/true);
+    RunAndKeep(25000);
     const ttd::TTDTimePoint pausedAt = _controller->CurrentPosition();
     const uint64_t backFrame = _controller->GetCheckpoint(6)->time.frame;
     ttd::TTDSeekResult r;
     ASSERT_TRUE(_controller->SeekTo({backFrame, 0}, &r));
     ASSERT_TRUE(_controller->GetSessionInfo().recordingPaused);
-    // From frame 6 the controller's machine runs 14 frames: 6 replayed, then live and recorded
-    _b->RunNFrames(14, /*skipBreakpoints=*/true);
+    // From frame 6 the machine runs 10 frames: 6 replayed, then live and recorded
+    _b->RunNFrames(10, /*skipBreakpoints=*/true);
     EXPECT_TRUE(_controller->IsRecording()) << "the recording went on at the paused end";
     EXPECT_FALSE(_controller->GetSessionInfo().recordingPaused);
-    // v1 ran straight to the same frame
-    const uint64_t target = _b->GetContext()->emulatorState.frame_counter;
-    while (_a->GetContext()->emulatorState.frame_counter < target)
-        _a->RunNFrames(1, /*skipBreakpoints=*/true);
-    _v1->StopRecording();
+    for (int f = 0; f < 4; ++f)
+    {
+        RunAndKeep(Span() / 3);
+        _b->RunNFrames(1, /*skipBreakpoints=*/true);
+    }
     _controller->StopRecording();
     EXPECT_GT(_controller->SessionEndPosition().frame, pausedAt.frame);
-
-    ASSERT_EQ(_controller->GetCheckpointCount(), _v1->GetCheckpointCount());
-    const uint32_t span = static_cast<uint32_t>(_v1->FrameSpan());
-    for (size_t i : {size_t(3), size_t(12), size_t(13), size_t(16), _v1->GetCheckpointCount() - 2})
-        ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({_v1->GetCheckpoint(i)->time.frame, span / 3}));
+    ASSERT_NO_FATAL_FAILURE(ExpectEverySeekShowsLive());
 }
 
 /// D8: a reverse query while recording pauses the recording even when it moves
@@ -1056,11 +1125,37 @@ TEST_F(TimeTravelController_Test, AMachineChangeEndsTheSession)
     EXPECT_LE(_controller->GetCheckpointCount(), 3u) << "a new session, not the old one";
 }
 
+/// A recording that switched debug mode on gives it back when it stops, but not while a debug feature switched on
+/// meanwhile still needs it: an analysis session that started memory tracking during a black box session kept losing
+/// its counters when a reset or a snapshot load ended that session (the tracker frees them with debug mode off)
+TEST_F(TimeTravelController_Test, StopKeepsDebugModeAnotherFeatureNeeds)
+{
+    FeatureManager* features = _b->GetFeatureManager();
+    MemoryAccessTracker& tracker = _b->GetMemory()->GetAccessTracker();
+    ASSERT_TRUE(features->setFeature(Features::kDebugMode, false));
+    ASSERT_TRUE(_controller->StartRecording());
+    ASSERT_TRUE(features->isEnabled(Features::kDebugMode)) << "the recording needs it";
+
+    ASSERT_TRUE(features->setFeature(Features::kMemoryTracking, true));
+    ASSERT_NE(tracker.Z80CountersView().reads, nullptr) << "tracking allocated its counters";
+    _controller->StopRecording();
+    EXPECT_TRUE(features->isEnabled(Features::kDebugMode)) << "memory tracking still needs debug mode";
+    EXPECT_NE(tracker.Z80CountersView().reads, nullptr) << "the counters survive the stop";
+
+    // Nothing else needs it: the next stop gives debug mode back as before
+    ASSERT_TRUE(features->setFeature(Features::kMemoryTracking, false));
+    ASSERT_TRUE(features->setFeature(Features::kDebugMode, false));
+    ASSERT_TRUE(_controller->StartRecording());
+    _controller->StopRecording();
+    EXPECT_FALSE(features->isEnabled(Features::kDebugMode)) << "the recording's features restored";
+}
+
 /// Step 3 (D29): the black box records without holding the machine at real
 /// speed. Before an acceleration (turbo mode, host speed) takes effect it
 /// stops, its history kept; once nothing accelerates a new session starts. The
-/// fast loaders do not stop it (their traps are recorded edits). It keeps the
-/// last N minutes. An explicit recording still refuses accelerations
+/// tape shortcuts do not stop it (the tape trap is a recorded edit; fast disk is
+/// held: its FDC timing is no edit). It keeps the
+/// last N minutes. An explicit recording still refuses another host speed
 TEST_F(TimeTravelController_Test, TheBlackBoxStepsAsideForAccelerations)
 {
     FeatureManager* features = _b->GetFeatureManager();
@@ -1075,6 +1170,9 @@ TEST_F(TimeTravelController_Test, TheBlackBoxStepsAsideForAccelerations)
     ASSERT_TRUE(features->setFeature(Features::kFastTape, true));
     EXPECT_TRUE(features->isEnabled(Features::kFastTape)) << "not masked by a black box";
     EXPECT_TRUE(_controller->IsRecording());
+    // Fast disk is held: its compressed FDC timing is no recorded edit (a DSS floppy boot replayed another WD1793)
+    EXPECT_FALSE(features->setFeature(Features::kFastDisk, true));
+    EXPECT_FALSE(features->isEnabled(Features::kFastDisk));
 
     // Turbo: allowed; the black box stops first and keeps its history
     ASSERT_TRUE(features->setFeature(Features::kTurboMode, true));
@@ -1098,14 +1196,15 @@ TEST_F(TimeTravelController_Test, TheBlackBoxStepsAsideForAccelerations)
     EXPECT_TRUE(_b->SetSpeedMultiplier(1));
     EXPECT_TRUE(_controller->IsRecording());
 
-    // An explicit recording holds the lock
+    // An explicit recording holds the host speed, and records through turbo (D4)
     _controller->StopRecording();
     _controller->SetBlackBox(false);
     ASSERT_TRUE(features->setFeature(Features::kFastTape, false));
     ASSERT_TRUE(_controller->StartRecording());
-    EXPECT_FALSE(features->setFeature(Features::kTurboMode, true)) << "refused while an explicit recording runs";
-    EXPECT_FALSE(_b->SetSpeedMultiplier(4));
-    EXPECT_TRUE(_controller->IsRecording());
+    EXPECT_FALSE(_b->SetSpeedMultiplier(4)) << "refused while an explicit recording runs";
+    EXPECT_TRUE(features->setFeature(Features::kTurboMode, true));
+    EXPECT_TRUE(_controller->IsRecording()) << "an explicit recording does not step aside";
+    ASSERT_TRUE(features->setFeature(Features::kTurboMode, false));
 }
 
 /// Step 3 (D29) with the fast loaders: in a black box a fast tape load's trap
@@ -1118,31 +1217,8 @@ TEST_F(TimeTravelController_Test, AFastTapeTrapInTheBlackBoxIsReplayed)
     Memory* memory = context->pMemory;
     Z80* z80 = context->pCore->GetZ80();
 
-    // One TAP block: flag #FF and 256 bytes
-    std::vector<uint8_t> block(258);
-    block[0] = 0xFF;
-    uint8_t checksum = 0xFF;
-    for (size_t i = 1; i <= 256; ++i)
-    {
-        block[i] = static_cast<uint8_t>(i * 7 + 3);
-        checksum ^= block[i];
-    }
-    block[257] = checksum;
-    const std::string tap = TestPathHelper::GetUniqueTestScratchPath("blackbox-trap.tap");
-    {
-        std::ofstream out(tap, std::ios::binary);
-        const uint8_t length[2] = {static_cast<uint8_t>(block.size() & 0xFF), static_cast<uint8_t>(block.size() >> 8)};
-        out.write(reinterpret_cast<const char*>(length), 2);
-        out.write(reinterpret_cast<const char*>(block.data()), static_cast<std::streamsize>(block.size()));
-    }
-    ASSERT_TRUE(_b->LoadTape(tap));
-
-    // The ROM's LD-BYTES entry as the trap recognizes it
-    uint8_t* rom = memory->GetPhysicalAddressForZ80Page(0);
-    const uint8_t signature1[8] = {0x14, 0x08, 0x15, 0xF3, 0x3E, 0x0F, 0xD3, 0xFE};
-    const uint8_t signature2[3] = {0xDB, 0xFE, 0x1F};
-    std::memcpy(rom + 0x0556, signature1, sizeof(signature1));
-    std::memcpy(rom + 0x0556 + 12, signature2, sizeof(signature2));
+    const std::vector<uint8_t> block = InsertFastTapeBlock(*_b, "blackbox-trap.tap");
+    ASSERT_FALSE(block.empty());
 
     // A wait of about three frames (LD BC,8000; w: DEC BC; LD A,B; OR C; JR NZ,w), then
     // LD A,#FF; LD DE,256; LD IX,#9000; SCF; CALL #0556; LD HL,0; loop: INC HL; JR loop
@@ -1185,6 +1261,74 @@ TEST_F(TimeTravelController_Test, AFastTapeTrapInTheBlackBoxIsReplayed)
         _b->RunSingleCPUCycle(true);
     EXPECT_EQ(_controller->CurrentPosition(), later);
     expectSame(CaptureState(context, *_controller), liveLater, "running across the trap");
+}
+
+/// Phase 2, D4: an explicit recording keeps turbo mode and the tape shortcuts (a tape loaded from zero took minutes
+/// at 1x with the ROM trap off). Turbo only takes the host's pacing away and the trap is a recorded edit: with an AY
+/// tone playing, a fast tape load in turbo and frames after it replay to what the machine was live. Host speed
+/// stays at 1x, fast disk held
+TEST_F(TimeTravelController_Test, AnExplicitRecordingKeepsTurboAndTheTapeShortcuts)
+{
+    EmulatorContext* context = _b->GetContext();
+    Memory* memory = context->pMemory;
+    Z80* z80 = context->pCore->GetZ80();
+    FeatureManager* features = _b->GetFeatureManager();
+    const std::vector<uint8_t> block = InsertFastTapeBlock(*_b, "explicit-trap.tap");
+    ASSERT_FALSE(block.empty());
+
+    // An AY tone on channel A (mixer #3E, volume 15, period #40): LD BC,#FFFD; LD A,r; OUT (C),A; LD B,#BF;
+    // LD A,v; OUT (C),A per register, then the wait of about three frames and the load as in the black box's test
+    const uint8_t program[] = {
+        0x01, 0xFD, 0xFF, 0x3E, 0x07, 0xED, 0x79, 0x06, 0xBF, 0x3E, 0x3E, 0xED, 0x79,  // R7 = #3E
+        0x06, 0xFF, 0x3E, 0x08, 0xED, 0x79, 0x06, 0xBF, 0x3E, 0x0F, 0xED, 0x79,        // R8 = 15
+        0x06, 0xFF, 0x3E, 0x00, 0xED, 0x79, 0x06, 0xBF, 0x3E, 0x40, 0xED, 0x79,        // R0 = #40
+        0x01, 0x40, 0x1F, 0x0B, 0x78, 0xB1, 0x20, 0xFB, 0x3E, 0xFF, 0x11, 0x00, 0x01, 0xDD,
+        0x21, 0x00, 0x90, 0x37, 0xCD, 0x56, 0x05, 0x21, 0x00, 0x00, 0x23, 0x18, 0xFD};
+    for (size_t i = 0; i < sizeof(program); ++i)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8100 + i), program[i]);
+    z80->pc = 0x8100;
+    z80->sp = 0xBF00;
+
+    ASSERT_TRUE(features->setFeature(Features::kFastTape, true));
+    ASSERT_TRUE(_controller->StartRecording());
+    ASSERT_FALSE(_controller->IsBlackBox());
+    EXPECT_TRUE(features->isEnabled(Features::kFastTape)) << "kept by an explicit recording";
+    EXPECT_TRUE(features->setFeature(Features::kTurboTape, true));
+    EXPECT_TRUE(features->isEnabled(Features::kTurboTape));
+    EXPECT_FALSE(features->setFeature(Features::kFastDisk, true)) << "its compressed FDC timing is no recorded edit";
+    EXPECT_FALSE(_b->SetSpeedMultiplier(4)) << "the host speed stays at 1x";
+    ASSERT_TRUE(features->setFeature(Features::kTurboMode, true)) << features->refusalReason(Features::kTurboMode, true);
+    ASSERT_TRUE(context->pCore->IsTurboMode());
+    EXPECT_TRUE(_controller->IsRecording()) << "an explicit recording goes on in turbo";
+
+    const size_t events = _controller->GetSessionInfo().externalEventCount;
+    _b->RunNFrames(1, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint inTurbo = _controller->CurrentPosition();
+    const MachineState liveInTurbo = CaptureState(context, *_controller);
+    _b->RunTStates(2 * 71680 + 30000, /*skipBreakpoints=*/true);
+    ASSERT_EQ(memory->DirectReadFromZ80Memory(0x9000), block[1]) << "the trap loaded the block";
+    ASSERT_EQ(_controller->GetSessionInfo().externalEventCount, events + 1) << "as one edit";
+    const ttd::TTDTimePoint afterTrap = _controller->CurrentPosition();
+    const MachineState liveAfterTrap = CaptureState(context, *_controller);
+    ASSERT_TRUE(features->setFeature(Features::kTurboMode, false));
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint later = _controller->CurrentPosition();
+    const MachineState liveLater = CaptureState(context, *_controller);
+    _controller->StopRecording();
+
+    auto expectSame = [&](const MachineState& seen, const MachineState& live, const char* where) {
+        EXPECT_EQ(std::memcmp(&seen.cpu, &live.cpu, sizeof(seen.cpu)), 0)
+            << where << ": CPU (pc " << seen.cpu.pc << " vs " << live.cpu.pc << ")";
+        EXPECT_TRUE(seen.ram == live.ram) << where << ": RAM";
+        for (const auto& [id, bytes] : live.devices)
+            EXPECT_TRUE(seen.devices.count(id) && seen.devices.at(id) == bytes) << where << ": device " << int(id);
+    };
+    ASSERT_TRUE(_controller->SeekTo(inTurbo, nullptr));
+    expectSame(CaptureState(context, *_controller), liveInTurbo, "a seek into the turbo stretch");
+    ASSERT_TRUE(_controller->SeekTo(afterTrap, nullptr));
+    expectSame(CaptureState(context, *_controller), liveAfterTrap, "a seek across the trap in turbo");
+    ASSERT_TRUE(_controller->SeekTo(later, nullptr));
+    expectSame(CaptureState(context, *_controller), liveLater, "a seek after turbo");
 }
 
 /// A debugger-forced RAM window (DeZog SET_SLOT, windows 1/2) follows no port

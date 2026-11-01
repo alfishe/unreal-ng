@@ -9,13 +9,13 @@
 #include <functional>
 #include <fstream>
 #include <optional>
+#include <set>
 #include <type_traits>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/filehelper.h"
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdbookmarks.h"
 #include "debugger/ttd/ttdexternalevents.h"
 #include "debugger/ttd/ttdfileinfo.h"
@@ -161,7 +161,7 @@ StateNode RecordedMachineNodeImpl(const TTDRecordedMachine& m)
     v["ram_page_bound"] = static_cast<unsigned>(m.ramPageBound);
     // A string: a 64-bit hash does not survive a JSON number (doubles)
     v["rom_signature"] = m.romSignature == 0 ? StateNode() : StateNode("0x" + HashToString(m.romSignature));
-    // The devices with a v1 id as that id's set, as before D23 (`peripherals` names every device): ids 0..63 as one
+    // The devices with a legacy id as that id's set, as before D23 (`peripherals` names every device): ids 0..63 as one
     // number, `peripheral_mask_words` every 64-id word (ids 64.. in words 1..3)
     const PeripheralMask mask = m.V1Mask();
     v["peripheral_mask"] = static_cast<uint64_t>(mask.Low());
@@ -295,9 +295,7 @@ StateNode CheckNode(const TTDRestoreResult& check)
 
 /// region <Backends>
 
-/// The verbs over one session class: v1's TimeTravelManager or the engine's
-/// TimeTravelController (Phase 5, C5). Both offer the same methods, so one
-/// implementation serves both; TTDControl picks the one the instance runs
+/// The verbs over the instance's TimeTravelController
 class TTDControl::Backend
 {
 public:
@@ -306,36 +304,25 @@ public:
     virtual TTDReply Execute(const std::string& verb, const TTDRequest& request) = 0;
 };
 
-/// The folder the engine writes the session into as it records (empty: none - v1, a test, nothing recorded)
-template <class S>
-std::string RecordingFolderOf(const S* manager)
+/// The folder the engine writes the session into as it records (empty: none - a test, nothing recorded)
+std::string RecordingFolderOf(const TimeTravelController* manager)
 {
-    if constexpr (std::is_same<S, TimeTravelController>::value)
-        return manager ? manager->ShadowRecordingFolder() : std::string();
-    else
-        return {};
+    return manager ? manager->ShadowRecordingFolder() : std::string();
 }
 
 /// The black box is armed (the engine; D29): its recordings keep the last minutes and step aside for accelerations
-template <class S>
-bool BlackBoxOf(const S* manager)
+bool BlackBoxOf(const TimeTravelController* manager)
 {
-    if constexpr (std::is_same<S, TimeTravelController>::value)
-        return manager && manager->IsBlackBox();
-    else
-        return false;
+    return manager && manager->IsBlackBox();
 }
 
-template <class S>
-StateNode StatusBodyOf(const S* manager);
-template <class S>
-void AddWriteJournalOf(StateNode& body, const S& manager);
+StateNode StatusBodyOf(const TimeTravelController* manager);
+void AddWriteJournalOf(StateNode& body, const TimeTravelController& manager);
 
-template <class S>
 class TTDControlBackend final : public TTDControl::Backend
 {
 public:
-    TTDControlBackend(EmulatorContext* context, S* manager) : _context(context), _manager(manager) {}
+    TTDControlBackend(EmulatorContext* context, TimeTravelController* manager) : _context(context), _manager(manager) {}
     TTDReply Execute(const std::string& verb, const TTDRequest& request) override;
 
 private:
@@ -365,10 +352,12 @@ private:
     TTDReply ReverseContinue(const TTDRequest& request);
     TTDReply CoverageProbe(const TTDRequest& request);
     TTDReply CoverageScan(const TTDRequest& request);
+    TTDReply CoverageRare(const TTDRequest& request);
     TTDReply CoverageSummary(const TTDRequest& request);
     TTDReply MemoryAt(const TTDRequest& request);
     /// memory-at space cpu: Z80 addresses through the mapping at that point (the controller's ReadCpuView)
-    TTDReply MemoryAtCpu(uint64_t frame, uint32_t tin, uint64_t offset, uint64_t length);
+    /// @p frame absent: the machine as it stands now
+    TTDReply MemoryAtCpu(std::optional<uint64_t> frame, uint32_t tin, uint64_t offset, uint64_t length);
     TTDReply MemoryDiff(const TTDRequest& request);
     /// The engine's region a memory name means (a region name or alias, "ram", "ramN"), the byte offset of the
     /// name's start in it, and the checkpoint at or before `frame`. Empty: all good; otherwise the reply to send
@@ -400,29 +389,20 @@ private:
                          const std::function<TTDReply()>& run);
 
     EmulatorContext* _context = nullptr;
-    S* _manager = nullptr;
+    TimeTravelController* _manager = nullptr;
 };
 
 TTDControl::TTDControl(EmulatorContext* context)
 {
-    if (context && context->pTimeTravelController)
-        _backend = std::make_unique<TTDControlBackend<TimeTravelController>>(context, context->pTimeTravelController);
-    else
-        _backend = std::make_unique<TTDControlBackend<TimeTravelManager>>(
-            context, context ? context->pTimeTravelManager : nullptr);
+    _backend = std::make_unique<TTDControlBackend>(context, context ? context->pTimeTravelController : nullptr);
 }
 
 TTDControl::TTDControl(EmulatorContext* context, TimeTravelController* controller)
-    : _backend(std::make_unique<TTDControlBackend<TimeTravelController>>(context, controller))
+    : _backend(std::make_unique<TTDControlBackend>(context, controller))
 {
 }
 
 TTDControl::~TTDControl() = default;
-
-StateNode TTDControl::StatusBody(const TimeTravelManager* manager)
-{
-    return StatusBodyOf(manager);
-}
 
 StateNode TTDControl::StatusBody(const TimeTravelController* controller)
 {
@@ -431,12 +411,7 @@ StateNode TTDControl::StatusBody(const TimeTravelController* controller)
 
 StateNode TTDControl::StatusBody(std::nullptr_t)
 {
-    return StatusBodyOf(static_cast<const TimeTravelManager*>(nullptr));
-}
-
-void TTDControl::AddWriteJournal(StateNode& body, const TimeTravelManager& manager)
-{
-    AddWriteJournalOf(body, manager);
+    return StatusBodyOf(static_cast<const TimeTravelController*>(nullptr));
 }
 
 void TTDControl::AddWriteJournal(StateNode& body, const TimeTravelController& controller)
@@ -455,7 +430,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "status", "start", "stop", "invalidate", "history-limit", "journal", "journal-build", "journal-build-cancel",
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-delete",
-        "port-events", "find-last", "reverse-continue", "coverage-probe", "coverage-scan", "coverage-summary",
+        "port-events", "find-last", "reverse-continue", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
         "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
     return verbs;
 }
@@ -477,10 +452,13 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"port-events", {"*"}},
         {"find-last", {"addr", "addr_from", "addr_to", "access", "value", "pc_from", "pc_to", "phys_page", "space",
                        "before_frame", "before_tin", "before", "changes_only", "all", "limit", "from_frame"}},
-        {"reverse-continue", {"pcs", "phys_page", "all", "limit", "before_frame", "before_tin", "before", "from_frame"}},
+        {"reverse-continue", {"pcs", "phys_page", "all", "first_per_pc", "limit", "before_frame", "before_tin", "before",
+                              "from_frame"}},
         {"coverage-probe", {"frame", "kind", "addr_from", "addr_to", "phys_page", "space"}},
         {"coverage-scan", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "space", "limit",
                            "order", "ranges"}},
+        {"coverage-rare", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "space",
+                           "max_frames", "limit"}},
         {"memory-at", {"space", "offset", "length", "frame", "tinframe"}},
         {"memory-diff", {"space", "from_frame", "to_frame", "limit"}},
         {"coverage-summary", {"from_frame", "to_frame", "kind", "bucket_size", "limit"}},
@@ -527,8 +505,7 @@ TTDReply TTDControl::Execute(const TTDRequest& request)
     return _backend->Execute(verb, request);
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::Execute(const std::string& verb, const TTDRequest& request)
+TTDReply TTDControlBackend::Execute(const std::string& verb, const TTDRequest& request)
 {
     // Status answers without time travel too: it is the capability probe. So do the
     // coverage queries: "no index" (index_available false) is their answer then
@@ -538,6 +515,8 @@ TTDReply TTDControlBackend<S>::Execute(const std::string& verb, const TTDRequest
         return CoverageProbe(request);
     if (verb == "coverage-scan")
         return CoverageScan(request);
+    if (verb == "coverage-rare")
+        return CoverageRare(request);
     if (verb == "coverage-summary")
         return CoverageSummary(request);
     // A file on disk is described without any instance
@@ -548,8 +527,7 @@ TTDReply TTDControlBackend<S>::Execute(const std::string& verb, const TTDRequest
     return Run(verb, request);
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::Run(const std::string& verb, const TTDRequest& request)
+TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& request)
 {
     using coordinator::OpKind;
     if (verb == "start")
@@ -606,8 +584,7 @@ TTDReply TTDControlBackend<S>::Run(const std::string& verb, const TTDRequest& re
     return Fail(TTDControlError::Internal, "verb '" + verb + "' has no implementation");
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::AsOperation(coordinator::OpKind kind, const std::string& verb,
+TTDReply TTDControlBackend::AsOperation(coordinator::OpKind kind, const std::string& verb,
                                           const TTDRequest& request, const std::function<TTDReply()>& run)
 {
     coordinator::IMachineOps* ops = _context ? _context->pMachineOps : nullptr;
@@ -631,16 +608,14 @@ TTDReply TTDControlBackend<S>::AsOperation(coordinator::OpKind kind, const std::
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::WithCheck(TTDReply reply) const
+TTDReply TTDControlBackend::WithCheck(TTDReply reply) const
 {
     if (reply.Ok())
         reply.body["check"] = CheckNode(_manager->LastEngineCheck());
     return reply;
 }
 
-template <class S>
-StateNode StatusBodyOf(const S* manager)
+StateNode StatusBodyOf(const TimeTravelController* manager)
 {
     StateNode ret = StateNode::Object();
     if (!manager)
@@ -698,8 +673,8 @@ StateNode StatusBodyOf(const S* manager)
     ret["port_replay_value_mismatches"] = static_cast<uint64_t>(info.portReplayValueMismatches);
     ret["port_replay_divergences"] = static_cast<uint64_t>(info.portReplayDivergences);
     ret["ttd_available"] = true;
-    // Which implementation records on this instance (Phase 5): "engine" or "v1"
-    ret["backend"] = std::is_same<S, TimeTravelController>::value ? "engine" : "v1";
+    // The implementation that records: always the engine since v1 was deleted (Phase 6)
+    ret["backend"] = "engine";
     ret["black_box"] = BlackBoxOf(manager);
     ret["recording_folder"] = StringOrNull(RecordingFolderOf(manager));
     ret["loaded_from_file"] = info.loadedFromFile;
@@ -739,8 +714,7 @@ StateNode StatusBodyOf(const S* manager)
     return ret;
 }
 
-template <class S>
-void AddWriteJournalOf(StateNode& body, const S& manager)
+void AddWriteJournalOf(StateNode& body, const TimeTravelController& manager)
 {
     const TTDSessionInfo info = manager.ReadSessionInfo();
     body["write_journal_enabled"] = info.writeJournalEnabled;
@@ -764,16 +738,14 @@ void AddWriteJournalOf(StateNode& body, const S& manager)
     body["write_journal_build"] = b;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::Status()
+TTDReply TTDControlBackend::Status()
 {
     TTDReply reply;
     reply.body = StatusBodyOf(_manager);
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::Start(const TTDRequest& request)
+TTDReply TTDControlBackend::Start(const TTDRequest& request)
 {
     // Time travel not available for this machine at all (a ZX-Poly member)
     if (!_manager->GetUnavailableReason().empty())
@@ -813,13 +785,8 @@ TTDReply TTDControlBackend<S>::Start(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, "minutes must be an integer from 1 to 1440");
 
     const bool alreadyRecording = _manager->IsRecording();
-    if constexpr (std::is_same<S, TimeTravelController>::value)
-    {
-        if (!alreadyRecording)
-            _manager->SetBlackBox(blackBox, static_cast<uint32_t>(minutes));
-    }
-    else if (blackBox)
-        return Fail(TTDControlError::BadRequest, "the black box needs the engine (backend v1 records explicitly only)");
+    if (!alreadyRecording)
+        _manager->SetBlackBox(blackBox, static_cast<uint32_t>(minutes));
     if (!alreadyRecording && journalText)
         _manager->SetEnableWriteJournal(journal);
     if (framesText || bytesText)
@@ -845,8 +812,7 @@ TTDReply TTDControlBackend<S>::Start(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::Stop()
+TTDReply TTDControlBackend::Stop()
 {
     const bool wasRecording = _manager->IsRecording();
     _manager->StopRecording();
@@ -856,8 +822,7 @@ TTDReply TTDControlBackend<S>::Stop()
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::Invalidate(const TTDRequest& request)
+TTDReply TTDControlBackend::Invalidate(const TTDRequest& request)
 {
     const std::string* reasonText = Option(request, "reason");
     const std::string reason = reasonText && !reasonText->empty() ? *reasonText : "invalidate";
@@ -871,8 +836,7 @@ TTDReply TTDControlBackend<S>::Invalidate(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::HistoryLimit(const TTDRequest& request)
+TTDReply TTDControlBackend::HistoryLimit(const TTDRequest& request)
 {
     TTDSessionInfo info = _manager->ReadSessionInfo();
     const std::string* framesText = Option(request, "frames");
@@ -898,8 +862,7 @@ TTDReply TTDControlBackend<S>::HistoryLimit(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::Journal(const TTDRequest& request)
+TTDReply TTDControlBackend::Journal(const TTDRequest& request)
 {
     if (const std::string* value = Option(request, "enabled"))
     {
@@ -917,8 +880,7 @@ TTDReply TTDControlBackend<S>::Journal(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::JournalBuild(const TTDRequest& request)
+TTDReply TTDControlBackend::JournalBuild(const TTDRequest& request)
 {
     if (TTDReply refusal; RefuseWhileRecording(refusal))
         return refusal;
@@ -950,8 +912,7 @@ TTDReply TTDControlBackend<S>::JournalBuild(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::JournalBuildCancel()
+TTDReply TTDControlBackend::JournalBuildCancel()
 {
     const bool active = _manager->GetJournalBuildState().active;
     _manager->CancelJournalBuild();
@@ -960,12 +921,11 @@ TTDReply TTDControlBackend<S>::JournalBuildCancel()
     return reply;
 }
 
-template <class S>
-bool TTDControlBackend<S>::RefuseWhileRecording(TTDReply& reply, bool browses) const
+bool TTDControlBackend::RefuseWhileRecording(TTDReply& reply, bool browses) const
 {
     if (!_manager->IsRecording())
         return false;
-    if (std::is_same<S, TimeTravelController>::value && browses)
+    if (browses)
         return false;   // the controller pauses the recording (D8)
     StateNode body = StateNode::Object();
     body["state"] = TTDSessionStateToString(_manager->GetState());
@@ -977,8 +937,7 @@ bool TTDControlBackend<S>::RefuseWhileRecording(TTDReply& reply, bool browses) c
     return true;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::Position()
+TTDReply TTDControlBackend::Position()
 {
     // A read companions poll (a Stream Deck strip, 50 times a second): the machine's live position and the
     // published cursor (the history's bounds), never a session operation, so it never parks the machine
@@ -994,8 +953,7 @@ TTDReply TTDControlBackend<S>::Position()
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::Seek(const TTDRequest& request)
+TTDReply TTDControlBackend::Seek(const TTDRequest& request)
 {
     if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
@@ -1042,15 +1000,14 @@ TTDReply TTDControlBackend<S>::Seek(const TTDRequest& request)
     }
     // D13 (the engine): a frame without a T-state is the frame's end - machine
     // state and picture are then the frame's final ones
-    const bool frameEnd = std::is_same<S, TimeTravelController>::value && !bookmark && !tText;
+    const bool frameEnd = !bookmark && !tText;
 
     // Park the machine so its thread cannot advance past the restored checkpoint; it
     // stays paused at the target (Detached) until resume
     PauseAndConfirm();
     [[maybe_unused]] const uint64_t requestedFrame = target.frame;
-    if constexpr (std::is_same<S, TimeTravelController>::value)
-        if (frameEnd)
-            target = _manager->FrameEndPosition(requestedFrame);
+    if (frameEnd)
+        target = _manager->FrameEndPosition(requestedFrame);
     TTDSeekResult result;
     const bool reached = _manager->SeekTo(target, &result);
     NotifyFrameRefresh();
@@ -1058,13 +1015,10 @@ TTDReply TTDControlBackend<S>::Seek(const TTDRequest& request)
     TTDReply reply;
     reply.body["reached"] = reached;
     TTDTimePoint arrived = result.arrivedAt;
-    if constexpr (std::is_same<S, TimeTravelController>::value)
-    {
-        // The end of frame N is named in frame N: {N, its length}, the same machine time as {N+1, 0}
-        if (frameEnd && reached && arrived == TTDTimePoint{requestedFrame + 1, 0} &&
-            requestedFrame >= _manager->GetSessionInfo().sessionStartFrame)
-            arrived = {requestedFrame, _manager->FrameLength(requestedFrame)};
-    }
+    // The end of frame N is named in frame N: {N, its length}, the same machine time as {N+1, 0}
+    if (frameEnd && reached && arrived == TTDTimePoint{requestedFrame + 1, 0} &&
+        requestedFrame >= _manager->GetSessionInfo().sessionStartFrame)
+        arrived = {requestedFrame, _manager->FrameLength(requestedFrame)};
     reply.body["arrived_at"] = TimePointNode(arrived);
     const char* reason = "target";
     if (result.haltReason == TTDSeekHaltReason::ExternalEvent)
@@ -1092,8 +1046,7 @@ TTDReply TTDControlBackend<S>::Seek(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::StepFrame(bool forward)
+TTDReply TTDControlBackend::StepFrame(bool forward)
 {
     if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
@@ -1106,8 +1059,7 @@ TTDReply TTDControlBackend<S>::StepFrame(bool forward)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::Resume(const TTDRequest& request)
+TTDReply TTDControlBackend::Resume(const TTDRequest& request)
 {
     // No frame: resume exactly where the machine stands
     TTDTimePoint from = _manager->CurrentPosition();
@@ -1224,8 +1176,7 @@ TTDReply TTDControlBackend<S>::Resume(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::StepInstruction(const TTDRequest& request)
+TTDReply TTDControlBackend::StepInstruction(const TTDRequest& request)
 {
     bool forward = false;
     if (const std::string* dir = Option(request, "dir"))
@@ -1247,8 +1198,7 @@ TTDReply TTDControlBackend<S>::StepInstruction(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::ReverseStep(const TTDRequest& request)
+TTDReply TTDControlBackend::ReverseStep(const TTDRequest& request)
 {
     const std::string* countText = Option(request, "count");
     const std::string* tstatesText = Option(request, "tstates");
@@ -1286,8 +1236,7 @@ TTDReply TTDControlBackend<S>::ReverseStep(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::Markers()
+TTDReply TTDControlBackend::Markers()
 {
     const auto events = _manager->GetExternalEvents().SnapshotEvents();
     TTDReply reply;
@@ -1306,8 +1255,7 @@ TTDReply TTDControlBackend<S>::Markers()
 
 // TD-4: agent bookmarks are advisory annotations, never replay barriers. Labels are
 // keys: non-empty, at most 63 characters, unique per session
-template <class S>
-TTDReply TTDControlBackend<S>::Bookmarks()
+TTDReply TTDControlBackend::Bookmarks()
 {
     const auto bookmarks = _manager->GetBookmarks();  // time-sorted snapshot copy
     TTDReply reply;
@@ -1323,8 +1271,7 @@ TTDReply TTDControlBackend<S>::Bookmarks()
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::BookmarkAdd(const TTDRequest& request)
+TTDReply TTDControlBackend::BookmarkAdd(const TTDRequest& request)
 {
     const std::string* label = Option(request, "label");
     if (!label || label->empty())
@@ -1362,8 +1309,7 @@ TTDReply TTDControlBackend<S>::BookmarkAdd(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::BookmarkDelete(const TTDRequest& request)
+TTDReply TTDControlBackend::BookmarkDelete(const TTDRequest& request)
 {
     const std::string* label = Option(request, "label");
     if (!label || label->empty())
@@ -1379,9 +1325,10 @@ TTDReply TTDControlBackend<S>::BookmarkDelete(const TTDRequest& request)
 // "When did the program ..." over the session's port journals (ttdportsearch.h): no
 // replay, works on a loaded file. event + arg build the query; every other option
 // is a port query option (ApplyPortQueryOption checks the name); file: a .ttd on
-// disk, searched without loading it (the session is untouched)
-template <class S>
-TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
+// disk, searched without loading it (the session is untouched). context (D5): each
+// hit's registers and stack top at its instruction, replayed (the controller; on by
+// default except for a file and a running recording, which it would pause)
+TTDReply TTDControlBackend::PortEvents(const TTDRequest& request)
 {
     const std::string* event = Option(request, "event");
     if (!event || event->empty())
@@ -1398,16 +1345,28 @@ TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, err);
     for (const auto& [name, value] : request.options)
     {
-        if (name == "event" || name == "arg" || name == "file")
+        if (name == "event" || name == "arg" || name == "file" || name == "context")
             continue;
         if (!ApplyPortQueryOption(q, name, value, err))
             return Fail(TTDControlError::BadRequest, err);
     }
 
     const std::string* file = Option(request, "file");
+    const std::string* contextText = Option(request, "context");
+    bool context = false;
+    if (contextText && !ParseBool(*contextText, context))
+        return Fail(TTDControlError::BadRequest, "Invalid context: '" + *contextText + "' (expected true or false)");
+    if (!contextText)
+        context = !file && !_manager->IsRecording();
+    else if (context && file)
+        return Fail(TTDControlError::BadRequest, "context replays the session: it cannot read a file on disk");
+
     const TTDPortSearchResult result = file ? _manager->SearchPortEventsInFile(*file, q) : _manager->SearchPortEvents(q);
     if (!result.ok)
         return Fail(file ? TTDControlError::BadRequest : TTDControlError::Conflict, result.error);
+    std::vector<TTDPortContext> contexts;
+    if (context)
+        contexts = _manager->PortAccessContexts(result.hits);
 
     TTDReply reply;
     reply.body["event"] = *event;
@@ -1415,9 +1374,11 @@ TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
     reply.body["count"] = static_cast<uint64_t>(result.hits.size());
     reply.body["truncated"] = result.truncated;
     reply.body["scanned"] = static_cast<uint64_t>(result.scanned);
+    reply.body["context"] = context;
     StateNode hits = StateNode::Array();
-    for (const TTDPortHit& h : result.hits)
+    for (size_t i = 0; i < result.hits.size(); ++i)
     {
+        const TTDPortHit& h = result.hits[i];
         StateNode hit = StateNode::Object();
         hit["index"] = static_cast<uint64_t>(h.index);
         hit["frame"] = h.record.frame;
@@ -1427,6 +1388,36 @@ TTDReply TTDControlBackend<S>::PortEvents(const TTDRequest& request)
         hit["pc"] = static_cast<unsigned>(h.record.pc);
         if (h.ayRegister >= 0)
             hit["ay_register"] = h.ayRegister;
+        // A read of the ULA: the half-rows its address selects, the keys it saw down (one half-row only)
+        if (q.direction == TTDPortJournal::Direction::Read && (h.record.port & 1) == 0)
+        {
+            hit["rows"] = static_cast<unsigned>(KeyboardRowsRead(h.record.port));
+            StateNode keys = StateNode::Array();
+            for (const std::string& key : KeysSeenDown(h.record.port, h.record.value))
+                keys.push(StateNode(key));
+            hit["keys"] = keys;
+        }
+        if (i < contexts.size())
+        {
+            const TTDPortContext& c = contexts[i];
+            if (c.ok)
+            {
+                StateNode regs = StateNode::Object();
+                regs["af"] = static_cast<unsigned>(c.cpu.af);
+                regs["bc"] = static_cast<unsigned>(c.cpu.bc);
+                regs["de"] = static_cast<unsigned>(c.cpu.de);
+                regs["hl"] = static_cast<unsigned>(c.cpu.hl);
+                regs["ix"] = static_cast<unsigned>(c.cpu.ix);
+                regs["iy"] = static_cast<unsigned>(c.cpu.iy);
+                regs["sp"] = static_cast<unsigned>(c.cpu.sp);
+                hit["registers"] = regs;
+                hit["stack_top"] = static_cast<unsigned>(c.stackTop);
+            }
+            else
+            {
+                hit["context_error"] = c.error;
+            }
+        }
         hits.push(hit);
     }
     reply.body["hits"] = hits;
@@ -1467,8 +1458,7 @@ void AddFindMarker(StateNode& body, const TTDExternalEvent& marker)
 }
 }  // namespace
 
-template <class S>
-TTDReply TTDControlBackend<S>::FindLast(const TTDRequest& request)
+TTDReply TTDControlBackend::FindLast(const TTDRequest& request)
 {
     TTDSearchQuery q;
     const std::string* addr = Option(request, "addr");
@@ -1618,55 +1608,45 @@ TTDReply TTDControlBackend<S>::FindLast(const TTDRequest& request)
 }
 
 
-template <class S>
-TTDReply TTDControlBackend<S>::FindAll(const TTDSearchQuery& q, const TTDFindOptions& find)
+TTDReply TTDControlBackend::FindAll(const TTDSearchQuery& q, const TTDFindOptions& find)
 {
-    if constexpr (!std::is_same<S, TimeTravelController>::value)
+    const TTDFindResult r = _manager->FindAccesses(q, find);
+    TTDReply reply;
+    reply.body["found"] = !r.hits.empty();
+    if (find.all)
     {
-        (void)q, (void)find;
-        return Fail(TTDControlError::NotAvailable, "all, changes_only and from_frame need the time travel controller (backend engine)");
-    }
-    else
-    {
-        const TTDFindResult r = _manager->FindAccesses(q, find);
-        TTDReply reply;
-        reply.body["found"] = !r.hits.empty();
-        if (find.all)
+        StateNode hits = StateNode::Array();
+        for (const TTDFoundAccess& h : r.hits)
         {
-            StateNode hits = StateNode::Array();
-            for (const TTDFoundAccess& h : r.hits)
-            {
-                StateNode hit = StateNode::Object();
-                AddFoundAccess(hit, h.access);
-                hit["t"] = h.globalT;
-                if (find.changesOnly)
-                    hit["old_value"] = h.hasOldValue ? StateNode(static_cast<unsigned>(h.oldValue)) : StateNode();
-                hits.push(hit);
-            }
-            reply.body["hits"] = hits;
-            reply.body["count"] = static_cast<uint64_t>(r.hits.size());
-            reply.body["truncated"] = r.truncated;
-            // The next page: pass it back as `before` (at or before), the oldest hit excluded
-            if (r.truncated)
-                reply.body["next_before"] = r.hits.back().globalT - 1;
-        }
-        else if (!r.hits.empty())
-        {
-            const TTDFoundAccess& h = r.hits.front();
-            AddFoundAccess(reply.body, h.access);
-            reply.body["t"] = h.globalT;
+            StateNode hit = StateNode::Object();
+            AddFoundAccess(hit, h.access);
+            hit["t"] = h.globalT;
             if (find.changesOnly)
-                reply.body["old_value"] = h.hasOldValue ? StateNode(static_cast<unsigned>(h.oldValue)) : StateNode();
+                hit["old_value"] = h.hasOldValue ? StateNode(static_cast<unsigned>(h.oldValue)) : StateNode();
+            hits.push(hit);
         }
-        if (r.blockingMarker.reason[0] != '\0')
-            AddFindMarker(reply.body, r.blockingMarker);
-        AddSearchWindow(reply.body, r.window);
-        return reply;
+        reply.body["hits"] = hits;
+        reply.body["count"] = static_cast<uint64_t>(r.hits.size());
+        reply.body["truncated"] = r.truncated;
+        // The next page: pass it back as `before` (at or before), the oldest hit excluded
+        if (r.truncated)
+            reply.body["next_before"] = r.hits.back().globalT - 1;
     }
+    else if (!r.hits.empty())
+    {
+        const TTDFoundAccess& h = r.hits.front();
+        AddFoundAccess(reply.body, h.access);
+        reply.body["t"] = h.globalT;
+        if (find.changesOnly)
+            reply.body["old_value"] = h.hasOldValue ? StateNode(static_cast<unsigned>(h.oldValue)) : StateNode();
+    }
+    if (r.blockingMarker.reason[0] != '\0')
+        AddFindMarker(reply.body, r.blockingMarker);
+    AddSearchWindow(reply.body, r.window);
+    return reply;
 }
 
-template <class S>
-std::string TTDControlBackend<S>::SearchBounds(const TTDRequest& request, uint64_t& beforeGlobalT, uint64_t& fromFrame) const
+std::string TTDControlBackend::SearchBounds(const TTDRequest& request, uint64_t& beforeGlobalT, uint64_t& fromFrame) const
 {
     if (const std::string* beforeFrame = Option(request, "before_frame"))
     {
@@ -1689,8 +1669,7 @@ std::string TTDControlBackend<S>::SearchBounds(const TTDRequest& request, uint64
     return "";
 }
 
-template <class S>
-std::string TTDControlBackend<S>::HitLimit(const TTDRequest& request, size_t& limit)
+std::string TTDControlBackend::HitLimit(const TTDRequest& request, size_t& limit)
 {
     if (const std::string* t = Option(request, "limit"))
     {
@@ -1702,8 +1681,7 @@ std::string TTDControlBackend<S>::HitLimit(const TTDRequest& request, size_t& li
     return "";
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::ReverseContinue(const TTDRequest& request)
+TTDReply TTDControlBackend::ReverseContinue(const TTDRequest& request)
 {
     const std::string* pcsText = Option(request, "pcs");
     if (!pcsText || pcsText->empty())
@@ -1732,6 +1710,9 @@ TTDReply TTDControlBackend<S>::ReverseContinue(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, "Invalid phys_page: '" + *t + "' (expected 0..255 or rom)");
     if (std::string err = FlagOption(request, "all", query.all); !err.empty())
         return Fail(TTDControlError::BadRequest, err);
+    // first_per_pc: the list as all, each PC's newest hit only
+    if (std::string err = FlagOption(request, "first_per_pc", query.firstPerPc); !err.empty())
+        return Fail(TTDControlError::BadRequest, err);
     if (std::string err = HitLimit(request, query.limit); !err.empty())
         return Fail(TTDControlError::BadRequest, err);
     if (std::string err = SearchBounds(request, query.beforeGlobalT, query.fromFrame); !err.empty())
@@ -1741,22 +1722,15 @@ TTDReply TTDControlBackend<S>::ReverseContinue(const TTDRequest& request)
         return refusal;
     PauseAndConfirm();
     TTDReverseContinueResult r;
-    if constexpr (std::is_same<S, TimeTravelController>::value)
-        r = _manager->ReverseContinue(query);
-    else
-    {
-        if (query.physPage || query.all || query.beforeGlobalT != UINT64_MAX || query.fromFrame)
-            return Fail(TTDControlError::NotAvailable,
-                        "phys_page, all and the bounds need the time travel controller (backend engine)");
-        r = _manager->ReverseContinue(query.pcs);
-    }
-    if (!query.all)
+    r = _manager->ReverseContinue(query);
+    const bool list = query.all || query.firstPerPc;
+    if (!list)
         NotifyFrameRefresh();
 
     TTDReply reply;
     reply.body["matched"] = r.matched;
     reply.body["pc"] = static_cast<unsigned>(r.pc);
-    if (query.all)
+    if (list)
     {
         // The hits, newest first; the machine stays where it stood
         StateNode hits = StateNode::Array();
@@ -1772,6 +1746,17 @@ TTDReply TTDControlBackend<S>::ReverseContinue(const TTDRequest& request)
         }
         reply.body["hits"] = hits;
         reply.body["count"] = static_cast<uint64_t>(r.hits.size());
+        // first_per_pc: the PCs with no hit in the searched window
+        if (query.firstPerPc)
+        {
+            std::set<uint16_t> missing(query.pcs.begin(), query.pcs.end());
+            for (const TTDReverseHit& h : r.hits)
+                missing.erase(h.pc);
+            StateNode none = StateNode::Array();
+            for (uint16_t pc : missing)
+                none.push(static_cast<unsigned>(pc));
+            reply.body["pcs_without_hit"] = none;
+        }
         reply.body["truncated"] = r.truncated;
         // The next page: pass it back as `before` (at or before), the oldest hit excluded
         if (r.truncated && !r.hits.empty())
@@ -1902,8 +1887,7 @@ std::string CoverageWindow(const TTDRequest& request, uint64_t& fromFrame, uint6
 }
 }  // namespace
 
-template <class S>
-TTDReply TTDControlBackend<S>::CoverageProbe(const TTDRequest& request)
+TTDReply TTDControlBackend::CoverageProbe(const TTDRequest& request)
 {
     const std::string* frameText = Option(request, "frame");
     uint64_t frame = 0;
@@ -1932,8 +1916,7 @@ TTDReply TTDControlBackend<S>::CoverageProbe(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::CoverageScan(const TTDRequest& request)
+TTDReply TTDControlBackend::CoverageScan(const TTDRequest& request)
 {
     TTDCoverageKind kind = TTDCoverageKind::Executed;
     uint16_t addrFrom = 0;
@@ -1974,18 +1957,8 @@ TTDReply TTDControlBackend<S>::CoverageScan(const TTDRequest& request)
     if (space == TTDMemorySpace::Ram && page == kPhysPageNone)
         reply.body["phys_page"] = "rom";
     TTDCoverageScanResult res;
-    if constexpr (std::is_same<S, TimeTravelController>::value)
-    {
-        if (_manager)
-            res = _manager->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, page, limit, newestFirst, asRanges);
-    }
-    else
-    {
-        if (newestFirst || asRanges)
-            return Fail(TTDControlError::NotAvailable, "order and ranges need the time travel controller (backend engine)");
-        if (_manager)
-            res = _manager->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, page, limit);
-    }
+    if (_manager)
+        res = _manager->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, page, limit, newestFirst, asRanges);
     reply.body["scanned_frames"] = res.scannedFrames;
     reply.body["matching_frames"] = res.matchingFrames;
     reply.body["first_match"] = res.firstMatch;
@@ -2032,8 +2005,91 @@ TTDReply TTDControlBackend<S>::CoverageScan(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::CoverageSummary(const TTDRequest& request)
+TTDReply TTDControlBackend::CoverageRare(const TTDRequest& request)
+{
+    TTDCoverageKind kind = TTDCoverageKind::Executed;
+    uint16_t addrFrom = 0;
+    uint16_t addrTo = 0xFFFF;
+    std::optional<PhysPage> page;
+    const TTDSessionInfo session = _manager ? _manager->ReadSessionInfo() : TTDSessionInfo{};
+    uint64_t fromFrame = session.sessionStartFrame;
+    uint64_t toFrame = session.currentEndFrame;
+    size_t limit = 200;
+    TTDMemorySpace space = TTDMemorySpace::Ram;
+    std::string err = CoverageWindow(request, fromFrame, toFrame, limit);
+    if (err.empty())
+        err = CoverageRange(request, kind, addrFrom, addrTo, page, space);
+    uint64_t maxFrames = 1;
+    if (const std::string* t = Option(request, "max_frames");
+        err.empty() && t && (!ParseU64(*t, maxFrames) || maxFrames == 0 || maxFrames > TimeTravelController::kCoverageRareMaxFrames))
+        err = "Invalid max_frames: '" + *t + "' (expected 1.." + std::to_string(TimeTravelController::kCoverageRareMaxFrames) + ")";
+    if (err.empty() && limit > TimeTravelController::kCoverageScanLimitMax)
+        err = "Invalid limit: at most " + std::to_string(TimeTravelController::kCoverageScanLimitMax);
+    if (!err.empty())
+        return Fail(TTDControlError::BadRequest, err);
+
+    TTDCoverageRareResult res;
+    if (_manager)
+        res = _manager->QueryCoverageRare(fromFrame, toFrame, kind, addrFrom, addrTo, page,
+                                          static_cast<uint32_t>(maxFrames), limit);
+
+    TTDReply reply;
+    reply.body["kind"] = TTDCoverageKindToString(kind);
+    reply.body["addr_from"] = Hex4(addrFrom);
+    reply.body["addr_to"] = Hex4(addrTo);
+    AddCoverageSpace(reply.body, space, page, addrFrom, addrTo);
+    if (space == TTDMemorySpace::Ram && page == kPhysPageNone)
+        reply.body["phys_page"] = "rom";
+    reply.body["max_frames"] = res.maxFrames;
+    reply.body["scanned_frames"] = res.scannedFrames;
+    reply.body["unindexed_frames"] = res.unindexedFrames;
+    reply.body["distinct_keys"] = res.distinctKeys;
+    reply.body["rare_keys"] = res.rareKeys;
+    reply.body["rare_blocks"] = res.rareBlocks;
+    reply.body["truncated"] = res.truncated;
+    reply.body["index_available"] = res.indexAvailable;
+    if (res.indexAvailable)
+    {
+        reply.body["covered_from"] = res.coveredFrom;
+        reply.body["covered_to"] = res.coveredTo;
+    }
+    StateNode blocks = StateNode::Array();
+    for (const TTDCoverageRareBlock& b : res.blocks)
+    {
+        StateNode block = StateNode::Object();
+        // The page as the queries take it: a RAM page, rom (the no-page bucket), or the space and its offsets
+        if (b.pageField == kCoverageNoPageField)
+            block["phys_page"] = "rom";
+        else if (b.pageField < kCoverageNoPageField)
+            block["phys_page"] = b.pageField;
+        else
+        {
+            char text[16];
+            block["space"] = SpaceName(SpaceOfPage(static_cast<PhysPage>(b.pageField)));
+            std::snprintf(text, sizeof text, "0x%05X",
+                          static_cast<unsigned>(SpaceOffset(static_cast<PhysPage>(b.pageField), b.offsetFrom)));
+            block["offset_from"] = text;
+        }
+        block["page_offset_from"] = Hex4(b.offsetFrom);
+        block["page_offset_to"] = Hex4(b.offsetTo);
+        if (b.z80From)
+        {
+            block["addr_from"] = Hex4(*b.z80From);
+            block["addr_to"] = Hex4(static_cast<uint16_t>(*b.z80From + (b.offsetTo - b.offsetFrom)));
+        }
+        block["keys"] = b.keys;
+        block["frame_count"] = static_cast<uint64_t>(b.frames.size());
+        StateNode frames = StateNode::Array();
+        for (uint64_t f : b.frames)
+            frames.push(f);
+        block["frames"] = frames;
+        blocks.push(block);
+    }
+    reply.body["blocks"] = blocks;
+    return reply;
+}
+
+TTDReply TTDControlBackend::CoverageSummary(const TTDRequest& request)
 {
     // Default window: the session (frames before it hold nothing; a range from 0 was all empty buckets)
     const TTDSessionInfo session = _manager ? _manager->ReadSessionInfo() : TTDSessionInfo{};
@@ -2121,8 +2177,7 @@ StateNode TTDControl::FileInfoBody(const TTDFileInfo& info)
     return v;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::FileInfo(const TTDRequest& request)
+TTDReply TTDControlBackend::FileInfo(const TTDRequest& request)
 {
     const std::string* path = Option(request, "path");
     if (!path || path->empty())
@@ -2147,8 +2202,7 @@ TTDReply TTDControlBackend<S>::FileInfo(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::Dump(const TTDRequest& request)
+TTDReply TTDControlBackend::Dump(const TTDRequest& request)
 {
     const std::string* path = Option(request, "path");
     if (!path || path->empty())
@@ -2178,8 +2232,7 @@ TTDReply TTDControlBackend<S>::Dump(const TTDRequest& request)
     return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::Load(const TTDRequest& request)
+TTDReply TTDControlBackend::Load(const TTDRequest& request)
 {
     const std::string* path = Option(request, "path");
     if (!path || path->empty())
@@ -2230,13 +2283,8 @@ TTDReply TTDControlBackend<S>::Load(const TTDRequest& request)
     std::string err;
     _manager->SetSessionSourcePath(*path);
     bool loaded = false;
-    if constexpr (std::is_same<S, TimeTravelController>::value)
-    {
-        in.close();   // the engine reads the file where its loader asks
-        loaded = _manager->DeserializeSessionFile(file, err);
-    }
-    else
-        loaded = _manager->DeserializeSession(in, err);
+    in.close();   // the engine reads the file where its loader asks
+    loaded = _manager->DeserializeSessionFile(file, err);
     if (!loaded)
     {
         StateNode body = StateNode::Object();
@@ -2257,8 +2305,7 @@ TTDReply TTDControlBackend<S>::Load(const TTDRequest& request)
 
 // A frame range as a lossless clip (final picture, plane B when zxdlss is on, frame
 // meta), written inside the core: one call instead of a seek and a capture per frame
-template <class S>
-TTDReply TTDControlBackend<S>::ExportClip(const TTDRequest& request)
+TTDReply TTDControlBackend::ExportClip(const TTDRequest& request)
 {
     const std::string* fromText = Option(request, "from");
     const std::string* toText = Option(request, "to");
@@ -2349,14 +2396,12 @@ TTDReply TTDControlBackend<S>::ExportClip(const TTDRequest& request)
 
 /// region <Machine thread discipline>
 
-template <class S>
-bool TTDControlBackend<S>::OnMachineThread() const
+bool TTDControlBackend::OnMachineThread() const
 {
     return _context && _context->pMainLoop && _context->pMainLoop->IsRunThread();
 }
 
-template <class S>
-void TTDControlBackend<S>::PauseAndConfirm()
+void TTDControlBackend::PauseAndConfirm()
 {
     // Only a machine whose own loop runs: a stopped one, or a ZX-Poly member stepped by
     // its master, has nothing to park
@@ -2367,8 +2412,7 @@ void TTDControlBackend<S>::PauseAndConfirm()
     emulator->WaitForPauseConfirmation(1000);
 }
 
-template <class S>
-void TTDControlBackend<S>::NotifyFrameRefresh()
+void TTDControlBackend::NotifyFrameRefresh()
 {
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
     if (!emulator)
@@ -2381,78 +2425,74 @@ void TTDControlBackend<S>::NotifyFrameRefresh()
 /// endregion </Machine thread discipline>
 /// region <Memory at a checkpoint>
 
-template <class S>
-std::optional<TTDReply> TTDControlBackend<S>::ResolveRegionAt(const std::string& name, uint64_t frame, uint32_t& region,
+std::optional<TTDReply> TTDControlBackend::ResolveRegionAt(const std::string& name, uint64_t frame, uint32_t& region,
                                                               uint32_t& base, size_t& index)
 {
-    if constexpr (!std::is_same<S, TimeTravelController>::value)
-    {
-        (void)name, (void)frame, (void)region, (void)base, (void)index;
-        return Fail(TTDControlError::NotAvailable, "memory-at and memory-diff read the engine's store (backend engine)");
-    }
-    else
-    {
-        const TimeTravelEngine& engine = _manager->GetEngine();
-        if (engine.CheckpointCount() <= engine.FirstCheckpoint())
-            return Fail(TTDControlError::NotFound, "no recorded history");
+    const TimeTravelEngine& engine = _manager->GetEngine();
+    if (engine.CheckpointCount() <= engine.FirstCheckpoint())
+        return Fail(TTDControlError::NotFound, "no recorded history");
 
-        // The name: "ram" / "ramN" (machine RAM, page N at N x 16 KB), a region by name or alias (the registry
-        // every surface lists), or an engine region's own name (a loaded session's)
-        std::string wanted = name;
-        std::transform(wanted.begin(), wanted.end(), wanted.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        base = 0;
-        std::string engineName = wanted;
-        if (wanted.size() > 3 && wanted.compare(0, 3, "ram") == 0 &&
-            wanted.find_first_not_of("0123456789", 3) == std::string::npos)
-        {
-            engineName = "ram";
-            base = static_cast<uint32_t>(std::stoul(wanted.substr(3))) * 0x4000u;
-        }
-        else if (wanted == "cache")
-            engineName = "sprinter.fastram";
-        else if (IDeviceMemoryRegion* known = DeviceMemory::Find(_context, wanted); known && known->TtdRegion())
-            engineName = known->TtdRegion();
-        const std::vector<TTDRegionDesc>& regions = engine.Regions();
-        std::string names;
-        region = UINT32_MAX;
-        for (uint32_t r = 0; r < regions.size(); ++r)
-        {
-            if (regions[r].id >= TTDRegionId::DeviceStateFirst)
-                continue;   // device states are not memories
-            names += (names.empty() ? "" : ", ") + regions[r].name;
-            if (regions[r].name == engineName)
-                region = r;
-        }
-        if (region == UINT32_MAX)
-            return Fail(TTDControlError::BadRequest,
-                        "space '" + name + "' is not a memory this session records (it records: " + names + ")");
-        if (base >= regions[region].bytes)
-            return Fail(TTDControlError::BadRequest, "space '" + name + "': past the recorded RAM");
-
-        // The newest checkpoint at or before the frame
-        index = SIZE_MAX;
-        for (size_t i = engine.FirstCheckpoint(); i < engine.CheckpointCount(); ++i)
-            if (const TTDEngineCheckpoint* cp = engine.Checkpoint(i); cp && cp->position.frame <= frame)
-                index = i;
-        if (index == SIZE_MAX)
-            return Fail(TTDControlError::BadRequest,
-                        "frame " + std::to_string(frame) + " is before the first checkpoint (frame " +
-                            std::to_string(engine.Checkpoint(engine.FirstCheckpoint())->position.frame) + ")");
-        return std::nullopt;
+    // The name: "ram" / "ramN" (machine RAM, page N at N x 16 KB), a region by name or alias (the registry
+    // every surface lists), or an engine region's own name (a loaded session's)
+    std::string wanted = name;
+    std::transform(wanted.begin(), wanted.end(), wanted.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    base = 0;
+    std::string engineName = wanted;
+    if (wanted.size() > 3 && wanted.compare(0, 3, "ram") == 0 &&
+        wanted.find_first_not_of("0123456789", 3) == std::string::npos)
+    {
+        engineName = "ram";
+        base = static_cast<uint32_t>(std::stoul(wanted.substr(3))) * 0x4000u;
     }
+    else if (wanted == "cache")
+        engineName = "sprinter.fastram";
+    else if (IDeviceMemoryRegion* known = DeviceMemory::Find(_context, wanted); known && known->TtdRegion())
+        engineName = known->TtdRegion();
+    const std::vector<TTDRegionDesc>& regions = engine.Regions();
+    std::string names;
+    region = UINT32_MAX;
+    for (uint32_t r = 0; r < regions.size(); ++r)
+    {
+        if (regions[r].id >= TTDRegionId::DeviceStateFirst)
+            continue;   // device states are not memories
+        names += (names.empty() ? "" : ", ") + regions[r].name;
+        if (regions[r].name == engineName)
+            region = r;
+    }
+    if (region == UINT32_MAX)
+        return Fail(TTDControlError::BadRequest,
+                    "space '" + name + "' is not a memory this session records (it records: " + names + ")");
+    if (base >= regions[region].bytes)
+        return Fail(TTDControlError::BadRequest, "space '" + name + "': past the recorded RAM");
+
+    // The newest checkpoint at or before the frame
+    index = SIZE_MAX;
+    for (size_t i = engine.FirstCheckpoint(); i < engine.CheckpointCount(); ++i)
+        if (const TTDEngineCheckpoint* cp = engine.Checkpoint(i); cp && cp->position.frame <= frame)
+            index = i;
+    if (index == SIZE_MAX)
+        return Fail(TTDControlError::BadRequest,
+                    "frame " + std::to_string(frame) + " is before the first checkpoint (frame " +
+                        std::to_string(engine.Checkpoint(engine.FirstCheckpoint())->position.frame) + ")");
+    return std::nullopt;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::MemoryAt(const TTDRequest& request)
+TTDReply TTDControlBackend::MemoryAt(const TTDRequest& request)
 {
     const std::string* space = Option(request, "space");
     const std::string* frameText = Option(request, "frame");
     uint64_t frame = 0;
     uint64_t offset = 0;
     uint64_t length = 256;
-    if (!space || !frameText)
+    if (!space)
         return Fail(TTDControlError::BadRequest, "memory-at needs space and frame (offset, length optional)");
-    if (!ParseU64(*frameText, frame))
+    std::string lower = *space;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    // Space cpu without a frame: the machine now, no history needed
+    if (!frameText && lower != "cpu")
+        return Fail(TTDControlError::BadRequest,
+                    "memory-at needs space and frame (offset, length optional); space cpu without frame reads the machine now");
+    if (frameText && !ParseU64(*frameText, frame))
         return Fail(TTDControlError::BadRequest, "Invalid frame: '" + *frameText + "'");
     if (const std::string* t = Option(request, "offset"); t && !ParseUpTo(*t, 0xFFFFFFFFull, offset))
         return Fail(TTDControlError::BadRequest, "Invalid offset: '" + *t + "'");
@@ -2461,165 +2501,186 @@ TTDReply TTDControlBackend<S>::MemoryAt(const TTDRequest& request)
     uint64_t tin = 0;
     if (const std::string* t = Option(request, "tinframe"); t && !ParseUpTo(*t, UINT32_MAX, tin))
         return Fail(TTDControlError::BadRequest, "Invalid tinframe: '" + *t + "'");
-    if constexpr (!std::is_same<S, TimeTravelController>::value)
-        return Fail(TTDControlError::NotAvailable, "memory-at reads the engine's store (backend engine)");
-    else
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    if (lower == "cpu")
+        return MemoryAtCpu(frameText ? std::optional<uint64_t>(frame) : std::nullopt, static_cast<uint32_t>(tin),
+                           offset, length);
+    uint32_t region = 0;
+    uint32_t base = 0;
+    size_t index = 0;
+    if (std::optional<TTDReply> refused = ResolveRegionAt(*space, frame, region, base, index))
+        return *refused;
+    const TimeTravelEngine& engine = _manager->GetEngine();
+    const TTDRegionDesc& desc = engine.Regions()[region];
+    const uint64_t at = base + offset;
+    if (at >= desc.bytes)
+        return Fail(TTDControlError::BadRequest, "offset past the end of " + desc.name + " (" + std::to_string(desc.bytes) + " bytes)");
+    length = std::min<uint64_t>(length, desc.bytes - at);
+    // A point inside the frame (tinframe): the frame's checkpoint, then the frame's writes up to that point
+    // from the write journal (built for this frame by replay when it does not cover it). The memories whose
+    // writes are journaled: machine RAM, the Sprinter's video and fast RAM
+    const bool inside = tin > 0;
+    const TTDMemorySpace journaled = desc.name == "ram"                ? TTDMemorySpace::Ram
+                                     : desc.name == "sprinter.vram"    ? TTDMemorySpace::Vram
+                                     : desc.name == "sprinter.fastram" ? TTDMemorySpace::Cache
+                                                                       : static_cast<TTDMemorySpace>(0xFF);
+    if (inside && (static_cast<uint8_t>(journaled) == 0xFF || engine.Checkpoint(index)->position.frame != frame))
+        return Fail(TTDControlError::BadRequest,
+                    static_cast<uint8_t>(journaled) == 0xFF
+                        ? "tinframe: inside a frame memory-at reads ram, vram and cache (their writes are journaled); " +
+                              desc.name + " is read at a frame start (or seek there)"
+                        : "tinframe: frame " + std::to_string(frame) + " has no checkpoint of its own (history thinned); seek there");
+    std::vector<TTDWriteRecord> writes;
+    if (inside)
     {
-        if (TTDReply refusal; RefuseWhileRecording(refusal, true))
-            return refusal;
-        PauseAndConfirm();
-        std::string lower = *space;
-        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (lower == "cpu")
-            return MemoryAtCpu(frame, static_cast<uint32_t>(tin), offset, length);
-        uint32_t region = 0;
-        uint32_t base = 0;
-        size_t index = 0;
-        if (std::optional<TTDReply> refused = ResolveRegionAt(*space, frame, region, base, index))
-            return *refused;
-        const TimeTravelEngine& engine = _manager->GetEngine();
-        const TTDRegionDesc& desc = engine.Regions()[region];
-        const uint64_t at = base + offset;
-        if (at >= desc.bytes)
-            return Fail(TTDControlError::BadRequest, "offset past the end of " + desc.name + " (" + std::to_string(desc.bytes) + " bytes)");
-        length = std::min<uint64_t>(length, desc.bytes - at);
-        // A point inside the frame (tinframe): the frame's checkpoint, then the frame's writes up to that point
-        // from the write journal (built for this frame by replay when it does not cover it). The memories whose
-        // writes are journaled: machine RAM, the Sprinter's video and fast RAM
-        const bool inside = tin > 0;
-        const TTDMemorySpace journaled = desc.name == "ram"                ? TTDMemorySpace::Ram
-                                         : desc.name == "sprinter.vram"    ? TTDMemorySpace::Vram
-                                         : desc.name == "sprinter.fastram" ? TTDMemorySpace::Cache
-                                                                           : static_cast<TTDMemorySpace>(0xFF);
-        if (inside && (static_cast<uint8_t>(journaled) == 0xFF || engine.Checkpoint(index)->position.frame != frame))
-            return Fail(TTDControlError::BadRequest,
-                        static_cast<uint8_t>(journaled) == 0xFF
-                            ? "tinframe: inside a frame memory-at reads ram, vram and cache (their writes are journaled); " +
-                                  desc.name + " is read at a frame start (or seek there)"
-                            : "tinframe: frame " + std::to_string(frame) + " has no checkpoint of its own (history thinned); seek there");
-        std::vector<TTDWriteRecord> writes;
-        if (inside)
+        // From where the frame's checkpoint stands: its CPU may start a little past the frame boundary (the
+        // instruction that crossed it belongs to the frame before)
+        uint64_t from = _manager->GlobalT({frame, 0});
+        for (size_t i = 0; i < _manager->GetCheckpointCount(); ++i)
+            if (const TTDCheckpoint* cp = _manager->GetCheckpoint(i); cp && cp->time.frame == frame)
+                from = _manager->CheckpointStartT(*cp);
+        const uint64_t to = _manager->GlobalT({frame, static_cast<uint32_t>(tin)});
+        auto covered = [&] {
+            for (const TTDJournalSegment& seg : engine.Writes().Segments())
+                if (seg.from <= from && seg.to >= to)
+                    return true;
+            return false;
+        };
+        if (!covered())
         {
-            // From where the frame's checkpoint stands: its CPU may start a little past the frame boundary (the
-            // instruction that crossed it belongs to the frame before)
-            uint64_t from = _manager->GlobalT({frame, 0});
-            for (size_t i = 0; i < _manager->GetCheckpointCount(); ++i)
-                if (const TTDCheckpoint* cp = _manager->GetCheckpoint(i); cp && cp->time.frame == frame)
-                    from = _manager->CheckpointStartT(*cp);
-            const uint64_t to = _manager->GlobalT({frame, static_cast<uint32_t>(tin)});
-            auto covered = [&] {
-                for (const TTDJournalSegment& seg : engine.Writes().Segments())
-                    if (seg.from <= from && seg.to >= to)
-                        return true;
-                return false;
-            };
-            if (!covered())
-            {
-                const TTDJournalBuildResult built = _manager->BuildWriteJournalFrames(frame, frame, {});
-                if (!built.ok || !covered())
-                    return Fail(TTDControlError::Conflict, "tinframe: the frame's writes could not be rebuilt (" +
-                                                               (built.error.empty() ? std::string("a replay barrier") : built.error) +
-                                                               "); seek there instead");
-            }
-            engine.Writes().ForEach([&](const TTDWriteRecord& rec) {
-                if (!rec.isIo && rec.globalT > from && rec.globalT <= to)
-                    writes.push_back(rec);
-            });
+            const TTDJournalBuildResult built = _manager->BuildWriteJournalFrames(frame, frame, {});
+            if (!built.ok || !covered())
+                return Fail(TTDControlError::Conflict, "tinframe: the frame's writes could not be rebuilt (" +
+                                                           (built.error.empty() ? std::string("a replay barrier") : built.error) +
+                                                           "); seek there instead");
         }
-        std::vector<uint8_t> bytes(size_t(desc.pieces) * kTTDPieceSize);
-        std::vector<uint8_t> present;
-        const TTDRestoreResult restored = engine.RestoreRegion(index, region, bytes.data(), &present);
-        if (!restored.Ok())
-            return Fail(TTDControlError::Internal, desc.name + ": " + restored.message);
-        for (const TTDWriteRecord& rec : writes)
-        {
-            const PhysPage page = RecordPage(rec);
-            if (page == kPhysPageNone || SpaceOfPage(page) != journaled)
-                continue;
-            const uint64_t at = journaled == TTDMemorySpace::Ram ? uint64_t(page) * 0x4000 + (rec.addr & 0x3FFF)
-                                                                  : SpaceOffset(page, rec.addr);
-            if (at < bytes.size())
-                bytes[at] = rec.value;
-        }
-        for (uint64_t p = at / kTTDPieceSize; p <= (at + length - 1) / kTTDPieceSize; ++p)
-            if (p < present.size() && !present[p])
-                return Fail(TTDControlError::NotFound, desc.name + " offset " + std::to_string(p * kTTDPieceSize) +
-                                                           ": the session had not recorded it by then");
-        TTDReply reply;
-        reply.body["space"] = desc.name;
-        reply.body["offset"] = at;
-        reply.body["length"] = length;
-        reply.body["frame"] = frame;
-        reply.body["tinframe"] = tin;
-        reply.body["at_frame"] = engine.Checkpoint(index)->position.frame;
-        reply.body["exact"] = engine.Checkpoint(index)->position.frame == frame;
-        std::string hex;
-        hex.reserve(size_t(length) * 2);
-        static const char kHex[] = "0123456789ABCDEF";
-        for (uint64_t i = 0; i < length; ++i)
-        {
-            hex += kHex[bytes[at + i] >> 4];
-            hex += kHex[bytes[at + i] & 0x0F];
-        }
-        reply.body["hex"] = hex;
-        return reply;
+        engine.Writes().ForEach([&](const TTDWriteRecord& rec) {
+            if (!rec.isIo && rec.globalT > from && rec.globalT <= to)
+                writes.push_back(rec);
+        });
     }
+    std::vector<uint8_t> bytes(size_t(desc.pieces) * kTTDPieceSize);
+    std::vector<uint8_t> present;
+    const TTDRestoreResult restored = engine.RestoreRegion(index, region, bytes.data(), &present);
+    if (!restored.Ok())
+        return Fail(TTDControlError::Internal, desc.name + ": " + restored.message);
+    for (const TTDWriteRecord& rec : writes)
+    {
+        const PhysPage page = RecordPage(rec);
+        if (page == kPhysPageNone || SpaceOfPage(page) != journaled)
+            continue;
+        const uint64_t at = journaled == TTDMemorySpace::Ram ? uint64_t(page) * 0x4000 + (rec.addr & 0x3FFF)
+                                                              : SpaceOffset(page, rec.addr);
+        if (at < bytes.size())
+            bytes[at] = rec.value;
+    }
+    for (uint64_t p = at / kTTDPieceSize; p <= (at + length - 1) / kTTDPieceSize; ++p)
+        if (p < present.size() && !present[p])
+            return Fail(TTDControlError::NotFound, desc.name + " offset " + std::to_string(p * kTTDPieceSize) +
+                                                       ": the session had not recorded it by then");
+    TTDReply reply;
+    reply.body["space"] = desc.name;
+    reply.body["offset"] = at;
+    reply.body["length"] = length;
+    reply.body["frame"] = frame;
+    reply.body["tinframe"] = tin;
+    reply.body["at_frame"] = engine.Checkpoint(index)->position.frame;
+    reply.body["exact"] = engine.Checkpoint(index)->position.frame == frame;
+    std::string hex;
+    hex.reserve(size_t(length) * 2);
+    static const char kHex[] = "0123456789ABCDEF";
+    for (uint64_t i = 0; i < length; ++i)
+    {
+        hex += kHex[bytes[at + i] >> 4];
+        hex += kHex[bytes[at + i] & 0x0F];
+    }
+    reply.body["hex"] = hex;
+    return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::MemoryAtCpu(uint64_t frame, uint32_t tin, uint64_t offset, uint64_t length)
+TTDReply TTDControlBackend::MemoryAtCpu(std::optional<uint64_t> frame, uint32_t tin, uint64_t offset, uint64_t length)
 {
-    if constexpr (!std::is_same<S, TimeTravelController>::value)
+    if (offset > 0xFFFF)
+        return Fail(TTDControlError::BadRequest, "space cpu: offset is a Z80 address 0..65535");
+    if (offset + length > 0x10000)
+        return Fail(TTDControlError::BadRequest, "space cpu: the bytes end at 0xFFFF (offset + length at most 65536)");
+    // The machine now: no frame, or its own frame past the recorded history (a stopped recording the machine
+    // ran on from, or none at all). Read as it stands, through its mapping
+    const TTDTimePoint now = _manager->CurrentPosition();
+    const bool recorded = _manager->GetCheckpointCount() > 0 && frame &&
+                          !(_manager->SessionEndPosition() < TTDTimePoint{*frame, tin});
+    const bool live = !frame || (!recorded && *frame == now.frame);
+    TTDCpuView view;
+    if (live)
     {
-        (void)frame, (void)tin, (void)offset, (void)length;
-        return Fail(TTDControlError::NotAvailable, "memory-at space cpu needs the time travel controller (backend engine)");
-    }
-    else
-    {
-        if (offset > 0xFFFF)
-            return Fail(TTDControlError::BadRequest, "space cpu: offset is a Z80 address 0..65535");
-        if (offset + length > 0x10000)
-            return Fail(TTDControlError::BadRequest, "space cpu: the bytes end at 0xFFFF (offset + length at most 65536)");
-        const TTDCpuView view = _manager->ReadCpuView({frame, tin}, static_cast<uint16_t>(offset), static_cast<size_t>(length));
-        if (!view.ok)
-            return Fail(TTDControlError::Conflict, "space cpu: " + view.error);
-        TTDReply reply;
-        reply.body["space"] = "cpu";
-        reply.body["offset"] = offset;
-        reply.body["length"] = static_cast<uint64_t>(view.bytes.size());
-        reply.body["frame"] = frame;
-        reply.body["tinframe"] = static_cast<uint64_t>(tin);
-        reply.body["at_frame"] = view.at.frame;
-        reply.body["exact"] = true;
-        // The mapping the bytes were read through: each 16 KB window's ROM / RAM / cache page
-        StateNode banks = StateNode::Array();
-        static const char* const kKinds[] = {"rom", "ram", "cache"};
+        Memory* memory = _context ? _context->pMemory : nullptr;
+        if (!memory)
+            return Fail(TTDControlError::NotAvailable, "space cpu: no memory");
+        view.at = now;
+        view.bytes.resize(static_cast<size_t>(length));
+        for (size_t i = 0; i < view.bytes.size(); ++i)
+            view.bytes[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(offset + i));
         for (uint8_t w = 0; w < 4; ++w)
         {
-            StateNode bank = StateNode::Object();
-            bank["window"] = static_cast<unsigned>(w);
-            bank["addr"] = Hex4(static_cast<uint16_t>(w * 0x4000));
-            bank["kind"] = view.windows[w].kind < 3 ? kKinds[view.windows[w].kind] : "unknown";
-            bank["page"] = static_cast<unsigned>(view.windows[w].page);
-            bank["name"] = view.windows[w].name;
-            banks.push(bank);
+            const MemoryPageDescriptor page = memory->MapZ80AddressToPhysicalPage(static_cast<uint16_t>(w * 0x4000));
+            view.windows[w].kind = static_cast<uint8_t>(page.mode);
+            view.windows[w].page = page.page;
+            view.windows[w].name = memory->GetCurrentBankName(w);
         }
-        reply.body["banks"] = banks;
-        std::string hex;
-        hex.reserve(view.bytes.size() * 2);
-        static const char kHex[] = "0123456789ABCDEF";
-        for (uint8_t b : view.bytes)
-        {
-            hex += kHex[b >> 4];
-            hex += kHex[b & 0x0F];
-        }
-        reply.body["hex"] = hex;
-        return reply;
+        view.ok = true;
     }
+    else
+        view = _manager->ReadCpuView({*frame, tin}, static_cast<uint16_t>(offset), static_cast<size_t>(length));
+    if (!view.ok)
+    {
+        const TTDTimePoint end = _manager->SessionEndPosition();
+        std::string where = _manager->GetCheckpointCount() == 0
+                                ? std::string(" (no recorded history)")
+                                : " (history: frames up to " + std::to_string(end.frame) + ")";
+        return Fail(TTDControlError::Conflict, "space cpu: " + view.error + where + "; the machine stands at frame " +
+                                                   std::to_string(now.frame) + ": without frame it is read now");
+    }
+    TTDReply reply;
+    reply.body["space"] = "cpu";
+    reply.body["offset"] = offset;
+    reply.body["length"] = static_cast<uint64_t>(view.bytes.size());
+    reply.body["frame"] = frame ? *frame : view.at.frame;
+    reply.body["tinframe"] = static_cast<uint64_t>(frame ? tin : view.at.tInFrame);
+    reply.body["at_frame"] = view.at.frame;
+    // live: the machine now (at_tinframe where it stands); exact: the bytes are those of the asked point
+    reply.body["live"] = live;
+    if (live)
+        reply.body["at_tinframe"] = static_cast<uint64_t>(view.at.tInFrame);
+    reply.body["exact"] = !live || !frame || tin == view.at.tInFrame;
+    // The mapping the bytes were read through: each 16 KB window's ROM / RAM / cache page
+    StateNode banks = StateNode::Array();
+    static const char* const kKinds[] = {"rom", "ram", "cache"};
+    for (uint8_t w = 0; w < 4; ++w)
+    {
+        StateNode bank = StateNode::Object();
+        bank["window"] = static_cast<unsigned>(w);
+        bank["addr"] = Hex4(static_cast<uint16_t>(w * 0x4000));
+        bank["kind"] = view.windows[w].kind < 3 ? kKinds[view.windows[w].kind] : "unknown";
+        bank["page"] = static_cast<unsigned>(view.windows[w].page);
+        bank["name"] = view.windows[w].name;
+        banks.push(bank);
+    }
+    reply.body["banks"] = banks;
+    std::string hex;
+    hex.reserve(view.bytes.size() * 2);
+    static const char kHex[] = "0123456789ABCDEF";
+    for (uint8_t b : view.bytes)
+    {
+        hex += kHex[b >> 4];
+        hex += kHex[b & 0x0F];
+    }
+    reply.body["hex"] = hex;
+    return reply;
 }
 
-template <class S>
-TTDReply TTDControlBackend<S>::MemoryDiff(const TTDRequest& request)
+TTDReply TTDControlBackend::MemoryDiff(const TTDRequest& request)
 {
     const std::string* space = Option(request, "space");
     const std::string* fromText = Option(request, "from_frame");
@@ -2633,93 +2694,88 @@ TTDReply TTDControlBackend<S>::MemoryDiff(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, "from_frame and to_frame are frame numbers");
     if (const std::string* t = Option(request, "limit"); t && (!ParseU64(*t, limit) || limit == 0))
         return Fail(TTDControlError::BadRequest, "Invalid limit: '" + *t + "' (expected integer >= 1)");
-    if constexpr (!std::is_same<S, TimeTravelController>::value)
-        return Fail(TTDControlError::NotAvailable, "memory-diff reads the engine's store (backend engine)");
-    else
-    {
-        if (TTDReply refusal; RefuseWhileRecording(refusal, true))
-            return refusal;
-        PauseAndConfirm();
-        uint32_t region = 0;
-        uint32_t base = 0;
-        size_t fromIndex = 0;
-        size_t toIndex = 0;
-        if (std::optional<TTDReply> refused = ResolveRegionAt(*space, fromFrame, region, base, fromIndex))
-            return *refused;
-        if (std::optional<TTDReply> refused = ResolveRegionAt(*space, toFrame, region, base, toIndex))
-            return *refused;
-        const TimeTravelEngine& engine = _manager->GetEngine();
-        const TTDRegionDesc& desc = engine.Regions()[region];
-        // "ramN" compares that page only; any other name the whole memory
-        const uint64_t first = base;
-        const uint64_t end = base ? std::min<uint64_t>(base + 0x4000, desc.bytes) : desc.bytes;
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    uint32_t region = 0;
+    uint32_t base = 0;
+    size_t fromIndex = 0;
+    size_t toIndex = 0;
+    if (std::optional<TTDReply> refused = ResolveRegionAt(*space, fromFrame, region, base, fromIndex))
+        return *refused;
+    if (std::optional<TTDReply> refused = ResolveRegionAt(*space, toFrame, region, base, toIndex))
+        return *refused;
+    const TimeTravelEngine& engine = _manager->GetEngine();
+    const TTDRegionDesc& desc = engine.Regions()[region];
+    // "ramN" compares that page only; any other name the whole memory
+    const uint64_t first = base;
+    const uint64_t end = base ? std::min<uint64_t>(base + 0x4000, desc.bytes) : desc.bytes;
 
-        // Pieces whose stored versions differ, then their bytes
-        std::vector<uint32_t> candidates;
-        for (uint32_t p = static_cast<uint32_t>(first / kTTDPieceSize); p < (end + kTTDPieceSize - 1) / kTTDPieceSize; ++p)
-            if (engine.VersionAt(fromIndex, region, p) != engine.VersionAt(toIndex, region, p))
-                candidates.push_back(p);
-        TTDReply reply;
-        reply.body["space"] = desc.name;
-        reply.body["from_frame"] = fromFrame;
-        reply.body["to_frame"] = toFrame;
-        reply.body["at_from"] = engine.Checkpoint(fromIndex)->position.frame;
-        reply.body["at_to"] = engine.Checkpoint(toIndex)->position.frame;
-        uint64_t changed = 0;
-        bool truncated = false;
-        StateNode ranges = StateNode::Array();
-        if (!candidates.empty())
-        {
-            std::vector<uint8_t> before(size_t(desc.pieces) * kTTDPieceSize);
-            std::vector<uint8_t> after(before.size());
-            const TTDRestoreResult a = engine.RestoreRegion(fromIndex, region, before.data());
-            const TTDRestoreResult b = engine.RestoreRegion(toIndex, region, after.data());
-            if (!a.Ok() || !b.Ok())
-                return Fail(TTDControlError::Internal, desc.name + ": " + (a.Ok() ? b.message : a.message));
-            uint64_t runStart = 0;
-            uint64_t runLength = 0;
-            auto close = [&]() {
-                if (!runLength)
-                    return;
-                if (ranges.items.size() < limit)
-                {
-                    StateNode range = StateNode::Object();
-                    range["offset"] = runStart - base;
-                    range["length"] = runLength;
-                    ranges.push(range);
-                }
-                else
-                    truncated = true;
-                runLength = 0;
-            };
-            uint32_t previous = UINT32_MAX;
-            for (uint32_t p : candidates)
+    // Pieces whose stored versions differ, then their bytes
+    std::vector<uint32_t> candidates;
+    for (uint32_t p = static_cast<uint32_t>(first / kTTDPieceSize); p < (end + kTTDPieceSize - 1) / kTTDPieceSize; ++p)
+        if (engine.VersionAt(fromIndex, region, p) != engine.VersionAt(toIndex, region, p))
+            candidates.push_back(p);
+    TTDReply reply;
+    reply.body["space"] = desc.name;
+    reply.body["from_frame"] = fromFrame;
+    reply.body["to_frame"] = toFrame;
+    reply.body["at_from"] = engine.Checkpoint(fromIndex)->position.frame;
+    reply.body["at_to"] = engine.Checkpoint(toIndex)->position.frame;
+    uint64_t changed = 0;
+    bool truncated = false;
+    StateNode ranges = StateNode::Array();
+    if (!candidates.empty())
+    {
+        std::vector<uint8_t> before(size_t(desc.pieces) * kTTDPieceSize);
+        std::vector<uint8_t> after(before.size());
+        const TTDRestoreResult a = engine.RestoreRegion(fromIndex, region, before.data());
+        const TTDRestoreResult b = engine.RestoreRegion(toIndex, region, after.data());
+        if (!a.Ok() || !b.Ok())
+            return Fail(TTDControlError::Internal, desc.name + ": " + (a.Ok() ? b.message : a.message));
+        uint64_t runStart = 0;
+        uint64_t runLength = 0;
+        auto close = [&]() {
+            if (!runLength)
+                return;
+            if (ranges.items.size() < limit)
             {
-                if (previous != UINT32_MAX && p != previous + 1)
-                    close();
-                previous = p;
-                const uint64_t lo = std::max<uint64_t>(uint64_t(p) * kTTDPieceSize, first);
-                const uint64_t hi = std::min<uint64_t>(uint64_t(p + 1) * kTTDPieceSize, end);
-                for (uint64_t i = lo; i < hi; ++i)
-                {
-                    if (before[i] == after[i])
-                    {
-                        close();
-                        continue;
-                    }
-                    ++changed;
-                    if (!runLength)
-                        runStart = i;
-                    ++runLength;
-                }
+                StateNode range = StateNode::Object();
+                range["offset"] = runStart - base;
+                range["length"] = runLength;
+                ranges.push(range);
             }
-            close();
+            else
+                truncated = true;
+            runLength = 0;
+        };
+        uint32_t previous = UINT32_MAX;
+        for (uint32_t p : candidates)
+        {
+            if (previous != UINT32_MAX && p != previous + 1)
+                close();
+            previous = p;
+            const uint64_t lo = std::max<uint64_t>(uint64_t(p) * kTTDPieceSize, first);
+            const uint64_t hi = std::min<uint64_t>(uint64_t(p + 1) * kTTDPieceSize, end);
+            for (uint64_t i = lo; i < hi; ++i)
+            {
+                if (before[i] == after[i])
+                {
+                    close();
+                    continue;
+                }
+                ++changed;
+                if (!runLength)
+                    runStart = i;
+                ++runLength;
+            }
         }
-        reply.body["changed_bytes"] = changed;
-        reply.body["ranges"] = ranges;
-        reply.body["truncated"] = truncated;
-        return reply;
+        close();
     }
+    reply.body["changed_bytes"] = changed;
+    reply.body["ranges"] = ranges;
+    reply.body["truncated"] = truncated;
+    return reply;
 }
 
 /// endregion </Memory at a checkpoint>

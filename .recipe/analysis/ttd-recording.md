@@ -27,7 +27,7 @@ inspect_state {"aspects":["ttd"]}                              # status + positi
 time_travel   {"action":"stop"}                                # history retained → idle
 time_travel   {"action":"invalidate","reason":"next scenario"} # drop history
 
-# navigate (while recording on the engine this pauses the recording; v1 refuses it - stop first)
+# navigate (while recording this pauses the recording)
 time_travel {"action":"position"}
 time_travel {"action":"seek","frame":12000}                    # optional "tinframe"
 time_travel {"action":"step_back_frame"}
@@ -77,7 +77,8 @@ The black box (the engine) is for "always on" recording: it keeps only the
 last minutes and never holds the machine at real speed - turbo or a host
 speed above 1x stops it first (history kept, `last_stop_reason:
 "acceleration"`), and it starts a new session once nothing accelerates. No
-acceleration lock below applies to it, and it refuses no load: inserting a
+acceleration lock below applies to it (only fast disk reads as off while it
+records), and it refuses no load: inserting a
 tape, a disk or another medium ends its session (the recording up to there
 stays in its folder) and the next one starts at the next frame. The same
 holds for the history DeZog starts for reverse debugging. Same on the other surfaces: CLI
@@ -102,12 +103,16 @@ enabled it; `timetravel` stays on. Idempotent: starting twice is a no-op
 `"... the machine reports no RAM pages to record"`), every surface alike.
 
 While recording (and while the machine sits in `detached`) the
-**acceleration lock** holds: host speed forced to 1x (2x-16x refused),
-turbo mode off, fast tape / turbo tape / fast disk read as off (feature
-lists show them off; `PUT /feature/{name} {"enabled": true}` on one answers
-`409`, `PUT /settings/speed` other than 1 and `PUT /settings/turbo_mode true`
-answer `409` too). The previous settings come back when the session returns
-to `idle`. Full
+**acceleration lock** holds the host speed at 1x (`PUT /settings/speed`
+other than 1 answers `409`) and fast disk off (it also compresses the FDC's
+timing, which a replay cannot repeat). Turbo mode, turbo tape and fast tape
+stay on while the engine records: turbo only drops the host's pacing, and the
+tape trap is a recorded edit the replay applies. **Load a tape from
+zero inside the recording at full speed**: `PUT /settings/turbo_mode true`
+(or let turbo tape warp the load; the ROM loader's blocks load at once
+through fast tape), then turbo off for the part you want to watch in real
+time. A replay or the machine in `detached` reads the fast loaders as off. The
+previous settings come back when the session returns to `idle`. Full
 rules: [command-interface.md → TTD Session Rules](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-session-rules).
 
 ### Watch it record
@@ -173,13 +178,12 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/history-limit" \
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/resume" | jq '.state'
 ```
 
-Seek, step, find-last and reverse-* during `recording` pause the recording
-(`backend: engine`): everything up to that instant is kept, the state is
+Seek, step, find-last and reverse-* during `recording` pause the recording:
+everything up to that instant is kept, the state is
 `detached` and `/ttd/status` says `recording_paused: true`. Resume at the
 paused point (`POST /ttd/resume` while there, or seek back to it first)
 continues the same recording; running the machine forward through it
-continues it too; `POST /ttd/stop` ends it. On `backend: v1` these return
-`409 Conflict` - stop first.
+continues it too; `POST /ttd/stop` ends it.
 
 ### Traveling
 
@@ -211,10 +215,9 @@ replay barrier — tape transport command, WD1793 sector/track write, or a
 memory edit made by a tool (WebAPI, CLI, Lua, Python, DeZog) while
 recording; the response carries `blocking_marker`, and
 `GET /ttd/markers` lists them all), `out_of_range`. Keyboard and mouse input
-are journaled and replayed, so they are not barriers. On the engine
-(`GET /ttd/status` -> `backend: "engine"`, the default) tape commands, disk
+are journaled and replayed, so they are not barriers. Tape commands, disk
 writes and tool memory / register edits are replayed too and never block a
-seek; only v1 stops at them. A seek before the earliest kept position
+seek. A seek before the earliest kept position
 answers `out_of_range` with `earliest` (also in `GET /ttd/status`).
 
 Every scrub pauses the emulator first and leaves it paused at the new
@@ -265,9 +268,9 @@ instance and retry. After `load` the session is idle/browsable (use
 recording machine's `model_id`/`model_ram_pages`. The `.ttd` header pins a ROM signature:
 replaying against a different ROM set is refused, not silently wrong.
 The binary format is portable (the engine's session file, schema 2: Kaitai
-schema `core/src/debugger/ttd/engine/ttdsession.ksy`; Python analyzer in
-`tools/verification/ttd-analyzer`), so captures outlive the process. v1 files (`ttd.ksy`) are not loaded by the engine; the
-verification tools read and convert them.
+schema `core/src/debugger/ttd/ttd.ksy`; Python analyzer in
+`tools/verification/ttd-analyzer`), so captures outlive the process. Files of the deleted v1 recorder (schema 1)
+are refused.
 
 ### Inspect a file, search port journals, export a clip
 
@@ -296,7 +299,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: appli
   `in`, `out`; `arg` (MCP: `event_arg`) is the key name or AY register. `in`/`out` narrow with `port` /
   `port_mask` / `value` / `value_mask`; `newest` returns the last hits first. The reply has `event`,
   `direction`, `count`, `truncated`, `scanned` and `hits[]` (`index`, `frame`, `tinframe`, `port`, `value`,
-  `pc`, plus `ay_register` for AY events).
+  `pc`, plus `ay_register` for AY events). A keyboard read adds `rows` (the half-rows selected) and `keys` (the
+  keys it saw down, one half-row only). `context` (default on, off while a recording runs; `true` pauses it) adds
+  `registers` (`af` `bc` `de` `hl` `ix` `iy` `sp`) at the IN / OUT instruction and `stack_top` (the word at SP:
+  the caller's return address when the key routine pushed nothing) - replayed, the machine put back.
 - `export-clip` takes `from`, `to` (frames), `path` (an absolute directory, as seen by the emulator process) and
   optional `chunk` (frames per chunk). It is synchronous, pauses the emulator, and is refused while recording.
   The same export on the other surfaces: MCP `time_travel` action `export_clip` (`from_frame`, `to_frame`,
@@ -323,17 +329,15 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   there until you delete it. Startup cleanup only removes crashed leftovers
   after 7 days; a script that forgets to clean fills the disk (about 2 GB
   per hour of heavy content).
-- **409 on scrub** → `backend: v1` and still recording; `POST /ttd/stop` first
-  (the engine pauses the recording instead, `recording_paused: true`).
 - **`seek` beyond `current_end_frame`** → `halt_reason: "out_of_range"`,
   machine stays where it was.
 - **Memory budget**: development mode costs ~64 MB journal + page store;
   long captures grow — check `page_store_used_bytes` and dump+invalidate
   between scenarios.
-- **Markers**: on the engine tape commands, disk writes and tool edits are
-  replayed and do not stop a seek or a reverse search; on v1 they stop
-  backward replay (list them with `GET /ttd/markers` before wondering why a
-  seek halted early).
+- **Markers**: tape commands, disk writes and tool edits are replayed and do
+  not stop a seek or a reverse search; a debugger edit without its bytes, a
+  reset and an unclassified marker still do (list them with `GET /ttd/markers`
+  before wondering why a seek halted early).
 - **One rule: a reset, a snapshot load and a change of the machine END the
   session.** Nothing is refused: the recording stops cleanly and the operation
   runs. A reset and a snapshot load keep the ended session's history (browsable,
@@ -353,7 +357,7 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   CD too) land at the next frame boundary (`pending` meanwhile, also on a
   paused machine) and the recording goes on; a seek to before that frame
   shows the slot empty, from it on (and back live) the medium is there.
-  `end_recording` ends the recording instead. v1 still refuses them (409).
+  `end_recording` ends the recording instead.
 - **A seek sets every medium to what it held there** (engine). Sectors and
   floppy tracks the guest wrote later are set back, and set forward again
   on a later seek; a replay writes them again itself. A write-protect toggle
@@ -376,8 +380,7 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   lost. Resume the recording there first (`ttd resume`), then edit.
 - **A machine change** (ROM load, model switch, GS card switch, slot
   change) is the same rule with another machine behind it: the history is
-  dropped, `last_stop_reason: "machine-change"`. v1 still refuses these while
-  recording.
+  dropped, `last_stop_reason: "machine-change"`.
 - **A reset (or a disk autostart's quick reset)** ends the session and keeps
   what was captured; a machine sitting in history goes back to `idle`.
 - **ZX-Evo / ATM3 SD card** activity is recorded (the card's state, the

@@ -132,7 +132,15 @@ std::string DescribeFittedDevices(EmulatorContext* context)
         }
         out << " " << id << ":" << size;
     }
-    out << " notRecorded " << ttd::TTDPeripheralRegistry::V1MaskOf(registry.NotRecorded()).Low() << "\n";
+    uint64_t notRecorded = 0;   // a bit per legacy id below 64
+    for (const ttd::TTDDeviceKey& key : registry.NotRecorded())
+    {
+        if (static_cast<uint16_t>(key.type) < 64)
+        {
+            notRecorded |= uint64_t{1} << static_cast<uint16_t>(key.type);
+        }
+    }
+    out << " notRecorded " << notRecorded << "\n";
     return out.str();
 }
 

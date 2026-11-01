@@ -206,6 +206,7 @@ private:
     void HandleVideoViewport(const ClientSession& session, Emulator& emulator, const std::vector<std::string>& args);
     void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleAnalysis(const ClientSession& session, const std::vector<std::string>& args);  // analysis layers (L0 facts)
     void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAudioCapture(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMixer(const ClientSession& session, const std::vector<std::string>& args);

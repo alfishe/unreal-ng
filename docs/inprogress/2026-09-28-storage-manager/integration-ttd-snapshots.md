@@ -50,7 +50,7 @@ Both are addressed in their own designs and take media from the change layer's v
 - **TTD v2**: each checkpoint references, per medium, the version current at that moment. A seek
   switches each medium to that version, so replay reads what the machine read the first time, and
   seeks cross writes freely. Tracked as roadmap **ST-6** and the "Media" item of
-  [ttd-v2-migration/TODO.md](../2026-09-25-ttd-v2-migration/TODO.md).
+  [ttd-v2-migration/DONE.md](../2026-09-25-ttd-v2-migration/DONE.md).
 - **Universal snapshot (UNS)**: the manifest's media section holds, per slot, the source reference
   (path, `ContentId`), format, access and the change layer at the snapshot's version: embedded
   pieces, or a reference to a spill file plus a version id. On load the manager compares it with

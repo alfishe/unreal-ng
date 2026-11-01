@@ -6,7 +6,7 @@
   analyses in [use-cases-extended §5](use-cases-extended.md#5-ttd-recording-editor-and-visualizer)
   (IDs TE-, TV-, TA-); the principle in §5.5 there.
 - **Depends on:** the TTD v1 → v2 migration
-  ([2026-09-25-ttd-v2-migration](../2026-09-25-ttd-v2-migration/TODO.md), PLAN
+  ([2026-09-25-ttd-v2-migration](../2026-09-25-ttd-v2-migration/DONE.md), PLAN
   #40), the media manager ([2026-09-28-storage-manager](../2026-09-28-storage-manager/TODO.md),
   PLAN #58), the condition language (PLAN #6).
 

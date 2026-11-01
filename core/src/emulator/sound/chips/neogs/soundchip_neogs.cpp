@@ -10,7 +10,7 @@
 #include "common/filehelper.h"
 #include "common/statebytes.h"
 #include "debugger/targets/gscardtarget.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
@@ -1676,8 +1676,7 @@ void SoundChip_NeoGS::serializeDeviceState(uint8_t* dst, bool machineVisibleOnly
 size_t SoundChip_NeoGS::TTDStateSize() const
 {
     // Registers and device state only. The card RAM (2-4 MB) and the flash
-    // (512 KB) are the engine's regions 4 and 5 (TTDRegions below); a v1
-    // session does not record them, so a v1 restore keeps the live card memory
+    // (512 KB) are the engine's regions 4 and 5 (TTDRegions below)
     return TTD_DEVICE_STATE_END;
 }
 

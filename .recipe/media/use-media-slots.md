@@ -138,5 +138,5 @@ curl -s -X POST $BASE/emulator/$EMU_ID/media/A/swap -H 'Content-Type: applicatio
   goes into a CD drive ([cd-audio.md](cd-audio.md)). Format: [chd.md](../../docs/file-formats/disk-images/chd.md).
 - **A change while TTD records is an event of the recording**: it lands at the next frame
   boundary (`pending` meanwhile) and the recording goes on; `"end_recording": true` ends it
-  and changes at once. TTD v1: `recording` (409) unless `"end_recording": true`.
+  and changes at once.
 - **Drive letters follow the machine**: `C` on a +3 is `unknown-slot`.

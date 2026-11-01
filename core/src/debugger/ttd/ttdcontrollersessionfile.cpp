@@ -1,9 +1,9 @@
 /// @file ttdcontrollersessionfile.cpp
 /// @brief TimeTravelController's session files (Phase 5, C4b): the engine's
 /// session file format (engine/ttdsessionfile.h) with the controller's holder
-/// streams (ttdsessionfacts.h). v1 .ttd files are not read: v1 files are
-/// converted only by the verification tools (D32), and before the release no
-/// file format is kept compatible.
+/// streams (ttdsessionfacts.h). A v1 .ttd file is refused with a reason: its
+/// reader went with v1 (Phase 6), and before the release no file format is
+/// kept compatible.
 
 #include <chrono>
 #include <cstring>
@@ -66,7 +66,7 @@ bool ReadAll(std::istream& in, std::vector<uint8_t>& bytes, std::string& err)
     return true;
 }
 
-/// Both formats start with "TTDD"; the schema after it tells them apart (v1: 1, the container: 2)
+/// Both formats start with "TTDD"; the schema after it tells them apart (v1: 1 or 3, the container: 2)
 bool IsV1File(const std::vector<uint8_t>& bytes)
 {
     return bytes.size() >= 6 && std::memcmp(bytes.data(), dump::kMagic, 4) == 0 &&
@@ -74,8 +74,7 @@ bool IsV1File(const std::vector<uint8_t>& bytes)
 }
 
 constexpr const char* kV1Refused =
-    "a v1 .ttd file: this build reads session files in the engine's format only (record the session again; "
-    "the verification tools convert v1 files)";
+    "a v1 .ttd file: this build reads session files in the engine's format only (record the session again)";
 }  // namespace
 
 std::vector<TTDHolderStream> TimeTravelController::SessionHolderStreams(bool declareAll) const
@@ -263,7 +262,7 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
         _timeline.push_back(std::move(cp));
     }
 
-    // v1's journals from the engine's events: status counts, the marker list
+    // The controller's input journal and marker list from the engine's events: status counts, the marker list
     // and the network devices read them; the engine already has them all
     std::vector<TTDInputEvent> inputs;
     std::vector<TTDNetInput> net;
