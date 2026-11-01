@@ -242,6 +242,7 @@ An effect is a short program with an envelope and a target:
 | `target` | `handle.low`, `handle.high`, `trigger.left`, `trigger.right`, `hd.left`, `hd.right`, `all`; with fallbacks (`trigger.right\|handle.high`) |
 | `shape` | `pulse`, `adsr`, `ramp`, `pattern` (a list of on/off/level steps), `follow` (track a continuous value) |
 | `priority` | the mixer ducks lower priorities while a higher one plays |
+| `player` | `1`..`8`: the rule plays on the N-th pad connected only (the numbering of the profile's `play@N` layers, [mapping-and-profiles.md §9](mapping-and-profiles.md#9-two-players-and-more)); absent: on every pad of the instance |
 | `hd` | optional, used only on voice-coil devices: frequency, waveform (`sine`, `square`, `noise`), or a CoreHaptics AHAP file shipped with the profile |
 
 Built (2026-10-23), the HD frequency:

@@ -255,6 +255,8 @@ private:
     std::vector<int32_t> _lastSample;
     bool _wasOwned = false;
     HostSample _sample;  // reused per frame
+    std::vector<PcKey> _ps2HostKeys;  ///< the PC keys the overlay holds on a PS/2 sink (machine thread only)
+    std::array<uint8_t, 2> _pcOnlyKeys{};  ///< the PC-only keys of a profile (rows 8 and 9 of HostKeys), not in the TTD blob; _mutex
     std::array<uint8_t, 8> _hostKeys{};  ///< the host key overlay, active high (journaled, in the blob); _mutex
     uint8_t _mouseButtons = 0;           ///< the mouse buttons the host source held at its last sample
 

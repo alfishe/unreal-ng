@@ -16,6 +16,7 @@
 #include "controllers/hostcontrollers.h"
 #include "debugger/disassemblerwidget.h"
 #include "emulator/actions/actionparams.h"
+#include "emulator/actions/catalogue.h"
 #include "emulator/actions/steppingactions.h"
 #include "profiles/json.h"
 #include "router/analog.h"
@@ -161,17 +162,14 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
     : QObject(parent), _binding(binding), _hooks(std::move(hooks)), _alive(std::make_shared<std::atomic<bool>>(true))
 {
     _scrub = std::make_shared<Scrub>(_alive, _hooks.notice);
-    using actions::ValueKind;
 
     // 3.2 Time travel: the analog scrub (a trigger's level, `curve: scrub`; a button press is the full level)
-    const QString ttd = Tr("Time travel");
     actions::ActionRules rewind;
     rewind.scope = actions::ActionRules::Fixed(automation_gate::ScopeRewind);
     // Weak and raw references only: an executor may be dropped on an actions worker, the objects stay on this thread
     std::weak_ptr<Scrub> scrub = _scrub;
     for (const bool forward : {false, true})
-        Add(forward ? "ttd.scrub_forward" : "ttd.scrub_back", forward ? Tr("Scrub forward") : Tr("Scrub back"), ttd,
-            ValueKind::Level,
+        Add(forward ? "ttd.scrub_forward" : "ttd.scrub_back",
             [scrub, forward](const std::string& instance, const actions::ActionValue& value,
                              const actions::ActionOrigin& origin) -> QString {
                 std::shared_ptr<Scrub> live = scrub.lock();
@@ -180,10 +178,9 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
             rewind);
 
     // 3.3 Debugger UI
-    const QString debug = Tr("Debugger");
     QObject* debugger = _hooks.debugger;
     std::function<void()> showDebugger = _hooks.showDebugger;
-    Add("dbg.open", Tr("Open the debugger"), debug, ValueKind::Press,
+    Add("dbg.open",
         [showDebugger](const std::string&, const actions::ActionValue&, const actions::ActionOrigin&) -> QString {
             if (showDebugger)
                 showDebugger();
@@ -227,23 +224,17 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
     noDebugger.unavailable = [debugger](Emulator&, const actions::ActionValue&) {
         return debugger == nullptr ? std::string("the debugger is not available") : std::string();
     };
-    Add("dbg.focus_next_pane", Tr("Next debugger pane"), debug, ValueKind::Press, pane("focusNextPane"), noDebugger);
-    Add("dbg.focus_prev_pane", Tr("Previous debugger pane"), debug, ValueKind::Press, pane("focusPrevPane"),
-        noDebugger);
-    Add("dbg.cursor_up", Tr("Cursor up in the pane"), debug, ValueKind::Press, key(Qt::Key_Up, true), noDebugger, true);
-    Add("dbg.cursor_down", Tr("Cursor down in the pane"), debug, ValueKind::Press, key(Qt::Key_Down, true), noDebugger,
-        true);
-    Add("dbg.cursor_left", Tr("Cursor left in the pane"), debug, ValueKind::Press, key(Qt::Key_Left, true), noDebugger,
-        true);
-    Add("dbg.cursor_right", Tr("Cursor right in the pane"), debug, ValueKind::Press, key(Qt::Key_Right, true),
-        noDebugger, true);
-    Add("dbg.page_up", Tr("Page up in the pane"), debug, ValueKind::Press, key(Qt::Key_PageUp, true), noDebugger, true);
-    Add("dbg.page_down", Tr("Page down in the pane"), debug, ValueKind::Press, key(Qt::Key_PageDown, true), noDebugger,
-        true);
-    Add("dbg.memory_follow", Tr("Memory follows the value under the cursor"), debug, ValueKind::Press,
-        key(Qt::Key_Return, false), noDebugger, true);
+    Add("dbg.focus_next_pane", pane("focusNextPane"), noDebugger);
+    Add("dbg.focus_prev_pane", pane("focusPrevPane"), noDebugger);
+    Add("dbg.cursor_up", key(Qt::Key_Up, true), noDebugger);
+    Add("dbg.cursor_down", key(Qt::Key_Down, true), noDebugger);
+    Add("dbg.cursor_left", key(Qt::Key_Left, true), noDebugger);
+    Add("dbg.cursor_right", key(Qt::Key_Right, true), noDebugger);
+    Add("dbg.page_up", key(Qt::Key_PageUp, true), noDebugger);
+    Add("dbg.page_down", key(Qt::Key_PageDown, true), noDebugger);
+    Add("dbg.memory_follow", key(Qt::Key_Return, false), noDebugger);
     // An execution breakpoint at the disassembly cursor (dbg.breakpoint_toggle_pc, the core's, takes the PC)
-    Add("dbg.breakpoint_toggle_cursor", Tr("Toggle a breakpoint at the cursor"), debug, ValueKind::Press,
+    Add("dbg.breakpoint_toggle_cursor",
         [debugger, showDebugger](const std::string&, const actions::ActionValue&,
                                  const actions::ActionOrigin&) -> QString {
             auto* window = qobject_cast<QWidget*>(debugger);
@@ -257,18 +248,16 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
         noDebugger);
 
     // The disassembly (Stream Deck D6.4, D6.5): follow PC, labels on / off, byte / command scroll, go to an address
-    Add("dbg.follow_pc", Tr("Disassembly follows PC"), debug, ValueKind::Press, pane("followPc"), noDebugger);
+    Add("dbg.follow_pc", pane("followPc"), noDebugger);
     {
         actions::ActionRules labels = noDebugger;
         labels.state = [](Emulator&, const actions::ActionValue&) -> std::optional<bool> {
             return DisassemblerWidget::LabelsShown().load();
         };
-        Add("dbg.labels_toggle", Tr("Labels in the disassembly"), debug, ValueKind::Press, pane("toggleLabels"),
-            std::move(labels));
+        Add("dbg.labels_toggle", pane("toggleLabels"), std::move(labels));
     }
-    Add("dbg.scroll_mode_toggle", Tr("Disassembly scrolls by bytes / instructions"), debug, ValueKind::Press,
-        pane("toggleScrollMode"), noDebugger);
-    Add("dbg.goto", Tr("Disassembly at an address"), debug, ValueKind::Press,
+    Add("dbg.scroll_mode_toggle", pane("toggleScrollMode"), noDebugger);
+    Add("dbg.goto",
         [debugger, showDebugger](const std::string&, const actions::ActionValue& value,
                                  const actions::ActionOrigin&) -> QString {
             uint16_t address = 0;
@@ -283,12 +272,11 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
             QMetaObject::invokeMethod(window, "goToDisassemblyAddress", Q_ARG(int, static_cast<int>(address)));
             return {};
         },
-        noDebugger, false, "addr (0..#FFFF: decimal, 0x.., #.., $..)");
+        noDebugger);
 
     // 3.4 Capture: the screenshot to the clipboard (the main window's)
-    const QString machine = Tr("Capture and machine");
     std::function<void()> screenshot = _hooks.screenshot;
-    Add("cap.screenshot", Tr("Screenshot"), machine, ValueKind::Press,
+    Add("cap.screenshot",
         [screenshot](const std::string&, const actions::ActionValue&, const actions::ActionOrigin&) -> QString {
             if (screenshot)
                 screenshot();
@@ -297,7 +285,7 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
 
     // The on-screen keyboard window (the main window's)
     std::function<void()> toggleKeyboard = _hooks.toggleKeyboard;
-    Add("osd.keyboard", Tr("On-screen keyboard"), machine, ValueKind::Press,
+    Add("osd.keyboard",
         [toggleKeyboard](const std::string&, const actions::ActionValue&, const actions::ActionOrigin&) -> QString {
             if (toggleKeyboard)
                 toggleKeyboard();
@@ -305,30 +293,29 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
         });
 
     // The Controllers window, and its learn wizard for a device the database does not know (ui-ux.md §3.5)
-    const QString controllersGroup = Tr("Controllers");
     std::function<void()> showControllers = _hooks.showControllers;
-    Add("ctl.open", Tr("Open the Controllers window"), controllersGroup, ValueKind::Press,
+    Add("ctl.open",
         [showControllers](const std::string&, const actions::ActionValue&, const actions::ActionOrigin&) -> QString {
             if (showControllers)
                 showControllers();
             return {};
         });
     std::function<QString(const std::string&)> learn = _hooks.learn;
-    Add("ctl.learn", Tr("Learn a device's controls"), controllersGroup, ValueKind::Press,
+    Add("ctl.learn",
         [learn](const std::string&, const actions::ActionValue& value, const actions::ActionOrigin&) -> QString {
             const std::optional<std::string> device = actions::TextParam(value, "device");
             if (!device || device->empty())
                 return Tr("ctl.learn needs params.device: a host device id (controllers devices lists them)");
             return learn ? learn(*device) : Tr("the Controllers window is not available");
         },
-        {}, false, "device");
+        {});
 
     // Stubs of the catalogue: a binding to one says why instead of doing nothing
     actions::ActionRules later;
     later.unavailable = [](Emulator&, const actions::ActionValue&) { return std::string("not available yet"); };
     later.unavailableError = "Not Implemented";
     for (const char* id : {"osd.quick_menu"})
-        Add(id, QString::fromLatin1(id), machine, ValueKind::Press, nullptr, later);
+        Add(id, nullptr, later);
 }
 
 GuiActions::~GuiActions()
@@ -360,10 +347,21 @@ actions::Executor GuiActions::OnGui(GuiRun run)
     };
 }
 
-void GuiActions::Add(const char* id, const QString& label, const QString& group, actions::ValueKind kind, GuiRun run,
-                     actions::ActionRules rules, bool held, const char* params)
+void GuiActions::Add(const char* id, GuiRun run, actions::ActionRules rules)
 {
-    actions::ActionInfo info{id, label.toStdString(), group.toStdString(), kind, held, true, params, {}, false};
+    const actions::GuiActionDeclaration* declaration = actions::GuiActionDeclarationOf(id);
+    Q_ASSERT_X(declaration != nullptr, "GuiActions::Add", "a GUI action the core does not declare (catalogue.cpp)");
+    if (declaration == nullptr)
+        return;
+    actions::ActionInfo info{id,
+                             Tr(declaration->label).toStdString(),
+                             Tr(declaration->group).toStdString(),
+                             declaration->kind,
+                             declaration->held,
+                             true,
+                             declaration->params,
+                             {},
+                             false};
     _handles.push_back(actions::ActionRegistry::Instance().Register(std::move(info), OnGui(std::move(run)),
                                                                     std::move(rules)));
 }

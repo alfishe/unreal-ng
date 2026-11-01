@@ -215,6 +215,37 @@ TEST(ProfileStore_Test, Merge_FamilyDeviceAndGameFieldByField)
     store.Apply(router, {});
 }
 
+TEST(ProfileStore_Test, PlayerLayers_TheNthPadConnectedGetsItsOwnKeys)
+{
+    ProfileStore store;
+    std::string error;
+    ASSERT_TRUE(store.AddText(R"({"schema": 1, "kind": "play", "id": "user/two-players",
+        "layers": {"play": {"south": {"key": "A"}, "west": {"key": "B"}},
+                   "play@2": {"south": {"key": "L"}}}})",
+                              ProfileScope::User, error))
+        << error;
+
+    ProfileContext context;
+    context.machine = "pentagon";
+    context.devices = {{"usb:045e:0b00:1", "Elite", "xbox-elite-2", "xbox", "fake"},
+                       {"kbd:system", "Keyboard", "keyboard", "keyboard", "fake"},
+                       {"usb:045e:0b00:2", "Elite", "xbox-elite-2", "xbox", "fake"}};
+    const ResolvedProfiles resolved = store.Resolve(context);
+    EXPECT_TRUE(resolved.warnings.empty()) << resolved.warnings.front();
+
+    const Binding* first = Find(resolved, "", "", "south");
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(first->target.keys, std::vector<uint8_t>{'A'}) << "every pad but the second keeps the play layer";
+    EXPECT_EQ(Find(resolved, "usb:045e:0b00:1", "", "south"), nullptr) << "the first pad has no scope of its own";
+    const Binding* second = Find(resolved, "usb:045e:0b00:2", "", "south");
+    ASSERT_NE(second, nullptr) << "the second pad connected (the keyboard does not count) has its scope";
+    EXPECT_EQ(second->target.keys, std::vector<uint8_t>{'L'}) << "its layer replaces the binding below";
+    const Binding* west = Find(resolved, "usb:045e:0b00:2", "", "west");
+    ASSERT_NE(west, nullptr) << "the scope holds the whole set";
+    EXPECT_EQ(west->target.keys, std::vector<uint8_t>{'B'});
+    EXPECT_EQ(Find(resolved, "", "play@2", "south"), nullptr) << "the layer is not a shift layer of the other pads";
+}
+
 TEST(ProfileStore_Test, Next_MegaDrivePadByDefault)
 {
     ProfileStore store;

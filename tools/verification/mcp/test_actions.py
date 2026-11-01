@@ -99,7 +99,7 @@ def test_a_step_while_running_is_refused_with_the_reason(s):
     s.call('actions', {'action': 'run', 'id': 'run.pause_toggle'})  # resumes
     try:
         r = s.call('actions', {'action': 'run', 'id': 'run.step_in'}, ok=False)
-        expect(r.is_error and 'needs a pause' in r.text, 'not_now with the reason', r.text)
+        expect(r.is_error and 'pause it first' in r.text, 'not_now with the reason', r.text)
     finally:
         s.call('control_execution', {'action': 'pause'})
     r = s.call('actions', {'action': 'run', 'id': 'no.such_action'}, ok=False)

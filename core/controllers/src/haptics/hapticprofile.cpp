@@ -1,3 +1,4 @@
+#include <cmath>
 #include "haptics/hapticprofile.h"
 
 #include <algorithm>
@@ -746,6 +747,15 @@ bool ParseHapticProfile(const JsonValue& section, HapticProfile& out, std::strin
                 return false;
             }
             rule.priority = static_cast<uint8_t>(priority);
+            double player = 0;
+            if (!Number(spec, "player", player, error, where))
+                return false;
+            if (player < 0 || player > 8 || player != std::floor(player))
+            {
+                error = where + ": 'player' is 1..8 (the N-th pad connected)";
+                return false;
+            }
+            rule.player = static_cast<uint8_t>(player);
             if (const JsonValue* gate = spec.Find("if"))
             {
                 double equals = 0;

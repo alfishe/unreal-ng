@@ -41,12 +41,18 @@ bool SaveFile(const std::filesystem::path& file, const json& doc, std::string* e
 
 // ---- includes: {"type": "include", "file": "debug.yaml", "node"?: "id", "title"? / "face"? overrides}
 // Replaces every include with the subtree it names (the file's root by default), recursively, files relative to the
-// including file. The included root takes the include's id and slot; its descendants are prefixed "<includeId>."
+// including file, its pictures rebased onto the including file's folder (RebasePaths). The included root takes the include's id and slot; its descendants are prefixed "<includeId>."
 // (so one file can be included twice), nav targets inside follow. Every resolved node carries "included_from".
 // Cycles, missing files / nodes and nesting deeper than 8 are errors. `files` gets every file read.
 [[nodiscard]] std::optional<json> ResolveIncludes(const json& doc, const std::filesystem::path& baseDir,
                                                   std::string* error = nullptr,
                                                   std::vector<std::string>* files = nullptr);
+// The paths a node names relative to folder `from` made relative to `to` (a path from `to` to the same file; the
+// file itself when there is none, another drive): relative `image` / `svg` pictures (faces, strip) and every
+// "$scenario/..." string (pictures, action params). #xywh fragments, other roots and absolute paths stay. Includes
+// rebase an included subtree onto the including file's folder (a document has one folder: Scenario::dir); a document
+// written to another folder (the studio's run file) is rebased onto that one.
+void RebasePaths(json& node, const std::filesystem::path& from, const std::filesystem::path& to);
 // loadFile + resolveIncludes (relative to the file's folder).
 [[nodiscard]] std::optional<json> LoadResolved(const std::filesystem::path& file, std::string* error = nullptr,
                                                std::vector<std::string>* files = nullptr);

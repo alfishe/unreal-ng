@@ -28,7 +28,10 @@ GENERATOR = "tools/poc/033-vector-controller-pictures/generate.py"
 SETS = {
     "xbox-series": xbox.series,
     "xbox-one": xbox.one,
+    "xbox-elite-1": xbox.elite1,
+    "xbox-elite-1-cross": lambda: xbox.elite1("cross"),
     "xbox-elite-2": xbox.elite2,
+    "xbox-elite-2-disc": lambda: xbox.elite2("disc"),
     "dualsense": lambda: playstation.dualsense(),
     "dualshock-4": lambda: dualshock.dualshock4(),
     "8bitdo-ultimate": lambda: eightbitdo.ultimate(),

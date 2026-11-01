@@ -431,6 +431,36 @@ TEST_F(AnalysisL1_Test, DataFlowPageTable)
     EXPECT_GT(found->count, 0u);
 }
 
+/// A character code, AND A and LD L,A after its load, the low byte of the glyph addresses: an index; the message
+/// pointer, a word, none
+TEST_F(AnalysisL1_Test, DataFlowIndexUse)
+{
+    const L1Result l1 = Run("print-proportional.asm", 1);
+    ASSERT_FALSE(HasFailure());
+    const uint16_t message = At("message");
+    bool width = false, glyph = false;
+    for (const IndexUse& u : l1.indexes)
+    {
+        EXPECT_NE(u.z80, At("next")) << "the message pointer is no index";
+        if (u.selectorZ80 < message || u.selectorZ80 >= message + 17)
+            continue;
+        const uint8_t code = static_cast<uint8_t>("PROPORTIONAL TEXT"[u.selectorZ80 - message]);
+        if (u.z80 == At("width"))
+        {
+            width = true;
+            EXPECT_EQ(u.lo, 0xC000 + code);
+        }
+        if (u.z80 == At("glyph"))
+        {
+            glyph = true;
+            EXPECT_EQ(u.lo, 0xC100 + code);
+            EXPECT_EQ(u.hi, 0xC300 + code);
+        }
+    }
+    EXPECT_TRUE(width);
+    EXPECT_TRUE(glyph);
+}
+
 TEST_F(AnalysisL1_Test, BranchConditionVariable)
 {
     const L1Result l1 = Run("dataflow.asm", 1);

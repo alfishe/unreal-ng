@@ -162,8 +162,8 @@ revoke (`streamdeck revoke`), none can approve. `unreal-streamdeck pair` goes th
 | When a deck is attached (default) | unreal-qt watches USB for VID `0x0FD9` (IOHID / SetupAPI / udev matching only, it never opens the deck) and starts the daemon when one appears. |
 | Always | Started with unreal-qt (software decks without hardware). |
 
-- Start: `unreal-streamdeck --host 127.0.0.1:<webapi port> --parent <pid> --ready-fd <n>`; the daemon reports ready
-  (automation port, decks) on the fd, or the supervisor polls `GET /api/v1/health`.
+- Start: `unreal-streamdeck --host 127.0.0.1:<webapi port> --parent <pid> --ready-fd <n>`; the daemon writes `ready`
+  on the fd once its automation port serves, the supervisor then reads `GET /api/v1/health` at once.
 - `--parent`: the daemon exits when that process is gone (replaces `--with-parent`, which polls `getppid()` and does
   nothing on Windows: use a process handle wait on Windows, `kqueue` `EVFILT_PROC` on macOS, `pidfd` / `prctl` on Linux).
 - Restart policy and health check: [architecture §8](architecture.md#8-failure-and-restart).
@@ -180,7 +180,7 @@ of its own stepping every 250 ms; the process is `childprocess::Child` (posix_sp
 |:--|:--|
 | Modes | `off`, `deck` (default), `always`; plus Start / Stop / Restart by the user (Stop latches until Start) |
 | Deck watch | `controllers::CountUsbDevices(0x0FD9)` (`core/controllers/src/usbpresence.h`) once a second on the supervisor's thread: the I/O registry on macOS, SetupAPI on Windows, sysfs on Linux; matched, never opened. A deck that goes keeps the daemon (its runtime waits; own decks work) |
-| Start | `unreal-streamdeck run --wait --api <37053> --viewers <37050> --host 127.0.0.1:<webapi> --parent <pid> --activity <look>`; the binary is `UNREAL_STREAMDECK_BIN`, else the setting, else beside unreal-qt (`Contents/MacOS` in the bundle, beside the exe, a build tree's `bin/`). No `--ready-fd`: the first health check 200 ms after the start, then every 2 s |
+| Start | `unreal-streamdeck run --wait --api <37053> --viewers <37050> --host 127.0.0.1:<webapi> --parent <pid> --activity <look>`; the binary is `UNREAL_STREAMDECK_BIN`, else the setting, else beside unreal-qt (`Contents/MacOS` in the bundle, beside the exe, a build tree's `bin/`). `--ready-fd 3` (a pipe; on Windows the inherited handle's value): the daemon writes `ready` once its automation port serves and the supervisor looks on its next step; without that word (an older daemon) the first health check 200 ms after the start, then every 2 s |
 | No binary | `missing` (a build without `-DUNREAL_STREAMDECK=ON`, the default with the Qt apps): the reason in `error`, no countdown; a daemon on the port is still adopted (looked for every 5 s); Start, Restart or a binary setting tries again |
 | Crash | Restarted after 1 s, 2 s, 4 s; the fourth end in a row: `failed`, tried again after 60 s; 30 s healthy starts the count again. A clean end within 5 s counts too (a second start that found one running: after the backoff that one is adopted) |
 | Hang | Three failed checks: killed, then the crash path. Not answering within 10 s of the start: the same |

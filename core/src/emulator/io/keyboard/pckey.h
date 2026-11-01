@@ -76,6 +76,10 @@ public:
     /// would otherwise press Caps Shift on the matrix and Symbol Shift through
     /// the controller
     virtual bool ReplacesMatrix() const { return false; }
+    /// The ZX keys the host's game controllers hold (ControllerManager's host key overlay) also go to the controller
+    /// as the PC keys PcKeysForZxKey names. For a machine whose native software reads this controller and never the
+    /// ZX matrix (Sprinter DSS programs): a pad bound to `key: W` then plays a game that polls PS/2
+    virtual bool WantsHostOverlayKeys() const { return false; }
     /// Automation: the PC keys that stand for one ZX key on this controller.
     /// Default pckey::FromZxKey (the ZX-Evo AVR's reverse map)
     virtual std::vector<PcKey> PcKeysForZxKey(ZXKeysEnum key) const;
