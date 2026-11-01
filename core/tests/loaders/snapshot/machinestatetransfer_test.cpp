@@ -938,3 +938,44 @@ TEST_F(MachineStateTransfer_Test, whatCannotMoveSaysWhy)
         EXPECT_NE(report.reason.find("specific to its model"), std::string::npos) << report.reason;
     }
 }
+
+/// A Scorpion state moves into the GMX's Scorpion scheme (ROM plane 4, the card's pages off), and back while the card's
+/// own paging is off; a GMX using #78FD moves only to a GMX
+TEST_F(MachineStateTransfer_Test, aGmxHoldsAScorpionStateAndKeepsItsOwnPagingToItself)
+{
+    auto scorpion = Create("SCORPION");
+    auto gmx = Create("GMX");
+    ASSERT_TRUE(scorpion && gmx);
+    for (uint16_t page = 0; page < 16; page++)
+        FillPage(Ctx(scorpion), page, static_cast<uint8_t>(page * 13 + 7));
+    Ctx(scorpion).pPortDecoder->DecodePortOut(0x1FFD, 0x10, 0x8000);
+    Ctx(scorpion).pPortDecoder->DecodePortOut(0x7FFD, 0x03, 0x8000);   // page 11 at #C000
+    Ctx(gmx).pPortDecoder->DecodePortOut(0x78FD, 0x21, 0x8000);         // stale card paging on the target
+    SetCpu(Ctx(scorpion));
+
+    auto report = MachineStateTransfer::Transfer(*scorpion, *gmx);
+    ASSERT_TRUE(report.ok) << report.ToString();
+    EXPECT_EQ((Ctx(gmx).emulatorState.scorpion.p7EFD >> 4) & 0x07, 4) << "the Scorpion plane";
+    EXPECT_EQ(Ctx(gmx).pMemory->GetRAMPageForBank3(), 11);
+    EXPECT_EQ(FirstZ80ViewDifference(Ctx(scorpion), Ctx(gmx), 0x4000), -1) << "the program sees the same RAM";
+    for (uint16_t page = 0; page < 16; page++)
+        EXPECT_TRUE(SamePage(Ctx(scorpion), Ctx(gmx), page)) << "page " << page;
+    ExpectSameCpu(Ctx(scorpion), Ctx(gmx));
+
+    // Back to a Scorpion 256: the card's paging is off and pages 16-127 hold nothing (power-on RAM is random: a
+    // non-zero page above 15 counts as used), the state fits its 256 KB
+    for (uint16_t page = 16; page < 128; page++)
+        std::memset(Ctx(gmx).pMemory->RAMPageAddress(page), 0, PAGE_SIZE);
+    FillAllPages(Ctx(scorpion), 9);
+    report = MachineStateTransfer::Transfer(*gmx, *scorpion);
+    ASSERT_TRUE(report.ok) << report.ToString();
+    EXPECT_EQ(FirstZ80ViewDifference(Ctx(gmx), Ctx(scorpion), 0x4000), -1);
+
+    Ctx(gmx).pPortDecoder->DecodePortOut(0x78FD, 0x10, 0x8000);
+    const auto refused = MachineStateTransfer::Check(Ctx(gmx), Ctx(scorpion));
+    EXPECT_FALSE(refused.ok);
+    EXPECT_NE(refused.reason.find("GMX"), std::string::npos) << refused.reason;
+
+    EmulatorManager::GetInstance()->RemoveEmulator(scorpion->GetId());
+    EmulatorManager::GetInstance()->RemoveEmulator(gmx->GetId());
+}

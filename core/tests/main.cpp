@@ -14,6 +14,7 @@
 #include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/memory/atm/evoflash.h"
+#include "emulator/ports/models/portdecoder_scorpion256.h"
 
 /// Tests share one process-wide EmulatorManager. An instance a test leaves
 /// registered outlives it and changes what later tests see (sole-instance
@@ -86,6 +87,8 @@ int main(int argc, char **argv)
   // A test that flashes a ZX-Evo ROM must not change the ROM the next test boots: the flash's persistence file is
   // off except in the tests of the persistence itself (EvoFlashPersist_Test)
   EvoFlash::SetPersistenceAllowed(false);
+  // Nor the SMUC's NVRAM ([SMUC] NvramFile of the GMX config): every GMX boot starts from the power-on contents
+  PortDecoder_Scorpion256::SetNvramPersistenceAllowed(false);
 
   // Sound devices (AY / TurboSound / TSFM, General Sound, MoonSound) are left
   // out of every machine unless a test opts in with a SoundCardScope (see

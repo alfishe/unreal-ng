@@ -44,6 +44,7 @@ struct ModeCase
     int ff77 = -1;      // ATM FF77 mode, -1: untouched
     uint8_t dffd = 0;   // Profi hi-res
     VideoModeEnum expected = M_NUL;
+    uint8_t gmx7efd = 0;  // GMX #7EFD (bit 3: 640x200); the scroller is set off zero with it
 };
 
 std::ostream& operator<<(std::ostream& os, const ModeCase& c)
@@ -100,13 +101,19 @@ protected:
             state.atm.aFF77 = 0x0100;
         }
         state.pDFFD = c.dffd;
+        if (c.gmx7efd)
+        {
+            state.scorpion.p7EFD = c.gmx7efd;
+            state.gmx.p7AFD = 0x30;  // start 0x0530: the wrap at 16000 bytes falls inside the picture
+            state.gmx.p7CFD = 0x05;
+        }
         _screen->InitRaster();
         ASSERT_EQ(_screen->GetVideoMode(), c.expected);
 
         // Random video memory and palettes, so colours differ from pixel to pixel
         Rng rng;
         Memory* memory = _context->pMemory;
-        const uint32_t pages = std::min<uint32_t>(c.ramKB / 16, 64);
+        const uint32_t pages = std::min<uint32_t>(c.ramKB / 16, 128);  // GMX attributes sit in page #79
         for (uint32_t p = 0; p < pages; ++p)
         {
             uint8_t* page = memory->RAMPageAddress(static_cast<uint16_t>(p));
@@ -275,7 +282,8 @@ INSTANTIATE_TEST_SUITE_P(Modes, VideoMapService_Test,
                                            ModeCase{"atmhr", MM_ATM710, 1024, 69888, 0, FF77_MC, 0, M_ATMHR},
                                            ModeCase{"atmtx", MM_ATM710, 1024, 69888, 0, FF77_TX, 0, M_ATMTX},
                                            ModeCase{"atmtl", MM_ATM3, 1024, 69888, 0, FF77_TL, 0, M_ATMTL},
-                                           ModeCase{"profihr", MM_PROFI, 1024, 69888, 0, -1, 0x80, M_PROFIHR}),
+                                           ModeCase{"profihr", MM_PROFI, 1024, 69888, 0, -1, 0x80, M_PROFIHR},
+                                           ModeCase{"gmx", MM_GMX, 2048, 69888, 0, -1, 0, M_GMX, 0x08}),
                          [](const ::testing::TestParamInfo<ModeCase>& info) { return std::string(info.param.name); });
 
 /// Text layers give the grid exactly (design §6: OCR reads text modes, not the bitmap)
@@ -352,6 +360,7 @@ TEST(VideoFamily_Test, NullModeHasNoMapper)
     EXPECT_EQ(FamilyOf(M_NUL), VideoFamily::None);
     EXPECT_EQ(FamilyOf(M_ATMTL), VideoFamily::Atm);
     EXPECT_EQ(FamilyOf(M_PROFIHR), VideoFamily::Profi);
+    EXPECT_EQ(FamilyOf(M_GMX), VideoFamily::Gmx);
     EXPECT_EQ(FamilyOf(M_PMC), VideoFamily::Alco);
     for (VideoModeEnum mode : {M_TSZX, M_TS16, M_TS256, M_TSTX})
         EXPECT_EQ(FamilyOf(mode), VideoFamily::TsConf) << "ScreenTSConf draws every TS mode";

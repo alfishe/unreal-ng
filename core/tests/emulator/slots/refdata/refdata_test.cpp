@@ -294,7 +294,14 @@ TEST(RefData_Test, CollectionIsConsistent)
         PlanContext without;
         without.applyExceptions = false;
         const SlotPlan plain = planner.Plan(exception.model, {}, request, without);
-        EXPECT_FALSE(with.allowed) << where;
+        // A hard rule refuses even a forced plug; a soft one only an unforced one
+        EXPECT_EQ(with.allowed, !exception.hard) << where;
+        if (!exception.hard)
+        {
+            SlotRequest unforced = request;
+            unforced.replaceIfIncompatible = false;
+            EXPECT_FALSE(planner.Plan(exception.model, {}, unforced).allowed) << where;
+        }
         EXPECT_TRUE(plain.allowed) << where << " is redundant: the claims already refuse it\n" << ToText(plain);
     }
     // endregion

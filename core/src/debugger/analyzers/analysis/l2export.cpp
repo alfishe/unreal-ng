@@ -262,8 +262,9 @@ std::string TitleOf(const Region& r, uint32_t size)
 /// The SkoolKit image macro showing a graphics claim's frames inside [start, end] (Z80), wrapped in #UDGTABLE (which
 /// skool2asm drops: the draft's assembly does not change); empty when the geometry has no picture SkoolKit can draw.
 /// Sprites and tiles: one #UDGARRAY a frame (at most 16), the mask (when interleaved) assumed before each graphic
-/// byte, a tile's attribute from the byte before its rows; fonts: #FONT over the characters; screen pixels: #SCR on
-/// the buffer as the display file. Decimal addresses: the export turns $nnnn into #R references.
+/// byte, a tile's attribute from the byte before its rows; fonts: #FONT over the characters (stored a pixel row a page
+/// on: as sprites); screen pixels: #SCR on the buffer as the display file. Decimal addresses: the export turns $nnnn
+/// into #R references.
 std::string ImageMacro(const Region& r, uint32_t start, uint32_t end)
 {
     const Geometry& g = r.geometry;
@@ -273,7 +274,7 @@ std::string ImageMacro(const Region& r, uint32_t start, uint32_t end)
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return text;
     }();
-    if (r.kind == RegionKind::Font)
+    if (r.kind == RegionKind::Font && g.pitch == 0)  // a font a pixel row a page on: one #UDGARRAY a frame, below
     {
         const uint32_t chars = std::min<uint32_t>(96u, (end - start + 1u) / 8u);
         if (g.width != 8 || g.height != 8 || chars == 0)
@@ -287,7 +288,7 @@ std::string ImageMacro(const Region& r, uint32_t start, uint32_t end)
         return "#UDGTABLE { #SCR2,0,0,32," + std::to_string(std::min<uint32_t>(g.height / 8u, 24u)) + "," +
                std::to_string(start) + "(" + name + ") } TABLE#";
     }
-    if (r.kind != RegionKind::Sprite && r.kind != RegionKind::Tile)
+    if (r.kind != RegionKind::Sprite && r.kind != RegionKind::Tile && r.kind != RegionKind::Font)
         return std::string();
     if (g.width == 0 || g.width % 8 != 0 || g.height == 0 || g.height % 8 != 0 || g.width > 256)
         return std::string();

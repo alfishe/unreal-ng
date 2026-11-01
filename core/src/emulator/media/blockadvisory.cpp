@@ -94,10 +94,10 @@ SectorZeroLayout ClassifySectorZero(const uint8_t* sector, size_t size)
     return SectorZeroLayout::Unknown;
 }
 
-std::string DescribeBlockLayoutMismatch(IBlockDevice& block, const std::vector<std::string>& tags)
+std::string DescribeBlockLayoutMismatch(IBlockDevice& block, const std::vector<std::string>& tags, bool sdReadsMbr)
 {
     const bool expectsPartitionTable = HasTag(tags, "ide") && HasTag(tags, "hdd");
-    const bool expectsRawFat = HasTag(tags, "sd");
+    const bool expectsRawFat = HasTag(tags, "sd") && !sdReadsMbr;
     if (!expectsPartitionTable && !expectsRawFat)
         return {};
 
