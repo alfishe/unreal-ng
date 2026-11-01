@@ -3,11 +3,36 @@
   "images": [
     {
       "view": "front",
-      "source": "tools/controllers/make_fallback_images.py",
+      "title": "SEGA Six Button Control Pad (Mega Drive MK-1653 / Genesis 6 Button Arcade Pad), black",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
       "author": "unreal-ng",
       "licence": "same as the repository",
-      "terms": "generated line drawing, no photo",
-      "retouch": "none"
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "width 140 mm: SEGA's FightingPad 6B reissue of the same shell (140 x 70 x 29 mm, a retailer's listing); the traced view gives 72 mm deep at that width",
+          "source": "https://wafuu.com/collections/all-product/products/fightingpad-6b-gaming-controller-durable-design",
+          "retrieved": "2026-10-31",
+          "note": "an estimate"
+        },
+        {
+          "what": "view from above: the outline, the control positions and sizes",
+          "source": "https://cdn.shopify.com/s/files/1/0078/2575/2141/products/sega-genesis-6-button-arcade-padaccessories-video-game-controller-newretrofix-games-308454.png",
+          "author": "Retro-Bit (product shot of the licensed reissue, RB-SGA-001)",
+          "licence": "product photo",
+          "use": "measured geometry only (trace.py outline, positions on a grid); no pixels shipped",
+          "retrieved": "2026-10-31"
+        },
+        {
+          "what": "the original pad: the layout, the Mode key on the top right edge",
+          "source": "https://commons.wikimedia.org/wiki/File:Sega-Genesis-6But-Cont.jpg",
+          "author": "Evan-Amos",
+          "licence": "public domain",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-31"
+        }
+      ]
     }
   ]
 }

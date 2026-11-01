@@ -554,7 +554,23 @@ std::shared_ptr<IHapticFeed> HostInputService::HapticFeedFor(const std::string& 
                                                              const std::string& name)
 {
     return std::make_shared<ProfileHaptics>(profile, name, *_haptics, TargetsFor(instance),
-                                            [this](const HostDeviceId& device) { return RumbleActuators(device); });
+                                            [this](const HostDeviceId& device) { return RumbleActuators(device); },
+                                            [this](const HostDeviceId& device) { return PlayerNumber(device); });
+}
+
+int HostInputService::PlayerNumber(const HostDeviceId& device) const
+{
+    // The numbering of the profiles' `play@N` layers and `player:` rules: the N-th pad connected (not a keyboard, not a mouse)
+    int number = 0;
+    for (const HostDeviceInfo& info : _router->Devices())
+    {
+        if (info.family == "keyboard" || info.family == "mouse")
+            continue;
+        ++number;
+        if (info.id == device)
+            return number;
+    }
+    return 0;
 }
 
 void HostInputService::SetHapticsGate(bool open)

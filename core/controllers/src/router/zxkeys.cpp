@@ -17,6 +17,7 @@ enum : uint8_t
     kSpace = 0x20,
     k0 = 0x30,
     kA = 0x41,
+    kPcOnlyKeyBase = 0xE0,
 };
 
 uint8_t Letter(char c)
@@ -58,8 +59,25 @@ std::string Lower(const std::string& text)
     return lower;
 }
 
+/// The keys the ZX matrix has no place for, held on a PS/2 keyboard only (a Sprinter native program): ControllerManager
+/// maps these codes to PC keys (kPcOnlyKeyBase there)
+constexpr struct
+{
+    const char* name;
+    uint8_t code;
+} kPcOnly[] = {{"pc.delete", kPcOnlyKeyBase},   {"pc.insert", kPcOnlyKeyBase + 1}, {"pc.end", kPcOnlyKeyBase + 2},
+               {"pc.home", kPcOnlyKeyBase + 3}, {"pc.pageup", kPcOnlyKeyBase + 4}, {"pc.pagedown", kPcOnlyKeyBase + 5}};
+
 bool OneName(const std::string& name, std::vector<uint8_t>& keys)
 {
+    for (const auto& pcOnly : kPcOnly)
+    {
+        if (name == pcOnly.name)
+        {
+            keys.push_back(pcOnly.code);
+            return true;
+        }
+    }
     if (name.size() == 1 && name[0] >= 'a' && name[0] <= 'z')
     {
         keys.push_back(Letter(name[0]));
