@@ -41,6 +41,15 @@ leaves out keep their value.
 
 | the GS card's slot (`zxbus.1`; `gs` when the registry names none) | GS port and activity events | off | `timestamp` (GS cycles, 12 MHz), `frame`, `side` (`host` #B3 / #BB / #33, `gs` the card's ports, `dac` sample fetches, `interrupt`, `zx-dma` the NeoGS host window), `port`, `pc` (the GS CPU's; the host's for `zx-dma`), `value`, `channel`, `out` / `nmi`. One per machine: every personality the slot takes (LLE, LW, NeoGS) records into it, so a personality switch keeps it. The GS port trace (CLI `gsporttrace`, REST `/control/audio/gs/porttrace`, Python / Lua `gs_porttrace_*`) is its face: start = a ring of 65536, pause / resume, stop = paused with the events kept |
 
+| the MoonSound's registry id (the owner of `#C4`; `moonsound`) | OPL4 register writes | off | `frame`, `tacts`, `pc`, `chip` (`opl4` FM: `reg` = bank << 8 \| register; `opl4wave`), `unit`, `reg`, `value` |
+| the Covox's (the owner of `#FB`: `covox`, `covox-fb`, `soundrive`; `covox`) | DAC writes | off | the same, `chip` `dac`, `reg` the channel |
+| the Fuller Box's slot (`edge.1`) | AY register writes | off | the same, `chip` `ay` |
+| the ZX-MultiSound's slot + `.chips` (`zxbus.1.chips`) | SAA and SounDrive writes | off | the same, `chip` `saa` / `dac`; its YM writes into the machine's AY history (the card takes the AY ports, so that history carries the card's name), its GS into `zxbus.1.gs` |
+| `covox-blaster` (the Sprinter) | Covox Blaster writes | off | the same, `chip` `cbl`, `reg` 0 data, 1 control |
+
+A device whose history is its own holds a `history::Registered<Record>`: listed in the machine's histories while it
+lives. A card with several modules names the others `<slot>.<module>` (as the time-travel instances do).
+
 The FDC state report (`state fdc`, `/state/fdc`, `fdc_state()`, MCP aspect `fdc`) carries the same history as
 `history` and its stats as `history_state`.
 

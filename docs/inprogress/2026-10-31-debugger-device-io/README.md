@@ -77,6 +77,11 @@ Every step is checked against the machines where the registry, the devices and t
 | 3 | `history::DeviceHistory` + `HistoryControl` on every plane; the WD1793 command history on it (in place of `WD1793Collector`, removed) | done |
 | 4a | AY / TS / TSFM / the Next's three AYs: one AY history per machine (SoundManager), named by the `#FFFD` owner; the AY log analyzer is its face (its own ring and the device sinks removed) | done |
 | 4b | GS / LW / NeoGS: one GS history per machine (SoundManager), named by the card's slot, kept across personality switches; the GS port trace is its face (its own ring removed); pause / resume in the pattern on every plane | done |
-| 4c | OPL4 (MoonSound), SAA, the ZX-MultiSound card's own GS (records into its own history today, not registered) on the pattern | open |
-| 5 | Peripheral I/O window in the Qt debugger: a tab per registry device (`/slots`), its port trace (`owner`), its history and its catalog report | open |
+| 4c | Sound chip writes on the pattern (`chipwritehistory.h`, `history::Registered`): MoonSound OPL4, Covox / SounDrive, the Fuller Box AY, the ZX-MultiSound (its YM into the machine's AY history, its SAA / SounDrive into `<slot>.chips`, its GS into `<slot>.gs`), the Sprinter's Covox Blaster | done |
+| 4d | SD cards (every `SdCardSpi` host: `sd-zc` on TS-Conf / ATM3, the Next's `sd0` / `sd1`, DivMMC, the NeoGS `<slot>.sd`) and the NeoGS MP3 decoder's SCI writes (`<slot>.mp3`) | open |
+| 4e | TS-Conf: the register writes (`ts-registers`), the DMA transfers (`ts-registers.dma`), the VDAC2's FT812 SPI transactions (`vdac2`) | open |
+| 4f | The Next's own devices (NextREG, DMA, Copper, UARTs) and Scorpion + GMX, after their registry declarations (1b) | open |
+| 4g | Port accesses per device on the pattern: the port trace's records by registry owner, a history per device (its claims' IN / OUT: time, PC, port, value, the register it means), the board's unclaimed ports as the board's | open |
+| 4h | Execution histories on the pattern, one per processor: the main CPU (`PcHistory`), the GS / NeoGS card's Z80, the Next's Copper and DMA | open |
+| 5 | Qt debugger: the Devices tab (the registry's devices) shows each device's histories (port accesses, its own events) beside its catalog report; History refreshes while running too and covers every processor (the GS card's Z80) | open |
 | 6 | The catalog links each registry device to its state report and history | open |

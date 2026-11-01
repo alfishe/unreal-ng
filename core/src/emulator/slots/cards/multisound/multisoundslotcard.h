@@ -21,6 +21,8 @@
 #include "emulator/slots/card.h"
 #include "emulator/slots/cards/multisound/multisoundcard.h"
 #include "emulator/slots/cards/multisound/multisoundttd.h"
+#include "emulator/sound/chips/chipwritehistory.h"
+#include "emulator/sound/chips/gs/gsporttrace.h"
 
 class EmulatorContext;
 
@@ -128,6 +130,9 @@ private:
     void TrackM1();
 
     EmulatorContext* _context;
+    // Before the card: they outlive its pointers to them
+    ChipWriteHistory _chipHistory;                 ///< `<slot>.chips`: the SAA and SounDrive writes
+    history::Registered<GSTraceEvent> _gsHistory;  ///< `<slot>.gs`: the card's GS port and activity events
     MultiSoundCard _card;
     uint64_t _origin = 0;
     uint64_t _last = 0;

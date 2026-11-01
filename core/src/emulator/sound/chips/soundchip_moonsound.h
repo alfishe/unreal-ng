@@ -11,6 +11,7 @@
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/audio.h"
+#include "emulator/sound/chips/chipwritehistory.h"
 #include "debugger/ttd/engine/ttdregiontracker.h"
 
 class EmulatorContext;
@@ -244,6 +245,7 @@ private:
     void loadWaveRom();
 
     EmulatorContext* _context;
+    ChipWriteHistory _history;  ///< the OPL4 FM and wave register writes (chipwritehistory.h)
     ModuleLogger* _logger = nullptr;
 
     // Bus attachment state (attachToPorts/detachFromPorts)

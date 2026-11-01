@@ -111,7 +111,8 @@ std::unique_ptr<ICard> FullerBoxCard::Create(const CardContext& context)
 }
 
 FullerBoxCard::FullerBoxCard(const CardContext& context)
-    : ICard(context), _context(context.emulator), _chip(std::make_unique<SoundChip_AY8910>(context.emulator)),
+    : ICard(context), _context(context.emulator),
+      _history(ChipHistoryRegistry(context.emulator), context.slot, "AY register writes", kChipWriteRing), _chip(std::make_unique<SoundChip_AY8910>(context.emulator)),
       _ttd(std::make_unique<FullerBoxTtd>(*this))
 {
     _chip->setChipModel(AYChipModel::AY8910);
@@ -214,6 +215,8 @@ void FullerBoxCard::portDeviceOutMethod(uint16_t port, uint8_t value)
             _chip->writeCurrentRegister(value);
             if (_context && _context->chipRegisterWatch) [[unlikely]]
                 ReportChipRegisterWrite(_context, SoundChipKind::Ay, 0, _chip->getCurrentRegisterIndex(), value);
+            if (_history.On()) [[unlikely]]
+                RecordChipWrite(_context, _history, SoundChipKind::Ay, 0, _chip->getCurrentRegisterIndex(), value);
             break;
         default:
             break;

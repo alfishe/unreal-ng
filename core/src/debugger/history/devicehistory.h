@@ -496,4 +496,35 @@ private:
     detail::StreamFile<Record> _stream;
 };
 
+/// A device's own history, listed in its machine's histories while it lives: the member a device holds
+template <typename Record>
+class Registered
+{
+public:
+    /// `device`: the registry id, or a resolver (DeviceHistory); `registry`: the machine's (may be null: unlisted)
+    template <typename Name>
+    Registered(Registry* registry, Name&& device, std::string what, size_t defaultRing = 256)
+        : _registry(registry), _history(std::forward<Name>(device), std::move(what), defaultRing)
+    {
+        if (_registry)
+            _registry->Add(&_history);
+    }
+    ~Registered()
+    {
+        if (_registry)
+            _registry->Remove(&_history);
+    }
+    Registered(const Registered&) = delete;
+    Registered& operator=(const Registered&) = delete;
+
+    bool On() const { return _history.On(); }
+    DeviceHistory<Record>& operator*() { return _history; }
+    DeviceHistory<Record>* operator->() { return &_history; }
+    const DeviceHistory<Record>* operator->() const { return &_history; }
+
+private:
+    Registry* const _registry;
+    DeviceHistory<Record> _history;
+};
+
 }  // namespace history
