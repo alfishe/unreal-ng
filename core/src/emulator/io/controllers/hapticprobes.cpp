@@ -9,7 +9,10 @@
 namespace controllers
 {
 
-HapticProbes::HapticProbes(EmulatorContext* context) : _context(context) {}
+HapticProbes::HapticProbes(EmulatorContext* context, const char* owner, const char* note)
+    : _context(context), _owner(owner), _note(note)
+{
+}
 
 HapticProbes::~HapticProbes()
 {
@@ -74,8 +77,8 @@ void HapticProbes::Arm(const std::vector<HapticProbe>& probes, std::vector<std::
         auto* descriptor = new BreakpointDescriptor();
         descriptor->condition = std::move(condition);
         descriptor->hidden = true;
-        descriptor->owner = kOwner;
-        descriptor->note = "haptic probe";
+        descriptor->owner = _owner;
+        descriptor->note = _note;
         descriptor->tapSink = _sink;
         descriptor->tapCookie = static_cast<uint32_t>(index);
         if (port)

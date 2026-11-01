@@ -1332,6 +1332,14 @@ local rare = ttd_coverage_rare{max_frames = 2, addr_from = 0x8000, addr_to = 0xF
 --   blocks = { {addr_from = "0x9A10", addr_to = "0x9A2C", phys_page = 2, page_offset_from = "0x1A10", ...,
 --               keys = 11, frame_count = 1, frames = {1834}}, ... } }
 
+-- In which frames did a game profile's probes fire: a replay of the window, the machine put back
+local probes = ttd_probe_frames({{probe = "exec", address = 0x8A14},
+                                 {probe = "write", address = 0x5F20, ["if"] = "VAL < MDT"}}, {from_frame = 100})
+-- { from_frame = 100, to_frame = 2400, replayed_frames = 2301, pruned_frames = 0, truncated = false,
+--   probes = { {probe = "exec", address = "0x8A14", frame_count = 14, hit_count = 14, frames = {120, 388, ...},
+--               hits = {1, 1, ...}}, ... } }
+-- One probe: ttd_probe_frames{probe = "port-out", address = 0xFE, port_mask = 0x01}; limit = N frames per probe
+
 -- A memory at a past checkpoint, and what changed between two - from the store, no seek
 local at = ttd_memory_at{space = "ram5", frame = 150, offset = 0x1C78, length = 2}   -- tinframe = T: inside the frame (ram, vram, cache)
 -- { space = "ram", offset = 89208, length = 2, frame = 150, at_frame = 150, exact = true, hex = "6500" }
