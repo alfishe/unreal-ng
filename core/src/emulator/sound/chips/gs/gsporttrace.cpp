@@ -19,6 +19,8 @@ const char* SideName(GSTraceSide side)
             return "interrupt";
         case GSTraceSide::ZxDma:
             return "zx-dma";
+        case GSTraceSide::Idle:
+            return "idle";
     }
     return "unknown";
 }
@@ -45,7 +47,9 @@ void GSTraceEvent::ToState(StateNode& node) const
     node["value"] = int(value);
     if (side == GSTraceSide::DacFetch || side == GSTraceSide::ZxDma)
         node["channel"] = int(channel);
-    if (side == GSTraceSide::Interrupt)
+    if (side == GSTraceSide::Idle)
+        node["iterations"] = int64_t(iterations);
+    else if (side == GSTraceSide::Interrupt)
         node["nmi"] = isNmi();
     else
         node["out"] = isOut();

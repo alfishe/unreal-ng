@@ -452,7 +452,10 @@ bool Z80::RunHaltedIdle(bool skipBreakpoints)
     const uint16_t fetch = static_cast<uint16_t>(pc + 1);  // the byte after the HALT (HaltedM1)
     const uint32_t evenM1Period = _context->config.even_M1 ? 2u : 1u;
     uint32_t busPeriod = 1;
-    uint32_t handledWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep;
+    // The execution history `cpu` has the HALT already (the step that ran it): the repeated fetches are no new
+    // instructions
+    uint32_t handledWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep |
+                           EmulatorContext::kStepWorkExecHistory;
     // A TTD replay's input playback: the fetches that start before its next event (ServiceInput takes it at the
     // first boundary at or past its time, as per step)
     uint32_t inputDue = UINT32_MAX;
@@ -608,7 +611,7 @@ bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
 UNREAL_NOINLINE void Z80::RunHaltedIdleAfterWork(bool skipBreakpoints)
 {
     constexpr uint32_t kIdleWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep |
-                                   EmulatorContext::kStepWorkTtdInput;
+                                   EmulatorContext::kStepWorkTtdInput | EmulatorContext::kStepWorkExecHistory;
     if (_context->stepWork.load(std::memory_order_relaxed) & ~kIdleWork)
     {
         NoteHaltedIdleRefused();

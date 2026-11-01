@@ -18,6 +18,9 @@ struct ExecRecord
     uint16_t pc = 0;
     uint8_t kind = 0;  ///< MemoryBankModeEnum of the address's window: 0 ROM, 1 RAM, 2 cache, #FF none
     uint8_t page = 0;  ///< the physical page of that kind
+    /// A sound card's idle poll loop slept through (GSCardRunner): the loop at `pc` ran this often more, its
+    /// instructions as the iteration recorded before this one
+    uint32_t idle = 0;
 
     void ToState(StateNode& node) const;
 };

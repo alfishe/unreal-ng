@@ -890,6 +890,7 @@ const char* gsTraceSideToString(GSTraceSide side)
         case GSTraceSide::DacFetch: return "dac";
         case GSTraceSide::Interrupt: return "interrupt";
         case GSTraceSide::ZxDma: return "zxdma";
+        case GSTraceSide::Idle: return "idle";
     }
     return "unknown";
 }
@@ -993,6 +994,8 @@ void EmulatorAPI::getStateAudioGSPortTrace(const HttpRequestPtr& req, std::funct
                 ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
             if (e.side == GSTraceSide::Interrupt)
                 ev["nmi"] = e.isNmi();
+            if (e.side == GSTraceSide::Idle)
+                ev["iterations"] = e.iterations;
             eventsJson.append(ev);
         }
         ret["events"] = eventsJson;

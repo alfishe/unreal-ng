@@ -36,6 +36,7 @@ enum class GSTraceSide : uint8_t
     DacFetch = 2,   // GS Z80 read in 0x6000-0x7FFF: DAC channel sample latch
     Interrupt = 3,  // 37.5 kHz periodic interrupt accepted (or NMI)
     ZxDma = 4,      // NeoGS ZX-DMA byte: the host read or wrote card RAM through #0000-#3FFF
+    Idle = 5,       // the firmware's idle poll loop slept through (GSCardRunner): pc its head, iterations how often
 };
 
 namespace GSTraceFlags
@@ -55,6 +56,7 @@ struct GSTraceEvent
     uint8_t  channel = 0;     // DacFetch: channel index 0-3. ZxDma: card RAM address 20:16
     GSTraceSide side = GSTraceSide::Host;
     uint8_t  flags = 0;       // GSTraceFlags bitfield
+    uint32_t iterations = 0;  // Idle: the loop's iterations the sleep stood for (their port reads are not recorded)
 
     bool isOut() const { return flags & GSTraceFlags::kDirectionOut; }
     bool isNmi() const { return flags & GSTraceFlags::kNmi; }

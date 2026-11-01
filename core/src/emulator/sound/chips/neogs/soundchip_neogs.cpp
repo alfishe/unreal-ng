@@ -1083,6 +1083,17 @@ void SoundChip_NeoGS::traceEvent(GSTraceSide side, uint16_t port, uint8_t value,
     _portTrace.record(event);
 }
 
+void SoundChip_NeoGS::traceIdle(uint16_t head, int64_t start, uint64_t iterations)
+{
+    GSTraceEvent event;
+    event.timestamp = start;
+    event.frameNumber = currentFrameNumber();
+    event.pc = head;
+    event.side = GSTraceSide::Idle;
+    event.iterations = static_cast<uint32_t>(std::min<uint64_t>(iterations, UINT32_MAX));
+    _portTrace.record(event);
+}
+
 /// endregion </Frame lifecycle and host sync>
 
 /// region <Host ports>
@@ -1429,6 +1440,11 @@ uint8_t SoundChip_NeoGS::intVectorCb(Z80CPU* /*cpu*/, void* userData)
 void SoundChip_NeoGS::runToDebug(int64_t target)
 {
     _runner.runToDebug(target, _debugHooks);
+}
+
+void SoundChip_NeoGS::runToRecord(int64_t target)
+{
+    _runner.runToRecord(target);
 }
 
 bool SoundChip_NeoGS::setDebugHooks(IGSDebugHooks* hooks)

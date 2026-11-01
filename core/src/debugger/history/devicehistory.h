@@ -301,7 +301,11 @@ public:
     /// full). One writer only (the emulation thread). Set once, before any configuration
     void EnableFastPush(size_t stage = 1024)
     {
-        _stage.resize(stage ? stage : 1);
+        size_t size = 1;
+        while (size < stage)
+            size <<= 1;
+        _stage.resize(size);
+        _stageMask = size - 1;
     }
 
     /// One writer, no lock: a copy into the stage and a release store (EnableFastPush; else Push)
@@ -318,7 +322,7 @@ public:
             std::lock_guard lock(_mutex);
             DrainLocked();
         }
-        _stage[head % _stage.size()] = record;
+        _stage[head & _stageMask] = record;
         _stageHead.store(head + 1, std::memory_order_release);
     }
 
@@ -331,9 +335,34 @@ private:
         auto* self = const_cast<DeviceHistory*>(this);
         const size_t head = _stageHead.load(std::memory_order_acquire);
         size_t tail = _stageTail.load(std::memory_order_relaxed);
+        if (tail != head && self->_config.mode == Mode::Ring && !self->_stream.IsOpen())
+            self->DrainRingLocked(tail, head);
+        else
+        {
+            for (; tail != head; tail++)
+                self->PushLocked(_stage[tail & _stageMask]);
+        }
+        _stageTail.store(head, std::memory_order_release);
+    }
+
+    /// The staged records into a ring without a stream: PushLocked's effect, without its tests per record
+    void DrainRingLocked(size_t tail, size_t head)
+    {
+        _written += head - tail;
+        for (; tail != head && _records.size() < _capacity; tail++)
+            _records.push_back(_stage[tail & _stageMask]);
+        size_t at = _head;
+        const size_t dropped = head - tail;
         for (; tail != head; tail++)
-            self->PushLocked(_stage[tail % _stage.size()]);
-        _stageTail.store(tail, std::memory_order_release);
+        {
+            _records[at] = _stage[tail & _stageMask];
+            if (++at == _capacity)
+                at = 0;
+        }
+        _head = at;
+        _dropped += dropped;
+        _hasOverflow = false;
+        _hasOpen = true;
     }
 
     void PushLocked(const Record& record)
@@ -578,6 +607,7 @@ private:
     bool _hasOverflow = false;
     detail::StreamFile<Record> _stream;
     std::vector<Record> _stage;                  ///< PushFast's records waiting for the lock (EnableFastPush)
+    size_t _stageMask = 0;                       ///< the stage's size is a power of two
     std::atomic<size_t> _stageHead{ 0 };         ///< written by the one writer
     mutable std::atomic<size_t> _stageTail{ 0 }; ///< advanced under the lock
 };

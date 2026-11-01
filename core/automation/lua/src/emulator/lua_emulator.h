@@ -5737,6 +5737,7 @@ public:
                     case GSTraceSide::DacFetch: ev["side"] = "dac"; break;
                     case GSTraceSide::Interrupt: ev["side"] = "interrupt"; break;
                     case GSTraceSide::ZxDma: ev["side"] = "zxdma"; break;
+                    case GSTraceSide::Idle: ev["side"] = "idle"; break;
                 }
                 ev["direction"] = e.isOut() ? "out" : "in";
                 ev["port"] = e.port;
@@ -5745,6 +5746,7 @@ public:
                 if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
                 if (e.side == GSTraceSide::ZxDma) ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
                 if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
+                if (e.side == GSTraceSide::Idle) ev["iterations"] = e.iterations;
                 result[idx++] = ev;
             }
             return result;

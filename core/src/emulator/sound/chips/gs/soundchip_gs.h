@@ -347,10 +347,17 @@ private:
     uint32_t busEffects() const { return _busEffects; }
     bool sleepAllowed() const
     {
-        return !_nmiPending && !_portTrace.isCapturing() && !_busObserver && !Z80CpuIntPossible(_cpu);
+        return !_nmiPending && !_busObserver && !Z80CpuIntPossible(_cpu);
     }
     static int64_t sleepHardStop() { return std::numeric_limits<int64_t>::max(); }
     void onStepsSkipped(uint64_t steps) { _activityCounters.cpuSteps += steps; }
+    /// One sleep, one record in each history that is on (the event trace's Idle, the execution history's idle)
+    void onSlept(uint16_t head, int64_t start, uint64_t iterations)
+    {
+        if (_portTrace.isCapturing()) [[unlikely]]
+            traceIdle(head, start, iterations);
+        recordExecIdle(head, iterations);
+    }
     bool sleepQuietEventsBefore(int64_t end);
 
     // GSModuleReplay hooks
@@ -412,13 +419,20 @@ private:
     // Lazy sync core
     void flush();                      // run GS to the current ZX tact
     void runToDebug(int64_t targetGsCycles);  // out of line: the debug loop's code stays away from the fast loop's
+    void runToRecord(int64_t targetGsCycles);  // out of line too: the execution history's loop
     void runTo(int64_t targetGsCycles)
     {
         syncExecHistory();
-        // A debugger's hooks: the debug loop (one test per run, never per instruction)
+        // A debugger's hooks: the debug loop; the execution history: the record loop (tests a run, never per
+        // instruction)
         if (_debugHooks) [[unlikely]]
         {
             runToDebug(targetGsCycles);
+            return;
+        }
+        if (execRecording()) [[unlikely]]
+        {
+            runToRecord(targetGsCycles);
             return;
         }
         // The classic timing (1 unit per cycle, INT held until accepted) runs
@@ -523,4 +537,5 @@ private:
     IGSDebugHooks* _debugHooks = nullptr;  // a card CPU debugger (setDebugHooks): the debug loop and bus
     uint32_t currentFrameNumber() const;
     void traceEvent(GSTraceSide side, uint16_t port, uint8_t value, bool isOut, uint8_t channel = 0, uint8_t extraFlags = 0);
+    void traceIdle(uint16_t head, int64_t start, uint64_t iterations);
 };

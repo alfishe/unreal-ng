@@ -399,6 +399,10 @@ public:
         _execHistory = history;
         _execContext = context;
     }
+    /// The instruction at `pc` into the execution history (the runner's record loop, the recorder)
+    void recordExecStep(uint16_t pc);
+    /// The idle loop at `head` slept through `iterations` times: one record (ExecRecord::idle) while recording
+    void recordExecIdle(uint16_t head, uint64_t iterations);
     /// The 16K page behind a card CPU address now (as the emulation maps it, not a table). Flash and ROM count as
     /// ROM pages
     struct CardPage
@@ -537,10 +541,14 @@ protected:
         if (_execHistory && _execHistory->On() != _execBound) [[unlikely]]
             bindHooks();
     }
+    /// The run records its instructions without a debugger's hooks: the record loop (GSCardRunner::runToRecord).
+    /// Only asked after the hooks' test, so the fast loop pays one more test a run
+    bool execRecording() const;
 
 private:
-    /// The hooks the card runs with while its execution history is on: each instruction into the history, then the
-    /// debugger's hooks (if any) as they would be called alone
+    /// The hooks the card runs with while its execution history is on and a debugger's hooks are bound: each
+    /// instruction into the history, then the debugger's hooks as they would be called alone (without a debugger the
+    /// card runs its record loop instead, no hooks at all)
     class ExecRecorder final : public IGSDebugHooks
     {
     public:
@@ -586,7 +594,8 @@ private:
         GeneralSoundCard& _card;
     };
 
-    /// The debugger's hooks alone, or the recorder in front of them; the result of setDebugHooks
+    /// The debugger's hooks alone, or the recorder in front of them while the history is on; the result of
+    /// setDebugHooks
     bool bindHooks();
 
     history::DeviceHistory<ExecRecord>* _execHistory = nullptr;
