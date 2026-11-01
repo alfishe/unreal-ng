@@ -12,15 +12,15 @@
       "label": "LT",
       "shape": {
         "rect": [
-          506,
-          108,
-          245,
-          53
+          635,
+          111,
+          238,
+          43
         ]
       },
       "anchor": [
-        628,
-        135
+        754,
+        133
       ],
       "callout": "left",
       "analog": {
@@ -30,43 +30,43 @@
       "order": 0
     },
     {
+      "control": "lb",
+      "label": "LB",
+      "shape": {
+        "rect": [
+          624,
+          154,
+          251,
+          22
+        ]
+      },
+      "anchor": [
+        750,
+        165
+      ],
+      "callout": "left",
+      "order": 1
+    },
+    {
       "control": "rt",
       "label": "RT",
       "shape": {
         "rect": [
-          1298,
-          108,
-          245,
-          53
+          1175,
+          111,
+          238,
+          43
         ]
       },
       "anchor": [
-        1420,
-        135
+        1294,
+        133
       ],
       "callout": "right",
       "analog": {
         "kind": "trigger",
         "fill": "down"
       },
-      "order": 1
-    },
-    {
-      "control": "lb",
-      "label": "LB",
-      "shape": {
-        "rect": [
-          477,
-          143,
-          331,
-          39
-        ]
-      },
-      "anchor": [
-        642,
-        162
-      ],
-      "callout": "left",
       "order": 2
     },
     {
@@ -74,32 +74,49 @@
       "label": "RB",
       "shape": {
         "rect": [
-          1240,
-          143,
-          331,
-          39
+          1172,
+          154,
+          251,
+          22
         ]
       },
       "anchor": [
-        1406,
-        162
+        1298,
+        165
       ],
       "callout": "right",
       "order": 3
+    },
+    {
+      "control": "guide",
+      "label": "Guide",
+      "shape": {
+        "circle": [
+          1024,
+          221,
+          45
+        ]
+      },
+      "anchor": [
+        1024,
+        221
+      ],
+      "callout": "right",
+      "order": 4
     },
     {
       "control": "lstick.x",
       "label": "LS",
       "shape": {
         "circle": [
-          714,
-          347,
+          739,
+          327,
           76
         ]
       },
       "anchor": [
-        714,
-        347
+        739,
+        327
       ],
       "callout": "left",
       "analog": {
@@ -108,39 +125,39 @@
         "radius": 47
       },
       "group": "lstick",
-      "order": 4
+      "order": 5
     },
     {
       "control": "lstick.click",
       "label": "LS",
       "shape": {
         "circle": [
-          714,
-          347,
+          739,
+          327,
           46
         ]
       },
       "anchor": [
-        714,
-        347
+        739,
+        327
       ],
       "callout": "left",
       "group": "lstick",
-      "order": 5
+      "order": 6
     },
     {
       "control": "rstick.x",
       "label": "RS",
       "shape": {
         "circle": [
-          1186,
-          542,
+          1170,
+          499,
           76
         ]
       },
       "anchor": [
-        1186,
-        542
+        1170,
+        499
       ],
       "callout": "right",
       "analog": {
@@ -149,183 +166,166 @@
         "radius": 47
       },
       "group": "rstick",
-      "order": 6
+      "order": 7
     },
     {
       "control": "rstick.click",
       "label": "RS",
       "shape": {
         "circle": [
-          1186,
-          542,
+          1170,
+          499,
           46
         ]
       },
       "anchor": [
-        1186,
-        542
+        1170,
+        499
       ],
       "callout": "right",
       "group": "rstick",
-      "order": 7
+      "order": 8
     },
     {
       "control": "dpad.up",
       "label": "D-pad",
       "shape": {
         "rect": [
-          832,
-          455,
+          845,
+          422,
           60,
           56
         ]
       },
       "anchor": [
-        862,
-        483
-      ],
-      "callout": "left",
-      "group": "dpad",
-      "order": 8
-    },
-    {
-      "control": "dpad.down",
-      "label": "D-pad",
-      "shape": {
-        "rect": [
-          832,
-          572,
-          60,
-          56
-        ]
-      },
-      "anchor": [
-        862,
-        600
+        876,
+        450
       ],
       "callout": "left",
       "group": "dpad",
       "order": 9
     },
     {
-      "control": "dpad.left",
+      "control": "dpad.down",
       "label": "D-pad",
       "shape": {
         "rect": [
-          776,
-          512,
-          56,
-          60
+          845,
+          539,
+          60,
+          56
         ]
       },
       "anchor": [
-        804,
-        542
+        876,
+        567
       ],
       "callout": "left",
       "group": "dpad",
       "order": 10
     },
     {
-      "control": "dpad.right",
+      "control": "dpad.left",
       "label": "D-pad",
       "shape": {
         "rect": [
-          892,
-          512,
+          789,
+          478,
           56,
           60
         ]
       },
       "anchor": [
-        920,
-        542
+        817,
+        509
       ],
       "callout": "left",
       "group": "dpad",
       "order": 11
     },
     {
+      "control": "dpad.right",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          906,
+          478,
+          56,
+          60
+        ]
+      },
+      "anchor": [
+        934,
+        509
+      ],
+      "callout": "left",
+      "group": "dpad",
+      "order": 12
+    },
+    {
       "control": "north",
       "label": "Y",
       "shape": {
         "circle": [
-          1330,
-          271,
-          41
+          1313,
+          254,
+          40
         ]
       },
       "anchor": [
-        1330,
-        271
+        1313,
+        254
       ],
       "callout": "right",
-      "order": 12
+      "order": 13
     },
     {
       "control": "west",
       "label": "X",
       "shape": {
         "circle": [
-          1257,
-          344,
-          41
+          1237,
+          329,
+          40
         ]
       },
       "anchor": [
-        1257,
-        344
+        1237,
+        329
       ],
       "callout": "right",
-      "order": 13
+      "order": 14
     },
     {
       "control": "east",
       "label": "B",
       "shape": {
         "circle": [
-          1403,
-          344,
-          41
+          1388,
+          329,
+          40
         ]
       },
       "anchor": [
-        1403,
-        344
+        1388,
+        329
       ],
       "callout": "right",
-      "order": 14
+      "order": 15
     },
     {
       "control": "south",
       "label": "A",
       "shape": {
         "circle": [
-          1330,
-          418,
-          41
+          1313,
+          405,
+          40
         ]
       },
       "anchor": [
-        1330,
-        418
-      ],
-      "callout": "right",
-      "order": 15
-    },
-    {
-      "control": "guide",
-      "label": "Guide",
-      "shape": {
-        "circle": [
-          1024,
-          241,
-          52
-        ]
-      },
-      "anchor": [
-        1024,
-        241
+        1313,
+        405
       ],
       "callout": "right",
       "order": 16
@@ -335,14 +335,14 @@
       "label": "View",
       "shape": {
         "circle": [
-          938,
-          352,
-          30
+          943,
+          329,
+          27
         ]
       },
       "anchor": [
-        938,
-        352
+        943,
+        329
       ],
       "callout": "left",
       "order": 17
@@ -352,14 +352,14 @@
       "label": "Menu",
       "shape": {
         "circle": [
-          1110,
-          352,
-          30
+          1105,
+          329,
+          27
         ]
       },
       "anchor": [
-        1110,
-        352
+        1105,
+        329
       ],
       "callout": "right",
       "order": 18
@@ -369,15 +369,15 @@
       "label": "Profile",
       "shape": {
         "rect": [
-          992,
-          399,
-          63,
-          29
+          994,
+          372,
+          60,
+          30
         ]
       },
       "anchor": [
         1024,
-        414
+        387
       ],
       "callout": "right",
       "order": 19
@@ -387,14 +387,14 @@
       "label": "P1",
       "shape": {
         "circle": [
-          1160,
-          1152,
-          29
+          1148,
+          1125,
+          20
         ]
       },
       "anchor": [
-        1160,
-        1152
+        1148,
+        1125
       ],
       "callout": "right",
       "order": 20
@@ -404,14 +404,14 @@
       "label": "P2",
       "shape": {
         "circle": [
-          1168,
-          1104,
-          29
+          1172,
+          1063,
+          26
         ]
       },
       "anchor": [
-        1168,
-        1104
+        1172,
+        1063
       ],
       "callout": "right",
       "order": 21
@@ -421,14 +421,14 @@
       "label": "P3",
       "shape": {
         "circle": [
-          888,
-          1152,
-          29
+          900,
+          1125,
+          20
         ]
       },
       "anchor": [
-        888,
-        1152
+        900,
+        1125
       ],
       "callout": "left",
       "order": 22
@@ -438,14 +438,14 @@
       "label": "P4",
       "shape": {
         "circle": [
-          880,
-          1104,
-          29
+          876,
+          1063,
+          26
         ]
       },
       "anchor": [
-        880,
-        1104
+        876,
+        1063
       ],
       "callout": "left",
       "order": 23
