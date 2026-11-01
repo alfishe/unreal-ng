@@ -23,7 +23,8 @@ namespace ttd
 
 namespace
 {
-/// Models whose picture is the ZX screen of one RAM page (step 1 of the plan); the others report `screen` missing
+/// Models whose picture is the ZX screen of one RAM page: a session without the captured screen layouts (loaded
+/// from a file) still finds their screen from the 7FFD latch; the others report `screen` missing there
 bool HasUlaScreen(MEM_MODEL model)
 {
     switch (model)
@@ -47,6 +48,47 @@ constexpr size_t kMaxEvents = 1000;
 
 /// Coverage keys are (page field << 14 | offset) under 2^23 (TTDCoverageIndex::kKeySpaceBits)
 constexpr size_t kCoverageKeySlots = size_t{1} << 23;
+
+/// The frame wrote the picture's bytes: a piece of a layout range changed at checkpoint @p index, and, in machine RAM
+/// with the frame's written keys known (@p keys, sorted: a RAM key is the byte's RAM address), the CPU wrote a byte of
+/// the range there - or wrote nothing in that piece at all (a DMA, a device: the piece is all there is to go by)
+bool WroteScreen(const TimeTravelEngine& engine, size_t index, const std::vector<TTDScreenRange>& layout,
+                 uint32_t ramRegion, const std::vector<TTDCoverageKey>* keys)
+{
+    for (size_t k = 0; k < layout.size();)
+    {
+        const uint32_t region = layout[k].region;
+        size_t end = k;
+        while (end < layout.size() && layout[end].region == region)
+            ++end;
+        if (engine.ChangeCount(index, region) > 0)
+            for (const auto& change : engine.ChangesAt(index, region))
+            {
+                const uint32_t lo = change.first * static_cast<uint32_t>(kTTDPieceSize);
+                const uint32_t hi = lo + static_cast<uint32_t>(kTTDPieceSize);
+                bool overlaps = false;
+                bool cpuInPiece = false;
+                for (size_t r = k; r < end; ++r)
+                {
+                    const uint32_t b = std::max(layout[r].begin, lo);
+                    const uint32_t e = std::min(layout[r].end, hi);
+                    if (b >= e)
+                        continue;
+                    overlaps = true;
+                    if (region != ramRegion || !keys)
+                        return true;
+                    if (std::lower_bound(keys->begin(), keys->end(), b) != std::lower_bound(keys->begin(), keys->end(), e))
+                        return true;   // the CPU wrote a byte of the picture
+                }
+                if (overlaps && region == ramRegion && keys)
+                    cpuInPiece = std::lower_bound(keys->begin(), keys->end(), lo) != std::lower_bound(keys->begin(), keys->end(), hi);
+                if (overlaps && !cpuInPiece)
+                    return true;   // changed by no CPU write: the piece is all there is to go by
+            }
+        k = end;
+    }
+    return false;
+}
 
 const char* MarkerKind(TTDExternalEventKind kind)
 {
@@ -155,11 +197,22 @@ struct FrameFacts
     bool lengthChange = false;
     uint32_t firstDevice = 0;   ///< into the devices list
     uint32_t deviceCount = 0;
+    /// The picture's bytes at the frame's start and, after a mode switch inside it, at its end; the checkpoint that
+    /// holds the frame's changes
+    const std::vector<TTDScreenRange>* layout[2] = {nullptr, nullptr};
+    size_t changesAt = 0;
 };
 
 struct DeviceCount
 {
-    int32_t device;   ///< index into result.devices; -1 - slot: a media slot
+    enum class Kind : uint8_t
+    {
+        Port,     ///< `index` into result.devices: in, out
+        Slot,     ///< into result.media: in = sectors
+        Region    ///< into result.regions: changed in the frame
+    };
+    Kind kind;
+    uint32_t index;
     uint32_t in;
     uint32_t out;
 };
@@ -193,13 +246,19 @@ void SumFrames(const std::vector<FrameFacts>& frames, const std::vector<DeviceCo
         for (uint32_t k = f.firstDevice; k < f.firstDevice + f.deviceCount; ++k)
         {
             const DeviceCount& d = devices[k];
-            if (d.device >= 0)
+            switch (d.kind)
             {
-                into.deviceIn[static_cast<size_t>(d.device)] += d.in;
-                into.deviceOut[static_cast<size_t>(d.device)] += d.out;
+                case DeviceCount::Kind::Port:
+                    into.deviceIn[d.index] += d.in;
+                    into.deviceOut[d.index] += d.out;
+                    break;
+                case DeviceCount::Kind::Slot:
+                    into.mediaSectors[d.index] += d.in;
+                    break;
+                case DeviceCount::Kind::Region:
+                    ++into.regionFrames[d.index];
+                    break;
             }
-            else
-                into.mediaSectors[static_cast<size_t>(-1 - d.device)] += d.in;
         }
     }
 }
@@ -259,8 +318,6 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
     const bool writes = engine.Writes().Size() > 0;
     if (!coverage)
         result.missing.push_back({"coverage", "the coverage index is off"});
-    if (!ulaScreen)
-        result.missing.push_back({"screen", "the screen pages of this model are not mapped yet"});
     if (!writes)
         result.missing.push_back({"writes", "the write journal is off"});
     if (!options.ports)
@@ -279,6 +336,17 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
     const int16_t ula = ports.UlaDevice();
     for (const std::string& slot : engine.MediaReads().SlotNames())
         result.media.push_back({slot, 0});
+    std::vector<uint32_t> deviceRegions;   // engine region index per result.regions
+    for (uint32_t r = 0; r < regions.size(); ++r)
+        if (r != ramRegion)
+        {
+            deviceRegions.push_back(r);
+            result.regions.push_back({regions[r].name, 0});
+        }
+    size_t tapeSlot = SIZE_MAX;
+    for (size_t s = 0; s < engine.MediaSlots().size(); ++s)
+        if (engine.MediaSlots()[s].slot == "tape")
+            tapeSlot = s;
     auto deviceHas = [&](int16_t d, PortTag family) {
         const uint32_t f = static_cast<uint32_t>(family);
         return d >= 0 && (result.devices[static_cast<size_t>(d)].tags & f) == f;
@@ -288,6 +356,9 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
     // journals stood) and the port and media records between them
     std::vector<FrameFacts> frames(frameCount);
     bool haltKnown = true;
+    bool screenKnown = true;
+    const std::vector<TTDScreenRange> ulaLayout[2] = {{{ramRegion, 5u * 0x4000u, 5u * 0x4000u + 6912u}},
+                                                      {{ramRegion, 7u * 0x4000u, 7u * 0x4000u + 6912u}}};
     std::vector<DeviceCount> deviceCounts;
     std::vector<uint32_t> in(result.devices.size());
     std::vector<uint32_t> out(result.devices.size());
@@ -314,6 +385,9 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
         f.cut.halted = next->haltedInterrupts > cp->haltedInterrupts;
         haltKnown = haltKnown && cp->haltKnown && next->haltKnown;
         f.cut.storage = static_cast<uint32_t>(f.sectors);
+        TTDMediaVersion tape;
+        if (tapeSlot != SIZE_MAX && engine.MediaVersionAt(i, tapeSlot, tape))
+            f.cut.tapeIn = tape.contentId != 0;
         if (prev)
         {
             f.borderChange = cp->chipset.border_attr != prev->chipset.border_attr;
@@ -321,15 +395,20 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
             f.lengthChange = next->start - cp->start != cp->start - prev->start;
         }
         if (ramRegion != UINT32_MAX)
-        {
             f.ramPieces = engine.ChangeCount(i + 1, ramRegion);
-            if (ulaScreen && f.ramPieces > 0)
-            {
-                const uint32_t screen = Screen::GetVideoRAMPage(model, cp->chipset.p7FFD) * 4u;
-                for (const auto& change : engine.ChangesAt(i + 1, ramRegion))
-                    f.cut.screen = f.cut.screen || change.first == screen || change.first == screen + 1;
-            }
+        // The picture's bytes at the frame's start (and at its end, after a mode switch inside it); a session without
+        // the captured layouts finds a ULA model's screen from the 7FFD latch
+        f.changesAt = i + 1;
+        f.layout[0] = engine.ScreenLayoutOf(*cp);
+        if (f.layout[0])
+        {
+            const std::vector<TTDScreenRange>* after = engine.ScreenLayoutOf(*next);
+            f.layout[1] = after == f.layout[0] ? nullptr : after;
         }
+        else if (ulaScreen && ramRegion != UINT32_MAX)
+            f.layout[0] = &ulaLayout[Screen::GetVideoRAMPage(model, cp->chipset.p7FFD) == 7 ? 1 : 0];
+        else
+            screenKnown = false;
         f.firstDevice = static_cast<uint32_t>(deviceCounts.size());
         for (uint64_t k = cp->mediaReadCursor; k < next->mediaReadCursor && k < engine.MediaReads().Size(); ++k)
         {
@@ -340,7 +419,7 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
         for (size_t m = 0; m < slotSectors.size(); ++m)
             if (slotSectors[m])
             {
-                deviceCounts.push_back({-1 - static_cast<int32_t>(m), slotSectors[m], 0});
+                deviceCounts.push_back({DeviceCount::Kind::Slot, static_cast<uint32_t>(m), slotSectors[m], 0});
                 slotSectors[m] = 0;
             }
         if (options.ports)
@@ -379,14 +458,20 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
                         f.cut.sound += out[d];
                     if (deviceHas(dev, PortTag::Network))
                         f.cut.net += in[d] + out[d];
-                    deviceCounts.push_back({static_cast<int32_t>(d), in[d], out[d]});
+                    deviceCounts.push_back({DeviceCount::Kind::Port, static_cast<uint32_t>(d), in[d], out[d]});
                     in[d] = out[d] = 0;
                 }
             f.cut.sound += f.beeperToggles;
         }
+        for (size_t r = 0; r < deviceRegions.size(); ++r)
+            if (engine.ChangeCount(i + 1, deviceRegions[r]) > 0)
+                deviceCounts.push_back({DeviceCount::Kind::Region, static_cast<uint32_t>(r), 1, 0});
         f.deviceCount = static_cast<uint32_t>(deviceCounts.size()) - f.firstDevice;
         prev = cp;
     }
+    if (!screenKnown)
+        result.missing.push_back({"screen", "the session was loaded from a file, which does not keep this model's "
+                                            "screen layouts"});
     if (!haltKnown)
     {
         result.missing.push_back({"halt", "the session was loaded from a file, which does not keep the HALT waits"});
@@ -398,11 +483,21 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
     };
 
     // Coverage: distinct written keys per frame (what a burst is measured by)
+    // and which bytes of the picture it wrote
     std::vector<TTDCoverageKey> frameKeys;
-    if (coverage)
-        for (size_t i = 0; i < frameCount; ++i)
-            if (_coverageIndex.GetFrameKeys(TTDCoverageKind::Written, fromFrame + i, frameKeys))
-                frames[i].cut.written = static_cast<uint32_t>(frameKeys.size());
+    for (size_t i = 0; i < frameCount; ++i)
+    {
+        FrameFacts& f = frames[i];
+        const bool keys = coverage && _coverageIndex.GetFrameKeys(TTDCoverageKind::Written, fromFrame + i, frameKeys);
+        if (keys)
+        {
+            f.cut.written = static_cast<uint32_t>(frameKeys.size());
+            std::sort(frameKeys.begin(), frameKeys.end());
+        }
+        for (const std::vector<TTDScreenRange>* layout : f.layout)
+            if (layout && !f.cut.screen)
+                f.cut.screen = WroteScreen(engine, f.changesAt, *layout, ramRegion, keys ? &frameKeys : nullptr);
+    }
 
     // The write journal, where it was on: a write at machine time t belongs to the frame whose start is before it
     if (writes)
@@ -527,6 +622,7 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
         b.deviceIn.assign(result.devices.size(), 0);
         b.deviceOut.assign(result.devices.size(), 0);
         b.mediaSectors.assign(result.media.size(), 0);
+        b.regionFrames.assign(result.regions.size(), 0);
         SumFrames(frames, deviceCounts, static_cast<size_t>(b.frameStart - fromFrame),
                   static_cast<size_t>(b.frameEnd - fromFrame), b);
         for (const auto& [frame, key] : keyDowns)

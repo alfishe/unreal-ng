@@ -4635,6 +4635,41 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
         in.haltedInterrupts = z80->interruptsAcceptedHalted;
         in.haltKnown = true;
     }
+    // The memory the picture is read from at this boundary (the timeline's `screen` tag)
+    if (const Screen* screen = _context->pScreen)
+    {
+        screen->DescribeDisplayedMemory(_shadowScreenSpans);
+        _shadowScreenRanges.clear();
+        const std::vector<TTDRegionDesc>& regions = engine.Regions();
+        for (const ScreenMemorySpan& span : _shadowScreenSpans)
+        {
+            uint32_t region = 0;
+            while (region < regions.size() &&
+                   !(span.region ? regions[region].name == span.region
+                                 : regions[region].id < TTDRegionId::DeviceStateFirst && regions[region].name == "ram"))
+                ++region;
+            if (region == regions.size() || span.offset >= regions[region].bytes)
+                continue;   // memory this session does not record
+            const uint32_t bytes = std::min(span.bytes, regions[region].bytes - span.offset);
+            _shadowScreenRanges.push_back({region, span.offset, span.offset + bytes});
+        }
+        std::sort(_shadowScreenRanges.begin(), _shadowScreenRanges.end(),
+                  [](const TTDScreenRange& a, const TTDScreenRange& b) {
+                      return a.region != b.region ? a.region < b.region : a.begin < b.begin;
+                  });
+        // Overlapping or touching ranges merge: a layout compares and searches as few ranges as it has
+        size_t kept = 0;
+        for (size_t k = 0; k < _shadowScreenRanges.size(); ++k)
+        {
+            const TTDScreenRange r = _shadowScreenRanges[k];
+            if (kept > 0 && _shadowScreenRanges[kept - 1].region == r.region && r.begin <= _shadowScreenRanges[kept - 1].end)
+                _shadowScreenRanges[kept - 1].end = std::max(_shadowScreenRanges[kept - 1].end, r.end);
+            else
+                _shadowScreenRanges[kept++] = r;
+        }
+        _shadowScreenRanges.resize(kept);
+        in.screen = &_shadowScreenRanges;
+    }
     // Device states, raw, as the capture serialized them; a device whose
     // state also carries its region memory (General Sound) gives the engine
     // its state without that memory (CaptureNow took both)

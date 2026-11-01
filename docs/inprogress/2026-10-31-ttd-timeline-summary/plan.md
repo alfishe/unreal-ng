@@ -23,7 +23,7 @@ S1 is a synthetic program, generic (no game): a Pentagon program whose phases ar
 
 | Phase | The program does | The facts that must show |
 |-------|------------------|--------------------------|
-| A | polls EAR in a tight IN loop (a loader's edge loop), no tape marker: the rate alone must tell | `tape`, `ula_reads` |
+| A | polls EAR in a tight IN loop (a loader's edge loop), no tape in the deck: a poll, no `tape` tag (the rate with a tape in: `ttdtimeline_tape_test.cpp`) | `ula_reads` high, no `tape` |
 | B | fills 16 KB of RAM with a computed pattern by LDIR (an unpacker) | `burst`, `written` high |
 | C | HALT-paced loop polling the keyboard; the test presses keys | `halt`; `keys` named in the phase facts |
 | D | per frame: writes AY registers, toggles the beeper, redraws part of the screen, pages 7FFD | `sound`, `screen`, `paging` |
@@ -93,5 +93,20 @@ table and the cost breakdown are in [design.md §6](design.md#6-costs).
   now the one play of every plane: it queues the play for a tape on its way and starts it when the tape lands
   (`timetravelcontroller_tapeload_test.cpp`).
 
-Progress: steps 1, 2, 3, 5 and G done (S1 tests green, `PhasesDoNotDependOnTheBuckets` added); 4 (every other
-machine and peripheral) next.
+- Step 4, the `screen` fact on every video family (`scratch/ttd-timeline/models_sweep.py`: a fresh machine of each
+  corpus model, 100 recorded frames past its boot, the local Mac on 2026-11-01). The first cut compared 4 KB pieces
+  and counted all 100 frames as `screen` on 48K, +2, +2A and Pentagon: the ROM's FRAMES counter (#5C78) shares a
+  piece with the attributes. Byte exact (design §5) they count 0 frames, which is what their idle boot screens do.
+  The others: +3 12, Scorpion 9, Prof. Scorpion 10, ATM710 0, ATM450 11, ATM3 100 (its picture changes every frame:
+  the screen digest differs on each of 20 frames, `scratch/ttd-timeline/screen_changes.py`), Profi 2, Profi 3 5,
+  TS-Conf 2, TS-Conf VDAC2 2, Sprinter 3, Next 5. `missing[]` on every model holds only `writes` (the journal is off
+  by default); the query takes 0.5-8 ms for the 100 frames.
+- Found by the sweep: the Next firmware menu polls #FE 3,000 times a frame with no tape anywhere, which the read rate
+  alone tagged `tape`. The reads count as tape only while a tape is in the deck (the session's media versions of the
+  `tape` slot). Any tape in the deck starts by itself once a loader listens (the tape's sustained-poll start), so
+  with a tape in the reads matter only for a recording started while the tape already played; S1 phase A runs with
+  no tape and is no tape phase now, the rule is covered by `ttdtimeline_tape_test.cpp`.
+
+Progress: steps 1, 2, 3, 5 and G done (S1 tests green, `PhasesDoNotDependOnTheBuckets` added); step 4: the screen
+layouts of every video family done (`screendisplayedmemory_test.cpp`, `ttdtimeline_screen_test.cpp`); the devices,
+media slots and cards with their own CPU on every model next.

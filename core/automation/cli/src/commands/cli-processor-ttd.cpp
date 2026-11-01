@@ -1645,6 +1645,8 @@ void CLIProcessor::HandleTTDTimeline(const ClientSession& session, EmulatorConte
         {
             if (const StateNode* slot = dev.find("slot"))
                 ss << "; " << slot->s << " " << dev.find("sectors")->i << " sectors";
+            else if (const StateNode* region = dev.find("region"))
+                ss << "; " << region->s << " changed " << dev.find("frames")->i << " fr";
             else if (static_cast<size_t>(dev.find("device")->i) < devices.size())
                 ss << "; " << devices[static_cast<size_t>(dev.find("device")->i)].find("name")->s << " in "
                    << dev.find("in")->i << " out " << dev.find("out")->i;

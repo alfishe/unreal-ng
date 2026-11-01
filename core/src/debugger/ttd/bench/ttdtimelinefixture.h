@@ -5,7 +5,8 @@
 /// plan.md S1), recorded on a Pentagon. Shared by core-tests and core-benchmarks, so both measure the same session.
 ///
 /// The program cycles through four phases of a fixed number of frames each (an IM 2 handler counts the frames):
-///   A  "tape"   a tight IN loop on the ULA port, about 2,000 reads a frame (a loader's edge loop)
+///   A  "tape"   a tight IN loop on the ULA port, about 2,000 reads a frame (a loader's edge loop; no tape is in
+///               the deck, so the timeline tags it no `tape`: a poll)
 ///   B  "burst"  fills 16 KB at #C000 again and again with a new value (an unpacker)
 ///   C  "idle"   HALT, then scans the eight keyboard half-rows once a frame; the fixture presses a key in it
 ///   D  "game"   once a frame: AY register writes, a beeper toggle, 256 screen bytes, a 7FFD page switch

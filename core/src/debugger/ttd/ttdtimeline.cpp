@@ -71,7 +71,7 @@ std::vector<TTDTimelinePhase> CutTimelinePhases(const std::vector<TTDTimelineFra
     std::nth_element(written.begin(), written.begin() + static_cast<std::ptrdiff_t>(n / 2), written.end());
     const uint64_t median = written[n / 2];
     const Prefix pWritten(n, [&](size_t i) { return frames[i].written; });
-    const Prefix pUla(n, [&](size_t i) { return frames[i].ulaReads; });
+    const Prefix pUla(n, [&](size_t i) { return frames[i].tapeIn ? frames[i].ulaReads : 0u; });
     const Prefix pTape(n, [&](size_t i) { return frames[i].tape ? 1u : 0u; });
     const Prefix pDisk(n, [&](size_t i) { return frames[i].storage > 0 || frames[i].diskWritten ? 1u : 0u; });
     const Prefix pNet(n, [&](size_t i) { return frames[i].net > 0 ? 1u : 0u; });

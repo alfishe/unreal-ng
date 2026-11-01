@@ -19,7 +19,7 @@ namespace ttd
 /// What a bucket's machine did (design.md §4); a phase is a run of buckets with the same set
 enum TTDTimelineTag : uint32_t
 {
-    kTimelineTape = 1u << 0,    ///< a tape plays, or the ULA is read as fast as a loader's edge loop
+    kTimelineTape = 1u << 0,    ///< a tape plays, or, with a tape in, the ULA is read as fast as a loader's edge loop
     kTimelineDisk = 1u << 1,    ///< sectors read, storage ports used, or a disk written
     kTimelineInput = 1u << 2,   ///< keys, joystick, mouse (an event: it marks a phase, it does not cut one)
     kTimelineNet = 1u << 3,     ///< network ports or network events
@@ -76,6 +76,9 @@ struct TTDTimelineBucket
     std::vector<uint64_t> deviceIn;    ///< per TTDTimelineResult::devices
     std::vector<uint64_t> deviceOut;
     std::vector<uint64_t> mediaSectors;   ///< per TTDTimelineResult::media
+    /// Per TTDTimelineResult::regions: the frames whose checkpoint found the region changed (a card's own CPU or DMA,
+    /// a video RAM, a font: memory, so no clock field moves it)
+    std::vector<uint32_t> regionFrames;
     // Write journal (when on)
     uint64_t writes = 0;
     // Markers in the bucket
@@ -98,6 +101,9 @@ struct TTDTimelineFrame
     bool paging = false;
     bool input = false;
     bool tape = false;            ///< a tape played
+    /// A tape was in the deck at the frame's start (true when the session does not know the tape slot): an edge
+    /// loop's ULA reads count as tape only then, else they are a program polling the keyboard
+    bool tapeIn = true;
     bool diskWritten = false;
 };
 
@@ -152,6 +158,7 @@ struct TTDTimelineResult
     std::vector<TTDTimelineMissing> missing;
     std::vector<TTDTimelineDevice> devices;
     std::vector<TTDTimelineDevice> media;
+    std::vector<TTDTimelineDevice> regions;   ///< the session's device memory regions (all but machine RAM)
     // What the call cost
     uint64_t portRecords = 0;
     uint64_t elapsedNs = 0;

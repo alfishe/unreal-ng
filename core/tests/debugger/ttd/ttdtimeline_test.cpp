@@ -173,8 +173,14 @@ TEST_F(TTDTimeline_Test, PhasesFollowTheScript)
         switch (script.kind)
         {
             case Kind::Tape:
-                EXPECT_TRUE(tags & ttd::kTimelineTape) << got;
-                EXPECT_FALSE(tags & (ttd::kTimelineHalt | ttd::kTimelineSound | ttd::kTimelineBurst)) << got;
+                // The edge loop runs with no tape in the deck: the reads alone are a program polling #FE, no tape
+                // phase (TTDTimelineTape_Test covers a tape in the deck); the phase still stands apart by its reads
+                EXPECT_FALSE(tags & (ttd::kTimelineTape | ttd::kTimelineHalt | ttd::kTimelineSound |
+                                     ttd::kTimelineBurst))
+                    << got;
+                EXPECT_GE(PhaseAt(r, (script.firstFrame + script.endFrame) / 2)->facts.ulaReads,
+                          200u * (script.endFrame - script.firstFrame) / 2)
+                    << got;
                 break;
             case Kind::Burst:
                 EXPECT_TRUE(tags & ttd::kTimelineBurst) << got;

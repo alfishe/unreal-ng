@@ -6534,6 +6534,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             for (const Json::Value& d : p["devices"])
                                 if (d.isMember("slot"))
                                     out << "; " << d["slot"].asString() << " " << d["sectors"].asUInt64() << " sectors";
+                                else if (d.isMember("region"))
+                                    out << "; " << d["region"].asString() << " changed " << d["frames"].asUInt64()
+                                        << " fr";
                                 else if (d["device"].asUInt() < devices.size())
                                     out << "; " << devices[d["device"].asUInt()]["name"].asString() << " in "
                                         << d["in"].asUInt64() << " out " << d["out"].asUInt64();

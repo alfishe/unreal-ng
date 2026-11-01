@@ -74,6 +74,12 @@ public:
     void RenderOnlyMainScreen() override;
     void FillBorderWithColor(uint8_t color) override;
     ScreenState DescribeScreenState() const override;
+    /// The picture reads the video RAM only (the Spectrum mode too, through its ZX-40 squares), and every 4 KB of it
+    /// holds picture, mode-table and palette bytes: the whole "sprinter.vram" region
+    void DescribeDisplayedMemory(std::vector<ScreenMemorySpan>& out) const override
+    {
+        out.assign({{"sprinter.vram", 0, 0x40000}});
+    }
     BeamPosition DescribeBeam(uint32_t tInFrame) const override;
     const void* VideoFamilyView() const override;
     void CaptureFamilyLatches(videomap::VideoLatches& latches) const override;

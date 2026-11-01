@@ -299,6 +299,45 @@ uint32_t ScreenNext::LineEndT(unsigned y) const
     return GridFirstT() + (y + 1) * _rasterState.tstatesPerLine;
 }
 
+void ScreenNext::DescribeDisplayedMemory(std::vector<ScreenMemorySpan>& out) const
+{
+    out.clear();
+    PortDecoder_Next* decoder = Decoder();
+    if (!decoder)
+        return Screen::DescribeDisplayedMemory(out);
+    NextBoard& board = decoder->Board();
+    auto nr = [&](uint8_t r) { return board.Stored(r); };
+    auto bank = [&](uint32_t b, uint32_t offset, uint32_t bytes) { out.push_back({nullptr, b * 0x4000u + offset, bytes}); };
+    const bool shadow = _state && (_state->p7FFD & 0x08);
+    if ((nr(0x68) & 0x80) == 0)   // the ULA layer is on (NextVideoRenderer::UlaLine)
+    {
+        const uint8_t timex = shadow ? 0 : static_cast<uint8_t>(board.Video().PortFf() & 0x07);
+        if (shadow)
+            bank(7, 0, 6912);
+        else if (timex == 0)
+            bank(5, 0, 6912);
+        else if (timex == 1)
+            bank(5, 0x2000, 6912);   // the second display file
+        else
+        {
+            bank(5, 0x0000, 0x1800);   // hi-colour, hi-res: the pixels and the second file
+            bank(5, 0x2000, 0x1800);
+        }
+    }
+    if (nr(0x15) & 0x80)          // LoRes (and Radastan) read bank 5
+        bank(5, 0, 0x4000);
+    if (board.Video().Layer2Enabled())   // 256 x 192 with its scroll: 64 KB; 320 / 640 x 256: 80 KB
+        bank(nr(0x12) & 0x7Fu, 0, ((nr(0x70) >> 4) & 0x03) == 0 ? 0x10000u : 0x14000u);
+    if (nr(0x6B) & 0x80)          // the tilemap: map and definitions, each in bank 5 or the 8K of bank 7
+        for (const uint8_t base : {nr(0x6E), nr(0x6F)})
+        {
+            if (base & 0x80)
+                bank(7, 0, 0x2000);
+            else
+                bank(5, 0, 0x4000);
+        }
+}
+
 uint64_t ScreenNext::CopperClock(uint32_t tstate) const
 {
     // The copper's lines count from the first paper line; its horizontal 0 is 11 pixels before the first paper pixel. In 7 MHz counts the map

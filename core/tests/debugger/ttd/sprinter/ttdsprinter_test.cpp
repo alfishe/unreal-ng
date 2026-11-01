@@ -622,6 +622,31 @@ TEST_F(TTDSprinterMachine_Test, AReplayAfterASeekReadsTheRecordedSectorsNotTheIm
     ASSERT_TRUE(info.has_value());
     ASSERT_TRUE(info->dirty) << "MD wrote the disk\n" << ScreenText();
 
+    // The timeline counts the recorded sector reads per media slot (TD-5): the hard disk is read from the host, so
+    // its reads are the session's; all of them belong to it
+    {
+        ttd::TTDTimelineOptions o;
+        o.ports = false;
+        const ttd::TTDTimelineResult tl = _ttd->QueryTimeline(o);
+        ASSERT_TRUE(tl.error.empty()) << tl.error;
+        const auto slot = std::find_if(tl.media.begin(), tl.media.end(),
+                                       [](const ttd::TTDTimelineDevice& m) { return m.name == "ide0.master"; });
+        ASSERT_NE(slot, tl.media.end());
+        const size_t m = static_cast<size_t>(slot - tl.media.begin());
+        uint64_t slotSectors = 0, sectors = 0;
+        bool disk = false;
+        for (const ttd::TTDTimelinePhase& p : tl.phases)
+        {
+            if (m < p.facts.mediaSectors.size())
+                slotSectors += p.facts.mediaSectors[m];
+            sectors += p.facts.sectors;
+            disk = disk || (p.tags & ttd::kTimelineDisk);
+        }
+        EXPECT_GT(slotSectors, 0u);
+        EXPECT_EQ(slotSectors, sectors) << "one medium read";
+        EXPECT_TRUE(disk) << "the DSS boot is a disk phase";
+    }
+
     // Before running on, a throwaway replay elsewhere (a frame-cache build of a later frame): the run continues from
     // checkpoint 0's place in the journals, not from where that replay left them
     const uint64_t later = _ttd->GetCheckpoint(_ttd->GetCheckpointCount() - 5)->time.frame;

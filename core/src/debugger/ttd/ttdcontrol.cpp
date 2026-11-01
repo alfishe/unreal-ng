@@ -2395,6 +2395,14 @@ StateNode TimelineFactsNode(const TTDTimelineResult& result, const TTDTimelineBu
             dev["sectors"] = b.mediaSectors[m];
             devices.push(dev);
         }
+    for (size_t r = 0; r < result.regions.size() && r < b.regionFrames.size(); ++r)
+        if (b.regionFrames[r] > 0)
+        {
+            StateNode dev = StateNode::Object();
+            dev["region"] = result.regions[r].name;
+            dev["frames"] = static_cast<uint64_t>(b.regionFrames[r]);
+            devices.push(dev);
+        }
     node["devices"] = devices;
     return node;
 }
