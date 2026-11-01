@@ -4,7 +4,7 @@
 Each image is a line drawing in the 2048 x 1536 design space, written as data/controllers/images/<set>/front.svg,
 with front.hotspots.json (schema 1) and provenance.json. The pads and the DB9 sticks are drawn by POC 033
 (tools/poc/033-vector-controller-pictures/generate.py); this script keeps the sets that have no vector picture yet
-(md6-pad, surface-dial, generic-keyboard). The drawing is ours, so the provenance says so.
+(surface-dial, steam-deck, generic-keyboard). The drawing is ours, so the provenance says so.
 Run from anywhere: python3 tools/controllers/make_fallback_images.py [--check]
 --check exits 1 when a written file would differ (the files are generated, not edited by hand).
 """
@@ -51,28 +51,6 @@ def dpad(cx, cy, size, side, prefix="dpad", label="D-pad"):
         spots.append(spot)
         svgs.append(svg)
     svgs.append(f'<rect x="{cx - arm // 2}" y="{cy - arm // 2}" width="{arm}" height="{arm}" fill="{KEY}"/>')
-    return spots, svgs
-
-
-def md6():
-    spots, svgs = [], []
-    svgs.append(f'<path d="M480 600 Q1024 480 1568 600 Q1760 700 1700 1000 Q1640 1200 1400 1120 L648 1120 '
-                f'Q408 1200 348 1000 Q288 700 480 600 Z" fill="{BODY}" stroke="{EDGE}" stroke-width="8"/>')
-    s, v = dpad(640, 860, 300, "left", prefix="", label="D-pad")
-    for spot in s:
-        spot["control"] = spot["control"].lstrip(".")
-        spot["group"] = "directions"
-    spots += s
-    svgs += v
-    for control, cx, cy in (("a", 1240, 960), ("b", 1380, 920), ("c", 1520, 880), ("x", 1220, 800), ("y", 1360, 760),
-                            ("z", 1500, 720)):
-        spot, svg = circle(control, control.upper(), cx, cy, 56, "right")
-        spots.append(spot)
-        svgs.append(svg)
-    for control, label, cx in (("start", "Start", 1024), ("mode", "Mode", 1500)):
-        spot, svg = rect(control, label, cx - 70, 640 if control == "start" else 560, 140, 44, "right", rx=22)
-        spots.append(spot)
-        svgs.append(svg)
     return spots, svgs
 
 
@@ -256,7 +234,6 @@ def escape(text):
 
 
 SETS = {
-    "md6-pad": md6,
     "surface-dial": surface_dial,
     "steam-deck": steam_deck,
     "generic-keyboard": keyboard,

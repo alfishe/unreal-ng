@@ -8,215 +8,214 @@
   ],
   "controls": [
     {
-      "control": "up",
-      "label": "D-pad",
+      "control": "mode",
+      "label": "Mode",
       "shape": {
-        "rect": [
-          590,
-          710,
-          100,
-          100
+        "circle": [
+          1457,
+          586,
+          38
         ]
       },
       "anchor": [
-        640,
-        760
+        1457,
+        586
       ],
-      "callout": "left",
-      "group": "directions",
+      "callout": "right",
       "order": 0
     },
     {
-      "control": "down",
-      "label": "D-pad",
+      "control": "up",
+      "label": "Up",
       "shape": {
         "rect": [
-          590,
-          910,
-          100,
-          100
+          687,
+          628,
+          65,
+          69
         ]
       },
       "anchor": [
-        640,
-        960
+        720,
+        662
       ],
       "callout": "left",
       "group": "directions",
       "order": 1
     },
     {
-      "control": "left",
-      "label": "D-pad",
+      "control": "down",
+      "label": "Down",
       "shape": {
         "rect": [
-          490,
-          810,
-          100,
-          100
+          687,
+          762,
+          65,
+          69
         ]
       },
       "anchor": [
-        540,
-        860
+        720,
+        796
       ],
       "callout": "left",
       "group": "directions",
       "order": 2
     },
     {
-      "control": "right",
-      "label": "D-pad",
+      "control": "left",
+      "label": "Left",
       "shape": {
         "rect": [
-          690,
-          810,
-          100,
-          100
+          618,
+          697,
+          69,
+          65
         ]
       },
       "anchor": [
-        740,
-        860
+        652,
+        729
       ],
       "callout": "left",
       "group": "directions",
       "order": 3
     },
     {
-      "control": "a",
-      "label": "A",
+      "control": "right",
+      "label": "Right",
       "shape": {
-        "circle": [
-          1240,
-          960,
-          56
+        "rect": [
+          752,
+          697,
+          69,
+          65
         ]
       },
       "anchor": [
-        1240,
-        960
+        787,
+        729
       ],
-      "callout": "right",
+      "callout": "left",
+      "group": "directions",
       "order": 4
-    },
-    {
-      "control": "b",
-      "label": "B",
-      "shape": {
-        "circle": [
-          1380,
-          920,
-          56
-        ]
-      },
-      "anchor": [
-        1380,
-        920
-      ],
-      "callout": "right",
-      "order": 5
-    },
-    {
-      "control": "c",
-      "label": "C",
-      "shape": {
-        "circle": [
-          1520,
-          880,
-          56
-        ]
-      },
-      "anchor": [
-        1520,
-        880
-      ],
-      "callout": "right",
-      "order": 6
-    },
-    {
-      "control": "x",
-      "label": "X",
-      "shape": {
-        "circle": [
-          1220,
-          800,
-          56
-        ]
-      },
-      "anchor": [
-        1220,
-        800
-      ],
-      "callout": "right",
-      "order": 7
-    },
-    {
-      "control": "y",
-      "label": "Y",
-      "shape": {
-        "circle": [
-          1360,
-          760,
-          56
-        ]
-      },
-      "anchor": [
-        1360,
-        760
-      ],
-      "callout": "right",
-      "order": 8
-    },
-    {
-      "control": "z",
-      "label": "Z",
-      "shape": {
-        "circle": [
-          1500,
-          720,
-          56
-        ]
-      },
-      "anchor": [
-        1500,
-        720
-      ],
-      "callout": "right",
-      "order": 9
     },
     {
       "control": "start",
       "label": "Start",
       "shape": {
         "rect": [
-          954,
-          640,
-          140,
-          44
+          971,
+          683,
+          107,
+          41
         ]
       },
       "anchor": [
         1024,
-        662
+        704
+      ],
+      "callout": "right",
+      "order": 5
+    },
+    {
+      "control": "a",
+      "label": "A",
+      "shape": {
+        "circle": [
+          1227,
+          830,
+          54
+        ]
+      },
+      "anchor": [
+        1227,
+        830
+      ],
+      "callout": "right",
+      "order": 6
+    },
+    {
+      "control": "b",
+      "label": "B",
+      "shape": {
+        "circle": [
+          1334,
+          771,
+          54
+        ]
+      },
+      "anchor": [
+        1334,
+        771
+      ],
+      "callout": "right",
+      "order": 7
+    },
+    {
+      "control": "c",
+      "label": "C",
+      "shape": {
+        "circle": [
+          1451,
+          740,
+          54
+        ]
+      },
+      "anchor": [
+        1451,
+        740
+      ],
+      "callout": "right",
+      "order": 8
+    },
+    {
+      "control": "x",
+      "label": "X",
+      "shape": {
+        "circle": [
+          1186,
+          704,
+          40
+        ]
+      },
+      "anchor": [
+        1186,
+        704
+      ],
+      "callout": "right",
+      "order": 9
+    },
+    {
+      "control": "y",
+      "label": "Y",
+      "shape": {
+        "circle": [
+          1285,
+          658,
+          40
+        ]
+      },
+      "anchor": [
+        1285,
+        658
       ],
       "callout": "right",
       "order": 10
     },
     {
-      "control": "mode",
-      "label": "Mode",
+      "control": "z",
+      "label": "Z",
       "shape": {
-        "rect": [
-          1430,
-          560,
-          140,
-          44
+        "circle": [
+          1387,
+          632,
+          40
         ]
       },
       "anchor": [
-        1500,
-        582
+        1387,
+        632
       ],
       "callout": "right",
       "order": 11

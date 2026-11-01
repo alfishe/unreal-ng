@@ -1,7 +1,7 @@
 # Proposal
 
 1. **Adopt** the generator as the source of the bundled controller pictures (controller manager C5). `generate.py`
-   owns the pad and DB9 sets; `tools/controllers/make_fallback_images.py` keeps md6-pad, surface-dial and
+   owns the pad and DB9 sets; `tools/controllers/make_fallback_images.py` keeps surface-dial, steam-deck and
    generic-keyboard until they are drawn here too. `devices.json` points xbox-series, xbox-one, xbox-one-s,
    xbox-elite-2, dualsense and switch-pro at their own sets; the other families keep the generic pad.
 2. **Next devices**, same way: DualSense Edge (back buttons), DualShock 3, Xbox 360, Elite 1, Joy-Con, 8BitDo Ultimate
