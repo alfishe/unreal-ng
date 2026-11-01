@@ -16,20 +16,20 @@
           "retrieved": "2026-10-23"
         },
         {
-          "what": "front: the cross D-pad on its dish with ticks, metal stick collars, the profile button under View / Menu, three profile lights right of the D-pad, rubber grips, metal bumpers",
-          "source": "https://commons.wikimedia.org/wiki/File:Xbox_One_Elite_Wireless_Controller_Series_2_(Model_1797).jpg",
-          "author": "mliu92",
-          "licence": "CC BY-SA 2.0",
-          "use": "reference only, not traced",
-          "retrieved": "2026-10-23"
+          "what": "the outline (trace.py, the half mirrored, overlap 0.995) and the control positions, scaled to 153 mm; front: the faceted D-pad (nine flat facets on a 3 x 3 grid), the cross on its dish with ticks, the stick collars, the profile key under View / Menu, the three profile lights between the D-pad and the right stick, rubber grips, the bumpers and the top strip",
+          "source": "https://www.xbox.com/en-US/accessories/controllers/elite-wireless-controller-series-2 (999666_Buy-Box-Image-0_2)",
+          "author": "Microsoft",
+          "licence": "product render",
+          "use": "measured geometry only (trace.py outline, positions); no pixels shipped",
+          "retrieved": "2026-11-01"
         },
         {
-          "what": "back: the four paddles P1-P4 (P1 / P2 on the right hand, upper / lower), the trigger stops",
+          "what": "back: the four paddles P1-P4 (P1 / P2 on the right hand, upper / lower), the trigger stops, the charging contacts",
           "source": "https://commons.wikimedia.org/wiki/File:Xbox_One_Elite_Wireless_Controller_Series_2_(Model_1797)_-_underside.jpg",
           "author": "mliu92",
           "licence": "CC BY-SA 2.0",
           "use": "reference only, not traced",
-          "retrieved": "2026-10-23",
+          "retrieved": "2026-11-01",
           "note": "drawn as the pad turned over towards the viewer (triggers at the bottom), so the right hand's paddles stay on the right; positions estimated to about 2 mm"
         },
         {
