@@ -62,7 +62,8 @@ def md6():
     style.sheen(view, d)
     # the raised bridge on the top edge where the cord comes out
     bridge = (f"M{num(-26.0)},{num(-31.8)}C{num(-14.0)},{num(-35.4)} {num(14.0)},{num(-35.4)} {num(26.0)},{num(-31.8)}"
-              f"L{num(22.6)},{num(-28.6)}C{num(10.0)},{num(-31.0)} {num(-10.0)},{num(-31.0)} {num(-22.6)},{num(-28.6)}Z")
+              f"L{num(22.6)},{num(-28.6)}C{num(10.0)},{num(-31.0)} {num(-10.0)},{num(-31.0)} "
+              f"{num(-22.6)},{num(-28.6)}Z")
     view.add("case", f'<path d="{bridge}" fill="{colors["bridge"]}" stroke="{style.rim_of(colors["body"])}" '
                      f'stroke-width="0.25"/>')
     # two glossy dishes: round under the D-pad, wider under the six buttons; a lighter lip on their lower edge
@@ -73,8 +74,8 @@ def md6():
         view.add("case", f'<path d="{circle_d(cx, cy, r - 1.4)}" fill="none" stroke="{lip}" stroke-width="1.4"/>')
     # the D-pad: a disc with the cross moulded in, arrows in the corners
     cx, cy = -35.4, -4.5
-    disc = view.defs.radial([(0, shade(colors["dpad"], 0.94)), (0.82, colors["dpad"]), (1, shade(colors["dpad"], 1.12))],
-                            r=0.5)
+    disc = view.defs.radial([(0, shade(colors["dpad"], 0.94)), (0.82, colors["dpad"]),
+                             (1, shade(colors["dpad"], 1.12))], r=0.5)
     view.add("controls", f'<path d="{circle_d(cx, cy, 15.4)}" fill="{disc}" stroke="{style.rim_of(colors["dpad"])}" '
                          f'stroke-width="0.25"/>', "dpad")
     span, arm = 23.6, 7.6
