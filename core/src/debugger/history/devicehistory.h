@@ -277,6 +277,7 @@ public:
         std::lock_guard lock(_mutex);
         FlushOpen();
         _stream.Close();
+        SetOn(false);
     }
 
     /// The whole cost of an off history on the device's path
@@ -370,7 +371,7 @@ public:
             _records.reserve(_capacity);
         }
         _paused = false;
-        _on.store(_config.mode != Mode::Off, std::memory_order_relaxed);
+        SetOn(_config.mode != Mode::Off);
         return true;
     }
 
@@ -378,7 +379,14 @@ public:
     {
         std::lock_guard lock(_mutex);
         _paused = paused;
-        _on.store(_config.mode != Mode::Off && !_paused, std::memory_order_relaxed);
+        SetOn(_config.mode != Mode::Off && !_paused);
+    }
+
+    /// A group of histories behind one test (the port histories of a machine): `counter` counts the ones that are on.
+    /// Set before any configuration
+    void CountOnIn(std::atomic<int>* counter)
+    {
+        _onCount = counter;
     }
 
     void Clear() override
@@ -482,6 +490,14 @@ private:
     const size_t _defaultRing;
 
     std::atomic<bool> _on{ false };
+    std::atomic<int>* _onCount = nullptr;
+
+    void SetOn(bool on)
+    {
+        const bool was = _on.exchange(on, std::memory_order_relaxed);
+        if (_onCount && was != on)
+            _onCount->fetch_add(on ? 1 : -1, std::memory_order_relaxed);
+    }
     mutable std::mutex _mutex;
     Config _config;
     size_t _capacity = 0;

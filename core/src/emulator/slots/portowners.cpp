@@ -76,12 +76,12 @@ PortOwners PortOwners::Of(const EmulatorContext* context)
     return Of(context->pSlotManager->Current(), planner);
 }
 
-const std::string& PortOwners::Find(uint16_t port, bool out, bool dos) const
+int PortOwners::FindClaim(uint16_t port, bool out, bool dos) const
 {
-    static const std::string none;
     const Dir dir = out ? Dir::Out : Dir::In;
-    for (const Claim& claim : _claims)
+    for (size_t i = 0; i < _claims.size(); i++)
     {
+        const Claim& claim = _claims[i];
         if ((port & claim.mask) != claim.match || (static_cast<uint8_t>(claim.dir) & static_cast<uint8_t>(dir)) == 0)
         {
             continue;
@@ -90,9 +90,16 @@ const std::string& PortOwners::Find(uint16_t port, bool out, bool dos) const
         {
             continue;
         }
-        return claim.owner;
+        return static_cast<int>(i);
     }
-    return none;
+    return -1;
+}
+
+const std::string& PortOwners::Find(uint16_t port, bool out, bool dos) const
+{
+    static const std::string none;
+    const int claim = FindClaim(port, out, dos);
+    return claim < 0 ? none : _claims[static_cast<size_t>(claim)].owner;
 }
 
 std::string PortOwnerName(const EmulatorContext* context, uint16_t port, const char* fallback)

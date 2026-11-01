@@ -40,6 +40,17 @@ public:
     /// id ("beta128", "ula"); "" when no device claims it (the board's own ports). `dos`: the TR-DOS ROM is paged
     const std::string& Find(uint16_t port, bool out, bool dos) const;
 
+    /// The index of the claim that answers the access (its owner: ClaimOwner), -1 for the board's own ports
+    int FindClaim(uint16_t port, bool out, bool dos) const;
+    const std::string& ClaimOwner(int claim) const
+    {
+        return _claims[static_cast<size_t>(claim)].owner;
+    }
+    size_t ClaimCount() const
+    {
+        return _claims.size();
+    }
+
     /// Whether the machine has a declaration (else every access is the board's)
     bool Declared() const
     {
