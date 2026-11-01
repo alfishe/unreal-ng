@@ -133,7 +133,15 @@ std::string DescribeFittedDevices(EmulatorContext* context)
         }
         out << " " << id << ":" << size;
     }
-    out << " notRecorded " << ttd::TTDPeripheralRegistry::V1MaskOf(registry.NotRecorded()).Low() << "\n";
+    uint64_t notRecorded = 0;   // a bit per legacy id below 64
+    for (const ttd::TTDDeviceKey& key : registry.NotRecorded())
+    {
+        if (static_cast<uint16_t>(key.type) < 64)
+        {
+            notRecorded |= uint64_t{1} << static_cast<uint16_t>(key.type);
+        }
+    }
+    out << " notRecorded " << notRecorded << "\n";
     return out.str();
 }
 
@@ -152,7 +160,7 @@ std::string DescribeConfigCards(const CONFIG& config)
 const std::vector<std::string>& ShippedConfigFolders()
 {
     static const std::vector<std::string> folders = {
-        "atm3", "atm450", "atm710", "next", "pentagon128k", "pentagon512k", "profi", "profi3", "profscorp", "scorpion",
+        "atm3", "atm450", "atm710", "gmx", "next", "pentagon128k", "pentagon512k", "profi", "profi3", "profscorp", "scorpion",
         "spectrum128", "spectrum2", "spectrum2a", "spectrum3", "spectrum48", "sprinter", "ts-conf", "zx-diagnostics",
     };
     return folders;

@@ -2,7 +2,7 @@
 // Same chip getters the WebAPI /state/audio/gs endpoint serves.
 
 #include <emulator/emulator.h>
-#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/timetravelcontroller.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>

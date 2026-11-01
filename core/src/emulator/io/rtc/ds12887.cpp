@@ -13,7 +13,7 @@ namespace
 {
     constexpr int64_t kMicrosPerSecond = 1000000;
     constexpr int64_t kSecondsPerDay = 86400;
-    constexpr uint8_t kStateVersion = 2;
+    constexpr uint8_t kStateVersion = 3;   // 3: the periodic interrupt's divider position
 
     /// Days since 1970-01-01 of a proleptic Gregorian date (H. Hinnant's
     /// days_from_civil, public domain)
@@ -414,8 +414,34 @@ void Ds12887::WriteTimeRegister(uint8_t index, uint8_t value)
     SetChipTime(time, fraction);
 }
 
+void Ds12887::UpdatePeriodicFlag()
+{
+    // Rate select (datasheet table, 32.768 kHz time base): RS 1 and 2 are 256 Hz and 128 Hz, RS 3-15 are
+    // 8192 Hz >> (RS - 3); 0 = none. The divider stops in reset (DV = 11x)
+    const uint8_t rate = static_cast<uint8_t>(_cells[kRegA] & 0x0F);
+    if (rate == 0 || IsDividerReset() || !_emulatedClock)
+    {
+        _periodicValid = false;
+        return;
+    }
+    const uint64_t ticks = rate == 1 ? 128 : rate == 2 ? 256 : (1ull << (rate - 1));
+    const uint64_t crystal = _emulatedClock() * 32768ull / static_cast<uint64_t>(kMicrosPerSecond);
+    const auto index = static_cast<int64_t>(crystal / ticks);
+    if (_periodicValid && index != _periodicIndex)
+        _flagsC |= kCPeriodic;
+    _periodicValid = true;
+    _periodicIndex = index;
+}
+
+bool Ds12887::IsIrqAsserted()
+{
+    UpdateFlags();
+    return (_flagsC & _cells[kRegB] & 0x70) != 0;
+}
+
 void Ds12887::UpdateFlags()
 {
+    UpdatePeriodicFlag();
     if (_held || _mode == TimeMode::Fixed)
         return;
 
@@ -580,6 +606,13 @@ bool Ds12887::LoadNvram(const std::string& path)
     file.read(reinterpret_cast<char*>(image.data()), static_cast<std::streamsize>(image.size()));
     if (file.gcount() != static_cast<std::streamsize>(image.size()))
         return false;
+    return LoadNvramImage(image.data(), image.size());
+}
+
+bool Ds12887::LoadNvramImage(const uint8_t* image, size_t size)
+{
+    if (!image || size != _cellCount)
+        return false;
 
     // The time comes from the time base, C and D are live
     _cells[kRegA] = static_cast<uint8_t>(image[kRegA] & 0x7F);
@@ -592,15 +625,20 @@ bool Ds12887::LoadNvram(const std::string& path)
     return true;
 }
 
+std::vector<uint8_t> Ds12887::NvramImage() const
+{
+    std::vector<uint8_t> image(_cells.begin(), _cells.begin() + static_cast<std::ptrdiff_t>(_cellCount));
+    for (uint8_t index = 0; index < kFirstRamCell; ++index)
+        image[index] = PeekRegister(index);
+    return image;
+}
+
 bool Ds12887::SaveNvram(const std::string& path) const
 {
     if (path.empty())
         return false;
 
-    std::vector<uint8_t> image(_cells.begin(), _cells.begin() + static_cast<std::ptrdiff_t>(_cellCount));
-    for (uint8_t index = 0; index < kFirstRamCell; ++index)
-        image[index] = PeekRegister(index);
-
+    const std::vector<uint8_t> image = NvramImage();
     std::ofstream file(FileHelper::ToFsPath(path), std::ios::binary | std::ios::trunc);
     if (!file)
         return false;
@@ -622,7 +660,7 @@ void Ds12887::SaveState(uint8_t* dst) const
     dst[4] = _dayOfWeekOffset;
     dst[5] = _centuryRegister;
     dst[6] = static_cast<uint8_t>(_mode);
-    dst[7] = static_cast<uint8_t>((_held ? 0x01 : 0) | (_secondValid ? 0x02 : 0));
+    dst[7] = static_cast<uint8_t>((_held ? 0x01 : 0) | (_secondValid ? 0x02 : 0) | (_periodicValid ? 0x04 : 0));
     PutU64(dst + 8, static_cast<uint64_t>(_offsetMicros));
     PutU64(dst + 16, static_cast<uint64_t>(_fixedMicros));
     PutU64(dst + 24, static_cast<uint64_t>(_anchorMicros));
@@ -645,7 +683,8 @@ void Ds12887::SaveState(uint8_t* dst) const
     dst[70] = static_cast<uint8_t>(_rawTime.minute);
     dst[71] = static_cast<uint8_t>(_rawTime.second);
     PutU64(dst + 72, static_cast<uint64_t>(_rawSecond));
-    std::memcpy(dst + 80, _cells.data(), kMaxCells);
+    PutU64(dst + 80, static_cast<uint64_t>(_periodicIndex));
+    std::memcpy(dst + 88, _cells.data(), kMaxCells);
 }
 
 void Ds12887::LoadState(const uint8_t* src)
@@ -661,6 +700,7 @@ void Ds12887::LoadState(const uint8_t* src)
     _mode = src[6] <= static_cast<uint8_t>(TimeMode::Fixed) ? static_cast<TimeMode>(src[6]) : TimeMode::Host;
     _held = (src[7] & 0x01) != 0;
     _secondValid = (src[7] & 0x02) != 0;
+    _periodicValid = (src[7] & 0x04) != 0;
     _offsetMicros = static_cast<int64_t>(GetU64(src + 8));
     _fixedMicros = static_cast<int64_t>(GetU64(src + 16));
     _anchorMicros = static_cast<int64_t>(GetU64(src + 24));
@@ -681,7 +721,8 @@ void Ds12887::LoadState(const uint8_t* src)
     _rawTime.minute = src[70];
     _rawTime.second = src[71];
     _rawSecond = static_cast<int64_t>(GetU64(src + 72));
-    std::memcpy(_cells.data(), src + 80, kMaxCells);
+    _periodicIndex = static_cast<int64_t>(GetU64(src + 80));
+    std::memcpy(_cells.data(), src + 88, kMaxCells);
 }
 
 /// endregion </TTD>

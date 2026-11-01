@@ -13,7 +13,7 @@
 #include "emulator/media/mediamanager.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 
 IdeController::IdeController(EmulatorContext* context) : _context(context)
 {
@@ -282,7 +282,7 @@ bool IdeController::SchemeFits(IDE_SCHEME scheme, MEM_MODEL model)
     // Only the v5 board decodes the Profi IDE (its extended port map); the v3 board has none (ProfiBoard)
     const bool profi = IsProfiModel(model);
     const bool profiIde = ProfiBoard::For(model).extendedPorts;
-    const bool scorpion = model == MM_SCORP || model == MM_PROFSCORP;
+    const bool scorpion = IsScorpionModel(model);
     const bool atm = model == MM_ATM710 || model == MM_ATM450 || model == MM_ATM3;
     const bool sprinter = model == MM_SPRINTER;
     switch (scheme)

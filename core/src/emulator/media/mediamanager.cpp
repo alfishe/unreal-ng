@@ -34,7 +34,7 @@
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/storage/sessionwritemap.h"
@@ -162,23 +162,6 @@ class MediaManager::MediaOpOwner : public coordinator::IOpOwner
 {
 public:
     explicit MediaOpOwner(MediaManager& manager) : _manager(manager) {}
-
-    /// TTD v1 keeps no media change events (NoteMediaChange): while it records, a change is refused as before M3.
-    /// Goes with v1
-    std::string Refusal(const coordinator::MachineOp& op) const override
-    {
-        EmulatorContext* context = _manager._context;
-        ttd::ITimeTravelHooks* ttd = context ? context->pTimeTravelHooks : nullptr;
-        if (op.endRecording || !ttd || ttd->RecordsMediaChanges())
-            return {};
-        const ttd::TTDGuardedAction action = op.kind == coordinator::OpKind::DiskCreate ? ttd::TTDGuardedAction::CreateDisk
-                                             : op.media == coordinator::MediaClass::Tape ? ttd::TTDGuardedAction::LoadTape
-                                                                                         : ttd::TTDGuardedAction::LoadDisk;
-        std::string refusal = ttd->RecordingGuard(action);
-        if (!refusal.empty() && op.media == coordinator::MediaClass::Any && op.kind != coordinator::OpKind::DiskCreate)
-            refusal = "the media set is fixed while a TTD recording runs; end the recording first";
-        return refusal;
-    }
 
     bool Prepare(const coordinator::MachineOp& op, coordinator::OpStage& stage) override
     {
@@ -530,7 +513,7 @@ MediaResult MediaManager::OpenForSlot(const std::string& slotId, const MediaSour
     // actually reads (MBR-partitioned vs. raw FAT)? Never refuses the insert
     if ((medium->Kind() == MediaKind::Block) && medium->Block())
     {
-        std::string mismatch = DescribeBlockLayoutMismatch(*medium->Block(), descriptor.tags);
+        std::string mismatch = DescribeBlockLayoutMismatch(*medium->Block(), descriptor.tags, descriptor.folderMbr);
         if (!mismatch.empty())
             medium->Report().push_back(std::move(mismatch));
     }
@@ -946,7 +929,7 @@ MediaResult MediaManager::SetWriteProtect(const std::string& slotId, bool on)
     // While the user's recording runs the toggle is an event of the recording: it lands at the next frame boundary,
     // where a replay meets it again (M3, gap 12)
     const ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-    if (ttd && ttd->RecordsMediaChanges() && ttd->IsRecording())
+    if (ttd && ttd->IsRecording())
     {
         state.pendingProtect = on;
         _revision++;

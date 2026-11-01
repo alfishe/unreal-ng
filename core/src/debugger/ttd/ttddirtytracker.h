@@ -9,7 +9,7 @@
 ///     banks in, and write traps fire per 16 KB page. Sub-page splitting
 ///     happens later, at the codec-store level — see ttdcodecpagestore.h
 ///     (kPageSize = 4096, 4 sub-pages per emulator page) and the P-frame
-///     path in TimeTravelManager::UpdateRamPages.
+///     path of v1's UpdateRamPages (deleted in Phase 6).
 ///   - Why not track at 4 KB here? Measured: per-page dirty cost is already
 ///     <1 % of the frame budget at 16 KB granularity, and 4 KB bit-tracking
 ///     would force the write-protect trap path in Memory to fire 4× more
@@ -18,7 +18,7 @@
 ///   - Two bitmaps: `_dirty` (per-frame, cleared by CollectAndClear) and
 ///     `_everDirty` (session-scoped, never cleared within a session).
 ///   - `_everDirty` distinguishes "never touched in this session" pages,
-///     which carry the kNeverTouchedSlot sentinel across all 4 sub-page
+///     which carry the TTDPageRef::kNeverTouched sentinel across all 4 sub-page
 ///     slots in their TTDPageRef and cost nothing to capture or restore.
 ///   - MarkDirty is hot-path code: one predictable branch + one atomic OR
 ///     when the feature is enabled; zero cost when disabled.

@@ -22,6 +22,7 @@
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/actions/actionparams.h"
 #include "emulator/actions/actionregistry.h"
+#include "emulator/actions/builtinactions.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -100,7 +101,7 @@ std::string NoHistory(Emulator& emulator, const ActionValue& value)
     if (std::string why = NoTtd(emulator, value); !why.empty())
         return why;
     return emulator.GetContext()->pTimeTravelHooks->PublishedCursor().history ? std::string()
-                                                                                : std::string("record first");
+                                                                                : std::string(kNoHistory);
 }
 
 ActionResult FromRun(RunReply reply)

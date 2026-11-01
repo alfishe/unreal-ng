@@ -113,7 +113,6 @@
 #include "common/stringhelper.h"
 #include "ui_mainwindow.h"
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/mousecapturecontroller.h"
 #include "emulator/companioncontroller.h"
@@ -379,6 +378,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // hidden until Tools → Controllers
     _hostControllers = new HostControllers(m_binding, this);
     _hostControllers->SetShortcutWindows(this, debuggerWindow);
+    _hostControllers->SetDebuggerOpener([this] { handleDebuggerToggled(true); });
     _controllersDialog = new ControllersDialog(_hostControllers, this);
     _controllersDialog->setSurfaceTargets(_surfaceTargets);
     connect(_hostControllers, &HostControllers::notice, this,
@@ -5771,7 +5771,7 @@ void MainWindow::applyBlackBox()
     EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
     ttd::TimeTravelController* controller = context ? context->pTimeTravelController : nullptr;
     if (!controller)
-        return;   // v1 (UNREAL_TTD_BACKEND=v1) has no black box
+        return;
 
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
     const bool on = settings.value(QStringLiteral("TimeTravel/BlackBox"), false).toBool();

@@ -198,7 +198,7 @@ public:
     /// @brief Why setFeature(idOrAlias, enabled) would be refused right now, as one
     /// sentence a user can act on; empty when it would not be (or the feature is unknown).
     /// TTD holds features while it records or replays: see isTtdRecordingActive /
-    /// isTtdTimelineBound, and TimeTravelManager::RecordingGuard for the capture flags.
+    /// isTtdTimelineBound, and TimeTravelController::RecordingGuard for the capture flags.
     std::string refusalReason(const std::string& idOrAlias, bool enabled) const;
     std::vector<FeatureInfo> listFeatures() const;
     void setDefaults();
@@ -255,7 +255,7 @@ private:
     bool isMaskedByTtd(const std::string& id) const;
     /// The TTD backend keeps turbo mode and the fast loaders in a recording (ITimeTravelHooks::RecordsShortcuts)
     bool ttdRecordsShortcuts() const;
-    /// Turbo mode is held off: a recording that locks acceleration and does not keep it (v1)
+    /// Turbo mode is held off: a recording that locks acceleration and does not keep it (RecordsShortcuts false)
     bool ttdLocksTurboMode() const;
     /// Fast tape, turbo tape or fast disk (@p id) is held off: bound to a timeline, except fast tape and turbo tape
     /// in the engine's recording at its live head (the tape trap is a recorded edit there); fast disk also while a
@@ -283,7 +283,7 @@ private:
     std::unordered_map<std::string, std::string> _aliases;   // alias -> id
     mutable bool _dirty = false;                             // Track if the state changed and save is required
 
-    // TTD recording lock, driven only by TimeTravelManager (onTtdRecordingStarted /
+    // TTD recording lock, driven only by TimeTravelController (onTtdRecordingStarted /
     // onTtdRecordingStopped) - not by the 'timetravel' feature toggle, which merely
     // arms the capture machinery. Masking needs no saved states: the stored feature
     // values are untouched and show through again once the lock is released.

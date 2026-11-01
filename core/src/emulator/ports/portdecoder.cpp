@@ -9,7 +9,7 @@
 #include "common/stringhelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
-#include "debugger/ttd/timetravelmanager.h"  // Phase 4 — RecordIoWrite hot-path call
+#include "debugger/ttd/timetravelcontroller.h"  // Phase 4 — RecordIoWrite hot-path call
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/io/joystick/joystick.h"
@@ -25,6 +25,7 @@
 #include "emulator/ports/models/portdecoder_pentagon1024.h"
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
+#include "emulator/ports/models/portdecoder_scorpiongmx.h"
 #include "emulator/ports/models/portdecoder_spectrum128.h"
 #include "emulator/ports/models/portdecoder_spectrum3.h"
 #include "emulator/ports/models/portdecoder_spectrum48.h"
@@ -140,6 +141,7 @@ bool PortDecoder::IsModelSupported(MEM_MODEL model)
         case MM_PROFI3:
         case MM_SCORP:
         case MM_PROFSCORP:
+        case MM_GMX:
         case MM_ATM450:
         case MM_ATM710:
         case MM_ATM3:
@@ -199,6 +201,10 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             // ProfROM variant shares the decoder: it branches on
             // mem_model == MM_PROFSCORP for the #7EFD window latch arm
             result = new PortDecoder_Scorpion256(context);
+            break;
+        case MM_GMX:
+            // The GMX card's register file on top of the host Scorpion decode
+            result = new PortDecoder_ScorpionGMX(context);
             break;
         case MM_ATM450:
             result = new PortDecoder_ATM450(context);
@@ -626,6 +632,7 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
             case MM_PROFI3:      info.modelName = "Profi3"; break;
             case MM_SCORP:       info.modelName = "Scorpion256"; break;
             case MM_PROFSCORP:   info.modelName = "Scorpion256Prof"; break;
+            case MM_GMX:         info.modelName = "ScorpionGMX"; break;
             case MM_ATM450:      info.modelName = "ATM450"; break;
             case MM_ATM710:      info.modelName = "ATM710"; break;
             case MM_ATM3:        info.modelName = "ZXEvoBaseConf"; break;
@@ -651,7 +658,7 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
         return entries;
 
     const MEM_MODEL model = _context->config.mem_model;
-    const bool scorpion = (model == MM_SCORP || model == MM_PROFSCORP);
+    const bool scorpion = IsScorpionModel(model);
     // ZX-Evo BaseConf decodes every mainboard port on the full low byte
     // (PortDecoder_ATM3::ClassifyPort, BaseConf zports.v porthit list)
     const bool evo = (model == MM_ATM3);
@@ -757,6 +764,34 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
                 entries.push_back({0x00BA, 0x00FE, 0x00BA, "SMUC board (EEPROM / RTC / PIC / IDE window)", nullptr,
                                    Tags(PortTag::System)});
             }
+            break;
+        case MM_GMX:
+            // PortDecoder_ScorpionGMX: #xx00 on the full low byte, the card's #xxFD file on the Scorpion low-byte rule
+            // plus the exact high byte (GmxRegisterOf), decoded before the host's #7FFD and AY masks
+            entries.push_back({0x0000, 0x00FF, 0x0000, "GMX configuration: scheme, RECONF, FIXROM, BLKEXT, INT type",
+                               "kept by RESET", Tags(PortTag::Memory) | PortTag::Rom | PortTag::System,
+                               PagingLatch::PGmx00});
+            entries.push_back({0x78FD, 0xFF27, 0x7825, "GMX #8000 RAM page (stored XOR 2); IN: page, BRD1, magic bit",
+                               nullptr, Tags(PortTag::Memory), PagingLatch::P78FD});
+            entries.push_back({0x7AFD, 0xFF27, 0x7A25, "GMX scroll start low (bits 7-4); IN: paging status, BRD0",
+                               nullptr, Tags(PortTag::Screen) | PortTag::Memory, PagingLatch::P7AFD});
+            entries.push_back({0x7CFD, 0xFF27, 0x7C25, "GMX scroll start high (bits 13-8)", nullptr,
+                               Tags(PortTag::Screen), PagingLatch::P7CFD});
+            entries.push_back({0x7EFD, 0xFF27, 0x7E25, "GMX turbo, ROM plane, 640x200, MagEnable; IN: status", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen | PortTag::System,
+                               PagingLatch::P7EFD});
+            entries.push_back({0xDFFD, 0xFF27, 0xDF25, "GMX RAM page bits 4-6 at #C000", nullptr, Tags(PortTag::Memory),
+                               PagingLatch::PDFFD});
+            entries.push_back({0x7FFD, 0xD027, 0x5025, "Memory paging (host Scorpion, after the GMX file)", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
+            entries.push_back({0x1FFD, 0xD027, 0x1025, "RAM 0 at #0000, Shadow Monitor, RAM page bit 3, TR-DOS page",
+                               nullptr, Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P1FFD});
+            entries.push_back({0xFF1F, 0xFFFF, 0xFF1F, "Kempston joystick interface",
+                               "gives #1F up while TR-DOS selected / Shadow Monitor paged",
+                               Tags(PortTag::Joystick)});
+            entries.push_back({0x0077, 0x00FF, 0x0077, "Z-Controller SD chip select (reads #00)", nullptr,
+                               Tags(PortTag::StorageSd)});
+            entries.push_back({0x0057, 0x00FF, 0x0057, "Z-Controller SD data", nullptr, Tags(PortTag::StorageSd)});
             break;
         case MM_PENTAGON:
             // pentagonPortMasksMatches (PortDecoder_Pentagon128/512/1024): paging row keeps
@@ -1049,6 +1084,10 @@ uint32_t PortDecoder::ReadPagingLatch(PagingLatch latch, const EmulatorState& st
         case PagingLatch::PFFF7Window2: return state.atm.pFFF7[2];
         case PagingLatch::PFFF7Window3: return state.atm.pFFF7[3];
         case PagingLatch::PFE:    return state.pFE;
+        case PagingLatch::PGmx00: return state.gmx.p00;
+        case PagingLatch::P78FD:  return state.gmx.p78FD;
+        case PagingLatch::P7AFD:  return state.gmx.p7AFD;
+        case PagingLatch::P7CFD:  return state.gmx.p7CFD;
         case PagingLatch::None:
         default:
             return 0;
@@ -1140,6 +1179,10 @@ const char* PagingLatchToString(PagingLatch latch)
         case PagingLatch::PFFF7Window2: return "pFFF7_w2";
         case PagingLatch::PFFF7Window3: return "pFFF7_w3";
         case PagingLatch::PFE:    return "pFE";
+        case PagingLatch::PGmx00: return "p00";
+        case PagingLatch::P78FD:  return "p78FD";
+        case PagingLatch::P7AFD:  return "p7AFD";
+        case PagingLatch::P7CFD:  return "p7CFD";
         case PagingLatch::None:
         default:
             return nullptr;
@@ -1196,9 +1239,15 @@ std::vector<DecodedLatchField> DecodePagingLatch(PagingLatch latch, uint32_t val
             break;
         }
         case PagingLatch::P1FFD:
-            if (model == MM_SCORP || model == MM_PROFSCORP)
+            if (IsScorpionModel(model))
             {
                 boolField("shadow_monitor_paged", (value & 0x02) != 0);
+                if (model == MM_GMX)
+                {
+                    boolField("ram0_at_0000", (value & 0x01) != 0);
+                    boolField("trdos_page", (value & 0x04) != 0);
+                    intField("ram_bank_bit3", (value & 0x10) ? 1 : 0);
+                }
             }
             else if (model == MM_PLUS3 || model == MM_PLUS2A)
             {
@@ -1208,6 +1257,8 @@ std::vector<DecodedLatchField> DecodePagingLatch(PagingLatch latch, uint32_t val
             break;
         case PagingLatch::PDFFD:
             intField("extended_ram_bank", static_cast<int>(value & 0x07));
+            if (model == MM_GMX)
+                break;  // the GMX #DFFD carries the RAM page bits 4-6 only
             boolField("sco", (value & 0x08) != 0);
             boolField("worom", (value & 0x10) != 0);
             boolField("cpm", (value & 0x20) != 0);
@@ -1231,6 +1282,29 @@ std::vector<DecodedLatchField> DecodePagingLatch(PagingLatch latch, uint32_t val
             {
                 intField("value", static_cast<int>(value));
             }
+            break;
+        case PagingLatch::P7EFD:
+            if (model == MM_GMX)
+            {
+                boolField("turbo", (value & 0x80) != 0);
+                intField("rom_plane", static_cast<int>((value >> 4) & 0x07));
+                boolField("video_640x200", (value & 0x08) != 0);
+                boolField("magic_blocked", (value & 0x04) != 0);
+            }
+            break;
+        case PagingLatch::PGmx00:
+            intField("scheme", static_cast<int>(value & 0x07));
+            boolField("fixrom", (value & 0x10) != 0);
+            boolField("blkext", (value & 0x20) != 0);
+            boolField("blkex2", (value & 0x40) != 0);
+            boolField("pentagon_int", (value & 0x80) != 0);
+            break;
+        case PagingLatch::P78FD:
+            intField("ram_page", static_cast<int>((value & 0x7F) ^ 0x02));
+            break;
+        case PagingLatch::P7AFD:
+        case PagingLatch::P7CFD:
+            intField("value", static_cast<int>(value));
             break;
         case PagingLatch::PFF77:
             intField("video_mode", static_cast<int>((value >> 1) & 0x07));

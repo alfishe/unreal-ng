@@ -1,6 +1,9 @@
 #include "debugger/analyzers/analysis/l1valueflow.h"
 
 #include <algorithm>
+#include <numeric>
+#include <tuple>
+#include <unordered_map>
 #include <utility>
 
 namespace analysis
@@ -20,6 +23,7 @@ struct Source
     PhysKey read = kNoKey;    ///< the byte the instruction read
     PhysKey origin = kNoKey;  ///< the byte the value was first read from
     uint64_t seq = 0;         ///< when it was read
+    bool masked = false;      ///< came in as an AND's operand: a mask, not the picture
 };
 
 /// A value's sources, the latest first
@@ -39,7 +43,10 @@ Value Merge(const Value& a, const Value& b)
             if (e.read != kNoKey &&
                 std::none_of(all, all + n, [&](const Source& o) { return o.read == e.read && o.seq == e.seq; }))
                 all[n++] = e;
-    std::sort(all, all + n, [](const Source& x, const Source& y) { return x.seq > y.seq; });
+    // Latest first; an insertion sort of at most six (gcc 15 cannot bound n inside std::sort: -Warray-bounds)
+    for (int i = 1; i < n; ++i)
+        for (int j = i; j > 0 && all[j - 1].seq < all[j].seq; --j)
+            std::swap(all[j - 1], all[j]);
     Value out;
     for (int i = 0; i < n && i < 3; ++i)
         out.s[i] = all[i];
@@ -164,6 +171,319 @@ void AddStep(DrawStep& step, int32_t delta)
         --step.count;
 }
 
+constexpr size_t kCarryReach = 4;           ///< a rewrite this few writes later: a shifted sprite's carry, same pass
+constexpr uint32_t kScreenPixels = 0x1800;
+constexpr size_t kMaxPass = 2 * kScreenPixels;
+constexpr size_t kMaxFrames = size_t{1} << 17;
+
+/// One screen write of a drawing pass
+struct PassWrite
+{
+    PhysKey src = kNoKey;
+    PhysKey mask = kNoKey;
+    PhysKey writer = kNoKey;
+    uint8_t x = 0;
+    uint8_t y = 0;
+    uint8_t screen = 0;
+};
+
+struct FrameKey
+{
+    PhysKey base = 0;
+    uint8_t width = 0;
+    uint8_t height = 0;
+    int16_t rowStep = 0;
+    int16_t colStep = 0;
+    int16_t maskDelta = 0;
+    bool operator==(const FrameKey& o) const
+    {
+        return base == o.base && width == o.width && height == o.height && rowStep == o.rowStep &&
+               colStep == o.colStep && maskDelta == o.maskDelta;
+    }
+};
+
+struct FrameKeyHash
+{
+    size_t operator()(const FrameKey& k) const
+    {
+        uint64_t h = (static_cast<uint64_t>(k.base) << 16) ^ (static_cast<uint64_t>(k.width) << 8) ^ k.height;
+        h = h * 0x9E3779B97F4A7C15ull ^ (static_cast<uint64_t>(static_cast<uint16_t>(k.rowStep)) << 32) ^
+            (static_cast<uint64_t>(static_cast<uint16_t>(k.colStep)) << 16) ^ static_cast<uint16_t>(k.maskDelta);
+        return static_cast<size_t>(h * 0xC2B2AE3D27D4EB4Full);
+    }
+};
+
+struct FrameAcc
+{
+    uint16_t bytes = 0;
+    uint32_t count = 0;
+    uint8_t x = 0;
+    uint8_t y = 0;
+    uint8_t screen = 0;
+    PhysKey writer = kNoKey;
+};
+
+/// Where the pages were last seen in the Z80's address space: a page's bank (-1: never seen), a bank's page
+struct Paging
+{
+    std::vector<int8_t> bankOf;
+    uint16_t pageAt[4] = {0, 0, 0, 0};
+
+    /// @p key's Z80 address (false: its page never seen)
+    bool Z80(PhysKey key, int32_t& z80) const
+    {
+        const uint16_t page = KeyPage(key);
+        if (page >= bankOf.size() || bankOf[page] < 0)
+            return false;
+        z80 = bankOf[page] * 0x4000 + static_cast<int32_t>(KeyOffset(key));
+        return true;
+    }
+};
+
+/// The step from @p a to @p b: in one page, or across pages the Z80 sees side by side (a set stored a pixel row a page
+/// on, running past $C000); false: no step
+bool StepOf(const Paging& paging, PhysKey a, PhysKey b, int32_t& step)
+{
+    if (a == b)
+        return false;
+    if (KeyPage(a) == KeyPage(b))
+    {
+        step = static_cast<int32_t>(KeyOffset(b)) - static_cast<int32_t>(KeyOffset(a));
+        return true;
+    }
+    int32_t za = 0, zb = 0;
+    if (!paging.Z80(a, za) || !paging.Z80(b, zb) || za == zb)
+        return false;
+    step = zb - za;
+    return true;
+}
+
+/// The pictures of one drawing pass (Drawn frames in l1valueflow.h)
+class PassFit
+{
+public:
+    PassFit(const std::vector<PassWrite>& pass, const Paging& paging) : _pass(pass), _paging(paging) {}
+
+    template <typename Emit>
+    void Run(Emit&& emit)
+    {
+        const size_t n = _pass.size();
+        _order.resize(n);
+        std::iota(_order.begin(), _order.end(), 0u);
+        std::sort(_order.begin(), _order.end(), [this](uint32_t i, uint32_t j) {
+            const PassWrite& a = _pass[i];
+            const PassWrite& b = _pass[j];
+            return std::tie(a.screen, a.x, a.y) < std::tie(b.screen, b.x, b.y);
+        });
+        // Column pieces: consecutive lines of one byte column, a constant step between their sources
+        for (size_t k = 0; k < n; ++k)
+        {
+            const PassWrite& w = _pass[_order[k]];
+            if (!_pieces.empty())
+            {
+                Piece& p = _pieces.back();
+                const PassWrite& last = _pass[_order[p.first + p.length - 1]];
+                int32_t step = 0;
+                if (last.screen == w.screen && last.x == w.x && last.y + 1 == w.y &&
+                    StepOf(_paging, last.src, w.src, step) && (p.length == 1 || step == p.rowStep))
+                {
+                    p.rowStep = step;
+                    ++p.length;
+                    continue;
+                }
+            }
+            _pieces.push_back(Piece{static_cast<uint32_t>(k), 1, 0});
+        }
+        _parent.resize(_pieces.size());
+        std::iota(_parent.begin(), _parent.end(), 0u);
+        _groups.assign(_pieces.size(), Group{});
+        for (size_t i = 0; i < _pieces.size(); ++i)
+        {
+            Group& g = _groups[i];
+            g.pieces.push_back(static_cast<uint32_t>(i));
+            g.rowStep = _pieces[i].rowStep;
+            g.hasRow = _pieces[i].length > 1;
+        }
+        // Pieces of neighbouring columns join when one model holds for both groups
+        for (size_t i = 0; i < _pieces.size(); ++i)
+        {
+            const PassWrite& top = Write(i, 0);
+            for (size_t j = i + 1; j < _pieces.size(); ++j)
+            {
+                const PassWrite& other = Write(j, 0);
+                if (other.screen != top.screen || other.x > top.x + 1)
+                    break;
+                if (other.x == top.x + 1)
+                    TryJoin(static_cast<uint32_t>(i), static_cast<uint32_t>(j));
+            }
+        }
+        for (size_t i = 0; i < _pieces.size(); ++i)
+            if (Find(static_cast<uint32_t>(i)) == i)
+                EmitGroup(_groups[i], emit);
+    }
+
+private:
+    struct Piece
+    {
+        uint32_t first = 0;  ///< in _order
+        uint32_t length = 0;
+        int32_t rowStep = 0;
+    };
+    struct Group
+    {
+        std::vector<uint32_t> pieces;
+        int32_t rowStep = 0;
+        int32_t colStep = 0;
+        bool hasRow = false;
+        bool hasCol = false;
+    };
+
+    const PassWrite& Write(size_t piece, uint32_t line) const { return _pass[_order[_pieces[piece].first + line]]; }
+
+    uint32_t Find(uint32_t i)
+    {
+        while (_parent[i] != i)
+            i = _parent[i] = _parent[_parent[i]];
+        return i;
+    }
+
+    /// The source a piece shows at pixel line @p y (false: none there)
+    bool At(uint32_t piece, int y, PhysKey& src) const
+    {
+        const Piece& p = _pieces[piece];
+        const int y0 = Write(piece, 0).y;
+        if (y < y0 || y >= y0 + static_cast<int>(p.length))
+            return false;
+        src = Write(piece, static_cast<uint32_t>(y - y0)).src;
+        return true;
+    }
+
+    void TryJoin(uint32_t left, uint32_t right)
+    {
+        // The step between the two columns, the same on every line they share
+        const PassWrite& l0 = Write(left, 0);
+        const PassWrite& r0 = Write(right, 0);
+        const int lo = std::max<int>(l0.y, r0.y);
+        const int hi = std::min<int>(l0.y + static_cast<int>(_pieces[left].length),
+                                     r0.y + static_cast<int>(_pieces[right].length)) - 1;
+        if (lo > hi)
+            return;
+        int32_t colStep = 0;
+        for (int y = lo; y <= hi; ++y)
+        {
+            PhysKey a = kNoKey, b = kNoKey;
+            int32_t step = 0;
+            At(left, y, a);
+            At(right, y, b);
+            if (!StepOf(_paging, a, b, step) || (y > lo && step != colStep))
+                return;
+            colStep = step;
+        }
+        const uint32_t ga = Find(left), gb = Find(right);
+        if (ga == gb)
+            return;
+        Group& a = _groups[ga];
+        Group& b = _groups[gb];
+        if ((a.hasCol && a.colStep != colStep) || (b.hasCol && b.colStep != colStep) ||
+            (a.hasRow && b.hasRow && a.rowStep != b.rowStep))
+            return;
+        // One line in common sets no column step for a column of lines (any two bytes are some distance apart: a
+        // byte looked up in a table next to a sprite's column); the step a group already holds, it may follow
+        if (lo == hi && (_pieces[left].length > 1 || _pieces[right].length > 1) && !a.hasCol && !b.hasCol)
+            return;
+        Group joined;
+        joined.hasRow = a.hasRow || b.hasRow;
+        joined.rowStep = a.hasRow ? a.rowStep : b.rowStep;
+        joined.hasCol = true;
+        joined.colStep = colStep;
+        joined.pieces = a.pieces;
+        joined.pieces.insert(joined.pieces.end(), b.pieces.begin(), b.pieces.end());
+        if (!Holds(joined))
+            return;
+        const uint32_t root = a.pieces.size() >= b.pieces.size() ? ga : gb;
+        _parent[ga == root ? gb : ga] = root;
+        _groups[root] = std::move(joined);
+        _groups[ga == root ? gb : ga] = Group{};
+    }
+
+    /// Every byte of the group at base + line * rowStep + column * colStep (relative to its first byte)
+    bool Holds(const Group& g) const
+    {
+        const PassWrite& ref = Write(g.pieces.front(), 0);
+        for (const uint32_t piece : g.pieces)
+            for (uint32_t line = 0; line < _pieces[piece].length; ++line)
+            {
+                const PassWrite& w = Write(piece, line);
+                const int dy = w.y - ref.y;
+                const int dx = w.x - ref.x;
+                if ((dy != 0 && !g.hasRow) || (dx != 0 && !g.hasCol))
+                    return false;
+                int32_t step = 0;
+                const int32_t expected = dy * g.rowStep + dx * g.colStep;
+                if (expected == 0 ? w.src != ref.src : !StepOf(_paging, ref.src, w.src, step) || step != expected)
+                    return false;
+            }
+        return true;
+    }
+
+    template <typename Emit>
+    void EmitGroup(const Group& g, Emit&& emit) const
+    {
+        const PassWrite& ref = Write(g.pieces.front(), 0);
+        int x0 = 255, x1 = 0, y0 = 255, y1 = 0;
+        uint32_t bytes = 0;
+        bool masked = true;
+        int32_t maskDelta = 0;
+        PhysKey writer = kNoKey;
+        for (const uint32_t piece : g.pieces)
+            for (uint32_t line = 0; line < _pieces[piece].length; ++line)
+            {
+                const PassWrite& w = Write(piece, line);
+                x0 = std::min<int>(x0, w.x);
+                x1 = std::max<int>(x1, w.x);
+                y0 = std::min<int>(y0, w.y);
+                y1 = std::max<int>(y1, w.y);
+                int32_t delta = 0;
+                if (masked &&
+                    (w.mask == kNoKey || !StepOf(_paging, w.src, w.mask, delta) || (bytes != 0 && delta != maskDelta)))
+                    masked = false;
+                maskDelta = delta;
+                if (writer == kNoKey)
+                    writer = w.writer;
+                ++bytes;
+            }
+        if (bytes < 2)
+            return;
+        // The top left byte: in the reference's page, or in the page the Z80 saw there
+        const int32_t delta = (y0 - ref.y) * g.rowStep + (x0 - ref.x) * g.colStep;
+        const int32_t offset = static_cast<int32_t>(KeyOffset(ref.src)) + delta;
+        int32_t z80 = 0;
+        PhysKey base = kNoKey;
+        if (offset >= 0 && offset < 0x4000)
+            base = MakeKey(KeyPage(ref.src), static_cast<uint16_t>(offset));
+        else if (_paging.Z80(ref.src, z80) && z80 + delta >= 0 && z80 + delta < 0x10000)
+            base = MakeKey(_paging.pageAt[(z80 + delta) >> 14], static_cast<uint16_t>(z80 + delta));
+        if (base == kNoKey)
+            return;
+        FrameKey key;
+        key.base = base;
+        key.width = static_cast<uint8_t>(x1 - x0 + 1);
+        key.height = static_cast<uint8_t>(y1 - y0 + 1);
+        key.rowStep = static_cast<int16_t>(key.height > 1 ? g.rowStep : 0);
+        key.colStep = static_cast<int16_t>(key.width > 1 ? g.colStep : 0);
+        key.maskDelta = static_cast<int16_t>(masked ? maskDelta : 0);
+        emit(key, static_cast<uint16_t>(bytes), static_cast<uint8_t>(x0), static_cast<uint8_t>(y0), ref.screen,
+             writer);
+    }
+
+    const std::vector<PassWrite>& _pass;
+    const Paging& _paging;
+    std::vector<uint32_t> _order;
+    std::vector<Piece> _pieces;
+    std::vector<uint32_t> _parent;
+    std::vector<Group> _groups;
+};
+
 }  // namespace
 
 struct ValueFlow::Impl
@@ -178,6 +498,61 @@ struct ValueFlow::Impl
     PhysKey blockWriter = kNoKey;           ///< the block copy instruction of the last steps
     PhysKey blockWrote[kFillDistance] = {};  ///< the bytes its last steps wrote
     int blockAt = 0;
+    std::vector<PassWrite> pass;                                       ///< the drawing pass in progress
+    std::vector<int32_t> passAt = std::vector<int32_t>(2 * kScreenPixels, -1);  ///< per screen byte: its write
+    std::unordered_map<FrameKey, FrameAcc, FrameKeyHash> frames;
+    Paging paging;
+
+    /// The drawing pass ends: its pictures join the frames drawn
+    void EndPass()
+    {
+        if (pass.empty())
+            return;
+        PassFit(pass, paging).Run([this](const FrameKey& key, uint16_t bytes, uint8_t x, uint8_t y, uint8_t screen,
+                                 PhysKey writer) {
+            auto it = frames.find(key);
+            if (it == frames.end())
+            {
+                if (frames.size() >= kMaxFrames)
+                    return;
+                it = frames.emplace(key, FrameAcc{}).first;
+            }
+            FrameAcc& acc = it->second;
+            acc.bytes = std::max(acc.bytes, bytes);
+            if (acc.count != 0xFFFFFFFFu)
+                ++acc.count;
+            acc.x = x;
+            acc.y = y;
+            acc.screen = screen;
+            acc.writer = writer;
+        });
+        for (const PassWrite& w : pass)
+            passAt[(w.screen == 7 ? kScreenPixels : 0) + ScreenOffset(w.x, w.y)] = -1;
+        pass.clear();
+    }
+
+    /// @p origin (with @p mask merged into it) drawn at screen byte @p at, in the drawing pass
+    void PassDraw(PhysKey origin, PhysKey mask, PhysKey at, PhysKey writer, int x, int y)
+    {
+        const auto screen = static_cast<uint8_t>(KeyPage(at));
+        const size_t pos = (screen == 7 ? kScreenPixels : 0) + KeyOffset(at);
+        if (passAt[pos] >= 0)
+        {
+            const auto at_ = static_cast<size_t>(passAt[pos]);
+            if (pass.size() - at_ <= kCarryReach)
+            {
+                pass[at_].src = origin;
+                pass[at_].mask = mask;
+                pass[at_].writer = writer;
+                return;
+            }
+            EndPass();
+        }
+        if (pass.size() >= kMaxPass)
+            EndPass();
+        passAt[pos] = static_cast<int32_t>(pass.size());
+        pass.push_back(PassWrite{origin, mask, writer, static_cast<uint8_t>(x), static_cast<uint8_t>(y), screen});
+    }
 
     PhysKey Shadow(PhysKey key) const
     {
@@ -266,8 +641,8 @@ struct ValueFlow::Impl
         }
     }
 
-    /// @p origin drawn at screen byte @p at
-    void Draw(PhysKey origin, PhysKey at, PhysKey writer, uint64_t frame)
+    /// @p origin drawn at screen byte @p at (@p mask: the mask byte merged into it)
+    void Draw(PhysKey origin, PhysKey mask, PhysKey at, PhysKey writer, uint64_t frame)
     {
         const uint16_t offset = KeyOffset(at);
         const int x = offset & 31;
@@ -288,6 +663,7 @@ struct ValueFlow::Impl
         acc.y = static_cast<uint8_t>(y);
         acc.screen = screen;
         acc.writer = writer;
+        PassDraw(origin, mask, at, writer, x, y);
     }
 
     /// A memory write of @p value: the latest source that is not the byte written. A byte copied from another one
@@ -297,27 +673,49 @@ struct ValueFlow::Impl
     void Store(PhysKey key, const Value& value, PhysKey writer, uint64_t frame)
     {
         PhysKey origin = kNoKey;
+        PhysKey mask = kNoKey;  // an AND's operand, else the next source that is no screen byte (ANDed in before)
+        PhysKey before = kNoKey;
+        bool found = false;
+        const bool anyPlain = std::any_of(std::begin(value.s), std::end(value.s), [&](const Source& s) {
+            return s.read != kNoKey && s.read != key && !s.masked;
+        });
         for (const Source& s : value.s)
-            if (s.read != kNoKey && s.read != key)
+        {
+            if (s.read == kNoKey || s.read == key)
+                continue;
+            if (s.masked && anyPlain)
             {
-                origin = s.origin;
-                if (origin != s.read && !IsScreen(s.read))
-                {
-                    Fanout& f = FanoutOf(s.read);
-                    if (f.Add(key) > kBufferPlaces)
-                        origin = s.read;
-                }
-                break;
+                if (mask == kNoKey && !IsScreen(s.read))
+                    mask = s.origin;
+                continue;
             }
+            if (found)
+            {
+                if (before == kNoKey && !IsScreen(s.read))
+                    before = s.origin;
+                continue;
+            }
+            found = true;
+            origin = s.origin;
+            if (origin != s.read && !IsScreen(s.read))
+            {
+                Fanout& f = FanoutOf(s.read);
+                if (f.Add(key) > kBufferPlaces)
+                    origin = s.read;
+            }
+        }
+        if (mask == kNoKey)
+            mask = before;
         SetShadow(key, origin);
         if (origin != kNoKey && IsPixels(key) && !IsScreen(origin))
-            Draw(origin, key, writer, frame);
+            Draw(origin, mask, key, writer, frame);
     }
 
     void Instruction(const OpInfo& op, const Access* accesses, int count, PhysKey writer, uint64_t frame)
     {
         if (frame != lastFrame)
         {
+            // A pass goes on over a frame's end: a copy of a back buffer longer than a frame is one picture
             if (lastFrame != ~0ull)
                 Sample();
             lastFrame = frame;
@@ -327,6 +725,14 @@ struct ValueFlow::Impl
         const Access* stackReads[2] = {};
         const Access* stackWrites[2] = {};
         int nr = 0, nw = 0, nsr = 0, nsw = 0;
+        for (int i = 0; i < count; ++i)
+        {
+            const uint16_t page = KeyPage(accesses[i].key);
+            if (page >= paging.bankOf.size())
+                paging.bankOf.resize(page + 1u, -1);
+            paging.bankOf[page] = static_cast<int8_t>(accesses[i].z80 >> 14);
+            paging.pageAt[accesses[i].z80 >> 14] = page;
+        }
         for (int i = 0; i < count; ++i)
         {
             const Access& a = accesses[i];
@@ -411,13 +817,20 @@ struct ValueFlow::Impl
         {
             if (op.aluOp == 7)
                 return;  // CP
+            // AND's operand is the mask (OR (HL) / AND (HL) with the mask after the graphic); A keeps its role
+            const auto operand = [&](Value v) {
+                if (op.aluOp == 4)
+                    for (Source& e : v.s)
+                        e.masked = true;
+                return v;
+            };
             if (op.memRead && nr >= 1)
-                regs[0] = Merge(Read(reads[0]->key), regs[0]);
+                regs[0] = Merge(operand(Read(reads[0]->key)), regs[0]);
             else if (op.immBytes == 0)
             {
                 const int other = Bit(static_cast<uint16_t>(op.regsRead & ~(reg::kA | reg::kF)));
                 if (other >= 0)
-                    regs[0] = Merge(regs[other], regs[0]);
+                    regs[0] = Merge(operand(regs[other]), regs[0]);
                 else if (op.aluOp == 2 || op.aluOp == 3 || op.aluOp == 5)
                     regs[0] = Value{};  // SUB A / SBC A,A / XOR A: a constant
             }
@@ -531,6 +944,35 @@ std::vector<DrawnByte> ValueFlow::Build() const
     return out;
 }
 
+std::vector<DrawnFrame> ValueFlow::BuildFrames()
+{
+    _impl->EndPass();
+    std::vector<DrawnFrame> out;
+    out.reserve(_impl->frames.size());
+    for (const auto& [key, acc] : _impl->frames)
+    {
+        DrawnFrame f;
+        f.base = key.base;
+        f.width = key.width;
+        f.height = key.height;
+        f.rowStep = key.rowStep;
+        f.colStep = key.colStep;
+        f.maskDelta = key.maskDelta;
+        f.bytes = acc.bytes;
+        f.count = acc.count;
+        f.x = acc.x;
+        f.y = acc.y;
+        f.screen = acc.screen;
+        f.writer = acc.writer;
+        out.push_back(f);
+    }
+    std::sort(out.begin(), out.end(), [](const DrawnFrame& a, const DrawnFrame& b) {
+        return std::tie(a.base, a.width, a.height, a.rowStep, a.colStep, a.maskDelta) <
+               std::tie(b.base, b.width, b.height, b.rowStep, b.colStep, b.maskDelta);
+    });
+    return out;
+}
+
 size_t ValueFlow::MemoryBytes() const
 {
     size_t bytes = 0;
@@ -540,6 +982,8 @@ size_t ValueFlow::MemoryBytes() const
         bytes += t ? 0x4000 * sizeof(Fanout) : 0;
     for (const auto& t : _impl->draws)
         bytes += t ? 0x4000 * sizeof(DrawAcc) : 0;
+    bytes += _impl->passAt.size() * sizeof(int32_t) + _impl->pass.capacity() * sizeof(PassWrite);
+    bytes += _impl->frames.size() * (sizeof(FrameKey) + sizeof(FrameAcc) + 24);
     return bytes;
 }
 

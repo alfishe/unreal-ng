@@ -1,7 +1,7 @@
 #pragma push_macro("slots")
 #undef slots
 #include "debugger/ttd/ttdsession.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdfileinfo.h"
 #include "common/filehelper.h"

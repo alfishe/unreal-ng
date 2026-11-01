@@ -464,13 +464,13 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithUnsupportedRamReportsReason)
 
 TEST_F(EmulatorManager_Test, CreateEmulatorWithNonCreatableModelReportsReason)
 {
-    // A non-creatable model (e.g. GMX): whichever guard fires first,
+    // A non-creatable model (e.g. KAY): whichever guard fires first,
     // the caller must learn WHICH model failed and why
     std::string error;
-    auto emulator = _manager->CreateEmulatorWithModel("", "GMX", LoggerLevel::LogWarning, &error);
+    auto emulator = _manager->CreateEmulatorWithModel("", "KAY", LoggerLevel::LogWarning, &error);
 
     EXPECT_EQ(emulator, nullptr);
-    EXPECT_NE(error.find("GMX"), std::string::npos) << "reason was: " << error;
+    EXPECT_NE(error.find("KAY"), std::string::npos) << "reason was: " << error;
     EXPECT_FALSE(error.empty());
 }
 
@@ -499,7 +499,7 @@ TEST_F(EmulatorManager_Test, FailedCreateFreesTheHalfBuiltInstance)
     EXPECT_EQ(_manager->CreateEmulatorWithModelAndRAM("", "PENTAGON", 256, LoggerLevel::LogError, &error), nullptr);
     EXPECT_EQ(EmulatorContext::LiveCount(), contextsBefore) << "unsupported RAM size";
 
-    EXPECT_EQ(_manager->CreateEmulatorWithModel("", "GMX", LoggerLevel::LogError, &error), nullptr);
+    EXPECT_EQ(_manager->CreateEmulatorWithModel("", "KAY", LoggerLevel::LogError, &error), nullptr);
     EXPECT_EQ(EmulatorContext::LiveCount(), contextsBefore) << "non-creatable model: " << error;
 }
 
@@ -668,7 +668,7 @@ TEST_F(EmulatorManager_Test, PortDecoderIsModelSupportedMatchesCreatableExpectat
     }
 
     // Models without decoders (no factory case yet)
-    for (MEM_MODEL model : {MM_GMX, MM_KAY, MM_QUORUM, MM_LSY256, MM_PHOENIX})
+    for (MEM_MODEL model : {MM_KAY, MM_QUORUM, MM_LSY256, MM_PHOENIX})
         EXPECT_FALSE(PortDecoder::IsModelSupported(model)) << int(model);
 }
 

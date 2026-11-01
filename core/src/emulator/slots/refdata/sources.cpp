@@ -56,6 +56,8 @@ constexpr SourceRef kSources[] = {
     { Src::ScorpionProfRom, "Scorpion ProfROM paging",
       "https://github.com/romychs/Scorpion256TPlus/blob/main/doc/files/Scorpion_ProfROM_Paging.md" },
     { Src::MameScorpion, "MAME scorpion.cpp", "https://github.com/mamedev/mame/blob/master/src/mame/sinclair/scorpion.cpp" },
+    { Src::GmxApollonov, "A. Apollonov, \"Nemnogo o GMX\" (City #18 / ZX-Pilot #31, 1999)",
+      "https://zxpress.ru/article.php?id=10414" },
 
     { Src::AtmMicroArtManual, "MicroArt ATM Turbo manual: peripherals and connectors",
       "https://zxpress.ru/ru/books/chapter/2353" },

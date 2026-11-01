@@ -2,7 +2,7 @@
 
 /// @file ttdexternalevents.h
 /// @brief TTD external-event journal — replay barriers for sources of
-///        nondeterminism that aren't covered by an input journal in v1.
+///        nondeterminism that aren't covered by the input journal.
 ///
 /// Per parent TDD §5.1 (External-Event Markers):
 ///   "Any nondeterministic event that is not covered by a journal gets an
@@ -23,8 +23,8 @@
 ///
 /// This file owns the marker data structure. It does NOT own:
 ///   - The capture call sites (those will live in Tape, BetaDisk, etc.
-///     and call Record() via the TimeTravelManager facade).
-///   - The seek-time barrier logic (that lives in TimeTravelManager::
+///     and call Record() via the TimeTravelController facade).
+///   - The seek-time barrier logic (that lives in TimeTravelController::
 ///     SeekTo, which calls FirstMarkerInInterval() to decide whether
 ///     replay would cross a marker).
 ///
@@ -96,7 +96,7 @@ struct TTDExternalEvent
 /// Ordering invariant: the journal is kept sorted by `time` (ascending).
 /// Record() enforces this by trusting the caller — events arrive in
 /// emulator-time order, which is monotonic. A non-monotonic insert is
-/// logged and dropped at the call site (TimeTravelManager::RecordExternalEvent).
+/// logged and dropped at the call site (TimeTravelController::RecordExternalEvent).
 ///
 /// Resume-from-past truncation (Item 5) calls DropAfter() to clip the
 /// journal to a new end position, matching how the timeline and input
@@ -116,7 +116,7 @@ public:
 
     /// @brief Append a marker to the journal.
     ///
-    /// Caller (TimeTravelManager::RecordExternalEvent) is responsible for
+    /// Caller (TimeTravelController::RecordExternalEvent) is responsible for
     /// monotonicity checking — this method just appends. Idempotent in the
     /// sense that recording the same event twice produces two entries; the
     /// caller's monotonicity guard rejects the second one before it gets here.

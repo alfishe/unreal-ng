@@ -9,7 +9,7 @@
 #include <cstdlib>
 
 #include "common/stringhelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/coordinator/ports.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"

@@ -1066,11 +1066,11 @@ print(rzx_status().summary)   -- playing frame 500 / 32315 (1.5%), block 1 / 1, 
 
 The TTD functions are **global functions** (like the mouse functions), not methods on the emulator object. They act on the bound emulator, or on the selected one when the script is not bound to an instance. Bindings: `core/automation/lua/src/emulator/lua_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse functions are refused while recording (`ttd_seek` returns `reached = false` and `error` = the reason, the boolean functions return `false`), so call `ttd_stop()` first; a seek or a step leaves the machine paused at the target, and `ttd_resume()` runs it again (the same on every surface); `ttd_start()` switches the `timetravel` feature on by itself; while recording (`snapshot_load` only on v1: on the engine a snapshot load is part of the recording), `ttd_invalidate`, `ttd_set_journal_enabled` are refused (on v1 also `tape_load`, `disk_create`, `gs_switch_personality` and every slot change, `slots_*`: `status = "recording"`; on the engine a tape / disk / media change is an event of the recording at the next frame boundary, the others end the session) and return `false, reason` (`disk_load` on v1: `success = false` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse functions are refused while recording (`ttd_seek` returns `reached = false` and `error` = the reason, the boolean functions return `false`), so call `ttd_stop()` first; a seek or a step leaves the machine paused at the target, and `ttd_resume()` runs it again (the same on every surface); `ttd_start()` switches the `timetravel` feature on by itself; while recording (a snapshot load is part of the recording), `ttd_invalidate`, `ttd_set_journal_enabled` are refused (a tape / disk / media change is an event of the recording at the next frame boundary, the others end the session) and return `false, reason`; on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
 
 ```lua
 local ok, reason = tape_load("game.tap")
-if not ok then print(reason) end   -- v1 only: "Cannot insert a tape while TTD is recording: ... stop the recording first."
+if not ok then print(reason) end   -- a refused call returns false and the reason
 ```
 
 Unlike the WebAPI, the Lua functions do not pause the emulator for you: pause it before browsing history. Errors never raise; they come back as `false` (plus a reason for a TTD refusal), an empty table, or a table with an `error` string. When the build has no TTD engine every function returns `false` / an empty or `error` table.
@@ -1156,7 +1156,7 @@ local status = ttd_status()
 **Navigation:**
 
 ```lua
-ttd_seek(4823)                   -- frame 4823's end on the engine (state and picture of {4824, 0}), its start on v1
+ttd_seek(4823)                   -- frame 4823's end (state and picture of {4824, 0})
 ttd_seek(4823, 14982)            -- seek to (frame, tinframe); ttd_seek(4823, 0) is the frame's start
 -- --> { reached = true, arrived_at = {frame = 4823, tinframe = 14982},
 --       halt_reason = "target",          -- "target" | "external_event" | "out_of_range"
@@ -1246,7 +1246,7 @@ local v = ttd_find_last{ addr = 0x4805, space = "vram" }
 
 **When did the program ... (port events):** `ttd_port_events(event, [arg], [options])` searches the port journals - every IN and OUT with its time and PC - without replay. Events, arguments and options: [command-interface.md → Port events](./command-interface.md).
 
-Output below is from the recorded fixture `testdata/ttd/port-journals/dizzyx.ttd` (Dizzy X):
+Output below is from the recorded fixture `testdata/ttd/port-journals/engine/dizzyx.ttd` (Dizzy X):
 
 ```lua
 local r = ttd_port_events("key", "space")          -- when the game saw SPACE pressed
@@ -1256,7 +1256,7 @@ local r = ttd_port_events("key", "space")          -- when the game saw SPACE pr
 local w = ttd_port_events("ay-write", 7, { limit = 3 })
 -- w.count = 3, w.truncated = true; w.hits[1]: frame 50, tinframe 9202, pc 0xD86E, value 0x18, ay_register 7
 
-local f = ttd_port_events("key", "q", { file = "testdata/ttd/port-journals/dizzyx.ttd" })
+local f = ttd_port_events("key", "q", { file = "testdata/ttd/port-journals/engine/dizzyx.ttd" })
 -- a saved session, searched without loading it: f.hits[1].frame = 365
 
 local j = ttd_port_events("in", nil, { port = 0x1F, port_mask = 0xFF, match = "any-set", value_mask = 0x1F })
@@ -1338,6 +1338,14 @@ local rare = ttd_coverage_rare{max_frames = 2, addr_from = 0x8000, addr_to = 0xF
 -- { rare_keys = 41, distinct_keys = 2310, rare_blocks = 6, truncated = false,
 --   blocks = { {addr_from = "0x9A10", addr_to = "0x9A2C", phys_page = 2, page_offset_from = "0x1A10", ...,
 --               keys = 11, frame_count = 1, frames = {1834}}, ... } }
+
+-- In which frames did a game profile's probes fire: a replay of the window, the machine put back
+local probes = ttd_probe_frames({{probe = "exec", address = 0x8A14},
+                                 {probe = "write", address = 0x5F20, ["if"] = "VAL < MDT"}}, {from_frame = 100})
+-- { from_frame = 100, to_frame = 2400, replayed_frames = 2301, pruned_frames = 0, truncated = false,
+--   probes = { {probe = "exec", address = "0x8A14", frame_count = 14, hit_count = 14, frames = {120, 388, ...},
+--               hits = {1, 1, ...}}, ... } }
+-- One probe: ttd_probe_frames{probe = "port-out", address = 0xFE, port_mask = 0x01}; limit = N frames per probe
 
 -- A memory at a past checkpoint, and what changed between two - from the store, no seek
 local at = ttd_memory_at{space = "ram5", frame = 150, offset = 0x1C78, length = 2}   -- tinframe = T: inside the frame (ram, vram, cache)

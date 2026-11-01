@@ -49,15 +49,14 @@ constexpr Cell kRefuse{Action::Refuse, SessionEffect::None};
 //   RemoteAccess alone, is no operation: it changes nothing the machine sees);
 // - an RZX playback's snapshot block or seek back: a snapshot load (D42).
 // A model switch or a machine state transfer: allowed in every mode, a change of the machine itself ends the session
-// (owner rule 2026-10-05); the TTD v1 backend still refuses it while recording, as its owner's refusal (the
-// emulator's), until v1 is deleted.
+// (owner rule 2026-10-05).
 // M6, the changes of the machine itself (owner rule 2026-10-05; today's TTD engine): a ROM load, a General Sound card
 // switch, a state transfer end the session in every mode and drop its history (the black box starts again on the
-// changed machine); TTD v1 refuses them while recording, as the emulator's owner refusal, until v1 is deleted. A speed
+// changed machine). A speed
 // change drops a history except the black box's (held: dropping a stopped session's history takes the CPU, which must
 // not wait inside the coordinator); a recording the user started locks the speed at 1x (the feature
-// manager refuses the change before it is asked). A slot change is applied by a restart and only asked here (v1
-// refuses it as the owner). A CD drive's front panel from outside the guest is refused while a recording the user
+// manager refuses the change before it is asked). A slot change is applied by a restart and only asked here. A CD
+// drive's front panel from outside the guest is refused while a recording the user
 // started runs: a replay would not repeat it.
 // A tool's edit (any surface): nothing for the session at the commit point - while a recording runs the edit is
 // recorded as an event of it (BeginToolEdit / EndToolEdit around it; a paused recording the user started goes on
@@ -141,8 +140,7 @@ std::string RefusalText(const MachineOp& op, MachineMode mode)
     if (op.kind == OpKind::CdFrontPanel)
         return "Cannot play, pause, stop or change the volume of a CD drive from outside the guest while TTD is "
                "recording: a replay would not repeat it. Let the guest's CD player do it, or stop the recording first.";
-    // No other cell refuses today (media changes while recording are events since M3; TTD v1 refuses them as the
-    // media owner's refusal)
+    // No other cell refuses today (media changes while recording are events since M3)
     return std::string("'") + OpKindName(op.kind) + "' is not allowed while the machine is " + MachineModeName(mode);
 }
 }  // namespace

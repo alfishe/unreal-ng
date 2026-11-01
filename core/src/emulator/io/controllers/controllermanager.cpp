@@ -4,6 +4,7 @@
 #include "haptics/hapticprofile.h"
 #endif
 
+#include <iterator>
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -61,6 +62,12 @@ bool CheckHapticCondition(const std::string& text, uint8_t trigger, std::string&
 /// v3: the host key overlay (8 half-rows) after the connectors
 constexpr uint8_t kControllersTTDVersion = 3;
 constexpr size_t kHostKeyRows = 8;
+/// The PC-only keys of a profile (`pc.delete` .. `pc.pagedown`, controllers/router/zxkeys.h; codes 0xE0..) have no place
+/// in the ZX matrix. They ride the same HostKeys events as rows 8 and 9 (five to a row), are held outside the TTD blob and
+/// its hash (their format stays v3) and reach a PS/2 sink only
+constexpr uint8_t kPcOnlyKeyBase = 0xE0;
+constexpr size_t kPcOnlyRows = 2;
+constexpr PcKey kPcOnlyKeys[] = {PcKey::Delete, PcKey::Insert, PcKey::End, PcKey::Home, PcKey::PageUp, PcKey::PageDown};
 
 /// The key each control bit holds (kRight, kLeft, kDown, kUp, kFire), per wiring
 constexpr ZXKeysEnum kSinclair1Keys[5] = {ZXKEY_7, ZXKEY_6, ZXKEY_8, ZXKEY_9, ZXKEY_0};
@@ -313,16 +320,9 @@ ControllerResult ControllerManager::PlugRefused(bool& defer) const
     defer = false;
     if (InputOwnedByReplay())
         return ControllerResult::Fail(ControllerError::OwnedByReplay, "recorded input drives the machine");
+    // A plug decides what the journal records: while recording it lands at the boundary, where the recording keeps it
     if (hooks && hooks->IsRecording())
-    {
-        // A plug decides what the journal records: it lands at the boundary, where the recording keeps it
-        if (!hooks->RecordsMediaChanges())
-        {
-            return ControllerResult::Fail(ControllerError::Recording,
-                                          "TTD v1 keeps no configuration changes: plug before the recording starts");
-        }
         defer = true;
-    }
     return ControllerResult::Success();
 }
 
@@ -1014,19 +1014,26 @@ void ControllerManager::OnFrame(uint64_t frame)
 
 void ControllerManager::SubmitHostKeys(const std::vector<uint8_t>& keys)
 {
-    std::array<uint8_t, kHostKeyRows> rows{};
+    std::array<uint8_t, kHostKeyRows + kPcOnlyRows> rows{};
     for (uint8_t key : keys)
     {
         uint8_t row = 0;
         uint8_t bit = 0;
-        if (Keyboard::MatrixPosition(static_cast<ZXKeysEnum>(key), row, bit))
+        if (key >= kPcOnlyKeyBase)
+        {
+            const unsigned index = key - kPcOnlyKeyBase;
+            if (index < std::size(kPcOnlyKeys))
+                rows[kHostKeyRows + index / 5] =
+                    static_cast<uint8_t>(rows[kHostKeyRows + index / 5] | (1u << (index % 5)));
+        }
+        else if (Keyboard::MatrixPosition(static_cast<ZXKeysEnum>(key), row, bit))
             rows[row] = static_cast<uint8_t>(rows[row] | (1u << bit));
     }
-    for (uint8_t row = 0; row < kHostKeyRows; row++)
+    for (uint8_t row = 0; row < kHostKeyRows + kPcOnlyRows; row++)
     {
         {
             std::lock_guard<std::mutex> lock(_mutex);
-            if (_hostKeys[row] == rows[row])
+            if ((row < kHostKeyRows ? _hostKeys[row] : _pcOnlyKeys[row - kHostKeyRows]) == rows[row])
                 continue;
         }
         ttd::TTDInputEvent ev;
@@ -1075,18 +1082,89 @@ void ControllerManager::SubmitMouse(const MouseSample& mouse)
 
 bool ControllerManager::ApplyHostKeys(uint8_t row, uint8_t bits)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-    if (row >= kHostKeyRows)
-        return false;
-    _hostKeys[row] = static_cast<uint8_t>(bits & 0x1F);
-    UpdateOverlay();
+    std::array<uint8_t, kHostKeyRows> rows{};
+    std::array<uint8_t, kPcOnlyRows> pcOnly{};
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (row >= kHostKeyRows + kPcOnlyRows)
+            return false;
+        if (row < kHostKeyRows)
+        {
+            _hostKeys[row] = static_cast<uint8_t>(bits & 0x1F);
+            UpdateOverlay();
+        }
+        else
+            _pcOnlyKeys[row - kHostKeyRows] = static_cast<uint8_t>(bits & 0x1F);
+        rows = _hostKeys;
+        pcOnly = _pcOnlyKeys;
+    }
+    // A machine whose software reads a PS/2 controller instead of the matrix gets the same keys as PC keys
+    IPs2KeySink* sink = _context && _context->pKeyboard ? _context->pKeyboard->GetPs2Sink() : nullptr;
+    if (!sink || !sink->WantsHostOverlayKeys())
+    {
+        _ps2HostKeys.clear();
+        return true;
+    }
+    std::vector<ZXKeysEnum> held;
+    for (unsigned code = 1; code < 0x100; code++)
+    {
+        uint8_t keyRow = 0;
+        uint8_t keyBit = 0;
+        const ZXKeysEnum zx = static_cast<ZXKeysEnum>(code);
+        if (Keyboard::MatrixPosition(zx, keyRow, keyBit) && keyRow < kHostKeyRows && (rows[keyRow] & (1u << keyBit)))
+            held.push_back(zx);
+    }
+    auto holds = [&held](ZXKeysEnum key) { return std::find(held.begin(), held.end(), key) != held.end(); };
+    // Caps Shift with 5 / 6 / 7 / 8 is the cursor key of the ZX keyboard: the PS/2 side gets the arrow, not Shift and a digit
+    static const std::pair<ZXKeysEnum, PcKey> kCursors[] = {{ZXKEY_5, PcKey::Left}, {ZXKEY_6, PcKey::Down},
+                                                            {ZXKEY_7, PcKey::Up}, {ZXKEY_8, PcKey::Right}};
+    std::vector<PcKey> wanted;
+    bool capsUsed = false;
+    std::vector<ZXKeysEnum> rest;
+    for (ZXKeysEnum zx : held)
+    {
+        PcKey arrow = PcKey::None;
+        if (holds(ZXKEY_CAPS_SHIFT))
+        {
+            for (const auto& cursor : kCursors)
+                if (cursor.first == zx)
+                    arrow = cursor.second;
+        }
+        if (arrow != PcKey::None)
+        {
+            wanted.push_back(arrow);
+            capsUsed = true;
+        }
+        else
+            rest.push_back(zx);
+    }
+    for (ZXKeysEnum zx : rest)
+    {
+        if (zx == ZXKEY_CAPS_SHIFT && capsUsed)
+            continue;
+        for (PcKey key : sink->PcKeysForZxKey(zx))
+            if (std::find(wanted.begin(), wanted.end(), key) == wanted.end())
+                wanted.push_back(key);
+    }
+    for (size_t index = 0; index < std::size(kPcOnlyKeys); index++)
+        if (pcOnly[index / 5] & (1u << (index % 5)))
+            wanted.push_back(kPcOnlyKeys[index]);
+    for (auto it = _ps2HostKeys.rbegin(); it != _ps2HostKeys.rend(); ++it)
+        if (std::find(wanted.begin(), wanted.end(), *it) == wanted.end())
+            sink->OnPcKey(*it, false);
+    for (PcKey key : wanted)
+        if (std::find(_ps2HostKeys.begin(), _ps2HostKeys.end(), key) == _ps2HostKeys.end())
+            sink->OnPcKey(key, true);
+    _ps2HostKeys = wanted;
     return true;
 }
 
 uint8_t ControllerManager::HostKeys(uint8_t row) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    return row < kHostKeyRows ? _hostKeys[row] : 0;
+    if (row >= kHostKeyRows)
+        return row < kHostKeyRows + kPcOnlyRows ? _pcOnlyKeys[row - kHostKeyRows] : uint8_t{0};
+    return _hostKeys[row];
 }
 
 /// endregion </Input>

@@ -340,7 +340,7 @@ void TrafficWindow::updateSeek()
             can = true;
     }
     _seek->setEnabled(can);
-    _seek->setToolTip(can ? tr("Time travel to frame %1, %2 units in (pauses the machine and ends a running TTD recording; "
+    _seek->setToolTip(can ? tr("Time travel to frame %1, %2 units in (pauses the machine and a running TTD recording; "
                                "its history stays)")
                                 .arg(r->frame)
                                 .arg(r->tInFrame)
@@ -353,11 +353,8 @@ void TrafficWindow::onSeek()
     const TrafficRow* r = selectedRow();
     if (!r || !ctx || !ctx->pTimeTravelHooks || !_seek->isEnabled())
         return;
-    // The seek verb every surface uses: it parks the machine; a running recording ends on v1
-    // and pauses on the engine (its history stays either way)
+    // The seek verb every surface uses: it parks the machine; a running recording pauses (its history stays)
     ttd::TTDControl control(ctx);
-    if (ctx->pTimeTravelController == nullptr && ctx->pTimeTravelHooks->IsRecording())
-        (void)control.Execute({"stop", {}});
     const ttd::TTDReply reply = control.Execute(
         {"seek", {{"frame", std::to_string(r->frame)}, {"tinframe", std::to_string(r->tInFrame)}}});
     const StateNode* reached = reply.body.find("reached");

@@ -1,10 +1,8 @@
 # Recipe: TTD Reverse Debugging — find-last, reverse-step, reverse-continue, coverage
 
 Precondition: a recorded session — see [ttd-recording.md](ttd-recording.md).
-On the engine (`backend: "engine"`, the default) `find-last`, `reverse-step`
-and `reverse-continue` while recording pause the recording and answer; on v1
-they return `409` until the recording is stopped. The coverage queries answer
-at any time. Session rules
+`find-last`, `reverse-step` and `reverse-continue` while recording pause the
+recording and answer. The coverage queries answer at any time. Session rules
 (states, what wipes history, markers):
 [command-interface.md → TTD Session Rules](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-session-rules).
 
@@ -13,6 +11,8 @@ These are the "answer the question backwards" primitives:
 - *Who wrote this memory?* → `find-last`
 - *What ran just before the crash?* → `reverse-step` / `reverse-continue`
 - *Which frames touched this address range?* → coverage probe/scan/summary
+- *In which frames did a game profile's probe fire?* → `probe-frames` (MCP `probe_frames`: the probes as the profile
+  writes them, `if:` included; a replay of the window, the machine stays)
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred — the
 > `time_travel` tool covers find-last, reverse-step/continue and the coverage
@@ -29,8 +29,12 @@ time_travel {"action":"coverage_probe","frame":11782,"kind":"executed",
 time_travel {"action":"coverage_scan","from_frame":11000,"to_frame":12000,"kind":"written",
              "addr_from":"0x8000","addr_to":"0xBFFF","phys_page":5,"limit":200}
 time_travel {"action":"coverage_summary","kind":"executed"}
+# a profile's probes over the history ("shot" and "died" of a haptic profile):
+time_travel {"action":"probe_frames","from_frame":11000,"to_frame":12000,
+             "probes":[{"probe":"exec","address":"0x8A14"},
+                       {"probe":"write","address":"0x5F20","if":"VAL < MDT"}]}
 
-# reverse travel (pauses a running recording on the engine; v1: stop it first):
+# reverse travel (pauses a running recording):
 time_travel {"action":"find_last","addr":16384,"access":"write"}
 time_travel {"action":"find_last","addr_from":"0x4000","addr_to":"0x57FF","access":"write",
              "pc_from":"0x8000","pc_to":"0x8FFF","phys_page":5,"before_frame":11800}
@@ -253,6 +257,5 @@ Full worked example: [articles/bug-hunt-ttd.md](../articles/bug-hunt-ttd.md).
   coverage endpoints likewise take Z80 ranges plus an optional `phys_page`.
 - **Reverse travel across a marker** (tape transport command, WD1793
   sector/track write, debugger memory edit): the engine replays them and
-  crosses; v1 halts with the marker description, as its replay cannot
-  reproduce the event.
+  crosses.
   Keyboard/mouse input is journaled and is not a barrier.

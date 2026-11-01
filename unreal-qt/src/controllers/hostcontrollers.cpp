@@ -216,6 +216,7 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
         out.rate = event.rate;
         if (!event.params.IsNull())
             out.params = QString::fromStdString(event.params.Dump());
+        out.instance = QString::fromStdString(event.instance);
         QMetaObject::invokeMethod(this, [this, out] { emit actionTriggered(out); }, Qt::QueuedConnection);
     });
     // A pad's layer key takes the instance into the debugger: every surface follows, not only that pad
@@ -506,6 +507,17 @@ void HostControllers::followContext()
         _service->Router().SetContext(id, info.context, info.set);
     }
     Emulator* bound = _binding->emulator();
+    // A surface entering a debug context (`debug`, `debug.disasm`: the deck's DEBUG menu, a debug layer) opens the
+    // debugger once; the GUI's own panes set those too, and a debugger closed while the deck stays there stays closed
+    if (bound != nullptr)
+    {
+        const actions::ContextInfo info = actions::ContextState::Instance().Get(bound->GetId(), bound);
+        const bool debug = info.context == "debug" || info.context.rfind("debug.", 0) == 0;
+        const bool surface = info.by.rfind("companion", 0) == 0 || info.by.rfind("host-device", 0) == 0;
+        if (debug && _debugContextOf != bound->GetId() && surface && _openDebugger)
+            _openDebugger();
+        _debugContextOf = debug ? bound->GetId() : std::string();
+    }
     const bool follow = bound != nullptr && _service->Router().PlayersFollow(bound->GetId());
     if (follow == _playersFollow)
         return;
@@ -689,6 +701,7 @@ void HostControllers::onUnbound()
     _hapticFeed.reset();
     _hapticsKey.clear();
     _attached.reset();
+    _service->Router().SetFocus({});  // a following device drives no machine now: its actions say so
 #endif
 }
 

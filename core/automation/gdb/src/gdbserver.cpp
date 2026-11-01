@@ -17,7 +17,6 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointcondition.h>
 #include <debugger/breakpoints/breakpointmanager.h>
-#include <debugger/ttd/timetravelmanager.h>
 #include <emulator/coordinator/machineop.h>
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/ttd/ttdsession.h>
@@ -1934,18 +1933,6 @@ bool GDBSession::leaveHistory()
     return true;
 }
 
-namespace
-{
-/// The engine's controller browses a recording by pausing it (D8); TTD v1 refuses to browse while it records, so
-/// the recording stops first (it keeps the history)
-void PrepareReverse(EmulatorContext* context, ttd::TTDControl& control)
-{
-    if (!context->pTimeTravelController &&
-        context->pTimeTravelHooks->ReadSessionInfo().state == ttd::TTDSessionState::Recording)
-        (void)control.Execute({"stop", {}});
-}
-}  // namespace
-
 std::string GDBSession::handleBackwardStep()
 {
     if (!_context || !_context->pTimeTravelHooks)
@@ -1961,8 +1948,8 @@ std::string GDBSession::handleBackwardStep()
         return "E01";  // No TTD session active
     }
 
+    // A reverse step or continue while recording pauses the recording (D8): its history stays
     ttd::TTDControl control(_context);
-    PrepareReverse(_context, control);
 
     const ttd::TTDReply stepped = control.Execute({"step-instruction", {{"dir", "back"}}});
     const StateNode* ok = stepped.Ok() ? stepped.body.find("stepped") : nullptr;
@@ -1985,8 +1972,8 @@ std::string GDBSession::handleBackwardContinue()
         return "E01";  // No TTD session active
     }
 
+    // A reverse step or continue while recording pauses the recording (D8): its history stays
     ttd::TTDControl control(_context);
-    PrepareReverse(_context, control);
 
     // gdb's own execution breakpoints are the targets
     std::string pcs;

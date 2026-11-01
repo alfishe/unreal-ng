@@ -376,7 +376,7 @@ TEST_F(TTD_WD1793_Serializer_Test, RoundTrip_CrossDevice_LoadProducesSameSave)
 
 /// endregion </WD1793 controller + subsystem serializer tests>
 
-/// region <TimeTravelManager integration: fdcState blob is populated>
+/// region <Time travel integration: fdcState blob is populated>
 
 TEST(TTD_WD1793_ManagerIntegration_Test, CaptureNow_PopulatesFdcStateBlob_OnBetaDiskModel)
 {
@@ -389,7 +389,7 @@ TEST(TTD_WD1793_ManagerIntegration_Test, CaptureNow_PopulatesFdcStateBlob_OnBeta
 
     // pBetaDisk is populated by Init() only on Beta Disk models (Pentagon,
     // Scorpion, etc.). The default test model may or may not have one —
-    // either outcome is a valid v1 result.
+    // either outcome is a valid result.
     WD1793* fdc = context->pBetaDisk;
 
     ASSERT_TRUE(context->pTimeTravelController->StartRecording());
@@ -413,4 +413,4 @@ TEST(TTD_WD1793_ManagerIntegration_Test, CaptureNow_PopulatesFdcStateBlob_OnBeta
     emulator.Release();
 }
 
-/// endregion </TimeTravelManager integration>
+/// endregion </Time travel integration>

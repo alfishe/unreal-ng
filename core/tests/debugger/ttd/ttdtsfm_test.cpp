@@ -21,12 +21,9 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/ttdrecordedstate.h"
-#include "_helpers/ttdv1tests.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcheckpoint.h"
-#include "debugger/ttd/ttddumpformat.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -55,8 +52,8 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelController;   // null when the test selected v1 (TtdTsfmV1_Test)
-        ASSERT_TRUE(_ttd != nullptr || _context->pTimeTravelManager != nullptr);
+        _ttd = _context->pTimeTravelController;
+        ASSERT_NE(_ttd, nullptr);
         _fm = _emulator->GetFeatureManager();
         ASSERT_NE(_fm, nullptr);
 
@@ -92,121 +89,6 @@ protected:
         EXPECT_TRUE(_ttd->SerializeSession(out, err)) << err;
         return out.str();
     }
-
-    /// Locate the baseline checkpoint's TurboSound blob inside a serialized
-    /// .ttd stream. Mirrors DeserializeSession's reads exactly (header PODs,
-    /// page store slots, checkpoint 0's fixed fields and RAM refs, then the
-    /// blob map: count u16, per blob id u8 + length u32 + body). The guard
-    /// reads only the map key, but the blob's own header id is patched too
-    /// (see SessionKindMismatchRefused) so the forged stream matches what a
-    /// real TSFM recorder would have written.
-    /// @param keyPos  Offset of the blob map's id byte for the TurboSound blob.
-    /// @param blobPos Offset of the blob body's first byte (its header id).
-    static bool FindBaselineTurboSoundBlob(const std::string& s, size_t& keyPos, size_t& blobPos)
-    {
-        size_t p = 0;
-        auto skip = [&p](size_t n) { p += n; };
-
-        // Header (field order and sizes mirror the reader in DeserializeSession)
-        skip(4);   // magic
-        skip(2);   // schema version
-        skip(2);   // flags
-        skip(1);   // model id
-        const size_t modelRamPagesAt = p;
-        skip(2);   // model ram pages
-        skip(2);   // cpu state size
-        skip(2);   // chipset state size
-        skip(8);   // rom signature
-        skip(8);   // captured at ms
-        if (p > s.size())
-            return false;
-
-        const size_t emulatorIdLen = static_cast<size_t>(static_cast<uint8_t>(s[p]));
-        skip(1 + emulatorIdLen);
-        skip(1);   // session state
-        skip(8);   // session start
-        skip(8);   // session end
-        if (p + 4 > s.size())
-            return false;
-        uint32_t pageStoreCount = 0;
-        std::memcpy(&pageStoreCount, s.data() + p, sizeof pageStoreCount);
-        skip(4);
-        skip(4);   // checkpoint count
-        // the peripheral mask (schema 3: u8 word count + u64 words; schema 1: one u64), then the not-recorded mask with flag bit 11
-        uint16_t schema = 0, flags = 0;
-        std::memcpy(&schema, s.data() + 4, 2);
-        std::memcpy(&flags, s.data() + 6, 2);
-        for (int mask = 0; mask < ((flags & 0x0800) ? 2 : 1); ++mask)
-        {
-            if (p >= s.size())
-                return false;
-            skip(schema >= 3 ? 1 + 8 * static_cast<size_t>(static_cast<uint8_t>(s[p])) : 8);
-        }
-
-        if (p > s.size())
-            return false;
-
-        // Page store: per slot enc u8 + refcount/prevSlot/crc/payloadSize u32
-        // each + payload
-        for (uint32_t i = 0; i < pageStoreCount; ++i)
-        {
-            if (p + 17 > s.size())
-                return false;
-            skip(1);   // encoding
-            skip(4);   // refcount
-            skip(4);   // prev slot
-            skip(4);   // crc
-            uint32_t payloadSize = 0;
-            std::memcpy(&payloadSize, s.data() + p, sizeof payloadSize);
-            skip(4);
-            skip(payloadSize);
-        }
-
-        // Checkpoint 0 fixed fields
-        skip(8);   // time.frame (u64)
-        skip(8);   // globalT (u64)
-        skip(1);   // frame kind
-        skip(8);   // keyframe anchor (u64)
-        skip(sizeof(ttd::TTDCpuState));
-        skip(sizeof(ttd::TTDChipsetState));
-
-        // RAM page refs: modelRamPages * kSubPagesPerEmuPage u32 slots
-        uint16_t modelRamPages = 0;
-        std::memcpy(&modelRamPages, s.data() + modelRamPagesAt, sizeof modelRamPages);
-        skip(static_cast<size_t>(modelRamPages) * ttd::dump::kSubPagesPerEmuPage * 4);
-
-        if (p + 2 > s.size())
-            return false;
-        uint16_t blobCount = 0;
-        std::memcpy(&blobCount, s.data() + p, sizeof blobCount);
-        skip(2);
-
-        // Blob map: per blob id u8 + WriteBlob framing (length u32 + body)
-        for (uint16_t b = 0; b < blobCount; ++b)
-        {
-            if (p + 5 > s.size())
-                return false;
-            const size_t idAt = p;
-            skip(1);
-            const size_t lenAt = p;
-            skip(4);
-            uint32_t blobLen = 0;
-            std::memcpy(&blobLen, s.data() + lenAt, sizeof blobLen);
-            if (p + blobLen > s.size())
-                return false;
-
-            uint8_t id = 0;
-            std::memcpy(&id, s.data() + idAt, sizeof id);
-            if (id == static_cast<uint8_t>(ttd::PeripheralId::TurboSound))
-            {
-                keyPos = idAt;
-                blobPos = lenAt + sizeof blobLen;
-                return true;
-            }
-            skip(blobLen);
-        }
-        return false;
-    }
 };
 
 // The decision core moved to SlotManager::TtdSlotSetMatches (ZX-bus slots SL-5): TtdSlots_Test covers the
@@ -216,58 +98,40 @@ protected:
 // End to end: DeserializeSession wiring (plan gate: SessionKindMismatchRefused)
 // ===========================================================================
 
-/// The forge below patches v1's file layout: this test records and loads with v1
-class TtdTsfmV1_Test : public TtdTsfm_Test
+/// A session recorded on the AY TurboSound loaded into a machine with the FM board in its socket: refused, the live machine untouched
+TEST_F(TtdTsfm_Test, SessionKindMismatchRefused)
 {
-protected:
-    ttdtest::V1Scope _v1;   // before SetUp creates the machine
-};
-
-TEST_F(TtdTsfmV1_Test, SessionKindMismatchRefused)
-{
-    ttd::TimeTravelManager* v1 = _context->pTimeTravelManager;
-    ASSERT_TRUE(v1->StartRecording());
-    RunFrames(2);
-    v1->StopRecording();
-    std::string data;
-    {
-        std::ostringstream out(std::ios::binary);
-        std::string err;
-        ASSERT_TRUE(v1->SerializeSession(out, err)) << err;
-        data = out.str();
-    }
+    const std::string data = MakeLegacySession();
     ASSERT_FALSE(data.empty());
 
-    // Sanity first: the same-kind session loads (the guard must not
-    // false-positive on a normal legacy recording)
+    // Sanity first: the same-kind session loads (the guard must not false-positive on a normal recording)
     {
         std::istringstream in(data, std::ios::binary);
         std::string err;
-        EXPECT_TRUE(v1->DeserializeSession(in, err)) << err;
+        EXPECT_TRUE(_ttd->DeserializeSession(in, err)) << err;
     }
-    v1->InvalidateSession("test");
 
-    // Forge the baseline TurboSound blob (id 0) as a TSFM blob (id 4): patch
-    // the blob map key and the blob header's own id byte. Everything else
-    // stays byte-identical, so a refusal can only come from the guard.
-    std::string forged = data;
-    size_t keyPos = 0;
-    size_t blobPos = 0;
-    ASSERT_TRUE(FindBaselineTurboSoundBlob(forged, keyPos, blobPos));
-    forged[keyPos] = static_cast<uint8_t>(ttd::PeripheralId::TSFM);
-    forged[blobPos] = static_cast<uint8_t>(ttd::PeripheralId::TSFM);
+    Emulator fm(LoggerLevel::LogError);
+    fm.SetCustomConfigPath(EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::FM));
+    ASSERT_TRUE(fm.Init());
+    EmulatorContext* context = fm.GetContext();
+    ASSERT_EQ(context->pSoundManager->getTurboSound()->TTDPeripheralId(), ttd::PeripheralId::TSFM) << "precondition: the FM board";
+    fm.GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    fm.GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
 
     {
-        std::istringstream in(forged, std::ios::binary);
+        std::istringstream in(data, std::ios::binary);
         std::string err;
-        EXPECT_FALSE(v1->DeserializeSession(in, err));
-        EXPECT_NE(err.find("ay-socket: recorded tsfm, this machine ts"), std::string::npos) << err;
+        EXPECT_FALSE(context->pTimeTravelController->DeserializeSession(in, err));
+        EXPECT_NE(err.find("ay-socket: recorded ts, this machine"), std::string::npos) << err;
     }
 
-    // The live machine state is untouched by the refused load (restores only
-    // happen on SeekTo, never during DeserializeSession)
-    EXPECT_EQ(_context->pSoundManager->getTurboSound()->TTDPeripheralId(),
-              ttd::PeripheralId::TurboSound);
+    // The live machine state is untouched by the refused load (restores only happen on SeekTo, never during DeserializeSession)
+    EXPECT_EQ(context->pSoundManager->getTurboSound()->TTDPeripheralId(), ttd::PeripheralId::TSFM);
+
+    fm.Stop();
+    fm.Release();
 }
 
 /// An empty TurboSound slot (TurboSound=None) leaves the AY ports on the
@@ -289,7 +153,7 @@ TEST_F(TtdTsfm_Test, SessionWithSlotDeviceRefusedOnEmptySlot)
     std::istringstream in(data, std::ios::binary);
     std::string err;
     EXPECT_FALSE(empty.GetContext()->pTimeTravelController->DeserializeSession(in, err));
-    // The engine's device table names the socket's board (a v1 file could not: "ay / ts")
+    // The engine's device table names the socket's board (a set keyed by legacy id could not: "ay / ts")
     EXPECT_NE(err.find("ay-socket: recorded ts, this machine none"), std::string::npos) << err;
 
     empty.Stop();
@@ -388,7 +252,7 @@ TEST_F(TTD_TurboSoundFM_Serializer_Test, RoundTrip_SsgRegistersPreserved)
 
 /// endregion </SoundChip_TurboSoundFM serializer tests>
 
-/// region <TimeTravelManager integration: TSFM blob is populated>
+/// region <Time travel integration: TSFM blob is populated>
 
 TEST(TTD_TSFM_ManagerIntegration_Test, CaptureNow_PopulatesTsfmStateBlob)
 {
@@ -879,4 +743,4 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_KeepsDeviceAndMixerSampleCountsEqu
     emulator.Release();
 }
 
-/// endregion </TimeTravelManager integration>
+/// endregion </Time travel integration>

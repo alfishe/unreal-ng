@@ -56,7 +56,7 @@ void TTDVdac2Memory::TTDRegions(std::vector<TTDDeviceRegion>& out)
         r.desc.memory = region.base;
         r.desc.bytes = static_cast<uint32_t>(region.size);
         r.desc.pieces = _trackers[i].Pieces();
-        // The chip rebuilds what it derives from its memory (as after v1's blob)
+        // The chip rebuilds what it derives from its memory (as after loading the Vdac2Memory blob)
         r.desc.onRestored = [chip]() { EveMemoryRestored(chip); };
         r.tracker = &_trackers[i];
         out.push_back(r);

@@ -323,6 +323,10 @@ StateNode NextCopper(EmulatorContext* context, const NextCopperQuery& query);
 /// `next_sprites`: the switches, the clip window, the collision / overtime flags (not cleared), the 128 attributes decoded and the pattern memory summary
 StateNode NextSprites(EmulatorContext* context, const NextSpritesQuery& query);
 StateNode SprinterPaging(EmulatorContext* context);
+/// The Scorpion GMX card's register file (/state/paging `gmx`): #00 (scheme, RECONF pending, FIXROM, BLKEXT, BLKEX2,
+/// INT type), #7EFD (ROM plane, turbo, 640x200, Magic blocked), #78FD and the #8000 page, #DFFD and the #C000 page,
+/// the scroll start (#7AFD / #7CFD), #1FFD bit 2 and the Magic-button freeze. `available` false on other models
+StateNode GmxPaging(EmulatorContext* context);
 /// The text of the picture's text squares (80 x 32: BIOS SETUP, DSS) from the mode table - the
 /// Sprinter has no ZX screen to OCR; graphics squares read as spaces
 StateNode SprinterText(EmulatorContext* context);

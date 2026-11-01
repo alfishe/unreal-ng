@@ -95,7 +95,7 @@ def test_seek_by_scrubs_the_history_with_the_curve_the_clamp_and_marks(s):
     emu = instance(s)
     r = s.call('actions', {'action': 'run', 'id': 'ttd.seek_by', 'value': -1}, ok=False)
     if r.is_error:
-        expect('record first' in r.text, 'without a history: record first', r.text)
+        expect('press TTD REC to record' in r.text, 'without a history: press TTD REC to record', r.text)
     s.call('time_travel', {'action': 'start'})
     s.call('control_execution', {'action': 'run_frames', 'frames': 160})
     s.call('time_travel', {'action': 'stop'})

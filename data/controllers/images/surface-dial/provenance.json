@@ -3,11 +3,32 @@
   "images": [
     {
       "view": "front",
-      "source": "tools/controllers/make_fallback_images.py",
+      "title": "Microsoft Surface Dial, magnesium (drawn at twice the scale)",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
       "author": "unreal-ng",
       "licence": "same as the repository",
-      "terms": "generated line drawing, no photo",
-      "retouch": "none"
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size 59 mm across, 30 mm high, the base 54 x 4 mm, 145 g; aluminium, magnesium colour",
+          "source": "https://www.microsoft.com/en-us/d/surface-dial/925r551sktgn",
+          "retrieved": "2026-10-31"
+        },
+        {
+          "what": "the top seen from above: the satin top inset in the shell, the colours",
+          "source": "https://www.microsoft.com/en-us/d/surface-dial/925r551sktgn",
+          "author": "Microsoft",
+          "licence": "product photo",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-31"
+        },
+        {
+          "what": "the scale: twice the pads' 8.6 px per mm, the hotspots of the line drawing it replaces kept (press, turn with its 36-step ring, touch as a tag)",
+          "source": "this POC",
+          "retrieved": "2026-10-31"
+        }
+      ]
     }
   ]
 }

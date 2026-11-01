@@ -565,7 +565,10 @@ public:
         // position come from the board's sync PROM ([PROFI] SyncProm, ports/models/profiboard.h). A 320-line
         // PROM (71680T) only adds 8 lines past the visible area
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},  // M_PROFI
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_GMX
+        // M_GMX: the GMX card's 640x200 extended mode (#7EFD bit 3, GMX design 2.5) on the Scorpion's 312 x 224T
+        // beam. 640 px paper at 5 px/T inside the 128 T paper window, 48 px side borders at 2 px/T; the 200 lines
+        // 4 above the standard 192-line window (ScreenGmx, gmxgeometry.h)
+        {736, 288, 640, 200, 48, 44, 448, 64, 32, 8, 16},  // M_GMX
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_BRD
         // M_SCORPION: 312 lines x 224T = 69888T frame - same 312-line geometry as
         // M_ZX48 (Pentagon's row differs only in vSyncLines 16 vs 8)

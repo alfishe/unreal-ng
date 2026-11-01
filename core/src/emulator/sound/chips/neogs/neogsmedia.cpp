@@ -5,7 +5,7 @@
 #include <optional>
 
 #include "common/filehelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "common/logger.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"

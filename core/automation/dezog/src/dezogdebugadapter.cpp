@@ -6,7 +6,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/coordinator/machineop.h"
 #include "debugger/ttd/ttdsession.h"
 #include "debugger/ttd/ttdcheckpoint.h"
@@ -1524,33 +1524,9 @@ void DezogDebugAdapter::editMachine(Emulator& emulator, const char* what, const 
         return;
     }
 
-    // v1 - its replay cannot cross the edit: restart recording at the edited state
+    // Without the controller there is no session to keep the edit: it is applied as it comes
     emulator.NoteDebugChange();   // the debugger snapshot's seq
     edit();
-    if (!isHistoryEnabled())
-        return;
-
-    ttd::TTDSessionRef mgr = ttdManagerOf(emulator);
-    if (!mgr || !mgr->IsRecording())
-        return;
-
-    // Marker for tooling/consistency, then a fresh baseline so replay starts
-    // from the edited state (a mid-frame checkpoint, exactly like
-    // StartRecording on connect). History before the edit is dropped - same
-    // segment semantics as any other nondeterministic barrier.
-    //
-    // NOTE (§6.4): this applies in DebuggerLive too. A marker-only handling
-    // was tried and is UNSOUND: replay re-executes from the last checkpoint,
-    // so after an out-of-band edit (registers/PC/memory) everything between
-    // that checkpoint and the marker decodes as fabricated execution that
-    // never ran. Restarting at the edited state is the only correct Phase-1
-    // semantics; journaling debugger writes (§6.5 Phase 3) will remove the
-    // wipe. DeZog breakpoints are native objects, NOT memory edits - they
-    // never trigger this.
-    mgr->RecordExternalEvent(ttd::TTDExternalEventKind::DebuggerEdit, what);
-    mgr->StopRecording();
-    if (!mgr->StartRecording())
-        std::cerr << "[DZRP] TTD restart after debugger edit failed\n";
 }
 
 void DezogDebugAdapter::leaveHistoryIfBrowsing()

@@ -13,7 +13,7 @@
 #include "debugger/ttd/atm/ttdevosdcard.h"
 #include "debugger/ttd/atm/ttdevoturbocache.h"
 #include "debugger/ttd/ttdds12887.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/cpu/core.h"

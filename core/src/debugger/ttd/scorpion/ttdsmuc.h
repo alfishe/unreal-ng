@@ -26,7 +26,7 @@ namespace ttd
 class TTDSmuc : public TTDSerializable
 {
 public:
-    static constexpr uint8_t kVersion = 1;
+    static constexpr uint8_t kVersion = 2;   // 2: the 8259
 
     TTDSmuc(PortDecoder_Scorpion256& decoder, EmulatorContext& context) : _decoder(decoder), _context(context) {}
 

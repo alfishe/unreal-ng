@@ -297,11 +297,11 @@ TEST_F(TtdScorpionProfRom_Test, RegistryIgnoresBlobsForUnregisteredDevices)
 }
 
 // ---------------------------------------------------------------------------
-// TimeTravelManager wiring
+// TimeTravelController wiring
 // ---------------------------------------------------------------------------
 
 /// The framework must discover model serializers on its own. Nothing outside
-/// TimeTravelManager registers them, so if this regresses a Scorpion recording
+/// TimeTravelController registers them, so if this regresses a Scorpion recording
 /// silently loses its ProfROM state with no error anywhere.
 TEST_F(TtdScorpionProfRom_Test, RecordingRegistersTheScorpionSerializer)
 {

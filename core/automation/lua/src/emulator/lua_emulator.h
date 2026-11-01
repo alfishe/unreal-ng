@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/base64.h"
+#include "emulator/state/statenodejson.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runpacer.h"
@@ -90,7 +91,7 @@
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
 #include "debugger/asm/asmcontrol.h"
-#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/timetravelcontroller.h>
 #include <debugger/ttd/machinestatehash.h>
 #include <debugger/ttd/ttdfileinfo.h>
 #include <tuple>
@@ -2892,7 +2893,7 @@ public:
         });
 
         // Tape operations
-        // ok, reason: the reason is set when the insert is refused (TTD v1 while recording)
+        // ok, reason: the reason is set when the insert is refused
         lua.set_function("tape_load", [this](const std::string& path) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator"};
@@ -5933,7 +5934,7 @@ public:
         });
 
         lua.set_function("ttd_seek", [this](sol::this_state ts, uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::object {
-            // Without a T-state: the frame's end on the engine (D13), its start on v1
+            // Without a T-state: the frame's end (D13)
             std::map<std::string, std::string> options{{"frame", std::to_string(frame)}};
             if (tInFrameOpt)
                 options["tinframe"] = std::to_string(*tInFrameOpt);
@@ -6167,6 +6168,31 @@ public:
             if (!value.find("matched"))
                 value["matched"] = false;
             return StateNodeToLua(ts, value);
+        });
+
+        // ttd_probe_frames(probe or {probe, ...}, {from_frame=, to_frame=, limit=}): a game profile's probes over the
+        // history ({probe="exec", address=0x8000, page=, end=, port_mask=, ["if"]=}), replayed, the machine put back
+        lua.set_function("ttd_probe_frames", [this](sol::this_state ts, sol::table probesTable,
+                                                    sol::optional<sol::table> optionsTable) -> sol::object {
+            StateNode probes = StateNode::Array();
+            auto add = [&](const sol::table& probe) {
+                StateNode node = StateNode::Object();
+                for (const auto& [key, value] : probe)
+                    node[key.as<std::string>()] = TtdOptionText(value);
+                probes.push(node);
+            };
+            if (probesTable["probe"].valid())
+                add(probesTable);
+            else
+                for (const auto& [index, probe] : probesTable)
+                    if (probe.is<sol::table>())
+                        add(probe.as<sol::table>());
+            std::map<std::string, std::string> options;
+            if (optionsTable)
+                for (const auto& [key, value] : *optionsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            options["probes"] = StateNodeToJsonText(probes);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("probe-frames", options)));
         });
 
         lua.set_function("ttd_coverage_probe", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
@@ -6500,7 +6526,7 @@ public:
             live["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
             live["mouse_ports_decoded"] = mouseDecoded;
             live["mouse_routing_note"] = mouseNote;
-            const bool scorpion = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP);
+            const bool scorpion = IsScorpionModel(config.mem_model);
             if (scorpion)
                 live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
             // else: key absent = the #1FFD latch does not exist on this model
@@ -6664,6 +6690,9 @@ public:
                 }
                 result["sprinter"] = StateNodeToLua(s, sprinter);
             }
+            // GMX: the card's register file (the /state/paging `gmx` view)
+            if (config.mem_model == MM_GMX)
+                result["gmx"] = StateNodeToLua(s, DeviceState::GmxPaging(context));
             result["banks"] = banks;
 
             results.push_back(sol::make_object(s, result));

@@ -1,8 +1,9 @@
 # TODO — TTD peripheral registry integration (2026-09-10)
 
-**Status:** partially done — [PLAN.md](PLAN.md) Phase 1 (blocking bug fixes)
-complete; Phases 2–5 (wiring, proofs, tests, docs) not started. Tracked work
-sits on the `atm` branch per the plan header.
+**Status:** closed 2026-10-30 — Phase 1 (blocking bug fixes) done; Phases 2–5
+were about v1's capture path (its blob vectors), which was deleted with v1
+(TTD v2 migration, Phase 6). The engine's device table (migration Phase 2) and
+its own tests and benchmarks replaced them; nothing here is left to do.
 
 ## Progress
 - Phase 1 all FIXED: use-after-free in `RestoreAll` (1.1), silent corruption

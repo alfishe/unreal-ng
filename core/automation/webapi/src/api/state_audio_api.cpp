@@ -15,7 +15,7 @@
 #include "../common/statenode_json.h"
 #include <emulator/state/devicestate.h>
 #include <emulator/sound/audiomixer.h>
-#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/timetravelcontroller.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
 

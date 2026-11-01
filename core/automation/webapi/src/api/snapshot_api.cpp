@@ -523,7 +523,7 @@ void EmulatorAPI::transferState(const HttpRequestPtr& req, std::function<void(co
             return;
         }
 
-        // The coordinator refuses this (TTD v1 while recording): answer why instead of a bare failure, logged
+        // The coordinator may refuse this: answer why instead of a bare failure, logged
         if (const std::string refusal = target->AskModelSwitch("state from " + id); !refusal.empty())
         {
             SendError(callback, HttpStatusCode::k409Conflict, "Conflict", refusal);

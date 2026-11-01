@@ -126,7 +126,7 @@ std::string NoHistory(Emulator& emulator, const ActionValue& value)
     if (std::string why = NoTtd(emulator, value); !why.empty())
         return why;
     return emulator.GetContext()->pTimeTravelHooks->PublishedCursor().history ? std::string()
-                                                                                : std::string("record first");
+                                                                                : std::string(kNoHistory);
 }
 
 const StateNode* Param(const ActionValue& value, const char* name)
@@ -281,7 +281,7 @@ ActionResult SeekBy(const ActionCall& call)
 
     const ttd::TTDCursor cursor = context->pTimeTravelHooks->PublishedCursor();
     if (!cursor.history)
-        return ActionResult::Failure("not_now", "record first");
+        return ActionResult::Failure("not_now", kNoHistory);
     const double fps = ttd::TTDFrameRate(context);
     const int64_t frames = SeekFrames(curve, call.value.delta, rate, fps);
     const uint64_t from = cursor.frame;

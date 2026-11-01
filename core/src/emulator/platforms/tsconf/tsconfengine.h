@@ -169,7 +169,6 @@ private:
     TsConfInterrupts& _interrupts;
     TsConfDma& _dma;
     TsConfMemory* _memory = nullptr;
-    uint32_t _cpuLineRunning = 0;  ///< CPU DRAM reads on the current line so far
     std::function<void(uint32_t)> _videoFlush;
     std::function<void()> _videoCatchUp;
     uint32_t _stepEndRaster = 0;  // derived from the CPU's clock at the step, not state

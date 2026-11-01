@@ -115,7 +115,6 @@ on_tap({write = 0x5C78, ["if"] = "MDT < MDT@prev"}, [[return function(hit) poke(
 - A replay never runs a hook, so a logic hook's own state (its upvalues, `shared_set`) is not rewound by a seek.
 - No host randomness or time: `math.random` starts from a fixed seed in every hook state, and `math.randomseed` takes
   an explicit seed (with none it raises). There is no `os`.
-- TTD v1 (`UNREAL_TTD_BACKEND=v1`, the fallback recorder) does not record these edits: a logic write while it records is refused.
 - Deferred callbacks have no role: their writes go through the scripts' memory and register calls, which TTD records
   as tool edits already.
 

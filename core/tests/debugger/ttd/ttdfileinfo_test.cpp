@@ -34,7 +34,6 @@
 #include "debugger/ttd/engine/ttdcontainer.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelengine.h"
-#include "debugger/ttd/ttddumpformat.h"
 #include "debugger/ttd/ttdfileinfo.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "debugger/ttd/ttdsessionfacts.h"
@@ -178,26 +177,25 @@ TEST_F(TTDFileInfo_Test, GeneralSoundCardOfTheRecordingIsNamed)
 TEST(TTDFileInfo_Names, GeneralSoundOfAMachine)
 {
     using ttd::PeripheralId;
-    auto bit = [](PeripheralId id) {
-        ttd::PeripheralMask mask;
-        mask.Set(static_cast<uint8_t>(id));
-        return mask;
-    };
-    auto machineOf = [](const ttd::PeripheralMask& mask) {
+    auto machineOf = [](std::initializer_list<PeripheralId> ids) {
         ttd::TTDRecordedMachine m;
-        m.devices = ttd::DevicesOfV1Mask(mask);
+        for (const PeripheralId id : ids)
+        {
+            const ttd::TTDDeviceKey key{static_cast<ttd::TTDDeviceType>(id), ttd::PeripheralIdName(static_cast<uint8_t>(id))};
+            m.devices.push_back({key, id});
+        }
         return m;
     };
-    EXPECT_EQ(ttd::GeneralSoundOf(machineOf(ttd::PeripheralMask{})), GSTypeKind::NONE);
-    EXPECT_EQ(ttd::GeneralSoundOf(machineOf(bit(PeripheralId::GeneralSound))), GSTypeKind::Z80);
-    EXPECT_EQ(ttd::GeneralSoundOf(machineOf(bit(PeripheralId::GeneralSoundLightweight))), GSTypeKind::LW);
-    EXPECT_EQ(ttd::GeneralSoundOf(machineOf(bit(PeripheralId::NeoGS) | bit(PeripheralId::BetaDisk))), GSTypeKind::NGS);
+    EXPECT_EQ(ttd::GeneralSoundOf(machineOf({})), GSTypeKind::NONE);
+    EXPECT_EQ(ttd::GeneralSoundOf(machineOf({PeripheralId::GeneralSound})), GSTypeKind::Z80);
+    EXPECT_EQ(ttd::GeneralSoundOf(machineOf({PeripheralId::GeneralSoundLightweight})), GSTypeKind::LW);
+    EXPECT_EQ(ttd::GeneralSoundOf(machineOf({PeripheralId::NeoGS, PeripheralId::BetaDisk})), GSTypeKind::NGS);
     EXPECT_EQ(ttd::PeripheralIdName(static_cast<uint8_t>(PeripheralId::BetaDisk)), "betadisk");
     EXPECT_EQ(ttd::PeripheralIdName(60), "multisound-gs");
     EXPECT_EQ(ttd::PeripheralIdName(63), "next-system-area");
     EXPECT_EQ(ttd::PeripheralIdName(200), "id200");  // an id no build knows
 
-    ttd::TTDRecordedMachine m = machineOf(bit(PeripheralId::NeoGS) | bit(PeripheralId::TSFM));
+    ttd::TTDRecordedMachine m = machineOf({PeripheralId::TSFM, PeripheralId::NeoGS});
     ttd::DescribeRecordedMachine(m);
     EXPECT_EQ(m.turboSound, "tsfm");
     EXPECT_EQ(m.generalSound, GSTypeKind::NGS);
@@ -214,10 +212,16 @@ TEST(TTDFileInfo_Refusal, NotATtdFile)
     EXPECT_FALSE(ttd::ReadTTDFileInfo(junk, info, err));
     EXPECT_NE(err.find("not a .ttd"), std::string::npos) << err;
 
-    std::istringstream truncated(std::string("TTDD\x01\x00", 6), std::ios::binary);
+    std::istringstream truncated(std::string("TTDD\x02\x00", 6), std::ios::binary);
     err.clear();
     EXPECT_FALSE(ttd::ReadTTDFileInfo(truncated, info, err));
-    EXPECT_NE(err.find("truncated"), std::string::npos) << err;
+    EXPECT_NE(err.find("too short"), std::string::npos) << err;
+
+    // A v1 file (schema 1 or 3) is refused with what to do about it
+    std::istringstream v1(std::string("TTDD\x03\x00", 6), std::ios::binary);
+    err.clear();
+    EXPECT_FALSE(ttd::ReadTTDFileInfo(v1, info, err));
+    EXPECT_NE(err.find("engine's format only"), std::string::npos) << err;
 
     err.clear();
     EXPECT_FALSE(ttd::ReadTTDFileInfo(std::string("/nonexistent/dir/none.ttd"), info, err));
@@ -241,7 +245,7 @@ TEST_F(TTDFileInfo_Test, ReadsFromAPath)
     std::remove(path.c_str());
 }
 
-/// A device without a v1 id is named by its instance and listed after the v1 devices; a lone type past the v1 ids
+/// A device without a legacy id is named by its instance and listed after the others; a lone type past the legacy ids
 /// without an instance by its number
 TEST(TTDFileInfo_Names, DeviceWithoutV1IdIsNamedByItsInstance)
 {
@@ -254,7 +258,7 @@ TEST(TTDFileInfo_Names, DeviceWithoutV1IdIsNamedByItsInstance)
     EXPECT_EQ(ttd::DeviceDisplayName({{static_cast<ttd::TTDDeviceType>(70), ""}, ttd::PeripheralId::None}), "type70");
 }
 
-/// The controller's facts, version 2: the not-recorded devices as keys; version 1 (two masks of v1 ids) still reads
+/// The controller's facts, version 2: the not-recorded devices as keys; version 1 (two masks of legacy ids) still reads
 TEST(TTDSessionFacts_Test, NotRecordedDevicesAreKeysAndVersionOneStillReads)
 {
     ttd::TTDSessionFacts facts;

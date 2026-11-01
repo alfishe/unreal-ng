@@ -680,7 +680,7 @@ TEST(TtdMultiSound_Test, RecordingRefusedWhenACardDeviceIsMissing)
 
 /// Two cards of one kind are two sets of devices: the planner hands out all four of the card's devices under the
 /// same four types, and the slot names each card's instances ("zxbus.1.multisound.saa1099", "zxbus.2..."), so the
-/// engine records both cards side by side (D23). v1 keeps one blob per id and refuses that machine, naming both. One
+/// engine records both cards side by side (D23), which the legacy ids could not tell apart. One
 /// Pentagon with both cards, 3 frames (~40 ms)
 TEST(TtdMultiSound_Test, TwoCardsWithDisjointDipsAreRecordedSideBySide)
 {
@@ -703,9 +703,6 @@ TEST(TtdMultiSound_Test, TwoCardsWithDisjointDipsAreRecordedSideBySide)
                                             std::pair{ ttd::TTDDeviceType::MultiSoundGs, ".gs" } })
             EXPECT_NE(registry.Find({ type, std::string(slot) + ".multisound" + suffix }), nullptr) << slot << suffix;
     EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
-    EXPECT_FALSE(registry.V1Recordable(error));
-    EXPECT_NE(error.find("zxbus.1.multisound"), std::string::npos) << error;
-    EXPECT_NE(error.find("zxbus.2.multisound"), std::string::npos) << error;
 
     ASSERT_TRUE(m.Ttd()->StartRecording()) << "the engine keeps both cards' state: " << m.Ttd()->LastStartError();
     m.Machine().RunNFrames(3);

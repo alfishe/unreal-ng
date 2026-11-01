@@ -54,7 +54,7 @@
         "- `black_box`: record as the black box (the engine; D29): keep the last `minutes` (default 5, 1..1440) "
         "and never hold turbo or the host speed - the recording stops before either takes effect, its history kept, "
         "and a new session starts once nothing accelerates; fast loaders' traps are recorded. Absent or false: an "
-        "explicit recording, which holds the machine at real speed. v1 answers 400 for black_box true";
+        "explicit recording, which holds the machine at real speed";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["required"] = true;
@@ -110,8 +110,8 @@
         op["description"] =
             "Replays frames `from_frame`..`to_frame` (both optional; default: the whole session) with every memory "
             "write collected, and adds them to the write journal: the frames join its spans. Frames already covered "
-            "are left as they are; the session's last frame and frames holding a v1 marker without its data are not "
-            "built. About 2-4 ms per frame, like RZX playback: the request answers when done; GET /ttd/journal shows "
+            "are left as they are; the session's last frame and frames holding a barrier (a marker without the data a "
+            "replay needs) are not built. About 2-4 ms per frame, like RZX playback: the request answers when done; GET /ttd/journal shows "
             "the progress meanwhile (`write_journal_build`) and POST /ttd/journal/build/cancel stops it (what was "
             "built is kept). Not while recording.";
         op["parameters"][0]["name"] = "id";
@@ -537,8 +537,7 @@
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["description"] =
         "Serializes the current TTD session to a .ttd binary file at the "
         "given filesystem path: the engine's session file (schema 2, Kaitai "
-        "schema core/src/debugger/ttd/engine/ttdsession.ksy); on v1 "
-        "(UNREAL_TTD_BACKEND=v1) v1's format (ttd.ksy).";
+        "schema core/src/debugger/ttd/ttd.ksy).";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["required"] = true;
@@ -651,7 +650,7 @@
             op["responses"]["400"]["description"] = "Missing or bad option, a memory the session does not record, a frame "
                                                     "before the first checkpoint";
             op["responses"]["404"]["description"] = "No recorded history, or the instance is not found";
-            op["responses"]["501"]["description"] = "Backend v1 (no piece store)";
+            op["responses"]["501"]["description"] = "Time travel is not available for this instance";
         }
         Json::Value& at = paths[kAt]["post"];
         at["summary"] = "Read a memory as it was at a past checkpoint, without seeking";
@@ -818,6 +817,42 @@
         "Emulator instance not found";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["responses"]["501"]["description"] =
         "TTD engine not available in this build";
+
+    // =====================================================================
+    // POST /ttd/probe-frames — the frames a game profile's probes fired in
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["summary"] = "The frames a game profile's probes fired in (a replay of the window)";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["description"] =
+        "Replays each complete recorded frame of [from_frame, to_frame] with the probes armed as taps of the "
+        "replay's own sink, so they match as in real time (banks, pages, port masks, the `if` condition with its "
+        "operands); the live haptics, the user's breakpoints and the deck hear nothing, and the machine stays where "
+        "it stood. A frame the coverage index proves free of every memory probe is not replayed (pruned_frames); "
+        "a frame a replay barrier cuts is skipped and listed in barrier_frames. Body: probes, an array of at most 16 "
+        "objects {probe: exec|read|write|port-in|port-out, address, end?, page?, port_mask?, if?} (numbers or "
+        "strings, decimal or hex), or one probe's fields at the top level; from_frame?, to_frame?, limit? (frames "
+        "listed per probe, default 1000, at most 10000). A probe whose condition does not compile has error and no "
+        "frames. When every probe's list is full and the window goes on, truncated is true and next_from_frame is "
+        "the next call's from_frame. A recording running is paused for the query.";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["probes"]["type"] = "array";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["probes"]["items"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["from_frame"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["to_frame"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["limit"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["responses"]["200"]["description"] =
+        "{from_frame, to_frame, replayed_frames, pruned_frames, barrier_frames, blocked_by_marker?, probes: "
+        "[{probe, address, end?, page?, port_mask?, if?, error?, frame_count, hit_count, frames, hits, truncated}], "
+        "truncated, next_from_frame?}";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["responses"]["400"]["description"] = "A probe field is malformed, or more than 16 probes";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["responses"]["404"]["description"] = "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["responses"]["409"]["description"] = "No complete recorded frame in the window";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["responses"]["501"]["description"] = "TTD engine not available in this build";
 
     // =====================================================================
     // GET /ttd/coverage/probe — probe address range containment for a frame

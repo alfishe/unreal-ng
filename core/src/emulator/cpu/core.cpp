@@ -114,7 +114,7 @@ bool Core::Init()
     // and ProfROM bus-cycle silicon, TS-Conf the one that maps its windows
     // from TsConfState and models its CPU cache; everything else stays on the
     // generic one
-    if (_config->mem_model == MM_SCORP || _config->mem_model == MM_PROFSCORP)
+    if (IsScorpionModel(_config->mem_model))
         _memory = new ScorpionMemory(_context);
     else if (_config->mem_model == MM_TSL)
         _memory = new TsConfMemory(_context);
@@ -908,7 +908,8 @@ void Core::ResetKeepingClock(ROMModeEnum mode)
 void Core::Reset(ROMModeEnum mode)
 {
     // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
-    _mode = mode;
+    // The GMX card has no RESET= choice: its CPU always starts at page 0 of the plane, the loader (GMX design 2.4)
+    _mode = (_config->mem_model == MM_GMX) ? RM_128 : mode;
 
     // The battery clock keeps its time over the reset, which restarts the emulated time it runs on
     if (Ds12887* rtc = _portDecoder ? _portDecoder->RtcChip() : nullptr)
@@ -1019,7 +1020,7 @@ uint16_t Core::GetCPUFrequencyMultiplier()
 bool Core::CanSetSpeedMultiplier(uint8_t multiplier) const
 {
     // A TTD recording captures the machine at real speed: only 1x while it is
-    // active (TimeTravelManager forces 1x on entry and restores the setting on exit)
+    // active (TimeTravelController forces 1x on entry and restores the setting on exit)
     if (multiplier != 1 && _context->pFeatureManager && _context->pFeatureManager->isTtdRecordingActive())
         return false;
     // A history the user recorded keeps the speed it was recorded at: a change would drop it (Timing)

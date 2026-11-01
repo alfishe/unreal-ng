@@ -1,27 +1,22 @@
 # TTD analyzer
 
-Reads Unreal-NG `.ttd` time-travel sessions without an emulator: the header, checkpoints, journals and the recorded machine.
+Reads Unreal-NG `.ttd` session files without an emulator: the time-travel engine's format (schema 2), records in
+parts, every record checked by CRC32C, one file per segment of history
+([container format](../../../docs/emulator/design/debugger/time-travel-debug/ttd-container-format.md),
+`core/src/debugger/ttd/ttd.ksy`; `src/ttdcontainer.py` reads it).
+
+v1's files (schema 1) are refused: v1's reader and the analyses built on it (render, heatmap, anomaly report, port
+search) went with v1 (Phase 6 of the [TTD v2 migration](../../../docs/inprogress/2026-09-25-ttd-v2-migration/README.md),
+2026-10-30). The emulator answers those questions of an engine file itself: `ttd port-events` with `file=`,
+`ttd export-clip`, the coverage verbs.
 
 ```bash
 cd tools/verification/ttd-analyzer
-python3 -m src.main info session.ttd        # header + checkpoint overview, journals, coverage
-python3 -m src.main validate session.ttd    # integrity checks (CI-friendly)
-python3 -m src.main search session.ttd key 5   # "when did the program ...": the port journals
-python3 -m src.main --help                  # every command
-python3 -m pytest -q tests                  # its tests
-```
-
-The file format: [ttd-v1-architecture-and-format.md](../../../docs/emulator/design/debugger/time-travel-debug/ttd-v1-architecture-and-format.md) and `core/src/debugger/ttd/ttd.ksy`.
-
-## Schema 2: the time-travel engine's session file
-
-The engine that replaces v1 (TTD v2, [migration](../../../docs/inprogress/2026-09-25-ttd-v2-migration/README.md)) writes another format: records in parts, every record checked by CRC32C, one file per segment of history ([phase-4 TDD](../../../docs/inprogress/2026-09-25-ttd-v2-migration/phase-4-session-file-tdd.md), `core/src/debugger/ttd/engine/ttdsession.ksy`). `info` and `validate` tell the schemas apart by the header; `src/ttdcontainer.py` reads schema 2.
-
-```bash
 python3 -m src.main info ../../../testdata/ttd/v2/synthetic.ttd      # regions, segments, versions, bytes per stream
 python3 -m src.main validate ../../../testdata/ttd/v2/synthetic.ttd  # every CRC, every version decoded, dependencies
 python3 -m src.main parts ../../../testdata/ttd/v2/synthetic.ttd     # part by part: frames, bytes, dependencies
 python3 -m src.main recover ../../../testdata/ttd/v2/synthetic-unfinished.ttd   # what a crashed recording keeps
+python3 -m pytest -q tests                                          # its tests
 ```
 
 ```
@@ -65,5 +60,5 @@ Options: `--out` (default `<input>-journal.ttd`), `--from` / `--to` (frames; def
 | Script | What it does |
 |---|---|
 | `scripts/build_write_journal.py` | Adds the write journal to a saved session by replay (above) |
-| `scripts/record_fixtures.py` | Records the `testdata/ttd` corpus sessions through the WebAPI |
-| `scripts/record_port_journal_fixtures.py` | Records the port-journal fixtures and their expected answers |
+| `scripts/record_fixtures.py` | Records the `testdata/ttd/engine` corpus sessions through the WebAPI |
+| `scripts/record_port_journal_fixtures.py` | Records the port-journal fixtures (`testdata/ttd/port-journals/engine`) and their expected answers |

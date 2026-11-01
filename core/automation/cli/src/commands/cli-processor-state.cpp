@@ -519,6 +519,10 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
     ss << "  Bank 3 (0xC000-0xFFFF): " << memory.GetCurrentBankName(3) << NEWLINE;
     ss << NEWLINE;
 
+    // GMX: the card's register file (DeviceState::GmxPaging)
+    if (config.mem_model == MM_GMX)
+        ss << "GMX card:" << NEWLINE << DeviceState::ToText(DeviceState::GmxPaging(context), 1) << NEWLINE;
+
     // Paging State
     if (config.mem_model == MM_SPRINTER)
     {
@@ -609,6 +613,9 @@ void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorCo
     // Bank 3 (always RAM, pageable on 128K)
     ss << "Bank 3 (0xC000-0xFFFF): RAM Page " << (int)memory.GetRAMPageForBank3() << " (" << access(3) << contended(3) << ")"
        << NEWLINE;
+
+    if (config.mem_model == MM_GMX)
+        ss << NEWLINE << "GMX card:" << NEWLINE << DeviceState::ToText(DeviceState::GmxPaging(context), 1);
 
     if (config.mem_model == MM_SPRINTER)
     {

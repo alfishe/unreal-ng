@@ -21,7 +21,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcoverageindex.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -40,7 +40,7 @@ constexpr const char* kSnapshotPath = "testdata/loaders/sna/Dizzy Y.sna";
 struct CoverageRun
 {
     Emulator* emulator = nullptr;
-    ttd::TimeTravelManager* ttd = nullptr;
+    ttd::TimeTravelController* ttd = nullptr;
     bool ok = false;
 
     explicit CoverageRun(bool loadSnapshot)
@@ -50,7 +50,7 @@ struct CoverageRun
             return;
 
         EmulatorContext* ctx = emulator->GetContext();
-        ttd = ctx->pTimeTravelManager;
+        ttd = ctx->pTimeTravelController;
         FeatureManager* fm = emulator->GetFeatureManager();
         if (!ttd || !fm)
             return;
@@ -203,47 +203,56 @@ BENCHMARK(BM_TTD_CoverageIndex_RebuildPerFrame)
 // Args({operation, coverageEnabled}) where operation 0 = FindLastAccess (read
 // watchpoint), 1 = ReverseContinue (reverse breakpoint).
 
-#include <fstream>
+#include <memory>
 
+#include "debugger/ttd/ttdfileinfo.h"
 #include "debugger/ttd/ttdprobe.h"
+#include "emulator/config.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 
 namespace
 {
 
-constexpr const char* kSessionFixture = "testdata/ttd/demo_across-the-edge-second.ttd";
+constexpr const char* kSessionFixture = "testdata/ttd/engine/demo_across-the-edge-second.ttd";
 
-/// Load a recorded session into a fresh emulator. Returns null when the
+/// Load a recorded session into a fresh machine of the recorded model with the
+/// recorded General Sound card (the loader refuses another). Not ok when the
 /// fixture is missing, so the benchmark skips rather than reporting nonsense.
 struct LoadedSession
 {
-    Emulator* emulator = nullptr;
-    ttd::TimeTravelManager* ttd = nullptr;
+    std::shared_ptr<Emulator> emulator;
+    ttd::TimeTravelController* ttd = nullptr;
     bool ok = false;
+    std::string error;
 
     LoadedSession()
     {
-        emulator = new Emulator(LoggerLevel::LogError);
-        if (!emulator->Init())
+        ttd::TTDFileInfo info;
+        if (!ttd::ReadTTDFileInfo(kSessionFixture, info, error))
+            return;
+        const GSTypeKind gs = info.machine.generalSound;
+        emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+            "ttd-loaded-session", info.machine.model, LoggerLevel::LogError, &error,
+            [gs](CONFIG& c) { c.sound.gsTypeKind = gs; });
+        if (!emulator)
             return;
 
         EmulatorContext* ctx = emulator->GetContext();
-        ttd = ctx->pTimeTravelManager;
+        ttd = ctx->pTimeTravelController;
         FeatureManager* fm = emulator->GetFeatureManager();
         if (!ttd || !fm)
+        {
+            error = "no time travel on the machine";
             return;
+        }
 
         fm->setFeature(Features::kDebugMode, true);
         fm->setFeature(Features::kTimeTravel, true);
         ctx->pMemory->UpdateFeatureCache();
 
-        std::ifstream in(kSessionFixture, std::ios::binary);
-        if (!in)
-            return;
-
-        std::string err;
-        if (!ttd->DeserializeSession(in, err))
+        if (!ttd->DeserializeSessionFile(kSessionFixture, error))
             return;
 
         ok = ttd->GetCheckpointCount() > 1;
@@ -252,11 +261,7 @@ struct LoadedSession
     ~LoadedSession()
     {
         if (emulator)
-        {
-            emulator->Stop();
-            emulator->Release();
-            delete emulator;
-        }
+            EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
     }
 };
 
@@ -270,8 +275,8 @@ static void BM_TTD_LoadedSession_Query(benchmark::State& state)
     LoadedSession session;
     if (!session.ok)
     {
-        state.SkipWithError("could not load testdata/ttd fixture "
-                            "(run record_fixtures.py, and run from the repo root)");
+        const std::string why = std::string(kSessionFixture) + " (run from the repo root): " + session.error;
+        state.SkipWithError(why.c_str());
         return;
     }
 

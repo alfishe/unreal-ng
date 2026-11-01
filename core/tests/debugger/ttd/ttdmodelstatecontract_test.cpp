@@ -60,7 +60,7 @@ public:
 /// fails here rather than at someone's seek months later.
 TEST(TTDModelStateContract_Test, DeclaredStateIsCoveredBySerializers)
 {
-    for (const char* model : {"48K", "128k", "PENTAGON", "SCORPION", "PROFSCORP", "ATM710", "ATM3", "PROFI", "SPRINTER"})
+    for (const char* model : {"48K", "128k", "PENTAGON", "SCORPION", "PROFSCORP", "GMX", "ATM710", "ATM3", "PROFI", "SPRINTER"})
     {
         Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
         if (emulator == nullptr)
@@ -96,7 +96,7 @@ TEST(TTDModelStateContract_Test, DeclaredStateIsCoveredBySerializers)
 /// PROFSCORP. If this regresses, a seek lands on the wrong ROM / RAM page.
 TEST(TTDModelStateContract_Test, ScorpionModelsDeclareScorpionState)
 {
-    for (const char* model : {"SCORPION", "PROFSCORP"})
+    for (const char* model : {"SCORPION", "PROFSCORP", "GMX"})
     {
         Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
         ASSERT_NE(emulator, nullptr) << model;
@@ -308,8 +308,8 @@ TEST(TTDModelStateContract_Test, EveryDeviceMatchesItsDescriptorOnEveryModel)
 {
     SoundCardScope cards{TestSound::All};
     size_t checked = 0;
-    for (const char* model : {"48K", "128k", "PLUS2", "PLUS2A", "PLUS3", "PENTAGON", "SCORPION", "PROFSCORP", "ATM710",
-                              "ATM450", "ATM3", "PROFI", "PROFI3", "TSL", "TSL-VDAC2", "SPRINTER"})
+    for (const char* model : {"48K", "128k", "PLUS2", "PLUS2A", "PLUS3", "PENTAGON", "SCORPION", "PROFSCORP", "GMX",
+                              "ATM710", "ATM450", "ATM3", "PROFI", "PROFI3", "TSL", "TSL-VDAC2", "SPRINTER"})
     {
         for (GSTypeKind gs : {GSTypeKind::Z80, GSTypeKind::NGS})
         {
@@ -342,7 +342,7 @@ TEST(TTDModelStateContract_Test, EveryDeviceMatchesItsDescriptorOnEveryModel)
             EmulatorTestHelper::CleanupEmulator(emulator);
         }
     }
-    EXPECT_EQ(checked, 32u) << "every model is creatable in this build";
+    EXPECT_EQ(checked, 34u) << "every model is creatable in this build";
 
     // The cards the slots build themselves (the ZX-MultiSound), on every model with a ZX-bus: the card's devices
     // (MultiSound, SAA1099, SAM2695, its GS) next to the machine's own. The card replaces the config's slot set (a GS
@@ -425,7 +425,7 @@ struct ContractDevice : ttd::TTDSerializable
 }  // namespace
 
 /// The registration check names what does not match: a descriptor naming
-/// another v1 id than the device, a descriptor whose size is not the device's, a time field
+/// another legacy id than the device, a descriptor whose size is not the device's, a time field
 /// outside the state, a dependency on a device the machine lacks
 TEST(TTDModelStateContract_Test, ADeviceNotMatchingItsDescriptorIsRefusedByName)
 {

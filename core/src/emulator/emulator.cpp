@@ -32,7 +32,6 @@
 #include <cstdlib>
 
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdinputapply.h"
 #include "debugger/ttd/ttdsessionport.h"
 #include "emulator/coordinator/machinecoordinator.h"
@@ -44,6 +43,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
+#include "emulator/ports/models/portdecoder_scorpiongmx.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "loaders/nex/loadernex.h"
 #include "loaders/snapshot/loaderspg.h"
@@ -133,22 +133,8 @@ public:
         return time;
     }
 
-    /// A change of the machine itself (a model switch, a state transfer, a ROM load, a General Sound card switch, a
-    /// slot change): the TTD v1 backend refuses it while recording (D26); the engine never does (the change ends the
-    /// session). Goes with v1
-    std::string Refusal(const coordinator::MachineOp& op) const override
-    {
-        switch (op.kind)
-        {
-            case coordinator::OpKind::ModelSwitch:
-            case coordinator::OpKind::StateTransfer:
-                return _emulator.RecordingGuard(ttd::TTDGuardedAction::SwitchModel);
-            case coordinator::OpKind::RomLoad: return _emulator.RecordingGuard(ttd::TTDGuardedAction::LoadRom);
-            case coordinator::OpKind::GsCardSwitch: return _emulator.RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard);
-            case coordinator::OpKind::SlotChange: return _emulator.RecordingGuard(ttd::TTDGuardedAction::ChangeSlots);
-            default: return {};
-        }
-    }
+    // No Refusal: TTD refuses no change of the machine itself (a model switch, a state transfer, a ROM load, a
+    // General Sound card switch, a slot change); the change ends the session (owner rule 2026-10-05)
 
     bool Commit(const coordinator::MachineOp& op, coordinator::OpStage& stage) override
     {
@@ -459,35 +445,21 @@ bool Emulator::Init()
     if (result)
         ApplySymbolBundles();
 
-    // Create TTD manager (per parent TDD §10.2). Always constructed; the
+    // Create the time travel controller (per parent TDD §10.2). Always constructed; the
     // per-frame capture cost is gated by the cached _feature_ttd_enabled
-    // bool in Memory (no work when timetravel feature is off). The manager
+    // bool in Memory (no work when timetravel feature is off). The controller
     // also exposes GetState() == Idle until StartRecording() is called.
     if (result)
     {
-        // Both implementations exist; the selected one is what the core and the
-        // verbs drive (Phase 5): the engine's controller by default
-        ttd::TimeTravelManager* ttdManager = new ttd::TimeTravelManager(_context);
-        _context->pTimeTravelManager = ttdManager;
-        if (DefaultTimeTravelBackend() == TimeTravelBackend::Engine)
+        ttd::TimeTravelController* controller = new ttd::TimeTravelController(_context);
         {
-            ttd::TimeTravelController* controller = new ttd::TimeTravelController(_context);
-            {
-                std::lock_guard<std::mutex> lock(g_ttdRecordingRootMutex);
-                if (!g_ttdRecordingRoot.empty())
-                    controller->SetShadowRecordingRoot(g_ttdRecordingRoot);
-            }
-            _context->pTimeTravelController = controller;
-            _context->pTimeTravelHooks = controller;
-            _context->ttdWriteSink = controller;
-            MLOGDEBUG("Emulator::Init - time travel: the engine's controller");
+            std::lock_guard<std::mutex> lock(g_ttdRecordingRootMutex);
+            if (!g_ttdRecordingRoot.empty())
+                controller->SetShadowRecordingRoot(g_ttdRecordingRoot);
         }
-        else
-        {
-            _context->pTimeTravelHooks = ttdManager;
-            _context->ttdWriteSink = ttdManager;
-            MLOGDEBUG("Emulator::Init - time travel: v1's manager");
-        }
+        _context->pTimeTravelController = controller;
+        _context->pTimeTravelHooks = controller;
+        _context->ttdWriteSink = controller;
     }
 
     /// region <Sanity checks>
@@ -734,11 +706,6 @@ void Emulator::ReleaseNoGuard()
         delete _context->pTimeTravelController;   // clears the sinks it set
         _context->pTimeTravelController = nullptr;
     }
-    if (_context->pTimeTravelManager)
-    {
-        delete _context->pTimeTravelManager;
-        _context->pTimeTravelManager = nullptr;
-    }
     _context->ttdWriteSink = nullptr;
 
     // Stop and release main loop
@@ -963,7 +930,7 @@ std::string Emulator::EditMemoryFromTool(const char* source, const std::function
         if (session && !onEmulationThread)
             hold.emplace(*this, "memory edit");
         stage.CommitPoint();
-        // v1 keeps a marker; the edit's bytes go with it, so the engine's replay applies it
+        // The recording keeps a marker with the edit's bytes, so the engine's replay applies it
         if (session)
             ttd->BeginToolEdit();
         edit();
@@ -1432,7 +1399,16 @@ void Emulator::RequestMNI()
     // comes from the forced TR-DOS page. The trigger releases on the first
     // CPU read from >= #4000 (Memory::MemoryReadFast). On non-Scorpion models
     // the plain NMI pulse semantics apply
-    if (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP)
+    // GMX: #7EFD bit 2 blocks the button; a press freezes the card's read-backs, then the host DD50 trigger as on
+    // every Scorpion (GMX design 2.2)
+    if (config.mem_model == MM_GMX)
+    {
+        auto* gmx = dynamic_cast<PortDecoder_ScorpionGMX*>(_context->pPortDecoder);
+        if (gmx && !gmx->OnMagicButton())
+            return;
+    }
+
+    if (IsScorpionModel(config.mem_model))
     {
         if (config.mem_model == MM_PROFSCORP)
         {
@@ -1897,7 +1873,7 @@ bool Emulator::StopFor(std::chrono::milliseconds timeout)
     // inside _asyncThread->join() - IsRunning() already read false at that
     // point, so a concurrent EmulatorManager::RemoveEmulatorInstance() (gated
     // on IsRunning()) could skip its own Stop() call and run straight into
-    // Release(), freeing Core's Screen / SoundManager / TimeTravelManager
+    // Release(), freeing Core's Screen / SoundManager / TimeTravelController
     // while MainLoop::Run() was still mid-frame on the still-running thread
     // (observed as a SIGSEGV / pointer-authentication failure in
     // MainLoop::OnFrameStart() and SoundManager::handleFrameStart(),
@@ -2368,32 +2344,10 @@ rzx::RzxSession* Emulator::LoadedRzxSession()
     return _rzxSession && _rzxSession->Status().loaded ? _rzxSession.get() : nullptr;
 }
 
-namespace
-{
-/// The engine unless the process is started with UNREAL_TTD_BACKEND=v1 (the
-/// previous recorder: re-recording v1's fixture corpus, a comparison, a fallback)
-Emulator::TimeTravelBackend InitialTimeTravelBackend()
-{
-    const char* value = std::getenv("UNREAL_TTD_BACKEND");
-    return value && std::string(value) == "v1" ? Emulator::TimeTravelBackend::V1 : Emulator::TimeTravelBackend::Engine;
-}
-std::atomic<Emulator::TimeTravelBackend> g_defaultTimeTravelBackend{InitialTimeTravelBackend()};
-}
-
 void Emulator::SetDefaultTtdRecordingRoot(const std::string& root)
 {
     std::lock_guard<std::mutex> lock(g_ttdRecordingRootMutex);
     g_ttdRecordingRoot = root;
-}
-
-void Emulator::SetDefaultTimeTravelBackend(TimeTravelBackend backend)
-{
-    g_defaultTimeTravelBackend.store(backend);
-}
-
-Emulator::TimeTravelBackend Emulator::DefaultTimeTravelBackend()
-{
-    return g_defaultTimeTravelBackend.load();
 }
 
 bool Emulator::IsRzxExtension(const std::string& ext)
@@ -2832,7 +2786,7 @@ bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
         return fail(std::string("drive ") + static_cast<char>('A' + drive) + " is not present on this machine");
 
     // A medium leaving is a media set change, like a load: while a TTD recording
-    // runs an event of the recording at the next frame boundary (TTD v1 refuses it)
+    // runs an event of the recording at the next frame boundary
     EjectOptions options;
     options.disposition = force ? Disposition::Discard : Disposition::None;
 
@@ -3948,7 +3902,7 @@ bool Emulator::LoadROM(std::string path)
     op.summary = path;
     op.sessionReason = "rom-reload";
 
-    // Asked before pausing: a refusal (TTD v1 while recording) leaves the machine as it was
+    // Asked before pausing: a refusal leaves the machine as it was
     const coordinator::OpResult asked = _coordinator->Ask(op);
     if (!asked.Ok())
     {

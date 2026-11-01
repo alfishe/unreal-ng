@@ -151,6 +151,10 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& /*req*/, std::function<vo
     ram["bank3"] = static_cast<int>(memory.GetRAMPageForBank3());
     ret["ram"] = ram;
 
+    // GMX: the card's register file next to the host Scorpion's latches (DeviceState::GmxPaging)
+    if (config.mem_model == MM_GMX)
+        ret["gmx"] = StateNodeToJson(DeviceState::GmxPaging(context));
+
     // Sprinter: #7FFD / #1FFD and the windows live in the PLD (DeviceState::SprinterPaging)
     if (config.mem_model == MM_SPRINTER)
     {
@@ -315,6 +319,10 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& /*req*/,
         banks[bankKeys[slot]]["contended"] = context->pCore && context->pCore->IsSlotContended(slot);
 
     ret["banks"] = banks;
+
+    // GMX: the card's register file (DeviceState::GmxPaging)
+    if (config.mem_model == MM_GMX)
+        ret["gmx"] = StateNodeToJson(DeviceState::GmxPaging(context));
 
     // Sprinter: the window kinds (fast RAM, vROM, graphics, ISA) and the PLD latches
     if (config.mem_model == MM_SPRINTER)
@@ -1761,6 +1769,10 @@ void EmulatorAPI::getStatePaging(const HttpRequestPtr& /*req*/, std::function<vo
     }
 
     ret["banks"] = banks;
+
+    // GMX: the card's register file, the same view every interface shows (DeviceState::GmxPaging)
+    if (config.mem_model == MM_GMX)
+        ret["gmx"] = StateNodeToJson(DeviceState::GmxPaging(context));
 
     // Top-level flags
     ret["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;

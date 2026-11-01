@@ -100,7 +100,7 @@ struct TTDHolderStream
 };
 
 /// Header flags of a session file
-constexpr uint16_t kSessionConvertedFromV1 = 1;   ///< converted from a schema-1 file (D31): what v1 lacks is absent
+constexpr uint16_t kSessionConvertedFromV1 = 1;   ///< converted from a schema-1 (v1) file (D31): what v1 lacked is absent
 
 struct TTDSessionSaveParams
 {
@@ -119,7 +119,7 @@ struct TTDSessionLoadReport
     size_t partsLoaded = 0;
     size_t partsInFile = 0;
     bool complete = false;       ///< every part came in
-    bool convertedFromV1 = false;   ///< kSessionConvertedFromV1: no fingerprint, media versions or device regions v1 lacks
+    bool convertedFromV1 = false;   ///< kSessionConvertedFromV1: no fingerprint, media versions or device regions v1 lacked
     std::string stoppedAt;       ///< why the load stopped early
     std::vector<std::string> notes;   ///< the container's notes (scan, skipped streams)
     std::map<uint16_t, std::vector<uint8_t>> holderStreams;   ///< by id, as saved (absent: none, or not reached)

@@ -112,6 +112,7 @@ const std::set<std::string> kDebugRoutes = {
     "POST /ttd/memory-at",
     "POST /ttd/memory-diff",
     "POST /ttd/port-events",
+    "POST /ttd/probe-frames",
     "POST /ttd/reverse-continue",
     "POST /ttd/reverse-step",
     "POST /ttd/step-instruction",

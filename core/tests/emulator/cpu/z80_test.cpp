@@ -150,6 +150,7 @@ protected:
         _z80->Z80Step();
         return _z80->t - t;
     }
+
 };
 
 TEST_F(EvenM1_Test, ScorpionRamFetchOnAnOddTWaitsOne)
@@ -184,6 +185,52 @@ TEST_F(EvenM1_Test, ScorpionTurboHasNoEvenM1)
     _context->emulatorState.hw_turbo_ratio = 2;
     EXPECT_EQ(StepAt(0x8000, 20001), 4u) << "the Even M1 terms are gated off in turbo";
     _context->emulatorState.hw_turbo_ratio = 1;
+}
+
+/// @brief GMX (design 2.6, Q21): the card's own wait, in turbo only. In turbo the CPU's T are 7 MHz T (the frame is
+///        twice as many of them), so the rule's odd T is an odd 7 MHz T
+TEST_F(EvenM1_Test, GmxTurboRamFetchOnAnOddCpuTWaitsOne)
+{
+    Create("GMX");
+    ASSERT_EQ(_context->config.even_M1, EVEN_M1_TURBO);
+    EXPECT_EQ(StepAt(0x8000, 20001), 4u) << "3.5 MHz: the host WAIT is cut, no wait";
+
+    _context->pPortDecoder->DecodePortOut(0x7EFD, 0x80, 0x8000);  // turbo
+    ASSERT_EQ(_context->emulatorState.hw_turbo_ratio, 2);
+    EXPECT_EQ(StepAt(0x8000, 40000), 4u) << "even T: no wait";
+    EXPECT_EQ(StepAt(0x8000, 40001), 5u) << "odd T: one wait";
+
+    ASSERT_TRUE(_memory->IsBank0ROM());
+    EXPECT_EQ(StepAt(0x0000, 40001, false), StepAt(0x0000, 40000, false)) << "ROM: the same length on either phase";
+}
+
+/// @brief ZX-Format #07: turbo gives "1.8-1.9x from RAM, exactly 2x from ROM". A byte copy loop
+///        (LD A,(HL) / LD (DE),A / INC HL / INC DE / DEC BC / LD A,B / OR C / JR NZ: 52 T) takes 54 CPU T in turbo
+TEST_F(EvenM1_Test, GmxTurboCopyLoopFromRamRunsBelowTwiceAsFast)
+{
+    Create("GMX");
+    const uint8_t loop[] = {0x7E, 0x12, 0x23, 0x13, 0x0B, 0x78, 0xB1, 0x20, 0xF7};
+    for (size_t i = 0; i < sizeof(loop); i++)
+        _memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), loop[i]);
+    const auto run = [&](bool turbo) {
+        _context->pPortDecoder->DecodePortOut(0x7EFD, turbo ? 0x80 : 0x00, 0x8000);
+        _z80->pc = 0x8000;
+        _z80->iff1 = 0;
+        _z80->hl = 0x9000;
+        _z80->de = 0xA000;
+        _z80->bc = 100;
+        _z80->tt = 1000u << 8;
+        while (_z80->pc != 0x8009)
+            _z80->Z80Step();
+        return _z80->tt - (1000u << 8);
+    };
+    const uint32_t normal = run(false);
+    const uint32_t turbo = run(true);
+    EXPECT_EQ(normal, (100u * 52 - 5) << 8) << "the last JR NZ falls through: 7 T";
+    EXPECT_EQ(turbo, (100u * 54 - 5) << 8) << "two waits per pass, in 7 MHz T";
+    const double ratio = 2.0 * normal / turbo;
+    EXPECT_GT(ratio, 1.9);
+    EXPECT_LT(ratio, 2.0);
 }
 
 TEST_F(EvenM1_Test, OtherMachinesNeverAlign)

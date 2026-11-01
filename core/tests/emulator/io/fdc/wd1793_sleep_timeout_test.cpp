@@ -67,7 +67,6 @@ namespace
     std::mutex g_motorMutex;
     size_t g_motorStartedNotifications = 0;
     size_t g_motorStoppedNotifications = 0;
-    bool g_motorObserversRegistered = false;
 
     void onMotorStarted(int id, Message* message)
     {
@@ -119,12 +118,11 @@ protected:
     {
         MessageCenter& mc = MessageCenter::DefaultMessageCenter(true);
 
-        if (!g_motorObserversRegistered)
-        {
-            mc.AddObserver(NC_FDD_MOTOR_STARTED, &onMotorStarted);
-            mc.AddObserver(NC_FDD_MOTOR_STOPPED, &onMotorStopped);
-            g_motorObserversRegistered = true;
-        }
+        // The center may have been disposed since the last pass: remove-then-add keeps one registration
+        mc.RemoveObserver(NC_FDD_MOTOR_STARTED, &onMotorStarted);
+        mc.RemoveObserver(NC_FDD_MOTOR_STOPPED, &onMotorStopped);
+        mc.AddObserver(NC_FDD_MOTOR_STARTED, &onMotorStarted);
+        mc.AddObserver(NC_FDD_MOTOR_STOPPED, &onMotorStopped);
     }
 
     void SetUp() override

@@ -2,12 +2,75 @@
 
 | | |
 |---|---|
-| **Status** | Active development |
+| **Status** | Built. The engine `ttd::TimeTravelEngine`, driven by `ttd::TimeTravelController`, is the only implementation; [§0](#0-as-built-2026-10-31) says what was built. Sections 1-17 are the design as written, with notes where the build differs |
 | **Version** | 2.2 |
-| **Last updated** | 2026-09-10 |
+| **Last updated** | 2026-10-31 (as-built notes; design text 2026-09-10) |
 | **Scope** | UnrealSpeccy-NG core + Qt debugger UI |
-| **Companion docs** | [time-travel-ux.md](./time-travel-ux.md) (GUI/UX), [overhead-and-gating.md](./overhead-and-gating.md) (budgets & runtime gates), [gdb-reverse-debugging-tdd.md](./gdb-reverse-debugging-tdd.md) (RSP integration), [ttd.ksy](../../../../../core/src/debugger/ttd/ttd.ksy) (Kaitai schema) |
-| **As-built reference** | [ttd-v1-architecture-and-format.md](./ttd-v1-architecture-and-format.md) — TTD v1 architecture, data streams and `.ttd` file format as implemented |
+| **Companion docs** | [time-travel-ux.md](./time-travel-ux.md) (GUI/UX), [overhead-and-gating.md](./overhead-and-gating.md) (budgets & runtime gates, measured on v1), [gdb-reverse-debugging-tdd.md](./gdb-reverse-debugging-tdd.md) (RSP integration), [ttd.ksy](../../../../../core/src/debugger/ttd/ttd.ksy) (Kaitai schema of the session file, schema 2) |
+| **As-built reference** | The engine: the [TTD v2 migration](../../../../inprogress/2026-09-25-ttd-v2-migration/README.md) (decisions D1-D43 in [engine-decisions.md](../../../../inprogress/2026-09-25-ttd-v2-migration/engine-decisions.md), the record in [DONE.md](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md)) and the code (`core/src/debugger/ttd/`). History: [ttd-v1-architecture-and-format.md](./ttd-v1-architecture-and-format.md) describes v1, deleted on 2026-10-30 |
+
+---
+
+## 0. As built (2026-10-31)
+
+This document is the design TTD started from. What runs today is the engine; this section says what it is. The
+details are in the [TTD v2 migration](../../../../inprogress/2026-09-25-ttd-v2-migration/README.md).
+
+**v1 and v2.** "v1" is the first implementation of this design, `TimeTravelManager`, with its own file format. It
+was deleted on 2026-10-30 (migration Phase 6, `d4d7bc34a`), with its file reader and `UNREAL_TTD_BACKEND`.
+"v2" is the engine, `ttd::TimeTravelEngine`. The code names carry no version. Passages below that say "v1" describe
+that first implementation and are history.
+
+**Components.** One `ttd::TimeTravelController` per emulator instance (`EmulatorContext::pTimeTravelController`,
+`core/src/debugger/ttd/timetravelcontroller.*`) records, seeks, replays and searches. It keeps the history in a
+`ttd::TimeTravelEngine` (`timetravelengine.*`, `engine/`). The surfaces reach it through the `ttd::TTDControl` verbs
+(`ttdcontrol.*`) or `TTDSessionRef` (`ttdsession.h`). The verbs on every surface:
+[command-interface.md §8](../../control-interfaces/command-interface.md#8-time-travel-debugging-ttd).
+
+**Memory.** Every frame has a checkpoint. Memory is stored as 4 KB pieces in one piece store
+(`engine/ttdpiecestore.*`): a piece gets a new version only when it changed, stored whole, as a difference from its
+previous version, or as "all zero". Machine RAM is region 0; large device memories (General Sound, NeoGS, MoonSound,
+Sprinter, VDAC2, the ZX-Evo and SMUC EEPROMs) are regions of the same store (`engine/ttdregion.h`). Device states are
+versioned records in the engine's device table (`engine/ttddevicetable.*`).
+
+**Storage modes.** History is kept in segments; each starts with a baseline that needs nothing from earlier segments
+(`TTDHistoryPolicy`, D41). A history limit in frames or bytes (`ttd history-limit`; 0, no limit, is the default) drops
+whole segments, oldest first. Nothing is thinned. The black box (`black_box` on `ttd start`, D29, off by default) is a
+background recording that keeps the last N minutes (default 5) and does not hold the machine at real speed.
+
+**Session file.** A recording writes itself to disk as it records: one file per segment in its own folder,
+`<user data>/ttd/<date-time>-<name>/` (`engine/ttdrecordingwriter.*`, `ttdrecordingfolders.h`). A writer thread
+compresses and appends; capture never waits for the disk. Saving joins the segment files into one `.ttd`
+(`TTDRecordingFolder::SaveAs`). The file is the engine's container (`engine/ttdcontainer.*`), schema 2, described by
+[`ttd.ksy`](../../../../../core/src/debugger/ttd/ttd.ksy).
+
+**Integrity.** CRC32C on the header, on each record's header and payload, and on the index. A file without its
+trailer (a crash) opens by scanning its records: complete parts are kept, an incomplete last part is dropped. A
+damaged part is a hole: it and the parts that depend on it are unreachable, the rest opens. An unknown required
+stream refuses the file; an unknown ancillary stream is skipped. A crashed recording's folder is kept 7 days, then
+the startup cleanup deletes it. Design: [integrity-and-versioning.md](../../../../inprogress/2026-09-25-ttd-v2-migration/integrity-and-versioning.md).
+
+**Replay inputs.** The engine's event log (`engine/ttdeventlog.*`) holds input, external events, debugger edits with
+their bytes, media changes and configuration changes. The `IN` / `OUT` bus journals, the interrupt vectors and the media
+read journal (`engine/ttdmediajournal.*`) let a replay run without live devices or image files. A seek on other
+settings runs and reports that it is not bit-exact.
+
+**Navigation while recording.** A seek, step or reverse query while recording pauses the recording (D8); it goes on
+from where it paused. Resuming from a past point drops the history after it.
+
+**What ends a session (D42, D43).** A reset, a snapshot load and a change of the machine end the recording session;
+the same machine's history stays browsable. A recording the user started refuses media loads and holds the host
+speed at 1x; a background recording (the black box, a debugger's history) refuses nothing, and a change ends its
+session (4.2).
+
+**Deferred** (owner decisions; open items in [PLAN](../../../../inprogress/PLAN.md)):
+- branches: keeping the future when resuming or editing in the past (migration Phase 5, Step 2b; PLAN #76);
+- positions on a card CPU (seek and reverse step in General Sound / NeoGS instructions), with the CPU table and
+  clock map (Phase 3, Step 3; with the GS debugger, PLAN #45);
+- offering to open a crashed recording at the next start (Phase 5, Step 3c);
+- retiring the RZX player's own key-frame store (`RzxKeyframeStore`) in favour of the engine (D14), and a session
+  that replays without its RZX file;
+- groups of machines (ZX-Poly) over a shared piece store (D22); a ZX-Poly member has no time travel today.
 
 ---
 
@@ -231,6 +294,8 @@ flowchart TB
     EMU --> hooks
 ```
 
+> **As built.** The engine box is `TimeTravelController`; the timeline is the engine's piece store, regions, device table, event log and bus journals (§0). There is no thinning and no 16 KB slot store.
+
 Reading order: the emulation core feeds three cheap capture hooks (bottom); they populate the timeline (checkpoints backed by the COW page store, plus two journals); the seek/search engine consumes the timeline and drives the emulation core in silent-replay mode to reach exact intra-frame points; UI and automation sit on top of the engine only — they never touch the stores directly.
 
 ---
@@ -261,7 +326,7 @@ Notes:
 
 - `config.frame` is t-states per frame (71680 for Pentagon). The CPU's own counter `z80.t` counts at the clock running now and is rescaled when a hardware turbo switches mid-frame (the instant is kept, the number changes), so after a switch down it repeats values of the same frame. TTD time therefore counts at the model's top clock: `tInFrame = z80.t * ttd_clock_units / hardware ratio`, where `ttd_clock_units` is the LCM of the model's hardware CPU clock ratios (1 without turbo; Scorpion and ATM 7.10 2; ZX-Evo 4; ZX Next 8). One instant has one value, time only grows, and a frame is always `config.frame * ttd_clock_units` units (B4). Co-processors with their own clock (GS, NeoGS) are outside this unit: their stimuli are journaled at main-CPU time and the card converts.
 - **Granularity is one Z80 instruction**, not one t-state. This is the same resolution as every existing stepping facility and is sufficient: no observable state changes mid-instruction from the debugger's point of view. (ULA beam position within an instruction is derivable from `t`.)
-- The global monotonic key used for indexes is `globalT = frame * config.frame * ttd_clock_units + tInFrame` (`TimeTravelManager::GlobalT`), stored as `uint64_t`; the write journal packs it in 40 bits, which lasts ~90 h of recording at 1 unit per T-state and ~10 h at 8.
+- The global monotonic key used for indexes is `globalT = frame * config.frame * ttd_clock_units + tInFrame` (`TimeTravelController::GlobalT`), stored as `uint64_t`; the write journal packs it in 40 bits, which lasts ~90 h of recording at 1 unit per T-state and ~10 h at 8.
 
 ### 4.2 Recording Session
 
@@ -273,17 +338,19 @@ A recording session is the unit of history validity:
   - Manual memory/register edits from the debugger UI *while running* (edits while paused at time T truncate history *after* T instead — the past is still valid)
   - Speed multiplier change (`next_z80_frequency_multiplier`) on a retained (stopped) session — simpler to invalidate than to model. While recording the change is refused instead (see the acceleration lock below)
   - Media write-back to mounted disk images (see 12.2 for the staged handling)
-- **A running recording refuses the host-side invalidators (B9).** While `Recording`, snapshot/tape/disk load, disk create, ROM load, `InvalidateSession` from a surface, switching `timetravel`/`debugmode` off and changing the write-journal mode are refused; the invalidation list above applies to a stopped (retained) session. `TimeTravelManager::RecordingGuard(TTDGuardedAction)` returns the user-facing reason (empty when allowed); the core entry points (`Emulator::LoadSnapshot/LoadTape/LoadDisk/CreateBlankDisk/LoadROM`, `FeatureManager::setFeature`, `SetEnableWriteJournal`) enforce it, and every surface pre-checks it to report the reason (CLI `Error:`, WebAPI 409, Lua `false, reason`, Python `RuntimeError`, Qt dialog). A reset stays allowed: it stops the recording and keeps the history. Guest-driven invalidators (ZX-Evo SD card) cannot be refused; `TTDSessionInfo::lastDropReason` (`last_drop_reason`) records what dropped the last history. Only a `Session` recording is protected: a `DebuggerLive` history (DeZog) is a rolling debugger history that any outside change drops and the debugger restarts on the next resume/step, as before B9.
+- **A running recording refuses the host-side invalidators (B9).** *History: the rule as v1 built it; the engine's rule follows this item.* While `Recording`, snapshot/tape/disk load, disk create, ROM load, `InvalidateSession` from a surface, switching `timetravel`/`debugmode` off and changing the write-journal mode are refused; the invalidation list above applies to a stopped (retained) session. `RecordingGuard(TTDGuardedAction)` returns the user-facing reason (empty when allowed); the core entry points (`Emulator::LoadSnapshot/LoadTape/LoadDisk/CreateBlankDisk/LoadROM`, `FeatureManager::setFeature`, `SetEnableWriteJournal`) enforce it, and every surface pre-checks it to report the reason (CLI `Error:`, WebAPI 409, Lua `false, reason`, Python `RuntimeError`, Qt dialog). A reset stays allowed: it stops the recording and keeps the history. Guest-driven invalidators (ZX-Evo SD card) cannot be refused; `TTDSessionInfo::lastDropReason` (`last_drop_reason`) records what dropped the last history. Only a `Session` recording is protected: a `DebuggerLive` history (DeZog) is a rolling debugger history that any outside change drops and the debugger restarts on the next resume/step, as before B9.
+
+  **As built (engine, D42, D43).** A reset, an autostart's quick reset, a snapshot load and a change of the machine itself (ROM reload, model switch, General Sound card or slot change) each end the recording session: nothing is refused, the recording stops cleanly. The history of the same machine (reset, snapshot load) stays browsable; a changed machine's history is dropped. No new session starts by itself, except with the `ttdrestart` feature (off by default) or the black box. `TimeTravelController::RecordingGuard` protects only a recording the user started, also while it is paused for browsing: it refuses a tape or disk load, a disk create, discarding the session and a CD drive's front panel. Switching `timetravel` or `debugmode` off stops the recording cleanly first (`StopForFeatureChange`, FR-17). A background recording (the black box, a debugger's history: `HoldBackgroundRecording`; v1's `DebuggerLive` mode was not carried over) refuses nothing: a media change or a host speed above 1x ends its session, and the next session starts at once.
 - The session records `sessionStartTime` (TTDTimePoint) and monotonically grows `sessionEndTime` = "now".
-- **Acceleration lock.** A recording must show the code running at real speed. Every way into `Recording` (`StartRecording`, `ResumeRecordingFrom`, `ResumeRecordingLive`) engages the lock, and it is released only when the session returns to `Idle` (stop, invalidation, reset out of `Detached`, file load). While it is held:
+- **Acceleration lock.** A recording must show the code running at real speed. Every way into `Recording` (`StartRecording`, `ResumeRecordingFrom`, `ResumeRecordingLive`) engages the lock (on the engine an explicit recording only: the black box and a debugger's history hold none, D29, D43), and it is released only when the session returns to `Idle` (stop, invalidation, reset out of `Detached`, file load). While it is held:
   - the host speed control is forced to 1x before the baseline is captured, and 2x..16x is refused (`Core::SetSpeedMultiplier` returns false). The emulated machine's own hardware turbo (ATM, Scorpion) is guest behavior and is left alone;
   - fast disk reads as off and cannot be switched on: besides its trap it compresses the WD1793's timing (`WD1793::isFastDiskArmed`), which no edit records;
-  - v1 only: turbo mode (`turbomode` feature) is switched off and cannot be switched on, and fast tape and turbo tape read as off and cannot be switched on.
+  - v1 only (history): turbo mode (`turbomode` feature) was switched off and could not be switched on, and fast tape and turbo tape read as off and could not be switched on.
 
   The engine (`TimeTravelController`, `ITimeTravelHooks::RecordsShortcuts`, phase 2 D4) keeps turbo mode, turbo tape and fast tape while it records: turbo only takes the host's pacing away (every frame runs the same T-states and devices; sound generation off is the state the `sound` feature gives at 1x too), and the tape trap is a recorded edit (the block's bytes, the registers, the tape cursor, its time) that a replay applies. A tape loaded from zero no longer takes minutes at 1x.
 
   The previous speed and turbo settings come back on release. The lock is held through `Detached` as well, since replaying history under a dilated clock or a loader trap would diverge (on the engine the loaders read as off in `Detached` and come back when the machine records again). Only a recording engages it: switching the `timetravel` feature on merely arms the capture machinery and locks nothing.
-- **Shortcuts stay off for the whole time the machine is bound to history.** Fast tape, turbo tape and fast disk change what the guest code does (a trap skips the ROM loader), so they also read as off while a stopped or loaded session is replayed (seek, step, frame-cache build) or the machine sits in `Detached` - even when no recording lock is held (`FeatureManager::ttdLocksFastLoaders`). The one exception is fast tape and turbo tape in the engine's recording at its live head, where the tape trap is a recorded edit. Turbo mode and the speed control only change pacing, not the guest's behavior, so history browsing leaves them alone.
+- **Shortcuts stay off for the whole time the machine is bound to history.** Fast tape, turbo tape and fast disk change what the guest code does (a trap skips the ROM loader), so they also read as off while a stopped or loaded session is replayed (seek, step, frame-cache build) or the machine sits in `Detached` - even when no recording lock is held (`FeatureManager::ttdLocksFastLoader`). The one exception is fast tape and turbo tape in the engine's recording at its live head, where the tape trap is a recorded edit. Turbo mode and the speed control only change pacing, not the guest's behavior, so history browsing leaves them alone.
 
   Every automation surface (Qt UI, CLI, WebAPI/MCP, Lua, Python) goes through these same core checks, and the Qt menu greys the locked items out.
 
@@ -300,7 +367,7 @@ stateDiagram-v2
     Detached --> Idle : InvalidateSession()
 ```
 
-"Detached" corresponds to the emulator being **paused** at a historical point. Resuming execution from a historical point discards the future beyond it (like `git reset --hard` + new commits). A "branch and keep both" model was considered and rejected for v1 — it complicates the UI and index for a rare use case; a user who wants to preserve the future can save an emulator snapshot first.
+"Detached" corresponds to the emulator being **paused** at a historical point. Resuming execution from a historical point discards the future beyond it (like `git reset --hard` + new commits). A "branch and keep both" model was considered and rejected for v1 — it complicates the UI and index for a rare use case; a user who wants to preserve the future can save an emulator snapshot first. On the engine, branches are deferred (migration Phase 5, Step 2b; PLAN #76). On the engine the recording also leaves `Recording` for a seek: it is paused for browsing (D8), not stopped.
 
 ---
 
@@ -312,7 +379,7 @@ Replay correctness requires: **identical checkpoint state + identical external i
 |---|--------|-------|----------|
 | 1 | Keyboard matrix state | External input | **Journal.** Host key events arrive asynchronously via MessageCenter and mutate the matrix between instructions. Journal entries: `(TTDTimePoint, key, press/release)` recorded when the matrix mutation is applied. On replay, the TTD engine injects matrix changes at the recorded points instead of live input (live input is suppressed during replay). |
 | 2 | Joystick / mouse | External input | Same journal mechanism, same event stream. |
-| 3 | Tape (`pTape`) playback position | Internal state | **Checkpoint.** Tape position/phase is deterministic once captured; `handleFrameStart/End` derive everything from counters. Tape *insertion/start/stop* commands are session-invalidating events in v1 (journaled in a later phase). |
+| 3 | Tape (`pTape`) playback position | Internal state | **Checkpoint.** Tape position/phase is deterministic once captured; `handleFrameStart/End` derive everything from counters. Tape *insertion/start/stop* commands were session-invalidating events in v1. On the engine tape control is input the replay applies, and inserting a tape is refused while the user's recording runs. |
 | 4 | WD1793 FDC + disk images | Internal state + persistent media | **Checkpoint the controller**, journal sector writes (12.2). FDC internal state (state machine phase, track/sector regs, DRQ/INTRQ timers) must be fully serialized — this is new code in `wd1793.*`. |
 | 5 | AY/YM state | Internal state | **Checkpoint the register file + selected register exactly** — that is the only CPU-visible part (`pFFFD` readback exposes R0–R15, never envelope internals). Envelope phase / tone counters / noise LFSR **cannot cause CPU divergence**; they are captured anyway (~100 B, trivial) so audio is correct at the seek destination, but a bug there degrades sound only, never determinism. |
 | 6 | Floating bus / `portFF` reads | Timing-derived | Deterministic — derived from beam position (`t`), no action needed. Verified by config flags `floatbus/floatdos` living in `CONFIG` (checkpointed indirectly since config doesn't change mid-session). |
@@ -322,7 +389,7 @@ Replay correctness requires: **identical checkpoint state + identical external i
 | 10 | Breakpoints pausing mid-frame (`WaitWhilePaused` inside `MemoryWriteDebug`) | Debugger interaction | Replay always runs with `skipBreakpoints=true`; user breakpoints cannot fire during internal seeks. Reverse-search instrumentation uses its own hook, not BreakpointManager (Section 9.3). |
 | 11 | Analyzers (`AnalyzerManager::dispatchFrameStart`) | Debugger feature | Analyzers may mutate state (e.g., TR-DOS analyzer injects breakpoints). During replay, analyzer dispatch is suppressed; analyzers observe only live execution. |
 | 12 | MessageCenter notifications (video frame ready, etc.) | Host-side | Suppressed during replay (Section 8.2) — they are outputs, not inputs. |
-| 13 | Speed multiplier queued change (`next_z80_frequency_multiplier`) | Config change | Session-invalidating in v1 (see 4.2). |
+| 13 | Speed multiplier queued change (`next_z80_frequency_multiplier`) | Config change | Session-invalidating in v1 (see 4.2). On the engine a host speed change ends the session's history, except the black box's (`TTDChange::Timing`). |
 | 14 | Shared memory export, recording subsystem | Host-side outputs | Non-state-affecting; recording is disabled during replay windows. |
 | 15 | Contended memory / ULA snow timing | Timing-derived | Deterministic — contention is recomputed from `t` and scanline position by the same code on live run and replay. **Verify, don't assume:** the divergence-test corpus (Section 15) must include contention-sensitive multicolor demos. |
 
@@ -342,14 +409,18 @@ ApplyEdits`). While the engine records, `ITimeTravelHooks::RecordScriptEdit` kee
 at that boundary, carrying its data (role Input). The payload holds only what the hook wrote: kind 9 records with
 bytes written through the CPU's view (index = the first address) and, when it set registers, the CPU (kind 4). It
 does not hold the whole dirty pages a tool edit carries. The replay applies the event before the instruction that
-starts there and never runs the hook. TTD v1 does not record these edits (`RecordsScriptEdits()` false), and a logic
-write while it records is refused.
+starts there and never runs the hook. v1 did not record these edits (`RecordsScriptEdits()` false) and refused a logic write while
+it recorded (history).
 
 **Determinism is enforced by test, not by hope:** the test suite gains a *divergence test* — run N frames live, checkpoint every frame, then for random frames: restore checkpoint k, replay to frame k+m, hash full machine state, compare with the live-run hash recorded earlier. Any mismatch is a P0 bug in either the serializer or an unaudited nondeterminism source. (Section 15.)
 
 ---
 
 ## 6. Checkpoint Subsystem
+
+> **As built.** Sections 6.1-6.6 are the design v1 implemented. The engine keeps the CPU and chipset records of
+> 6.1, but stores memory as 4 KB pieces in a piece store with regions, device states as versioned records, and
+> history as segments written to disk as it records (§0). Notes below mark the main differences.
 
 ### 6.1 Checkpoint Content
 
@@ -475,13 +546,18 @@ bound. A model whose page set outgrows this table announces itself in the log
 instead of silently recording partial memory.
 
 > **Revisit when new models land.** The bound is currently a small switch in
-> `TimeTravelManager::ResolveModelRamPages()`. Once TS-Conf / ZX-Evo / Profi /
+> `TimeTravelController::ResolveModelRamPages()`. Once TS-Conf / ZX-Evo / Profi /
 > Scorpion extended paging is implemented — today those models have no port
 > decoder at all and `PortDecoder::GetPortDecoderForModel` throws for them — the
 > page set belongs to the configuration layer next to the port decoders, and this
 > function should consume it rather than re-derive it.
 
 ### 6.3 Copy-on-Write Page Store
+
+> **As built.** Not built as written. v1 had a compressed 4 KB slot store (`ttdcodecpagestore`). The engine uses its
+> piece store (`engine/ttdpiecestore.*`): 4 KB pieces, a version only when a piece changed, and per-checkpoint change
+> records with a full reference table every 64 checkpoints (`engine/ttdreftable.*`). See
+> [phase-1-memory-regions-tdd.md](../../../../inprogress/2026-09-25-ttd-v2-migration/phase-1-memory-regions-tdd.md).
 
 Naive per-frame full-RAM copies would cost 6.4 MB/s on a 128K model (acceptable) but 200 MB/s on a maxed TS-Conf (not). The page store deduplicates:
 
@@ -564,7 +640,7 @@ The split between *declaring* and *implementing* is deliberate: a declared id wi
 
 **Design constraints:**
 - No heap allocation in `TTDSaveState` (runs every frame on the emulator thread).
-- Versioning is unnecessary (checkpoints never persist across process runs in v1).
+- Versioning is unnecessary (checkpoints never persist across process runs in v1). *Superseded:* sessions persist, so the engine's device table gives every device a stable key and a layout version (D23, [phase-2-device-state-tdd.md](../../../../inprogress/2026-09-25-ttd-v2-migration/phase-2-device-state-tdd.md)).
 - Non-connected peripherals contribute zero bytes — the peripheral registry captures only registered devices.
 
 #### 6.4.1 Peripheral Registry and Delta Compression
@@ -618,6 +694,9 @@ flowchart LR
 
 ### 6.5 Checkpoint Tiering and Eviction
 
+> **As built.** Not built. The engine keeps a checkpoint for every frame and never thins. A history limit drops
+> whole segments, oldest first (§0, D41).
+
 All frames are checkpointed while recording (cheap, per 6.3). Memory is bounded by a **budget** (default 64 MB, configurable — a 128K machine with typical COW sharing fits 5+ minutes in this; see the worksheet in Appendix A). When the page store exceeds budget, the timeline is *thinned*, oldest-densest first:
 
 | Age of history | Kept checkpoint density | Max replay distance to any point |
@@ -632,7 +711,15 @@ The input journal and write journal are never thinned within the session window 
 
 ### 6.6 Storage Modes
 
-TTD supports two storage modes for checkpoint data:
+> **As built.** Sections 6.6.1-6.6.9 are the design; `TTDStorageMode`, the `.ttdi` index file, the adaptive
+> watermark and `TTDConfig` were not built. What was built (migration Phase 4, D28, D41): history in memory as
+> segments, with a history limit or none; every recording written to segment files as it records, by a writer
+> thread, so a crash leaves a file that opens up to its last complete part; the file is the engine's container,
+> schema 2, with CRC32C per record, header and index, and opens with holes (§0). Design:
+> [phase-4-session-file-tdd.md](../../../../inprogress/2026-09-25-ttd-v2-migration/phase-4-session-file-tdd.md). The analyzer
+> (`tools/verification/ttd-analyzer`) reads schema 2: `info`, `validate`, `parts`, `recover`.
+
+The design proposed two storage modes for checkpoint data:
 
 ```cpp
 enum class TTDStorageMode : uint8_t
@@ -971,7 +1058,7 @@ def iter_records(ttd_path):
 | Memory write | `Memory::MemoryWriteDebug()` | `MarkDirty` (+ optional write journal) |
 | Port write | `Ports` out path (where `p7FFD` etc. are latched) | Nothing extra — port latches are read from `EmulatorState` at checkpoint time. (Write journal optionally records OUTs for the event track UI.) |
 | Keyboard/joystick mutation | `Keyboard` observer callbacks | Append input-journal entry with current `TTDTimePoint` |
-| Session invalidators | `Emulator::Reset / LoadSnapshot / LoadTape / LoadDisk / SetSpeed...`, debugger memory-edit paths | `TTDManager::InvalidateSession(reason)` |
+| Session invalidators | `Emulator::Reset / LoadSnapshot / LoadTape / LoadDisk / SetSpeed...`, debugger memory-edit paths | `TTDManager::InvalidateSession(reason)` (built as `TimeTravelController`; see 4.2 for what ends a session on the engine) |
 
 ### 7.2 Threading Model
 
@@ -985,7 +1072,7 @@ def iter_records(ttd_path):
 
 Recording requires the debug write path (that's where the dirty hook lives). Options considered:
 
-1. Require `debugmode` + debug interface while recording (**chosen for v1**) — matches how memory tracking works today; overhead of the debug read path is already accepted by anyone using the debugger.
+1. Require `debugmode` + debug interface while recording (**chosen**; the engine keeps it: TTD's hooks run only with `debugmode` on) — matches how memory tracking works today; overhead of the debug read path is already accepted by anyone using the debugger.
 2. A third "TTD-only" `MemoryInterface` with just the dirty hook (fast reads, hooked writes) — nice optimization, deferred; the `MemoryInterface` struct makes this a 20-line addition later.
 
 When TTD is enabled via FeatureManager, it forces `Z80::MemIf = DbgMemIf` (same mechanism the debugger uses).
@@ -1058,7 +1145,7 @@ Step-level operations build on SeekTo:
 
 ### 8.2 Silent Replay Mode
 
-Replay must be *observationally silent* and *fast*. `TTDManager::ReplayRun` wraps the existing stepping core (`ProcessInterrupts` / `Z80Step` / `OnCPUStep` loop, as in `Emulator::RunTStates`) with a replay context flag `_context->ttdReplayActive` that:
+Replay must be *observationally silent* and *fast*. `TTDManager::ReplayRun` (built in `TimeTravelController`) wraps the existing stepping core (`ProcessInterrupts` / `Z80Step` / `OnCPUStep` loop, as in `Emulator::RunTStates`) with a replay context flag `_context->ttdReplayActive` that:
 
 | Subsystem | Behavior during replay |
 |---|---|
@@ -1084,6 +1171,8 @@ When the user resumes execution while positioned at T < end:
 ```
 
 This is atomic with respect to the UI (done under pause, before Resume()).
+
+On the engine the segment files written so far are discarded at a resume from the past, and a new recording folder starts. Keeping both futures (branches) is deferred (§0).
 
 ---
 
@@ -1125,6 +1214,10 @@ opcode after it. A redundant DD/FD prefix is an instruction of its own. The
 same address feeds the write journal and the execute probe.
 
 ### 9.3 Write Journal (Fast Path)
+
+> **As built.** The engine's write journal is the write index (`engine/ttdwriteindex.*`, D40): off by default,
+> switched on and off at any instruction (segments), stored in compressed blocks of 2,048 records. Outside its
+> segments find-last on writes uses the coverage index and replay. The ring below is v1's.
 
 Optional feature (`timetravel` mode flag `journal=on`), on by default when memory budget allows:
 
@@ -1185,6 +1278,12 @@ Probe hits now carry a real page for every access type. Reads and instruction fe
 
 ## 10. Component Design
 
+> **As built.** The facade is `ttd::TimeTravelController` in `core/src/debugger/ttd/` (no `debugger/timetravel/`
+> folder, no `TTDManager` class); the engine is in `timetravelengine.*` and `engine/`. The routes and verbs as built:
+> [command-interface.md §8](../../control-interfaces/command-interface.md#8-time-travel-debugging-ttd). The
+> `features.ini` knobs of 10.3 (`budget_mb`, `dense_seconds`, `journal_mb`) were not built: the history limit and
+> the write journal are set per recording (`ttd history-limit`, `ttd start` options).
+
 ### 10.1 New Files
 
 ```
@@ -1241,7 +1340,7 @@ public:
 };
 ```
 
-`EmulatorContext` gains `TTDManager* pTTDManager` (same lifecycle pattern as `pDebugManager`), plus the `ttdReplayActive` flag checked by the suppression points (8.2).
+`EmulatorContext` gains `TTDManager* pTTDManager` (built: `ttd::TimeTravelController* pTimeTravelController`) (same lifecycle pattern as `pDebugManager`), plus the `ttdReplayActive` flag checked by the suppression points (8.2).
 
 ### 10.3 Feature Gating
 
@@ -1350,13 +1449,18 @@ Staged handling:
 
 The same logic applies to NVRAM writes (rare; Phase 1 invalidates).
 
+**As built (engine).** Disk writes do not end a session. The media manager's undo log (`MediaUndoLog`,
+`core/src/emulator/media/mediaundolog.h`) keeps each sector or track as it was before its first change in a version;
+a restore sets every medium to the checkpoint's version. Writes a replay makes to write-through media are held in
+memory until the replay ends (`HostWriteHold`, migration Phase 3, Step 6). The EEPROMs are regions of the piece store.
+
 ### 12.3 Turbo / Speed Multiplier
 
-`current_z80_frequency_multiplier` scales t-states per frame, which changes the meaning of `tInFrame`. v1 invalidates the session on multiplier change (4.2). The checkpoint records the active multiplier so a session recorded entirely at ×2 replays correctly at ×2.
+`current_z80_frequency_multiplier` scales t-states per frame, which changes the meaning of `tInFrame`. v1 invalidated the session on multiplier change (4.2); on the engine the user's recording holds the host speed at 1x, and a speed change ends the history except the black box's (4.2, 5 row 13). The checkpoint records the active multiplier so a session recorded entirely at ×2 replays correctly at ×2.
 
 ### 12.4 Model Support Matrix
 
-TTD v1 is validated on: **Pentagon 128/512** (primary demo platform). Each additional model requires: peripheral serializer audit + divergence-test pass. Models with DMA-capable hardware (TS-Conf) additionally require dirty-hook coverage of the DMA write path (6.2). The feature is enabled per-model via a whitelist until audited — enabling TTD on an unaudited model shows a warning.
+*History:* TTD v1 was first validated on **Pentagon 128/512** (primary demo platform). On the engine region 0 covers every model's RAM with no per-model code, and the corpus test (`TimeTravelControllerCorpus_Test`) covers every model. Each additional model requires: peripheral serializer audit + divergence-test pass. Models with DMA-capable hardware (TS-Conf) additionally require dirty-hook coverage of the DMA write path (6.2). The feature is enabled per-model via a whitelist until audited — enabling TTD on an unaudited model shows a warning.
 
 ### 12.5 Observability Data vs Machine State
 
@@ -1381,7 +1485,7 @@ Retained from v1 of this document, deliberately compressed — none of it affect
 - **Tenet trace export** (IDA plugin): a bounded window of history replayed once with a full-trace probe (`pc=…, reg=…, mr=…, mw=…` per instruction) — the replay engine already supports instrumented passes (9.2), this is just a different probe.
 - **Perfetto / Speedscope export**: per-frame counters and call-stack flame graphs from CallTrace + write journal.
 - **Temporal memory heatmap**: X = address, Y = frame, RGB = W/R/X intensity; data is exactly the per-frame RWX counters already collected by `MemoryAccessTracker` segments.
-- **Session persistence**: serialize page store + journals to disk to reopen a session later (requires versioned peripheral serializers — the one place versioning enters the design).
+- **Session persistence**: serialize page store + journals to disk to reopen a session later (requires versioned peripheral serializers — the one place versioning enters the design). **Built**: v1 saved `.ttd` files; the engine writes the session as it records (§0).
 
 ---
 
@@ -1480,6 +1584,9 @@ Tests live in `core/tests/timetravel/`, following the fixtures and helpers in `c
 
 ## 16. Implementation Plan
 
+> **History.** This is the plan v1 was built to. Its phases 1-5 are not the phases of the TTD v2 migration, which built the
+> engine ([DONE.md](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md)).
+
 Phases are strictly ordered by dependency; each has a demoable acceptance criterion.
 
 | Phase | Content | Exit criteria (named tests must pass) | Est. |
@@ -1496,13 +1603,13 @@ Phase 1 carries the dominant risk (peripheral state completeness). The divergenc
 
 ## 17. Open Questions
 
-1. **Session persistence to disk** — worth the serializer-versioning cost? (Deferred; revisit after v1 usage feedback.)
-2. **Tape-driven workloads** — v1 checkpoints tape position but invalidates on tape control commands; is that acceptable for tape-loader debugging, or does Phase 2 need tape-command journaling?
-3. **Branching history** (keep the future when resuming from the past) — rejected for v1 (4.2); is a single "auto-save emulator snapshot before truncation" safety net wanted instead?
+1. **Session persistence to disk** — worth the serializer-versioning cost? **Resolved:** built, with versioned device layouts (§0).
+2. **Tape-driven workloads** — v1 checkpoints tape position but invalidates on tape control commands; is that acceptable for tape-loader debugging, or does Phase 2 need tape-command journaling? **Resolved on the engine:** tape control is input the replay applies, and the tape trap is a recorded edit (4.2).
+3. **Branching history** (keep the future when resuming from the past) — rejected for v1 (4.2); is a single "auto-save emulator snapshot before truncation" safety net wanted instead? **Deferred** on the engine (migration Phase 5, Step 2b; PLAN #76).
 4. **Third memory interface** (fast reads + TTD-hooked writes, 7.3) — measure first; implement only if debug-read overhead is noticeable in recording sessions.
 5. **Multi-instance** — TTDManager is per-`EmulatorContext` and therefore per-instance by construction; is per-instance memory budgeting needed when many instances run (videowall scenario), or a global pool?
-6. **CMOS contents** — resolved 2026-09-28 (PLAN #60(c)): the clock chip of every machine is the shared `Ds12887` (`core/src/emulator/io/rtc/ds12887.h`), captured whole as `PeripheralId::Ds12887` (id 18, `core/src/debugger/ttd/ttdds12887.h`): 256 cells, the address latch, the C flags and the time base, 336 bytes per checkpoint before compression. While a session records the chip runs on emulated time (`TTDSerializable::TTDRecordingStarted`, called before the baseline capture), so the blob carries no host-clock dependence. Still not captured: the ZX-Evo AVR's 4 KiB EEPROM and the Scorpion SMUC's 2 KiB LC16 serial EEPROM (the guest writes them only when it saves configuration).
-7. **Delta capture for the EEPROMs** — if the two EEPROMs above ever need capture, a write journal replayed on seek costs exactly the write rate; the clock chip itself is small enough to capture whole.
+6. **CMOS contents** — resolved 2026-09-28 (PLAN #60(c)): the clock chip of every machine is the shared `Ds12887` (`core/src/emulator/io/rtc/ds12887.h`), captured whole as `PeripheralId::Ds12887` (id 18, `core/src/debugger/ttd/ttdds12887.h`): 256 cells, the address latch, the C flags and the time base, 336 bytes per checkpoint before compression. While a session records the chip runs on emulated time (`TTDSerializable::TTDRecordingStarted`, called before the baseline capture), so the blob carries no host-clock dependence. The ZX-Evo AVR's 4 KiB EEPROM and the Scorpion SMUC's 2 KiB LC16 serial EEPROM are captured by the engine as regions 15 and 16, compared at each capture (v1 did not capture them).
+7. **Delta capture for the EEPROMs** — resolved by the regions above. The original note: if the two EEPROMs above ever need capture, a write journal replayed on seek costs exactly the write rate; the clock chip itself is small enough to capture whole.
 8. **Divergence hash** — the `Ds12887` blob participates (`TTDDs12887::TTDHashState`); the EEPROMs do not.
 
 ---

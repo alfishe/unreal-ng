@@ -8,7 +8,11 @@
 # crash state #43 and divides the speed by 4 at #8364..#836F, 108 -> 27 in one write), run once per crash and then the wreck
 # state #83A1 follows for about 450 frames.
 # Checked in real time (O + Space held 5 s, then Z and X alternating 3 s each): 1 crash in 29 s, the speed level follows the car.
-# Known limits: the rival overtakes and the roadside are not events yet.
+# The race position is the packed BCD word #AF32 / #AF33 (RANK on the HUD, 100 at the start, QUALIFY 80); its two writers sit in the
+# per-car loop #8F56: #8FC0 (dec a; daa; ld (iy+1),a) improves the place by one, #8F9D (inc a; daa) loses one, each run once per change
+# (found by sampling RAM against the HUD digits, then find-last on #AF33).
+# Checked in real time (O + Space held 70 s, steering by the road on the screen): 6 overtakes and 5 lost places = RANK 100 -> 99 on the
+# HUD, 2 crashes. Known limits: the roadside is not an event.
 schema: 1
 kind: play
 id: builtin/game/continental-circus
@@ -31,6 +35,10 @@ haptics:
   sources:
     speed: { probe: value, address: "0xB504", scale: 1.3 }
     crash: { probe: exec, address: "0x835E" }
+    overtake: { probe: exec, address: "0x8FC0" }
+    passed:   { probe: exec, address: "0x8F9D" }
   rules:
     - { on: speed, play: engine, target: handle.low }
     - { on: crash, play: explosion, scale: 0.9 }
+    - { on: overtake, play: tick, target: handle.low }
+    - { on: passed, play: hit, scale: 0.4 }

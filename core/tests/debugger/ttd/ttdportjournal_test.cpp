@@ -9,7 +9,7 @@
 
 /// TTDPortJournal on its own: recording, playback with verification,
 /// truncation and the file section (ttd-port-read-journal.md). The machine
-/// integration is in timetravelmanager_portjournal_test.cpp, the search in
+/// integration is in timetravelcontroller_portjournal_test.cpp, the search in
 /// ttdportsearch_test.cpp.
 namespace
 {

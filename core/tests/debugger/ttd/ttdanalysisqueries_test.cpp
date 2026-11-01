@@ -1,6 +1,6 @@
 // The analysis queries (docs/inprogress/2026-10-28-ttd-analysis-feedback): coverage-scan lists every matching frame
 // (both orders, runs, a cursor), coverage-rare's blocks, page filters, reverse-continue first_per_pc, memory-at of the machine now (ROM, two banks behind one Z80 address), reverse-continue `all`,
-// find-last `changes_only` / `all` and the memory-at CPU view. Each answer is checked against a second way to get it:
+// find-last `changes_only` / `all`, the memory-at CPU view and probe-frames (a profile's probes over the history). Each answer is checked against a second way to get it:
 // a loop of single calls, a brute-force walk of every write, the live machine after a seek.
 //
 // One program records 30 frames on a Pentagon (about 20 ms with turbo):
@@ -19,12 +19,15 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/controllers/hapticprobes.h"
 #include "emulator/memory/memory.h"
 
 namespace
@@ -787,4 +790,206 @@ TEST_F(TTDAnalysisQueries_Test, VerbsRefuseBadOptions)
     EXPECT_TRUE(runs.body.find("truncated")->b);
     EXPECT_TRUE(runs.body.find("next_to_frame"));
     EXPECT_EQ(runs.body.find("order")->s, "newest");
+}
+
+// ---------------------------------------------------------------------------
+// probe-frames (feedback item 7): a game profile's probes over the history
+// ---------------------------------------------------------------------------
+
+namespace
+{
+controllers::HapticProbe Probe(controllers::HapticProbeKind kind, uint16_t address, uint16_t page = 0xFFFF,
+                               std::string condition = {})
+{
+    controllers::HapticProbe probe;
+    probe.kind = kind;
+    probe.address = probe.end = address;
+    probe.page = page;
+    probe.condition = std::move(condition);
+    return probe;
+}
+
+/// Hits per frame, from another query's accesses
+template <class Hits, class FrameOf>
+std::map<uint64_t, uint32_t> PerFrame(const Hits& hits, FrameOf frameOf)
+{
+    std::map<uint64_t, uint32_t> frames;
+    for (const auto& h : hits)
+        ++frames[frameOf(h)];
+    return frames;
+}
+
+std::map<uint64_t, uint32_t> PerFrame(const ttd::TTDProbeFrames& probe)
+{
+    std::map<uint64_t, uint32_t> frames;
+    for (size_t i = 0; i < probe.frames.size(); ++i)
+        frames[probe.frames[i]] = probe.hits[i];
+    return frames;
+}
+}  // namespace
+
+/// Each probe's frames and hits are what the access queries find: exec, a page, a write with a condition, an OUT and
+/// a ROM read; the machine stays where it stood
+TEST_F(TTDAnalysisQueries_Test, ProbeFramesMatchTheAccessQueries)
+{
+    using Kind = controllers::HapticProbeKind;
+    ASSERT_NO_FATAL_FAILURE(Record(false));
+    const ttd::TTDTimePoint before = _ttd->CurrentPosition();
+    const uint16_t pc = _context->pCore->GetZ80()->pc;
+
+    controllers::HapticProbe out = Probe(Kind::PortOut, 0x7FFD);
+    const ttd::TTDProbeFramesResult r = _ttd->ProbeFrames(
+        {Probe(Kind::Exec, 0x8200), Probe(Kind::Write, 0x8103, 0xFFFF, "VAL == 1"), Probe(Kind::Exec, 0xC000, 3), out,
+         Probe(Kind::Read, 0x0000)},
+        0, UINT64_MAX);
+    ASSERT_TRUE(r.error.empty()) << r.error;
+    ASSERT_EQ(r.probes.size(), 5u);
+    EXPECT_GE(r.toFrame - r.fromFrame + 1, kFrames - 1);
+    EXPECT_EQ(r.replayedFrames, r.toFrame - r.fromFrame + 1) << "the ROM read runs every frame: nothing pruned";
+    EXPECT_FALSE(r.truncated);
+
+    auto frameOfHit = [](const ttd::TTDReverseHit& h) { return h.time.frame; };
+    auto frameOfAccess = [](const ttd::TTDFoundAccess& a) { return a.access.time.frame; };
+    ttd::TTDFindOptions every;
+    every.all = true;
+    every.limit = 10000;
+    ttd::TTDSearchQuery ones = Writes(0x8103);
+    ones.hasValueFilter = true;
+    ones.value = 1;
+    ttd::TTDSearchQuery outs;
+    outs.addrFrom = outs.addrTo = 0x7FFD;
+    outs.access = ttd::TTDAccessType::Io;
+    ttd::TTDSearchQuery reads;
+    reads.addrFrom = reads.addrTo = 0x0000;
+    reads.access = ttd::TTDAccessType::Read;
+
+    const std::map<uint64_t, uint32_t> expected[] = {
+        PerFrame(AllHits(0x8200), frameOfHit),
+        PerFrame(_ttd->FindAccesses(ones, every).hits, frameOfAccess),
+        PerFrame(AllHits(0xC000, ttd::PhysPage(3)), frameOfHit),
+        PerFrame(_ttd->FindAccesses(outs, every).hits, frameOfAccess),
+        PerFrame(_ttd->FindAccesses(reads, every).hits, frameOfAccess),
+    };
+    for (size_t p = 0; p < 5; ++p)
+    {
+        SCOPED_TRACE(p);
+        const ttd::TTDProbeFrames& probe = r.probes[p];
+        EXPECT_TRUE(probe.error.empty()) << probe.error;
+        EXPECT_FALSE(expected[p].empty());
+        EXPECT_EQ(PerFrame(probe), expected[p]);
+        EXPECT_EQ(probe.frameCount, expected[p].size());
+        uint64_t hits = 0;
+        for (const auto& [frame, n] : expected[p])
+            hits += n;
+        EXPECT_EQ(probe.hitCount, hits);
+    }
+    EXPECT_LT(r.probes[2].frameCount, r.probes[0].frameCount) << "page 3 runs on every other call";
+    EXPECT_EQ(r.probes[4].frameCount, r.toFrame - r.fromFrame + 1);
+
+    EXPECT_EQ(_ttd->CurrentPosition(), before);
+    EXPECT_EQ(_context->pCore->GetZ80()->pc, pc);
+}
+
+/// The replay tells the query's taps only: the live haptics' probe and a user's breakpoint on the same address hear
+/// nothing, and the tap demand is back as it was
+TEST_F(TTDAnalysisQueries_Test, ProbeFramesReplayIsHeardOnlyByTheQuery)
+{
+    ASSERT_NO_FATAL_FAILURE(Record(false));
+    BreakpointManager* breakpoints = _context->pDebugManager->GetBreakpointsManager();
+    controllers::HapticProbes live(_context);
+    live.Arm({Probe(controllers::HapticProbeKind::Exec, 0x8200)});
+    const uint16_t user = breakpoints->AddExecutionBreakpoint(0x8200);
+    ASSERT_NE(user, BRK_INVALID);
+    const BreakpointTapDemand demand = breakpoints->GetTapDemand();
+
+    const ttd::TTDProbeFramesResult r =
+        _ttd->ProbeFrames({Probe(controllers::HapticProbeKind::Exec, 0x8200)}, 0, UINT64_MAX);
+    ASSERT_TRUE(r.error.empty()) << r.error;
+    EXPECT_GE(r.probes[0].frameCount, 5u);
+
+    controllers::HapticFrame heard;
+    live.TakeFrame(heard);
+    EXPECT_EQ(heard.probeHits[0], 0u) << "the live haptics' probe";
+    EXPECT_EQ(breakpoints->GetAllBreakpoints().at(user)->hitCount, 0u) << "the user's breakpoint";
+    EXPECT_TRUE(breakpoints->GetTapDemand() == demand);
+    live.Disarm();
+}
+
+/// A full list stops the walk with a cursor that goes on without a gap; a frame no probe can hit is not replayed; a
+/// condition that does not compile names its probe and leaves the others working
+TEST_F(TTDAnalysisQueries_Test, ProbeFramesCursorPruningAndABadCondition)
+{
+    using Kind = controllers::HapticProbeKind;
+    ASSERT_NO_FATAL_FAILURE(Record(false));
+    const std::vector<controllers::HapticProbe> page3 = {Probe(Kind::Exec, 0xC000, 3)};
+    const ttd::TTDProbeFramesResult whole = _ttd->ProbeFrames(page3, 0, UINT64_MAX);
+    ASSERT_TRUE(whole.error.empty()) << whole.error;
+    ASSERT_GE(whole.probes[0].frames.size(), 3u);
+    EXPECT_GT(whole.prunedFrames, 0u) << "the coverage index rules out the frames page 3 did not run in";
+    EXPECT_EQ(whole.replayedFrames + whole.prunedFrames, whole.toFrame - whole.fromFrame + 1);
+
+    std::vector<uint64_t> walked;
+    uint64_t from = 0;
+    for (int call = 0; call < 100; ++call)
+    {
+        const ttd::TTDProbeFramesResult page = _ttd->ProbeFrames(page3, from, UINT64_MAX, 2);
+        ASSERT_TRUE(page.error.empty()) << page.error;
+        walked.insert(walked.end(), page.probes[0].frames.begin(), page.probes[0].frames.end());
+        if (!page.truncated)
+            break;
+        EXPECT_EQ(page.probes[0].frames.size(), 2u);
+        EXPECT_EQ(page.nextFromFrame, page.toFrame + 1);
+        from = page.nextFromFrame;
+    }
+    EXPECT_EQ(walked, whole.probes[0].frames);
+
+    const ttd::TTDProbeFramesResult mixed =
+        _ttd->ProbeFrames({Probe(Kind::Write, 0x8103, 0xFFFF, "VAL =="), Probe(Kind::Exec, 0x8200)}, 0, UINT64_MAX);
+    ASSERT_TRUE(mixed.error.empty()) << mixed.error;
+    EXPECT_FALSE(mixed.probes[0].error.empty());
+    EXPECT_TRUE(mixed.probes[0].frames.empty());
+    EXPECT_GE(mixed.probes[1].frameCount, 5u);
+
+    EXPECT_FALSE(_ttd->ProbeFrames({}, 0, UINT64_MAX).error.empty());
+    EXPECT_FALSE(_ttd->ProbeFrames(page3, 1000000, UINT64_MAX).error.empty()) << "past the history";
+}
+
+/// The verb takes a profile's probe shape: a JSON list (numbers or strings) or one probe's flat fields, with the same
+/// answer as the controller's; malformed probes are refused before any replay
+TEST_F(TTDAnalysisQueries_Test, ProbeFramesVerbTakesTheProfileShape)
+{
+    ASSERT_NO_FATAL_FAILURE(Record(false));
+    const ttd::TTDProbeFramesResult direct =
+        _ttd->ProbeFrames({Probe(controllers::HapticProbeKind::Exec, 0xC000, 3)}, 0, UINT64_MAX);
+    ASSERT_TRUE(direct.error.empty()) << direct.error;
+
+    auto framesOf = [](const ttd::TTDReply& reply, size_t probe) {
+        std::vector<uint64_t> frames;
+        for (const StateNode& f : reply.body.find("probes")->items[probe].find("frames")->items)
+            frames.push_back(static_cast<uint64_t>(f.i));
+        return frames;
+    };
+    const ttd::TTDReply list = Run("probe-frames", {{"probes", R"([{"probe": "exec", "address": 49152, "page": 3},
+        {"probe": "port-out", "address": "0x7FFD", "port_mask": "0xFFFF"}])"}});
+    ASSERT_TRUE(list.Ok()) << list.message;
+    EXPECT_EQ(framesOf(list, 0), direct.probes[0].frames);
+    EXPECT_EQ(list.body.find("probes")->items[0].find("address")->s, "0xC000");
+    EXPECT_EQ(list.body.find("probes")->items[1].find("probe")->s, "port-out");
+    EXPECT_GE(list.body.find("probes")->items[1].find("frame_count")->i, 5);
+
+    const ttd::TTDReply flat = Run("probe-frames", {{"probe", "exec"}, {"address", "0xC000"}, {"page", "3"}});
+    ASSERT_TRUE(flat.Ok()) << flat.message;
+    EXPECT_EQ(framesOf(flat, 0), direct.probes[0].frames);
+
+    for (const std::map<std::string, std::string>& bad :
+         std::vector<std::map<std::string, std::string>>{{{"probe", "jump"}, {"address", "0x8000"}},
+                                                         {{"probe", "exec"}},
+                                                         {{"probe", "port-in"}, {"address", "0xFE"}, {"page", "1"}},
+                                                         {{"probes", "[1]"}},
+                                                         {{"probes", "[]"}},
+                                                         {{"probes", R"([{"probe": "exec", "address": 1}])"}, {"probe", "exec"}}})
+    {
+        const ttd::TTDReply reply = Run("probe-frames", bad);
+        EXPECT_EQ(reply.error, ttd::TTDControlError::BadRequest) << reply.message;
+    }
 }

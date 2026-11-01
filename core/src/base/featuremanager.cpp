@@ -12,7 +12,7 @@
 #include "common/inifile.h"
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -69,7 +69,7 @@ void FeatureManager::clear()
     _dirty = true;
 }
 
-/// @brief True while the TTD recording lock is held (TimeTravelManager engages it
+/// @brief True while the TTD recording lock is held (TimeTravelController engages it
 /// on entering Recording and holds it until the session returns to Idle)
 bool FeatureManager::isTtdRecordingActive() const
 {

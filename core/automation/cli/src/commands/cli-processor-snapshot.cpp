@@ -4,7 +4,7 @@
 
 #include "cli-processor.h"
 
-#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/timetravelcontroller.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <common/filehelper.h>

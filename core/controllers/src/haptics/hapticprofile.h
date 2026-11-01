@@ -132,6 +132,8 @@ struct HapticRule
     uint8_t target = 0;  ///< 0: the effect's own; else the first of `trigger.right|handle.high`
     std::vector<uint8_t> fallbacks;  ///< the rest, in order: the first a device has plays (Haptics_Fallback)
     uint8_t priority = 0;            ///< `priority`: over the effect's own when set
+    /// `player: N`: plays on the N-th pad connected only (the numbering of `play@N` layers); 0: on every pad
+    uint8_t player = 0;
     /// `if: {source, equals}`: the rule plays only while the byte a `value` source watches equals `gateValue` at the
     /// frame the event fires (the direction of a blow); empty: always
     std::string gate;

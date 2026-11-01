@@ -579,7 +579,6 @@ TEST(MediaManager_Test, ExportWritesTheGuestView)
     std::remove(path.c_str());
 }
 
-/// The media set is fixed while TTD records (integration-ttd-snapshots.md §2)
 /// M3 (Q4): while TTD records, a change is an event of the recording at the next frame boundary (the recording goes
 /// on); a caller that asks to end the recording ends it and changes the medium at once
 TEST(MediaManager_Test, RecordingTakesAChangeAtTheFrameBoundaryOrEndsWhenAsked)
