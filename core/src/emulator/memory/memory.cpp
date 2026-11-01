@@ -974,7 +974,7 @@ void Memory::SetROMMode(ROMModeEnum mode)
     // plain OUT #1FFD latches (RAM at #0000 / Shadow Monitor / RS-232 line)
     // that a ROM-mode switch must not clobber. The #0000 priority chain in
     // ScorpionMemory::UpdateModelBanks() derives everything from the latches (design §3)
-    if (config.mem_model != MM_SCORP && config.mem_model != MM_PROFSCORP)
+    if (!IsScorpionModel(config.mem_model))
         state.p1FFD &= ~7;
     state.pDFFD &= ~0x10;
     state.flags &= ~CF_CACHEON;
@@ -2395,7 +2395,7 @@ void Memory::handleFrameEnd()
         // ProfROM composes the page as plane * ROM_QUADRANT_PAGES + role, so the
         // plane falls straight out of the absolute page. floor() is monotonic,
         // which is what lets the frame's min/max pages carry the plane range too
-        if (_context->config.mem_model == MM_PROFSCORP)
+        if (_context->config.mem_model == MM_PROFSCORP || _context->config.mem_model == MM_GMX)
         {
             payload->planeAware = true;
             payload->plane = static_cast<uint8_t>(payload->page / ROM_QUADRANT_PAGES);

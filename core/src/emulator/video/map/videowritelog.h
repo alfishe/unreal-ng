@@ -58,13 +58,16 @@ struct VideoLatches
     uint8_t portY = 0;
     uint8_t allMode = 0;
     uint16_t frameLines = 0;
+    /// GMX: the 640x200 scroller's start address in bytes (#7AFD / #7CFD, gmxgeometry.h)
+    uint16_t scrollStart = 0;
 
     bool operator==(const VideoLatches& o) const
     {
         return mode == o.mode && p7FFD == o.p7FFD && pEFF7 == o.pEFF7 && pFF77 == o.pFF77 && pDFFD == o.pDFFD &&
                aFE == o.aFE && pFE == o.pFE && borderAttr == o.borderAttr && borderIndex == o.borderIndex &&
                atmBorderBright == o.atmBorderBright && activeScreen == o.activeScreen && rgMod == o.rgMod &&
-               hold == o.hold && portY == o.portY && allMode == o.allMode && frameLines == o.frameLines;
+               hold == o.hold && portY == o.portY && allMode == o.allMode && frameLines == o.frameLines &&
+               scrollStart == o.scrollStart;
     }
     bool operator!=(const VideoLatches& o) const { return !(*this == o); }
 };

@@ -230,11 +230,11 @@ protected:
 
 TEST_F(SurfaceActions_Test, SeekByWithoutAHistoryIsNotNowRecordFirst)
 {
-    EXPECT_EQ(_registry->Unavailable("ttd.seek_by", Delta(-1)), "record first");
+    EXPECT_EQ(_registry->Unavailable("ttd.seek_by", Delta(-1)), actions::kNoHistory);
     const ActionResult result = _registry->Run("ttd.seek_by", Delta(-1));
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.error, "not_now");
-    EXPECT_EQ(result.message, "record first");
+    EXPECT_EQ(result.message, actions::kNoHistory);
 }
 
 // A deck greys a key out by the host's reason: the verbs that move through or mark a history have none to act on
@@ -249,7 +249,7 @@ TEST_F(SurfaceActions_Test, HistoryVerbsAreUnavailableUntilAHistoryIsRecorded)
                            "ttd.reverse_step",          "ttd.reverse_continue",  "ttd.jog_frames",
                            "ttd.jog_instructions"};
     for (const char* id : verbs)
-        EXPECT_EQ(_registry->Unavailable(id, press), "record first") << id;
+        EXPECT_EQ(_registry->Unavailable(id, press), actions::kNoHistory) << id;
     EXPECT_EQ(_registry->Run("ttd.bookmark_add", press).error, "not_now");
     EXPECT_EQ(_registry->Unavailable("ttd.record_toggle", press), "") << "recording needs no history";
 
@@ -258,7 +258,7 @@ TEST_F(SurfaceActions_Test, HistoryVerbsAreUnavailableUntilAHistoryIsRecorded)
     EXPECT_EQ(_registry->Unavailable("ttd.bookmark_add", press), "") << "while recording";
     ASSERT_TRUE(Ttd("stop").Ok());
     for (const char* id : verbs)  // the instruction steps still need a pause: their own reason, not the history
-        EXPECT_NE(_registry->Unavailable(id, press), "record first") << id << " on a stopped history";
+        EXPECT_NE(_registry->Unavailable(id, press), actions::kNoHistory) << id << " on a stopped history";
     EXPECT_EQ(_registry->Unavailable("ttd.bookmark_add", press), "") << "on a stopped history";
 }
 
@@ -499,7 +499,7 @@ TEST_F(StepBy_Test, ItNeedsAPauseAndBackNeedsAHistory)
     result = _registry->Run("run.step_by", Delta(-1));
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.error, "not_now");
-    EXPECT_EQ(result.message, "record first");
+    EXPECT_EQ(result.message, actions::kNoHistory);
     EXPECT_EQ(_registry->Unavailable("run.step_by", Delta(1)), "") << "forward needs no history";
 }
 

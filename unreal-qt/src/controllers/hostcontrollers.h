@@ -10,6 +10,7 @@
 #include <QString>
 #include <QTimer>
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -136,6 +137,8 @@ public:
     /// While the debugger window has the focus the pads are debugger remotes too, with no layer key and without the
     /// Advanced switch (InputRouter::SetDebugFocus); another app taking the focus changes nothing
     void SetShortcutWindows(QWidget* main, QWidget* debugger);
+    /// Opens the debugger window: a surface entering a debug context (the deck's DEBUG menu) calls it once
+    void SetDebuggerOpener(std::function<void()> open) { _openDebugger = std::move(open); }
     bool GlobalShortcuts() const
     {
         return _globalShortcuts;
@@ -294,6 +297,8 @@ private:
     std::vector<std::pair<QWidget*, std::string>> _contextWidgets;
     QWidget* _ttdPanel = nullptr;
     std::string _guiPane;  ///< the context of the widget the focus entered last ("" none): set once per entry
+    std::function<void()> _openDebugger;
+    std::string _debugContextOf;  ///< the instance whose context in force is a debug one ("" none): opened once
     struct HeldKey
     {
         std::string control;

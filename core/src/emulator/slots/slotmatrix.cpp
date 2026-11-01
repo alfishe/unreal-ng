@@ -638,6 +638,14 @@ std::string MachineCell(const SlotPlanner& planner, const MachineDef& machine, c
     }
 
     std::vector<std::string> parts;
+    for (const PlanReason& reason : plan.reasons)
+    {
+        // A soft documented refusal (D9): the planner plugs the card only when forced
+        if (reason.rule == Rule::D9 && !reason.hard)
+        {
+            parts.push_back(std::string(Describe(Outcome::Refused).id) + " (" + reason.brief + "; forced plug only)");
+        }
+    }
     for (const RemovedFromSocket& removed : plan.removedFromSocket)
     {
         parts.push_back(std::string(Describe(Outcome::RemovedFromSocket).id) + " (" + Quoted(removed.builtIn) + " " +
