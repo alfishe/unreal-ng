@@ -4057,7 +4057,7 @@ control.
 
 | Command | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- |
-| `action [list]` | `[--json]` | Every action: id, label, group, kind (`press`, `delta`, `level`, `text`), `held`, `gui`, the companion scope it needs now, `needs_pause`, the `params` it reads (one line, `?` = optional), and whether it can run now for this caller or why not (`not_now` "needs a pause", `Not Implemented` for the stubs, `Run-control held`, `companion_forbidden`, `held_by_other`) | ✅ Implemented |
+| `action [list]` | `[--json]` | Every action: id, label, group, kind (`press`, `delta`, `level`, `text`), `held`, `gui`, the companion scope it needs now, `needs_pause`, the `params` it reads (one line, `?` = optional), and whether it can run now for this caller or why not (`not_now` "the machine is running: pause it first", `Not Implemented` for the stubs, `Run-control held`, `companion_forbidden`, `held_by_other`) | ✅ Implemented |
 | `action run` | `<id> [value] [param=val ...] [--json]` | Run one on the selected instance and wait for it. Value by kind: press `press` (default) / `release`; delta signed steps; level 0..1; text. Parameters as `name=value` words: `run.to_scanline line=N`, `run.frames count=N`, `input.key key=caps+1`, `media.open path=game.tap`, `feature.toggle name=turbomode`, `ttd.seek_by unit= min= max= rate_lo= rate_hi= rate=`. The reply: `ok`, `error`, `message`, `result` (a step: `pc`, `sp`, `state`, `stop`) | ✅ Implemented |
 | `action context` | `[--json]` | The instance's surface context: the one in force, whether somebody set it and who (`by`), the default it returns to | ✅ Implemented |
 

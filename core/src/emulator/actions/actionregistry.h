@@ -46,6 +46,9 @@ class Emulator;
 
 namespace actions
 {
+/// Why an action that needs a paused machine cannot run (`not_now`), and what to do
+inline constexpr const char* kNeedsPause = "the machine is running: pause it first";
+
 
 class ActivityFeed;
 
@@ -150,7 +153,7 @@ struct ActionRules
     /// The companion scope the call needs (automation_gate::CompanionScope bits); 0 = it changes nothing, nobody is
     /// gated. Null: 0. A function of the value and the machine: run.pause_toggle pausing needs none, resuming ScopeRun
     std::function<uint32_t(Emulator& emulator, const ActionValue& value)> scope;
-    /// A paused machine is needed (steps, instruction steps): "needs a pause" for every origin otherwise
+    /// A paused machine is needed (steps, instruction steps): `not_now` kNeedsPause for every origin otherwise
     bool needsPause = false;
     /// "" when it can run now, else why not ("no time travel history", "not available yet"). Reads published state
     /// only: never waits for the machine. Null: always available
