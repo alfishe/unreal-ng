@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 
+#include "emulator/video/presentpolicy.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/smoothmotion.h"
 #include "emulator/video/windowview.h"
@@ -28,6 +29,7 @@ struct ScreenFrames
     NextFrameSourceFn next;  ///< empty: no serials or no times (a ZX-Poly display): no smooth motion
     smoothmotion::Mode smooth = smoothmotion::Mode::Off;  ///< [VIDEO] SmoothMotion
     bool onCpu = false;  ///< [VIDEO] EffectsDevice = cpu: the GPU screen runs smooth motion on the CPU reference
+    PresentPolicy policy = PresentPolicy::Auto;  ///< [VIDEO] PresentPolicy: the native presenter's
 };
 
 /// The steady clock's now in ns: the clock frame targets are on

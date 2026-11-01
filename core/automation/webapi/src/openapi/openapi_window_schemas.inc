@@ -23,6 +23,8 @@
               "The shown instance's [VIDEO] SmoothMotion: off, blend or interpolate (the picture between two frames on a "
               "fixed display)");
         field("effects_device", "string", "The shown instance's [VIDEO] EffectsDevice: gpu or cpu (the same bits)");
+        field("present_policy", "string", "The shown instance's [VIDEO] PresentPolicy: auto, vrr or vsync");
+        field("lip_sync_offset_ms", "integer", "The shown instance's [VIDEO] LipSyncOffsetMs, -200..200");
         {
             Json::Value& p = s["properties"]["present"];
             p["type"] = "object";
@@ -35,6 +37,9 @@
             };
             pf("presenter", "string", "metal, dxgi (present at the frame's time), gl (the window's own swap), software");
             pf("fixed_display", "boolean", "A fixed refresh rate (false: VRR / ProMotion range)");
+            pf("vrr", "boolean",
+               "Native presenters: each frame presented at its own time (true) or on the refresh grid (false), as the "
+               "policy and the display decide");
             pf("refresh_hz", "object", "{min, max}: the display's refresh range");
             for (const char* count : {"presented", "shown", "dropped", "late"})
                 pf(count, "integer", "Presents since the start: handed over, on screen, never on screen, a refresh late");

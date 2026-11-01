@@ -109,6 +109,11 @@ WindowDisplaySettings MainWindow::windowDisplaySettings() const
         const auto mode = static_cast<smoothmotion::Mode>(context->config.smoothMotion);
         s.smoothMotion = smoothmotion::ModeName(mode);
         s.effectsDevice = context->config.effectsOnCpu ? "cpu" : "gpu";
+        PresentPolicy policy = PresentPolicy::Auto;
+        if (context->config.presentPolicy <= static_cast<uint8_t>(PresentPolicy::Vsync))
+            policy = static_cast<PresentPolicy>(context->config.presentPolicy);
+        s.presentPolicy = PresentPolicyName(policy);
+        s.lipSyncOffsetMs = context->config.lipSyncOffsetMs;
     }
     s.present = _screenWrapper->presentStats();
 
@@ -195,15 +200,21 @@ void MainWindow::applyWindowDisplay(const WindowDisplayChange& change)
     }
     // Smooth motion is the shown instance's [VIDEO] setting: its frames go to the screen again with it
     EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: held by _emulator
-    if ((change.smoothMotion || change.effectsDevice) && context)
+    if ((change.smoothMotion || change.effectsDevice || change.presentPolicy) && context)
     {
         smoothmotion::Mode mode = smoothmotion::Mode::Off;
         if (change.smoothMotion && smoothmotion::ParseMode(change.smoothMotion->c_str(), mode))
             context->config.smoothMotion = static_cast<uint8_t>(mode);
         if (change.effectsDevice)
             context->config.effectsOnCpu = *change.effectsDevice == "cpu";
+        PresentPolicy policy = PresentPolicy::Auto;
+        if (change.presentPolicy && ParsePresentPolicy(change.presentPolicy->c_str(), policy))
+            context->config.presentPolicy = static_cast<uint8_t>(policy);
         refreshFrameSource();
     }
+    // The emulation thread reads it at the next latch
+    if (change.lipSyncOffsetMs && context)
+        context->config.lipSyncOffsetMs = *change.lipSyncOffsetMs;
     // An open Temporal Effects dialog shows what automation set
     if (change.blending || change.blendingFrames || change.blendingWeights || change.blendingDecay)
     {

@@ -1369,8 +1369,9 @@ emu.window_display()                 -- GUI window display settings: { backend (
                                      --   gpu, crt, crt_profile, crt_profiles = {...}, blending (temporal blending),
                                      --   blending_frames (2..5), blending_weights ("equal" / "exponential"),
                                      --   blending_decay (0.1..0.9), smooth_motion ("off" / "blend" /
-                                     --   "interpolate"), effects_device ("gpu" / "cpu"), present = { presenter,
-                                     --   late, lead_ms, error_ms, smooth = { mode, renders, interpolated, ... } }
+                                     --   "interpolate"), effects_device ("gpu" / "cpu"), present_policy
+                                     --   ("auto" / "vrr" / "vsync"), lip_sync_offset_ms (-200..200),
+                                     --   present = { presenter, vrr, late, lead_ms, error_ms, smooth = { mode, renders, interpolated, ... } }
                                      --   (the frame presenter's timing), emulator (the instance the window shows),
                                      --   fullscreen, scale (1..4, 0 = resized by hand), toolbar, status_bar, hud,
                                      --   hud_theme, hud_themes, hud_notices = {id = shown}, osd_keyboard,
@@ -1384,7 +1385,8 @@ emu.window_display_set({crt_profile = "basic", blending = true})  -- any of gpu,
                                      --   shader:<name> (a preset or a custom shader) with the GPU; other
                                      --   than none switches CRT on), blending_frames, blending_weights,
                                      --   blending_decay (0.3), smooth_motion ("interpolate"), effects_device
-                                     --   ("gpu" / "cpu"), scale (1..4), hud_theme, hud_notices = {["ram-page"]
+                                     --   ("gpu" / "cpu"), present_policy ("vsync"), lip_sync_offset_ms (-40),
+                                     --   scale (1..4), hud_theme, hud_notices = {["ram-page"]
                                      --   = false}, osd_keyboard_picture, osd_keyboard_style ("photo" / "schematic" /
                                      --   "hybrid"), next_layers_mode ("layers" / "composed" /
                                      --   "winner"), next_layers_shown = {sprites = false}; applied the way the View

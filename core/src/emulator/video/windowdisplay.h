@@ -14,6 +14,7 @@
 /// Validation lives here, so every surface refuses the same words with the same message; the provider only applies.
 
 #include <emulator/state/statenode.h>
+#include <emulator/video/presentpolicy.h>
 #include <emulator/video/smoothmotion.h>
 #include <emulator/video/windowview.h>
 
@@ -30,7 +31,7 @@ namespace WindowDisplay
 /// The settings a change can name, in the order every surface lists them
 inline constexpr const char* kKeys =
     "gpu, crt, crt_profile, blending, blending_frames, blending_weights, blending_decay, smooth_motion, effects_device, "
-    "fullscreen, scale, toolbar, "
+    "present_policy, lip_sync_offset_ms, fullscreen, scale, toolbar, "
     "status_bar, hud, hud_theme, hud_notice.<id>, osd_keyboard, osd_keyboard_picture, osd_keyboard_style, next_layers, next_layers_mode, "
     "next_layer.<ula|layer2|tilemap|sprites>";
 
@@ -265,6 +266,29 @@ inline bool ApplyWord(WindowDisplayChange& change, const std::string& key, const
         change.effectsDevice = device;
         return true;
     }
+    if (k == "present_policy")
+    {
+        PresentPolicy policy = PresentPolicy::Auto;
+        if (!ParsePresentPolicy(value.c_str(), policy))
+        {
+            error = "'present_policy' takes auto, vrr or vsync, not '" + value + "'";
+            return false;
+        }
+        change.presentPolicy = PresentPolicyName(policy);
+        return true;
+    }
+    if (k == "lip_sync_offset_ms")
+    {
+        double ms = 0;
+        if (!ParseNumber(value, ms) || ms != std::floor(ms) || ms < kMinLipSyncOffsetMs || ms > kMaxLipSyncOffsetMs)
+        {
+            error = "'lip_sync_offset_ms' takes " + std::to_string(kMinLipSyncOffsetMs) + ".." +
+                    std::to_string(kMaxLipSyncOffsetMs) + " (ms, positive = the picture later), not '" + value + "'";
+            return false;
+        }
+        change.lipSyncOffsetMs = static_cast<int>(ms);
+        return true;
+    }
     if (k == "fullscreen")
         return flag(change.fullscreen);
     if (k == "scale")
@@ -418,7 +442,7 @@ inline Result Set(const WindowDisplayChange& change)
     return r;
 }
 
-/// The frame presenter's part of the report: presenter, fixed_display, refresh_hz {min, max}, presented, shown, dropped,
+/// The frame presenter's part of the report: presenter, fixed_display, vrr, refresh_hz {min, max}, presented, shown, dropped,
 /// late, lead_ms, error_ms {p50, p99, max}, gpu_wait_ms {p50, max}, smooth {mode, device, game, frames, pictures,
 /// renders, blended, interpolated, motion_fields, on_device, held_flicker}
 inline StateNode PresentReport(const WindowPresentStats& p)
@@ -426,6 +450,7 @@ inline StateNode PresentReport(const WindowPresentStats& p)
     StateNode node = StateNode::Object();
     node["presenter"] = p.presenter;
     node["fixed_display"] = p.fixedDisplay;
+    node["vrr"] = p.vrr;
     StateNode refresh = StateNode::Object();
     refresh["min"] = p.minRefreshHz;
     refresh["max"] = p.maxRefreshHz;
@@ -461,7 +486,8 @@ inline StateNode PresentReport(const WindowPresentStats& p)
 }
 
 /// The report every surface returns: backend, gpu_available, gpu, crt, crt_profile, crt_profiles[], blending,
-/// blending_frames, blending_weights, smooth_motion, effects_device, present (PresentReport), emulator (the instance
+/// blending_frames, blending_weights, smooth_motion, effects_device, present_policy, lip_sync_offset_ms, present
+/// (PresentReport), emulator (the instance
 /// the window shows, "" = none)
 inline StateNode Report(const WindowDisplaySettings& s)
 {
@@ -481,6 +507,8 @@ inline StateNode Report(const WindowDisplaySettings& s)
     node["blending_decay"] = s.blendingDecay;
     node["smooth_motion"] = s.smoothMotion;
     node["effects_device"] = s.effectsDevice;
+    node["present_policy"] = s.presentPolicy;
+    node["lip_sync_offset_ms"] = s.lipSyncOffsetMs;
     node["present"] = PresentReport(s.present);
     node["emulator"] = s.emulatorId;
     node["fullscreen"] = s.fullscreen;
@@ -536,6 +564,12 @@ inline std::string Summary(const WindowDisplaySettings& s)
             " frames, " + s.blendingWeights + (s.blendingWeights == "exponential" ? " " + NumberWord(s.blendingDecay) : "") +
             ")";
     line += ", smooth motion " + s.smoothMotion + (s.smoothMotion == "off" ? "" : " (" + s.effectsDevice + ")");
+    // The policy in effect only where a native presenter applies it
+    const bool native = s.present.presenter == "metal" || s.present.presenter == "dxgi";
+    line += ", present " + s.presentPolicy + (native ? (s.present.vrr ? " (vrr)" : " (vsync)") : "");
+    if (s.lipSyncOffsetMs != 0)
+        line += ", lip sync " + std::string(s.lipSyncOffsetMs > 0 ? "+" : "") + std::to_string(s.lipSyncOffsetMs) +
+                " ms";
     line += s.fullscreen ? ", full screen" : (s.scale > 0 ? ", scale " + std::to_string(s.scale) + "x" : ", scale free");
     line += std::string(", hud ") + (s.hud ? "on" : "off") + (s.hudTheme.empty() ? "" : " (" + s.hudTheme + ")");
     if (s.osdKeyboard)

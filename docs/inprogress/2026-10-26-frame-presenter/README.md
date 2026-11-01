@@ -483,9 +483,12 @@ directly: the screen time minus the frame's target.
   mode in effect, device and counters (renders, blended, interpolated, motion fields, steps on the device, renders
   with flicker held). CLI `video window`, REST and WebSocket `/video/window`, Lua and Python `window_display()`, MCP
   `window_display` (a `present:` line in the text) take them through the same words. Read with the settings on the
-  GUI thread, never from the emulation thread. Not yet: `PresentPolicy` is still `UNREAL_PRESENT_POLICY` only, and
-  `LipSyncOffsetMs` is read from the config only (the emulation thread reads it per latch: a run-time setter needs
-  it atomic).
+  GUI thread, never from the emulation thread. `present_policy` (auto / vrr / vsync) is the shown instance's
+  `[VIDEO] PresentPolicy`, applied to the native presenter at once (Metal: off the refresh grid or on it; DXGI:
+  tearing presents or `Present(0)`, auto keeps its VRR check); `UNREAL_PRESENT_POLICY` overrides it. The report's
+  `present.vrr` says which way the frames go now. `lip_sync_offset_ms` (-200..200) is `[VIDEO] LipSyncOffsetMs`,
+  a relaxed atomic the emulation thread reads per latch: it moves the next frame's target time. Not yet: the
+  clock in use, frames off the beat pattern, the screen-to-sound offset and the WebSocket policy topic.
 
 ### 6.5 Every effect on the GPU and on the CPU
 

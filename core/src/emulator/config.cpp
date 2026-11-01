@@ -13,6 +13,7 @@
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/atm/atmgeometry.h"
+#include "emulator/video/presentpolicy.h"
 #include "emulator/video/smoothmotion.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/comportspec.h"
@@ -1079,7 +1080,16 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: [VIDEO] AVSyncDelayFrames is retired and ignored: video follows the audio clock, "
 						"[VIDEO] LipSyncOffsetMs trims it");
 		const long lipSync = inimanager.GetLongValue(video, "LipSyncOffsetMs", 0);
-		config.lipSyncOffsetMs = (lipSync >= -200 && lipSync <= 200) ? (int)lipSync : 0;
+		config.lipSyncOffsetMs = (lipSync >= kMinLipSyncOffsetMs && lipSync <= kMaxLipSyncOffsetMs) ? (int)lipSync : 0;
+	}
+	// The native presenter's policy: auto (default) | vrr | vsync. Unknown values warn and keep auto
+	{
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(video, "PresentPolicy", nullptr), line, sizeof line);
+		PresentPolicy policy = PresentPolicy::Auto;
+		if (line[0] != '\0' && !ParsePresentPolicy(line, policy))
+			MLOGWARNING("Config: unsupported [VIDEO] PresentPolicy='%s', using auto", line);
+		config.presentPolicy = static_cast<uint8_t>(policy);
 	}
 	// Smooth motion on a fixed display: off (default) | blend | interpolate. Unknown values warn and keep off
 	{

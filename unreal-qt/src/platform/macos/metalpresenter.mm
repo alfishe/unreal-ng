@@ -101,6 +101,7 @@ struct MetalPresenter::Impl
     std::atomic<uint64_t> shown{0};
     std::atomic<uint64_t> dropped{0};
     std::atomic<int64_t> lastPresentedNs{0};  // the newest presentedTime: a refresh of the display
+    std::atomic<uint8_t> policy{0};           // a PresentPolicy
     PresentLead lead{kLeadStartNs};  // LeadNs: a refresh and this margin
     FILE* trace = nullptr;  // UNREAL_PRESENT_TRACE: one line per present (see environment-variables.md)
     std::string dumpPath;   // UNREAL_PRESENT_DUMP: a drawable as shown, a PPM (from the 200th present, again once deleted)
@@ -455,14 +456,30 @@ bool MetalPresenter::IsVisible() const
     return window && (window.occlusionState & NSWindowOcclusionStateVisible) != 0;
 }
 
+void MetalPresenter::SetPolicy(PresentPolicy policy)
+{
+    _impl->policy.store(static_cast<uint8_t>(policy), std::memory_order_relaxed);
+}
+
+bool MetalPresenter::Vrr() const
+{
+    const auto policy = static_cast<PresentPolicy>(_impl->policy.load(std::memory_order_relaxed));
+    if (policy != PresentPolicy::Auto)
+        return policy == PresentPolicy::Vrr;
+    // A refresh range (ProMotion, adaptive sync) shows each present at its time
+    NSScreen* screen = _impl->view.window.screen ?: [NSScreen mainScreen];
+    const CFTimeInterval shortest = screen.minimumRefreshInterval;
+    const CFTimeInterval longest = screen.maximumRefreshInterval;
+    return shortest > 0 && longest - shortest > shortest * 0.01;
+}
+
 bool MetalPresenter::RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const
 {
     const int64_t last = _impl->lastPresentedNs.load(std::memory_order_relaxed);
     NSScreen* screen = _impl->view.window.screen ?: [NSScreen mainScreen];
+    // vsync on a refresh range: its top rate
     const CFTimeInterval shortest = screen.minimumRefreshInterval;
-    const CFTimeInterval longest = screen.maximumRefreshInterval;
-    // A refresh range (ProMotion, adaptive sync) shows each present at its time
-    if (last == 0 || shortest <= 0 || longest - shortest > shortest * 0.01)
+    if (last == 0 || shortest <= 0 || Vrr())
         return false;
     refreshNs = last;
     periodNs = SecondsToNs(shortest);
@@ -513,6 +530,7 @@ MetalPresenter::Stats MetalPresenter::GetStats() const
     NSScreen* screen = p.view.window.screen ?: [NSScreen mainScreen];
     s.maxRefreshHz = screen.minimumRefreshInterval > 0 ? 1.0 / screen.minimumRefreshInterval : 0.0;
     s.minRefreshHz = screen.maximumRefreshInterval > 0 ? 1.0 / screen.maximumRefreshInterval : 0.0;
+    s.vrr = Vrr();
     return s;
 }
 
@@ -523,11 +541,12 @@ std::string MetalPresenter::Describe() const
     std::snprintf(line, sizeof(line),
                   "Metal present-at-time: %llu presented, %llu shown, %llu dropped, %llu a refresh late (lead %.1f ms); "
                   "error p50 %.2f p99 %.2f max %.2f ms; "
-                  "GL wait p50 %.2f max %.2f ms; drawable wait p50 %.2f max %.2f ms; display %.1f-%.1f Hz%s%s",
+                  "GL wait p50 %.2f max %.2f ms; drawable wait p50 %.2f max %.2f ms; display %.1f-%.1f Hz%s, %s%s",
                   static_cast<unsigned long long>(s.presented), static_cast<unsigned long long>(s.shown),
                   static_cast<unsigned long long>(s.dropped), static_cast<unsigned long long>(s.late), s.leadMs,
                   s.errorP50, s.errorP99, s.errorMax, s.gpuWaitP50,
                   s.gpuWaitMax, s.drawableWaitP50, s.drawableWaitMax, s.minRefreshHz, s.maxRefreshHz,
-                  s.maxRefreshHz - s.minRefreshHz > 1.0 ? " (VRR)" : " (fixed)", s.visible ? "" : "; occluded");
+                  s.maxRefreshHz - s.minRefreshHz > 1.0 ? " (VRR)" : " (fixed)",
+                  s.vrr ? "each frame at its time" : "on the refresh grid", s.visible ? "" : "; occluded");
     return line;
 }

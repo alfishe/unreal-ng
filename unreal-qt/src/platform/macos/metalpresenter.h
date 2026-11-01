@@ -27,13 +27,17 @@ public:
     /// a refresh plus 6 ms to start with, adapted to the load: each present shown a refresh late adds 1 ms (up to a
     /// refresh plus 12 ms), 600 on time in a row take 1 ms back (down to a refresh plus 4 ms)
     int64_t LeadNs(int64_t refreshPeriodNs) const override;
-    /// The last present's presentedTime and the screen's refresh interval; false on a display with a refresh range
+    /// auto: a display with a refresh range (ProMotion, adaptive sync) shows each present at its time, a fixed one at
+    /// the first refresh after it; vrr: no grid, the frames at their times; vsync: the grid, a range at its top rate
+    void SetPolicy(PresentPolicy policy) override;
+    /// The last present's presentedTime and the screen's refresh interval; false while each present shows at its time
     bool RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const override;
     Stats GetStats() const override;
     std::string Describe() const override;
 
 private:
     MetalPresenter();
+    bool Vrr() const;  // each present at its time: the policy, or (auto) the display's refresh range
     struct Impl;
     std::unique_ptr<Impl> _impl;
 };

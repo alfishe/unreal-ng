@@ -239,6 +239,7 @@ private:
     bool _glInitialized = false;
     QSize _glSize;                                ///< the surface size resizeGL saw, device pixels
     std::unique_ptr<NativePresenter> _presenter;  ///< native way, made on the first paint (needs the window)
+    PresentPolicy _presentPolicy = PresentPolicy::Auto;  ///< ScreenFrames::policy, UNREAL_PRESENT_POLICY overrides it
     QTimer* _presentTimer = nullptr;              ///< native way: the next frame's present
     bool _presentPending = false;                 ///< native way: a forced present asked for
     int64_t _presentLeadNs = 0;                   ///< native way: UNREAL_PRESENT_LEAD_MS, 0 = presentLeadNs() picks

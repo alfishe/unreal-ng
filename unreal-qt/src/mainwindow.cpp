@@ -190,6 +190,8 @@ ScreenFrames TimedFrameSource(Screen* screen, EmulatorContext* context)
     if (context && context->config.smoothMotion <= static_cast<uint8_t>(smoothmotion::Mode::Interpolate))
         source.smooth = static_cast<smoothmotion::Mode>(context->config.smoothMotion);
     source.onCpu = context && context->config.effectsOnCpu;
+    if (context && context->config.presentPolicy <= static_cast<uint8_t>(PresentPolicy::Vsync))
+        source.policy = static_cast<PresentPolicy>(context->config.presentPolicy);
     source.at = [screen, context](int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFrameInfo* info) {
         PresentFrameInfo shown;
         if (!context || !screen->CopyFrameAt(hostNs, dst, dstSize, &shown))

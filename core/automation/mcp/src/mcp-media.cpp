@@ -169,6 +169,12 @@ std::string WindowDisplaySummary(const Json::Value& s)
         const std::string smooth = s["smooth_motion"].asString();
         line += ", smooth motion " + smooth + (smooth == "off" ? "" : " (" + s.get("effects_device", "").asString() + ")");
     }
+    if (s.isMember("present_policy"))
+    {
+        line += ", present policy " + s["present_policy"].asString();
+        const int lipSync = s.get("lip_sync_offset_ms", 0).asInt();
+        line += ", lip sync " + std::string(lipSync > 0 ? "+" : "") + std::to_string(lipSync) + " ms";
+    }
     if (s.isMember("fullscreen"))
     {
         const int scale = s.get("scale", 0).asInt();
@@ -193,6 +199,9 @@ std::string WindowDisplaySummary(const Json::Value& s)
         line += "\npresent: " + present.get("presenter", "").asString() + ", " +
                 NumberText(refresh.get("max", 0.0).asDouble()) + " Hz" +
                 (present.get("fixed_display", true).asBool() ? " fixed" : " range from " + NumberText(refresh.get("min", 0.0).asDouble()));
+        const std::string presenter = present.get("presenter", "").asString();
+        if (presenter == "metal" || presenter == "dxgi")
+            line += present.get("vrr", false).asBool() ? ", each frame at its time (vrr)" : ", on the refresh grid (vsync)";
         if (present.get("presented", 0).asUInt64() > 0)
         {
             const Json::Value& error = present["error_ms"];
@@ -429,7 +438,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "none, basic, ...; other than none switches CRT on), blending (bool, temporal blending / gigascreen "
         "smoothing), blending_frames (2..5), blending_weights (equal, exponential), blending_decay (0.1..0.9), "
         "smooth_motion (off, blend, interpolate: the shown instance's picture between two frames on a fixed display), "
-        "effects_device (gpu, cpu), "
+        "effects_device (gpu, cpu), present_policy (auto, vrr, vsync: how the native presenter shows the frames), "
+        "lip_sync_offset_ms (-200..200, positive = the picture later), "
         "fullscreen (bool), scale (1..4), toolbar, status_bar, hud (bool), hud_theme (one of hud_themes), "
         "hud_notices ({id: bool}, ids from window_display), osd_keyboard (bool), osd_keyboard_picture (one of "
         "osd_keyboard_pictures), osd_keyboard_style (photo, schematic, hybrid: the hybrid shows what a combination key "
@@ -439,11 +449,12 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     for (const char* flag : {"gpu", "crt", "blending", "fullscreen", "toolbar", "status_bar", "hud", "osd_keyboard",
                              "next_layers"})
         schema["properties"]["display"]["properties"][flag]["type"] = "boolean";
-    for (const char* word : {"crt_profile", "blending_weights", "smooth_motion", "effects_device", "hud_theme",
+    for (const char* word : {"crt_profile", "blending_weights", "smooth_motion", "effects_device", "present_policy", "hud_theme",
                              "osd_keyboard_picture", "osd_keyboard_style", "next_layers_mode"})
         schema["properties"]["display"]["properties"][word]["type"] = "string";
     schema["properties"]["display"]["properties"]["blending_frames"]["type"] = "integer";
     schema["properties"]["display"]["properties"]["scale"]["type"] = "integer";
+    schema["properties"]["display"]["properties"]["lip_sync_offset_ms"]["type"] = "integer";
     schema["properties"]["display"]["properties"]["blending_decay"]["type"] = "number";
     for (const char* map : {"hud_notices", "next_layers_shown"})
     {

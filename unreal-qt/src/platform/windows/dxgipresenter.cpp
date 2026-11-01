@@ -162,13 +162,6 @@ double MonitorRefreshHz(HWND hwnd)
 class DxgiPresenter final : public NativePresenter
 {
 public:
-    enum class Policy
-    {
-        Auto,   // VRR while the vblanks follow the presents, else vsync
-        Vrr,    // Present(0, ALLOW_TEARING) at the time, always
-        Vsync,  // Present(0) without tearing at the time, always
-    };
-
     explicit DxgiPresenter(HWND hwnd) : _hwnd(hwnd) {}
 
     ~DxgiPresenter() override
@@ -284,9 +277,7 @@ public:
             return false;
         }
 
-        const QByteArray policy = qgetenv("UNREAL_PRESENT_POLICY").toLower();
-        _policy = policy == "vrr" ? Policy::Vrr : policy == "vsync" ? Policy::Vsync : Policy::Auto;
-        _vrr = _tearing && _policy != Policy::Vsync;
+        _vrr = _tearing && Policy() != PresentPolicy::Vsync;
         _panelFollows = _tearing;
         _refreshHz = MonitorRefreshHz(_hwnd);
         if (const QByteArray path = qgetenv("UNREAL_PRESENT_TRACE"); !path.isEmpty())
@@ -382,6 +373,16 @@ public:
         return _lead.Margin(refreshPeriodNs);
     }
 
+    /// auto: VRR while the vblanks follow the presents, else vsync (CheckVrr); vrr: Present(0, ALLOW_TEARING) at the
+    /// time, always; vsync: Present(0) without tearing at the time, always. VRR needs tearing supported
+    void SetPolicy(PresentPolicy policy) override
+    {
+        _policy.store(static_cast<uint8_t>(policy), std::memory_order_relaxed);
+        _vrr = _tearing && policy != PresentPolicy::Vsync;
+        std::lock_guard<std::mutex> lock(_statsMutex);
+        _vrrNote.clear();
+    }
+
     /// The vblank thread's last vblank and their interval (the monitor's rate before there are enough of them);
     /// false while presenting for VRR
     bool RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const override
@@ -430,6 +431,7 @@ public:
         s.drawableWaitMax = drawableWaits.empty() ? 0.0 : *std::max_element(drawableWaits.begin(), drawableWaits.end());
         s.minRefreshHz = s.maxRefreshHz = _refreshHz;
         s.visible = IsVisible();
+        s.vrr = _vrr;
         return s;
     }
 
@@ -452,11 +454,7 @@ public:
             "%.1f ms); error p50 %.2f p99 "
             "%.2f max %.2f ms; GL unlock p50 %.2f max %.2f ms; back buffer wait p50 %.2f max %.2f ms; display "
             "%.0f Hz, vblank interval p50 %.2f ms (%s)%s%s",
-            mode,
-            _policy == Policy::Auto  ? "auto"
-            : _policy == Policy::Vrr ? "vrr"
-                                     : "vsync",
-            _tearing ? "supported" : "not supported", vrrNote.empty() ? "" : (", " + vrrNote).c_str(),
+            mode, PresentPolicyName(Policy()), _tearing ? "supported" : "not supported", vrrNote.empty() ? "" : (", " + vrrNote).c_str(),
             static_cast<unsigned long long>(s.presented), static_cast<unsigned long long>(s.shown),
             static_cast<unsigned long long>(s.dropped), static_cast<unsigned long long>(s.late), s.leadMs, s.errorP50, s.errorP99, s.errorMax, s.gpuWaitP50, s.gpuWaitMax,
             s.drawableWaitP50, s.drawableWaitMax, _refreshHz.load(), vblankP50,
@@ -684,7 +682,7 @@ private:
         if (!onGrid || !presentsOffGrid)
             return;
         _panelFollows = false;
-        if (_policy == Policy::Auto && _vrr)
+        if (Policy() == PresentPolicy::Auto && _vrr)
         {
             _vrr = false;
             char note[160];
@@ -850,7 +848,12 @@ private:
     UINT _backWidth = 0;
     UINT _backHeight = 0;
     bool _tearing = false;
-    Policy _policy = Policy::Auto;
+    PresentPolicy Policy() const
+    {
+        return static_cast<PresentPolicy>(_policy.load(std::memory_order_relaxed));
+    }
+
+    std::atomic<uint8_t> _policy{0};  // a PresentPolicy (SetPolicy from the GUI thread)
     std::atomic<bool> _vrr{false};
     std::atomic<bool> _panelFollows{false};  // the vblanks follow the presents (CheckVrr; at first: tearing supported)
     std::string _vrrNote;                    // _statsMutex

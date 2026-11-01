@@ -29,7 +29,8 @@
             "How the GUI window draws the picture: backend (gpu / software), gpu_available, gpu, crt, crt_profile and "
             "the crt_profiles offered, blending (temporal blending, gigascreen smoothing), blending_frames, "
             "blending_weights, blending_decay, smooth motion (smooth_motion, effects_device: the shown instance's "
-            "[VIDEO] settings), present (the frame presenter's on-screen timing and smooth motion's counters), the "
+            "[VIDEO] settings), present_policy and lip_sync_offset_ms (the shown instance's [VIDEO] PresentPolicy, "
+            "LipSyncOffsetMs), present (the frame presenter's on-screen timing and smooth motion's counters), the "
             "emulator the window shows, fullscreen, scale, toolbar, status_bar, "
             "the HUD (hud, hud_theme, hud_themes, hud_notices), the on-screen keyboard (osd_keyboard, "
             "osd_keyboard_picture, osd_keyboard_pictures, osd_keyboard_style, osd_keyboard_styles) and the ZX Next layers window (next_layers, "
@@ -67,6 +68,11 @@
                   "off, blend or interpolate: the shown instance's smooth motion until it restarts ([VIDEO] "
                   "SmoothMotion keeps the default)");
             field("effects_device", "string", "gpu or cpu: where smooth motion's steps run (the same bits)");
+            field("present_policy", "string",
+                  "auto, vrr or vsync: how the native presenter shows the frames (auto: each at its time on a VRR "
+                  "display, the refresh grid on a fixed one; vrr / vsync force one), until the instance restarts");
+            field("lip_sync_offset_ms", "integer",
+                  "-200..200: added to every frame's target time, positive = the picture later; from the next frame");
             field("fullscreen", "boolean", "Full screen on / off (follows after the window system's transition)");
             field("scale", "integer", "Fit the window to the picture at 1..4x (leaves full screen)");
             field("toolbar", "boolean", "View > Toolbar");

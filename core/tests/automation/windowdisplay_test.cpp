@@ -178,13 +178,14 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     for (const auto& member : report.members)
         keys += member.first + " ";
     EXPECT_EQ(keys, "backend gpu_available gpu crt crt_profile crt_profiles blending blending_frames blending_weights "
-                    "blending_decay smooth_motion effects_device present emulator fullscreen scale toolbar status_bar hud hud_theme hud_themes hud_notices "
+                    "blending_decay smooth_motion effects_device present_policy lip_sync_offset_ms present emulator fullscreen scale toolbar status_bar hud hud_theme hud_themes hud_notices "
                     "osd_keyboard osd_keyboard_picture osd_keyboard_pictures osd_keyboard_style osd_keyboard_styles next_layers "
                     "next_layers_mode "
                     "next_layers_shown ");
 
     EXPECT_EQ(WindowDisplay::Summary(fake.settings),
-              "gpu off (unavailable), crt basic, blending off (4 frames, equal), smooth motion off, scale free, hud off");
+              "gpu off (unavailable), crt basic, blending off (4 frames, equal), smooth motion off, present auto, scale free, "
+              "hud off");
     fake.settings.blendingWeights = "exponential";
     fake.settings.blendingDecay = 0.3;
     fake.settings.scale = 2;
@@ -193,7 +194,7 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     fake.settings.smoothMotion = "interpolate";
     EXPECT_EQ(WindowDisplay::Summary(fake.settings),
               "gpu off (unavailable), crt basic, blending off (4 frames, exponential 0.3), smooth motion interpolate "
-              "(gpu), scale 2x, hud on (retro_zx)");
+              "(gpu), present auto, scale 2x, hud on (retro_zx)");
 
     // The presenter's timing and smooth motion's counters
     fake.settings.present.presenter = "metal";
@@ -207,6 +208,15 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     EXPECT_EQ(present.find("late")->i, 3);
     EXPECT_EQ(present.find("smooth")->find("mode")->s, "interpolate");
     EXPECT_EQ(present.find("smooth")->find("held_flicker")->i, 7);
+    ASSERT_NE(present.find("vrr"), nullptr);
+
+    // The present policy shows for a native presenter, the lip sync trim when set
+    fake.settings.smoothMotion = "off";
+    fake.settings.presentPolicy = "vsync";
+    fake.settings.lipSyncOffsetMs = -40;
+    EXPECT_EQ(WindowDisplay::Summary(fake.settings),
+              "gpu off (unavailable), crt basic, blending off (4 frames, exponential 0.3), smooth motion off, "
+              "present vsync (vsync), lip sync -40 ms, scale 2x, hud on (retro_zx)");
 }
 
 TEST(WindowDisplay_Test, TheWindowsOtherWordsMakeAChange)
@@ -264,6 +274,23 @@ TEST(WindowDisplay_Test, SmoothMotionWords)
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "smooth_motion", "motion", error));
     EXPECT_NE(error.find("off, blend or interpolate"), std::string::npos) << error;
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "effects_device", "npu", error));
+}
+
+TEST(WindowDisplay_Test, PresentPolicyAndLipSyncWords)
+{
+    WindowDisplayChange change;
+    std::string error;
+    EXPECT_TRUE(change.Empty());
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "present_policy", "VRR", error)) << error;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "lip_sync_offset_ms", "-200", error)) << error;
+    EXPECT_EQ(change.presentPolicy, "vrr");
+    EXPECT_EQ(change.lipSyncOffsetMs, -200);
+    EXPECT_FALSE(change.Empty());
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "present_policy", "gsync", error));
+    EXPECT_NE(error.find("auto, vrr or vsync"), std::string::npos) << error;
+    for (const char* bad : {"201", "-201", "2.5", "x", ""})
+        EXPECT_FALSE(WindowDisplay::ApplyWord(change, "lip_sync_offset_ms", bad, error)) << bad;
+    EXPECT_EQ(change.lipSyncOffsetMs, -200) << "a refused word keeps the last value";
 }
 
 TEST(WindowDisplay_Test, NumbersInWordsIgnoreTheLocale)

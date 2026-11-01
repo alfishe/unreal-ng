@@ -190,6 +190,7 @@ void DeviceScreenGLWindow::renderNative(bool force)
 #endif
             return;
         }
+        _presenter->SetPolicy(_presentPolicy);
         qInfo().noquote() << "DeviceScreenGLWindow: native presenter, lead" << presentLeadNs() / 1'000'000 << "ms;"
                           << QString::fromStdString(_presenter->Describe());
     }
@@ -325,6 +326,7 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
         out.errorMaxMs = s.errorMax;
         out.gpuWaitP50Ms = s.gpuWaitP50;
         out.gpuWaitMaxMs = s.gpuWaitMax;
+        out.vrr = s.vrr;
     }
     else
     {
@@ -488,6 +490,13 @@ void DeviceScreenGLWindow::setFrameSource(ScreenFrames source)
         _smoothOnGpu = device == "gpu";
     else if (!device.isEmpty())
         qWarning() << "DeviceScreenGLWindow: UNREAL_EFFECTS_DEVICE=" << device << "is not gpu | cpu";
+    // UNREAL_PRESENT_POLICY overrides [VIDEO] PresentPolicy
+    _presentPolicy = source.policy;
+    const QByteArray policy = qgetenv("UNREAL_PRESENT_POLICY");
+    if (!policy.isEmpty() && !ParsePresentPolicy(policy.constData(), _presentPolicy))
+        qWarning() << "DeviceScreenGLWindow: UNREAL_PRESENT_POLICY=" << policy << "is not auto | vrr | vsync";
+    if (_presenter)
+        _presenter->SetPolicy(_presentPolicy);
     _smooth.Reset();
     _smooth.SetMode(mode);
     _smoothShown = {};

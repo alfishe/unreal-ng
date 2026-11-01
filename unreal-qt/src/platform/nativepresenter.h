@@ -4,6 +4,8 @@
 #include <memory>
 #include <string>
 
+#include "emulator/video/presentpolicy.h"
+
 /// A native presenter (frame presenter design, docs/inprogress/2026-10-26-frame-presenter, sections 4.1 and 6.2): the
 /// GL renderer draws each picture into a texture shared with the platform's API, and the presenter shows it on the
 /// window at the frame's audio time. On a VRR display every frame is on screen for its own period; on a fixed one it
@@ -37,6 +39,7 @@ public:
         double minRefreshHz = 0.0;  ///< the display's range (min = max: fixed)
         double maxRefreshHz = 0.0;
         bool visible = true;  ///< some of the window is on screen
+        bool vrr = false;     ///< each frame at its own time (c-vrr); false: on the refresh grid (b-vsync)
     };
 
     /// Where a present came from, for UNREAL_PRESENT_TRACE only (steady clock, ns; 0 = unknown)
@@ -60,6 +63,8 @@ public:
     /// the presenter turns them over
     virtual void PresentFrame(int64_t atNs, const TraceInfo& trace) = 0;
 
+    /// [VIDEO] PresentPolicy, from any thread; the next present follows it
+    virtual void SetPolicy(PresentPolicy policy) = 0;
     /// Some of the window is on screen: an occluded or minimized window's presents would be dropped
     virtual bool IsVisible() const = 0;
     /// How long before a frame's target the window draws it and hands it over
