@@ -405,6 +405,13 @@ void HostControllers::followContext()
     // The default (Q-7: `ttd` while a history exists) changes without a notification: the poll reads it too
     const actions::ContextInfo info = actions::ContextState::Instance().Get(emulator->GetId(), emulator);
     _service->Router().SetContext(emulator->GetId(), info.context);
+    // A surface entering a debug context (`debug`, `debug.disasm`: the deck's DEBUG menu, a debug layer) opens the
+    // debugger once; the GUI's own panes set those too, and a debugger closed while the deck stays there stays closed
+    const bool debug = info.context == "debug" || info.context.rfind("debug.", 0) == 0;
+    const bool surface = info.by.rfind("companion", 0) == 0 || info.by.rfind("host-device", 0) == 0;
+    if (debug && _debugContextOf != emulator->GetId() && surface && _openDebugger)
+        _openDebugger();
+    _debugContextOf = debug ? emulator->GetId() : std::string();
 #endif
 }
 

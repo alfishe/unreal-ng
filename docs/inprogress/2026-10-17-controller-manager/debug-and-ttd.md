@@ -143,7 +143,7 @@ from N.
 
 | Action id | What |
 |:--|:--|
-| `dbg.open` | open / raise the debugger window |
+| `dbg.open` | open / raise the debugger window (a surface entering a `debug` / `debug.*` context opens it too, once per entry: the deck's DEBUG menu; a script's or the GUI's own `ctx.set` does not) |
 | `dbg.focus_next_pane` / `dbg.focus_prev_pane` | disassembly → registers → memory → stack, around; a closed debugger opens first |
 | `dbg.breakpoint_toggle_pc` | toggle an execution breakpoint at PC (or the cursor) |
 | `dbg.memory_follow` | memory view follows the value under the cursor (Enter in the pane) |

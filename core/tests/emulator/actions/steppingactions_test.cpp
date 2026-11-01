@@ -249,7 +249,7 @@ TEST_P(SteppingTtd_Test, ReverseStepTakesScanlinesOfTheMachinesLine)
 
 TEST_P(SteppingTtd_Test, ScanlineStepsGoBackAndForwardOneLine)
 {
-    EXPECT_EQ(_registry->Run("ttd.step_back_scanline", Press()).error, "not_now") << "record first";
+    EXPECT_EQ(_registry->Run("ttd.step_back_scanline", Press()).error, "not_now") << actions::kNoHistory;
     Record(8);
     const unsigned line = _context->config.t_line;
     Seek(_first + 4, 2000);
