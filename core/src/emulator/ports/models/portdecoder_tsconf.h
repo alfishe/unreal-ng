@@ -16,6 +16,7 @@
 #include "emulator/platforms/tsconf/tsconfdma.h"
 #include "emulator/platforms/tsconf/tsconfarbiter.h"
 #include "emulator/platforms/tsconf/tsconfengine.h"
+#include "emulator/platforms/tsconf/tsconfhistory.h"
 #include "emulator/platforms/tsconf/tsconfinterrupts.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 #include "emulator/ports/portdecoder.h"
@@ -287,6 +288,14 @@ private:
     TsConfState _ts{};
     TsConfInterrupts _interrupts{_context, _ts};
     TsConfDma _dma{_ts, _interrupts};
+    /// The register writes and the DMA transfers (tsconfhistory.h), named by the registers' registry id
+    TsRegisterHistory _registerHistory{ &_context->histories, [this]() { return RegistersDevice(); },
+                                        "TS-Conf register writes", 4096 };
+    TsDmaHistory _dmaHistory{ &_context->histories, [this]() { return RegistersDevice() + ".dma"; },
+                              "TS-Conf DMA transfers", 1024 };
+    std::string RegistersDevice() const;
+    void RecordRegister(uint8_t reg, uint8_t value);
+    bool _dmaRunningAtWrite = false;
     TsConfEngine _engine{_context, _ts, _interrupts, _dma};
     TsConfArbiter _arbiter{_engine};
     TsConfMemory* _tsMemory = nullptr;

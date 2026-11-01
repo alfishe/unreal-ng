@@ -48,7 +48,8 @@ std::string ResolveRomPath(const std::string& path)
 } // namespace
 
 Vdac2Card::Vdac2Card(EmulatorContext* context, std::function<uint32_t()> rasterInFrame)
-    : _context(context), _rasterInFrame(std::move(rasterInFrame))
+    : _context(context), _rasterInFrame(std::move(rasterInFrame)),
+      _history(context ? &context->histories : nullptr, std::string("vdac2"), "FT812 SPI transactions", 4096)
 {
     _logger = _context ? _context->pModuleLogger : nullptr;
 
@@ -818,6 +819,24 @@ bool Vdac2Card::StopCapture()
     return true;
 }
 
+/// A transaction's byte: the header, then the data (a read's data after its dummy byte, as MISO)
+void Vdac2Card::HistoryByte(uint8_t mosi, uint8_t miso)
+{
+    const uint32_t i = _transactionBytes++;
+    if (i < 3)
+    {
+        _transaction.header[i] = mosi;
+        return;
+    }
+    const bool read = (_transaction.header[0] >> 6) == 0;
+    if (read && i == 3)
+        return;  // the dummy byte
+    const uint32_t at = i - (read ? 4 : 3);
+    if (at < sizeof(_transaction.data))
+        _transaction.data[at] = read ? miso : mosi;
+    _transaction.length = at + 1;
+}
+
 void Vdac2Card::select(bool selected)
 {
     Synchronize();
@@ -826,6 +845,18 @@ void Vdac2Card::select(bool selected)
     EveSelect(_chip, selected ? 1 : 0);
     if (CaptureLive())
         _capture.Select(EveTotalClocks(_chip), selected);
+    if (_history.On() && !(_context && _context->ttdReplayActive)) [[unlikely]]
+    {
+        if (!selected && _transactionBytes != 0)
+            _history->Push(_transaction);
+        _transaction = {};
+        _transactionBytes = 0;
+        if (selected)
+        {
+            _transaction.frame = _context ? _context->emulatorState.frame_counter : 0;
+            _transaction.clock = EveTotalClocks(_chip);
+        }
+    }
     SampleInt(_time.position);
     PlanNextEvent();
 }
@@ -838,6 +869,8 @@ uint8_t Vdac2Card::exchange(uint8_t mosi)
     const uint8_t miso = EveExchange(_chip, mosi);
     if (CaptureLive())
         _capture.Byte(EveTotalClocks(_chip), mosi, miso);
+    if (_history.On()) [[unlikely]]
+        HistoryByte(mosi, miso);
     // A register write can raise INT_N at once (INT_EN with flags pending)
     // or release it (the REG_INT_FLAGS read)
     SampleInt(_time.position);
@@ -851,9 +884,11 @@ uint8_t Vdac2Card::exchange(uint8_t mosi)
 // VDAC2 configuration is refused at load), but the decoder's calls still
 // link against these. Nothing here runs
 Vdac2Card::Vdac2Card(EmulatorContext* context, std::function<uint32_t()> rasterInFrame)
-    : _context(context), _rasterInFrame(std::move(rasterInFrame))
+    : _context(context), _rasterInFrame(std::move(rasterInFrame)),
+      _history(context ? &context->histories : nullptr, std::string("vdac2"), "FT812 SPI transactions", 4096)
 {
 }
+void Vdac2Card::HistoryByte(uint8_t, uint8_t) {}
 Vdac2Card::~Vdac2Card() = default;
 void Vdac2Card::PowerOn() {}
 void Vdac2Card::OnFrameEnd() {}
