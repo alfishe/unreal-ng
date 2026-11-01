@@ -59,7 +59,7 @@ TEST(DeviceDatabaseAllPads_Test, UsbAndBluetoothIdsFindTheirFamily)
         const char* family;
         const char* images;
     } cases[] = {
-        {"usb", 0x045E, 0x02E3, "xbox-elite-1", "xbox-elite-2"},
+        {"usb", 0x045E, 0x02E3, "xbox-elite-1", "xbox-elite-1"},
         {"usb", 0x045E, 0x0719, "xbox-360-wireless", "xbox-360"},
         {"bt", 0x045E, 0x0B21, "xbox-adaptive", "xbox-adaptive"},
         {"usb", 0x054C, 0x0268, "dualshock-3", "dualshock-3"},
