@@ -384,6 +384,10 @@ private:
         if ((a.hasCol && a.colStep != colStep) || (b.hasCol && b.colStep != colStep) ||
             (a.hasRow && b.hasRow && a.rowStep != b.rowStep))
             return;
+        // One line in common sets no column step for a column of lines (any two bytes are some distance apart: a
+        // byte looked up in a table next to a sprite's column); the step a group already holds, it may follow
+        if (lo == hi && (_pieces[left].length > 1 || _pieces[right].length > 1) && !a.hasCol && !b.hasCol)
+            return;
         Group joined;
         joined.hasRow = a.hasRow || b.hasRow;
         joined.rowStep = a.hasRow ? a.rowStep : b.rowStep;

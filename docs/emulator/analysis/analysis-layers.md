@@ -220,7 +220,9 @@ table, the source itself; a byte that came in as an AND's operand is a mask, not
 drawing pass until a screen byte is written again (a shifted sprite's carry into the next column aside) or after two
 screens' worth of writes; not at a frame's end. In a pass, consecutive pixel lines of one byte column whose sources
 lie a constant step apart are a column piece; pieces of neighbouring columns join when one model, base + line x row
-step + column x column step, holds for every byte: a picture drawn as a whole (`drawn_frames`: base, width, height,
+step + column x column step, holds for every byte (two pieces with one line in common set no column step: any two
+bytes lie some distance apart, a byte looked up in a mirror table next to a sprite's column; a step the group already
+holds they may follow): a picture drawn as a whole (`drawn_frames`: base, width, height,
 row and column step, the mask's offset, the passes that drew it). Steps are Z80 address steps: a set stored a pixel
 row a page on runs past $C000 into the next bank.
 
@@ -234,7 +236,10 @@ join left to right only when every frame drew them side by side and neither ever
 a sprite beside a wall: no join). The layout: column step 1 (2 with the mask between) and the row step its pitch, in
 rows; row step 1 (2) and the columns back to back, in columns; one column alone, one byte wide (a set a pixel row a
 page on: pitch 256 or 512, a byte from frame to frame). Any other column step is the glyphs of one text printed the
-same way every time: one column each. Memory counters reject buffers: a picture most of whose bytes a block copy wrote,
+same way every time: one column each. A frame drawn whole, its rows back to back (plain, or a mask byte before each
+graphic byte), is a picture too, the tallest one from each base (a hero drawn clipped at every height cuts his
+columns into many segments). A picture most of whose bytes the replay never read (by any data read: a sprite drawn by
+`POP` reads its bytes off the stack) is none: the provenance lost the value on its way. Memory counters reject buffers: a picture most of whose bytes a block copy wrote,
 or which were written at least once for every four draws (a cavern's copy, a line composed for each draw), is none.
 Frames of one shape then form sets: one stride (holes of up to 8 frames between frames of an interleaved set, never
 drawn in the run, are filled in), footprints never overlapping. An object whose frames are all one value in every byte
@@ -242,7 +247,28 @@ drawn in the run, are filled in), footprints never overlapping. An object whose 
 are a font: of the text's characters at base + step x code, or of the game's own codes when eight or more different
 ones are drawn, not picked by a map, and the routine writing them to the screen reads them itself (printed straight
 to the screen; tiles composed in a back buffer and copied to the screen are sprites). An L1 without drawn frames falls
-back to the per-byte votes of the steps right and below (`DrawStep`).
+back to the per-byte votes of the steps right and below (`DrawStep`). Glyphs of the ROM's set ($3D00, codes 32..127)
+printed by the game's own loop (every writer in RAM) are a font of all 96 characters: objects on its lattice join
+whatever their gaps (a pointer into the set splits its glyphs; a step of 16 is two glyphs, no prefix). A frame
+whose bytes lie in a 256-byte page that follows an init table generator (`MatchGenerator`: a mirror table read by
+the bytes of a sprite drawn flipped) is no picture.
+
+Sprite banks (Dizzy's): records of a header that gives the size, then the rows, the next record right after. The
+seeds are the frames drawn whole (rows back to back, plain or with a mask byte before each graphic byte: the drawing
+passes' frames and the pictures'). A header format is 2..4 bytes before the rows that give the width (in bytes, times
+1, 2 or 8) and the height, or the height alone and one width for every record (the hero's frames: the second byte a
+flag); eight or more seeds agreeing make it a candidate. The bank's format is the candidate whose chains (from a
+seed's record the records after it while their headers give a size, over no executed code) link the most seeds to
+another seed's record, then the one most seeds agree with, the shortest header first; a height-alone header needs a
+link. Up to four banks, each from the seeds outside the earlier ones (scenery plain in one bank, the hero masked in
+another). From the records drawn the chains run on to the end of the bank; a record before the first one drawn is
+reached through a pointer whose chain lands on a known record: a word in a table of four or more such words (a word
+apart or two: a null entry between), or the operand of an executed `LD rr,nn` whose chain crosses four records at
+most, to a fixed point. Runs of records of one size in one 16 K bank are claimed together (observed when one was drawn,
+else inferred; stride the record, prefix the header): a font when they are glyphs (one or two plain bytes wide, 5..16
+lines) and eight or more of them were printed side by side (two records the columns of one drawn frame: letters of a
+word), and so is a run of glyphs linked to a font run twice or more (its own codes past the letters); sprites
+otherwise. The frames inside a bank are its, no claims of their own.
 
 At the end each buffer gets its field list (`FinishBufferFields`): one field per claim inside it, a group followed by
 its variables, the spans between as `unclaimed` (split where a page the code named by its high byte starts).

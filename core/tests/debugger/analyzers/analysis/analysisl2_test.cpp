@@ -10,12 +10,14 @@
 #include "pch.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <functional>
 #include <map>
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -841,6 +843,58 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorTiles_PageStrided)
         << MediaClaims(b.l2);
 }
 
+/// A sprite bank (Dizzy's): records of a header (width x 2, height) and the rows. Every record is claimed, in runs of
+/// one size: the one before the first drawn (named by the walk's LD HL,bank), the ones after the last; the glyph
+/// records printed side by side are a font, with no text to name them. A second bank in another format (the height and
+/// a flag byte, every record one width, a mask byte before each graphic byte) is found too
+TEST_F(AnalysisL2_Test, AnalysisDetectorGraphics_SpriteBank)
+{
+    const Built& b = Run("sprite-bank.asm");
+    ASSERT_FALSE(HasFailure());
+    const auto hex = [](uint16_t v) {
+        char text[8];
+        std::snprintf(text, sizeof(text), "$%04X", v);
+        return std::string(text);
+    };
+    const auto run = [&](uint16_t at, RegionKind kind) {
+        const Region* r = StartsAt(at, kind, DetectorId::Graphics);
+        EXPECT_NE(r, nullptr) << hex(at) << "\n" << MediaClaims(b.l2);
+        return r;
+    };
+    const Region* hero = run(At("bank"), RegionKind::Sprite);
+    const Region* font = run(At("glyphs"), RegionKind::Font);
+    const Region* big = run(At("big"), RegionKind::Sprite);
+    const Region* boxes = run(At("boxes"), RegionKind::Sprite);
+    ASSERT_TRUE(hero && font && big && boxes);
+    for (const auto& [r, width, height, frames] :
+         {std::tuple{hero, 16u, 16u, 3u}, {font, 8u, 8u, 12u}, {big, 24u, 24u, 2u}, {boxes, 32u, 12u, 2u}})
+    {
+        EXPECT_EQ(r->geometry.width, width) << hex(r->z80);
+        EXPECT_EQ(r->geometry.height, height) << hex(r->z80);
+        EXPECT_EQ(r->geometry.frames, frames) << hex(r->z80);
+        EXPECT_EQ(r->geometry.prefix, 2u) << hex(r->z80);
+        EXPECT_EQ(r->geometry.stride, 2u + width / 8 * height) << hex(r->z80);
+        EXPECT_EQ(r->Size(), frames * r->geometry.stride) << hex(r->z80);
+    }
+    EXPECT_EQ(hero->status, RegionStatus::Observed);
+    EXPECT_EQ(boxes->status, RegionStatus::Inferred);
+    // The second bank: a header of the height and a flag, one width, a mask byte before each graphic byte
+    const Region* masked = run(At("heroes"), RegionKind::Sprite);
+    ASSERT_NE(masked, nullptr);
+    EXPECT_EQ(masked->geometry.width, 16u);
+    EXPECT_EQ(masked->geometry.height, 8u);
+    EXPECT_EQ(masked->geometry.frames, 10u);
+    EXPECT_TRUE(masked->geometry.mask);
+    EXPECT_EQ(masked->geometry.prefix, 2u);
+    EXPECT_EQ(masked->geometry.stride, 34u);
+    EXPECT_EQ(masked->Size(), 340u);
+    EXPECT_EQ(masked->status, RegionStatus::Observed);
+    // The frames drawn are the bank's: no claim of its own starts at a record's rows
+    for (const uint16_t at : {static_cast<uint16_t>(At("hero") + 2), static_cast<uint16_t>(At("glyphs") + 12)})
+        for (const RegionKind kind : {RegionKind::Sprite, RegionKind::Font, RegionKind::Tile})
+            EXPECT_EQ(StartsAt(at, kind, DetectorId::Graphics), nullptr) << hex(at) << "\n" << MediaClaims(b.l2);
+}
+
 TEST_F(AnalysisL2_Test, AnalysisDetectorLevelMaps_Test)
 {
     const Built& b = Run("tiles-level.asm", 8);
@@ -956,6 +1010,21 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorFonts_OwnFontThroughTheGlyphBlit)
     EXPECT_LE(font->Z80End(), At("font") + 767u);
     EXPECT_EQ(font->geometry.stride, 8u);
     EXPECT_TRUE(NoStrongClaim(At("font"), static_cast<uint16_t>(At("font") + 767), RegionKind::Text)) << MediaClaims(b.l2);
+}
+
+/// The ROM's character set printed by the game's own glyph loop from codes that are no text (each plus $60): the font is
+/// the ROM's 96 characters
+TEST_F(AnalysisL2_Test, AnalysisDetectorFonts_RomSetThroughOwnLoop)
+{
+    const Built& b = Run("rom-font-own-print.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* font = StartsAt(0x3D00, RegionKind::Font, DetectorId::Graphics);
+    ASSERT_NE(font, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(font->Z80End(), 0x3FFF);
+    EXPECT_EQ(font->geometry.frames, 96u);
+    EXPECT_EQ(font->geometry.stride, 8u);
+    EXPECT_TRUE(NoStrongClaim(At("message"), static_cast<uint16_t>(At("message") + 15), RegionKind::Text))
+        << MediaClaims(b.l2);
 }
 
 /// Glyphs drawn with codes in one contiguous run (0-3) are user graphics, not a character set
