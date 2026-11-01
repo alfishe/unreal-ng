@@ -123,3 +123,23 @@ TEST_F(PortHistory_Test, NothingDuringReplay)
     _context->ttdReplayActive = false;
     EXPECT_EQ(Written(ay), 0u);
 }
+
+/// The Next's own devices are the registry's: their ports go to their histories, not the board's
+TEST(PortHistoryNext_Test, NextDevicesHaveTheirOwn)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    for (const char* device : { "nextreg.ports", "dma.ports", "uart.ports", "sprites.ports", "spi.ports", "board.ports" })
+        EXPECT_TRUE(context->histories.With(device, [](history::IDeviceHistory&) {})) << device;
+    ASSERT_TRUE(context->histories.With("nextreg.ports", [](history::IDeviceHistory& h) {
+        std::string error;
+        EXPECT_TRUE(h.Configure({ .mode = history::Mode::Ring, .limit = 16 }, error)) << error;
+    }));
+    context->pPortDecoder->DecodePortOut(0x243B, 0x07, 0x8000);
+    context->pPortDecoder->DecodePortOut(0x6B, 0xC3, 0x8002);
+    uint64_t written = 0;
+    context->histories.With("nextreg.ports", [&](history::IDeviceHistory& h) { written = h.GetStats().written; });
+    EXPECT_EQ(written, 1u) << "the select, not the DMA's write";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
