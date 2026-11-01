@@ -19,6 +19,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/joystick/debugjoystickmanager.h"
 #include "emulator/actions/actionregistry.h"
+#include "emulator/actions/builtinactions.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -405,7 +406,7 @@ TEST_F(HostActions_Test, TimeTravelVerbsTakeTheirParamsAsOptions)
     {
         const ActionResult early = Run(id, Press());
         EXPECT_EQ(early.error, "not_now") << id;
-        EXPECT_EQ(early.message, "record first") << id;
+        EXPECT_EQ(early.message, actions::kNoHistory) << id;
     }
     ASSERT_TRUE(Run("ttd.start", Press()).ok);
     _emulator->RunNFrames(2, /*skipBreakpoints=*/true);

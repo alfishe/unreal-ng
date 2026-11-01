@@ -378,6 +378,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // hidden until Tools → Controllers
     _hostControllers = new HostControllers(m_binding, this);
     _hostControllers->SetShortcutWindows(this, debuggerWindow);
+    _hostControllers->SetDebuggerOpener([this] { handleDebuggerToggled(true); });
     _controllersDialog = new ControllersDialog(_hostControllers, this);
     _controllersDialog->setSurfaceTargets(_surfaceTargets);
     connect(_hostControllers, &HostControllers::notice, this,
