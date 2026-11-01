@@ -349,6 +349,10 @@ if (UNREAL_STREAMDECK AND NOT UNREAL_STREAMDECK_SKIPPED)
     if (TARGET unreal-qt AND TARGET unreal-streamdeck)
         add_dependencies(unreal-qt unreal-streamdeck)  # `build.sh unreal-qt` refreshes the daemon its supervisor runs
     endif ()
+    # data/streamdeck/catalogue.json from the action registry (tools/actioncatalogue)
+    if (TARGET unrealng::core AND NOT CMAKE_CROSSCOMPILING)
+        add_subdirectory(tools/actioncatalogue)
+    endif ()
 endif ()
 
 # ========================================
