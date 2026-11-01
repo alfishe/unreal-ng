@@ -493,7 +493,7 @@ TEST_F(StepBy_Test, ItNeedsAPauseAndBackNeedsAHistory)
     ActionResult result = _registry->Run("run.step_by", Delta(1));
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.error, "not_now");
-    EXPECT_EQ(result.message, "needs a pause");
+    EXPECT_EQ(result.message, actions::kNeedsPause);
 
     Pause();
     result = _registry->Run("run.step_by", Delta(-1));
