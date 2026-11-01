@@ -35,6 +35,7 @@ repository; their files are named, not linked).
 | **savelij ROM** | the pentevo multi-machine ROM (ZX-Evo), SMUC driver and port constants | `rom/ports_ide.a80`, `rom/fat_boot/source/drivers/drv_smuc.a80`, `rom/mainmenu/src/hdd_cd_boot.a80` |
 | **LW ProfROM** | ProfROM 4.xx builds by LW (SMUC and Nemo variants) and their change log | `Scorpion256TPlus/ROM/LW/README.md`, `Scorpion256TPlus/ROM/LW/changes.md` |
 | **NedoOS** | Mr Rabbit client, SMUC clock driver | `src/mrabbit-fusion/drivers/rtc-smuc.asm` |
+| **SMUC0.0c** | "SMUC0.0с.doc" (2009), the discrete SMUC rework's description, with the original board's port tables (ISA and 8259 included) | `Hardware/smuc/Originals/Discrete/SMUC0.0с.rar` (the owner's hardware archive); the schematic `Schematics_From_krotan.gif` beside it (`/IORQGE` = `/CSM`, the base ports with A6 = 0 only) |
 
 Earlier analysis in this repository: [profrom-smuc-not-found-and-driver-disassembly.md](../2026-09-07-scorpion-zs256-clone/profrom-smuc-not-found-and-driver-disassembly.md)
 (the serial-link driver, page 7 `#0D51`-`#0F55`), [IDE design](../2026-09-21-profi/2026-09-25-ide-hdd-design.md) §4 (SMUC row) and Q3.
@@ -105,6 +106,15 @@ A4 and A3 are not decoded. As one mask:
 | Xpeccy | family `0x18A3`, then an **exact 16-bit** port compare for the sub-devices and `(port & 0xF8FF) == 0xF8BE` for the IDE window | stricter (`hdd.c:719-731`, `733-761`) |
 | unreal-ng (master, IDE rollout 1) | family `0x18FB` / `0x18BA` (the whole low byte) plus `(port & 0xA044)` | stricter: also decodes A4 and A3 (see [current-state-and-gaps.md](current-state-and-gaps.md) G2) |
 
+**The ISA window** (SMUC0.0c table 3): Z80 `0 AB4 AB3 1 1 AB2 AB1 AB0 1 1 1 AB6 AB5 1 1 0`, ISA AB7 / AB8 from
+`#FFBA` D1 / D2, AB9 = 1. It is the keyboard's own address space: `#7FFE` (Space - B) is ISA `#27F` / `#2FF` /
+`#37F` / `#3FF`, an overlap the document points out. A6 splits the two halves of the board: A6 = 0 the base devices,
+A6 = 1 ISA. The board answers only while the DOS ports are on (/DOS = 0); the reference emulators gate the whole SMUC
+on the DOS state (MAME `dos()`, Unreal `CF_DOSPORTS`, ZXMAK2 `DOSEN`, Xpeccy `dosen`) and take the keyboard port off
+the bus there. unreal-ng opens the ISA window on TR-DOS and the DOS trigger only, not on the Shadow Monitor latch
+(`#1FFD` bit 1): the GMX 6.44 monitor scans the keyboard under the latch with `#FFBA` = `#77`, and its serial probe
+runs in TR-DOS (port trace 2026-10-31). The base ports stay decoded under the latch, where the monitor reads the clock.
+
 **Consensus: mask `#B8E7`.** Worked example: `#FEFE` (keyboard row Caps-V) & `#B8E7` = `#B8E6`. The
 eight sub-device matches are `#18A2` + one of `#0000`, `#0004`, `#2000`, `#2004`, `#8000`, `#8004`,
 `#A000`, `#A004`: `#B8E6` is none of them, because A6 = 1 in every `#xxFE` port. The A6 bit is
@@ -124,7 +134,7 @@ Write bits. The firmware evidence is ProfROM page 7; the power-on value it write
 | D5 | EEPROM write protect | (unused) | yes | yes | (unused) | `#0F3E` | WP |
 | D4 | EEPROM data (SDA) out | yes | yes | yes | yes | `#0EF7` | SDA |
 | D3 | interrupt enable (8259 output to the Z80 `/INT`) | - | - | - | - | set only around the 8259 test and cleared after (`#170C-#1716`, `#172A-#1734`, `#019E-#01A8`) | interrupt enable (firmware evidence only) |
-| D2, D1 | unknown; the firmware keeps them 1. unreal-ng (2026-10-31): ISA A8 / A7 of the ISA window (the `I`, `H` the `#18E6-#7FFE` pattern does not drive) - an inference: set, the window is COM1 `#380-#3FF` where the GMX 6.44 / ProfROM probe at `#7AFE` looks; clear (the loader, the 128 menu), the keyboard rows that share the pattern reach no card | - | - | - | - | `OR #06` at `#15CD` (ISA reset path); `#F7` at power-on | ISA A8 / A7 (inference) |
+| D2, D1 | D1 = ISA AB7, D2 = ISA AB8 (SMUC0.0c table 10; the emulators leave them unused). Set (the firmware keeps them 1, #F7 / #77), the ISA window is COM1 `#380-#3FF`, where the GMX 6.44 / ProfROM probe at `#7AFE` looks; clear, `#200-#27F` | - | - | - | - | `OR #06` at `#15CD` (ISA reset path); `#F7` at power-on | ISA AB8 / AB7 (SMUC0.0c) |
 | D0 | **IDE reset** (Q3, §5.6) | 1 resets | not modeled | **0 resets** | 1 resets | 0 then 1 pulse; 1 in normal use | **0 = reset** (§5.6) |
 
 Read bits:

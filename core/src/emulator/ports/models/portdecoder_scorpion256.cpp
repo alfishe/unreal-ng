@@ -975,12 +975,16 @@ bool PortDecoder_Scorpion256::SmucIsaAddress(uint16_t port, uint16_t& offset) co
     // carries no source for ISA A8 (I) and A7 (H): taken from #FFBA D2 / D1, the two bits the firmware sets on its
     // ISA path (ProfROM page 7 #15CD OR #06, #F7 at power-on) and has no other use for (hardware reference §5.2).
     // With them set the window is ISA #380-#3FF, where the COM1 probe at #7AFE (#3FA; GMX 6.44 page 23 #2021)
-    // looks; with #FFBA = 0 (the loader, the 128 menu) it is #200-#27F, and the keyboard rows that share the
-    // pattern (#7FFE) reach no card. Only the DOS ports' cycles reach the slot (the SMUC's gate, §4)
+    // looks; with #FFBA = 0 (the loader, the 128 menu) it is #200-#27F.
+    // The window is the keyboard's own address space (#xxFE with A15 = 0, A12 = A11 = 1: #7FFE is ISA #27F / #2FF /
+    // #37F / #3FF, SMUC0.0c table 3), so it is live only while the board's DOS ports are (TR-DOS, the DOS trigger).
+    // The Shadow Monitor latch (#1FFD bit 1) alone does not open it: the monitor scans the keyboard there with
+    // #FFBA = #77, and the GMX 6.44 serial probe runs in TR-DOS (MAME, Unreal, ZXMAK2 and Xpeccy gate the whole
+    // SMUC on the DOS state only)
     if (!_smucIsaCard || (port & 0x98E7) != 0x18E6 || !IsSmucFitted())
         return false;
     const EmulatorState& state = *_state;
-    if (!((state.flags & (CF_TRDOS | CF_DOSPORTS)) || (state.p1FFD & 0x02) || state.scorpion.dosTrigger))
+    if (!((state.flags & (CF_TRDOS | CF_DOSPORTS)) || state.scorpion.dosTrigger))
         return false;
     const uint8_t sys = state.scorpion.pFFBA;
     const auto isa = static_cast<uint32_t>(0x200 | ((sys & 0x04) << 6) | ((sys & 0x02) << 6) | ((port & 0x0010) << 2) | ((port & 0x0008) << 2) |

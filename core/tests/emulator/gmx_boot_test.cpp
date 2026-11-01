@@ -312,6 +312,20 @@ TEST_F(GmxBoot_Test, SmucPeripheralsAnswerTheFastTestProbes)
     state.flags = flags & ~static_cast<unsigned>(CF_DOSPORTS | CF_TRDOS);
     if ((state.p1FFD & 0x02) == 0 && !state.scorpion.dosTrigger)
         EXPECT_NE(decoder->DecodePortIn(0x7FFE, 0x0000), 0x5A) << "outside DOS the row port is the keyboard";
+
+    // The Shadow Monitor (#1FFD bit 1, no TR-DOS) scans the keyboard with #FFBA = #77: the latch does not open the
+    // window, #7FFE is the Space - B row and not the modem's scratch register (the monitor's keys were dead)
+    const uint8_t p1FFD = state.p1FFD;
+    const bool dosTrigger = state.scorpion.dosTrigger;
+    state.p1FFD = static_cast<uint8_t>(p1FFD | 0x02);
+    state.scorpion.dosTrigger = false;
+    decoder->DecodePortOut(0xFFBA, 0x77, 0x04D9);
+    EXPECT_EQ(decoder->DecodePortIn(0x7FFE, 0x04BA) & 0x1F, 0x1F) << "no key held: the keyboard answers";
+    _context->pKeyboard->PressKey(ZXKEY_SPACE);
+    EXPECT_EQ(decoder->DecodePortIn(0x7FFE, 0x04BA) & 0x1F, 0x1E) << "Space reads through the latch";
+    _context->pKeyboard->ReleaseKey(ZXKEY_SPACE);
+    state.p1FFD = p1FFD;
+    state.scorpion.dosTrigger = dosTrigger;
     state.flags = flags;
 }
 
