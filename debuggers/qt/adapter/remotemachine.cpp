@@ -52,12 +52,15 @@ public:
     Http(const QString &host, uint16_t port) : m_host(host), m_port(port) {}
 
     void set_session(const QByteArray &s) { m_session = s; }
+    // While the gate is down every request answers 0 at once (the machine is offline: nothing to ask)
+    void set_gate(const std::atomic<bool> * open) { m_gate = open; }
     uint64_t requests() const { return m_requests; }
     uint64_t bytes() const { return m_bytes; }
 
     // The status (0: no connection or no answer in time) and the body
     int request(const char * method, const QString &path, const QByteArray &body, QByteArray &out, int timeout_ms = 5000)
     {
+        if (m_gate && !m_gate->load()) return 0;
         // A kept connection the server has closed fails at once: then once more on a new one
         for (int attempt = 0; attempt < 2; attempt++) {
             const int status = once(method, path, body, out, timeout_ms);
@@ -83,6 +86,7 @@ private:
     QString m_host;
     uint16_t m_port;
     QByteArray m_session;
+    const std::atomic<bool> * m_gate = nullptr;
     std::unique_ptr<QTcpSocket> m_socket;
     QByteArray m_buffer;
     uint64_t m_requests = 0;
@@ -431,9 +435,13 @@ class RemoteMachine : public ecatshim::Emulator
 public:
     RemoteMachine(const RemoteOptions &o, const QString &id, const QByteArray &session)
         : m_http(QString::fromStdString(o.host), o.port), m_host(QString::fromStdString(o.host)), m_port(o.port),
-          m_base("/api/v1/emulator/" + id), m_session(session), m_settings("unreal-ng", "unreal-debugger")
+          m_want(QString::fromStdString(o.emulator)), m_base("/api/v1/emulator/" + id), m_session(session),
+          m_settings("unreal-ng", "unreal-debugger")
     {
         m_http.set_session(session);
+        m_http.set_gate(&m_online);
+        m_wait_base = m_base;
+        m_wait_session = session;
     }
 
     ~RemoteMachine() override
@@ -453,6 +461,8 @@ public:
     bool build(std::string &error)
     {
         m_id = m_base.mid(QString("/api/v1/emulator/").size());
+        for (const QJsonValue &e : m_http.json("GET", "/api/v1/emulator").value("emulators").toArray())
+            if (e.toObject().value("id").toString() == m_id) m_model = e.toObject().value("model").toString();
         if (!fresh()) {
             error = "no debugger snapshot from the emulator";
             return false;
@@ -531,9 +541,20 @@ public:
     }
     const QString &base() const { return m_base; }
 
+    bool debug_online() const override { return m_online.load(); }
+    std::string debug_offline_text() const override
+    {
+        return QString("No emulator: waiting for %1 at %2:%3")
+            .arg(m_want.isEmpty() ? QString("a %1").arg(m_model.isEmpty() ? QString("machine") : m_model) : m_want)
+            .arg(m_host)
+            .arg(m_port)
+            .toStdString();
+    }
+
     // The snapshot, taken again when stale: false when the emulator does not answer
     bool fresh()
     {
+        adopt();
         const bool stale = !m_snap.valid || m_dirty.load() || m_snap.seq != m_seq.load() ||
                            (m_snap.state == "running" && m_age.elapsed() >= 150);
         if (!stale) return true;
@@ -570,6 +591,38 @@ public:
     }
     // A change of ours: the next read takes a new snapshot
     void changed() { m_dirty = true; }
+
+    // A suitable emulator the waiter found and took a session on: this machine is its from now (the views' thread;
+    // the waiter never touches m_base / m_http)
+    void adopt()
+    {
+        QString id;
+        QByteArray session;
+        {
+            std::lock_guard<std::mutex> lock(m_wait_mutex);
+            if (m_pending_id.isEmpty()) return;
+            id = m_pending_id;
+            session = m_pending_session;
+            m_pending_id.clear();
+            m_base = m_wait_base = "/api/v1/emulator/" + id;
+            m_session = session;
+        }
+        m_id = id;
+        m_http.set_session(session);
+        m_run_to_armed = false;
+        m_bp_dirty = true;
+        {
+            std::lock_guard<std::mutex> lock(m_catalog_mutex);
+            m_catalog_age.invalidate();
+        }
+        m_dirty = true;
+        m_online = true;
+        if (m_attached) {
+            m_debug_before = m_http.json("GET", m_base + "/debugmode").value("enabled").toBool();
+            m_http.json("PUT", m_base + "/debugmode", QJsonObject{{"enabled", true}});
+            m_http.json("GET", m_base + "/debug/pchist?depth=1");
+        }
+    }
 
     std::vector<Breakpoint> breakpoints()
     {
@@ -719,6 +772,8 @@ private:
     Http m_http;
     QString m_host;
     uint16_t m_port;
+    QString m_want;    // the emulator asked for (an id or symbolic id); empty: one of the same model
+    QString m_model;   // the model it runs
     QString m_base;
     QJsonObject m_catalog;
     QElapsedTimer m_catalog_age;
@@ -745,6 +800,12 @@ private:
 
     QThread * m_waiter = nullptr;
     std::atomic<bool> m_stop{false};
+    std::atomic<bool> m_online{true};  // the gate of m_http too
+    std::mutex m_wait_mutex;           // the waiter's view of the instance and a found one
+    QString m_wait_base;
+    QByteArray m_wait_session;
+    QString m_pending_id;
+    QByteArray m_pending_session;
     std::atomic<uint64_t> m_wait_requests{0};
     std::atomic<uint64_t> m_wait_bytes{0};
     std::mutex m_listener_mutex;
@@ -767,13 +828,29 @@ private:
     void wait_loop()
     {
         Http wait(m_host, m_port);
-        wait.set_session(m_session);
         while (!m_stop) {
+            QString base;
+            {
+                std::lock_guard<std::mutex> lock(m_wait_mutex);
+                if (!m_pending_id.isEmpty()) base.clear();  // found: the views' thread takes it over (adopt)
+                else base = m_wait_base;
+                wait.set_session(m_wait_session);
+            }
+            if (base.isEmpty() || !m_online) {
+                if (base.isEmpty() || !look(wait)) pause_a_second();
+                continue;
+            }
             QByteArray out;
-            const QString path = m_base + "/debug/wait?since=" + QString::number(m_seq.load()) + "&timeout_ms=500";
+            const QString path = base + "/debug/wait?since=" + QString::number(m_seq.load()) + "&timeout_ms=500";
             const int status = wait.request("GET", path, QByteArray(), out, 3000);
             m_wait_requests = wait.requests();
             m_wait_bytes = wait.bytes();
+            if ((status == 0 || status == 404) && !listed(wait, base)) {
+                // The emulator closed or the server stopped: a normal course, the window shows it and waits
+                m_online = false;
+                notify();
+                continue;
+            }
             if (status != 200) {
                 QThread::msleep(200);
                 continue;
@@ -784,10 +861,58 @@ private:
             m_dirty = true;
             if (a.value("state").toString() == "paused" && m_seq.load() >= m_run_to_seq.load() + 2 &&
                 m_run_to_armed.exchange(false))
-                wait.json("POST", m_base + "/breakpoints/remove", QJsonObject{{"select", QString("group:") + kRunToGroup}});
-            std::lock_guard<std::mutex> lock(m_listener_mutex);
-            if (m_listener) m_listener();
+                wait.json("POST", base + "/breakpoints/remove", QJsonObject{{"select", QString("group:") + kRunToGroup}});
+            notify();
         }
+    }
+
+    void notify()
+    {
+        std::lock_guard<std::mutex> lock(m_listener_mutex);
+        if (m_listener) m_listener();
+    }
+    void pause_a_second()
+    {
+        for (int i = 0; i < 10 && !m_stop; i++) QThread::msleep(100);
+    }
+    // The instance at `base` is still listed (false also when the server does not answer)
+    bool listed(Http &wait, const QString &base)
+    {
+        int status = 0;
+        const QJsonArray list = wait.json("GET", "/api/v1/emulator", QJsonObject(), &status).value("emulators").toArray();
+        if (status != 200) return false;
+        for (const QJsonValue &v : list)
+            if ("/api/v1/emulator/" + v.toObject().value("id").toString() == base) return true;
+        return false;
+    }
+    // Offline: a suitable emulator (the one asked for by id, else one of the same model: the views' devices fit it)
+    // with a run-control session of ours; the views' thread takes it over (adopt)
+    bool look(Http &wait)
+    {
+        int status = 0;
+        const QJsonArray list = wait.json("GET", "/api/v1/emulator", QJsonObject(), &status).value("emulators").toArray();
+        if (status != 200) return false;
+        for (const QJsonValue &v : list) {
+            const QJsonObject e = v.toObject();
+            const bool suits = m_want.isEmpty() ? e.value("model").toString() == m_model
+                                                : e.value("id").toString() == m_want || e.value("symbolic_id").toString() == m_want;
+            if (!suits) continue;
+            const QString id = e.value("id").toString();
+            const QJsonObject s = wait.json("POST", "/api/v1/emulator/" + id + "/control/session",
+                                            QJsonObject{{"client", "ecat-debugger"}, {"surface", "webapi"}, {"lease_seconds", 120}},
+                                            &status);
+            if (status != 200) continue;
+            {
+                std::lock_guard<std::mutex> lock(m_wait_mutex);
+                m_pending_id = id;
+                m_pending_session = s.value("session").toString().toUtf8();
+                m_wait_session = m_pending_session;
+            }
+            m_seq = 0;
+            notify();
+            return true;
+        }
+        return false;
     }
 };
 

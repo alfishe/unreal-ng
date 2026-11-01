@@ -42,6 +42,7 @@ constexpr uint8_t kFFrameError = 0x52;        // dialog error text
 constexpr uint8_t kFrmHeader = 0xD0;          // dialog title bar
 constexpr uint8_t kMenuInside = 0x70;         // menu body / enabled item
 constexpr uint8_t kMenuHeader = 0xF0;         // menu title
+constexpr uint8_t kOffline = 0x07;            // every cell while no emulator answers (PaintOffline)
 constexpr uint8_t kMenuCursor = 0xE0;         // selected menu item
 constexpr uint8_t kMenuItemDis = 0x7A;        // disabled menu item
 constexpr uint8_t kAttrTransparent = 0xFF;    // "do not draw this cell"

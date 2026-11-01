@@ -1,9 +1,18 @@
 // tsconf-webapi-backend.cpp - see tsconf-webapi-backend.h.
 #include "backend/tsconf-webapi-backend.h"
 
+#include <cctype>
+
 #include "backend/json-mini.h"
 
 namespace dbg {
+
+bool TsConfWebApiBackend::Suitable(const std::string& model) const {
+    std::string upper = model;
+    for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return upper == "TSL" || upper == "TSCONF";
+}
+
 namespace {
 
 // The #xxAF register numbers (core/src/emulator/platforms/tsconf/tsconf.h)

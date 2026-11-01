@@ -105,6 +105,8 @@ private:
     QAction * m_bp_clear;
     unsigned int m_serial;
     bool m_paused;
+    bool m_online = true;
+    bool follow_online();
     int m_device_tick;
 
     CpuPane * pane();

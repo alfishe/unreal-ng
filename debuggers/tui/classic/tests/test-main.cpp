@@ -1,8 +1,11 @@
 // test-main.cpp - micro test harness for classic debugger interactivity and navigation.
 #include <cstdio>
+#include <memory>
 #include <string>
 
+#include "backend/api-transport.h"
 #include "backend/mock-backend.h"
+#include "backend/webapi-backend.h"
 #include "panels/paint.h"
 #include "tui/key-input.h"
 #include "ui/actions.h"
@@ -391,6 +394,72 @@ void TestTerminalKeys() {
     Check(k.key == dbg::Key::Space, "terminal: Space");
 }
 
+// A server with a list of instances that the test changes; every instance request answers an empty object
+class FakeServer : public dbg::IApiTransport {
+public:
+    std::string list = "{\"emulators\":[]}";
+    bool up = true;
+    int requests = 0;
+
+    std::string Name() const override { return "fake"; }
+    void SetTimeoutSeconds(int) override {}
+    dbg::HttpReply Request(const std::string& method, const std::string& path, const std::string& body) override {
+        (void)method;
+        (void)body;
+        ++requests;
+        dbg::HttpReply reply;
+        if (!up) {
+            reply.error = "connection refused";
+            return reply;
+        }
+        reply.ok = true;
+        reply.status = 200;
+        reply.body = path == "/api/v1/emulator" ? list : "{}";
+        return reply;
+    }
+};
+
+// No emulator: the debugger waits under its dialog, keys do nothing; one appears: attached; it goes: waiting again
+void TestWaitsAndReconnects() {
+    auto owned = std::make_unique<FakeServer>();
+    FakeServer& server = *owned;
+    dbg::WebApiBackend be(std::move(owned));
+    be.SetEndpoint("ws://localhost:8090");
+    Check(!be.Attach(), "offline: no instance to attach to");
+    Check(!be.Online(), "offline: not online");
+    Check(be.WaitingFor() == "an emulator at ws://localhost:8090", "offline: the dialog names what it waits for");
+
+    dbg::TextScreen screen(80, 30);
+    screen.Clear();
+    dbg::PaintOffline(screen, be.WaitingFor());
+    Check(screen.AttrAt(0, 0) == dbg::kOffline, "offline: the screen is grayed out");
+
+    const int before = server.requests;
+    dbg::UiState ui;
+    dbg::ActionContext ctx{be, ui, false, nullptr, nullptr};
+    Check(dbg::HandleKey(ctx, dbg::KeyPress{dbg::Key::F7, 0, 0}), "offline: the dialog takes the keys");
+    Check(server.requests == before, "offline: a key asks the server nothing (one look a second)");
+
+    server.list = "{\"emulators\":[{\"id\":\"e1\",\"model\":\"PENTAGON\"}]}";
+    be.RetryNow();
+    Check(be.PollExternalChanges(), "an emulator appears: paint again");
+    Check(be.Online() && be.InstanceId() == "e1", "attached to it");
+
+    server.list = "{\"emulators\":[]}";
+    be.RetryNow();
+    Check(be.PollExternalChanges(), "it goes: paint the dialog");
+    Check(!be.Online(), "waiting again");
+    Check(be.LastError().empty(), "reconnecting is the normal course: no error");
+
+    server.list = "{\"emulators\":[{\"id\":\"e2\",\"model\":\"PENTAGON\"}]}";
+    be.RetryNow();
+    Check(be.PollExternalChanges() && be.Online() && be.InstanceId() == "e2", "the next one attaches");
+    server.up = false;
+    be.RetryNow();
+    be.PollExternalChanges();
+    Check(!be.Online(), "the server stops: waiting");
+}
+
 }  // namespace
 
 int main() {
@@ -402,6 +471,7 @@ int main() {
     TestMouseInteractivity();
     TestUnrealKeys();
     TestTerminalKeys();
+    TestWaitsAndReconnects();
 
     if (failures == 0) {
         std::printf("all classic tests passed\n");

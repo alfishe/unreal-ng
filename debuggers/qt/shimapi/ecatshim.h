@@ -222,6 +222,11 @@ public:
     virtual CPU * debug_stop_cpu() const = 0;
     virtual int debug_stop_reason() const = 0;
     virtual void set_debug_listener(const std::function<void()> &fn) = 0;
+    // A remote machine's connection: false while its emulator is gone and it waits for a suitable one (it reattaches
+    // by itself, the listener tells both). The last state stays readable; nothing runs, steps or changes
+    virtual bool debug_online() const { return true; }
+    // The status text while offline ("No emulator: waiting for one at 127.0.0.1:8090")
+    virtual std::string debug_offline_text() const { return std::string(); }
 
     virtual std::string read_setup(const std::string &section, const std::string &key, const std::string &def) = 0;
     virtual void write_setup(const std::string &section, const std::string &key, const std::string &value) = 0;

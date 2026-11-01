@@ -117,18 +117,34 @@ public:
     void StepOut(int cpu) override;
     void RunTo(int cpu, uint16_t addr) override;
 
-    // Transport status for the UI (banner text when degraded).
+    bool Online() override { return connected_; }
+    std::string WaitingFor() const override;
+
+    // Transport status for the UI
     bool Connected() const { return connected_; }
     const std::string& InstanceId() const { return instanceId_; }
-    bool OwnsInstance() const { return ownsInstance_; }
     const std::string& LastError() const { return lastError_; }
-    // Attaches now (see EnsureInstance) instead of at the first call: false when the emulator does not answer
+    // Attaches now (see EnsureInstance) instead of at the first call: false when no suitable emulator answers yet
     bool Attach() { return EnsureInstance(); }
+    // The server's address, for the waiting dialog
+    void SetEndpoint(std::string endpoint) { endpoint_ = std::move(endpoint); }
+    // Tests: the next look for an instance and the next liveness check happen at the next call, not a second later
+    void RetryNow() {
+        nextAttach_ = {};
+        nextAlive_ = {};
+    }
 
 protected:
-    // Attaches to the first existing instance or creates one ("128k") and
-    // pauses it; refreshes all caches. Idempotent; false leaves lastError_.
+    // Attaches to the first running instance this debugger suits (Suitable) and pauses it; refreshes all caches.
+    // Never starts one: without a suitable instance it waits, asking again at most once a second. Idempotent
     bool EnsureInstance();
+    // The machines this debugger reads (the model's short name); all by default
+    virtual bool Suitable(const std::string& model) const {
+        (void)model;
+        return true;
+    }
+    // "an emulator", "a TS-Conf emulator": the dialog's words for Suitable
+    virtual std::string SuitableText() const { return "an emulator"; }
     bool EnsurePaused();
     bool FetchRegs();
     bool FetchMemory();
@@ -154,8 +170,14 @@ private:
 
     std::unique_ptr<IApiTransport> http_;
     std::string instanceId_;
-    bool ownsInstance_ = false;   // we created it -> we delete it on destruction
     bool connected_ = false;
+    std::string endpoint_;
+    // The instance went away (its emulator closed, the server stopped): wait for a suitable one again
+    void Lost();
+    // The instance is still listed by the server (asked about once a second while attached)
+    bool InstanceListed();
+    std::chrono::steady_clock::time_point nextAttach_{};  // the next look for an instance while offline
+    std::chrono::steady_clock::time_point nextAlive_{};   // the next liveness check while attached
     std::string model_;           // server-reported short name ("128k" ...)
     std::string lastError_;
 

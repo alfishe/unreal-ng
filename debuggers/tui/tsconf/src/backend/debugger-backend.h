@@ -222,6 +222,13 @@ public:
     // ten times a second; must not wait.
     virtual bool PollExternalChanges() { return false; }
 
+    // The connection: false while no suitable emulator answers. The UI then shows the last state grayed out under a
+    // waiting dialog (PaintOffline) and PollExternalChanges looks for one about once a second; reconnecting is the
+    // normal course, nothing is logged
+    virtual bool Online() { return true; }
+    // What the backend waits for, for the dialog ("a TS-Conf emulator at ws://localhost:8090")
+    virtual std::string WaitingFor() const { return {}; }
+
     // -- TSConf fork additions (TDD-DBG-02 §5) --------------------------------------------
     // Ring of the last M1 PC fetches, newest first (§5.1 PC history panel).
     // Backends without a machine-mode fetch trace return an empty ring and

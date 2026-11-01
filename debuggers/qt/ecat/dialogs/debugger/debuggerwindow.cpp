@@ -453,10 +453,12 @@ void DebuggerWindow::update_cursor()
 void DebuggerWindow::update_actions()
 {
     CpuPane * p = pane();
+    //Offline (a remote machine whose emulator is gone) the last state is read only: the views move, nothing else
     const bool loaded = e->loaded && p != nullptr;
-    const bool stepping = loaded && e->debug_stepping();
-    const bool held = loaded && !stepping && e->debug_paused();
-    const bool running = loaded && !held;
+    const bool live = loaded && e->debug_online();
+    const bool stepping = live && e->debug_stepping();
+    const bool held = live && !stepping && e->debug_paused();
+    const bool running = live && !held;
 
     //A free run stops at nothing: F9 then makes the breakpoints count again
     bool watching = stepping, any_breakpoints = false;
@@ -478,17 +480,17 @@ void DebuggerWindow::update_actions()
     m_go->setEnabled(loaded);
     m_goto->setEnabled(loaded);
 
-    const bool on = loaded && p->cpu->has_breakpoint(p->code->cursor_address());
-    m_bp_add->setEnabled(loaded && !on);
+    const bool on = live && p->cpu->has_breakpoint(p->code->cursor_address());
+    m_bp_add->setEnabled(live && !on);
     m_bp_remove->setEnabled(on);
-    m_bp_toggle->setEnabled(loaded);
-    m_bp_clear->setEnabled(loaded && !p->cpu->get_breakpoints().empty());
+    m_bp_toggle->setEnabled(live);
+    m_bp_clear->setEnabled(live && !p->cpu->get_breakpoints().empty());
 }
 
 void DebuggerWindow::run_command(void (*command)(Emulator *, CPU *))
 {
     CPU * c = current_cpu();
-    if (c == nullptr || !e->loaded) return;
+    if (c == nullptr || !e->loaded || !e->debug_online()) return;
     mark_all();
     Emulator * em = e;
     e->invoke([em, c, command]() { command(em, c); });
@@ -542,7 +544,9 @@ void DebuggerWindow::update_view()
 void DebuggerWindow::show_state()
 {
     QString text;
-    if (e->debug_stepping()) {
+    if (!e->debug_online()) {
+        text = QString::fromStdString(e->debug_offline_text());
+    } else if (e->debug_stepping()) {
         text = tr("Stepping...");
     } else if (e->debug_paused()) {
         CPU * c = e->debug_stop_cpu();
@@ -565,6 +569,7 @@ void DebuggerWindow::show_state()
 void DebuggerWindow::on_debug_event()
 {
     if (!e->loaded) return;
+    if (follow_online()) return;
     const unsigned int serial = e->debug_serial();
     if (serial == m_serial) return;
     m_serial = serial;
@@ -588,6 +593,7 @@ void DebuggerWindow::on_timer()
         update_actions();
         return;
     }
+    if (follow_online()) return;
     const bool paused = e->debug_paused() && !e->debug_stepping();
     if (paused != m_paused) {
         m_paused = paused;
@@ -602,6 +608,26 @@ void DebuggerWindow::on_timer()
         }
     }
     show_state();
+}
+
+//The connection of a remote machine: lost, the state shows it and the views stay as they were (no reads); back, every
+//view is read again. True while offline or on the change
+bool DebuggerWindow::follow_online()
+{
+    const bool online = e->debug_online();
+    if (online == m_online) {
+        if (online) return false;
+        e->debug_paused();  //a found emulator is taken over at the next read (no request while none is)
+        if (!e->debug_online()) return true;
+    }
+    m_online = e->debug_online();
+    if (m_online) {
+        m_serial = e->debug_serial();
+        m_paused = e->debug_paused() && !e->debug_stepping();
+        refresh_all(true);
+    }
+    show_state();
+    return true;
 }
 
 //The steps a browser takes: round numbers, the same way back

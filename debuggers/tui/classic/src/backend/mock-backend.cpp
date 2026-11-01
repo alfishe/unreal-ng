@@ -671,10 +671,8 @@ std::unique_ptr<IDebuggerBackend> CreateBackend(BackendKind kind, const std::str
         else
             transport = std::make_unique<HttpClient>(url);
         auto backend = std::make_unique<WebApiBackend>(std::move(transport));
-        if (!backend->Attach()) {
-            std::fprintf(stderr, "%s: %s\n", url.c_str(), backend->LastError().c_str());
-            return nullptr;
-        }
+        backend->SetEndpoint(url);
+        backend->Attach();  // no suitable emulator yet: the UI waits for one (IDebuggerBackend::Online)
         return backend;
     }
     case BackendKind::Ipc:

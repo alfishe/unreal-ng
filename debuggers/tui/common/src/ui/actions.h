@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 
 #include "backend/debugger-backend.h"
 #include "panels/paint.h"
@@ -83,6 +84,8 @@ bool HandleKey(ActionContext& ctx, const KeyPress& key);
 
 // The system menu over the frame when it is open (ui.menuOpen)
 void PaintSystemMenu(TextScreen& screen, const UiState& ui, bool isTsconf, bool running);
+// No emulator (IDebuggerBackend::Online false): the screen grayed out under the waiting dialog
+void PaintOffline(TextScreen& screen, const std::string& waitingFor);
 
 // A click on the open menu runs the item under it or closes the menu; true when the menu was open
 bool HandleMenuClick(ActionContext& ctx, int cellX, int cellY);

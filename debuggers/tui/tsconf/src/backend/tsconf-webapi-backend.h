@@ -3,6 +3,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "backend/webapi-backend.h"
@@ -16,6 +17,11 @@ public:
 
     std::vector<PcHistEntry> GetPcHistory(int cpu) override;
     bool GetTsConf(TsConfState& out) override;
+
+protected:
+    // A TS-Conf machine only (its register board, its PC history)
+    bool Suitable(const std::string& model) const override;
+    std::string SuitableText() const override { return "a TS-Conf emulator"; }
 
 private:
     uint64_t tsAt_ = 0;    // Snapshots() the board was read at (0: never)

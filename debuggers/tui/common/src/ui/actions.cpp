@@ -1,7 +1,9 @@
 // actions.cpp - the monitor's commands, their UnrealSpeccy keys and the system menu.
 #include "ui/actions.h"
 
+#include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -352,6 +354,11 @@ bool DispatchKey(ActionContext& ctx, const KeyPress& key) {
 }
 
 bool HandleKey(ActionContext& ctx, const KeyPress& key) {
+    // Waiting for an emulator: the dialog holds the keys, Alt+F4 still exits
+    if (!ctx.be.Online()) {
+        if (key.key == Key::F4 && key.mods == kModAlt && ctx.quit) ctx.quit();
+        return true;
+    }
     if (DispatchKey(ctx, key)) return true;
     IDebuggerBackend& be = ctx.be;
     UiState& ui = ctx.ui;
@@ -409,7 +416,30 @@ void PaintSystemMenu(TextScreen& screen, const UiState& ui, bool isTsconf, bool 
     }
 }
 
+void PaintOffline(TextScreen& screen, const std::string& waitingFor) {
+    // The last state stays readable, grayed out; only the dialog's frame is drawn (FilledFrame)
+    for (int y = 0; y < screen.Height(); ++y)
+        for (int x = 0; x < screen.Width(); ++x) screen.SetAttr(x, y, kOffline);
+    const std::string title = "no emulator";
+    const std::string lines[] = {"Waiting for " + waitingFor, "It reconnects by itself", "Alt+F4 exits"};
+    int width = static_cast<int>(title.size());
+    for (const std::string& line : lines) width = std::max(width, static_cast<int>(line.size()));
+    width = std::min(width + 2, screen.Width() - 2);
+    const int height = 2 + static_cast<int>(std::size(lines));
+    const int x = (screen.Width() - width) / 2;
+    const int y = (screen.Height() - height) / 2;
+    screen.FilledFrame(x, y, width, height);
+    screen.FillRect(x, y, width, height, kMenuInside);
+    screen.FillRect(x, y, width, 1, kMenuHeader);
+    screen.Tprint(x + (width - static_cast<int>(title.size())) / 2, y, title, kMenuHeader);
+    for (size_t i = 0; i < std::size(lines); ++i) {
+        const std::string line = lines[i].substr(0, static_cast<size_t>(width - 2));
+        screen.Tprint(x + 1, y + 2 + static_cast<int>(i), line, kMenuInside);
+    }
+}
+
 bool HandleMenuClick(ActionContext& ctx, int cellX, int cellY) {
+    if (!ctx.be.Online()) return true;  // the waiting dialog holds the mouse too
     UiState& ui = ctx.ui;
     if (!ui.menuOpen) return false;
     const MenuGeometry g = MeasureMenu(ctx.isTsconf);

@@ -70,18 +70,44 @@ WebApiBackend::WebApiBackend(std::unique_ptr<IApiTransport> transport) : http_(s
     mem_.assign(0x10000, 0);
 }
 
-WebApiBackend::~WebApiBackend() {
-    // best effort: an instance we created dies with the debugger
-    if (ownsInstance_ && connected_ && !instanceId_.empty()) {
-        Api("DELETE", "");
+WebApiBackend::~WebApiBackend() = default;
+
+std::string WebApiBackend::WaitingFor() const {
+    return endpoint_.empty() ? SuitableText() : SuitableText() + " at " + endpoint_;
+}
+
+void WebApiBackend::Lost() {
+    // The caches stay: the UI shows them grayed out while it waits
+    connected_ = false;
+    instanceId_.clear();
+    running_ = false;
+    runToArmed_ = false;
+    lastError_.clear();
+    nextAttach_ = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+}
+
+bool WebApiBackend::InstanceListed() {
+    const HttpReply list = http_->Request("GET", "/api/v1/emulator");
+    if (!list.ok) return false;
+    if (!list.IsSuccess()) return true;  // the server answers: the instance is asked itself
+    const Json root = Json::Parse(list.body, nullptr);
+    const Json* emulators = root.Find("emulators");
+    if (emulators == nullptr || !emulators->IsArray()) return true;
+    for (size_t i = 0; i < emulators->Size(); ++i) {
+        std::string id;
+        if (emulators->At(i).Get("id", &id) && id == instanceId_) return true;
     }
+    return false;
 }
 
 HttpReply WebApiBackend::Api(const std::string& method, const std::string& subPath,
                            const std::string& body) {
+    if (instanceId_.empty()) return HttpReply{};  // offline: nothing to ask
     const HttpReply reply = http_->Request(method, "/api/v1/emulator/" + instanceId_ + subPath, body);
     if (!reply.ok) {
-        lastError_ = "transport: " + reply.error;
+        Lost();  // the server is gone
+    } else if (reply.status == 404 && !InstanceListed()) {
+        Lost();  // the instance is gone
     } else if (!reply.IsSuccess()) {
         lastError_ = method + " " + subPath + ": HTTP " + std::to_string(reply.status) + " " +
                      ReplyText(reply);
@@ -93,39 +119,29 @@ HttpReply WebApiBackend::Api(const std::string& method, const std::string& subPa
 
 bool WebApiBackend::EnsureInstance() {
     if (connected_) return true;
+    // Offline: one look a second, whoever asks (every paint reads the machine)
+    const auto now = std::chrono::steady_clock::now();
+    if (now < nextAttach_) return false;
+    nextAttach_ = now + std::chrono::seconds(1);
 
     const HttpReply list = http_->Request("GET", "/api/v1/emulator");
-    if (!list.ok) {
-        lastError_ = "server unreachable: " + list.error;
-        return false;
-    }
+    if (!list.IsSuccess()) return false;
     const Json root = Json::Parse(list.body, nullptr);
     const Json* emulators = root.Find("emulators");
-    if (emulators != nullptr && emulators->IsArray() && emulators->Size() > 0) {
-        // attach to the first existing instance; it outlives us
-        emulators->At(0).Get("id", &instanceId_);
-        emulators->At(0).Get("model", &model_);
-        ownsInstance_ = false;
-    } else {
-        const HttpReply started = http_->Request("POST", "/api/v1/emulator/start",
-                                                "{\"model\":\"128k\"}");
-        if (!started.IsSuccess()) {
-            lastError_ = "cannot start instance: " + ReplyText(started);
-            return false;
-        }
-        const Json created = Json::Parse(started.body, nullptr);
-        if (!created.Get("id", &instanceId_) || instanceId_.empty()) {
-            lastError_ = "start reply missing instance id";
-            return false;
-        }
-        created.Get("model", &model_);
-        ownsInstance_ = true;
+    if (emulators == nullptr || !emulators->IsArray()) return false;
+    // The first running instance this debugger suits; it outlives us
+    std::string id, model;
+    for (size_t i = 0; i < emulators->Size(); ++i) {
+        emulators->At(i).Get("id", &id);
+        emulators->At(i).Get("model", &model);
+        if (!id.empty() && Suitable(model)) break;
+        id.clear();
     }
-    if (instanceId_.empty()) {
-        lastError_ = "no emulator instance available";
-        return false;
-    }
+    if (id.empty()) return false;
+    instanceId_ = id;
+    model_ = model;
     connected_ = true;
+    nextAlive_ = now + std::chrono::seconds(1);
     // Steps, stops and breakpoints of other clients come as topics (websocket-interface.md §3.3)
     pushed_ = http_->Subscribe("[\"debug.events\",\"run.state\"]");
     // The debugger runs the machine with the emulator's own breakpoints (Continue, RunTo): they fire in debug mode
@@ -139,7 +155,18 @@ bool WebApiBackend::EnsureInstance() {
 }
 
 bool WebApiBackend::PollExternalChanges() {
-    if (!connected_) return false;
+    if (!connected_) return EnsureInstance();  // attached again: everything is read, paint it
+    {
+        // The instance may go without a word (its emulator closed): asked about once a second
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= nextAlive_) {
+            nextAlive_ = now + std::chrono::seconds(1);
+            if (!InstanceListed()) {
+                Lost();
+                return true;  // paint the waiting dialog
+            }
+        }
+    }
     bool refresh = false;
     bool breakpoints = false;
     bool stateChanged = false;
@@ -187,6 +214,7 @@ bool WebApiBackend::PollExternalChanges() {
         if (now < nextPoll_) return false;
         nextPoll_ = now + std::chrono::milliseconds(500);
         const HttpReply state = Api("GET", "");
+        if (!connected_) return true;  // lost: paint the waiting dialog
         if (!state.IsSuccess()) return false;
         const bool running = StateIsRunning(Json::Parse(state.body, nullptr));
         stateChanged = running != running_;

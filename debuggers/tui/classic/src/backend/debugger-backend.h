@@ -221,6 +221,13 @@ public:
     // breakpoints changed since the last call, and the screen is to be painted again. Called by the UI loop about
     // ten times a second; must not wait.
     virtual bool PollExternalChanges() { return false; }
+
+    // The connection: false while no suitable emulator answers. The UI then shows the last state grayed out under a
+    // waiting dialog (PaintOffline) and PollExternalChanges looks for one about once a second; reconnecting is the
+    // normal course, nothing is logged
+    virtual bool Online() { return true; }
+    // What the backend waits for, for the dialog ("a TS-Conf emulator at ws://localhost:8090")
+    virtual std::string WaitingFor() const { return {}; }
 };
 
 // Backend factory identifiers (CLI: --backend <name> [--endpoint <url/pipe>]).

@@ -43,6 +43,7 @@ struct TuiApp {
         screen.Clear();
         dbg::PaintClassicFrame(screen, *be, ui);
         dbg::PaintSystemMenu(screen, ui, false, be->IsRunning());
+        if (!be->Online()) dbg::PaintOffline(screen, be->WaitingFor());
     }
 
     // Keep the trace cursor visible: reset the window origin when the PC or

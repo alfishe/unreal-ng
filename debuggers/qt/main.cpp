@@ -29,6 +29,7 @@
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
+#include <QProgressDialog>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
@@ -771,6 +772,22 @@ int main(int argc, char * argv[])
         if (colon > 0) ro.port = (uint16_t)where.mid(colon + 1).toUInt();
         ro.emulator = parser.value(emulatorOpt).toStdString();
         machine = CreateRemoteMachine(ro, error);
+        if (!machine && !parser.isSet(listOpt)) {
+            //No suitable emulator yet: a normal course, the debugger waits for one (a look a second), nothing logged
+            QProgressDialog waiting(QString("No emulator: waiting for %1 at %2")
+                                        .arg(ro.emulator.empty() ? QString("one") : QString::fromStdString(ro.emulator))
+                                        .arg(where),
+                                    "Quit", 0, 0);
+            waiting.setWindowTitle("unreal-debugger");
+            waiting.setMinimumDuration(0);
+            QTimer retry;
+            QObject::connect(&retry, &QTimer::timeout, [&]() {
+                machine = CreateRemoteMachine(ro, error);
+                if (machine) waiting.accept();
+            });
+            retry.start(1000);
+            if (waiting.exec() != QDialog::Accepted || !machine) return 0;
+        }
         options.model = "remote";
         options.card = where.toStdString();
     } else {
