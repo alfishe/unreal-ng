@@ -46,6 +46,8 @@ leaves out keep their value.
 | the Fuller Box's slot (`edge.1`) | AY register writes | off | the same, `chip` `ay` |
 | the ZX-MultiSound's slot + `.chips` (`zxbus.1.chips`) | SAA and SounDrive writes | off | the same, `chip` `saa` / `dac`; its YM writes into the machine's AY history (the card takes the AY ports, so that history carries the card's name), its GS into `zxbus.1.gs` |
 | `covox-blaster` (the Sprinter) | Covox Blaster writes | off | the same, `chip` `cbl`, `reg` 0 data, 1 control |
+| an SD card's host: `sd-zc` (the Z-Controller on TS-Conf / ATM3, the owner of `#57`), `sd0` / `sd1` (the Next), the DivMMC's id + `.sd0` / `.sd1`, the NeoGS slot + `.sd` (`zxbus.1.sd`) | SD commands and block transfers | off | `frame`, `us` (the card's clock), `type` (`command` / `read` / `write`), `cmd` (`CMD17`, `ACMD41`), `argument`, `crc_ok`, `r1`; for a block `block`, `ok` |
+| the NeoGS slot + `.mp3` (`zxbus.1.mp3`), when the card has its VS10xx | MP3 decoder SCI writes | off | `frame`, `reg`, `reg_name` (`MODE`, `CLOCKF`, `VOL` ...), `value` |
 
 A device whose history is its own holds a `history::Registered<Record>`: listed in the machine's histories while it
 lives. A card with several modules names the others `<slot>.<module>` (as the time-travel instances do).

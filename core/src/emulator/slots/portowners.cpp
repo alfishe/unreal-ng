@@ -95,4 +95,10 @@ const std::string& PortOwners::Find(uint16_t port, bool out, bool dos) const
     return none;
 }
 
+std::string PortOwnerName(const EmulatorContext* context, uint16_t port, const char* fallback)
+{
+    const std::string owner = PortOwners::Of(context).Find(port, true, false);  // a copy: the owners are a temporary
+    return owner.empty() ? std::string(fallback) : owner;
+}
+
 }  // namespace slots

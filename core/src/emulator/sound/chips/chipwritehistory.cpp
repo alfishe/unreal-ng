@@ -8,8 +8,7 @@
 
 std::string ChipHistoryDevice(const EmulatorContext* context, uint16_t port, const char* fallback)
 {
-    const std::string owner = slots::PortOwners::Of(context).Find(port, true, false);  // a copy: the owners are a temporary
-    return owner.empty() ? std::string(fallback) : owner;
+    return slots::PortOwnerName(context, port, fallback);
 }
 
 history::Registry* ChipHistoryRegistry(EmulatorContext* context)

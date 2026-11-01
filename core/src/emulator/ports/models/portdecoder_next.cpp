@@ -197,6 +197,7 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         _sd[i].setTraceListener([this, i](const SdTraceEvent& event) { RecordSdEvent(i, event); });
         _sd[i].SetBusTap(&_spiTap, static_cast<uint8_t>(i));
         _sd[i].SetClock([this]() { return EmulatedMicroseconds(); });
+        _sd[i].AttachHistory(_context, [i]() { return std::string(i ? "sd1" : "sd0"); });
         _spiTap.SetDevice(static_cast<uint8_t>(i), i ? "sd1" : "sd0");
     }
     // 16 CPU clocks per byte at any speed (spi_master.vhd); the export's scale is the 28 MHz one

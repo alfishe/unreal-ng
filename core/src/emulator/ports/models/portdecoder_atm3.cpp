@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "portdecoder_atm3.h"
 
+#include "emulator/slots/portowners.h"
 #include "emulator/io/mouse/mousemanager.h"
 
 #include "common/modulelogger.h"
@@ -36,6 +37,7 @@ PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM71
     _zc.SetTap(&_spiTap);
     _sdCard.SetBusTap(&_spiTap, 0);
     _sdCard.SetClock([this]() { return EmulatedMicroseconds(); });
+    _sdCard.AttachHistory(_context, [context = _context]() { return slots::PortOwnerName(context, 0x0057, "sd-zc"); });
     BindRtc(_evoAvr);
 
     // TTD: the card's protocol state is in the EvoSdCard blob; a guest write

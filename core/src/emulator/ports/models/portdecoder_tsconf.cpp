@@ -3,6 +3,7 @@
 #include "common/modulelogger.h"
 
 #include "portdecoder_tsconf.h"
+#include "emulator/slots/portowners.h"
 #include "emulator/platforms/tsconf/tsconfprogramsnapshot.h"
 #include "loaders/snapshot/snapshotcapture.h"
 
@@ -77,6 +78,7 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     _zc.SetTap(&_spiTap);
     _sdCard.SetBusTap(&_spiTap, 0);
     _sdCard.SetClock([this]() { return EmulatedMicroseconds(); });
+    _sdCard.AttachHistory(_context, [context = _context]() { return slots::PortOwnerName(context, 0x0057, "sd-zc"); });
     // The VDAC2 card keeps time in raster tacts; it closes a frame once the
     // engine has accounted all of it (the DMA's last SPI bytes included)
     _engine.SetFrameEndListener([this]() {

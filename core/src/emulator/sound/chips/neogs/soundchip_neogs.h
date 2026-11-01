@@ -47,6 +47,7 @@
 #include "emulator/sound/chips/neogs/neogsspi.h"
 #include "emulator/sound/chips/neogs/neogszxdma.h"
 #include "emulator/sound/chips/neogs/vs10xx.h"
+#include "debugger/history/devicehistory.h"
 #include "sysdefs.h"
 
 class EmulatorContext;
@@ -524,6 +525,15 @@ private:
     bool _sdWriteProtect = false; // the slot's write-protect switch (SSTAT bit 2)
     std::string _sdSource;        // the attached medium's source path
     std::unique_ptr<Vs10xxDecoder> _mp3; // absent with MP3Support=none
+    /// The MP3 decoder's SCI register writes, `<slot>.mp3` (with the decoder only)
+    struct Mp3Record
+    {
+        uint64_t frame = 0;
+        uint8_t reg = 0;
+        uint16_t value = 0;
+        void ToState(StateNode& node) const;
+    };
+    std::unique_ptr<history::Registered<Mp3Record>> _mp3History;
     NeoGSDma _dma;
     NeoGSZxDma _zx{*this, _dma, _mem};
     bool _zxLateStartLogged = false;

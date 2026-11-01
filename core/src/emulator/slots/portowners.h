@@ -60,6 +60,10 @@ private:
     bool _declared = false;
 };
 
+/// The registry id of the device a main-CPU OUT to `port` goes to (a copy), `fallback` when the registry names none:
+/// a device history's name
+std::string PortOwnerName(const EmulatorContext* context, uint16_t port, const char* fallback);
+
 }  // namespace slots
 
 #pragma pop_macro("signals")
