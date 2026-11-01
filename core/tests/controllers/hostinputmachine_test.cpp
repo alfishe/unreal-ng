@@ -23,6 +23,7 @@
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "fake/fakebackend.h"
+#include "emulator/ports/models/portdecoder_sprinter.h"
 #include "hostinputservice.h"
 #include "router/zxkeys.h"
 
@@ -112,6 +113,47 @@ TEST(HostInputMachine_Test, KeyTargetReachesTheMatrixAndKeyNamesAgree)
         EXPECT_EQ(keys[1], context->pKeyboard->GetMatrixKey(core)) << name;
     }
 
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// Boot-bound (~20 ms): one Sprinter, two frames
+TEST(HostInputMachine_Test, KeyTargetReachesTheSprinterPs2Keyboard)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("SPRINTER", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoder_Sprinter*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+
+    HostInputService service;
+    auto fake = std::make_unique<FakeBackend>();
+    FakeBackend* pads = fake.get();
+    std::string error;
+    ASSERT_TRUE(service.AddBackend(std::move(fake), error)) << error;
+    ASSERT_TRUE(pads->Connect({"fake:1", "Pad", "xbox", {}}));
+    Binding start;
+    start.sources = {"menu"};
+    ASSERT_TRUE(ParseKeysTarget("ENTER", start.target, error)) << error;
+    Binding up;
+    up.sources = {"dpad.up"};
+    ASSERT_TRUE(ParseKeysTarget("UP", up.target, error)) << error;
+    ASSERT_TRUE(service.Router().SetBindings({}, {start, up}, error)) << error;
+
+    context->pControllerManager->SetHostInputSource(service.SourceFor("emu-1"));
+    pads->Press("fake:1", "menu");
+    emulator->RunNFrames(1);
+    const Ps2KeyboardStream& stream = decoder->GetInput().KeyboardStream();
+    EXPECT_TRUE(stream.IsHeld(PcKey::Enter)) << "a pad button with a key target is a PS/2 key on the Sprinter";
+    pads->Release("fake:1", "menu");
+    pads->Press("fake:1", "dpad.up");
+    emulator->RunNFrames(1);
+    EXPECT_FALSE(stream.IsHeld(PcKey::Enter));
+    EXPECT_TRUE(stream.IsHeld(PcKey::Up)) << "a cursor key is the arrow, not Caps Shift and 7";
+    pads->Release("fake:1", "dpad.up");
+    emulator->RunNFrames(1);
+    EXPECT_FALSE(stream.IsHeld(PcKey::Up));
+
+    context->pControllerManager->SetHostInputSource(nullptr);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 

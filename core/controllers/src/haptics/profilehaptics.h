@@ -31,7 +31,8 @@ public:
     /// @p actuators: a device's RumbleActuator bits (the target fallbacks); none: every actuator
     ProfileHaptics(HapticProfile profile, std::string name, HapticMixer& mixer,
                    std::function<std::vector<HostDeviceId>()> targets,
-                   std::function<uint8_t(const HostDeviceId&)> actuators = nullptr);
+                   std::function<uint8_t(const HostDeviceId&)> actuators = nullptr,
+                   std::function<int(const HostDeviceId&)> playerOf = nullptr);
 
     void OnHapticFrame(const HapticFrame& frame) override;
     std::vector<HapticWatch> Watches() const override;
@@ -77,6 +78,7 @@ private:
     HapticMixer& _mixer;
     std::function<std::vector<HostDeviceId>()> _targets;
     std::function<uint8_t(const HostDeviceId&)> _actuators;
+    std::function<int(const HostDeviceId&)> _playerOf;  ///< the N of a pad (N-th connected), 0 unknown
     std::vector<HapticWatch> _watches;
     std::vector<HapticStream> _streams;
     std::vector<HapticProbe> _probes;

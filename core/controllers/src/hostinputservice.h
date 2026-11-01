@@ -158,6 +158,8 @@ public:
     }
     /// RumbleActuator bits of @p device (0: no motors)
     uint8_t RumbleActuators(const HostDeviceId& device) const;
+    /// The N of the N-th pad connected (1..), 0 for a device that is no pad or unknown: what `play@N` and `player:` mean
+    int PlayerNumber(const HostDeviceId& device) const;
     /// A game profile's haptics (haptics.md §7) for @p instance: its sources and rules instead of the generic filters
     std::shared_ptr<IHapticFeed> HapticFeedFor(const std::string& instance, const HapticProfile& profile,
                                                const std::string& name);

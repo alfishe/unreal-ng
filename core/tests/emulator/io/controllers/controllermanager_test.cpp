@@ -24,6 +24,7 @@
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/io/mouse/mousemanager.h"
+#include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/ports/portdecoder.h"
 #include "gtest/gtest.h"
 #include "stdafx.h"
@@ -313,6 +314,49 @@ TEST_F(ControllerManager_Test, HostSource_SubmitsChangesOnly)
     const int before = source->samples;
     _emulator->RunNFrames(1);
     EXPECT_EQ(source->samples, before) << "detached";
+}
+
+// Boot-bound: a pad's key binding reaches the Sprinter's PS/2 keyboard, which native programs poll instead of the matrix
+TEST_F(ControllerManager_Test, HostSource_KeysReachTheSprinterPs2Keyboard)
+{
+    Init("SPRINTER");
+    auto* decoder = dynamic_cast<PortDecoder_Sprinter*>(_context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    auto source = std::make_shared<FakeHostSource>();
+    _manager->SetHostInputSource(source);
+    EXPECT_FALSE(decoder->GetInput().KeyboardStream().Busy());
+
+    source->keys = {ZXKEY_W};
+    _emulator->RunNFrames(1);
+    EXPECT_TRUE(decoder->GetInput().KeyboardStream().Busy()) << "the make code of W is on the PS/2 wire";
+    EXPECT_EQ(_manager->HostKeys(2), 0x02) << "the matrix overlay is kept as well";
+    EXPECT_TRUE(decoder->GetInput().KeyboardStream().IsHeld(PcKey::W));
+
+    // A pad's cursor key is Caps Shift with 7 on the matrix: the PS/2 side gets the Up arrow, no Shift, no 7
+    source->keys = {ZXKEY_CAPS_SHIFT, ZXKEY_7};
+    _emulator->RunNFrames(1);
+    const Ps2KeyboardStream& stream = decoder->GetInput().KeyboardStream();
+    EXPECT_TRUE(stream.IsHeld(PcKey::Up));
+    EXPECT_FALSE(stream.IsHeld(PcKey::LeftShift));
+    EXPECT_FALSE(stream.IsHeld(PcKey::Digit7));
+    EXPECT_FALSE(stream.IsHeld(PcKey::W)) << "W was let go";
+    source->keys.clear();
+    _emulator->RunNFrames(1);
+    EXPECT_FALSE(stream.IsHeld(PcKey::Up));
+
+    // The keys the matrix has no place for (`pc.delete` .. `pc.pagedown`: 0xE0..0xE5) reach PS/2 only
+    source->keys = {0xE0, 0xE4};
+    _emulator->RunNFrames(1);
+    EXPECT_TRUE(stream.IsHeld(PcKey::Delete));
+    EXPECT_TRUE(stream.IsHeld(PcKey::PageUp));
+    EXPECT_FALSE(stream.IsHeld(PcKey::Insert));
+    EXPECT_EQ(_manager->HostKeys(8), 0x11) << "held outside the matrix rows, five to a row";
+    for (uint8_t row = 0; row < 8; row++)
+        EXPECT_EQ(_manager->HostKeys(row), 0) << "the matrix stays clean";
+    source->keys.clear();
+    _emulator->RunNFrames(1);
+    EXPECT_FALSE(stream.IsHeld(PcKey::Delete));
+    EXPECT_FALSE(stream.IsHeld(PcKey::PageUp));
 }
 
 // Boot-bound (~15 ms): one 48K, four frames

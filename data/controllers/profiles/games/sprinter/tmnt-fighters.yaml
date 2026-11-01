@@ -1,17 +1,33 @@
 # Teenage Mutant Ninja Turtles Fighters 1.2 (ZX Online, 2025), the Sprinter build `TMNTF\tmntf.exe` (a DSS program; the same
 # download holds a TS-Conf build). Started from the hard disk, so no file is loaded by the emulator: apply this profile by hand
-# (`controllers apply`) or let the program's hash choose it where the host knows it. Menu: Player vs Computer, difficulty, fighter,
-# arena, then the fight (ENTER confirms each page). Keys (the game's own "Redefine keys" page, player 1): W / S / A / D move, V low
-# punch, G high punch, B low kick, H high kick, J block. Haptics (haptics.md §13 H5), found with TTD on a recorded fight (the health
-# bars measured on the screen against RAM, all 64 KB of the CPU space every 30-40 frames): a fighter's health is one byte, 135 at the
-# full bar (a bar pixel is half a unit), player 1 at #2F67, player 2 at #2FD0 (the records are #69 apart; #2F68 trails #2F67 by a
-# frame and #2F69 holds the damage taken so far), refilled to 135 at each round. A write that lowers it is a hit taken.
+# (`controllers apply`) or let the program's hash choose it where the host knows it. Main menu: Player vs Player, Player vs
+# Computer, Demo mode, Settings, Redefine keys; then (difficulty), fighters, arena, the fight. ENTER or the block key confirms a page.
+# Two players, two pads: the first pad connected is player 1, the second player 2 (`play@2` below, `player: 2` in the rules).
+# Player 1 is the game's Kempston joystick (Settings: Kempston Joy On, the Sprinter's `kempston` connector): the D-pad and the
+# left stick move in the menus and in the fight (the menus take no W / S), and its keys (the game's "Redefine keys" page) are V low
+# punch, G high punch, B low kick, H high kick, J block. Player 2 has the cursor keys for the directions and Del / Ins / End /
+# Home / PgUp for low punch / high punch / low kick / high kick / block: PC-only keys the ZX matrix cannot hold (`pc.*` key names, held
+# outside the TTD blob; ControllerManager mirrors the host keys to a PS/2 sink that wants them, SprinterInput::
+# WantsHostOverlayKeys; ControllerManager_Test.HostSource_KeysReachTheSprinterPs2Keyboard). The pad has the fighting-game layout:
+# X / Y punches, A / B kicks, LB / RB block, Menu ENTER; every face button is bound so none falls through to the default
+# profile's fire buttons. None of this was tried with a physical pad (the fight was driven by typing the keys and the joystick
+# through the WebAPI).
+# Haptics (haptics.md §13 H5), found with TTD on a recorded fight (the health bars measured on the screen against RAM, all 64 KB
+# of the CPU space every 30-40 frames): a fighter's health is one byte, 135 at the full bar (a bar pixel is half a unit),
+# player 1 at #2F67, player 2 at #2FD0 (#2F68 trails #2F67 by a frame and #2F69 holds the damage taken so far), refilled to 135
+# at each round. A write that lowers it is a hit taken; the damage is applied by #25A3 / #25BA (health = (ix+8) - damage, ix the
+# victim), so every kind of blow ends there. A blow against a held block (J) took no health in 7 s of the computer's attacks, so
+# a block makes no event of its own.
+# Who is a human: the byte #2FBA (player 1) is 0 for a human, 1 for the computer; #3022 is the same flag of player 2. Player vs
+# Player: 0 and 0; Player vs Computer: 0 and 1; the demo ("Computer1 vs Computer2", it starts when the menu is left alone): 1
+# and 1. Every source carries the flag of the player it feels for, so a computer's fight and the demo play nothing. A blow
+# that lands plays `shot` on the striker's pad, the damage `hit` on the victim's pad (`tick` of one motor was not felt on an
+# Elite 2: its motors do not spin up that fast). In Player vs Computer the second pad has nothing to feel.
 # Checked in real time (the program started from a copy of the MAME-pack system disk with \TMNTF added, profile applied by hand;
 # 70 s of walking right and random blows against the computer on Normal): 35 `hurt`, 63 `strike`, 1 `down` and 1 `won`, the health
-# bars on the screen followed the two bytes. The gamepad keys of the layer use the host key overlay as the other profiles do and
-# were not tried with a physical pad (the check typed the keys through the WebAPI).
-# Known limits: block and throw are not told apart (a blocked blow still takes the chip damage), the round and match results are
-# the two health bytes reaching 0, the special meter (#AA24 fell 71 -> 0 in a fight, not identified) is not used.
+# bars on the screen followed the two bytes.
+# Known limits: the results of a round and of a match are the two health bytes reaching 0; the byte #AA24 (71 -> 0 in a fight) is
+# not identified and not used.
 schema: 1
 kind: play
 id: builtin/game/tmnt-fighters
@@ -19,33 +35,53 @@ label: Teenage Mutant Ninja Turtles Fighters (Sprinter)
 match:
   machines: [SPRINTER]
   file_sha256: ["1956c19dcf61a1017603b6b296226ecd45b35b8b9963ade2780282468f768148"]
+players:
+  - { device: "auto:1", connector: kempston }
 layers:
   play:
-    "dpad.*":     { none: true }
-    lstick:       { none: true }
-    dpad.up:      { key: W }
-    dpad.down:    { key: S }
-    dpad.left:    { key: A }
-    dpad.right:   { key: D }
-    lstick.up:    { key: W }
-    lstick.down:  { key: S }
-    lstick.left:  { key: A }
-    lstick.right: { key: D }
+    "dpad.*":     { retro: "auto:dpad" }
+    lstick:       { retro: "auto:dpad" }
     west:         { key: V, label: Low punch }
     north:        { key: G, label: High punch }
     south:        { key: B, label: Low kick }
     east:         { key: H, label: High kick }
     lb:           { key: J, label: Block }
     rb:           { key: J, label: Block }
+    rt.click:     { none: true }
     menu:         { key: ENTER, label: Start }
+  play@2:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.up:      { key: UP }
+    dpad.down:    { key: DOWN }
+    dpad.left:    { key: LEFT }
+    dpad.right:   { key: RIGHT }
+    lstick.up:    { key: UP }
+    lstick.down:  { key: DOWN }
+    lstick.left:  { key: LEFT }
+    lstick.right: { key: RIGHT }
+    west:         { key: pc.delete, label: Low punch }
+    north:        { key: pc.insert, label: High punch }
+    south:        { key: pc.end, label: Low kick }
+    east:         { key: pc.home, label: High kick }
+    lb:           { key: pc.pageup, label: Block }
+    rb:           { key: pc.pageup, label: Block }
 haptics:
   sources:
-    hurt:   { probe: write, address: "0x2F67", when: decreased }
-    strike: { probe: write, address: "0x2FD0", when: decreased }
-    down:   { probe: write, address: "0x2F67", when: "==", value: 0 }
-    won:    { probe: write, address: "0x2FD0", when: "==", value: 0 }
+    hurt1:   { probe: write, address: "0x2F67", when: decreased, if: "M(#2FBA) == 0" }
+    hurt2:   { probe: write, address: "0x2FD0", when: decreased, if: "M(#3022) == 0" }
+    strike1: { probe: write, address: "0x2FD0", when: decreased, if: "M(#2FBA) == 0" }
+    strike2: { probe: write, address: "0x2F67", when: decreased, if: "M(#3022) == 0" }
+    down1:   { probe: write, address: "0x2F67", when: "==", value: 0, if: "M(#2FBA) == 0" }
+    down2:   { probe: write, address: "0x2FD0", when: "==", value: 0, if: "M(#3022) == 0" }
+    won1:    { probe: write, address: "0x2FD0", when: "==", value: 0, if: "M(#2FBA) == 0" }
+    won2:    { probe: write, address: "0x2F67", when: "==", value: 0, if: "M(#3022) == 0" }
   rules:
-    - { on: hurt, play: hit }
-    - { on: strike, play: tick, target: handle.low }
-    - { on: down, play: explosion, scale: 0.9 }
-    - { on: won, play: thump, scale: 0.6 }
+    - { on: hurt1, play: hit, player: 1 }
+    - { on: hurt2, play: hit, player: 2 }
+    - { on: strike1, play: shot, player: 1 }
+    - { on: strike2, play: shot, player: 2 }
+    - { on: down1, play: explosion, scale: 0.9, player: 1 }
+    - { on: down2, play: explosion, scale: 0.9, player: 2 }
+    - { on: won1, play: thump, scale: 0.6, player: 1 }
+    - { on: won2, play: thump, scale: 0.6, player: 2 }
