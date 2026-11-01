@@ -1,5 +1,7 @@
 # 041 — ecat-debugger
 
+**2026-10-31: moved on to [debuggers/qt/](../../../debuggers/qt/README.md) (`unreal-debugger`, built with the Qt apps and shipped in the packages).** This folder keeps the POC as it was concluded.
+
 **Result (2026-10-29): go.** [conclusions.md](conclusions.md), [proposal.md](proposal.md), [analysis.md](analysis.md),
 measurements: [port](measurements-2026-10-29-port.md), [cost](measurements-2026-10-29-cost.md),
 [follow-ups](measurements-2026-10-29-followups.md), [banks, pages and the scale](measurements-2026-10-30-pages-zoom.md).
