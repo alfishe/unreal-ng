@@ -13,7 +13,6 @@
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
-#include "debugger/ttd/ttddumpformat.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"

@@ -1,17 +1,18 @@
 # TTD port journals: replay without the outside world, and "when did the program ..."
 
 - **Date:** 2026-09-29
-- **Status:** implemented and landed for v1. **v1 was deleted on 2026-10-30** (TTD v2
-  migration, Phase 6): the engine (`TimeTravelController`) records the port journals
-  itself; the v1 code paths named below (`TimeTravelManager`, the analyzer's
-  `ttd_format.py`, the v1 `ttd.ksy`) are history.
+- **Status:** built. First landed in v1, which was deleted on 2026-10-30 (TTD v2
+  migration, Phase 6). The engine records the port journals as its bus journals
+  ([port-journals-on-engine.md](../../../../inprogress/2026-09-25-ttd-v2-migration/port-journals-on-engine.md)).
+  The v1 file layout below (flag bit 8, `ttd_format.py`, v1's `ttd.ksy`) is history;
+  the engine's file stores the journals as streams of schema 2 (`ttd.ksy`).
 - **Code:** `core/src/debugger/ttd/ttdportjournal.{h,cpp}` (the journals),
   `ttdportsearch.{h,cpp}` (the search), the hooks in `Z80::in` / `Z80::out`
-  (`core/src/emulator/cpu/z80.cpp`), the lifecycle in `TimeTravelManager`
-  (`timetravelmanager.cpp`), file flag bit 8 (`ttddumpformat.h`, `ttd.ksy`),
-  analyzer `parse_port_journal` (`tools/verification/ttd-analyzer/src/ttd_format.py`).
+  (`core/src/emulator/cpu/z80.cpp`), the lifecycle in `TimeTravelController`
+  (`timetravelcontroller.cpp`), the journals in the engine (`TimeTravelEngine::BusReads` /
+  `BusWrites`).
 - **Related:** [ttd-v1-architecture-and-format.md](ttd-v1-architecture-and-format.md)
-  (TTD v1 as a whole), TTD v2 requirements FR-20 and FR-21
+  (history: TTD v1 as a whole), TTD v2 requirements FR-20 and FR-21
   ([requirements.md](../../../../inprogress/2026-09-25-ttd-v2-migration/requirements.md) §2.5).
 
 ## 0. Summary
@@ -65,8 +66,8 @@ shows the replay diverge.
 **The engine (the default backend since Phase 5) records the journals on every machine** and plays them in every
 replay; the CPU writes straight into the engine's bus journals (2026-10-09,
 [port-journals-on-engine.md](../../../../inprogress/2026-09-25-ttd-v2-migration/port-journals-on-engine.md)), and
-`port_journal_active` is true unless the session has a gap. The scope below is v1's, kept until v1 is deleted
-(Phase 6).
+`port_journal_active` is true unless the session has a gap. The scope below is v1's (history: v1 was deleted in
+Phase 6).
 
 **On:** every classic machine - Pentagon, 48K, 128K, +2, +2A, +3, Scorpion,
 Profi, ATM, and the rest - as long as the General Sound slot does not hold a
@@ -275,24 +276,26 @@ Lua, Python):
 ## 10. "When did the program ...": searching the journals
 
 The journals are searched directly (`ttdportsearch.h`,
-`TimeTravelManager::SearchPortEvents`). Nothing is replayed, so a search is
+`TimeTravelController::SearchPortEvents`). Nothing is replayed, so a search is
 instant and answers the same on a loaded `.ttd` file as on the live session.
-It is refused while a recording is running (the emulation thread is still
-appending) and on sessions without the journals.
+A running recording is searched too: the search holds the CPU while it reads
+the journals (they grow on the thread that runs the machine), and answers an
+error only when the hold cannot be taken during a long run. Sessions without
+the journals are refused.
 
 **A saved file** is searched without loading it
-(`TimeTravelManager::SearchPortEventsInFile`; `file` on every surface): the
+(`TimeTravelController::SearchPortEventsInFile`; `file` on every surface): the
 file is read and checked like a load, but nothing is committed - the
 instance keeps its own session, even a recording in progress, and the
-file's machine model and ROM do not matter. The offline analyzer answers the
-same questions (`tools/verification/ttd-analyzer/run.sh search FILE EVENT
-[ARG] [NAME=VALUE ...] [--json]`, module `src/port_search.py`). The three -
-the live search, the file search and the analyzer - are checked against each
-other on the real recordings: `record_port_journal_fixtures.py` asks 27
-questions of the live session and of the file (checked equal) and writes the
-answers to `expected.json`, which the C++ test
-`TimeTravelController_PortJournalFixture_Test` and the analyzer's
-`tests/test_port_search.py` had to reproduce (deleted with v1's reader).
+file's machine model and ROM do not matter. Until v1 was deleted the offline
+analyzer answered the same questions (`run.sh search`, module
+`src/port_search.py`; history: the analyzer now reads schema 2 with `info`,
+`validate`, `parts` and `recover` only). The live search and the file search
+are checked against each other on the real recordings:
+`record_port_journal_fixtures.py` asks 27 questions of the live session and of
+the file (checked equal) and writes the answers to `expected.json`, which the
+C++ test `TimeTravelController_PortJournalFixture_Test` reproduces. The
+analyzer's `tests/test_port_search.py` did too; it was deleted with v1's reader.
 
 **Named events**, the same on every surface (CLI `ttd port-events`, WebAPI
 `POST /ttd/port-events`, MCP `time_travel` action `port_events`, Lua and
@@ -391,14 +394,18 @@ bits.
 
 ## 11. Not done yet
 
-- **No writes while replaying** (TTD v2 FR-20). Replay can still make a disk
-  controller write to its image. The gate belongs in the media layer, keyed by
-  the replay state.
-- **DMA and device interrupt vectors** (TTD v2 FR-21): TSConf, ZX Next, NeoGS
-  ZX-DMA; IM2 vectors if TSConf or Sprinter supply them.
-- **Replay barriers stay.** Tape control, disk writes and debugger edits still
-  stop a seek. For a session with the journal, tape and disk barriers are no
-  longer needed for the CPU's view; lifting them is a separate step.
+- ~~**No writes while replaying** (TTD v2 FR-20).~~ **Done on the engine**
+  (migration Phase 3, Step 6): writes a replay makes to write-through media are
+  held in memory until it ends (`HostWriteHold`), and a restore sets every medium
+  to the checkpoint's version (`MediaUndoLog`).
+- ~~**DMA and device interrupt vectors** (TTD v2 FR-21).~~ **Done on the engine**
+  (migration Phase 3, Step 1): the bus journals are recorded on every machine,
+  sector reads from images go into the media read journal (TS-Conf SD / IDE DMA,
+  the NeoGS card's SD), and interrupt vectors are recorded (`BusVectors`).
+- **Replay barriers.** On the engine tape and disk markers are crossed (the
+  journals carry the data) and debugger edits with their bytes are applied; a
+  debugger edit without its bytes, a reset and an unclassified marker still stop
+  a seek.
 - **Qt panel for the search.** Every automation surface has it; the Qt
   debugger does not show it yet (planned: PLAN #46, debugger-enhancements
   TODO item 7).

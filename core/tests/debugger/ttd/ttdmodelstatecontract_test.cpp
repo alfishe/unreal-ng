@@ -425,7 +425,7 @@ struct ContractDevice : ttd::TTDSerializable
 }  // namespace
 
 /// The registration check names what does not match: a descriptor naming
-/// another v1 id than the device, a descriptor whose size is not the device's, a time field
+/// another legacy id than the device, a descriptor whose size is not the device's, a time field
 /// outside the state, a dependency on a device the machine lacks
 TEST(TTDModelStateContract_Test, ADeviceNotMatchingItsDescriptorIsRefusedByName)
 {

@@ -1,6 +1,6 @@
 /// @file ttddevicetable_test.cpp
 /// @brief The engine's device table (Phase 2, Step 1): one check of the
-/// device set, restore order as v1's unless a device says otherwise, a set
+/// device set, restore order by legacy id unless a device says otherwise, a set
 /// version that changes with the set.
 
 #include <gtest/gtest.h>
@@ -50,7 +50,7 @@ TEST(TTDDeviceTable_Test, OrderIsV1sAscendingIdsWithoutDependencies)
 
 TEST(TTDDeviceTable_Test, ADeviceRestoresAfterTheOnesItNames)
 {
-    // A device with a lower v1 id that must load after a higher one
+    // A device with a lower legacy id that must load after a higher one
     TTDDeviceTable t;
     std::string err;
     ASSERT_TRUE(t.Build({Device(PeripheralId::Tape, "tape", 8, {{TTDDeviceType::Covox, "covox"}}),

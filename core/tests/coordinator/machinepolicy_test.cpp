@@ -77,8 +77,8 @@ Expected ExpectedCell(OpKind kind, MachineMode mode, bool endRecording)
         case OpKind::TimelineSeek:
         case OpKind::TtdLoad:
             return {false, SessionEffect::None, false, false};
-        // M6: a change of the machine itself ends the session and drops its history in every mode (TTD v1's refusal
-        // is the owner's); held where the machine state is written from another thread
+        // M6: a change of the machine itself ends the session and drops its history in every mode; held where the
+        // machine state is written from another thread
         case OpKind::RomLoad:
         case OpKind::StateTransfer:
             return {false, SessionEffect::MachineChanged, true, false};

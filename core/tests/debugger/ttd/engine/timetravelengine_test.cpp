@@ -1181,7 +1181,7 @@ TEST(TimeTravelEngine_Test, AMostlyUniformRegionCostsTheDeltaBaseItsContentOnly)
 
 namespace
 {
-/// A device added after the v1 ids froze (type 66 and on, no v1 id), one instance of several
+/// A device added after the legacy ids froze (type 66 and on, no legacy id), one instance of several
 class KeyedDevice : public TTDSerializable
 {
 public:
@@ -1199,8 +1199,8 @@ private:
 };
 }  // namespace
 
-/// Two instances of a type past the v1 ids (66) record side by side, each under its key: read back by key, through a
-/// session file (the device table names both, v1 id none), and restored each into its own device
+/// Two instances of a type past the legacy ids (66) record side by side, each under its key: read back by key, through
+/// a session file (the device table names both, legacy id none), and restored each into its own device
 TEST(TimeTravelEngine_DeviceKeys_Test, DevicesWithoutV1IdRecordSaveLoadAndRestoreByKey)
 {
     std::vector<uint8_t> ram(kTTDPieceSize, 0);
@@ -1230,7 +1230,7 @@ TEST(TimeTravelEngine_DeviceKeys_Test, DevicesWithoutV1IdRecordSaveLoadAndRestor
     std::vector<uint8_t> got;
     ASSERT_TRUE(engine.DeviceState(1, keyB, got));
     EXPECT_EQ(got, std::vector<uint8_t>(40, 0x81));
-    EXPECT_FALSE(engine.DeviceStateOfV1Id(1, static_cast<uint8_t>(PeripheralId::None), got)) << "no v1 id to find";
+    EXPECT_FALSE(engine.DeviceStateOfV1Id(1, static_cast<uint8_t>(PeripheralId::None), got)) << "no legacy id to find";
 
     TTDMemorySink sink;
     ASSERT_TRUE(TTDSessionFile::Save(engine, sink, err, {})) << err;

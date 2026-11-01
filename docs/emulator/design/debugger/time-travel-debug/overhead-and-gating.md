@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Measured — section 1a carries current numbers; the estimate tables below are kept for comparison |
+| **Status** | History. Section 1a was measured on v1 (deleted 2026-10-30); the estimates and the runtime knobs below are the original design. The engine's measured figures are in the migration's phase results ([phase-1-results.md](../../../../inprogress/2026-09-25-ttd-v2-migration/phase-1-results.md) to [phase-4-results.md](../../../../inprogress/2026-09-25-ttd-v2-migration/phase-4-results.md)). As built, the knobs `budget_mb`, `journal_mb`, `dense_seconds` and the thinning tiers do not exist: the engine keeps every frame, a history limit in frames or bytes drops whole segments, and the write journal is off by default and switched per recording (D40, D41) |
 | **Version** | 1.1 |
 | **Last updated** | 2026-08-20 |
 | **Parent TDD** | [time-travel-debugging-tdd.md](./time-travel-debugging-tdd.md) §6–§9, §14 |

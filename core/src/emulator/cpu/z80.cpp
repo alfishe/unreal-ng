@@ -297,7 +297,7 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     // so the trap is active in both debug and release sessions.
     if (pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad != nullptr)
     {
-        // While TTD records (the engine keeps the shortcut, v1 masks it) the
+        // While TTD records (the engine keeps the shortcut) the
         // trap is an edit with what it did - the block's bytes, the registers,
         // the tape cursor and its time - so a replay repeats it
         ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;

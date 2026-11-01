@@ -47,7 +47,7 @@ public:
     void TTDLoadState(const uint8_t* src) override;
     std::string TTDDeviceName() const override { return _name; }
     PeripheralId TTDPeripheralId() const override { return _id; }
-    /// One kind, SerialPort, whatever v1 id the port records under; the
+    /// One kind, SerialPort, whatever legacy id the port records under; the
     /// instance tells the ports of one machine apart: the machine's #xxEF port
     /// ("uart"), the ATM2IOESP card's ("atm2ioesp.uart"), the TS AVR's ZiFi
     /// line ("zifi.uart"), the UART cards in expansion slots 1 / 2 and their

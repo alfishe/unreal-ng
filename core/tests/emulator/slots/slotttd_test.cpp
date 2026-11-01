@@ -285,7 +285,7 @@ TEST(TtdSlots_Test, SessionMismatchRefused)
         EXPECT_NE(err.find("zxbus.2: recorded none, this machine moonsound"), std::string::npos) << err;
     }
     {
-        // The same cards in other slot numbers are still the same devices for a v1 file (one blob per id); the
+        // The same cards in other slot numbers are still the same devices by legacy id (one blob per id); the
         // engine's fingerprint and device keys tell the slots apart
         StagedMachine same("pentagon128k", "ay-socket = tsfm\nzxbus.1 = gs");
         ASSERT_TRUE(same.Ok());
@@ -296,7 +296,7 @@ TEST(TtdSlots_Test, SessionMismatchRefused)
     }
 }
 
-/// The AY socket's `ay` and `ts` boards share one blob id (TurboSound): a v1 file cannot tell them apart, so a side
+/// The AY socket's `ay` and `ts` boards share one blob id (TurboSound): a set keyed by it cannot tell them apart, so a side
 /// that does not know the board matches either. The live registry and the engine's device table name the board by
 /// the device's instance (`ay-socket.ts`), and there the two differ. Pure device sets
 TEST(TtdSlots_Test, SocketBoardsToldApartByTheInstance)
@@ -455,8 +455,8 @@ TEST(TtdSlots_Test, MigratedCardsKeepBlobIds)
 }
 
 /// Item 4 (architecture.md §8): two cards carrying one module type. The engine keys devices by {type, instance}, the
-/// instance named by slot ("zxbus.1.saa"), so both are recorded side by side (D23); v1 keeps one blob per id and
-/// refuses that machine naming both. No card pair of the catalog fits two of one module today, hence the
+/// instance named by slot ("zxbus.1.saa"), so both are recorded side by side (D23), which the legacy ids could not tell
+/// apart. No card pair of the catalog fits two of one module today, hence the
 /// registry-level test
 TEST(TtdSlots_Test, TwoInstancesOfOneModuleAreTwoDevices)
 {
@@ -474,9 +474,6 @@ TEST(TtdSlots_Test, TwoInstancesOfOneModuleAreTwoDevices)
 
     std::string error;
     EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
-    EXPECT_FALSE(registry.V1Recordable(error));
-    EXPECT_NE(error.find("zxbus.1.saa"), std::string::npos) << error;
-    EXPECT_NE(error.find("zxbus.2.saa"), std::string::npos) << error;
 
     // The same key twice is still one device too many
     FakeModule third(PeripheralId::Saa1099);

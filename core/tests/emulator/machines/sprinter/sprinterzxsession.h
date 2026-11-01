@@ -276,7 +276,7 @@ protected:
             _emulator->RunTStates(cpu->t < cpu->_frameLimit ? cpu->_frameLimit - cpu->t : 1u, true);
     }
 
-    /// What TTD records of the machine now: every device's blob (by v1 id) and, under key 0x100 + r, every memory
+    /// What TTD records of the machine now: every device's blob (by legacy id) and, under key 0x100 + r, every memory
     /// region of the recording (machine RAM, video RAM, fast RAM, the cards' memories)
     using MachineState = std::unordered_map<uint32_t, std::vector<uint8_t>>;
     MachineState Recordable()

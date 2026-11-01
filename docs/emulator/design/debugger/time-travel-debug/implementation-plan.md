@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed |
+| **Status** | History: the plan for v1 (`TimeTravelManager`, deleted 2026-10-30) and the GDB stub, as proposed. The engine that replaced v1 was built by the [TTD v2 migration](../../../../inprogress/2026-09-25-ttd-v2-migration/README.md); its phases are not this plan's |
 | **Version** | 1.0 |
 | **Last updated** | 2026-07-19 |
 | **Governs** | [time-travel-debugging-tdd.md](./time-travel-debugging-tdd.md) (phases 1–5), [gdb-reverse-debugging-tdd.md](./gdb-reverse-debugging-tdd.md) (G1–G4), [time-travel-ux.md](./time-travel-ux.md), [overhead-and-gating.md](./overhead-and-gating.md) |

@@ -387,7 +387,7 @@ public:
     /// otherwise (Phase 5, C1d): the core records into it inline, like a direct call
     ttd::TTDCoverageIndex* ttdCoverage = nullptr;
     /// Who takes memory writes (debug write path) and port OUTs while time travel
-    /// records: v1's manager or the engine's controller (Phase 5, C1d)
+    /// records: the engine's controller (Phase 5, C1d)
     ttd::ITTDWriteSink* ttdWriteSink = nullptr;
     /// endregion </Child object references>
 

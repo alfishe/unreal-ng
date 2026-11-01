@@ -103,7 +103,7 @@ TTDEventRole TTDEventLog::RoleOf(const TTDEvent& ev)
         case TTDEventKind::MediaWrite:
             return TTDEventRole::Fact;
         case TTDEventKind::DebuggerEdit:
-            // A v1 edit has only its reason, not the bytes
+            // An edit without its bytes has only its reason
             return ev.payload && ev.args[0] == kEditCarriesData ? TTDEventRole::Input : TTDEventRole::Barrier;
         case TTDEventKind::SnapshotLoad:
         case TTDEventKind::MediaChange:
@@ -114,7 +114,7 @@ TTDEventRole TTDEventLog::RoleOf(const TTDEvent& ev)
         case TTDEventKind::InterruptFrame:
         case TTDEventKind::ReplaySourceChange:
             return TTDEventRole::Fact;
-        default:   // v1 records without their data: a reset (D39), an unclassified marker
+        default:   // markers without their data: a reset (D39), an unclassified marker
             return TTDEventRole::Barrier;
     }
 }
@@ -127,8 +127,8 @@ void TTDEventLog::Clear()
 }
 
 // args layout of an input event: key u8 @0, pressed u8 @1, dx i16 @2, dy i16 @4,
-// buttonMask u8 @6, wheelSteps i8 @7, value u8 @8, netIndex u32 @12 (v1's
-// network table index; the engine's network fields are packed by PackNet)
+// buttonMask u8 @6, wheelSteps i8 @7, value u8 @8, netIndex u32 @12 (the input
+// journal's network table index; the engine's network fields are packed by PackNet)
 TTDEvent TTDEventLog::FromInput(TTDMachineTime t, const TTDInputEvent& in)
 {
     TTDEvent ev;

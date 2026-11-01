@@ -2309,8 +2309,8 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
         return true; // already the requested personality
 
     // FR-4: the switch changes the device set under any TTD history: the coordinator ends the session and drops its
-    // history (no checkpoint could restore the outgoing card into the new one); TTD v1 refuses it while a user
-    // recording runs (the reason is also reported at request time)
+    // history (no checkpoint could restore the outgoing card into the new one); a refusal is also reported at request
+    // time
     coordinator::MachineOp op;
     op.kind = coordinator::OpKind::GsCardSwitch;
     op.summary = std::string(gsImplementationLabel(_gs->implementation())) + " -> " +

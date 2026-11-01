@@ -232,8 +232,8 @@ TEST(TimeTravelController_RzxPlayback_Test, EveryRzxFrameEndIsAFact)
 namespace
 {
 /// Record @p frames video frames of @p rzx from its start; for each target
-/// RZX frame, a TTD seek to the engine's fact (from v1's data and from the
-/// engine's) equals SeekRzx on a second machine
+/// RZX frame, a TTD seek to the engine's fact equals SeekRzx on a second
+/// machine
 void ExpectParity(const std::string& model, const std::string& rzx, unsigned frames)
 {
     SCOPED_TRACE(rzx);

@@ -633,8 +633,7 @@ public:
     /// the switch itself runs at the next frame boundary on the emulation
     /// thread (handleFrameStart), the only point where the card may be
     /// deleted/recreated safely
-    /// Refused (false, reason in `error`) where the coordinator's rules refuse it (TTD v1: while a user recording
-    /// runs) or the slot plan does
+    /// Refused (false, reason in `error`) where the coordinator's rules refuse it or the slot plan does
     bool requestGeneralSoundCardSwitch(GSTypeKind target, std::string* error = nullptr);
 
     /// What the GS slot holds now, safe to read from any thread (the GUI,

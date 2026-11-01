@@ -25,8 +25,9 @@
             operation["responses"]["400"]["description"] = "bad-request, kind-mismatch, unreadable-source, unknown-format, does-not-fit, ambiguous-slot";
             operation["responses"]["404"]["description"] = "unknown-slot, unknown-emulator";
             operation["responses"]["409"]["description"] =
-                "dirty (say save, export or discard), recording (TTD v1 records; end_recording; on the engine a change "
-                "while recording lands at the next frame boundary), in-use";
+                "dirty (say save, export or discard), recording (a change TTD refuses while it records, the message "
+                "says why; a medium change while recording is not refused: it lands at the next frame boundary, "
+                "end_recording ends the recording instead), in-use";
             operation["responses"]["501"]["description"] = "not-supported";
         };
 

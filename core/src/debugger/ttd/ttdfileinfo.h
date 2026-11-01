@@ -33,7 +33,7 @@ namespace ttd
 struct TTDRecordedDevice
 {
     TTDDeviceKey key;
-    PeripheralId legacyId = PeripheralId::None;   ///< its v1 id, None when it has none (or the file does not say)
+    PeripheralId legacyId = PeripheralId::None;   ///< its legacy id, None when it has none (or the file does not say)
 };
 
 /// The machine a session was recorded on: what an instance must match to load it.
@@ -45,18 +45,17 @@ struct TTDRecordedMachine
     uint64_t romSignature = 0;        ///< FNV-1a of the ROM region; 0 = unknown (not checked)
 
     /// The fitted devices: their state is in every checkpoint. The set the
-    /// loader checks the live machine against (an engine file's device table,
-    /// a v1 file's blob ids)
+    /// loader checks the live machine against (the file's device table)
     std::vector<TTDRecordedDevice> devices;
-    std::vector<std::string> peripherals;  ///< Their names (DeviceDisplayName), ascending v1 id, then type, instance
+    std::vector<std::string> peripherals;  ///< Their names (DeviceDisplayName), ascending legacy id, then type, instance
     /// Devices fitted but not recorded by design (the lightweight General Sound)
     std::vector<TTDRecordedDevice> notRecordedDevices;
     std::vector<std::string> notRecorded;  ///< Their names
 
     /// A device of @p type is fitted (recorded or not)
     bool Fits(TTDDeviceType type) const;
-    /// The recorded devices that have a v1 id, as the set of those ids (what a v1 file's header names; the
-    /// `peripheral_mask` of the automation surfaces). A device without a v1 id is not in it
+    /// The recorded devices that have a legacy id, as the set of those ids (the `peripheral_mask` of the
+    /// automation surfaces). A device without a legacy id is not in it
     PeripheralMask V1Mask() const;
 
     /// General Sound slot: NONE, Z80 (GS with its Z80), LW (lightweight), NGS (NeoGS)
@@ -100,17 +99,14 @@ struct TTDFileInfo
     TTDRecordedMachine machine;
 };
 
-/// Name of a v1 peripheral id ("betadisk", "gs", "neogs", ...); "id<N>" for an
+/// Name of a legacy peripheral id ("betadisk", "gs", "neogs", ...); "id<N>" for an
 /// id this build does not know.
 std::string PeripheralIdName(uint8_t id);
 
-/// The name automation shows for a recorded device: its v1 id's name (the names
+/// The name automation shows for a recorded device: its legacy id's name (the names
 /// sessions always had), a device of a pre-freeze type without one by its
 /// type's, any other by its instance
 std::string DeviceDisplayName(const TTDRecordedDevice& device);
-
-/// The devices of a v1 file's mask: id i set = v1 id i (type i, its name as instance)
-std::vector<TTDRecordedDevice> DevicesOfV1Mask(const PeripheralMask& mask);
 
 /// The General Sound personality a recorded machine has fitted (NONE when no
 /// General Sound card was fitted).

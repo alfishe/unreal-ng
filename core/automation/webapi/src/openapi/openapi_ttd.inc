@@ -54,7 +54,7 @@
         "- `black_box`: record as the black box (the engine; D29): keep the last `minutes` (default 5, 1..1440) "
         "and never hold turbo or the host speed - the recording stops before either takes effect, its history kept, "
         "and a new session starts once nothing accelerates; fast loaders' traps are recorded. Absent or false: an "
-        "explicit recording, which holds the machine at real speed. v1 answers 400 for black_box true";
+        "explicit recording, which holds the machine at real speed";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["required"] = true;
@@ -110,8 +110,8 @@
         op["description"] =
             "Replays frames `from_frame`..`to_frame` (both optional; default: the whole session) with every memory "
             "write collected, and adds them to the write journal: the frames join its spans. Frames already covered "
-            "are left as they are; the session's last frame and frames holding a v1 marker without its data are not "
-            "built. About 2-4 ms per frame, like RZX playback: the request answers when done; GET /ttd/journal shows "
+            "are left as they are; the session's last frame and frames holding a barrier (a marker without the data a "
+            "replay needs) are not built. About 2-4 ms per frame, like RZX playback: the request answers when done; GET /ttd/journal shows "
             "the progress meanwhile (`write_journal_build`) and POST /ttd/journal/build/cancel stops it (what was "
             "built is kept). Not while recording.";
         op["parameters"][0]["name"] = "id";
@@ -650,7 +650,7 @@
             op["responses"]["400"]["description"] = "Missing or bad option, a memory the session does not record, a frame "
                                                     "before the first checkpoint";
             op["responses"]["404"]["description"] = "No recorded history, or the instance is not found";
-            op["responses"]["501"]["description"] = "Backend v1 (no piece store)";
+            op["responses"]["501"]["description"] = "Time travel is not available for this instance";
         }
         Json::Value& at = paths[kAt]["post"];
         at["summary"] = "Read a memory as it was at a past checkpoint, without seeking";

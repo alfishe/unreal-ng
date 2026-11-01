@@ -380,7 +380,7 @@ TEST_F(TTD_Restore_Test, Restore_PreservesPortLatchesAndPaging)
     // 0xC000 should now land in the restored bank's storage.
     // (A full MemIf pointer comparison would be tighter but couples the
     //  test to Memory internals; the indirect write check is sufficient
-    //  for v1 and matches the divergence corpus strategy.)
+    //  here and matches the divergence corpus strategy.)
 }
 
 TEST_F(TTD_Restore_Test, Restore_PreservesDebuggerForcedWindows1And2)

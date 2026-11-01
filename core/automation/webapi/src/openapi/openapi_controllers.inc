@@ -23,7 +23,8 @@
             operation["responses"]["400"]["description"] = "bad-request (unknown verb, option or device)";
             operation["responses"]["404"]["description"] = "unknown-connector, unknown-emulator";
             operation["responses"]["409"]["description"] =
-                "incompatible, fixed, owned-by-replay, recording (TTD v1), ambiguous-connector";
+                "incompatible, fixed, owned-by-replay, recording (Kempston options while TTD records: they are not "
+                "journaled), ambiguous-connector";
         };
 
         Json::Value& list = paths["/api/v1/emulator/{id}/controllers"]["get"];

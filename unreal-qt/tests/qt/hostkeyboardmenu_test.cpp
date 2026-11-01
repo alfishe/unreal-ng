@@ -4,7 +4,7 @@
 // queued event later, so the menu must cope with a binding to an instance that
 // is being removed or already released (2026-10-02 crashes: pKeyboard read
 // through a null context in the aboutToShow handler; a selection-change
-// adoption reading the TimeTravelManager of an instance freed under it).
+// adoption reading the TimeTravelManager (TTD v1, since deleted) of an instance freed under it).
 //
 // The menu is a real QMenu popped up on the offscreen platform: popup() emits
 // aboutToShow exactly as opening it from the menu bar does.
