@@ -128,3 +128,12 @@ TEST_F(SdHistory_Test, NextCardsListed)
     EXPECT_TRUE(_context->histories.With("sd0", [](history::IDeviceHistory&) {}));
     EXPECT_TRUE(_context->histories.With("sd1", [](history::IDeviceHistory&) {}));
 }
+
+/// Scorpion + GMX: its Z-Controller SD under the registry's `sd-zc`, and the machine's port histories beside it
+TEST_F(SdHistory_Test, GmxCardListed)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("GMX"));
+    EXPECT_TRUE(_context->histories.With("sd-zc", [](history::IDeviceHistory&) {}));
+    EXPECT_TRUE(_context->histories.With("sd-zc.ports", [](history::IDeviceHistory&) {}));
+    EXPECT_TRUE(_context->histories.With("board.ports", [](history::IDeviceHistory&) {}));
+}
