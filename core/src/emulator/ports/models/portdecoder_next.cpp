@@ -209,10 +209,17 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         _context->pMediaManager->RegisterSlot(_sdSlot1);
     }
     _context->pConditionMachine = this;
+    // The journals on the device history pattern (the SD one stays the journal's: sd0 / sd1 are the cards' own)
+    _context->histories.Add(&_board->Journal().History());
+    _context->histories.Add(&_intJournal.History());
+    _context->histories.Add(&_divMmc->Journal().History());
 }
 
 PortDecoder_Next::~PortDecoder_Next()
 {
+    _context->histories.Remove(&_board->Journal().History());
+    _context->histories.Remove(&_intJournal.History());
+    _context->histories.Remove(&_divMmc->Journal().History());
     // The peers outlive the decoder (the network manager owns them): they must not call back into this one
     for (unsigned i = 0; i < NextUart::kChannels; i++)
         if (ISerialPeer* peer = _uart.Peer(i))
