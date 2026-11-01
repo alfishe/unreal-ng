@@ -40,6 +40,8 @@ StateNode GmxPaging(EmulatorContext* context)
     config["blkex2"] = (card.p00 & 0x40) != 0;
     config["pentagon_int"] = (card.p00 & 0x80) != 0;
     config["reconf_pending"] = gmx->IsReconfigurationPending();
+    config["firmware_booting"] = (gmx->BootState() & PortDecoder_ScorpionGMX::BOOT_FIRMWARE_RUNNING) != 0;
+    config["autostart_waits"] = gmx->IsAutostartDeferred();
     ret["port_00"] = config;
 
     StateNode plane = StateNode::Object();

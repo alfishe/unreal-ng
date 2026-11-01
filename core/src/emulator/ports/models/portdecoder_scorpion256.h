@@ -116,9 +116,13 @@ public:
     void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override { out.push_back(&_smucNvram); }
     /// endregion </TTD model-specific state>
 
-    /// [SMUC] NvramFile as a path: a bare name is in the settings folder (FileHelper::GetWritablePath); empty = none or
-    /// persistence off
+    /// [SMUC] NvramFile as a path, one per firmware: the ROM file's name joins the stem ("gmx-smuc-nvram-gmx644.bin").
+    /// A bare name is in the settings folder (FileHelper::GetWritablePath); empty = none or persistence off
     std::string SmucNvramPath() const;
+    /// [SMUC] NvramFile as written, without the ROM name (the image all firmwares shared before)
+    std::string SmucNvramBasePath() const;
+    /// The model's ROM file name without folder and extension
+    std::string SmucNvramRomName() const;
     /// [SMUC] NvramFile into the board, once, while it is fitted (the first reset or the first SMUC access)
     void LoadSmucNvram();
     /// Tests: a GMX boot must not depend on what an earlier test's machine saved (core-tests main turns it off)

@@ -838,6 +838,12 @@ void PortDecoder_Scorpion256::LoadSmucNvram()
     const std::string nvramPath = SmucNvramPath();
     if (!nvramPath.empty() && _smucNvram.LoadImage(nvramPath))
         return;
+    // The one image every firmware shared before the files were per ROM: its settings carry over, and the firmware
+    // initializes them itself when they are another's
+    const std::string sharedPath = SmucNvramBasePath();
+    if (!sharedPath.empty() && sharedPath != nvramPath && FileHelper::FileExists(sharedPath) &&
+        _smucNvram.LoadImage(sharedPath))
+        return;
     // No saved image yet: the one the config ships (the firmware's own first initialization), else blank cells
     const char* initialPath = _context->config.smuc_nvram_initial_path;
     if (initialPath[0] != '\0' && !_smucNvram.LoadImage(initialPath))
@@ -845,6 +851,25 @@ void PortDecoder_Scorpion256::LoadSmucNvram()
 }
 
 std::string PortDecoder_Scorpion256::SmucNvramPath() const
+{
+    const std::string path = SmucNvramBasePath();
+    if (path.empty())
+        return {};
+    // One image per firmware: each ROM keeps its own settings, signature and checksums, and a firmware that finds
+    // another's cells initializes them (ProfROM 5.00 resets the clock to its 18.10.98 too)
+    const std::string rom = SmucNvramRomName();
+    if (rom.empty())
+        return path;
+    std::filesystem::path keyed = FileHelper::ToFsPath(path);
+    const auto stem = keyed.stem().u8string();
+    const auto extension = keyed.extension().u8string();
+    keyed.replace_filename(FileHelper::ToFsPath(std::string(stem.begin(), stem.end()) + "-" + rom +
+                                                std::string(extension.begin(), extension.end())));
+    const auto text = keyed.u8string();
+    return std::string(text.begin(), text.end());
+}
+
+std::string PortDecoder_Scorpion256::SmucNvramBasePath() const
 {
     const char* path = _context->config.smuc_nvram_path;
     if (!s_nvramPersistence || path[0] == '\0')
@@ -854,6 +879,23 @@ std::string PortDecoder_Scorpion256::SmucNvramPath() const
     if (FileHelper::ToFsPath(path).is_relative())
         return FileHelper::PathCombine(FileHelper::GetWritablePath(), path);
     return path;
+}
+
+std::string PortDecoder_Scorpion256::SmucNvramRomName() const
+{
+    const CONFIG& config = _context->config;
+    const char* rom = config.mem_model == MM_GMX       ? config.gmx_rom_path
+                      : config.mem_model == MM_PROFSCORP ? config.prof_rom_path
+                                                         : config.scorp_rom_path;
+    // The file name alone; the config writes it with either separator ("rom\\gmx644.rom")
+    std::string name(rom);
+    const size_t slash = name.find_last_of("/\\");
+    if (slash != std::string::npos)
+        name.erase(0, slash + 1);
+    const size_t dot = name.find_last_of('.');
+    if (dot != std::string::npos && dot > 0)
+        name.erase(dot);
+    return name;
 }
 
 PortDecoder::RtcBinding PortDecoder_Scorpion256::GetRtcBinding()

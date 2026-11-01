@@ -635,6 +635,15 @@ public:
     /// memory-manager defaults when the requested mode is RM_DOS). Base: none.
     virtual void ApplyBootROMDefaults(ROMModeEnum mode) { (void)mode; }
 
+    /// The ROM mode a reset asked for @p mode really starts in (Core::Reset, before reset()). Base: @p mode. A model
+    /// whose CPU always starts in its own firmware answers that (GMX: the loader), or defers a disk autostart's
+    /// RM_DOS until the firmware has booted (IsAutostartDeferred)
+    virtual ROMModeEnum ResolveResetROMMode(ROMModeEnum mode) { return mode; }
+
+    /// A disk autostart waits for the model's firmware boot: the TR-DOS start comes later, so the autostart's
+    /// command loop hook leaves earlier TR-DOS runs alone. Base: never
+    virtual bool IsAutostartDeferred() const { return false; }
+
     /// Re-run the model-specific set_banks() RAM mapping from the model's latches.
     /// Called by Memory::UpdateZ80Banks() for every model: ATM710/ATM3/+2A/+3 own
     /// the whole memory manager; Profi, Spectrum 128 and the Pentagons derive the

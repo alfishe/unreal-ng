@@ -12,6 +12,10 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/io/fdc/diskautostart.h>
+#include <emulator/io/fdc/diskimage.h>
+#include <emulator/io/fdc/fdd.h>
+#include <emulator/io/fdc/trdoscatalog.h>
 #include <emulator/io/keyboard/keyboard.h>
 #include <emulator/memory/memory.h>
 #include <gtest/gtest.h>
@@ -341,4 +345,112 @@ TEST_F(GmxBoot_Test, SmucNvramStartsFromTheShippedImage)
     EXPECT_EQ(gmx->GetSMUCNvram().GetEEPROMByte(0x000), 0x65) << "NVRAM signature";
     EXPECT_EQ(gmx->GetSMUCNvram().GetEEPROMByte(0x0FE), 0xED) << "NVRAM checksum low";
     EXPECT_EQ(gmx->GetSMUCNvram().GetEEPROMByte(0x0FF), 0x97) << "NVRAM checksum high";
+}
+
+/// @brief Each firmware keeps its own NVRAM file: the ROM file's name joins [SMUC] NvramFile's stem, so ProfROM 5.00
+///        and 6.44 do not reinitialize each other's cells (5.00 resets the clock to 18.10.98 on a foreign signature)
+TEST_F(GmxBoot_Test, SmucNvramFileIsPerFirmware)
+{
+    auto* gmx = dynamic_cast<PortDecoder_ScorpionGMX*>(_context->pPortDecoder);
+    ASSERT_NE(gmx, nullptr);
+    std::snprintf(_context->config.smuc_nvram_path, sizeof _context->config.smuc_nvram_path, "%s", "gmx-smuc-nvram.bin");
+    PortDecoder_Scorpion256::SetNvramPersistenceAllowed(true);
+    std::snprintf(_context->config.gmx_rom_path, sizeof _context->config.gmx_rom_path, "%s", "rom\\gmx644.rom");
+    const std::string modern = gmx->SmucNvramPath();
+    std::snprintf(_context->config.gmx_rom_path, sizeof _context->config.gmx_rom_path, "%s", "rom/gmx.rom");
+    const std::string old = gmx->SmucNvramPath();
+    const std::string shared = gmx->SmucNvramBasePath();
+    PortDecoder_Scorpion256::SetNvramPersistenceAllowed(false);
+
+    EXPECT_TRUE(modern.ends_with("gmx-smuc-nvram-gmx644.bin")) << modern;
+    EXPECT_TRUE(old.ends_with("gmx-smuc-nvram-gmx.bin")) << old;
+    EXPECT_TRUE(shared.ends_with("gmx-smuc-nvram.bin")) << shared;
+}
+
+/// @brief A disk autostart right after power-on (a disk dropped on a machine just started): the quick reset into
+///        TR-DOS waits for the firmware boot, then TR-DOS runs the disk's program. Before, the quick reset came up
+///        with ProfROM's set-up half done: garbage or a bare A> prompt
+class GmxAutostart_Test : public GmxBoot_Test
+{
+protected:
+    /// The first bytes of the catalog file @p file
+    std::vector<uint8_t> FileHead(DiskImage& image, const TrdosFile& file, size_t count)
+    {
+        uint8_t* data = image.getTrack(file.firstTrack)->getDataForSector(file.firstSector);
+        return std::vector<uint8_t>(data, data + count);
+    }
+
+    /// The BASIC program at PROG begins with @p head
+    bool ProgramIs(const std::vector<uint8_t>& head)
+    {
+        const uint16_t prog = EmulatorTestHelper::ReadSysVar16(_emulator.get(), 0x5C53);
+        if (prog < 0x5CC0)
+            return false;
+        for (size_t i = 0; i < head.size(); i++)
+        {
+            if (_context->pMemory->MapZ80AddressToPhysicalAddress(static_cast<uint16_t>(prog + i))[0] != head[i])
+                return false;
+        }
+        return true;
+    }
+
+    PortDecoder_ScorpionGMX* Gmx() const { return dynamic_cast<PortDecoder_ScorpionGMX*>(_context->pPortDecoder); }
+
+    /// Autostarts @p name at power-on and runs until the program @p pick chooses from the catalog is loaded
+    template <typename Pick>
+    void AutostartAtPowerOn(const char* name, Pick pick)
+    {
+        ASSERT_NE(Gmx(), nullptr);
+        const Emulator::DiskAutostartResult result =
+            _emulator->AutostartDisk(TestPathHelper::GetTestDataPath(std::string("loaders/trd/") + name));
+        ASSERT_TRUE(result.started) << result.message;
+        EXPECT_TRUE(Gmx()->IsAutostartDeferred()) << "the loader runs first";
+        EXPECT_EQ(P7EFD() & 0x70, 0x00) << "plane 0: the loader";
+
+        DiskImage* image = _context->coreState.diskDrives[0]->getDiskImage();
+        TrdosCatalog catalog;
+        ASSERT_TRUE(catalog.Parse(*image));
+        const TrdosFile* file = pick(catalog);
+        ASSERT_NE(file, nullptr);
+        const std::vector<uint8_t> head = FileHead(*image, *file, 8);
+
+        _emulator->EnableTurboMode();
+        const int toDos = EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !Gmx()->IsAutostartDeferred(); }, 600, 5);
+        ASSERT_LT(toDos, 600) << "the firmware boot never ended, 7EFD=" << std::hex << int(P7EFD());
+        const int toProgram = EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ProgramIs(head); }, 600, 1);
+        EXPECT_LT(toProgram, 600) << "TR-DOS did not load the program, pc=" << std::hex << _context->pCore->GetZ80()->pc;
+        EXPECT_EQ(P7EFD() & 0x70, 0x40) << "plane 4: ProfROM's TR-DOS";
+        EXPECT_FALSE(_context->pDiskAutostart->IsHookPending());
+    }
+};
+
+TEST_F(GmxAutostart_Test, BootWaitsForTheFirmwareBoot)
+{
+    AutostartAtPowerOn("atarin.trd", [](TrdosCatalog& catalog) { return catalog.FindBoot(); });
+}
+
+/// @brief The firmware's own TR-DOS runs during its boot (the SMUC drive latch): the RUN "<name>" hook waits for the
+///        autostart's TR-DOS start instead of firing there
+TEST_F(GmxAutostart_Test, NamedProgramWaitsForTheFirmwareBoot)
+{
+    AutostartAtPowerOn("across_the_edge_by_demarche.trd", [](TrdosCatalog& catalog) {
+        return catalog.BasicFiles().empty() ? nullptr : catalog.BasicFiles()[0];
+    });
+}
+
+/// @brief Once the firmware has booted the autostart is the quick reset: TR-DOS at once, no loader
+TEST_F(GmxAutostart_Test, BootedMachineStartsTrdosAtOnce)
+{
+    ASSERT_NE(Gmx(), nullptr);
+    _emulator->EnableTurboMode();
+    const int toMenu = EmulatorTestHelper::RunUntil(
+        _emulator.get(), [&] { return !(Gmx()->BootState() & PortDecoder_ScorpionGMX::BOOT_FIRMWARE_RUNNING); }, 600, 5);
+    ASSERT_LT(toMenu, 600);
+
+    const Emulator::DiskAutostartResult result =
+        _emulator->AutostartDisk(TestPathHelper::GetTestDataPath("loaders/trd/atarin.trd"));
+    ASSERT_TRUE(result.started) << result.message;
+    EXPECT_FALSE(Gmx()->IsAutostartDeferred());
+    EXPECT_EQ(P7EFD() & 0x70, 0x40) << "plane 4 at once";
+    EXPECT_TRUE(_context->emulatorState.flags & CF_TRDOS);
 }

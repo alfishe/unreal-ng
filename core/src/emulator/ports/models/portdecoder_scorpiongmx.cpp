@@ -50,6 +50,11 @@ void PortDecoder_ScorpionGMX::reset()
     EmulatorState& state = *_state;
     GmxState& gmx = state.gmx;
 
+    _planeBeforeReset = static_cast<uint8_t>(state.scorpion.p7EFD & P7EFD_PLANE_MASK);
+    _p7FBABeforeReset = state.scorpion.p7FBA;
+    _firmwareRunning = true;  // the loader runs again (the autostart's RM_DOS puts the booted state back)
+    _dosEntryDue = false;
+
     // FIXROM: RESET leaves the plane where it is (manual, #00 bit 4)
     const uint8_t keptPlane = (gmx.p00 & P00_FIXROM) ? static_cast<uint8_t>(state.scorpion.p7EFD & P7EFD_PLANE_MASK) : 0;
 
@@ -75,6 +80,77 @@ void PortDecoder_ScorpionGMX::reset()
     // RESET clears #7EFD bit 3: back to the Scorpion raster
     if (_context->pScreen)
         _context->pScreen->InitRaster();
+}
+
+void PortDecoder_ScorpionGMX::ApplyBootROMDefaults(ROMModeEnum mode)
+{
+    if (mode != RM_DOS)
+        return;
+
+    // The real card has no such reset: the disk autostart wants TR-DOS at once, as on the plain Scorpion. Only after
+    // the firmware has booted (ResolveResetROMMode): TR-DOS needs ProfROM's set-up in RAM. The plane the loader chose
+    // for the scheme (Scorpion: 4, gmx644's ProfROM; Pentagon: 1); a program that left plane 0 gets the Scorpion one.
+    // The SMUC virtual drive latch too: gmx644's TR-DOS reads #7FBA on every disk access (D7 = drive A, D6 = B: 1 =
+    // the real floppy, 0 = an image on the hard disk through the Shadow Monitor, DOS page #08CB). The firmware's own
+    // boot writes #FF there (page 23 #22F5); a reset clears it, and TR-DOS then asks the monitor for drive A
+    // instead of reading the floppy: no boot. The autostart's image sits in drive A, so A reads the floppy whatever
+    // the latch held before (a ProfROM that left A on the hard disk image too)
+    constexpr uint8_t kScorpionPlane = 0x40;
+    constexpr uint8_t kRealDrives = 0xFF;
+    constexpr uint8_t kRealDriveA = 0x80;
+    EmulatorState& state = *_state;
+    const uint8_t plane = _planeBeforeReset ? _planeBeforeReset : kScorpionPlane;
+    state.scorpion.p7EFD = static_cast<uint8_t>((state.scorpion.p7EFD & ~P7EFD_PLANE_MASK) | plane);
+    state.scorpion.p7FBA = _planeBeforeReset ? static_cast<uint8_t>(_p7FBABeforeReset | kRealDriveA) : kRealDrives;
+    state.scorpion.profromBank = Plane();
+    _context->pMemory->UpdateZ80Banks();
+    _firmwareRunning = false;
+}
+
+ROMModeEnum PortDecoder_ScorpionGMX::ResolveResetROMMode(ROMModeEnum mode)
+{
+    // The CPU always starts at page 0 of the plane, the loader (design 2.4). An autostart during the boot (a disk
+    // dropped on a machine just started) lets it run: a quick reset then came up with ProfROM's RAM half set up, to
+    // garbage or a bare TR-DOS prompt
+    const bool quickDos = mode == RM_DOS && !_firmwareRunning;
+    _dosEntryPending = mode == RM_DOS && _firmwareRunning;
+    return quickDos ? RM_DOS : RM_128;
+}
+
+void PortDecoder_ScorpionGMX::OnFirmwareBooted()
+{
+    _firmwareRunning = false;
+    if (!_dosEntryPending)
+        return;
+
+    _dosEntryPending = false;
+    _dosEntryDue = true;
+    RefreshStepHook();
+}
+
+void PortDecoder_ScorpionGMX::RunDeferredDosEntry()
+{
+    _dosEntryDue = false;
+
+    // The quick reset the autostart asked for (Emulator::AutostartDisk: ResetKeepingClock(RM_DOS)), now that the
+    // firmware has booted: every peripheral as at that reset, TR-DOS paged in, the CPU at 0 after this instruction.
+    // RAM keeps the firmware's set-up
+    if (Core* core = _context->pCore)
+        core->ResetKeepingClock(RM_DOS);
+}
+
+uint8_t PortDecoder_ScorpionGMX::BootState() const
+{
+    return static_cast<uint8_t>((_firmwareRunning ? BOOT_FIRMWARE_RUNNING : 0) | (_dosEntryPending ? BOOT_DOS_PENDING : 0) |
+                                (_dosEntryDue ? BOOT_DOS_DUE : 0));
+}
+
+void PortDecoder_ScorpionGMX::RestoreBootState(uint8_t bits)
+{
+    _firmwareRunning = (bits & BOOT_FIRMWARE_RUNNING) != 0;
+    _dosEntryPending = (bits & BOOT_DOS_PENDING) != 0;
+    _dosEntryDue = (bits & BOOT_DOS_DUE) != 0;
+    RefreshStepHook();
 }
 
 void PortDecoder_ScorpionGMX::PowerCycle()
@@ -225,6 +301,10 @@ void PortDecoder_ScorpionGMX::DecodePortOut(uint16_t port, uint8_t value, uint16
             break;
         case 0x7E:
             Out7EFD(value);
+            // ProfROM's set-up ends when it leaves its logo for the 128 menu from ROM: plane 4, 640x200 off (the
+            // loader's own hand-over to plane 4 runs from RAM, gmx644 trace: #5D2F, then #06A1 at frame 317)
+            if (_firmwareRunning && pc < 0x4000 && (value & 0x7F) == 0x40)
+                OnFirmwareBooted();
             break;
         default:  // 0xDF
             state.pDFFD = static_cast<uint8_t>(value & 0x07);
@@ -282,6 +362,8 @@ void PortDecoder_ScorpionGMX::OnMachineStep([[maybe_unused]] uint32_t t)
 {
     if (_reconfPending)
         RunReconfiguration();
+    else if (_dosEntryDue)
+        RunDeferredDosEntry();
 }
 
 void PortDecoder_ScorpionGMX::OnMachineFrameRollover([[maybe_unused]] uint32_t frameLength)
@@ -316,6 +398,7 @@ void PortDecoder_ScorpionGMX::EnterSpectrum128Paging(uint16_t pc)
     DecodePortOut(0x7EFD, 0x40, pc);
     DecodePortOut(0x78FD, 0x00, pc);
     DecodePortOut(0xDFFD, 0x00, pc);
+    OnFirmwareBooted();  // the state is a booted machine's
 }
 
 std::vector<ttd::TTDDeviceType> PortDecoder_ScorpionGMX::GetTTDModelStateTypes() const
@@ -470,6 +553,10 @@ void PortDecoder_ScorpionGMX::Out00(uint8_t value)
             RefreshStepHook();
         }
     }
+
+    // The loader's Pentagon scheme hands over with the #xxFD ports off: ProfROM's menu never comes
+    if (IsPentagonDecode())
+        OnFirmwareBooted();
 }
 
 void PortDecoder_ScorpionGMX::Out7EFD(uint8_t value)
@@ -536,7 +623,7 @@ void PortDecoder_ScorpionGMX::RefreshStepHook()
         return;
 
     Z80* z80 = core->GetZ80();
-    if (_reconfPending)
+    if (_reconfPending || _dosEntryDue)
     {
         z80->SetMachineStepHook(this);
         z80->SetMachineStepWork(true);
