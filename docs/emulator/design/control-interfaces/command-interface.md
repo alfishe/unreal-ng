@@ -3882,6 +3882,21 @@ machine and applies the other keys of the request to it; settings without a card
 WebAPI `POST /network/config` (with `replaceIfIncompatible` / `dryRun` / `mediaDisposition`), MCP `emulator_manage`
 `network_configure` (`settings`), Lua / Python `network_configure`, and the Qt Network window's card boxes do the same.
 
+### 14a. Device Histories
+
+The history of each device's own state machine (the WD1793 commands, the AY register writes, the GS port and
+activity events), named by the device's registry id (`beta128`,
+`zxbus.1`): off (zero cost), a ring (the standby mode), a capture with any limit, and a stream to a JSON Lines file.
+Module doc: [device-history.md](../debugger/device-history.md) (REST, WebSocket, MCP, Python, Lua).
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `history` | | | Every device history: device, what it records, mode, limit, written, kept, dropped, the stream | ✅ Implemented |
+| `history <device>` | | `[N]` | The device's stats and its newest N records (all by default), oldest first | ✅ Implemented |
+| `history <device> mode` | | `<off\|ring\|capture> [limit=N] [stream=<file>] [stream_limit=N]` | Configure: ring size or capture cap (0: none); `stream=` a file every record goes to as well, empty to stop it. Starts afresh | ✅ Implemented |
+| `history <device> clear` | | | Drop the records and counts | ✅ Implemented |
+| `history <device> pause` | `resume` | | Hold the history: nothing recorded, the records kept; `resume` goes on | ✅ Implemented |
+
 ### 15. Game Controllers
 
 Two sides through one control layer each, with the same verbs, options and replies on every surface. The **machine

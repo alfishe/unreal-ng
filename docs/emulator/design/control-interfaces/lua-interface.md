@@ -546,7 +546,13 @@ ms  = audio_moonsound_state()       -- MoonSound OPL4: NEW/NEW2, latches, mix, w
 msf = audio_moonsound_state("fm")   -- its 18 FM channels, timers, register banks
 msp = audio_moonsound_state("pcm")  -- its 24 wavetable slots, envelopes, register file
 dev = devices_state()       -- the reports this machine has: reports[i] = {id, title, available, summary, route, cli, script, mcp}; devices_state(true): the absent ones too, with description
-fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
+fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4], history
+-- Device histories by registry id (../debugger/device-history.md): off / ring / capture, a JSON Lines stream
+history_list()
+history("beta128", 8)       -- stats + the newest 8 records
+history_config("beta128", {mode = "capture", limit = 0, stream = "scratch/fdc.jsonl"})
+history_clear("beta128")
+history_pause("zxbus.1")    -- hold the GS history (nothing recorded, the records kept); history_pause("zxbus.1", false) goes on
 ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (task_file, command, atapi)
 cd = cdaudio_state()        -- CD drives' audio: drives[] (slot, disc + tracks, audio status / head / track / index, drive_volume, mixer)
 r = cdaudio("play", "", {track=2})   -- verbs: status, play (track/to, lba/frames, msf/end), pause, resume, stop, volume, mixer

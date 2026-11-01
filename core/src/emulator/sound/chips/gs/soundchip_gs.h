@@ -184,6 +184,7 @@ public:
     /// Structured event trace (host ports, GS-side ports, DAC fetches,
     /// interrupts) - opt-in, mirrors the main-Z80 port tracer's session model
     /// but scoped to this chip. See gsporttrace.h.
+    void attachPortTrace(GSHistory* history) override { _portTrace.attach(history, _context); }
     void startPortTrace() override { _portTrace.start(); }
     void stopPortTrace() override { _portTrace.stop(); }
     void pausePortTrace() override { _portTrace.pause(); }

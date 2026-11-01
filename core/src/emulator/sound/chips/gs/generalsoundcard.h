@@ -446,6 +446,8 @@ public:
     /// Structured event trace (host ports, card-side activity, DAC fetches,
     /// interrupts) - opt-in, mirrors the main-Z80 port tracer's session
     /// model but scoped to this card. See gsporttrace.h.
+    /// The history the trace records into (gsporttrace.h): the machine's (SoundManager), nullptr for the card's own
+    virtual void attachPortTrace(GSHistory* history) = 0;
     virtual void startPortTrace() = 0;
     virtual void stopPortTrace() = 0;
     virtual void pausePortTrace() = 0;

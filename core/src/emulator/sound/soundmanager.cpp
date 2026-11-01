@@ -1,5 +1,6 @@
 #include "soundmanager.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/sound/chips/ayhistory.h"
 
 #include <algorithm>
 #include <cmath>
@@ -104,6 +105,17 @@ SoundManager::SoundManager(EmulatorContext* context)
             _turboSound = new SoundChip_TurboSound(_context);
             break;
     }
+    // The AY history: one per machine whatever device takes the AY ports, named by the registry (the slot plan is
+    // made before the sound manager); a machine whose registry has the AY ports gets it without the TurboSound slot
+    // device too (the Next's three AYs, NextAudio, write into it)
+    if (_turboSound || AYHistoryDeclared(_context))
+    {
+        _ayHistory = std::make_unique<AYHistory>([context = _context]() { return AYHistoryDevice(context); },
+                                                 "AY register writes", kAYHistoryRing);
+        _context->histories.Add(_ayHistory.get());
+        if (_turboSound)
+            _turboSound->setHistory(_ayHistory.get());
+    }
     if (_turboSound)
     {
         _turboSound->setDecimatorQuality(_context->config.sound.decimatorHighFidelity
@@ -205,6 +217,7 @@ SoundManager::SoundManager(EmulatorContext* context)
             gsKind = GSTypeKind::LW;
         }
         _gs = createGeneralSoundCard(gsKind);
+        attachGeneralSoundHistory();
         // The slot set names the personality the machine has (the TTD fingerprint and registry check follow it)
         if (_gs && gsKind != _context->config.sound.gsTypeKind && _context->pSlotManager)
             _context->pSlotManager->FollowGeneralSoundSwitch(gsKind);
@@ -279,6 +292,11 @@ SoundManager::SoundManager(EmulatorContext* context)
 
 SoundManager::~SoundManager()
 {
+    if (_ayHistory)
+        _context->histories.Remove(_ayHistory.get());
+    if (_gsHistory)
+        _context->histories.Remove(_gsHistory.get());
+
     if (_covox)
     {
         delete _covox;
@@ -2238,6 +2256,19 @@ void SoundManager::SoundManager::writeToWaveFile(uint8_t* buffer, size_t len)
 
 /// region <General Sound personality switching>
 
+void SoundManager::attachGeneralSoundHistory()
+{
+    if (_gs == nullptr)
+        return;
+    if (!_gsHistory)
+    {
+        _gsHistory = std::make_unique<GSHistory>([context = _context]() { return GSHistoryDevice(context); },
+                                                 "GS port and activity events", GSPortTraceRecorder::kDefaultCapacity);
+        _context->histories.Add(_gsHistory.get());
+    }
+    _gs->attachPortTrace(_gsHistory.get());
+}
+
 GeneralSoundCard* SoundManager::createGeneralSoundCard(GSTypeKind kind) const
 {
     switch (kind)
@@ -2374,6 +2405,7 @@ bool SoundManager::switchGeneralSoundCardNow(GSTypeKind target, GSCardImplementa
 
     delete _gs;
     _gs = card;
+    attachGeneralSoundHistory();
 
     // 3b. Re-point the TTD peripheral registry at the new card. TTD registers
     //     the GS slot by raw pointer only at StartRecording/session load
@@ -2534,6 +2566,11 @@ bool SoundManager::attachToPorts()
                 generalSoundDeviceName().c_str());
         delete _gs;
         _gs = nullptr;
+        if (_gsHistory)
+        {
+            _context->histories.Remove(_gsHistory.get());
+            _gsHistory.reset();
+        }
         if (_context->pDebugManager)
             _context->pDebugManager->OnGeneralSoundCardCreated();  // the hooks' card is gone
         _devices.erase(std::remove_if(_devices.begin(), _devices.end(),

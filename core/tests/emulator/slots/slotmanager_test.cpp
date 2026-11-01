@@ -31,6 +31,7 @@
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/covox.h"
+#include "emulator/slots/portowners.h"
 #include "emulator/slots/slotconfig.h"
 #include "emulator/slots/slotmanager.h"
 #include "emulator/sound/soundmanager.h"
@@ -835,7 +836,46 @@ TEST(SlotManager_Test, ReportListsSlotsAndBuiltIns)
     EXPECT_EQ(slotList->items[0].find("slot")->s, "ay-socket");
     ASSERT_NE(report.find("builtIns"), nullptr);
     EXPECT_FALSE(report.find("builtIns")->items.empty());
+    // A built-in carries its functions and port claims, as a card does: the Beta-128 answers #1F / #3F / #5F / #7F
+    // and #FF (the device registry a debugger attributes port accesses by)
+    const StateNode* beta = nullptr;
+    for (const StateNode& builtIn : report.find("builtIns")->items)
+    {
+        if (builtIn.find("id")->s == "beta128")
+        {
+            beta = &builtIn;
+        }
+    }
+    ASSERT_NE(beta, nullptr);
+    ASSERT_NE(beta->find("functions"), nullptr);
+    EXPECT_FALSE(beta->find("functions")->items.empty());
+    const StateNode* ports = beta->find("ports");
+    ASSERT_NE(ports, nullptr);
+    bool status = false;
+    for (const StateNode& port : ports->items)
+    {
+        const int mask = static_cast<int>(port.find("mask")->i);
+        const int match = static_cast<int>(port.find("match")->i);
+        status = status || (0x001F & mask) == match;
+    }
+    EXPECT_TRUE(status) << "a claim of the Beta-128 covers #1F";
     emulator.Release();
+}
+
+/// A port access belongs to the registry device whose claim covers it: a fitted card by its slot, a built-in by its
+/// id, the board's own port to nobody; the gate splits #1F between the Beta-128 (DOS) and the Kempston joystick
+TEST(SlotManager_Test, PortOwnersAttributeAccessesByTheRegistry)
+{
+    StagedMachine m("pentagon128k", "zxbus.1 = neogs");
+    ASSERT_TRUE(m.Ok());
+    const slots::PortOwners owners = slots::PortOwners::Of(m.Context());
+    ASSERT_TRUE(owners.Declared());
+    EXPECT_EQ(owners.Find(0x001F, false, true), "beta128");
+    EXPECT_EQ(owners.Find(0x001F, false, false), "kempston-joystick");
+    EXPECT_EQ(owners.Find(0x001F, true, false), "") << "the Kempston joystick is read only";
+    EXPECT_EQ(owners.Find(0x00BB, true, false), "zxbus.1") << "the NeoGS command port";
+    EXPECT_FALSE(owners.Find(0xFFFD, true, false).empty()) << "the AY register select";
+    EXPECT_EQ(owners.Find(0x7FFD, true, false), "") << "the paging port is the board's own";
 }
 
 // endregion

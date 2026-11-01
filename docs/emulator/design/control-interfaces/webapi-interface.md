@@ -529,7 +529,12 @@ GET  /api/v1/emulator/{id}/state/audio/midi     MIDI line + SAM2695: parts[16] (
 POST /api/v1/emulator/{id}/control/audio/midi   {"action": "panic"}: every voice stops (a TTD live input); 404 without a synthesizer, 409 while a TTD replay owns input
 GET  /api/v1/emulator/{id}/state/audio/channels  Audio overview (DeviceState::AudioChannels): beeper (peak, active, muted), AY tone generators, GS / Covox subsets, master (muted, sample_rate_hz, channels, bit depth), mixer[] devices
 GET  /api/v1/emulator/{id}/state/devices       The device catalog: {available, reports[{id, title, available, summary, route, cli, script, mcp}]}, the reports this machine has; ?all=1 the absent ones too, with description (why)
-GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
+GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives, command history (404 without Beta Disk)
+GET  /api/v1/emulator/{id}/history             Device histories by registry id: mode, limit, counts, stream (../debugger/device-history.md)
+GET  /api/v1/emulator/{id}/history/{device}    One history: stats + records (?last=N)
+POST /api/v1/emulator/{id}/history/{device}/config  {"mode": "off|ring|capture", "limit", "stream", "stream_limit"}
+POST /api/v1/emulator/{id}/history/{device}/clear
+POST /api/v1/emulator/{id}/history/{device}/pause   Hold: nothing recorded, the records kept (/resume goes on)
 GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)
 GET  /api/v1/emulator/{id}/state/cdaudio       CD drives' audio: disc and tracks, status (11h-15h), head (LBA, MSF, track, index), play range, page 0Eh volume, mixer row (available=false without a CD drive)
 POST /api/v1/emulator/{id}/cdaudio/{verb}      CD audio control: status | play (track, to | lba, frames | msf, end) | pause | resume | stop | volume (left, right, route, sotc) | mixer (volume, mute, solo); drive picks the drive. 409 recording / no-disc / not-playing, 404 no-cd-drive
@@ -666,7 +671,7 @@ GET  /api/v1/emulator/{id}/coverage            Coverage summary (executed count,
 GET  /api/v1/emulator/{id}/coverage/gaps       Executed ranges and gaps (?start=&end=&max=)
 POST /api/v1/emulator/{id}/coverage/export     SkoolKit code execution map (body: {"format": "skoolkit-map", "start", "end", "path", "merge"})
 POST /api/v1/emulator/{id}/ay/log              AY log control (body: {"action": "start|stop|clear", "capacity"})
-GET  /api/v1/emulator/{id}/ay/log              Get AY log entries (?count=&offset=)
+GET  /api/v1/emulator/{id}/ay/log              Get AY log entries (?count=&offset=); the face of the AY device history (/history/ay)
 POST /api/v1/emulator/{id}/audio/capture       Audio capture control (body: {"action": "start|stop|clear", "seconds"})
 GET  /api/v1/emulator/{id}/audio/capture/status   Capture state and level statistics
 GET  /api/v1/emulator/{id}/audio/capture/result   Captured samples (?format=wav&path=... to export)

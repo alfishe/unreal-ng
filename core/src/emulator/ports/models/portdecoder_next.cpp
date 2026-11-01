@@ -183,7 +183,10 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _audio = std::make_unique<NextAudio>(_context);
     _audio->SetTimeSource([this]() { return Now(); });
     if (_context->pSoundManager)
+    {
         _context->pSoundManager->attachModelAudioSource(_audio.get());
+        _audio->SetHistory(_context->pSoundManager->ayHistory());  // the machine's AY history: the Next's three AYs
+    }
     for (unsigned i = 0; i < 2; i++)
     {
         const std::string id = Slot(i).Descriptor().id;

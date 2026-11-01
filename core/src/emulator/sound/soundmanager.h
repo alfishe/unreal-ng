@@ -137,7 +137,11 @@ protected:
 
     // Supported sound chips
     Beeper* _beeper = nullptr;
-    ITurboSoundDevice* _turboSound = nullptr;  // TurboSound slot (legacy AY pair today, TSFM later - design §3.3)
+    ITurboSoundDevice* _turboSound = nullptr;
+    std::unique_ptr<AYHistory> _ayHistory;  // named by the registry device on the AY ports (ayhistory.h)
+    std::unique_ptr<GSHistory> _gsHistory;  // the General Sound card's, named by its slot (gsporttrace.h)
+    /// Points the fitted card at the machine's GS history (created with the first card, kept across personalities)
+    void attachGeneralSoundHistory();  // TurboSound slot (legacy AY pair today, TSFM later - design §3.3)
     Covox* _covox = nullptr;
     // A machine's own DAC (the Sprinter's Covox / Covox-Blaster), owned by its port decoder and
     // mixed in the COVOX slot (attachModelAudioSource). Null for every other machine
@@ -558,6 +562,18 @@ public:
     ITurboSoundDevice* getTurboSound() const
     {
         return _turboSound;
+    }
+    /// The machine's AY register-write history (ayhistory.h): every device on the AY ports writes into it (the
+    /// TurboSound slot device, the Next's NextAudio); off until configured. nullptr without an AY
+    AYHistory* ayHistory() const
+    {
+        return _ayHistory.get();
+    }
+    /// The General Sound card's port and activity history (gsporttrace.h), whichever personality fills the slot;
+    /// nullptr without a card
+    GSHistory* gsHistory() const
+    {
+        return _gsHistory.get();
     }
     /// The AY clock of the TurboSound slot, set by the machine (the Profi in
     /// hi-res: 1.5 MHz). Takes effect at the current CPU T-state; see

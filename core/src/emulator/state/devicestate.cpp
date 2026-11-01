@@ -1369,6 +1369,10 @@ StateNode Fdc(EmulatorContext* context)
     ret["side"] = fdc->getSideUp() ? 1 : 0;
 
     ret["drives"] = DrivesNode(context, 4);
+
+    // The chip's state machine history (debugger/history/devicehistory.h): its mode and counts, the records kept
+    ret["history_state"] = history::StatsNode(fdc->CommandHistory());
+    ret["history"] = fdc->CommandHistory().Records(0);
     return ret;
 }
 

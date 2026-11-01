@@ -155,6 +155,8 @@ public:
     const GSActivityCounters& getActivityCounters() const override { return _activityCounters; }
     void resetActivityCounters() override { _activityCounters = GSActivityCounters{}; }
 
+    void attachPortTrace(GSHistory* history) override { _portTrace.attach(history, _context); }
+
     void startPortTrace() override { _portTrace.start(); }
     void stopPortTrace() override { _portTrace.stop(); }
     void pausePortTrace() override { _portTrace.pause(); }

@@ -66,6 +66,7 @@ namespace ttd { class TimeTravelManager; class TimeTravelController; class ITime
 namespace rzx { class RzxPlayer; }
 
 #include "debugger/ttd/ttdprobe.h"  // inline member - needs full definition
+#include "debugger/history/devicehistory.h"  // inline member: the histories of the machine's devices
 
 // Create callback type for audio
 // User in emulator/sound/soundmanager and client/GUI
@@ -380,6 +381,10 @@ public:
     // Z80 M1 cycle, DecodePortOut) reads `ttdProbe.IsArmed()` with one
     // predictable branch. Cost when not armed: ~1 cycle.
     ttd::TTDAccessProbe ttdProbe;
+
+    // The histories of the machine's devices (debugger/history/devicehistory.h), by registry id: each device
+    // registers its own while it lives; every automation plane reads and configures them here
+    history::Registry histories;
 
     // Per-frame coverage collection (reverse-search index). Read on the
     // instruction-fetch path, so it is a plain bool rather than a call into

@@ -32,6 +32,7 @@ set(SOURCES
     src/commands/cli-processor-disk.cpp
     src/commands/cli-processor-media.cpp
     src/commands/cli-processor-slots.cpp
+    src/commands/cli-processor-history.cpp
     src/commands/cli-processor-controllers.cpp
     src/commands/cli-processor-multisound.cpp
     src/commands/cli-processor-cdaudio.cpp

@@ -506,7 +506,17 @@ def companion_revoke(id: str) -> int:
 
     def fdc_state(self) -> dict:
         """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
-        signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""
+        signals (intrq/drq), beta128_register, density, selected_drive, drives[4],
+        history (the command history) and history_state"""
+
+    # Device histories by registry id (../debugger/device-history.md): off / ring / capture, a JSON Lines stream.
+    # An unknown device raises KeyError, a bad mode or stream file ValueError
+    def history_list(self) -> dict: ...
+    def history(self, device: str, last: int = 0) -> dict: ...
+    def history_config(self, device: str, mode: str = None, limit: int = None, stream: str = None,
+                       stream_limit: int = None) -> dict: ...
+    def history_clear(self, device: str) -> dict: ...
+    def history_pause(self, device: str, paused: bool = True) -> dict: ...  # hold / go on
 
     def contention_state(self) -> dict:
         """Memory contention report: rule (none/ula48/ula128/gatearray), applicable, switch,

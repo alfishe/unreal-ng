@@ -17,6 +17,7 @@
 #include <emulator/emulatorcontext.h>
 #include <emulator/ports/portdecoder.h>
 #include <emulator/ports/portdiagrecorder.h>
+#include <emulator/slots/portowners.h>
 
 namespace LuaPortTrace
 {
@@ -63,7 +64,8 @@ inline std::vector<PortTraceCodeName> codeTable(PortDecoder* decoder)
     return decoder ? decoder->GetPortTraceCodeTable() : std::vector<PortTraceCodeName>{};
 }
 
-inline sol::table eventToTable(sol::state_view lua, const PortTraceEvent& e, const std::vector<PortTraceCodeName>& codes)
+inline sol::table eventToTable(sol::state_view lua, const PortTraceEvent& e, const std::vector<PortTraceCodeName>& codes,
+                               const slots::PortOwners& owners)
 {
     sol::table t = lua.create_table();
     t["timestamp"] = e.timestamp;
@@ -74,6 +76,8 @@ inline sol::table eventToTable(sol::state_view lua, const PortTraceEvent& e, con
     t["value"] = e.value;
     t["pc"] = e.pc;
     t["device"] = std::string(PortDiagnosticRecorder::DeviceIdToString(e.deviceId));
+    // The registry device whose claim covers the access ("" = the board's own port)
+    t["owner"] = owners.Find(e.rawPort, e.isOut(), e.cfTrdosActive());
     t["direction"] = e.isOut() ? "OUT" : "IN";
     t["decoded"] = e.wasDecoded();
     t["had_handler"] = e.hadHandler();
@@ -344,9 +348,10 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
         auto* recorder = resolveRecorder(getEmulator(), &decoder, error);
         if (!recorder) return result;
         const auto codes = codeTable(decoder);
+        const auto owners = slots::PortOwners::Of(getEmulator()->GetContext());
         int index = 1;
         for (const auto& e : recorder->getAll())
-            result[index++] = eventToTable(lua, e, codes);
+            result[index++] = eventToTable(lua, e, codes, owners);
         return result;
     });
 
@@ -358,9 +363,10 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
         auto* recorder = resolveRecorder(getEmulator(), &decoder, error);
         if (!recorder) return result;
         const auto codes = codeTable(decoder);
+        const auto owners = slots::PortOwners::Of(getEmulator()->GetContext());
         int index = 1;
         for (const auto& e : recorder->getLast(count))
-            result[index++] = eventToTable(lua, e, codes);
+            result[index++] = eventToTable(lua, e, codes, owners);
         return result;
     });
 
@@ -373,9 +379,10 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
                          auto* recorder = resolveRecorder(getEmulator(), &decoder, error);
                          if (!recorder) return result;
                          const auto codes = codeTable(decoder);
+                         const auto owners = slots::PortOwners::Of(getEmulator()->GetContext());
                          int index = 1;
                          for (const auto& e : recorder->getSince(timestamp))
-                             result[index++] = eventToTable(lua, e, codes);
+                             result[index++] = eventToTable(lua, e, codes, owners);
                          return result;
                      });
 

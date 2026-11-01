@@ -9,6 +9,7 @@
 #include "debugger/breakpoints/chipregister.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/sound/chips/ayhistory.h"
 #include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
@@ -685,24 +686,12 @@ void SoundChip_TurboSoundFM::portDeviceOutMethod(uint16_t port, uint8_t value)
             return;  // Not a board port - no tap
     }
 
-    // Automation tap (MCP M7j): fires after the write so `chip` identifies
-    // the chip that received it. Control-word distinction (flags byte) is
-    // the observability upgrade of P7 - P4 records plain records.
-    if (_logSink) [[unlikely]]
+    // The AY history: after the write, so `chip` is the chip that received it. Control-word distinction (flags
+    // byte) is the observability upgrade of P7 - P4 records plain records
+    if (_history && _history->On()) [[unlikely]]
     {
-        AYLogRecord record;
-        record.port = port;
-        record.value = value;
-        record.chip = _board.chip;
-        record.reg = (port == PORT_BFFD) ? _pair.chip(_board.chip)->address : value;
-        if (_context && _context->pCore)
-        {
-            const Z80* z80 = _context->pCore->GetZ80();
-            record.pc = z80->m1_pc;  // PC of the OUT instruction, not the next one
-            record.tacts = z80->t;
-            record.frame = _context->emulatorState.frame_counter;
-        }
-        _logSink(_logSinkContext, record);
+        RecordAYWrite(_context, *_history, port, value, static_cast<uint8_t>(_board.chip),
+                      port == PORT_BFFD ? _pair.chip(_board.chip)->address : value);
     }
 }
 
