@@ -1,8 +1,8 @@
 # Proposal
 
 1. **Adopt** the generator as the source of the bundled controller pictures (controller manager C5). `generate.py`
-   owns the pad, DB9, Surface Dial and Steam Deck sets; `tools/controllers/make_fallback_images.py` keeps
-   generic-keyboard until it is drawn here too. `devices.json` points xbox-series, xbox-one, xbox-one-s,
+   owns every bundled set: the generic keyboard, the last set of `tools/controllers/make_fallback_images.py`,
+   was drawn here on 2026-11-01 and the script removed. `devices.json` points xbox-series, xbox-one, xbox-one-s,
    xbox-elite-2, dualsense and switch-pro at their own sets; the other families keep the generic pad.
 2. **Next devices**, same way: DualSense Edge (back buttons), DualShock 3, Xbox 360, Elite 1, Joy-Con, 8BitDo Ultimate
    2C / Ultimate 2 / Pro 3 / Lite 2 (now on the Ultimate and Pro 2 pictures), the Mega Drive 6-button pad (replacing the md6 line drawing), the Sinclair SJS-1 when a reference
