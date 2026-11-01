@@ -1593,7 +1593,7 @@ private:
                 Object part;
                 for (size_t i = 0; i < drawn.size(); ++i)
                 {
-                    if (i == 0 || drawn[i] - drawn[i - 1] != shape.GlyphStep())
+                    if (i == 0 || static_cast<uint32_t>(drawn[i] - drawn[i - 1]) != shape.GlyphStep())
                     {
                         if (i != 0)
                             _pending.push_back(Pending{shape, part, size});
