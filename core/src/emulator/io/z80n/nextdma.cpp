@@ -182,6 +182,8 @@ void NextDma::Command(uint8_t value)
 /// clearing the flag (only LOAD, CONTINUE, 0x8B and reset do), else the DMA stops
 void NextDma::FinishBlock()
 {
+    if (_onBlock) [[unlikely]]
+        _onBlock(*this);
     _endOfBlock = true;
     if (_autoRestart)
     {
