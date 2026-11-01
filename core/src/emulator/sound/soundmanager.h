@@ -140,6 +140,8 @@ protected:
     ITurboSoundDevice* _turboSound = nullptr;
     std::unique_ptr<AYHistory> _ayHistory;  // named by the registry device on the AY ports (ayhistory.h)
     std::unique_ptr<GSHistory> _gsHistory;  // the General Sound card's, named by its slot (gsporttrace.h)
+    // The card CPU's instructions (`<slot>.cpu`, exechistory.h): kept across personality switches like _gsHistory
+    std::unique_ptr<history::DeviceHistory<ExecRecord>> _gsExecHistory;
     /// Points the fitted card at the machine's GS history (created with the first card, kept across personalities)
     void attachGeneralSoundHistory();  // TurboSound slot (legacy AY pair today, TSFM later - design §3.3)
     Covox* _covox = nullptr;

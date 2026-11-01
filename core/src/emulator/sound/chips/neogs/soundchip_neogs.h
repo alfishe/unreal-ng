@@ -373,6 +373,7 @@ private:
     /// The catch-up: the fast loop, or the debug loop while a debugger's hooks are set (one test per run)
     void runTo(int64_t target)
     {
+        syncExecHistory();
         if (_debugHooks) [[unlikely]]
             runToDebug(target);
         else

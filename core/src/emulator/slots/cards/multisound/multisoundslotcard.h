@@ -18,6 +18,7 @@
 #include <memory>
 #include <vector>
 
+#include "debugger/history/exechistory.h"
 #include "emulator/slots/card.h"
 #include "emulator/slots/cards/multisound/multisoundcard.h"
 #include "emulator/slots/cards/multisound/multisoundttd.h"
@@ -133,6 +134,7 @@ private:
     // Before the card: they outlive its pointers to them
     ChipWriteHistory _chipHistory;                 ///< `<slot>.chips`: the SAA and SounDrive writes
     history::Registered<GSTraceEvent> _gsHistory;  ///< `<slot>.gs`: the card's GS port and activity events
+    ExecHistory _gsExecHistory;                    ///< `<slot>.gs.cpu`: the instructions of the card's GS Z80
     MultiSoundCard _card;
     uint64_t _origin = 0;
     uint64_t _last = 0;

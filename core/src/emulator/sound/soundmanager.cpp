@@ -296,6 +296,8 @@ SoundManager::~SoundManager()
         _context->histories.Remove(_ayHistory.get());
     if (_gsHistory)
         _context->histories.Remove(_gsHistory.get());
+    if (_gsExecHistory)
+        _context->histories.Remove(_gsExecHistory.get());
 
     if (_covox)
     {
@@ -2267,6 +2269,15 @@ void SoundManager::attachGeneralSoundHistory()
         _context->histories.Add(_gsHistory.get());
     }
     _gs->attachPortTrace(_gsHistory.get());
+    if (!_gsExecHistory)
+    {
+        _gsExecHistory = std::make_unique<history::DeviceHistory<ExecRecord>>(
+            [context = _context]() { return GSHistoryDevice(context) + ".cpu"; }, "instructions the card's Z80 starts",
+            kExecHistoryRing);
+        _gsExecHistory->EnableFastPush();
+        _context->histories.Add(_gsExecHistory.get());
+    }
+    _gs->attachExecHistory(_gsExecHistory.get(), _context);
 }
 
 GeneralSoundCard* SoundManager::createGeneralSoundCard(GSTypeKind kind) const
@@ -2570,6 +2581,11 @@ bool SoundManager::attachToPorts()
         {
             _context->histories.Remove(_gsHistory.get());
             _gsHistory.reset();
+        }
+        if (_gsExecHistory)
+        {
+            _context->histories.Remove(_gsExecHistory.get());
+            _gsExecHistory.reset();
         }
         if (_context->pDebugManager)
             _context->pDebugManager->OnGeneralSoundCardCreated();  // the hooks' card is gone

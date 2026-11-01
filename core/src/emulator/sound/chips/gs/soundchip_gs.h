@@ -414,6 +414,7 @@ private:
     void runToDebug(int64_t targetGsCycles);  // out of line: the debug loop's code stays away from the fast loop's
     void runTo(int64_t targetGsCycles)
     {
+        syncExecHistory();
         // A debugger's hooks: the debug loop (one test per run, never per instruction)
         if (_debugHooks) [[unlikely]]
         {
