@@ -491,6 +491,7 @@ private:
                                    const std::vector<std::string>& args);
     void HandleTTDProbeFrames(const ClientSession& session, EmulatorContext* context,
                               const std::vector<std::string>& args);
+    void HandleTTDTimeline(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDCoverage(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
     void HandleTTDMemoryAt(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);

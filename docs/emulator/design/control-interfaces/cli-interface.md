@@ -275,6 +275,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd reverse-step` | `ttd rs` | Reverse-step execution. | ✅ Implemented |
 | `ttd reverse-continue` | `ttd rc` | Reverse-continue execution. | ✅ Implemented |
 | `ttd probe-frames` | `ttd pf` | The frames a game profile's probes fired in (a replay of the window). | ✅ Implemented |
+| `ttd timeline` | `ttd tl` | The recording cut into phases of the same activity, each with its facts (no replay). | ✅ Implemented |
 
 **Interactive session example** (post-mortem crash forensics):
 

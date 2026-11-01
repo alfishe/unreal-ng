@@ -23,16 +23,17 @@ S1 is a synthetic program, generic (no game): a Pentagon program whose phases ar
 
 | Phase | The program does | The facts that must show |
 |-------|------------------|--------------------------|
-| A | polls EAR in a tight IN loop (a loader's edge loop) with a tape marker around it | `tape`, `ear_reads` |
-| B | fills 16 KB of RAM with a computed pattern, then copies it (an unpacker) | `burst`, `written` high |
-| C | HALT-paced loop polling the keyboard; the test presses keys | `idle`, `input`, `key_polls`, `keys` named |
+| A | polls EAR in a tight IN loop (a loader's edge loop), no tape marker: the rate alone must tell | `tape`, `ula_reads` |
+| B | fills 16 KB of RAM with a computed pattern by LDIR (an unpacker) | `burst`, `written` high |
+| C | HALT-paced loop polling the keyboard; the test presses keys | `halt`; `keys` named in the phase facts |
 | D | per frame: writes AY registers, toggles the beeper, redraws part of the screen, pages 7FFD | `sound`, `screen`, `paging` |
 
 Tests (`core/tests/debugger/ttd/ttdtimeline_test.cpp`, about 10 ms each, the recording made once per suite):
 
 - `FactsMatchTheDirectQueries`: per bucket, `executed / written / read` equal `coverage-summary`; `in / out` equal the
   port journal counted directly; `keys` equal the input journal; `events` equal `markers` and `bookmarks`.
-- `PhasesFollowTheScript`: S1's four phases, each boundary within one bucket, nothing split or missed.
+- `PhasesFollowTheScript`: S1's four phases, each boundary within half the tagging window (5 frames), nothing split or missed.
+- `PhasesDoNotDependOnTheBuckets`: the phases are the same with no buckets and with 1, 5, 100 or 500 of them.
 - `MissingFactsAreNamed`: write journal off -> `writes` missing; port journal dropped -> `ports` missing, tags that
   need ports not set; a TS-Conf video mode -> `screen` missing.
 - `LiveStoppedAndLoadedAgree`: the same reply (minus `cost`) while recording, stopped, and after a save and load.
@@ -66,4 +67,31 @@ reply bytes stand for the agent's tokens (the MCP text of the same calls is meas
 
 ## Measurements
 
-(filled in by steps 0, 2, G and 6)
+2026-11-01, M3 Ultra (.20), one iteration per row for the old loop (10-190 s each), three for the call; the full
+table and the cost breakdown are in [design.md §6](design.md#6-costs).
+
+- B1 / B2: one `timeline` call against the old loop is 189-327x faster and its reply 33-117x smaller (3,000 and
+  50,000 synthetic frames, old loop over 20 or 100 buckets); 50,000 frames take 403 ms (`ports=false`) to 863 ms
+  (ports and 20 buckets), under the 1 s target. Before the stamp counting of distinct keys they took 1.7-3.4 s.
+- Live UMT23X load (12,061 frames, `scratch/ttd-timeline/live_timeline.py`): REST 33x faster, 9x fewer bytes; MCP
+  34x faster, 22x less JSON, 9x shorter text (126 calls against one).
+- Buckets: 5 / 10 / 20 / 50 / 100 / 500 make the reply 1.8 / 2.6 / 4.1 / 8.6 / 16 / 74 times the phases-only one,
+  the phases stay the same: buckets off by default, `limit` 20.
+- `min_phase_ms` on UMT23X: 100 and 200 give the same four phases (typing, the burst after ENTER, a pause, the tape);
+  500 merges the burst and the pause into the typing, 1000 leaves one phase: 200 by default.
+- Recording cost of the `halt` fact: one counter increment per accepted INT and two fields per checkpoint (B3
+  pending with step 6).
+
+- Gate G on 48K, a real load (`scratch/ttd-timeline/after_load.py`: `load_software` autostart, the recording until
+  the tape stops, then 1,500 frames; three runs): 3,520 frames, 26 ms, 5.8 KB. The phases are the ROM typing
+  `LOAD ""`, the header, the loading screen, the data block, the depacker (`tape,burst` then `burst`, 30 frames,
+  ~7,000-9,400 bytes written each) and the loader waiting for more tape. The runs differ by one frame at most.
+- The depacker writes ~510 bytes per frame on its quiet frames: the burst floor is 256 bytes (it was 1,024, which
+  left the depacker untagged).
+- Found by the gate: a tape loaded while TTD records lands at the next frame boundary (an event of the recording),
+  so the play right after the load (the `load_software` autostart) answered "no loadable blocks". `Tape::Play` is
+  now the one play of every plane: it queues the play for a tape on its way and starts it when the tape lands
+  (`timetravelcontroller_tapeload_test.cpp`).
+
+Progress: steps 1, 2, 3, 5 and G done (S1 tests green, `PhasesDoNotDependOnTheBuckets` added); 4 (every other
+machine and peripheral) next.

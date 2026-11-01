@@ -335,24 +335,22 @@ void CLIProcessor::HandleTapePlay(const ClientSession& session, std::shared_ptr<
 
     EmulatorPauseBracket bracket(emulator);
 
-    // Parse-once (idempotent): surfaces never race the lazy image load
-    if (!context->pTape->EnsureImageLoaded())
+    // Paused -> resume the frozen position IN PLACE (FR-6); otherwise start at the consumption cursor - where a
+    // real tape head would be. A tape loaded while a TTD recording runs lands at the next frame boundary: queued
+    switch (context->pTape->Play())
     {
-        session.SendResponse(std::string("Error: Tape image has no loadable blocks") + NEWLINE);
-        return;
-    }
-
-    // Paused -> resume the frozen position IN PLACE (FR-6); otherwise start
-    // at the consumption cursor — where a real tape head would be
-    if (context->pTape->GetPlaybackState() == TapePlaybackState::Paused)
-    {
-        context->pTape->ResumePlaybackFromPause();
-        session.SendResponse(std::string("Tape playback resumed (in place)") + NEWLINE);
-    }
-    else
-    {
-        context->pTape->StartPlaybackAtCursor();
-        session.SendResponse(std::string("Tape playback started") + NEWLINE);
+        case TapePlayResult::NoBlocks:
+            session.SendResponse(std::string("Error: Tape image has no loadable blocks") + NEWLINE);
+            break;
+        case TapePlayResult::Resumed:
+            session.SendResponse(std::string("Tape playback resumed (in place)") + NEWLINE);
+            break;
+        case TapePlayResult::Queued:
+            session.SendResponse(std::string("Tape playback starts when the tape is in") + NEWLINE);
+            break;
+        case TapePlayResult::Started:
+            session.SendResponse(std::string("Tape playback started") + NEWLINE);
+            break;
     }
 }
 

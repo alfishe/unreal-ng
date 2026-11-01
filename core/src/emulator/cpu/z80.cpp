@@ -147,6 +147,7 @@ void Z80::Reset()
     int_gate = true;       // Allow external interrupts
     nmi_in_progress = false;  // Clear NMI flag
     _nmi_pending_count = 0;   // No NMI requested
+    interruptsAcceptedHalted = 0;   // HALT waits count from the reset
 
     tt = 0;  // Scaled to CPU frequency multiplier cycle count
     t = 0;   // Reset cycle counter for deterministic state
@@ -2106,6 +2107,7 @@ void Z80::HandleINT(uint8_t vector)
 {
     Z80& cpu = *this;
     interruptsAccepted++;
+    interruptsAcceptedHalted += cpu.halted ? 1 : 0;
 
     // A machine on its own engine: the acknowledge cycle, the pushes and the vector read are the engine's
     // (ICpuEngine); one test per accepted INT, not per instruction

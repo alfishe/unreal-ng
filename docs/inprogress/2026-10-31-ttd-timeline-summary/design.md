@@ -11,7 +11,7 @@ Every source below is filled by the recording as it is today; the query reads th
 |--------|----------------|------------------------------|------|
 | Engine checkpoint cursors `busReadCursor`, `busWriteCursor`, `mediaReadCursor`, `busVectorCursor` (`TTDEngineCheckpoint`, timetravelengine.h) | IN count, OUT count, sector reads, interrupt vectors taken: cursor[N+1] - cursor[N] | index walk | O(frames), no decode |
 | Region changes `ChangeCount(index, 0)`, `ChangesAt(index, 0)` (RAM region, 4 KB pieces) | RAM pieces changed in the frame; the screen pieces among them | per checkpoint | O(frames + changes), no decode |
-| Checkpoint CPU state `TTDCpuState` | halted at the frame start | per checkpoint | O(frames) |
+| Checkpoint `haltedInterrupts` (Z80 `interruptsAcceptedHalted`) | the INT that ended the frame came while halted (a checkpoint is taken past that acknowledge, so the CPU state's own `halted` is clear there); live captures only, not in the session file (`halt` missing after a load) | per checkpoint | O(frames) |
 | Checkpoint chipset `TTDChipsetState` | border, `p7FFD` (paging, displayed screen, ROM), turbo ratio at the frame start; a change against the previous frame | per checkpoint | O(frames) |
 | Frame table `Frames()` | frame length (turbo / clock changes show as a different length) | per frame | O(frames) |
 | Coverage index `TTDCoverageIndex` | distinct executed / written / read keys (what `coverage-summary` reports) | the summary's own path | O(frames x keys), zstd blocks of 64 frames |
@@ -29,7 +29,7 @@ A device state region may carry time fields that change every frame (a card's ow
 count says nothing about activity. Each device that has one is listed at step 4 (plan.md) with what it reports
 instead (its port traffic, or the change of the fields that are not time), checked per device, never assumed.
 
-Not in the recording, so not in the timeline: HALT idle time inside a frame (only the frame-start `halted`), sound
+Not in the recording, so not in the timeline: HALT idle time inside a frame (only whether the frame ended in HALT), sound
 energy, a screen picture (the screenshot stream is registered but off), interrupts per frame outside RZX and the
 vector machines. These are listed as limits, not estimated.
 
@@ -45,11 +45,11 @@ Verb `timeline` (CLI `ttd timeline`, `GET /api/v1/emulator/{id}/ttd/timeline`, L
 | Option | Default | Meaning |
 |--------|---------|---------|
 | `from_frame`, `to_frame` | the history | the window |
-| `bucket_size` | automatic: ceil(frames / `limit`) | frames per bucket |
-| `limit` | 100 (1..500) | at most this many buckets (same rule as `coverage-summary`) |
-| `buckets` | false | include the per-bucket rows; the phases are always there |
+| `buckets` | false | add an overview of `limit` buckets; the phases are always there and never depend on it |
+| `limit` | 20 (1..500) | at most this many overview buckets (same rule as `coverage-summary`) |
+| `bucket_size` | automatic: ceil(frames / `limit`) | frames per overview bucket; an explicit size cuts the window at `limit` |
 | `ports` | true | classify the port journals (tier 2); false keeps the call O(frames) |
-| `min_phase` | 2 buckets | a run shorter than this joins a neighbour (§4) |
+| `min_phase_ms` | 200 | the shortest phase in machine time, and the window a frame's tags are measured over (§4) |
 
 `TimeTravelController::QueryTimeline(window, options)` builds the result under `SessionOperation{Read}` (a live
 recording is parked for the call, as `QueryCoverageSummary` does), in one pass over the window's checkpoints and one
@@ -58,9 +58,9 @@ pass over each journal.
 ## 3. The reply
 
 Top level: `from_frame`, `to_frame`, `bucket_size`, `bucket_count`, `fps`, `phases[]`, `buckets[]` (when asked),
-`events[]`, `missing[]`, `cost` (`frames`, `port_records`, `ms`).
+`events[]`, `missing[]`, `devices[]`, `truncated`, `cost` (`frames`, `port_records`, `ms`).
 
-A bucket (and a phase, which sums its buckets):
+A phase (and an overview bucket; both sum their frames):
 
 | Field | From |
 |-------|------|
@@ -68,12 +68,12 @@ A bucket (and a phase, which sums its buckets):
 | `executed`, `written`, `read` | coverage distinct keys (the bucket's union, as `coverage-summary`) |
 | `ram_pieces` | RAM pieces changed (sum over frames) |
 | `screen_frames` | frames that changed a displayed-screen piece |
-| `halted_frames` | frames that started halted |
+| `halted_frames` | frames that waited in HALT for their INT |
 | `in`, `out`, `sectors`, `vectors` | cursor deltas |
 | `keys` | the keys pressed (names, distinct), `key_events` |
-| `input_other` | joystick / mouse / other input events |
-| `key_polls`, `ear_reads`, `border_outs`, `beeper_toggles` | the ULA's port records (tier 2) |
-| `devices[]` | per device on the port map: name, tags, `in`, `out` (tier 2); per media slot: `sectors`; per card with its own CPU / DMA: frames its state changed |
+| `input_other`, `net_events` | joystick / mouse / other input events; network events |
+| `ula_reads`, `border_outs`, `beeper_toggles` | the port records of the port map row bound to the #FE latch (tier 2). A keyboard poll and an EAR read are the same IN: a loader is told apart by the rate, not by the port |
+| `devices[]` | per used device: `device` (index into the top-level `devices[]`: name, port tags), `in`, `out` (tier 2; a port belongs to the matching row with the most decoded bits); per used media slot: `slot`, `sectors`; per card with its own CPU / DMA: frames its state changed (step 4) |
 | `border_changes`, `paging_changes`, `length_changes` | frame-start state against the previous frame |
 | `writes` | write records (write journal on only) |
 | `tags` | the activity tags (§4) |
@@ -83,27 +83,35 @@ kind and text.
 
 `missing[]`: each fact the session cannot give, with the reason (TL-6): `writes` (journal off), `ports` (journal
 invalid: the reason from the session facts), `coverage` (frames not indexed), `screen` (the video mode's memory is not
-known for this model, §5).
+known for this model, §5), `halt` (a session loaded from a file: the HALT waits are not kept there).
 
 ## 4. Phases
 
-A bucket's **tags** come from its facts against the session's own levels; the same rule for every recording (TL-5):
+Phases are cut per frame, not per bucket: an earlier draft tagged buckets and merged runs of them, so the phases
+moved with `limit` (100 buckets over 3,000 frames gave other boundaries than 20). Now the buckets are an overview
+only, and `limit` changes nothing in the phases (a test holds it).
 
-| Tag | The bucket has |
+Each **frame** gets the regime tags of the window of `min_phase_ms` centred on it (10 frames at 50 Hz by default);
+the same rule for every recording (TL-5):
+
+| Tag | The window has |
 |-----|----------------|
-| `tape` | a tape marker says playing for part of it, or EAR reads dominate the IN records |
-| `disk` | sector reads on any media slot, storage-tagged port traffic, or a disk write marker |
-| `input` | key / joystick / mouse events |
-| `net` | network-tagged port traffic or net events |
-| `sound` | OUTs to any sound-tagged device (AY, Covox, SounDrive, GS, MoonSound, TS-FM, ...) or beeper toggles |
-| `screen` | screen-changing frames in at least a quarter of its frames |
-| `burst` | written keys above 4x the median of the window's buckets (an unpacker, a level build, a clear) |
-| `idle` | most frames start halted and few keys executed |
-| `paging` | paging changes |
+| `tape` | a tape marker says playing in a quarter of its frames, or 200+ #FE reads per frame (an EAR loop; a keyboard poll is a few) |
+| `disk` | sector reads, storage-tagged port traffic or a disk write marker in a quarter of its frames |
+| `net` | network-tagged port traffic or net events in a quarter of its frames |
+| `sound` | OUTs to a sound-tagged device (AY, Covox, SounDrive, GS, MoonSound, TS-FM, ...) or beeper toggles in a quarter of its frames |
+| `screen` | screen-changing frames in a quarter of its frames |
+| `burst` | written keys 256+ per frame and above 4x the median frame of the window (an unpacker, a level build, a clear; the floor only guards a near-zero median: UMT23X's depacker writes about 510 a frame) |
+| `halt` | most frames wait in HALT for their INT (a HALT-paced loop) |
+| `paging` | paging changes in a quarter of its frames |
 
-A **phase** is a maximal run of buckets with the same tag set. A run shorter than `min_phase` buckets joins the
-neighbour whose tag set is closer (fewer differing tags; the earlier one on a tie). Each phase carries its frame
-range, its tags, the summed facts and the busiest bucket (most `executed`), so the agent can seek there or run
+Two tags mark a phase but never cut it: `input` (a key press is an event, not a regime) and a rare `paging` change;
+a phase carries them when any of its frames has them.
+
+A **phase** is a maximal run of frames with the same regime tags. The shortest run under `min_phase_ms` joins the
+neighbour whose tags are closer (fewer differing tags; the earlier one on a tie), and so on until none is left; two
+neighbours that end up with the same tags join. Each phase carries its frame range, its tags, the summed facts and
+the busiest frame (most distinct keys executed, else most port records), so the agent can seek there or run
 `coverage-rare` over the phase.
 
 Thresholds are relative (medians and fractions of the window), not constants tuned to a game. The synthetic program
@@ -129,17 +137,31 @@ and every peripheral at once, in the same task - a gap left for later turns into
 
 ## 6. Costs
 
+Target (owner 2026-11-01): a whole 50,000-frame window in under 1 s, with every option.
+
 Tier 1 (all but the port classification and the write records): one pass over the checkpoints plus the coverage
-decode `coverage-summary` already does. Target: 50,000 frames in under 100 ms on the Mac (the coverage decode is
-about 10 ms per 5,000 frames today).
+decode. Each frame's keys are decoded four times (written for the cut, then executed / written / read for the facts of
+its phase; three more with `buckets=true`), and a range's distinct keys are counted with one stamp per key (the key's
+last range) instead of sorting them - the sort was three quarters of the call. What is left is the coverage index's
+own decode (about 70 %); keeping the frames' keys in memory to save one decode would cost hundreds of MB on a
+burst-heavy recording, so it is not done.
 
 Tier 2 (`ports`): one sequential decode of the window's port records. A tape loader reads EAR about 1,000 times a
-frame, so a minute of loading is about 3 M records (about 100 blocks). Measured in plan.md B1 before the default is
-fixed; if a long window is too slow, the default becomes `ports: auto` (on up to a record budget, with the cut
-reported in `missing[]`).
+frame: UMT23X's 12,000 loading frames are 11.3 M records, about 80 ms of the 90 ms call.
 
-The reply: `limit` bounds the buckets; phases are at most the bucket count, usually a handful. The MCP text lists the
-phases (one line each) and the events; buckets only when asked.
+Measured on the M3 Ultra (plan.md B1 / B2, 2026-11-01), one call against the agent's old loop of 126 calls (20
+buckets) or 606 (100 buckets):
+
+| Window | `timeline` (default / `ports=false` / +20 buckets) | old loop, 20 / 100 buckets | faster | smaller reply |
+|--------|--------------------------------------------------|-----------------------------|--------|---------------|
+| synthetic 3,000 frames | 37.5 / 25.7 / 54.6 ms | 10.4 / 11.8 s | 277x / 314x | 33x / 36x |
+| synthetic 50,000 frames | 588 / 403 / 863 ms | 111 / 192 s | 189x / 327x | 74x / 117x |
+| UMT23X load, 12,061 frames, REST | 93 ms (12 ms `ports=false`) | 3.1 s | 33x | 9x |
+| same over MCP | 90 ms, text 807 chars | 3.1 s, text 7,295 chars | 34x | 22x JSON, 9x text |
+
+The reply: phases only by default (2.7 KB on UMT23X); overview buckets on request, `limit` 20 by default: on UMT23X
+5 / 10 / 20 / 50 / 100 / 500 buckets make the reply 1.8 / 2.6 / 4.1 / 8.6 / 16 / 74 times the phases-only one and
+change no phase. The MCP text lists the phases (one line each) and the events; buckets only when asked.
 
 ## 7. Planes
 

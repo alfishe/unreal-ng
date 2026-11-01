@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """time_travel: record, stop, the history in status, seek back, the machine state follows, rare coverage,
-port events with their context, reverse-continue first per PC, memory-at the machine now, probe frames"""
+port events with their context, reverse-continue first per PC, memory-at the machine now, probe frames, the
+timeline"""
 
 import re
 import sys
@@ -113,6 +114,26 @@ def test_probe_frames_lists_each_probes_frames_in_the_text(s):
            'the machine did not move' in r.text, 'the frames and the error in the text', r.text)
     r = s.call('time_travel', {'action': 'probe_frames'}, ok=False)
     expect(r.is_error and 'probes' in r.text, 'no probes named', r.text)
+
+
+def test_timeline_names_the_phases_in_the_text(s):
+    # The history of test_record_stop_seek: the ROM editor waiting for a key (a busy loop on the flag the INT sets,
+    # no HALT: core-tests TTDTimeline_Test holds the `halt` tag on a HALT-paced program)
+    r = s.call('time_travel', {'action': 'timeline'})
+    phases = r.structured.get('phases', [])
+    expect(not r.is_error and phases, 'phases answered', r.text)
+    expect(all(isinstance(p.get('halted_frames'), int) for p in phases), 'halted frames per phase', r.structured)
+    expect(r.text.count(' fr, halted ') == len(phases), 'halted frames in the text', r.text)
+    expect(r.text.count('busiest frame') == len(phases), 'every phase in the text', r.text)
+    expect(any(d.get('name', '').startswith('Keyboard') for d in r.structured.get('devices', [])),
+           'the port map devices', r.structured.get('devices'))
+    expect('missing writes' in r.text, 'the write journal named as missing', r.text)
+    expect(not r.structured.get('buckets'), 'no buckets unless asked', r.structured)
+    r = s.call('time_travel', {'action': 'timeline', 'buckets': True, 'ports': False, 'limit': 4})
+    expect(not r.is_error and 0 < len(r.structured.get('buckets', [])) <= 4, 'buckets on request', r.structured)
+    expect('missing ports' in r.text, 'ports=false named', r.text)
+    r = s.call('time_travel', {'action': 'timeline', 'from_frame': 10_000_000}, ok=False)
+    expect(r.is_error and 'history' in r.text, 'a window past the history is an error', r.text)
 
 if __name__ == '__main__':
     sys.exit(main(globals()))

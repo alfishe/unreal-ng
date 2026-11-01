@@ -314,6 +314,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDProbeFrames(session, context, args);
     }
+    else if (subcommand == "timeline" || subcommand == "tl")
+    {
+        HandleTTDTimeline(session, context, args);
+    }
     else if (subcommand == "coverage" || subcommand == "cov")
     {
         HandleTTDCoverage(session, context, args);
@@ -412,7 +416,9 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd probe-frames <exec|read|write|port-in|port-out> <address>   The frames a profile probe fired in" << NEWLINE;
     ss << "      [--end A] [--page N] [--port-mask M] [--if \"COND\"] | --probes '[{...}, ...]'" << NEWLINE;
     ss << "      [--from-frame F] [--to-frame F] [--limit N]   (replays the window; the machine stays)" << NEWLINE;
-    ss << "  Aliases: rs=reverse-step, rc=reverse-continue, pf=probe-frames" << NEWLINE;
+    ss << "  ttd timeline [--from-frame F] [--to-frame F] [--bucket-size N] [--limit N] [--buckets] [--no-ports]" << NEWLINE;
+    ss << "      [--min-phase-ms N]              The recording cut into phases of the same activity (no replay)" << NEWLINE;
+    ss << "  Aliases: rs=reverse-step, rc=reverse-continue, pf=probe-frames, tl=timeline" << NEWLINE;
     ss << NEWLINE;
     ss << "Notes:" << NEWLINE;
     ss << "  - Seek/step/resume require the emulator to be paused." << NEWLINE;
@@ -1573,6 +1579,102 @@ void CLIProcessor::HandleTTDProbeFrames(const ClientSession& session, EmulatorCo
     }
     if (const StateNode* next = b.find("next_from_frame"))
         ss << "More: --from-frame " << next->i << NEWLINE;
+    session.SendResponse(ss.str());
+}
+
+/// `ttd timeline [--from-frame F] [--to-frame F] [--bucket-size N] [--limit N] [--buckets] [--no-ports]
+/// [--min-phase-ms N]`: the phases of the recording, each with its tags and the facts that made them
+void CLIProcessor::HandleTTDTimeline(const ClientSession& session, EmulatorContext* context,
+                                     const std::vector<std::string>& args)
+{
+    static const std::map<std::string, std::string> flags = {{"--from-frame", "from_frame"},
+                                                             {"--to-frame", "to_frame"},
+                                                             {"--bucket-size", "bucket_size"},
+                                                             {"--limit", "limit"},
+                                                             {"--min-phase-ms", "min_phase_ms"}};
+    std::map<std::string, std::string> options;
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        const auto flag = flags.find(args[i]);
+        if (flag != flags.end() && i + 1 < args.size())
+            options[flag->second] = args[++i];
+        else if (args[i] == "--buckets")
+            options["buckets"] = "true";
+        else if (args[i] == "--no-ports")
+            options["ports"] = "false";
+        else
+        {
+            session.SendResponse(std::string("Usage: ttd timeline [--from-frame F] [--to-frame F] [--bucket-size N] "
+                                             "[--limit N] [--buckets] [--no-ports] [--min-phase-ms N]") + NEWLINE);
+            return;
+        }
+    }
+
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"timeline", options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    const StateNode& b = reply.body;
+    const std::vector<StateNode>& devices = b.find("devices")->items;
+    auto line = [&](std::stringstream& ss, const StateNode& p) {
+        ss << p.find("frame_start")->i << ".." << p.find("frame_end")->i << " ";
+        std::string tags;
+        for (const StateNode& tag : p.find("tags")->items)
+            tags += (tags.empty() ? "" : ",") + tag.s;
+        ss << (tags.empty() ? "-" : tags) << ": exec " << p.find("executed")->i << ", written " << p.find("written")->i
+           << ", in " << p.find("in")->i << ", out " << p.find("out")->i;
+        if (p.find("screen_frames")->i)
+            ss << ", screen " << p.find("screen_frames")->i << " fr";
+        if (p.find("halted_frames")->i)
+            ss << ", halted " << p.find("halted_frames")->i << " fr";
+        if (p.find("ula_reads")->i)
+            ss << ", #FE reads " << p.find("ula_reads")->i;
+        if (p.find("beeper_toggles")->i)
+            ss << ", beeper " << p.find("beeper_toggles")->i;
+        if (p.find("sectors")->i)
+            ss << ", sectors " << p.find("sectors")->i;
+        if (!p.find("keys")->items.empty())
+        {
+            ss << ", keys";
+            for (const StateNode& key : p.find("keys")->items)
+                ss << " " << key.s;
+        }
+        for (const StateNode& dev : p.find("devices")->items)
+        {
+            if (const StateNode* slot = dev.find("slot"))
+                ss << "; " << slot->s << " " << dev.find("sectors")->i << " sectors";
+            else if (static_cast<size_t>(dev.find("device")->i) < devices.size())
+                ss << "; " << devices[static_cast<size_t>(dev.find("device")->i)].find("name")->s << " in "
+                   << dev.find("in")->i << " out " << dev.find("out")->i;
+        }
+        ss << NEWLINE;
+    };
+    std::stringstream ss;
+    ss << "Frames " << b.find("from_frame")->i << ".." << b.find("to_frame")->i;
+    if (b.find("bucket_count")->i)
+        ss << ", " << b.find("bucket_count")->i << " buckets of " << b.find("bucket_size")->i;
+    ss << (b.find("truncated")->b ? " (window cut at the limit)" : "") << ", " << b.find("phases")->items.size()
+       << " phases" << NEWLINE;
+    for (const StateNode& p : b.find("phases")->items)
+    {
+        ss << "  ";
+        line(ss, p);
+    }
+    if (const StateNode* buckets = b.find("buckets"))
+    {
+        ss << "Buckets:" << NEWLINE;
+        for (const StateNode& bucket : buckets->items)
+        {
+            ss << "  ";
+            line(ss, bucket);
+        }
+    }
+    for (const StateNode& e : b.find("events")->items)
+        ss << "  event " << e.find("frame")->i << " " << e.find("kind")->s << " " << e.find("text")->s << NEWLINE;
+    for (const StateNode& m : b.find("missing")->items)
+        ss << "  missing " << m.find("fact")->s << ": " << m.find("reason")->s << NEWLINE;
     session.SendResponse(ss.str());
 }
 

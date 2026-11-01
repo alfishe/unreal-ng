@@ -109,6 +109,10 @@ struct TTDEngineCheckpoint
     uint64_t busWriteCursor = 0;
     uint64_t mediaReadCursor = 0;   ///< ... and the media read journal
     uint64_t busVectorCursor = 0;   ///< ... and the interrupt-vector journal
+    /// Interrupts accepted while halted, up to this boundary (TTDFrameInput::haltedInterrupts): the frame before
+    /// was HALT-paced when it grew. Live captures only, not in the session file: haltKnown false after a load
+    uint64_t haltedInterrupts = 0;
+    bool haltKnown = false;
     /// Only for the regions that changed at this checkpoint (and, on every
     /// S-th checkpoint, for every region): its range of the engine's change
     /// records and, on those checkpoints, a full reference table (shared

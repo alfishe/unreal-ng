@@ -978,3 +978,48 @@
     paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["parameters"][0]["required"] = true;
+
+    // =====================================================================
+    // GET /ttd/timeline — the recording cut into phases (TD-5)
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/timeline"]["get"];
+        op["summary"] = "The recording cut into phases of the same activity (TD-5)";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "Every frame's facts the session holds (coverage distinct keys, changed RAM pieces and screen frames, "
+            "halted frames, port / sector / vector counts, keys and other input, per port-map device IN / OUT, per "
+            "media slot sectors, border / paging / frame length changes), tagged over a window of min_phase_ms and cut "
+            "at frame precision into phases of the same activity (tape, disk, net, sound, screen, burst, halt; input "
+            "and paging mark a phase, never cut one); buckets are an optional overview. Reads only what the "
+            "recording stores, no replay; facts the session cannot give are listed in missing[] with the reason. "
+            "Reply: from_frame, to_frame, bucket_size, bucket_count, truncated, fps, devices[] {name, tags}, phases[] "
+            "{frame_start, frame_end, tags[], facts..., devices[], busiest_frame}, buckets[] (buckets=true), events[] "
+            "{frame, tinframe, kind, text}, missing[] {fact, reason}, cost {frames, port_records, ms}.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"from_frame", "integer", "First frame (default: the oldest held)"},
+            {"to_frame", "integer", "Last frame, inclusive (default: the last complete frame)"},
+            {"bucket_size", "integer", "Frames per overview bucket (default: the window over limit buckets)"},
+            {"limit", "integer", "Most overview buckets, 1..500 (default 20); an explicit bucket_size cuts the window there"},
+            {"buckets", "boolean", "Also return the overview buckets (default false: the phases only)"},
+            {"ports", "boolean", "Classify the port records per device (default true)"},
+            {"min_phase_ms", "integer", "The shortest phase in ms of machine time, also the window frames are tagged over (default 200)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }

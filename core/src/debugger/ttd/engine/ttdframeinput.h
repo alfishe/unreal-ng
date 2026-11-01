@@ -50,6 +50,10 @@ struct TTDFrameInput
     /// Raw device-state bytes the capture serialized for the blobs above
     /// (counted work only; the engine does not read them)
     uint64_t deviceStateBytes = 0;
+    /// Maskable interrupts the CPU accepted while halted, since it was made (Z80::interruptsAcceptedHalted); with
+    /// haltKnown false the capture did not say (a file feeder)
+    uint64_t haltedInterrupts = 0;
+    bool haltKnown = false;
 };
 
 }  // namespace ttd

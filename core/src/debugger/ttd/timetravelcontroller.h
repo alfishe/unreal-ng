@@ -84,6 +84,7 @@
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
 #include "ttdcoverageindex.h"
+#include "ttdtimeline.h"
 #include "ttdperipheralregistry.h"
 #include "ttdportjournal.h"
 #include "ttdportsearch.h"
@@ -1264,6 +1265,11 @@ public:
         std::optional<TTDCoverageKind> kind = std::nullopt,
         uint64_t bucketSize = 0,
         size_t limit = 100) const;
+
+    /// @brief The timeline summary (TD-5, docs/inprogress/2026-10-31-ttd-timeline-summary): per bucket of frames
+    /// the facts the session holds, and the phases they make. Reads only what the recording stores (no replay);
+    /// a fact it cannot give is named in `missing`
+    TTDTimelineResult QueryTimeline(const TTDTimelineOptions& options) const;
     
     /// @brief Step back one instruction (TDD §10.2 + §16 row 2).
     ///

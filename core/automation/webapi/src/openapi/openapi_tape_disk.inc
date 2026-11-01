@@ -51,7 +51,14 @@
     paths["/api/v1/emulator/{id}/tape/play"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/tape/play"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/tape/play"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/tape/play"]["post"]["responses"]["200"]["description"] = "Tape playback started";
+    paths["/api/v1/emulator/{id}/tape/play"]["post"]["description"] =
+        "A paused tape resumes in place, else it plays from the consumption cursor. A tape loaded while TTD records "
+        "lands at the next frame boundary: a play before that is queued (\"Tape playback starts when the tape is "
+        "in\") and the tape starts from its first block when it lands; a stop drops it.";
+    paths["/api/v1/emulator/{id}/tape/play"]["post"]["responses"]["200"]["description"] =
+        "Tape playback started, resumed, or queued for a tape on its way";
+    paths["/api/v1/emulator/{id}/tape/play"]["post"]["responses"]["400"]["description"] =
+        "Tape image has no loadable blocks (no tape in and none on its way)";
 
     paths["/api/v1/emulator/{id}/tape/stop"]["post"]["summary"] = "Stop tape playback";
     paths["/api/v1/emulator/{id}/tape/stop"]["post"]["tags"].append("Tape Control");

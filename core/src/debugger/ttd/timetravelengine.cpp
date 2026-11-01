@@ -502,6 +502,8 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
     cp.busWriteCursor = _busWrites.Size();
     cp.mediaReadCursor = _mediaReads.Size();
     cp.busVectorCursor = _busVectors.Size();
+    cp.haltedInterrupts = input.haltedInterrupts;
+    cp.haltKnown = input.haltKnown;
     cp.cpu = input.cpu;
     cp.chipset = input.chipset;
 

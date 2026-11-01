@@ -24,6 +24,7 @@
 #include "debugger/ttd/ttdportsearch.h"
 #include "debugger/ttd/ttdprobe.h"
 #include "debugger/ttd/ttdrecordingfolders.h"
+#include "debugger/keyboard/debugkeyboardmanager.h"
 #include "emulator/capture/recordingcontrol.h"
 #include "emulator/coordinator/ports.h"
 #include "emulator/emulator.h"
@@ -344,6 +345,7 @@ private:
     TTDReply StepInstruction(const TTDRequest& request);
     TTDReply ReverseStep(const TTDRequest& request);
     TTDReply Markers();
+    TTDReply Timeline(const TTDRequest& request);
     TTDReply Bookmarks();
     TTDReply BookmarkAdd(const TTDRequest& request);
     TTDReply BookmarkDelete(const TTDRequest& request);
@@ -435,7 +437,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-delete",
         "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
-        "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
+        "timeline", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
     return verbs;
 }
 
@@ -468,6 +470,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"memory-at", {"space", "offset", "length", "frame", "tinframe"}},
         {"memory-diff", {"space", "from_frame", "to_frame", "limit"}},
         {"coverage-summary", {"from_frame", "to_frame", "kind", "bucket_size", "limit"}},
+        {"timeline", {"from_frame", "to_frame", "bucket_size", "limit", "buckets", "ports", "min_phase_ms"}},
         {"file-info", {"path"}},
         {"dump", {"path"}},
         {"load", {"path"}},
@@ -563,6 +566,8 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return AsOperation(OpKind::TimelineSeek, verb, request, [&]() { return WithCheck(StepInstruction(request)); });
     if (verb == "reverse-step")
         return AsOperation(OpKind::TimelineSeek, verb, request, [&]() { return WithCheck(ReverseStep(request)); });
+    if (verb == "timeline")
+        return Timeline(request);
     if (verb == "markers")
         return Markers();
     if (verb == "bookmarks")
@@ -2330,6 +2335,147 @@ TTDReply TTDControlBackend::CoverageSummary(const TTDRequest& request)
         buckets.push(node);
     }
     reply.body["buckets"] = buckets;
+    return reply;
+}
+
+namespace
+{
+/// A bucket or a phase's facts (design.md §3); devices and media slots only where they were used
+StateNode TimelineFactsNode(const TTDTimelineResult& result, const TTDTimelineBucket& b)
+{
+    StateNode node = StateNode::Object();
+    node["frame_start"] = b.frameStart;
+    node["frame_end"] = b.frameEnd;
+    StateNode tags = StateNode::Array();
+    for (const std::string& tag : TimelineTagNames(b.tags))
+        tags.push(tag);
+    node["tags"] = tags;
+    node["executed"] = static_cast<unsigned>(b.executed);
+    node["written"] = static_cast<unsigned>(b.written);
+    node["read"] = static_cast<unsigned>(b.read);
+    node["ram_pieces"] = b.ramPieces;
+    node["screen_frames"] = static_cast<unsigned>(b.screenFrames);
+    node["halted_frames"] = static_cast<unsigned>(b.haltedFrames);
+    node["in"] = b.in;
+    node["out"] = b.out;
+    node["sectors"] = b.sectors;
+    node["vectors"] = b.vectors;
+    node["key_events"] = static_cast<unsigned>(b.keyEvents);
+    StateNode keys = StateNode::Array();
+    for (uint8_t k : b.keys)
+        keys.push(DebugKeyboardManager::GetKeyDisplayName(static_cast<ZXKeysEnum>(k)));
+    node["keys"] = keys;
+    node["input_other"] = static_cast<unsigned>(b.otherInput);
+    node["net_events"] = static_cast<unsigned>(b.netEvents);
+    node["ula_reads"] = b.ulaReads;
+    node["border_outs"] = b.borderOuts;
+    node["beeper_toggles"] = b.beeperToggles;
+    node["border_changes"] = static_cast<unsigned>(b.borderChanges);
+    node["paging_changes"] = static_cast<unsigned>(b.pagingChanges);
+    node["length_changes"] = static_cast<unsigned>(b.lengthChanges);
+    node["writes"] = b.writes;
+    StateNode devices = StateNode::Array();
+    for (size_t d = 0; d < result.devices.size(); ++d)
+    {
+        const uint64_t in = d < b.deviceIn.size() ? b.deviceIn[d] : 0;
+        const uint64_t out = d < b.deviceOut.size() ? b.deviceOut[d] : 0;
+        if (in + out == 0)
+            continue;
+        StateNode dev = StateNode::Object();
+        dev["device"] = static_cast<uint64_t>(d);
+        dev["in"] = in;
+        dev["out"] = out;
+        devices.push(dev);
+    }
+    for (size_t m = 0; m < result.media.size() && m < b.mediaSectors.size(); ++m)
+        if (b.mediaSectors[m] > 0)
+        {
+            StateNode dev = StateNode::Object();
+            dev["slot"] = result.media[m].name;
+            dev["sectors"] = b.mediaSectors[m];
+            devices.push(dev);
+        }
+    node["devices"] = devices;
+    return node;
+}
+}  // namespace
+
+TTDReply TTDControlBackend::Timeline(const TTDRequest& request)
+{
+    TTDTimelineOptions options;
+    if (const std::string err = CoverageWindow(request, options.fromFrame, options.toFrame, options.limit); !err.empty())
+        return Fail(TTDControlError::BadRequest, err);
+    if (const std::string* t = Option(request, "bucket_size"); t && !ParseU64(*t, options.bucketSize))
+        return Fail(TTDControlError::BadRequest, "Invalid bucket_size: '" + *t + "' (expected unsigned integer)");
+    if (const std::string* t = Option(request, "buckets"); t && !ParseBool(*t, options.buckets))
+        return Fail(TTDControlError::BadRequest, "Invalid buckets: '" + *t + "' (expected true or false)");
+    if (const std::string* t = Option(request, "ports"); t && !ParseBool(*t, options.ports))
+        return Fail(TTDControlError::BadRequest, "Invalid ports: '" + *t + "' (expected true or false)");
+    uint64_t minPhaseMs = options.minPhaseMs;
+    if (const std::string* t = Option(request, "min_phase_ms");
+        t && (!ParseU64(*t, minPhaseMs) || minPhaseMs == 0 || minPhaseMs > 60000))
+        return Fail(TTDControlError::BadRequest, "Invalid min_phase_ms: '" + *t + "' (expected 1..60000)");
+    options.minPhaseMs = static_cast<unsigned>(minPhaseMs);
+
+    const TTDTimelineResult res = _manager->QueryTimeline(options);
+    if (!res.error.empty())
+        return Fail(TTDControlError::NotAvailable, res.error);
+    TTDReply reply;
+    reply.body["from_frame"] = res.fromFrame;
+    reply.body["to_frame"] = res.toFrame;
+    reply.body["bucket_size"] = res.bucketSize;
+    reply.body["bucket_count"] = static_cast<uint64_t>(res.buckets.size());
+    reply.body["truncated"] = res.truncated;
+    reply.body["fps"] = res.fps;
+    StateNode devices = StateNode::Array();
+    for (const TTDTimelineDevice& d : res.devices)
+    {
+        StateNode dev = StateNode::Object();
+        dev["name"] = d.name;
+        dev["tags"] = static_cast<uint64_t>(d.tags);
+        devices.push(dev);
+    }
+    reply.body["devices"] = devices;
+    StateNode phases = StateNode::Array();
+    for (const TTDTimelinePhase& p : res.phases)
+    {
+        StateNode node = TimelineFactsNode(res, p.facts);
+        node["busiest_frame"] = p.busiestFrame;
+        phases.push(node);
+    }
+    reply.body["phases"] = phases;
+    if (options.buckets)
+    {
+        StateNode buckets = StateNode::Array();
+        for (const TTDTimelineBucket& b : res.buckets)
+            buckets.push(TimelineFactsNode(res, b));
+        reply.body["buckets"] = buckets;
+    }
+    StateNode events = StateNode::Array();
+    for (const TTDTimelineEvent& e : res.events)
+    {
+        StateNode node = StateNode::Object();
+        node["frame"] = e.frame;
+        node["tinframe"] = static_cast<uint64_t>(e.tInFrame);
+        node["kind"] = e.kind;
+        node["text"] = e.text;
+        events.push(node);
+    }
+    reply.body["events"] = events;
+    StateNode missing = StateNode::Array();
+    for (const TTDTimelineMissing& m : res.missing)
+    {
+        StateNode node = StateNode::Object();
+        node["fact"] = m.fact;
+        node["reason"] = m.reason;
+        missing.push(node);
+    }
+    reply.body["missing"] = missing;
+    StateNode cost = StateNode::Object();
+    cost["frames"] = res.toFrame - res.fromFrame + 1;
+    cost["port_records"] = res.portRecords;
+    cost["ms"] = static_cast<double>(res.elapsedNs) / 1e6;
+    reply.body["cost"] = cost;
     return reply;
 }
 

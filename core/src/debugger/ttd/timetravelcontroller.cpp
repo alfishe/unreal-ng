@@ -4630,6 +4630,11 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
     in.start = freshShadow ? GlobalT(out.time) : _shadowLastStart + closedLength;
     in.cpu = out.cpu;
     in.chipset = out.chipset;
+    if (const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+    {
+        in.haltedInterrupts = z80->interruptsAcceptedHalted;
+        in.haltKnown = true;
+    }
     // Device states, raw, as the capture serialized them; a device whose
     // state also carries its region memory (General Sound) gives the engine
     // its state without that memory (CaptureNow took both)
