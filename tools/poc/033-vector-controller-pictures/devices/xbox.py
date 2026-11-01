@@ -1,10 +1,9 @@
 """The Xbox pads: the Series X|S controller, the One S controller, the Elite Series 1 and 2 with their back views.
 
-The Series and the One S share one shell drawn at the Series controller's 153 x 102 mm plan (Microsoft's 6.02 x 4.01
-x 2.40 in, as the retail listings quote it). Each Elite has its own shell traced (trace.py) on a straight top view
-scaled to the same width, its controls measured on that view. Control positions and sizes are measured on
-near-orthographic photos scaled to that width (provenance.json names them): the offset layout, the left stick high,
-the D-pad and the right stick low, mirrored about the centre line.
+Every pad has its own shell traced (trace.py) on a straight view scaled to the Series controller's 153 mm width
+(Microsoft's 6.02 x 4.01 x 2.40 in, as the retail listings quote it), its controls measured on that view
+(provenance.json names it): the offset layout, the left stick high, the D-pad and the right stick low, mirrored about
+the centre line.
 """
 
 import math
@@ -19,16 +18,48 @@ SIZE = {"what": "plan 153 x 102 mm, height 61 mm (6.02 x 4.01 x 2.40 in)",
         "source": "retail listings of the Xbox Wireless Controller (pcrichard.com QAU-00090, nfm.com 64696412)",
         "retrieved": "2026-10-23"}
 
-TOP = -48.0  # the shell's top edge at the centre line; the grips end at +53.5
-SHELL = [("M", (0, TOP)),
-         ("C", (18, TOP), (38, TOP - 0.6), (53, TOP + 0.4)),
-         ("C", (66, TOP + 1.2), (74.5, TOP + 6.5), (76.6, TOP + 17)),
-         ("C", (78.2, -20), (78.6, -4), (77.2, 12)),
-         ("C", (76, 28), (74.6, 40), (70.4, 48)),
-         ("C", (66.6, 55), (55, 57), (50.4, 51.5)),
-         ("C", (46.6, 47), (43.6, 37), (40, 31.5)),
-         ("C", (35, 27.3), (20, 27), (0, 27))]
-LSTICK, RSTICK, DPAD, FACE = (-43, -23.2), (22.5, 3.8), (-22.5, 3.8), (42.5, -23.6)
+# The Series controller: traced (trace.py) on Microsoft's front render of the Carbon Black pad scaled to 153 mm (the
+# half mirrored, overlap 0.999); the trigger tips rise over the bumpers at the top corners
+SERIES_SHELL = [("M", (0, -49.0)),
+                ("C", (6.0, -49.0), (15.4, -48.5), (22.5, -49.0)),
+                ("C", (24.8, -49.1), (25.6, -50.8), (27.6, -51.6)),
+                ("C", (31.5, -53.3), (40.5, -50.7), (44.2, -49.0)),
+                ("C", (47.1, -47.6), (49.7, -45.7), (51.7, -43.3)),
+                ("C", (62.1, -30.2), (77.0, 16.2), (76.5, 32.7)),
+                ("C", (76.3, 39.9), (74.3, 47.6), (67.9, 51.8)),
+                ("C", (65.0, 53.7), (62.1, 54.2), (59.0, 53.4)),
+                ("C", (48.6, 47.5), (43.0, 32.6), (34.8, 27.3)),
+                ("C", (30.7, 24.7), (26.2, 24.5), (21.4, 24.5)),
+                ("C", (14.3, 24.5), (7.1, 24.5), (0, 24.5))]
+# The One S: traced on a straight top view of a model 1708 (Recon Tech) scaled to 153 mm (overlap 0.985, the photo's
+# own lean); the front face below the arch shows a little, as in the photo
+ONE_SHELL = [("M", (0, -48.9)),
+             ("C", (6.4, -48.7), (13.8, -48.3), (20.2, -49.3)),
+             ("C", (22.0, -49.5), (23.2, -50.8), (24.9, -51.5)),
+             ("C", (28.9, -53.0), (35.0, -51.1), (39.0, -49.9)),
+             ("C", (42.3, -48.8), (46.5, -46.9), (48.7, -44.1)),
+             ("C", (49.4, -43.2), (49.5, -42.0), (50.3, -41.2)),
+             ("C", (52.0, -39.4), (54.1, -38.4), (55.5, -36.2)),
+             ("C", (63.9, -23.4), (76.5, 15.3), (76.5, 30.6)),
+             ("C", (76.5, 39.6), (74.1, 49.6), (65.1, 53.7)),
+             ("C", (62.8, 54.7), (60.5, 55.3), (58.1, 54.0)),
+             ("C", (45.0, 46.9), (42.4, 21.3), (26.6, 20.3)),
+             ("C", (18.1, 19.8), (9.5, 20.2), (0, 20.2))]
+# The shoulders of the right hand as the top view shows them: the trigger's tip a crescent along the outline, the
+# bumper a narrow band in front of it; ("M" / "L" / "C" segments, the left hand mirrored)
+SERIES_TRIGGER = [("M", (22.5, -49.0)), ("C", (24.8, -49.1), (25.6, -50.8), (27.6, -51.6)),
+                  ("C", (31.5, -53.3), (40.5, -50.7), (44.2, -49.0)),
+                  ("C", (45.3, -48.5), (46.3, -47.9), (47.2, -47.2)),
+                  ("C", (42.0, -49.0), (32.0, -49.8), (23.0, -48.6))]
+SERIES_BUMPER = [("M", (23.0, -48.6)), ("C", (32.0, -49.8), (42.0, -49.0), (47.2, -47.2)),
+                 ("C", (49.0, -46.0), (50.5, -44.8), (51.7, -43.3)), ("L", (53.2, -41.4)),
+                 ("C", (50.0, -43.6), (45.0, -46.0), (38.0, -47.0)), ("C", (32.0, -47.6), (27.0, -47.4), (23.0, -46.8))]
+ONE_TRIGGER = [("M", (20.2, -49.3)), ("C", (22.0, -49.5), (23.2, -50.8), (24.9, -51.5)),
+               ("C", (28.9, -53.0), (35.0, -51.1), (39.0, -49.9)), ("C", (41.3, -49.1), (43.6, -48.2), (45.6, -47.0)),
+               ("C", (40.0, -48.4), (30.0, -49.6), (20.6, -48.6))]
+ONE_BUMPER = [("M", (20.6, -48.6)), ("C", (30.0, -49.6), (40.0, -48.4), (45.6, -47.0)),
+              ("C", (47.0, -46.1), (48.0, -45.2), (48.7, -44.1)), ("C", (49.4, -43.2), (49.5, -42.0), (50.3, -41.2)),
+              ("C", (47.0, -43.6), (42.0, -46.0), (35.0, -46.9)), ("C", (29.0, -47.5), (24.0, -47.2), (20.6, -46.6))]
 LETTERS = {"north": ("Y", "#e2b23a"), "west": ("X", "#3f7fd0"), "east": ("B", "#d0453a"), "south": ("A", "#5aa848")}
 
 
@@ -36,49 +67,35 @@ def _p(sx, x, y, flip=False):
     return f"{num(x * sx)},{num(-y if flip else y)}"
 
 
-def bumper_d(sx=1, flip=False):
-    """A bumper round the top corner, drawn under the shell: only its outer band shows"""
-    f = lambda x, y: _p(sx, x, y, flip)  # noqa: E731
-    return (f"M{f(20, TOP + 1.5)}C{f(30, TOP - 2.6)} {f(46, TOP - 4.4)} {f(58, TOP - 3.6)}"
-            f"C{f(69, TOP - 2.8)} {f(77, TOP + 2.6)} {f(79, TOP + 11.5)}C{f(79.4, TOP + 13.5)} {f(79.2, TOP + 15.5)} "
-            f"{f(78.6, TOP + 17)}L{f(70, TOP + 17)}L{f(24, TOP + 6)}Z")
+def side_d(segs, sx=1, flip=False):
+    """A closed path of @p segs ("M" / "L" / "C" with their points) on the hand @p sx, flipped top to bottom"""
+    out = []
+    for op, *pts in segs:
+        out.append(op + " ".join(_p(sx, x, y, flip) for x, y in pts))
+    return "".join(out) + "Z"
 
 
-def trigger_d(sx=1, flip=False):
-    """A trigger's top, behind the bumper, as a slightly raised view shows it"""
-    f = lambda x, y: _p(sx, x, y, flip)  # noqa: E731
-    return (f"M{f(36, TOP - 1)}C{f(40, TOP - 6.6)} {f(50, TOP - 8.4)} {f(58, TOP - 8)}"
-            f"C{f(65.5, TOP - 7.6)} {f(71, TOP - 4.6)} {f(73.5, TOP)}L{f(60, TOP + 2)}Z")
+def shoulders(view, colors, trigger, bumper, spots):
+    """The triggers' tips and the bumpers of @p trigger / @p bumper; @p spots: (x0, x1, y, h) of the trigger's and
+    the bumper's hotspot on the right hand"""
+    for sx, trig, bump, side in ((-1, "lt", "lb", "left"), (1, "rt", "rb", "right")):
+        style.shaped(view, side_d(trigger, sx), colors["trigger"], trig)
+        style.shaped(view, side_d(bumper, sx), colors["bumper"], bump)
+        for control, (a, b, y, h), analog in ((trig, spots[0], {"kind": "trigger", "fill": "down"}),
+                                              (bump, spots[1], None)):
+            x0, x1 = sorted((a * sx, b * sx))
+            view.spot(control, control.upper(), ("rect", x0, y, x1 - x0, h), side, analog=analog)
 
 
-def shoulders(view, colors, names):
-    for sx, trig, side in ((-1, "lt", "left"), (1, "rt", "right")):
-        style.shaped(view, trigger_d(sx), colors["trigger"], trig, layer="shoulders")
-        x0, x1 = sorted((38 * sx, 72 * sx))
-        view.spot(trig, names[trig], ("rect", x0, TOP - 8.4, x1 - x0, 7.4), side,
-                  analog={"kind": "trigger", "fill": "down"})
-    for sx, bump, side in ((-1, "lb", "left"), (1, "rb", "right")):
-        style.shaped(view, bumper_d(sx), colors["bumper"], bump, layer="shoulders")
-        x0, x1 = sorted((30 * sx, 76 * sx))
-        view.spot(bump, names[bump], ("rect", x0, TOP - 3.6, x1 - x0, 5.4), side)
-
-
-def shell(view, colors, flip=False):
-    d = mirrored_d(SHELL, mirror_y=flip)
-    style.body(view, d, colors["body"])
-    style.sheen(view, d, cy=0.78 if flip else 0.22)
-    return d
-
-
-def sticks(view, colors, collar=None, at=(LSTICK, RSTICK)):
+def sticks(view, colors, at, collar=None, cap=10.3, skirt=11.8, well=12.4):
     for name, label, (cx, cy), side in (("lstick", "LS", at[0], "left"), ("rstick", "RS", at[1], "right")):
-        style.recess(view, cx, cy, 12.4, colors["body"], depth=colors.get("well", 0.55))
+        style.recess(view, cx, cy, well, colors["body"], depth=colors.get("well", 0.55))
         if collar:  # the Elite's metal shaft collar shows round the cap
             view.add("controls", f'<path d="{circle_d(cx, cy, 11.6)}" fill="{collar}" stroke="{shade(collar, 0.7)}" '
                                  f'stroke-width="0.25"/>', f"{name}.x")
             style.stick(view, cx, cy, 10.1, colors["stick"], f"{name}.x")
         else:
-            style.stick(view, cx, cy, 10.3, colors["stick"], f"{name}.x", skirt=11.8)
+            style.stick(view, cx, cy, cap, colors["stick"], f"{name}.x", skirt=skirt)
         common.stick_spots(view, name, label, cx, cy, 10.6, 6.5, side)
 
 
@@ -91,17 +108,17 @@ def ticks16(view, colors, cx, cy, r0=15.6, r1=16.6):
                    shade(colors["body"], 1.35), 0.22, opacity=0.6)
 
 
-def dpad(view, colors, kind, at=DPAD, ticks=True):
+def dpad(view, colors, kind, at, ticks=True):
     """@p ticks: the Elite 2 marks the dish round either of its D-pads, the Elite 1 does not"""
     cx, cy = at
     if kind == "cross":  # One S: a plus standing straight on the shell
-        span, arm = 26.5, 8.8
+        span, arm = 24.6, 8.8
         style.shaped(view, style.cross_d(cx, cy, span, arm, r=1.3), colors["dpad"], "dpad",
                      style.cross_d(cx, cy, span + 1.0, arm + 1.0, r=1.6))
     elif kind == "hybrid":  # Series: the cross filling a dished disc, the disc's quarters as lower facets
-        span, arm = 27, 9
-        style.recess(view, cx, cy, 14.6, colors["body"], depth=0.55)
-        style.button(view, cx, cy, 14, shade(colors["dpad"], 1.05), "dpad", gap=0.35)
+        span, arm = 22.6, 7.6
+        style.recess(view, cx, cy, 13.0, colors["body"], depth=0.55)
+        style.button(view, cx, cy, 12.3, shade(colors["dpad"], 1.05), "dpad", gap=0.35)
         fill = view.defs.linear([(0, shade(colors["dpad"], 1.04)), (1, shade(colors["dpad"], 0.96))])
         view.add("controls", f'<path d="{style.cross_d(cx, cy, span, arm, r=1.1)}" fill="{fill}" '
                              f'stroke="{shade(colors["dpad"], 0.62)}" stroke-width="0.3" stroke-linejoin="round"/>',
@@ -122,7 +139,7 @@ def dpad(view, colors, kind, at=DPAD, ticks=True):
     common.dpad_spots(view, cx, cy, span, arm, "left", prefix="dpad.")
 
 
-def face(view, colors, mono=False, at=FACE, offset=10.2, r=5.3):
+def face(view, colors, at, mono=False, offset=10.2, r=5.3):
     labels = {}
     for control, (letter, ink) in LETTERS.items():
         labels[control] = {"cap": colors["button"], "text": letter, "name": letter,
@@ -130,18 +147,22 @@ def face(view, colors, mono=False, at=FACE, offset=10.2, r=5.3):
     common.face_diamond(view, *at, offset, r, labels)
 
 
-def system(view, colors, share=True):
-    gy = TOP + 10
-    common.neutral_guide(view, 0, gy, 6.9, colors["guide"], colors["guide_ring"], "guide")
-    view.spot("guide", "Guide", ("circle", 0, gy, 7.2), "right")
-    for control, label, x, draw in (("view", "View", -12, common.view_glyph), ("menu", "Menu", 12, common.menu_glyph)):
-        style.button(view, x, -22.5, 3.8, colors["small"], control)
-        draw(view, x, -22.5, 4.2, colors["glyph"], control)
-        view.spot(control, label, ("circle", x, -22.5, 4.2), "left" if x < 0 else "right")
+def system(view, colors, guide, small, share=None):
+    """Guide at (0, @p guide[0]) of radius guide[1]; View / Menu at (-+small[0], small[1]) of radius small[2]; @p share
+    the Share key (y, w, h) or None"""
+    gy, gr = guide
+    common.neutral_guide(view, 0, gy, gr, colors["guide"], colors["guide_ring"], "guide")
+    view.spot("guide", "Guide", ("circle", 0, gy, gr + 0.3), "right")
+    sx, sy, sr = small
+    for control, label, x, draw in (("view", "View", -sx, common.view_glyph), ("menu", "Menu", sx, common.menu_glyph)):
+        style.button(view, x, sy, sr, colors["small"], control)
+        draw(view, x, sy, sr + 0.4, colors["glyph"], control)
+        view.spot(control, label, ("circle", x, sy, sr + 0.4), "left" if x < 0 else "right")
     if share:
-        style.pill(view, 0, -14, 8.8, 5.0, colors["small"], "share")
-        common.share_glyph(view, 0, -14, 3.6, colors["glyph"], "share")
-        view.spot("share", "Share", ("rect", -4.9, -17, 9.8, 6), "right")
+        y, w, h = share
+        style.pill(view, 0, y, w, h, colors["small"], "share")
+        common.share_glyph(view, 0, y, h * 0.72, colors["glyph"], "share")
+        view.spot("share", "Share", ("rect", -w / 2 - 0.5, y - h / 2 - 0.5, w + 1, h + 1), "right")
 
 
 COLORS_DARK = {"body": "#3f4145", "trigger": "#36383c", "bumper": "#3b3d41", "button": "#26272a", "small": "#2a2b2e",
@@ -151,39 +172,59 @@ COLORS_DARK = {"body": "#3f4145", "trigger": "#36383c", "bumper": "#3b3d41", "bu
 
 def series():
     pic = Picture("xbox-series", "Xbox Wireless Controller (Series X|S), Carbon Black")
-    pic.sources = [SIZE, {"what": "control positions and sizes, colours",
-                          "source": COMMONS + "Xbox_Series_Controller_Carbon_Black.jpg",
-                          "author": "UKER", "licence": "CC BY-SA 4.0", "use": "reference only, not traced",
-                          "retrieved": "2026-10-23", "note": "measured to about 1 mm on a near-orthographic photo"}]
-    view = pic.view("front", oy=768 - 2.5 * 8.6)
-    shoulders(view, COLORS_DARK, {"lt": "LT", "rt": "RT", "lb": "LB", "rb": "RB"})
-    shell(view, COLORS_DARK)
-    sticks(view, COLORS_DARK)
-    dpad(view, COLORS_DARK, "hybrid")
-    face(view, COLORS_DARK)
-    system(view, COLORS_DARK, share=True)
+    pic.sources = [SIZE,
+                   {"what": "the outline (trace.py, the half mirrored, overlap 0.999) and the control positions and "
+                            "sizes, scaled to 153 mm: the hybrid D-pad on its disc, the Share key under View / Menu, "
+                            "the trigger tips over the bumpers",
+                    "source": "https://www.xbox.com/en-US/accessories/controllers/xbox-wireless-controller "
+                              "(111101_Gallery-0_4, Carbon Black)",
+                    "author": "Microsoft", "licence": "product render",
+                    "use": "measured geometry only (trace.py outline, positions); no pixels shipped",
+                    "retrieved": "2026-11-01", "note": "measured to about 0.5 mm"}]
+    colors = COLORS_DARK
+    view = pic.view("front", oy=768 - 0.5 * 8.6)
+    d = mirrored_d(SERIES_SHELL)
+    style.body(view, d, colors["body"])
+    style.sheen(view, d)
+    shoulders(view, colors, SERIES_TRIGGER, SERIES_BUMPER, ((23, 47, -53.6, 4.4), (23, 53.2, -49.2, 3.2)))
+    sticks(view, colors, ((-39.5, -23.4), (20.0, 1.2)), cap=9.3, skirt=10.6, well=12.6)
+    dpad(view, colors, "hybrid", (-20.2, 2.3))
+    face(view, colors, (39.4, -22.7), offset=10.3, r=5.2)
+    system(view, colors, (-38.5, 5.9), (11.2, -23.2, 3.5), share=(-14.9, 8.6, 4.8))
     return pic
 
 
 def one():
     pic = Picture("xbox-one", "Xbox One S Wireless Controller, Robot White")
-    pic.sources = [SIZE, {"what": "the One S layout: no Share button, a plus-shaped D-pad, white shell, black controls",
-                          "source": COMMONS + "Xbox_One_S_controller_(cropped).jpg", "author": "Ratianidze",
-                          "licence": "CC BY-SA 3.0", "use": "reference only, not traced", "retrieved": "2026-10-23"},
-                   {"what": "the shell and the control positions shared with the Series controller",
-                    "source": COMMONS + "Xbox_Series_Controller_Carbon_Black.jpg", "author": "UKER",
-                    "licence": "CC BY-SA 4.0", "use": "reference only, not traced", "retrieved": "2026-10-23"}]
+    pic.sources = [SIZE,
+                   {"what": "the outline (trace.py, the half mirrored, overlap 0.985) and the control positions and "
+                            "sizes, scaled to 153 mm: the plus-shaped D-pad, no Share, the top plate's crease round "
+                            "Guide, the trigger tips over the bumpers",
+                    "source": COMMONS + "Xbox_One_Controller_Recon_Tech_Special_Edition.jpg",
+                    "author": "Spritekollision", "licence": "CC BY-SA 4.0",
+                    "use": "measured geometry only (trace.py outline, positions); not traced into the picture",
+                    "retrieved": "2026-11-01", "note": "a straight top view of a model 1708; about 0.7 mm"},
+                   {"what": "the Robot White colours: white shell, black sticks, D-pad and face buttons",
+                    "source": COMMONS + "Xbox_One_S_controller_(cropped).jpg", "author": "Ratianidze",
+                    "licence": "CC BY-SA 3.0", "use": "reference only, not traced", "retrieved": "2026-10-23"}]
     colors = {"well": 0.8, "body": "#e4e5e3", "trigger": "#d2d3d1", "bumper": "#d9dad8", "button": "#25262a",
               "small": "#e9eae8",
               "stick": "#2a2b2e", "dpad": "#27282c", "guide": "#2a2b2e", "guide_ring": "#9a9da3",
               "glyph": "#3b3d42", "letter": "#d7d9dd"}
-    view = pic.view("front", oy=768 - 2.5 * 8.6)
-    shoulders(view, colors, {"lt": "LT", "rt": "RT", "lb": "LB", "rb": "RB"})
-    shell(view, colors)
-    sticks(view, colors)
-    dpad(view, colors, "cross")
-    face(view, colors)
-    system(view, colors, share=False)
+    view = pic.view("front", oy=768 - 1.5 * 8.6)
+    d = mirrored_d(ONE_SHELL)
+    style.body(view, d, colors["body"])
+    style.sheen(view, d)
+    # the crease of the top plate: from each bumper's end down round Guide, flat under it
+    crease = (f"M{num(-49.2)},{num(-43.0)}C{num(-40.0)},{num(-40.0)} {num(-24.0)},{num(-36.0)} "
+              f"{num(-16.0)},{num(-36.0)}L{num(16.0)},{num(-36.0)}C{num(24.0)},{num(-36.0)} {num(40.0)},{num(-40.0)} "
+              f"{num(49.2)},{num(-43.0)}")
+    style.line(view, crease, shade(colors["body"], 0.82), 0.3, opacity=0.6)
+    shoulders(view, colors, ONE_TRIGGER, ONE_BUMPER, ((20.5, 45.6, -53.4, 4.4), (20.6, 50.3, -49.2, 3.2)))
+    sticks(view, colors, ((-39.8, -28.7), (20.6, -8.1)), cap=9.1, skirt=10.3, well=12.5)
+    dpad(view, colors, "cross", (-20.7, -4.1))
+    face(view, colors, (39.6, -27.0), offset=9.9, r=5.1)
+    system(view, colors, (-41.8, 6.0), (11.2, -28.1, 3.6))
     return pic
 
 
@@ -337,9 +378,9 @@ def elite2(pad="cross"):
     style.line(front, crease, shade(colors["body"], 1.45), 0.3, opacity=0.5)
     common.neutral_guide(front, 0, E2_GUIDE, 5.8, colors["guide"], colors["guide_ring"], "guide")
     front.spot("guide", "Guide", ("circle", 0, E2_GUIDE, 6.2), "right")
-    sticks(front, colors, collar=colors["collar"], at=(E2_LSTICK, E2_RSTICK))
-    dpad(front, colors, "elite" if pad == "cross" else "disc", at=E2_DPAD)
-    face(front, colors, mono=True, at=E2_FACE, offset=10.5, r=5.2)
+    sticks(front, colors, (E2_LSTICK, E2_RSTICK), collar=colors["collar"])
+    dpad(front, colors, "elite" if pad == "cross" else "disc", E2_DPAD)
+    face(front, colors, E2_FACE, mono=True, offset=10.5, r=5.2)
     for control, label, x, draw in (("view", "View", -11.3, common.view_glyph),
                                     ("menu", "Menu", 11.3, common.menu_glyph)):
         style.button(front, x, -22.3, 3.4, colors["small"], control)
@@ -398,11 +439,24 @@ ELITE1_SHELL = [("M", (0, -48.5)),
                 ("C", (10.7, 28.2), (5.3, 27.9), (0, 27.9))]
 # measured on the same view: the sticks, the D-pad, the face diamond, Guide, View / Menu, the profile switch
 E1_LSTICK, E1_RSTICK, E1_DPAD, E1_FACE, E1_GUIDE = (-42.9, -23.1), (21.0, 0.8), (-22.9, 0.8), (42.5, -22.6), -41.8
-# the paddles on the back as on the Series 2, the lower one longer (P2 / P4 reach down the grip)
-E1_PADDLES = (("paddle.p1", "P1", [(19, -2.6), (30, -2.6), (41, -1.6)], (31, -2.4), "right"),
-              ("paddle.p2", "P2", [(20, 5.2), (31, 5.6), (37, 12), (40.5, 26)], (36, 12), "right"),
-              ("paddle.p3", "P3", [(-19, -2.6), (-30, -2.6), (-41, -1.6)], (-31, -2.4), "left"),
-              ("paddle.p4", "P4", [(-20, 5.2), (-31, 5.6), (-37, 12), (-40.5, 26)], (-36, 12), "left"))
+# The paddles of the right hand in front coordinates, measured on Mliu92's photo of the back scaled to 153 mm: steel
+# blades thinner than the Series 2's; P1 a bar from its mount out to a round head that swells up and down, P2 a bar
+# that bends at a rounded kink into a long leg down the handle, its round end hanging past the shell into the arch
+E1_P1 = [("M", (17.0, -1.9)), ("L", (29.0, -1.9)), ("C", (31.5, -1.9), (32.5, -4.0), (36.0, -4.1)),
+         ("C", (39.5, -4.2), (41.6, -1.5), (41.6, 2.2)), ("C", (41.6, 6.0), (39.8, 8.6), (37.2, 8.6)),
+         ("C", (34.5, 8.6), (32.8, 6.6), (31.0, 5.4)), ("C", (29.8, 4.6), (28.6, 4.2), (27.0, 4.2)),
+         ("L", (17.0, 4.2)), ("C", (16.5, 4.2), (16.2, 3.9), (16.2, 3.4)), ("L", (16.2, -1.1)),
+         ("C", (16.2, -1.6), (16.5, -1.9), (17.0, -1.9))]
+E1_P2 = [("M", (17.0, 5.9)), ("L", (28.0, 5.9)), ("C", (31.0, 5.9), (33.6, 7.6), (35.2, 10.6)),
+         ("C", (37.5, 15.5), (40.6, 23.5), (42.4, 30.6)), ("C", (43.2, 33.8), (42.2, 36.4), (39.8, 36.5)),
+         ("C", (37.6, 36.6), (35.9, 35.2), (35.0, 32.8)), ("C", (33.4, 27.5), (31.4, 21.5), (29.8, 17.8)),
+         ("C", (28.6, 14.8), (27.2, 12.1), (24.5, 12.1)), ("L", (17.0, 12.1)),
+         ("C", (16.5, 12.1), (16.2, 11.8), (16.2, 11.3)), ("L", (16.2, 6.7)),
+         ("C", (16.2, 6.2), (16.5, 5.9), (17.0, 5.9))]
+E1_PADDLES = (("paddle.p1", "P1", E1_P1, 1, (34.0, 2.2), 6.0, "right"),
+              ("paddle.p2", "P2", E1_P2, 1, (35.5, 21.0), 7.0, "right"),
+              ("paddle.p3", "P3", E1_P1, -1, (-34.0, 2.2), 6.0, "left"),
+              ("paddle.p4", "P4", E1_P2, -1, (-35.5, 21.0), 7.0, "left"))
 
 
 def clip_to_circle(points, cx, cy, r, sides=72):
@@ -501,7 +555,7 @@ def elite1(pad="disc"):
                               f'stroke="{shade(colors["collar"], 0.7)}" stroke-width="0.25"/>', f"{name}.x")
         style.stick(front, cx, cy, 9.4, colors["stick"], f"{name}.x")
         common.stick_spots(front, name, label, cx, cy, 10.0, 6.0, side)
-    dpad(front, colors, "disc" if pad == "disc" else "elite", at=E1_DPAD, ticks=False)
+    dpad(front, colors, "disc" if pad == "disc" else "elite", E1_DPAD, ticks=False)
     labels = {control: {"cap": colors["button"], "text": letter, "name": letter, "ink": colors["letter"]}
               for control, (letter, _) in LETTERS.items()}
     common.face_diamond(front, *E1_FACE, 10.8, 5.3, labels)
@@ -539,9 +593,9 @@ def elite1(pad="disc"):
     back.add("case", f'<path d="{rounded_d(-25.7, 5.2, 51.4, 32.9, 2.4)}" fill="{shade(colors["body"], 0.9)}" '
                      f'stroke="{shade(colors["body"], 0.6)}" stroke-width="0.3"/>')
     style.sheen(back, d, cy=0.78)
-    for control, name, points, centre, side in E1_PADDLES:
-        paddle(back, [(x, -y) for x, y in points], colors["paddle"], control)
-        back.spot(control, name, ("circle", centre[0], -centre[1], 7.2), side)
+    for control, name, segs, sx, centre, r, side in E1_PADDLES:
+        blade(back, side_d(segs, sx, flip=True), colors["paddle"], control)
+        back.spot(control, name, ("circle", centre[0], -centre[1], r), side)
     return pic
 
 
