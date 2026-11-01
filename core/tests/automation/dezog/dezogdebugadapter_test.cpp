@@ -1324,22 +1324,7 @@ TEST_F(DezogHistory_test, DebuggerEditStartsNewHistorySegment)
 
 /// The engine (Phase 5, D9): a debugger edit is recorded as an event with what
 /// it changed, so the history before it stays browsable and recording goes on
-class DezogHistoryEngine_test : public DezogHistory_test
-{
-protected:
-    void SetUp() override
-    {
-        Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::Engine);
-        DezogHistory_test::SetUp();
-    }
-    void TearDown() override
-    {
-        DezogHistory_test::TearDown();
-        Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::V1);
-    }
-};
-
-TEST_F(DezogHistoryEngine_test, DebuggerEditKeepsTheHistory)
+TEST_F(DezogHistory_test, DebuggerEditKeepsTheHistory)
 {
     ttd::TimeTravelController* controller = _emulator->GetContext()->pTimeTravelController;
     ASSERT_NE(controller, nullptr);

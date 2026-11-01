@@ -33,7 +33,7 @@
 #include "emulator/ports/models/sprinter/sprinterporttable.h"
 #include "emulator/ports/models/sprinter/sprinterzxports.h"
 #include "emulator/machineeventjournal.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdportsearch.h"
 #include "emulator/video/sprinter/sprintervideorenderer.h"
 #include <cstdlib>

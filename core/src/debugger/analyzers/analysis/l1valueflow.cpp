@@ -43,7 +43,10 @@ Value Merge(const Value& a, const Value& b)
             if (e.read != kNoKey &&
                 std::none_of(all, all + n, [&](const Source& o) { return o.read == e.read && o.seq == e.seq; }))
                 all[n++] = e;
-    std::sort(all, all + n, [](const Source& x, const Source& y) { return x.seq > y.seq; });
+    // Latest first; an insertion sort of at most six (gcc 15 cannot bound n inside std::sort: -Warray-bounds)
+    for (int i = 1; i < n; ++i)
+        for (int j = i; j > 0 && all[j - 1].seq < all[j].seq; --j)
+            std::swap(all[j - 1], all[j]);
     Value out;
     for (int i = 0; i < n && i < 3; ++i)
         out.s[i] = all[i];

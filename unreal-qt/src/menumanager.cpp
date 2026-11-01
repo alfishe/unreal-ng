@@ -29,7 +29,7 @@
 // Avoid Qt 'signals' and 'slots' macro conflicts with core struct members
 #undef signals
 #undef slots
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/fdc/fdd.h"
 #define signals Q_SIGNALS
@@ -1554,7 +1554,7 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
 
         // The core's own refusal (FeatureManager::refusalReason, Core::CanSetSpeedMultiplier), so the menu never
         // offers what the core rejects: TTD and an RZX playback hold the shortcuts that change what the guest code
-        // does (the engine's recording keeps them, their traps are recorded edits), v1 recording holds turbo too
+        // does (the engine's recording keeps them, their traps are recorded edits)
         auto offered = [featureManager](const char* id) {
             return featureManager && featureManager->refusalReason(id, true).empty();
         };

@@ -23,7 +23,7 @@ namespace
 {
 
 constexpr const char* kAySocket = "ay-socket";
-/// The name a v1 file gives the socket's `ay` / `ts` board: the two share one id
+/// The name for the socket's `ay` / `ts` board when the set cannot tell them apart: the two share one id
 constexpr const char* kAyOrTs = "ay / ts";
 
 const SlotPlanner& TtdPlanner()
@@ -113,7 +113,7 @@ std::string CardsAt(const TtdPosition& position, const SlotManager::TtdDeviceSet
     return names.empty() ? "none" : names;
 }
 
-/// The same cards on both sides; a side that cannot tell the socket's `ay` from its `ts` (a v1 file) matches either
+/// The same cards on both sides; a side that cannot tell the socket's `ay` from its `ts` (no socket instance) matches either
 bool SameCards(const std::string& was, const std::string& is)
 {
     if (was == is)
@@ -169,21 +169,6 @@ bool SlotManager::TtdDeviceSet::Holds(TTDDeviceType type) const
 {
     auto ofType = [type](const ttd::TTDDeviceKey& key) { return key.type == type; };
     return std::any_of(devices.begin(), devices.end(), ofType) || std::any_of(notRecorded.begin(), notRecorded.end(), ofType);
-}
-
-SlotManager::TtdDeviceSet SlotManager::TtdDeviceSet::Of(const ttd::TTDDeviceStates& states,
-                                                        const std::vector<ttd::TTDDeviceKey>& notRecorded)
-{
-    TtdDeviceSet set;
-    for (const auto& [key, state] : states)
-    {
-        if (!state.empty())
-        {
-            set.devices.push_back(key);
-        }
-    }
-    set.notRecorded = notRecorded;
-    return set;
 }
 
 SlotManager::TtdDeviceSet SlotManager::TtdDeviceSet::Of(const ttd::TTDPeripheralRegistry& registry)
@@ -393,7 +378,7 @@ bool SlotManager::TtdSessionMatches(const TtdDeviceSet& recorded, const ttd::TTD
 
 std::string SlotManager::ChangeRefusal() const
 {
-    // The coordinator's rules (OpKind::SlotChange: TTD v1 refuses while a user recording runs)
+    // The coordinator's rules (OpKind::SlotChange)
     if (_context == nullptr || _context->pMachineOps == nullptr)
     {
         return {};

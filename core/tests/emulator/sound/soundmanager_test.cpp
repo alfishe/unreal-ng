@@ -345,6 +345,7 @@ std::vector<std::vector<int16_t>> RunBeeperFrames(EmulatorContext* context, int 
     context->pAudioCallback.store(&DelayCapture::callback, std::memory_order_release);
     context->pAudioManagerObj.store(&capture, std::memory_order_release);
     SoundManager sound(context);
+    sound.unmute();  // a SoundManager starts muted
     sound.reset();
     sound.getBeeperChain().setPunchEnabled(false);
     Z80* z80 = context->pCore->GetZ80();
@@ -637,6 +638,7 @@ protected:
     std::unique_ptr<SoundManager> MakeSound()
     {
         auto sound = std::make_unique<SoundManager>(_context);
+        sound->unmute();  // a SoundManager starts muted
         sound->reset();
         ProgramTone(*sound->getTurboSound());
         return sound;

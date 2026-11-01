@@ -665,7 +665,7 @@ RecordingReply ExportTtdClip(Emulator& emulator, uint64_t fromFrame, uint64_t to
         return RecordingReply::Fail("Internal Error", "Recording manager not available for this emulator");
     ttd::TimeTravelController* controller = context->pTimeTravelController;
     if (controller == nullptr)
-        return RecordingReply::Fail("Conflict", "a video clip of the history needs the TTD engine (UNREAL_TTD_BACKEND)");
+        return RecordingReply::Fail("Conflict", "time travel is not available on this instance");
     if (path.empty())
         return RecordingReply::Fail("Bad Request", "path: the video file to write (.gif, .mp4, .mkv, .webm, .mov, .avi)");
     const std::string container = ExtensionOf(path);

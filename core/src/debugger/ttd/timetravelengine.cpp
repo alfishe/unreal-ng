@@ -357,8 +357,8 @@ size_t TimeTravelEngine::BindLive(const std::vector<TTDRegionDesc>& liveRegions,
         for (const TTDDeviceEntry& l : liveDevices)
             if (l.descriptor.Key() == e.descriptor.Key())
                 live = &l;
-        // A session that names its devices otherwise (fed from a v1 file: "id<N>"; the socket's board): the device
-        // v1 saves under the same id
+        // A session that names its devices otherwise ("id<N>"; the socket's board): the device with the same
+        // legacy id
         if (!live && e.descriptor.legacyId != PeripheralId::None)
             for (const TTDDeviceEntry& l : liveDevices)
                 if (l.descriptor.legacyId == e.descriptor.legacyId)
@@ -1597,7 +1597,7 @@ TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestore
             result.Add(issue);
         }
     }
-    // (an id is unclaimed when the session's table has no device for it: the v1 file's blobs)
+    // (an id is unclaimed when the session's table has no device for it: blobs fed by legacy id)
     for (const uint8_t id : cp->unclaimedDevices)
         if (DeviceIndexOfV1Id(id) < 0)
         {

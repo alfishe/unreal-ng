@@ -218,9 +218,7 @@ curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' \
 - **The id changes.** Every applied change (and `gs_switch_personality`) is a new emulator; calls with the old id
   answer 404. Take `restart.emulatorId` from the reply (MCP `target: "auto"` resolves the single instance).
 - **A TTD recording ends with the change** (the application's time travel, the engine): the machine is a new
-  instance, the old recording stops (`last_stop_reason` `machine-change`). Only the old implementation
-  (`UNREAL_TTD_BACKEND=v1`, the core-tests) refuses instead (`status: "recording"`: `Cannot change the slot set while
-  TTD is recording session #1, started at frame 1: ...`); a dry run says so there too.
+  instance, the old recording stops (`last_stop_reason` `machine-change`).
 - **Sprinter:** `isa.1` / `isa.2` take a General Sound card (`gs`, `gs-lw`, `neogs`) behind `sprinter-isa-zxbus` only
   where `[ISA] SlotN=ZXBUS` fits the ZX-bus adapter; the ISA cards themselves are `[ISA]` settings, listed in the
   report's `machineSlots` (see below).

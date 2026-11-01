@@ -919,17 +919,17 @@
         "False when the manager is missing (minimal build); state will be \"idle\"";
     schemas["TTDStatusResponse"]["properties"]["recording_paused"]["type"] = "boolean";
     schemas["TTDStatusResponse"]["properties"]["recording_paused"]["description"] =
-        "The engine (D8): a seek, step or reverse query while recording paused the recording; state is detached. "
-        "Resuming at its end (resume, or running into it) continues the same recording; stop ends it. Always false on v1";
+        "D8: a seek, step or reverse query while recording paused the recording; state is detached. "
+        "Resuming at its end (resume, or running into it) continues the same recording; stop ends it";
     schemas["TTDStatusResponse"]["properties"]["earliest"]["$ref"] = "#/components/schemas/TTDTimePoint";
     schemas["TTDStatusResponse"]["properties"]["earliest"]["description"] =
         "The earliest position the history keeps (D12): where 'jump to start' goes. Older frames were "
         "released by the history limit or never recorded. null when there is no history";
     schemas["TTDStatusResponse"]["properties"]["black_box"]["type"] = "boolean";
     schemas["TTDStatusResponse"]["properties"]["black_box"]["description"] =
-        "The black box is armed on this instance (the engine; started with black_box, or by unreal-qt's "
+        "The black box is armed on this instance (started with black_box, or by unreal-qt's "
         "Debug > Time Travel > Always Record): its recordings keep the last minutes and step aside for turbo and "
-        "host speed. Always false on v1";
+        "host speed";
     schemas["TTDStatusResponse"]["properties"]["recording_folder"]["type"] = "string";
     schemas["TTDStatusResponse"]["properties"]["recording_folder"]["nullable"] = true;
     schemas["TTDStatusResponse"]["properties"]["recording_folder"]["description"] =
@@ -940,8 +940,7 @@
         "startup cleanup 7 days after its process ended";
     schemas["TTDStatusResponse"]["properties"]["backend"]["type"] = "string";
     schemas["TTDStatusResponse"]["properties"]["backend"]["description"] =
-        "Which implementation records on this instance: \"engine\" (the default) or \"v1\" (selected with "
-        "UNREAL_TTD_BACKEND=v1); null when time travel is not available";
+        "Which implementation records on this instance: \"engine\"; null when time travel is not available";
     // The write journal (D40): the same fields in /ttd/status, /ttd/journal and the build response
     {
         Json::Value journal;
@@ -991,7 +990,7 @@
         b["frames_covered"]["type"] = "integer";
         b["frames_covered"]["description"] = "Already inside a span, left as they were";
         b["frames_refused"]["type"] = "integer";
-        b["frames_refused"]["description"] = "Hold a v1 marker without its data: cannot be replayed";
+        b["frames_refused"]["description"] = "Hold a barrier (a marker without the data a replay needs): cannot be replayed";
         b["records"]["type"] = "integer";
         b["records"]["description"] = "Writes added";
     }
@@ -1061,9 +1060,9 @@
     schemas["TTDSeekRequest"]["description"] =
         "Request body for POST /ttd/seek. Either frame (with optional tinframe) "
         "or bookmark must be present — a bookmark label resolves to its stored "
-        "(frame, tinframe) first. A frame without tinframe is the frame's end on "
-        "the engine (D13: state and picture of {frame+1, 0}; arrived_at names it "
-        "{frame, its length}), its start on v1; tinframe 0 is the frame's start.";
+        "(frame, tinframe) first. A frame without tinframe is the frame's end "
+        "(D13: state and picture of {frame+1, 0}; arrived_at names it "
+        "{frame, its length}); tinframe 0 is the frame's start.";
     schemas["TTDSeekRequest"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDSeekRequest"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDSeekRequest"]["properties"]["tinframe"]["type"] = "integer";
@@ -1375,8 +1374,7 @@
     schemas["TTDPortEventsRequest"]["properties"]["context"]["type"] = "boolean";
     schemas["TTDPortEventsRequest"]["properties"]["context"]["description"] =
         "Each hit's registers and stack_top at its IN / OUT instruction, replayed with the machine put back. Default "
-        "on, off while a recording runs (true pauses it, as browsing does) and for a file (true: 400); the v1 backend "
-        "has none (true: 501)";
+        "on, off while a recording runs (true pauses it, as browsing does) and for a file (true: 400)";
 
     schemas["TTDPortEventHit"]["type"] = "object";
     schemas["TTDPortEventHit"]["properties"]["index"]["type"] = "integer";

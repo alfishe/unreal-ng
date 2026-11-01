@@ -5,9 +5,8 @@
 ///
 /// The core (loaders, devices, MainLoop, the CPU's input gate, the feature
 /// manager) talks to time travel only through this interface and
-/// EmulatorContext::pTimeTravelHooks, so the object behind it can change - v1's
-/// TimeTravelManager today, the engine after the switch - without touching the
-/// core. Every call is per frame, on a rare event, or behind the CPU's step-work
+/// EmulatorContext::pTimeTravelHooks (the TimeTravelController), so the object
+/// behind it can change without touching the core. Every call is per frame, on a rare event, or behind the CPU's step-work
 /// bit; per-event recording (memory and port writes, coverage) is not here.
 ///
 /// Surfaces (WebAPI, CLI, Lua, Python, GDB, DeZog, Qt) and lockstep groups that
@@ -180,20 +179,18 @@ public:
     virtual void RecordExternalEvent(TTDExternalEventKind kind, const char* reason) = 0;
     /// A medium change landed in @p slot at this frame boundary (before its checkpoint): @p what is the new medium
     /// ("<path>"), "ejected" or "discarded". A recording keeps it as an event there (M3, Q4); then ports and sectors
-    /// only. A backend that keeps no such events refuses media changes while recording instead
+    /// only
     virtual void NoteMediaChange(const char* slot, const char* what)
     {
         (void)slot;
         (void)what;
     }
-    /// Whether a recording keeps media changes as events (NoteMediaChange): the engine does, TTD v1 does not
-    virtual bool RecordsMediaChanges() const { return false; }
     /// A tool's edit of the machine: Begin before it, End after it (Emulator::EditMemoryFromTool,
     /// and a fast loader's trap: what it wrote, the registers and the time it spent).
     /// End without a source: nothing was edited (a trap declined)
     virtual void BeginToolEdit() = 0;
     virtual void EndToolEdit(const char* source) = 0;
-    /// Whether a recording keeps a logic callback's writes (RecordScriptEdit): the engine does, TTD v1 does not
+    /// Whether a recording keeps a logic callback's writes (RecordScriptEdit): the engine's controller does; default: no
     virtual bool RecordsScriptEdits() const { return false; }
     /// A logic callback's writes, just made at an instruction boundary (ScriptCallbackManager::ApplyEdits): the bytes
     /// in @p pokes (address, byte) written through the CPU's view, in order, and with @p cpu the registers it set.
@@ -280,7 +277,7 @@ public:
     /// Whether a recording that locks acceleration still keeps turbo mode, turbo tape and fast tape (phase 2, D4):
     /// turbo only takes the host's pacing away (the machine's frames are the same), and the tape trap is a recorded
     /// edit a replay applies. The host speed stays at 1x; fast disk stays held (its compressed FDC timing is no
-    /// edit). v1: no, it locks them all
+    /// edit). Default: no, it locks them all
     virtual bool RecordsShortcuts() const { return false; }
 };
 }  // namespace ttd

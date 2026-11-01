@@ -12,7 +12,7 @@ std::string Describe(const TTDDeviceKey& key)
     return key.instance + " (type " + std::to_string(static_cast<uint16_t>(key.type)) + ")";
 }
 
-/// v1's order between two devices free to go either way
+/// The legacy order (ascending legacy id) between two devices free to go either way
 bool TieBefore(const TTDDeviceDescriptor& a, const TTDDeviceDescriptor& b)
 {
     const auto ia = static_cast<uint16_t>(a.legacyId);
@@ -79,7 +79,7 @@ bool TTDDeviceTable::Build(std::vector<TTDDeviceEntry> entries, std::string& err
         }
     }
 
-    // Kahn's algorithm, the ready device that comes first in v1's order each time
+    // Kahn's algorithm, the ready device that comes first in the legacy order each time
     std::vector<uint32_t> order;
     order.reserve(n);
     std::vector<uint32_t> ready;

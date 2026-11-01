@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """time_travel: record, stop, the history in status, seek back, the machine state follows, rare coverage,
-port events with their context"""
+port events with their context, reverse-continue first per PC, memory-at the machine now"""
 
 import re
 import sys
@@ -58,6 +58,25 @@ def test_coverage_rare_lists_blocks_in_the_text(s):
     expect(len(blocks) <= 5 and r.text.count('frames ') >= len(blocks), 'each listed block in the text', r.text)
     r = s.call('time_travel', {'action': 'coverage_rare', 'max_frames': 0}, ok=False)
     expect(r.is_error and 'max_frames' in r.text, 'a bad bound named', r.text)
+
+
+def test_reverse_continue_first_per_pc_names_the_pcs_without_a_hit(s):
+    # The history of test_record_stop_seek: the ROM's IM 1 handler runs every frame, 0xFFF0 (UDG data) never
+    r = s.call('time_travel', {'action': 'reverse_continue', 'pcs': ['0x0038', '0xFFF0'], 'first_per_pc': True})
+    hits = r.structured.get('hits', [])
+    expect(not r.is_error and len(hits) == 1 and hits[0].get('pc') == 0x0038, 'one hit, the IM 1 handler',
+           r.structured)
+    expect(r.structured.get('pcs_without_hit') == [0xFFF0], 'the PC that never ran is named', r.structured)
+    expect('PC 0x0038' in r.text and 'No hit in the window: 0xFFF0' in r.text, 'both in the text', r.text)
+
+
+def test_memory_at_cpu_without_frame_reads_the_machine_now(s):
+    r = s.call('time_travel', {'action': 'memory_at', 'space': 'cpu', 'offset': '0x4000', 'length': 16})
+    expect(not r.is_error and r.structured.get('live') is True and len(r.structured.get('hex', '')) == 32,
+           'sixteen bytes of the machine now', r.structured)
+    expect('(the machine now)' in r.text and '[' in r.text, 'live and the banks in the text', r.text)
+    r = s.call('time_travel', {'action': 'memory_at', 'space': 'cpu', 'frame': 10_000_000}, ok=False)
+    expect(r.is_error and 'frame' in r.text, 'a frame past the history is an error', r.text)
 
 
 def test_port_events_carry_rows_and_registers(s):

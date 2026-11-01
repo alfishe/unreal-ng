@@ -461,7 +461,6 @@ Every surface returns the same fields:
 | `unknown-format` | 400 | not a format this slot takes |
 | `does-not-fit` | 400 | the folder does not fit the medium |
 | `dirty` | 409 | unsaved writes: add `save`, `export` or `discard` |
-| `recording` | 409 | TTD v1 only: a TTD recording runs: stop it, or `end_recording` |
 | `in-use` | 409 | the same file is in another slot (only read-only media can share) |
 | `io-error` | 500 | host I/O failed |
 | `not-supported` | 501 | a valid request this build cannot do yet |

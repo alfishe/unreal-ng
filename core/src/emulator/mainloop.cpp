@@ -17,7 +17,7 @@
 #include "emulator/io/controllers/controllermanager.h"
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/callbacks/scriptcallbacks.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -517,7 +517,7 @@ void MainLoop::CompleteFrame()
         }
         catch (const std::exception& e)
         {
-            MLOGERROR("TimeTravelManager::OnFrameBoundary failed: %s", e.what());
+            MLOGERROR("TimeTravelController::OnFrameBoundary failed: %s", e.what());
         }
     }
 
@@ -699,7 +699,7 @@ void MainLoop::OnFrameEnd()
         //
         // TTD silent-replay suppression (parent TDD §8.2 + Appendix C, same
         // contract as the NC_VIDEO_FRAME_REFRESH gate below): a throwaway
-        // replay pass (ReplayWithinFrame / TimeTravelManager::
+        // replay pass (ReplayWithinFrame / TimeTravelController::
         // ComposeDisplay) can cross a real frame boundary while
         // ttdReplayActive is set. Latching there advances the present-slot
         // ring (Screen::_presentLatchCounter) for a frame nobody asked to

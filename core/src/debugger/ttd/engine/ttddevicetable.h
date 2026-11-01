@@ -4,10 +4,10 @@
 /// @brief The engine's device table: every device of the recorded machine with
 /// its descriptor, checked once and put in restore order.
 ///
-/// Built from the same peripheral registry v1 records from, so the device set
-/// is defined in one place. A device restores after the devices it names in
-/// TTDDeviceDescriptor::restoreAfter; ties keep v1's order (ascending blob id,
-/// then type, then instance), so the engine and v1 load devices alike.
+/// Built from the peripheral registry, so the device set is defined in one
+/// place. A device restores after the devices it names in
+/// TTDDeviceDescriptor::restoreAfter; ties keep the legacy order (ascending
+/// legacy id, then type, then instance), the order v1 loaded devices in.
 /// The set has a version that changes when the set changes (a card switched,
 /// Phase 2, Step 4).
 /// Design: docs/inprogress/2026-09-25-ttd-v2-migration/phase-2-device-state-tdd.md §5.1.
@@ -44,8 +44,8 @@ public:
     /// Changes whenever Build adopts a set that differs from the previous one
     uint32_t SetVersion() const { return _setVersion; }
     const std::vector<TTDDeviceEntry>& Entries() const { return _entries; }
-    /// Point entry @p index at a live device (a session read from a file or
-    /// fed from v1 binds to the machine it is restored into)
+    /// Point entry @p index at a live device (a session read from a file
+    /// binds to the machine it is restored into)
     void Bind(size_t index, TTDSerializable* device, ITTDRegionSource* withoutRegions)
     {
         _entries[index].device = device;

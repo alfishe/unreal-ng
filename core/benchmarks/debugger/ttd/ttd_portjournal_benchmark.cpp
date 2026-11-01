@@ -5,7 +5,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdportjournal.h"
 #include "debugger/ttd/ttdportsearch.h"
 #include "emulator/cpu/core.h"
@@ -165,7 +165,7 @@ static void BM_TTD_PortJournal_TapeSession(benchmark::State& state)
             z80->DirectWrite(static_cast<uint16_t>(0x8000 + i), kEarPoller[i]);
         z80->pc = 0x8000;
         emulator->RunNFrames(3);
-        ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+        ttd::TimeTravelController* ttd = context->pTimeTravelController;
         if (!ttd->StartRecording())
             BenchmarkPathHelper::FailSetup("StartRecording failed");
         state.ResumeTiming();

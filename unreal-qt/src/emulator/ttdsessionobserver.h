@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <optional>
 
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 
 class Emulator;
 
@@ -14,9 +14,9 @@ class Emulator;
 /// Two threads are in the way: the machine's thread grows, trims and frees the
 /// timeline while it records, and an automation thread may stop, invalidate or
 /// remove the instance at any moment. So a read holds a context lease
-/// (Emulator::LeaseContext: the TimeTravelManager stays alive for the call, and
+/// (Emulator::LeaseContext: the TimeTravelController stays alive for the call, and
 /// the read is refused once a removal has begun) and takes the manager's
-/// published snapshot (TimeTravelManager::GetPublishedSessionInfo), never the
+/// published snapshot (TimeTravelController::GetPublishedSessionInfo), never the
 /// live session (2026-10-03 crash: GetHeapBreakdown walked a timeline freed
 /// under the toolbar's tooltip timer).
 namespace TtdSessionObserver

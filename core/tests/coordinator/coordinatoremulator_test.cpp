@@ -17,7 +17,6 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/coordinator/machinecoordinator.h"
 #include "emulator/cpu/core.h"
@@ -58,25 +57,9 @@ protected:
 
     void TearDown() override
     {
-        if (_engineHooks && _emulator)
-        {
-            EmulatorContext* context = _emulator->GetContext();
-            context->pTimeTravelManager->StopRecording();
-            context->pTimeTravelHooks = _engineHooks;
-        }
         if (_emulator)
             EmulatorTestHelper::CleanupEmulator(_emulator);
     }
-
-    /// TTD v1 as the backend: it keeps no media change events, so it still refuses them while recording (goes with v1)
-    void UseV1()
-    {
-        EmulatorContext* context = _emulator->GetContext();
-        ASSERT_NE(context->pTimeTravelManager, nullptr);
-        _engineHooks = context->pTimeTravelHooks;
-        context->pTimeTravelHooks = context->pTimeTravelManager;
-    }
-    ttd::ITimeTravelHooks* _engineHooks = nullptr;
 
     /// Start counting log entries from here
     void Mark() { _since = _emulator->GetOperationLog().LastSeq(); }
@@ -113,70 +96,6 @@ TEST_F(CoordinatorEmulator_Test, AResetIsOneOperationThatEndsTheSessionAndKeepsT
     EXPECT_TRUE(_ttd->HasHistory()) << "D42: the history of the same machine stays browsable";
     EXPECT_EQ(_ttd->GetSessionInfo().lastStopReason, "reset");
     EXPECT_EQ(_emulator->MachineOps().Mode(), MachineMode::Live);
-}
-
-TEST_F(CoordinatorEmulator_Test, TtdV1RefusesATapeWhileRecordingAndTheLogHasItBeforeTheFileIsOpened)
-{
-    UseV1();
-    ASSERT_TRUE(_emulator->GetContext()->pTimeTravelManager->StartRecording());
-    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
-
-    // Every surface asks the same question and gets the same sentence
-    coordinator::MachineOp ask;
-    ask.kind = OpKind::MediaInsert;
-    ask.media = coordinator::MediaClass::Tape;
-    const coordinator::OpResult would = _emulator->MachineOps().WouldRefuse(ask);
-    ASSERT_EQ(would.status, OpStatus::Refused);
-
-    Mark();
-    std::string error;
-    EXPECT_FALSE(_emulator->LoadTape(Garbage("refused.tzx"), &error));
-    EXPECT_EQ(error, would.reason) << "a garbage file would fail to parse: the refusal came first";
-    EXPECT_TRUE(_emulator->GetContext()->pTimeTravelManager->IsRecording());
-    const auto log = Logged();
-    ASSERT_EQ(log.size(), 1u);
-    EXPECT_EQ(log[0].kind, OpKind::MediaInsert);
-    EXPECT_EQ(log[0].status, OpStatus::Refused);
-    EXPECT_EQ(log[0].detail, would.reason);
-}
-
-TEST_F(CoordinatorEmulator_Test, ASurfaceThatAsksFirstGetsTheSameRefusalAndTheLogNamesIt)
-{
-    UseV1();   // the engine refuses no media change while recording (M3): v1 still does
-    ASSERT_TRUE(_emulator->GetContext()->pTimeTravelManager->StartRecording());
-    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
-
-    // A surface asks before its own preparation (an upload, a dialog): the sentence LoadTape / LoadDisk /
-    // CreateBlankDisk give, logged under the asking thread's source
-    coordinator::SourceScope scope(coordinator::OpSource::WebApi);
-    Mark();
-    const std::string tape = _emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, "game.tzx");
-    const std::string disk = _emulator->AskMediaChange(Emulator::MediaChange::LoadDisk, 1, "game.trd");
-    const std::string blank = _emulator->AskMediaChange(Emulator::MediaChange::CreateDisk, 0);
-    std::string error;
-    EXPECT_FALSE(_emulator->LoadTape(Garbage("asked.tzx"), &error));
-    EXPECT_EQ(tape, error);
-    EXPECT_NE(disk.find("insert a disk"), std::string::npos) << disk;
-    EXPECT_NE(blank.find("create a disk"), std::string::npos) << blank;
-
-    const auto log = Logged();
-    ASSERT_EQ(log.size(), 4u) << "every refusal is in the log, the ones a surface asked for too";
-    for (const OperationLogEntry& e : log)
-    {
-        EXPECT_EQ(e.status, OpStatus::Refused);
-        EXPECT_EQ(e.source, coordinator::OpSource::WebApi);
-        EXPECT_EQ(e.mode, MachineMode::Recording);
-    }
-    EXPECT_EQ(log[0].summary, "tape game.tzx");
-    EXPECT_EQ(log[1].summary, FloppyDriveSlot::IdFor(1) + " game.trd");
-    EXPECT_EQ(log[2].kind, OpKind::DiskCreate);
-    EXPECT_TRUE(_emulator->GetContext()->pTimeTravelManager->IsRecording());
-
-    // Live: nothing to refuse, nothing logged
-    _emulator->GetContext()->pTimeTravelManager->StopRecording();
-    Mark();
-    EXPECT_EQ(_emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, "game.tzx"), "");
-    EXPECT_TRUE(Logged().empty());
 }
 
 TEST_F(CoordinatorEmulator_Test, TheBlackBoxEndsAtATapeLoadAndTheLogSaysSo)
@@ -376,7 +295,7 @@ TEST_F(CoordinatorEmulator_Test, AnRzxSeekBackIsASnapshotLoad)
     EXPECT_EQ(_ttd->GetSessionInfo().lastStopReason, "rzx-seek");
 }
 
-TEST_F(CoordinatorEmulator_Test, AModelSwitchIsAskedOfTheCoordinatorAndARefusalIsLogged)
+TEST_F(CoordinatorEmulator_Test, AModelSwitchIsAskedOfTheCoordinator)
 {
     // The engine: a change of the machine itself ends the session, never refused (owner rule 2026-10-05)
     ASSERT_TRUE(_ttd->StartRecording());
@@ -385,24 +304,6 @@ TEST_F(CoordinatorEmulator_Test, AModelSwitchIsAskedOfTheCoordinatorAndARefusalI
     EXPECT_EQ(_emulator->AskModelSwitch("to TSL"), "");
     EXPECT_TRUE(Logged().empty()) << "a yes is not logged: the switch replaces the instance and its log";
     _ttd->StopRecording();
-
-    // TTD v1 refuses it while recording (D26): the emulator's owner refusal, logged with the sentence
-    EmulatorContext* context = _emulator->GetContext();
-    ASSERT_NE(context->pTimeTravelManager, nullptr);
-    ttd::ITimeTravelHooks* engine = context->pTimeTravelHooks;
-    context->pTimeTravelHooks = context->pTimeTravelManager;
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    const std::string refusal = _emulator->AskModelSwitch("to TSL");
-    context->pTimeTravelManager->StopRecording();
-    context->pTimeTravelHooks = engine;
-
-    EXPECT_NE(refusal.find("model"), std::string::npos) << refusal;
-    const auto log = Logged();
-    ASSERT_EQ(log.size(), 1u);
-    EXPECT_EQ(log[0].kind, OpKind::ModelSwitch);
-    EXPECT_EQ(log[0].status, OpStatus::Refused);
-    EXPECT_EQ(log[0].summary, "to TSL");
-    EXPECT_EQ(log[0].detail, refusal);
 }
 
 // M3 (Q4, owner 2026-10-10): a media change while the user's recording runs is an event of the recording - the
@@ -573,25 +474,6 @@ TEST_F(CoordinatorEmulator_Test, ASpeedChangeIsRefusedWhileAHistoryIsKeptAndLogg
     EXPECT_EQ(log[0].summary, "2x");
     EXPECT_EQ(log[0].effect, SessionEffect::TimingChanged);
     EXPECT_EQ(log[1].summary, "1x");
-}
-
-// M6: TTD v1 refuses a change of the machine itself while recording (D26), as the emulator's owner refusal, logged;
-// the ROM is not touched and the machine is not paused
-TEST_F(CoordinatorEmulator_Test, TtdV1RefusesARomLoadWhileRecordingAndTheLogHasIt)
-{
-    UseV1();
-    ASSERT_TRUE(_emulator->GetContext()->pTimeTravelManager->StartRecording());
-    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
-
-    Mark();
-    EXPECT_FALSE(_emulator->LoadROM("any.rom"));
-    const auto log = Logged();
-    ASSERT_EQ(log.size(), 1u);
-    EXPECT_EQ(log[0].kind, OpKind::RomLoad);
-    EXPECT_EQ(log[0].status, OpStatus::Refused);
-    EXPECT_EQ(log[0].summary, "any.rom");
-    EXPECT_NE(log[0].detail.find("ROM"), std::string::npos) << log[0].detail;
-    EXPECT_TRUE(_emulator->GetContext()->pTimeTravelManager->IsRecording());
 }
 
 // M6: a reset leaves the path an RZX playback drives - the coordinator ends the playback first, the caller does not

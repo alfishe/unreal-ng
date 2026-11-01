@@ -509,6 +509,7 @@ menu time:
   label: TIME
   uc: [D1, D3]
   glyph: ttd.menu
+  context: ttd
   strip: {content: title, status: ttd, target: true}
   dials:
     0: {label: FRAMES, uc: D3.3, turn: {action: ttd.jog_frames, value: {d: $ticks}}, press: {action: run.pause_toggle}}

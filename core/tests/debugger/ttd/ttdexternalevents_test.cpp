@@ -38,7 +38,7 @@
 #include "emulator/platform.h"
 
 // TTDSeekHaltReason / TTDSeekResult are nested inside TimeTravelController
-// (defined in timetravelmanager.h). Pull them into convenient aliases so the
+// (defined in timetravelcontroller.h). Pull them into convenient aliases so the
 // test bodies read like the parent TDD's pseudocode.
 using SeekHaltReason = ttd::TimeTravelController::TTDSeekHaltReason;
 using SeekResult     = ttd::TimeTravelController::TTDSeekResult;

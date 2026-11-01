@@ -90,7 +90,7 @@
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
 #include "debugger/asm/asmcontrol.h"
-#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/timetravelcontroller.h>
 #include <debugger/ttd/machinestatehash.h>
 #include <debugger/ttd/ttdfileinfo.h>
 #include <tuple>
@@ -2890,7 +2890,7 @@ public:
         });
 
         // Tape operations
-        // ok, reason: the reason is set when the insert is refused (TTD v1 while recording)
+        // ok, reason: the reason is set when the insert is refused
         lua.set_function("tape_load", [this](const std::string& path) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator"};
@@ -5880,7 +5880,7 @@ public:
         });
 
         lua.set_function("ttd_seek", [this](sol::this_state ts, uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::object {
-            // Without a T-state: the frame's end on the engine (D13), its start on v1
+            // Without a T-state: the frame's end (D13)
             std::map<std::string, std::string> options{{"frame", std::to_string(frame)}};
             if (tInFrameOpt)
                 options["tinframe"] = std::to_string(*tInFrameOpt);

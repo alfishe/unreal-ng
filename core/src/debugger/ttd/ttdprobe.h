@@ -117,7 +117,7 @@ struct TTDSearchResult
 /// @brief A single M1 (instruction-start) cycle recorded during reverse
 /// execution enumeration (Phase 4 reverse execution).
 ///
-/// Emitted by `TimeTravelManager::EnumerateM1InRange`, which arms the access
+/// Emitted by `TimeTravelController::EnumerateM1InRange`, which arms the access
 /// probe with `Execute` + full address range during a single silent-replay
 /// pass over an interval. Each M1 cycle inside the interval produces one of
 /// these records.

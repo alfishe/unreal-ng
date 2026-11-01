@@ -1,6 +1,6 @@
 # Port journals on the engine: one copy, recorded where it is kept
 
-Design step for the last open item of Phase 5 Item 2 ([TODO](TODO.md), "Port event search and find-last on port
+Design step for the last open item of Phase 5 Item 2 ([TODO](DONE.md), "Port event search and find-last on port
 writes stay on the live port journals"). Written 2026-10-09 from the code on master `7e3163872`.
 
 **Abbreviations:** TTC.cpp = `core/src/debugger/ttd/timetravelcontroller.cpp`, TTE.cpp = `timetravelengine.cpp`.

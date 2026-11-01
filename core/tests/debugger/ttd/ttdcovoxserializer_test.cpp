@@ -153,7 +153,7 @@ TEST_F(TTD_Covox_Serializer_Test, RoundTrip_All256ValuesPerChannel)
 
 /// endregion </Covox serializer tests>
 
-/// region <TimeTravelManager integration: covoxState blob is populated>
+/// region <Time travel integration: covoxState blob is populated>
 
 TEST(TTD_Covox_ManagerIntegration_Test, CaptureNow_PopulatesCovoxStateBlob)
 {
@@ -188,4 +188,4 @@ TEST(TTD_Covox_ManagerIntegration_Test, CaptureNow_PopulatesCovoxStateBlob)
     emulator.Release();
 }
 
-/// endregion </TimeTravelManager integration>
+/// endregion </Time travel integration>

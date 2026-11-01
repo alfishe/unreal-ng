@@ -1,5 +1,5 @@
 #include "soundmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 
 #include <algorithm>
 #include <cmath>
@@ -2309,8 +2309,8 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
         return true; // already the requested personality
 
     // FR-4: the switch changes the device set under any TTD history: the coordinator ends the session and drops its
-    // history (no checkpoint could restore the outgoing card into the new one); TTD v1 refuses it while a user
-    // recording runs (the reason is also reported at request time)
+    // history (no checkpoint could restore the outgoing card into the new one); a refusal is also reported at request
+    // time
     coordinator::MachineOp op;
     op.kind = coordinator::OpKind::GsCardSwitch;
     op.summary = std::string(gsImplementationLabel(_gs->implementation())) + " -> " +
@@ -2385,7 +2385,7 @@ bool SoundManager::switchGeneralSoundCardNow(GSTypeKind target, GSCardImplementa
     //     TurboSound/TSFM slots) so a checkpoint recorded on one personality
     //     cannot silently restore into the other - UpdatePeripheral drops the
     //     outgoing card's type and registers the new card under its own key.
-    //     Safe to call unconditionally: a null TimeTravelManager (TTD
+    //     Safe to call unconditionally: a null TimeTravelController (TTD
     //     unavailable) no-ops.
     if (_context && _context->pTimeTravelHooks)
         _context->pTimeTravelHooks->UpdatePeripheral(outgoingTtdType, _gs);

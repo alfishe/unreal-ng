@@ -2,10 +2,9 @@
 
 /// @file timetravelcontroller.h
 /// @brief TimeTravelController — the engine's playback controller (Phase 5, item 2): a
-/// copy of v1's TimeTravelManager that records into and restores from its own
+/// copy of v1's manager (deleted in Phase 6) that records into and restores from its own
 /// TimeTravelEngine: the engine holds the history (checkpoints, pieces, events,
-/// bus and write journals) and writes the session file; v1's page store and file
-/// format are gone (Phase 5, C1-C4). Parts of the description below are still v1's.
+/// bus and write journals) and writes the session file (Phase 5, C1-C4).
 ///
 /// Per parent TDD §7.1, §10.2. This class owns:
 ///   - The engine (TimeTravelEngine) - the history's store
@@ -34,11 +33,11 @@
 ///   - Start/Stop/Invalidate/Seek are called from the control thread while
 ///     the emulator is paused (existing pause discipline; no new concurrency).
 ///
-/// v1 simplification — never-touched handling:
+/// Never-touched handling:
 ///   The TDD §6.3 "lazy baseline upgrade" optimization (capture pre-first-
 ///   write content so never-touched-in-session pages cost zero even on
-///   extended-RAM machines) is deferred. For v1, the baseline capture at
-///   StartRecording interns every model-RAM page (cost: 128 KB – 4 MB,
+///   extended-RAM machines) is deferred. The baseline capture at
+///   StartRecording stores every model-RAM page (cost: 128 KB – 4 MB,
 ///   proportional to model RAM size, paid once per session). This is correct
 ///   and matches the design's restore semantics. The working-set-proportional
 ///   optimization can be added later as a fast path without changing the
@@ -243,13 +242,12 @@ public:
     /// checkpoint's device blobs (what the byte limit measures)
     uint64_t HistoryBytes() const;
 
-    /// Shadow mode (TTD v2 migration, Phase 1, Step 4): every capture is also
-    /// handed to @p engine - the same dirty pages, live memory, CPU and device
-    /// state - so the new engine records the running emulator next to v1 and
-    /// can be checked against it. When v1's history is cleared, loaded or cut
-    /// short, the engine starts a new session; after a restore it rescans all
-    /// pieces once. Null detaches and leaves the engine's session as it is.
-    /// Without an engine attached this costs one pointer check per frame.
+    /// Record into @p engine instead of the controller's own (the "shadow"
+    /// engine, a name from the TTD v2 migration, Phase 1, Step 4): every capture
+    /// is handed to it - the same dirty pages, live memory, CPU and device
+    /// state. When the history is cleared, loaded or cut short, the engine
+    /// starts a new session; after a restore it rescans all pieces once. Null
+    /// detaches and leaves the engine's session as it is.
     /// Tests and benchmarks only
     void SetShadowEngine(TimeTravelEngine* engine);
     /// Shadow mode (Phase 4): write the shadow engine's session as it records,
@@ -355,10 +353,9 @@ public:
     /// @return false with @p err set when there is no session or a write fails
     bool SerializeSession(std::ostream& out, std::string& err);
 
-    /// @brief Replace the session by the one in @p in: an engine session file,
-    /// or a v1 .ttd file (read by v1's manager and converted on the way in,
-    /// until v1 files are retired). Refused, leaving the current session as it
-    /// was, when the file is unreadable, recorded on another model or ROM set,
+    /// @brief Replace the session by the one in @p in, an engine session file.
+    /// Refused, leaving the current session as it was, when the file is
+    /// unreadable or a (deleted) v1 file, recorded on another model or ROM set,
     /// or with devices this machine lacks. The session is Idle afterwards;
     /// SeekTo browses it, ResumeRecordingFrom continues it
     bool DeserializeSession(std::istream& in, std::string& err);
@@ -379,7 +376,7 @@ private:
     std::unique_ptr<TimeTravelEngine> LoadEngineSession(const ITTDByteSource& source, TTDSessionFacts& facts,
                                                         std::vector<uint8_t>& coverage, TTDBookmarkJournal& bookmarks,
                                                         std::string& err);
-    /// Make @p loaded the session: the side table, v1's journals and indexes from it
+    /// Make @p loaded the session: the side table, the controller's journals and indexes from it
     void CommitLoadedSession(std::unique_ptr<TimeTravelEngine> loaded, const TTDSessionFacts& facts,
                              const std::vector<uint8_t>& coverage, TTDBookmarkJournal& bookmarks);
 
@@ -745,10 +742,10 @@ public:
     /// @brief The position of machine time @p globalT (the inverse of GlobalT)
     TTDTimePoint TimePointAt(uint64_t globalT) const;
     /// @brief The first barrier in (@p from, @p to] on the engine's event log,
-    /// as a v1 marker (C3): what a replay cannot reproduce. Tape control and
+    /// as a marker (TTDExternalEvent, C3): what a replay cannot reproduce. Tape control and
     /// debugger edits with their bytes are input the replay applies, not barriers
     std::optional<TTDExternalEvent> FirstBarrierBetween(const TTDTimePoint& from, const TTDTimePoint& to) const;
-    /// @brief The engine gets what v1's journals hold since the last boundary
+    /// @brief The engine gets what the controller's journals hold since the last boundary
     /// (bus records, input, markers, facts): at a stop, and before a replay
     /// while recording
     void FlushToEngine();
@@ -796,15 +793,15 @@ public:
     // External-event markers (Phase 2 Item 6; parent TDD §5.1)
     // -----------------------------------------------------------------------
     //
-    // Sources of nondeterminism that aren't covered by an input journal in
-    // v1 (tape control, disk writes, debugger-initiated state edits) get
-    // a marker on the timeline. Markers are replay barriers: SeekTo refuses
+    // Sources of nondeterminism that the input journal does not cover (tape
+    // control, disk writes, debugger-initiated state edits) get a marker on
+    // the timeline. Markers are replay barriers: SeekTo refuses
     // to cross them silently and surfaces the marker to the caller via
     // TTDSeekResult. This keeps TTD honest — it never pretends to reproduce
     // what it cannot. Journals (input today, tape/disk later) progressively
     // convert marker classes into replayable events.
     //
-    // Item 6 v1 ships the data structure, the capture API, and the
+    // Item 6 shipped the data structure, the capture API, and the
     // SeekTo barrier logic. Hook points in Tape / BetaDisk / debugger edit
     // paths land incrementally — each new hook is a one-line call to
     // RecordExternalEvent() guarded by IsRecording().
@@ -820,13 +817,12 @@ public:
     /// @param reason Short human-readable description. May be nullptr.
     void RecordExternalEvent(TTDExternalEventKind kind, const char* reason) override;
     void NoteMediaChange(const char* slot, const char* what) override;
-    bool RecordsMediaChanges() const override { return true; }
     /// The same, stamped at @p at (a tool edit's event sits where the edit began)
     void RecordExternalEventAt(TTDExternalEventKind kind, const char* reason, const TTDTimePoint& at);
 
     /// A tool's edit of the machine while recording (Emulator::EditMemoryFromTool,
     /// Phase 3): BeginToolEdit before the edit, EndToolEdit after it. The edit
-    /// is a DebuggerEdit marker for v1 (a barrier) and, with its bytes - the
+    /// is a DebuggerEdit marker in the marker journal and, with its bytes - the
     /// RAM pages and device-memory pieces written since the last checkpoint,
     /// and every device state the edit changed - an input event the engine's
     /// replay applies (no barrier)
@@ -841,7 +837,7 @@ public:
     /// them to the card's target a frame at a time (ServiceInput), since the card runs behind the main CPU
     void RecordCardEdits(const char* source, const std::vector<TTDCardEdit>& edits) override;
 
-    /// The bytes of the tool edit recorded as v1 marker @p markerIndex (empty: none)
+    /// The bytes of the tool edit recorded as marker @p markerIndex (empty: none)
     const std::unordered_map<size_t, std::vector<uint8_t>>& ToolEditPayloads() const { return _toolEditPayloads; }
 
     /// @brief Read-only access to the marker journal. Used by tests, the UI,
@@ -927,8 +923,8 @@ public:
     //
     // Lifecycle mirrors the other journals: cleared on StartRecording /
     // InvalidateSession / DeserializeSession, clipped by
-    // ResumeRecordingFrom, persisted in the .ttd file as a flag-gated
-    // section (ttd::dump::kFlagsHasBookmarks).
+    // ResumeRecordingFrom, persisted in the .ttd file as the "bookmarks"
+    // holder stream (ttdcontrollersessionfile.cpp).
 
     /// @brief Add a bookmark at an explicit position.
     ///
@@ -1186,7 +1182,7 @@ public:
     /// address, value, PC, physical page), as the write journal recorded
     /// them. The machine is left at the frame's end.
     /// @return false when the session has no checkpoint of @p frame or none
-    ///         after it, while recording, or when a v1 marker lies in the frame
+    ///         after it, while recording, or when a barrier marker lies in the frame
     bool RegenerateFrameWrites(uint64_t frame, std::vector<TTDSearchResult>& out);
 
     /// @brief Build the write journal for a span of recorded history by
@@ -1196,8 +1192,8 @@ public:
     /// order and the frames join its segments. Slow - about 2-4 ms per frame,
     /// like RZX playback - so @p progress reports each frame and can stop
     /// the build (the frames built so far are kept). The session's last
-    /// frame (no checkpoint after it) and frames holding a v1 marker without
-    /// its data are not built. Refused while recording. The machine returns
+    /// frame (no checkpoint after it) and frames holding a marker without
+    /// its data (a barrier) are not built. Refused while recording. The machine returns
     /// to where it stood (positioned in history, as after any search).
     TTDJournalBuildResult BuildWriteJournal(uint64_t fromT, uint64_t toT,
                                             const TTDJournalBuildProgress& progress = nullptr);
@@ -1863,8 +1859,8 @@ private:
     bool _shadowArmed = false;
     /// Start or stop the devices marking their memory writes for the shadow engine
     void ArmShadowRegions(bool on);
-    TTDExternalEvent _barrierScratch;   ///< EnumerateM1InRange's barrier, as a v1 marker
-    TTDV1EventCursor _shadowEvents;   ///< how far the shadow engine has v1's journals
+    TTDExternalEvent _barrierScratch;   ///< EnumerateM1InRange's barrier, as a marker
+    TTDV1EventCursor _shadowEvents;   ///< how far the shadow engine has the controller's journals
     std::vector<TTDPendingFact> _shadowFacts;   ///< the live machine's facts since the last boundary
     /// A fact at the current instant (normalized past the frame's end)
     void NoteFact(const TTDEvent& ev);
@@ -1918,7 +1914,7 @@ private:
     bool _toolEditOpen = false;
     TTDTimePoint _toolEditAt{};   ///< where the edit began: its event's time (a trap's instruction boundary)
     uint32_t _toolEditTt = 0;     ///< the CPU clock (Z80::tt) when it began: a trap also spends time
-    std::unordered_map<size_t, std::vector<uint8_t>> _toolEditPayloads;   ///< v1 marker index -> edit bytes
+    std::unordered_map<size_t, std::vector<uint8_t>> _toolEditPayloads;   ///< marker index -> edit bytes
     /// Apply a tool edit's bytes (a replay crossing it)
     void ApplyToolEdit(const std::vector<uint8_t>& payload);
     /// The replay's card edits of frame @p frame to the card targets (those of an earlier frame leave)
@@ -1964,7 +1960,7 @@ private:
                 _shadowEntryDevice[i] = _shadowEngine->DeviceIndex(entries[i].key);
         }
     }
-    /// The shadow engine's history no longer matches v1's: it starts over at the next capture
+    /// The shadow engine's history no longer matches the timeline's: it starts over at the next capture
     void ResetShadow();
     TTDPeripheralRegistry _peripherals;
 
@@ -2122,7 +2118,7 @@ private:
     void StopBusRecording();
 
     /// External-event journal — replay barriers for nondeterminism sources
-    /// that aren't input-journaled in v1 (Item 6). Same lifecycle as the
+    /// that aren't input-journaled (Item 6). Same lifecycle as the
     /// input journal: dropped on Invalidate/Start, truncated by Resume.
     TTDExternalEventJournal _externalEvents;
 

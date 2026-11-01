@@ -8,8 +8,9 @@
 # the hit sets the car flags (ix+#12) = #E5FF to 2 and 3 in #A637 / #A63B, so a write that raises #E5FF is the player's hit.
 # Checked in real time (Q held 48 s, random O / P / SPACE every 0.8 s): the speed level follows the car (values 0 to 9 seen),
 # 12 `hit`. #B877 is the missile launch (the free-slot branch of the shot spawn, IX = the player's record, 6 runs for 6 SPACE taps);
-# the drones' records #E658 / #E6C3 do not take the player's hit path (their flag byte ix+#12 was written once in 3200 frames, by
-# other code), so a drone hit is not an event; the lap events are not mapped.
+# the drones' records #E658 / #E6C3 do not take the player's hit path, but a drone that is shot ends in #A67D (set 7 and 3 of
+# ix+#12, speed ix+6 = 0; 3 runs in 3200 frames, IX = #E658 / #E6C3 each time), which is the `wreck` event (in a 15000-frame stepped run the player was hit 64 times through #A659 and none of them ran #A67D, so it does not double the player's `hit`); the lap events are not mapped.
+# Checked in real time (Q held 120 s, random O / P, SPACE every 0.8 s): 129 `fire`, 23 `hit`, 1 `wreck`.
 schema: 1
 kind: play
 id: builtin/game/badlands
@@ -35,7 +36,9 @@ haptics:
     speed: { probe: value, address: "0xE5F3", scale: 28 }
     hit:   { probe: write, address: "0xE5FF", when: increased }
     fire:  { probe: exec, address: "0xB877" }
+    wreck: { probe: exec, address: "0xA67D" }
   rules:
     - { on: speed, play: engine, target: handle.low }
     - { on: hit, play: hit }
     - { on: fire, play: shot, scale: 0.6 }
+    - { on: wreck, play: explosion, scale: 0.5 }

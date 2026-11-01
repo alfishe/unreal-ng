@@ -5,7 +5,7 @@
 /// The gate runs the "ci" subset of the benchmark matrix through the same
 /// harness core-benchmarks uses, with the engine every build ships, and checks:
 ///
-///  - **Bytes against the stored baseline** (testdata/ttd/bench/v1-ci-gate.txt):
+///  - **Bytes against the stored baseline** (testdata/ttd/bench/ci-gate.txt):
 ///    every stream per frame, the session footprint and the saved file size.
 ///    The workloads are replayable (fixed start state, scripted input, frozen
 ///    RTC, zeroed power-on RAM), so these counts repeat to the byte in any
@@ -33,10 +33,10 @@
 /// It replaces TTD_Capture_Cost_Gate_Test, whose frame-time rounds were
 /// load-sensitive. A deliberate format or capture change updates the baseline:
 ///
-///   UNREAL_TTD_BENCH_OVERHEAD=0 core-benchmarks --benchmark_filter=TTDMatrix/v1/
+///   UNREAL_TTD_BENCH_OVERHEAD=0 core-benchmarks --benchmark_filter=TTDMatrix/controller/
 ///       --benchmark_format=json --benchmark_out=scratch/ci.json
 ///   python3 tools/verification/ttd-bench/ttd_bench_compare.py export-gate
-///       scratch/ci.json testdata/ttd/bench/v1-ci-gate.txt
+///       scratch/ci.json testdata/ttd/bench/ci-gate.txt
 ///
 /// Each gate case boots a machine and records 60 frames (~0.5-1 s in Release),
 /// well past the 50 ms guideline: the workload is the thing being gated.
@@ -56,6 +56,7 @@
 
 #include "_helpers/testpathhelper.h"
 #include "debugger/ttd/bench/ttdbench.h"
+#include "debugger/ttd/engine/ttdarena.h"
 
 namespace ttd::bench
 {
@@ -110,7 +111,7 @@ const Baseline& GateBaseline()
     static const Baseline baseline = [] {
         Baseline b;
         std::string error;
-        if (!LoadBaseline(TestPathHelper::GetTestDataPath("ttd/bench/v1-ci-gate.txt"), b, error))
+        if (!LoadBaseline(TestPathHelper::GetTestDataPath("ttd/bench/ci-gate.txt"), b, error))
             ADD_FAILURE() << error;
         return b;
     }();
@@ -153,7 +154,7 @@ TEST_P(TTDBench_Test, CiGate)
     const auto expectedIt = GateBaseline().find(c.Name());
     ASSERT_NE(expectedIt, GateBaseline().end()) << c.Name() << " is in the ci matrix but not in the gate baseline";
 
-    std::unique_ptr<ttd::bench::Engine> engine = ttd::bench::CreateEngine("v1");
+    std::unique_ptr<ttd::bench::Engine> engine = ttd::bench::CreateEngine("controller");
     ASSERT_NE(engine, nullptr);
     const ttd::bench::Result result = ttd::bench::RunCase(*engine, c, GateOptions());
     ASSERT_TRUE(result.ok) << c.Name() << ": " << result.error;
@@ -170,7 +171,7 @@ TEST_P(TTDBench_Test, CiGate)
         EXPECT_LE(std::abs(actual->second - expected.value), allowed)
             << c.Name() << " " << metric << ": " << actual->second << " vs baseline " << expected.value
             << " (tolerance " << expected.tolerancePct << "%). A capture or format change that is meant "
-            << "has to update testdata/ttd/bench/v1-ci-gate.txt (see the header of this file).";
+            << "has to update testdata/ttd/bench/ci-gate.txt (see the header of this file).";
     }
 
     // The capture-cost check lives in the baseline: without the work metrics
@@ -192,11 +193,15 @@ TEST_P(TTDBench_Test, CiGate)
     EXPECT_LE(result.metrics.at("bm4_heap_write_journal_slack_bpf"), result.metrics.at("bm4_heap_write_journal_bpf"));
 
     // Compressed data is stored at its exact size (ttd::codec::Compress, POC 011
-    // E5): the stored pieces, coverage and port-journal blocks hold no unused
-    // allocation - before the fix ~4 KB per piece, half a recording's memory
-    for (const char* slack : {"bm4_heap_ram_payload_slack_bpf", "bm4_heap_coverage_slack_bpf",
-                              "bm4_heap_port_journal_slack_bpf"})
+    // E5): coverage and port-journal blocks hold no unused allocation - before
+    // the fix ~4 KB per piece, half a recording's memory. The engine's pieces
+    // are carved from arena chunks at their exact size; what the arena holds
+    // beyond them is the unfilled rest of its chunks, under one chunk
+    for (const char* slack : {"bm4_heap_coverage_slack_bpf", "bm4_heap_port_journal_slack_bpf"})
         EXPECT_EQ(result.metrics.at(slack), 0.0) << c.Name() << ": " << slack;
+    EXPECT_LT(result.metrics.at("bm4_heap_ram_payload_slack_bpf") * result.metrics.at("frames"),
+              double(ttd::TTDArena::kChunkBytes))
+        << c.Name() << ": the arena holds more than a chunk beyond its pieces";
     EXPECT_LE(result.metrics.at("bm4_heap_coverage_slack_bpf"), result.metrics.at("bm4_heap_coverage_bpf"));
     EXPECT_LE(result.metrics.at("bm4_heap_port_journal_slack_bpf"),
               result.metrics.at("bm4_heap_port_reads_bpf") + result.metrics.at("bm4_heap_port_writes_bpf"));

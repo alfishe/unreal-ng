@@ -7,9 +7,9 @@
 /// The journal is recorded on demand: switched on and off during a recording,
 /// or built later by replay. Its segments say which spans of machine time it
 /// covers; inside them "who wrote this address last" answers from it at once.
-/// Records arrive in time order and are kept as v1's file blocks (2,048
-/// records in columns, zstd level 1) instead of v1's raw 12-byte ring: about
-/// 15-40 times smaller (E7).
+/// Records arrive in time order and are kept in file blocks (2,048 records in
+/// columns, zstd level 1, the layout v1's files had) instead of a raw 12-byte
+/// ring: about 15-40 times smaller (E7).
 
 #include <cstddef>
 #include <cstdint>

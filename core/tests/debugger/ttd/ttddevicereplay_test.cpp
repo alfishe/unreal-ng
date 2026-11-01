@@ -113,11 +113,9 @@ protected:
         features->setFeature(Features::kDebugMode, true);
         features->setFeature(Features::kTimeTravel, true);
         _context->pMemory->UpdateFeatureCache();
-        // The shipped configs fit NeoGS in the GS slot (GSType=NGS). Its card
-        // memory is not in TTD v1 checkpoints, so after a seek its firmware
-        // runs over the live (later) RAM and the card is not replayed exactly
-        // until TTD v2 memory regions exist. The classic card keeps the slot
-        // covered by the exact-replay check
+        // The shipped configs fit NeoGS in the GS slot (GSType=NGS). The
+        // classic card keeps the slot covered by the exact-replay check (chosen
+        // when v1's checkpoints left the NeoGS card memory out)
         ASSERT_TRUE(_context->pSoundManager->switchGeneralSoundCard(GSTypeKind::Z80));
     }
 

@@ -81,7 +81,7 @@
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
 #include <debugger/joystick/debugjoystickmanager.h>
-#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/timetravelcontroller.h>
 #include <debugger/ttd/machinestatehash.h>
 #include <debugger/ttd/ttdfileinfo.h>
 #include <debugger/ttd/ttdprobe.h>
@@ -3056,10 +3056,10 @@ namespace PythonBindings
             // Tape operations
             .def("tape_load", [](Emulator& self, const std::string& path) -> bool {
                 if (std::string refusal = self.AskMediaChange(Emulator::MediaChange::LoadTape, 0, path); !refusal.empty())
-                    throw std::runtime_error(refusal);  // refused (TTD v1 while recording): RuntimeError with the reason
+                    throw std::runtime_error(refusal);  // refused: RuntimeError with the reason
                 return self.LoadTape(path);
             }, "Load tape file (while TTD records: an event of the recording at the next frame boundary; "
-               "RuntimeError on TTD v1)", py::arg("path"))
+               "RuntimeError when the change is refused, with the reason)", py::arg("path"))
             .def("tape_is_inserted", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
                 return ctx && ctx->pTape && !ctx->coreState.tapeFilePath.empty();
@@ -6173,13 +6173,13 @@ namespace PythonBindings
             }, "Drop all TTD history (RuntimeError while recording)", py::arg("reason") = "python invalidate")
 
             .def("ttd_seek", [](Emulator& self, uint64_t frame, std::optional<uint32_t> tInFrame) -> py::object {
-                // Without a T-state: the frame's end on the engine (D13), its start on v1
+                // Without a T-state: the frame's end (D13)
                 std::map<std::string, std::string> options{{"frame", std::to_string(frame)}};
                 if (tInFrame)
                     options["tinframe"] = std::to_string(*tInFrame);
                 return TtdSeekPy(TtdRunPy(self, "seek", options));
             }, "Seek to a point in the timeline (the machine stays paused there; ttd_resume continues). "
-               "Without tinframe the engine lands at the frame's end, v1 at its start",
+               "Without tinframe it lands at the frame's end (D13)",
                py::arg("frame"), py::arg("tinframe") = py::none())
 
             .def("ttd_step_back", [](Emulator& self) -> bool {
@@ -6488,7 +6488,7 @@ namespace PythonBindings
                 py::arg("phys_page") = py::none(), py::arg("limit") = 200, py::arg("space") = py::none())
 
             // A memory at a past checkpoint and what changed between two, from the store (no seek). A bad
-            // argument raises ValueError; a refusal (no history, backend v1) is a dict with error
+            // argument raises ValueError; a refusal (no history) is a dict with error
             .def("ttd_memory_at", [](Emulator& self, const std::string& space, py::object frameObj, py::object offsetObj,
                                      uint32_t length, uint32_t tinframe) -> py::object {
                 std::map<std::string, std::string> options{

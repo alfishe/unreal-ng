@@ -99,8 +99,7 @@ has the run state of the old one: it runs when the old one ran, it is started an
 **Refused** without changing anything: when the machine cannot take the card (a fixed built-in uses its ports, the
 bus lacks a signal and no adapter connects it); when the new set would not create a machine (two cards in conflict).
 A TTD recording does not stop the change: changing the machine ends the recording (its history stays loadable when it
-was a black box) and the restarted machine records again only by its own settings. Only the old time-travel
-implementation (`UNREAL_TTD_BACKEND=v1`) refuses the change while it records, naming the recording.
+was a black box) and the restarted machine records again only by its own settings.
 
 **What a restart keeps besides the cards:** the network settings and the firmware choices made through them - the
 ZX-Evo AVR (`avr_firmware`, `[EVO] Avr=`) and the ATM Turbo 2+ keyboard controller (`kbc_firmware`, `[ATM] Kbc=`) -

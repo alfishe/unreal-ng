@@ -1,7 +1,7 @@
 /// @file ttdsessionfile_test.cpp
 /// @brief A TimeTravelEngine session through the session file (Phase 4,
-/// debugger/ttd/engine/ttdsessionfile.h): every v1 session of the corpus is
-/// fed into the engine, saved, loaded into a second engine, and compared
+/// debugger/ttd/engine/ttdsessionfile.h): every engine session of the corpus
+/// is loaded, saved again, loaded into a second engine, and compared
 /// checkpoint by checkpoint (every region, every device, the events, the bus
 /// and media journals, the write journal, the configuration); saving the
 /// loaded session gives the same bytes. Damage stops the load at the first
@@ -26,40 +26,26 @@
 #include <string>
 #include <vector>
 
-#include "_helpers/emulatortesthelper.h"
-#include "_helpers/gsslot.h"
 #include "_helpers/ttdmultisoundsessions.h"
-#include "_helpers/ttdslotcards.h"
-#include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testtier.h"
 #include "_helpers/testwaithelper.h"
 #include "_helpers/ttdsyntheticsession.h"
-#include "base/featuremanager.h"
-#include "debugger/ttd/bench/ttdv1feeder.h"
+#include "common/filehelper.h"
 #include "debugger/ttd/engine/ttdsessionfile.h"
 #include "debugger/ttd/timetravelengine.h"
-#include "debugger/ttd/timetravelmanager.h"
-#include "debugger/ttd/ttdfileinfo.h"
-#include "emulator/emulator.h"
-#include "emulator/emulatorcontext.h"
-#include "emulator/memory/memory.h"
 
 namespace
 {
 namespace fs = std::filesystem;
 using namespace ttd;
 
-/// The stored v1 sessions (testdata/ttd, its port journals, testdata/machines/<machine>/ttd)
+/// The stored engine sessions (testdata/ttd/engine and the port journals' engine/)
 std::vector<fs::path> StoredFiles()
 {
     std::vector<fs::path> files;
-    const fs::path root = TestPathHelper::FindProjectRoot() / "testdata";
-    std::vector<fs::path> dirs = {root / "ttd", root / "ttd" / "port-journals"};
-    if (fs::exists(root / "machines"))
-        for (const auto& machine : fs::directory_iterator(root / "machines"))
-            dirs.push_back(machine.path() / "ttd");
-    for (const fs::path& dir : dirs)
+    const fs::path root = TestPathHelper::FindProjectRoot() / "testdata" / "ttd";
+    for (const fs::path& dir : {root / "engine", root / "port-journals" / "engine"})
         if (fs::exists(dir))
             for (const auto& entry : fs::directory_iterator(dir))
                 if (entry.path().extension() == ".ttd")
@@ -68,11 +54,11 @@ std::vector<fs::path> StoredFiles()
     return files;
 }
 
-/// The whole v1 corpus: the stored sessions and the ZX-MultiSound ones, recorded by v1 in this process
+/// The whole corpus: the stored sessions and the ZX-MultiSound ones, recorded in this process
 std::vector<fs::path> CorpusFiles()
 {
     std::vector<fs::path> files = StoredFiles();
-    for (const fs::path& recorded : ttdtest::MultiSoundSessions(ttdtest::SessionRecorder::V1))
+    for (const fs::path& recorded : ttdtest::MultiSoundSessions())
         files.push_back(recorded);
     return files;
 }
@@ -81,7 +67,7 @@ std::vector<fs::path> CorpusFiles()
 /// long tier (about 0.5 s a session)
 std::vector<fs::path> CorpusSample()
 {
-    return TestTier::Sample(CorpusFiles(), {"idle_session.ttd", "greenberet-load.ttd", "multisound-zxevo-v1.ttd"});
+    return TestTier::Sample(CorpusFiles(), {"idle_session.ttd", "greenberet-load.ttd", "multisound-zxevo.ttd"});
 }
 
 TTDSessionSaveParams Params(uint32_t perPart = 50)
@@ -177,37 +163,15 @@ void ExpectSameSession(const TimeTravelEngine& a, const TimeTravelEngine& b, siz
 class TTDSessionFile_Test : public ::testing::Test
 {
 protected:
-    SoundCardScope _soundCards;
-    Emulator* _emulator = nullptr;
-    TimeTravelManager* _v1 = nullptr;
-
-    void TearDown() override
-    {
-        if (_emulator)
-            EmulatorTestHelper::CleanupEmulator(_emulator);
-        _emulator = nullptr;
-    }
-
-    /// @p file into v1 on a machine of its model, then into @p engine
+    /// @p file, the whole session, into @p engine
     void Feed(const fs::path& file, TimeTravelEngine& engine)
     {
-        TTDFileInfo info;
-        std::string err;
-        ASSERT_TRUE(ReadTTDFileInfo(file.string(), info, err)) << err;
-        if (_emulator)
-            EmulatorTestHelper::CleanupEmulator(_emulator);
-        // The machine the session was recorded on: its General Sound card and its slot-built cards (ttdslotcards.h)
-        _emulator = ttdtest::CreateRecordedMachine(info.machine, err);
-        ASSERT_NE(_emulator, nullptr) << err;
-        EmulatorContext* context = _emulator->GetContext();
-        _v1 = context->pTimeTravelManager;
-        _emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
-        _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
-        context->pMemory->UpdateFeatureCache();
-        ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, info.machine.generalSound));
-        std::ifstream in(file, std::ios::binary);
-        ASSERT_TRUE(_v1->DeserializeSession(in, err)) << err;
-        ASSERT_TRUE(bench::FeedV1Session(*_v1, engine, err)) << err;
+        TTDFileSource source(file.string());
+        ASSERT_TRUE(source.Valid()) << source.Error();
+        std::string error;
+        TTDSessionLoadReport report;
+        ASSERT_TRUE(TTDSessionFile::Load(engine, source, error, &report)) << error;
+        ASSERT_TRUE(report.complete) << report.stoppedAt;
     }
 
     /// The largest stored session of the corpus
@@ -273,7 +237,7 @@ TEST_F(TTDSessionFile_Test, EveryCorpusSessionSurvivesTheFile)
 
         // The loaded session saves to the same bytes
         EXPECT_TRUE(Save(loaded) == bytes) << "a re-save differs";
-        // Bytes per stream, for the comparison with v1's file
+        // Bytes per stream, for the comparison with the stored file
         TTDMemorySource again(bytes);
         TTDContainerReader reader;
         ASSERT_TRUE(reader.Open(again, error));
@@ -284,34 +248,9 @@ TEST_F(TTDSessionFile_Test, EveryCorpusSessionSurvivesTheFile)
         std::string split;
         for (const auto& [id, n] : perStream)
             split += " " + reader.Header().Stream(id)->name + "=" + std::to_string(n);
-        std::printf("[ session  ] %s: %zu checkpoints, %zu bytes (v1 %llu):%s\n", file.filename().string().c_str(),
+        std::printf("[ session  ] %s: %zu checkpoints, %zu bytes (stored %llu):%s\n", file.filename().string().c_str(),
                     original.CheckpointCount(), bytes.size(), static_cast<unsigned long long>(fs::file_size(file)),
                     split.c_str());
-    }
-}
-
-/// D31: every v1 session of the corpus converts to an engine file marked as
-/// converted, which loads as the session fed straight into the engine
-TEST_F(TTDSessionFile_Test, EveryV1SessionConverts)
-{
-    const auto files = CorpusSample();
-    ASSERT_GE(files.size(), 3u);
-    for (const fs::path& file : files)
-    {
-        SCOPED_TRACE(file.filename().string());
-        TimeTravelEngine fed;
-        ASSERT_NO_FATAL_FAILURE(Feed(file, fed));
-        TTDMemorySink sink;
-        std::string error;
-        ASSERT_TRUE(bench::ConvertV1Session(*_v1, sink, error)) << error;
-        TimeTravelEngine loaded;
-        TTDMemorySource source(sink.bytes);
-        TTDSessionLoadReport report;
-        ASSERT_TRUE(TTDSessionFile::Load(loaded, source, error, &report)) << error;
-        EXPECT_TRUE(report.convertedFromV1);
-        EXPECT_TRUE(report.complete);
-        ASSERT_EQ(loaded.CheckpointCount(), fed.CheckpointCount());
-        ASSERT_NO_FATAL_FAILURE(ExpectSameSession(fed, loaded, fed.CheckpointCount()));
     }
 }
 
@@ -800,12 +739,10 @@ TEST_F(TTDSessionFile_Test, DISABLED_WriteAnalyzerFixtures)
     }
     files["synthetic-ancillary.ttd"] = AncillaryFixture();
     {
-        TimeTravelEngine fed;
-        ASSERT_NO_FATAL_FAILURE(Feed(TestPathHelper::FindProjectRoot() / "testdata" / "ttd" / "active_demo.ttd", fed));
-        TTDMemorySink sink;
-        std::string error;
-        ASSERT_TRUE(bench::ConvertV1Session(*_v1, sink, error)) << error;
-        files["active-demo-converted.ttd"] = sink.bytes;
+        // A v1 session converted (D31) before v1 was removed: kept as it was committed
+        std::ifstream f(FixtureDir() / "active-demo-converted.ttd", std::ios::binary);
+        ASSERT_TRUE(f.is_open());
+        files["active-demo-converted.ttd"].assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
     }
     std::string json = "{\n";
     for (const auto& [name, bytes] : files)

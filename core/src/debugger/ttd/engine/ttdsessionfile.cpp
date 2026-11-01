@@ -99,7 +99,7 @@ bool ReadDescriptor(TTDByteReader& r, TTDDeviceDescriptor& d)
 /// endregion </Tables>
 
 /// Columns (frame deltas, times, ports, PCs, values): each compresses on its own,
-/// as in v1's journal blocks. A time is the delta from the previous record of
+/// as in the bus journal's blocks. A time is the delta from the previous record of
 /// its frame, or the time itself on a new frame
 void WritePortRecords(TTDByteWriter& w, const TTDPortJournal& j, uint64_t from, uint64_t to)
 {
@@ -629,7 +629,7 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
     // The write journal (derived, D40) goes whole with the last part
     if (ok && lastPart && atSessionEnd && (e._writes.Size() > 0 || !e._writes.Segments().empty()))
     {
-        // In v1's column blocks of 2,048 records (EncodeWriteBlock)
+        // In column blocks of 2,048 records (EncodeWriteBlock)
         TTDByteWriter wj;
         std::vector<TTDWriteRecord> all;
         all.reserve(static_cast<size_t>(e._writes.Size()));

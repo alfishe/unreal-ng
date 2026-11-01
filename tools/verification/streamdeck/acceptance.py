@@ -380,6 +380,7 @@ CHECKS = []
 # The product scenario's home (data/streamdeck/scenarios/src/unreal.spec.yaml): the keys and dials the checks use
 HOME_PAUSE = (0, 0)    # run.pause_toggle: always available (set.speed is not while TTD holds a history), twice = back
 HOME_DEBUG = (3, 0)    # the Debugger menu (context debug)
+HOME_TIME = (3, 1)     # the Time menu (context ttd)
 DIAL_FRAMES = 0        # ttd.jog_frames, on home and on Time
 SCRUB_SECONDS = 60     # ACC-1's criterion; --scrub-seconds shortens it
 HUMAN_DIAL = False     # --surface-dial: ACC-1's turns come from a person on the Surface Dial, not the deck's dial
@@ -521,6 +522,14 @@ def acc1_surface_dial(rig, emulator):
 
 
 @check('acc2')
+def pads_in_debugger(rig):
+    """The host controllers apply the pads' debug profiles: the instance's context has them in the debugger (the
+    rig's own settings keep the Debug layer key off, so only the context turns this on)"""
+    status, body = rig.host('GET', '/api/v1/controllers/context')
+    expect(status == 200 and isinstance(body, dict), 'the host controllers\' context', body)
+    return bool(body.get('debug_layer', (body.get('result') or {}).get('debug_layer')))
+
+
 def acc2_context(rig):
     """UC-2 / UC-4: a context change from either side switches the other before its next input"""
     emulator = followed(rig)
@@ -542,8 +551,16 @@ def acc2_context(rig):
                  'the ctx.set in the activity feed', 2, 0.01)
     changed = entry['t_ms'] / 1000.0
     deck_to_host = changed - (released if changed >= released else pressed)
+    # every surface follows the context: the pads drive the debugger with the deck on its Debugger page
+    wait(lambda: pads_in_debugger(rig), 'the deck\'s Debugger menu takes the pads into the debugger', 2, 0.01)
     rig.navigate()
     wait(lambda: rig.context(emulator)['context'] == 'play', 'back home sets play again', 2, 0.01)
+    wait(lambda: not pads_in_debugger(rig), 'home gives the pads back to the game', 2, 0.01)
+    rig.key(*HOME_TIME)
+    wait(lambda: rig.context(emulator)['context'] == 'ttd', 'the deck\'s Time menu sets ttd', 2, 0.01)
+    wait(lambda: pads_in_debugger(rig), 'the Time menu takes the pads into the history', 2, 0.01)
+    rig.navigate()
+    wait(lambda: not pads_in_debugger(rig), 'home again: the pads play', 2, 0.01)
     # the host to the deck: another surface sets the context, the deck goes to the menu declaring it
     started = time.monotonic()
     rig.action('ctx.set', 'debug', emulator=emulator)

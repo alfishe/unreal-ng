@@ -9,7 +9,7 @@
 #include "common/stringhelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
-#include "debugger/ttd/timetravelmanager.h"  // Phase 4 — RecordIoWrite hot-path call
+#include "debugger/ttd/timetravelcontroller.h"  // Phase 4 — RecordIoWrite hot-path call
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/io/joystick/joystick.h"

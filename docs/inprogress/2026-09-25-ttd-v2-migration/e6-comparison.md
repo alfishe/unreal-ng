@@ -80,7 +80,7 @@ Status: measured 2026-10-09 on branch `ttd-engine` (engine backend, the controll
 - **Two streams are above the model, both fixed costs per checkpoint.** Looked at 2026-10-09: the "reference tables" figure includes the piece store's version table (28 B per stored version), which E6 did not model - the tables alone are 166 B per frame against 143. The checkpoint record's extra (position, journal cursors, region list) is real; reducing either was judged not worth it (TODO).
   - Reference tables: 3.1× on 128K machines, 413 B per frame against 143.
   - CPU + chipset: 2.4–2.9×, about 400 B per frame against E6's 168 B, which was not delta-coded either.
-  - They are 1.2–1.7 MB per minute: small next to the journal on active content, but most of an idle recording. Open in the [TODO](TODO.md).
+  - They are 1.2–1.7 MB per minute: small next to the journal on active content, but most of an idle recording. Open in the [TODO](DONE.md).
 - **The session file is 0.14–0.42 of E6's file model.** The file stores the journal's raw column blocks inside the container's zstd stream, which compresses across blocks. Memory keeps one zstd frame per 2,048 records, which is E6's model.
 - **Device states that change in every frame at an idle prompt** (Variability "every frame"):
   - the AY / TSFM chips and the classic GS (Phase 2's Q1: real generator state);

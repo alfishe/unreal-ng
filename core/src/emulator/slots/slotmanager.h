@@ -329,8 +329,8 @@ public:
     /// The devices of a TTD checkpoint: the devices it holds a state for and the devices fitted but deliberately not
     /// recorded (TTDPeripheralRegistry::MarkNotRecorded, the lightweight General Sound). The AY socket's `ay` and
     /// `ts` boards are one type (TurboSound); `socketCard` tells them apart where the device's engine instance names
-    /// the socket's card (`ay-socket.ts`): the live registry and the engine's device table do, a v1 file does not
-    /// ("" = not known, either board)
+    /// the socket's card (`ay-socket.ts`): the live registry and the engine's device table do ("" = not known,
+    /// either board)
     struct TtdDeviceSet
     {
         std::vector<ttd::TTDDeviceKey> devices;
@@ -340,8 +340,6 @@ public:
         /// A device of @p type held or fitted
         bool Holds(ttd::TTDDeviceType type) const;
 
-        /// Device states (a v1 file's baseline, by the keys the live registry gives its v1 ids)
-        static TtdDeviceSet Of(const ttd::TTDDeviceStates& states, const std::vector<ttd::TTDDeviceKey>& notRecorded);
         static TtdDeviceSet Of(const ttd::TTDPeripheralRegistry& registry);
         /// A session file of the engine: every device of its device table, the not-recorded devices from the
         /// controller's facts
@@ -376,7 +374,8 @@ public:
     /// The slot-set guard on a session load: the cards the recording held (its baseline checkpoint) against the
     /// cards of this machine, per slot (AY socket, General Sound card, MoonSound card). False with every difference
     /// listed in `why` ("ay-socket: recorded tsfm, this machine ay / ts; zxbus.1: ..."). The AY socket's `ay` and
-    /// `ts` share one type: a v1 file cannot tell them apart (the configuration fingerprint can)
+    /// `ts` share one type: a set without the socket's instance cannot tell them apart (the configuration
+    /// fingerprint can)
     static bool TtdSlotSetMatches(const Result& result, const TtdDeviceSet& recorded, const TtdDeviceSet& live,
                                   std::string& why);
     /// The same for this machine, then each slot-built card's own check (the MultiSound's MIDI bank), then its

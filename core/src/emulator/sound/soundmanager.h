@@ -63,7 +63,7 @@ protected:
     EmulatorContext* _context;
     ModuleLogger* _logger;
 
-    volatile bool _mute = false;  // MUST initialize - sound unmuted by default
+    volatile bool _mute = true;   // MUST initialize - an instance starts muted; the GUI (its bound instance) or an automation plane unmutes it
     bool _soundEnabled = true;
 
     // The core audio rate all chip DSP is designed for (multirate plan phase
@@ -430,7 +430,7 @@ public:
     /// Holds are taken only through a HostOutputHold guard, keyed by the reason that holds:
     ///  - DirectRun: Emulator::DirectStepScope, for the duration of one direct run (run_frames, run_tstates,
     ///    run_to_*, step, step_n...), on whatever thread runs it
-    ///  - TtdReplay: TimeTravelManager, EnterReplayMode .. ExitReplayMode (seek, replay, history browsing)
+    ///  - TtdReplay: TimeTravelController, EnterReplayMode .. ExitReplayMode (seek, replay, history browsing)
     ///  - Turbo: Core, EnableTurboMode .. DisableTurboMode (one hold per turbo span)
     ///  - Unpaced: ScriptCallbackManager, while frame and sync callbacks of the unpaced policy keep the frames over
     ///    their period (the machine runs slower than real time; its sound would break up)
@@ -633,8 +633,7 @@ public:
     /// the switch itself runs at the next frame boundary on the emulation
     /// thread (handleFrameStart), the only point where the card may be
     /// deleted/recreated safely
-    /// Refused (false, reason in `error`) where the coordinator's rules refuse it (TTD v1: while a user recording
-    /// runs) or the slot plan does
+    /// Refused (false, reason in `error`) where the coordinator's rules refuse it or the slot plan does
     bool requestGeneralSoundCardSwitch(GSTypeKind target, std::string* error = nullptr);
 
     /// What the GS slot holds now, safe to read from any thread (the GUI,

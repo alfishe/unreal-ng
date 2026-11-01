@@ -129,7 +129,7 @@ void RestoreCpuState(const TTDCpuState& src, Z80State* dst)
 // Chipset capture / restore
 // ---------------------------------------------------------------------------
 
-TTDChipsetState CaptureChipsetState(const EmulatorState& src, uint32_t cpuTInFrame)
+TTDChipsetState CaptureChipsetState(const EmulatorState& src, uint32_t cpuTInFrame, uint8_t cpuTFraction)
 {
     // Zero first so padding is deterministic — see CaptureCpuState for the
     // full rationale. The chipset struct has many sub-arrays (wd_shadow,
@@ -179,6 +179,7 @@ TTDChipsetState CaptureChipsetState(const EmulatorState& src, uint32_t cpuTInFra
     // Extended/model-specific ports handled via TTDPeripheralRegistry
 
     SetChipsetCpuTInFrame(dst, cpuTInFrame);
+    dst.cpu_t_fraction = cpuTFraction;
 
     return dst;
 }

@@ -5,7 +5,7 @@
 ///
 /// Reads the settings a replay depends on from the emulator's configuration
 /// and state into a TTDConfigFingerprint. The ROM signature is the caller's
-/// (TimeTravelManager hashes the ROM region once per session, not per frame).
+/// (TimeTravelController hashes the ROM region once per session, not per frame).
 
 #include <cstdint>
 

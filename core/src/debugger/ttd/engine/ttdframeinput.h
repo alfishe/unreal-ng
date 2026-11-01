@@ -3,9 +3,8 @@
 /// @file ttdframeinput.h
 /// @brief What the engine is fed at each frame boundary.
 ///
-/// Both producers hand the engine the same frame input: live capture from
-/// the running emulator, and the v1 file feeder used for verification. The
-/// engine never needs to know which one feeds it.
+/// Live capture from the running emulator hands the engine one frame input
+/// per boundary; tests build the same input by hand.
 /// Design: docs/inprogress/2026-09-25-ttd-v2-migration/phase-1-memory-regions-tdd.md §4.1-4.2.
 
 #include <cstdint>
@@ -43,8 +42,9 @@ struct TTDFrameInput
     TTDChipsetState chipset;
     /// Device states, raw (live capture). When empty, deviceBlobs is read
     std::vector<TTDDeviceStateInput> deviceStates;
-    /// Device states as v1 stores them, wrapped and compressed, keyed by v1 id
-    /// (the v1 file feeder); decoded by the engine
+    /// Device states as blobs (PeripheralBlobHeader, compressed), keyed by
+    /// legacy id; decoded by the engine. Only tests set it (the v1 file feeder
+    /// that did went with v1)
     const std::unordered_map<uint8_t, std::vector<uint8_t>>* deviceBlobs = nullptr;
     std::vector<TTDChangedPiece> changed;
     /// Raw device-state bytes the capture serialized for the blobs above
