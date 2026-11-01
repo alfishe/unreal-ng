@@ -1549,7 +1549,8 @@ private:
                 size_t j = i + 1;
                 while (j < objects.size() &&
                        (((objects[j].step == 0 || objects[j].step == g) && (group.step == 0 || group.step == g) &&
-                         (objects[j].first - group.last) % g == 0 && static_cast<unsigned>(objects[j].first - group.last) <= 32u * g) ||
+                         (objects[j].first - group.last) % g == 0 &&
+                         static_cast<unsigned>(objects[j].first - group.last) <= 32u * g) ||
                         (romSet(group) && romSet(objects[j]) && objects[j].step % 8 == 0 && group.step % 8 == 0)))
                 {
                     group.filled += (objects[j].first - group.last) / g - 1 + objects[j].filled;
