@@ -13,7 +13,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ID="unreal-ng-deck"
 NAME="Unreal NG"
 APPS="$HOME/.local/share/applications"
-ICONS="$HOME/.local/share/icons/hicolor/256x256/apps"
+ICONS="$HOME/.local/share/icons/hicolor/256x256/apps"   # by name: the Steam library entry keeps the name
 DESKTOP_FILE="$APPS/$ID.desktop"
 
 if [ "${1:-}" = "--remove" ]; then
@@ -31,7 +31,7 @@ Name=$NAME
 Comment=ZX Spectrum emulator (WebAPI on port 8090)
 Exec="$DIR/p01-sdl-gpu-latency" --boot
 Path=$DIR
-Icon=$ID
+Icon=$DIR/$ID.png
 Terminal=false
 Categories=Game;Emulator;
 EOF
