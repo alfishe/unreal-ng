@@ -1363,6 +1363,14 @@ local timeline = ttd_timeline{min_phase_ms = 500}   -- also from_frame, to_frame
 --   tags = {"halt", "input"}, executed = ..., keys = {"A"}, busiest_frame = ..., ...}, ... },
 --   events = {...}, missing = { {fact = "writes", reason = "the write journal is off"} }, ... }
 
+-- Where a value came from: a Z80 address (a number) or a register name; options frame, tinframe, phys_page,
+-- depth (default 4), max_links (32), max_frames (50), flags (follow F), text (the indented lines too)
+local chain = ttd_cause_chain(0x5C78, {depth = 6})
+-- { target = {kind = "memory", name = "(#5C78 RAM 5)", ...}, links = { {id = 0, parent = -1, depth = 0,
+--   kind = "store", name = "(#5C78 RAM 5)", value = 3, frame = ..., pc = 0x8A14, text = "LD (HL),A",
+--   inputs = {"A=#03"}}, ... }, stops = 0, frames_traced = 2, ms = ... }
+local why = ttd_cause_chain("HL", {frame = 150, tinframe = 20000})
+
 local summary = ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50, limit = 100}
 -- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,
 --   bucket_size = 50, bucket_count = 10, index_available = true,

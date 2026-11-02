@@ -11,6 +11,7 @@
 #include <fstream>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <type_traits>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -346,6 +347,7 @@ private:
     TTDReply ReverseStep(const TTDRequest& request);
     TTDReply Markers();
     TTDReply Timeline(const TTDRequest& request);
+    TTDReply CauseChain(const TTDRequest& request);
     TTDReply Bookmarks();
     TTDReply BookmarkAdd(const TTDRequest& request);
     TTDReply BookmarkDelete(const TTDRequest& request);
@@ -437,7 +439,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-delete",
         "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
-        "timeline", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
+        "timeline", "cause-chain", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
     return verbs;
 }
 
@@ -471,6 +473,8 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"memory-diff", {"space", "from_frame", "to_frame", "limit"}},
         {"coverage-summary", {"from_frame", "to_frame", "kind", "bucket_size", "limit"}},
         {"timeline", {"from_frame", "to_frame", "bucket_size", "limit", "buckets", "ports", "min_phase_ms"}},
+        {"cause-chain", {"addr", "phys_page", "reg", "frame", "tinframe", "depth", "max_links", "max_frames", "flags",
+                         "text"}},
         {"file-info", {"path"}},
         {"dump", {"path"}},
         {"load", {"path"}},
@@ -568,6 +572,8 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return AsOperation(OpKind::TimelineSeek, verb, request, [&]() { return WithCheck(ReverseStep(request)); });
     if (verb == "timeline")
         return Timeline(request);
+    if (verb == "cause-chain")
+        return CauseChain(request);
     if (verb == "markers")
         return Markers();
     if (verb == "bookmarks")
@@ -2484,6 +2490,140 @@ TTDReply TTDControlBackend::Timeline(const TTDRequest& request)
     cost["port_records"] = res.portRecords;
     cost["ms"] = static_cast<double>(res.elapsedNs) / 1e6;
     reply.body["cost"] = cost;
+    return reply;
+}
+
+TTDReply TTDControlBackend::CauseChain(const TTDRequest& request)
+{
+    TTDCauseQuery q;
+    const std::string* addr = Option(request, "addr");
+    const std::string* reg = Option(request, "reg");
+    if (!addr == !reg)
+        return Fail(TTDControlError::BadRequest, "cause-chain needs addr (a Z80 address) or reg (A, HL, IX, SP, E'...)");
+    uint64_t n = 0;
+    if (addr)
+    {
+        if (!ParseUpTo(*addr, 0xFFFF, n))
+            return Fail(TTDControlError::BadRequest, "Invalid addr: '" + *addr + "' (expected 0..0xFFFF)");
+        q.memory = true;
+        q.address = static_cast<uint16_t>(n);
+        if (const std::string* page = Option(request, "phys_page"))
+        {
+            std::optional<PhysPage> parsed;
+            if (!ParsePhysPage(*page, parsed))
+                return Fail(TTDControlError::BadRequest, "Invalid phys_page (expected 0..255 or rom)");
+            q.hasPage = true;
+            q.page = *parsed;
+        }
+    }
+    else
+    {
+        std::vector<TTDCauseReg> regs;
+        if (!TTDCauseRegsByName(*reg, regs))
+            return Fail(TTDControlError::BadRequest, "Invalid reg: '" + *reg +
+                                                         "' (A F B C D E H L IXH IXL IYH IYL I R, AF BC DE HL IX IY SP, "
+                                                         "the primed A' ... L' and AF' ... HL')");
+        q.memory = false;
+        q.reg = *reg;
+    }
+    if (const std::string* t = Option(request, "frame"))
+    {
+        if (!ParseU64(*t, n))
+            return Fail(TTDControlError::BadRequest, "Invalid frame: '" + *t + "'");
+        q.hasTime = true;
+        q.at.frame = n;
+        if (const std::string* tin = Option(request, "tinframe"))
+        {
+            if (!ParseUpTo(*tin, UINT32_MAX, n))
+                return Fail(TTDControlError::BadRequest, "Invalid tinframe: '" + *tin + "'");
+            q.at.tInFrame = static_cast<uint32_t>(n);
+        }
+    }
+    else if (Option(request, "tinframe"))
+        return Fail(TTDControlError::BadRequest, "tinframe goes with frame");
+    auto bounded = [&](const char* name, uint32_t max, uint32_t& out) -> std::string {
+        const std::string* t = Option(request, name);
+        if (!t)
+            return "";
+        if (!ParseUpTo(*t, max, n) || n == 0)
+            return std::string("Invalid ") + name + ": '" + *t + "' (expected 1.." + std::to_string(max) + ")";
+        out = static_cast<uint32_t>(n);
+        return "";
+    };
+    for (const auto& [name, max, out] : {std::tuple<const char*, uint32_t, uint32_t*>{"depth", TTDCauseQuery::kMaxDepth, &q.depth},
+                                         {"max_links", TTDCauseQuery::kMaxLinks, &q.maxLinks},
+                                         {"max_frames", TTDCauseQuery::kMaxFrames, &q.maxFrames}})
+        if (std::string bad = bounded(name, max, *out); !bad.empty())
+            return Fail(TTDControlError::BadRequest, bad);
+    if (std::string flag = FlagOption(request, "flags", q.followFlags); !flag.empty())
+        return Fail(TTDControlError::BadRequest, flag);
+    bool text = false;
+    if (std::string flag = FlagOption(request, "text", text); !flag.empty())
+        return Fail(TTDControlError::BadRequest, flag);
+
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    const TTDCauseResult res = _manager->QueryCauseChain(q);
+    if (!res.error.empty())
+        return Fail(TTDControlError::NotAvailable, res.error);
+
+    TTDReply reply;
+    StateNode target = StateNode::Object();
+    target["kind"] = q.memory ? "memory" : "register";
+    if (!res.links.empty())
+        target["name"] = TTDCauseNameText(res.links.front().name);
+    if (q.memory)
+    {
+        target["addr"] = static_cast<unsigned>(q.address);
+        if (!res.links.empty())
+            target["phys_page"] = PhysPageNode(res.links.front().name.page);
+    }
+    else
+        target["reg"] = q.reg;
+    AddPosition(target, res.at);
+    reply.body["target"] = target;
+    StateNode links = StateNode::Array();
+    uint64_t stops = 0;
+    for (size_t i = 0; i < res.links.size(); ++i)
+    {
+        const TTDCauseLink& l = res.links[i];
+        StateNode node = StateNode::Object();
+        node["id"] = static_cast<uint64_t>(i);
+        node["parent"] = static_cast<int64_t>(l.parent);
+        node["depth"] = static_cast<unsigned>(l.depth);
+        node["kind"] = TTDCauseKindName(l.kind);
+        node["name"] = TTDCauseNameText(l.name);
+        node["value"] = static_cast<unsigned>(l.value);
+        if (l.hasProducer)
+        {
+            AddPosition(node, l.time);
+            node["pc"] = static_cast<unsigned>(l.pc);
+            node["code_page"] = PhysPageNode(l.codePage);
+            node["text"] = l.text;
+        }
+        if (!l.inputs.empty())
+        {
+            StateNode inputs = StateNode::Array();
+            for (const std::string& in : l.inputs)
+                inputs.push(StateNode(in));
+            node["inputs"] = inputs;
+        }
+        if (!l.detail.empty())
+            node["detail"] = l.detail;
+        if (!l.stop.empty())
+        {
+            node["stop"] = l.stop;
+            ++stops;
+        }
+        links.push(node);
+    }
+    reply.body["links"] = links;
+    reply.body["stops"] = stops;
+    reply.body["frames_traced"] = static_cast<uint64_t>(res.framesTraced);
+    reply.body["ms"] = res.ms;
+    if (text)
+        reply.body["text"] = TTDCauseChainText(res);
     return reply;
 }
 

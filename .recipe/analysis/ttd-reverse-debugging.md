@@ -9,6 +9,9 @@ recording and answer. The coverage queries answer at any time. Session rules
 These are the "answer the question backwards" primitives:
 
 - *Who wrote this memory?* → `find-last`
+- *Why does this byte / register hold this value?* → `cause-chain` (MCP `cause_chain`: the writer, its source, that
+  source's writer... back to a constant, a port read or the initial memory, in one call; no `find_last` +
+  `disassemble` + `reverse_step` loop)
 - *What ran just before the crash?* → `reverse-step` / `reverse-continue`
 - *What happened in this recording, and where?* → `timeline` first (MCP `timeline`: the phases with their tags and
   busiest frames, one call, no replay), then the queries below on a phase
@@ -47,6 +50,11 @@ time_travel {"action":"find_last","addr_from":"0x4000","addr_to":"0x57FF","acces
              "pc_from":"0x8000","pc_to":"0x8FFF","phys_page":5,"before_frame":11800}
 time_travel {"action":"reverse_step","count":50}               # or {"tstates":2000} — exactly one
 time_travel {"action":"reverse_continue","pcs":[33156,"0x82F0"]}
+
+# why a value: the chain back from it (store <- A <- load <- (IX+3) <- block copy <- ... <- initial / port / constant)
+time_travel {"action":"cause_chain","addr":"0x5C78"}            # the byte at the current position
+time_travel {"action":"cause_chain","reg":"HL","frame":11800,"tinframe":20000,"depth":6}
+#   one line per link: name = value, kind, f<frame>+<t>, PC, instruction, <- inputs; [stop: depth] = ask deeper there
 
 # follow-ups once find-last names a writer PC:
 debug_code  {"action":"disassemble","address":"0x8174","count":12}   # pc-16 window (= /disasm)

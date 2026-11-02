@@ -1023,3 +1023,50 @@
             ++i;
         }
     }
+
+    // =====================================================================
+    // GET /ttd/cause-chain — where a value came from (the TTD cause chain)
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/cause-chain"]["get"];
+        op["summary"] = "Where the value of a memory byte or a register came from (the cause chain)";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "Replays the frames it needs with the instruction and bus hooks and follows the value back: the "
+            "instruction that wrote it, that instruction's inputs (registers, memory bytes) and theirs, as a tree "
+            "bounded by depth and max_links. Kinds: store, load, copy, computed, constant, port, block, modify, "
+            "return, interrupt, refresh, initial (held since the session start), rom, device (the byte read differs "
+            "from the CPU's last write: something else wrote it), stop. The machine goes back where it stood; a live "
+            "recording pauses for browsing. Reply: target {kind, name, addr, phys_page | reg, frame, tinframe}, "
+            "links[] {id, parent, depth, kind, name, value, frame, tinframe, pc, code_page, text, inputs[], detail, "
+            "stop}, stops, frames_traced, ms, text (text=true).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"addr", "string", "A memory byte: the Z80 address (decimal, 0x.., #..); addr or reg"},
+            {"phys_page", "string", "addr: the RAM page behind it, 0..255 or rom (default: the page mapped at the moment)"},
+            {"reg", "string", "A register: A F B C D E H L IXH IXL IYH IYL I R, a pair AF BC DE HL IX IY SP, or primed A' ... L', AF' ... HL'"},
+            {"frame", "integer", "The moment's frame (default: the current position)"},
+            {"tinframe", "integer", "The moment inside the frame, TTD time units (default 0)"},
+            {"depth", "integer", "Links from the target to a leaf, 1..16 (default 4)"},
+            {"max_links", "integer", "Links in the whole tree, 1..256 (default 32)"},
+            {"max_frames", "integer", "Frames searched back for a register's producer, 1..1000 (default 50)"},
+            {"flags", "boolean", "Follow F as an input (default false: listed, not followed)"},
+            {"text", "boolean", "Also return the chain as indented text, one line per link (default false)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }

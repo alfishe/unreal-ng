@@ -6230,6 +6230,23 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("timeline", options)));
         });
 
+        // ttd_cause_chain(target, {frame=, tinframe=, phys_page=, depth=, max_links=, max_frames=, flags=, text=}):
+        // where a value came from. target: a Z80 address (a number, or "#A000") or a register name ("A", "HL", "E'")
+        lua.set_function("ttd_cause_chain", [this](sol::this_state ts, sol::object target,
+                                                   sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            std::vector<ttd::TTDCauseReg> regs;
+            const std::string name = TtdOptionText(target);
+            if (target.get_type() == sol::type::string && ttd::TTDCauseRegsByName(name, regs))
+                options["reg"] = name;
+            else
+                options["addr"] = name;
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("cause-chain", options)));
+        });
+
         // A memory at a past checkpoint and what changed between two, from the store (no seek):
         // ttd_memory_at{space = "vram", frame = F, offset = 0x4805, length = 16}
         // ttd_memory_diff{space = "ram5", from_frame = F1, to_frame = F2, limit = 100}

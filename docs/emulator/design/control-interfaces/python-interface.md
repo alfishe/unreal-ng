@@ -1814,6 +1814,12 @@ timeline = emu.ttd_timeline(min_phase_ms=500)   # also from_frame, to_frame, buc
 # {'from_frame': ..., 'phases': [{'frame_start': ..., 'frame_end': ..., 'tags': ['halt', 'input'],
 #   'keys': ['A'], 'busiest_frame': ..., ...}, ...], 'events': [...], 'missing': [{'fact': 'writes', ...}], ...}
 
+# Where a value came from: target a Z80 address (int) or a register name ('A', 'HL', "E'");
+# also frame, tinframe, phys_page, depth=4, max_links=32, max_frames=50, flags=False, text=False
+chain = emu.ttd_cause_chain(0x5C78, depth=6, text=True)
+# {'target': {'kind': 'memory', 'name': '(#5C78 RAM 5)', ...}, 'links': [{'id': 0, 'parent': -1, 'kind': 'store',
+#   'value': 3, 'pc': 35348, 'text': 'LD (HL),A', 'inputs': ['A=#03'], ...}, ...], 'text': '(#5C78 RAM 5) = #03 ...'}
+
 summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50, limit=100)
 # {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,
 #  'bucket_size': 50, 'bucket_count': 10, 'index_available': True,

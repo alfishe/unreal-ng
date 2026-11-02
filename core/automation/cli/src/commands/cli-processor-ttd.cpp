@@ -15,6 +15,7 @@
 ///   ttd markers                — list external-event markers (replay barriers)
 ///   ttd bookmark [add|del|list] — agent bookmarks (advisory, never barriers)
 ///   ttd seek --bookmark <label> — seek to a bookmarked position
+///   ttd cause <addr>|<reg>     — the cause chain: where a byte or a register got its value
 ///
 /// All commands operate on the currently selected emulator instance. The TTD
 /// engine requires the emulator to be paused for seek/step/resume operations
@@ -26,6 +27,7 @@
 #include <cctype>
 
 #include <debugger/ttd/timetravelcontroller.h>
+#include <debugger/ttd/ttdcausechain.h>
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/ttd/ttdsession.h>
 #include <debugger/ttd/ttdbookmarks.h>
@@ -318,6 +320,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDTimeline(session, context, args);
     }
+    else if (subcommand == "cause" || subcommand == "cause-chain")
+    {
+        HandleTTDCauseChain(session, context, args);
+    }
     else if (subcommand == "coverage" || subcommand == "cov")
     {
         HandleTTDCoverage(session, context, args);
@@ -418,7 +424,9 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "      [--from-frame F] [--to-frame F] [--limit N]   (replays the window; the machine stays)" << NEWLINE;
     ss << "  ttd timeline [--from-frame F] [--to-frame F] [--bucket-size N] [--limit N] [--buckets] [--no-ports]" << NEWLINE;
     ss << "      [--min-phase-ms N]              The recording cut into phases of the same activity (no replay)" << NEWLINE;
-    ss << "  Aliases: rs=reverse-step, rc=reverse-continue, pf=probe-frames, tl=timeline" << NEWLINE;
+    ss << "  ttd cause <addr>[:page] | <reg> [--frame F [--tin T]] [--depth N] [--links N] [--frames N] [--flags]" << NEWLINE;
+    ss << "      Where a byte or a register got its value: the chain back to constants, ports, initial memory" << NEWLINE;
+    ss << "  Aliases: rs=reverse-step, rc=reverse-continue, pf=probe-frames, tl=timeline, cause-chain=cause" << NEWLINE;
     ss << NEWLINE;
     ss << "Notes:" << NEWLINE;
     ss << "  - Seek/step/resume require the emulator to be paused." << NEWLINE;
@@ -1580,6 +1588,61 @@ void CLIProcessor::HandleTTDProbeFrames(const ClientSession& session, EmulatorCo
     if (const StateNode* next = b.find("next_from_frame"))
         ss << "More: --from-frame " << next->i << NEWLINE;
     session.SendResponse(ss.str());
+}
+
+/// `ttd cause <addr>[:page] | <reg> [--frame F [--tin T]] [--depth N] [--links N] [--frames N] [--flags]`: the cause
+/// chain of a memory byte or a register, one line per link
+void CLIProcessor::HandleTTDCauseChain(const ClientSession& session, EmulatorContext* context,
+                                       const std::vector<std::string>& args)
+{
+    static const std::map<std::string, std::string> flags = {{"--frame", "frame"},     {"--tin", "tinframe"},
+                                                             {"--depth", "depth"},     {"--links", "max_links"},
+                                                             {"--frames", "max_frames"}};
+    const std::string usage = std::string("Usage: ttd cause <addr>[:page] | <reg> [--frame F [--tin T]] [--depth N] "
+                                          "[--links N] [--frames N] [--flags]") + NEWLINE;
+    std::map<std::string, std::string> options = {{"text", "true"}};
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        const auto flag = flags.find(args[i]);
+        if (flag != flags.end() && i + 1 < args.size())
+            options[flag->second] = args[++i];
+        else if (args[i] == "--flags")
+            options["flags"] = "true";
+        else if (i == 1 && !args[i].empty() && args[i][0] != '-')
+        {
+            std::vector<ttd::TTDCauseReg> regs;
+            if (ttd::TTDCauseRegsByName(args[i], regs))
+                options["reg"] = args[i];
+            else if (const size_t colon = args[i].find(':'); colon != std::string::npos)
+            {
+                options["addr"] = args[i].substr(0, colon);
+                options["phys_page"] = args[i].substr(colon + 1);
+            }
+            else
+                options["addr"] = args[i];
+        }
+        else
+        {
+            session.SendResponse(usage);
+            return;
+        }
+    }
+    if (!options.count("reg") && !options.count("addr"))
+    {
+        session.SendResponse(usage);
+        return;
+    }
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"cause-chain", options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    std::string text = reply.body.find("text")->s;
+    std::string out;
+    for (char c : text)
+        out += c == '\n' ? std::string(NEWLINE) : std::string(1, c);
+    session.SendResponse(out);
 }
 
 /// `ttd timeline [--from-frame F] [--to-frame F] [--bucket-size N] [--limit N] [--buckets] [--no-ports]

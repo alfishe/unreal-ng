@@ -277,6 +277,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd reverse-continue` | `ttd rc` | Reverse-continue execution. | ✅ Implemented |
 | `ttd probe-frames` | `ttd pf` | The frames a game profile's probes fired in (a replay of the window). | ✅ Implemented |
 | `ttd timeline` | `ttd tl` | The recording cut into phases of the same activity, each with its facts (no replay). | ✅ Implemented |
+| `ttd cause <addr>[:page] \| <reg>` | `ttd cause-chain` | Where a byte or a register got its value: the chain back to constants, port reads and the initial memory, one line per link (`--frame F [--tin T]`, `--depth N`, `--links N`, `--frames N`, `--flags`). | ✅ Implemented |
 
 **Interactive session example** (post-mortem crash forensics):
 
