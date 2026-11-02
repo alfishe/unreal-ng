@@ -41,8 +41,6 @@
 #include <QToolButton>
 #include <QWidget>
 
-#include <sys/resource.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cmath>

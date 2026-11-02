@@ -58,7 +58,7 @@ struct Config
 {
     Mode mode = Mode::Off;
     size_t limit = 0;           ///< ring: its size (0: the device's default); capture: the cap (0: no cap)
-    std::string stream;         ///< a file every record is written to as well (JSON Lines); "": none
+    std::string stream{};       ///< a file every record is written to as well (JSON Lines); "": none
     uint64_t streamLimit = 0;   ///< records to the file at most (0: no limit)
 };
 
