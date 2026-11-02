@@ -44,7 +44,7 @@ Ids are VID:PID in hex; "BT" is Bluetooth classic or LE. Family = the `devices.j
 | Xbox One (2013, no BT) | 045E:02D1, 02DD | — | none (dext does not match) | GameInput / XInput | xpad | `xbox-one` | `xbox-one` |
 | Xbox One S | 045E:02EA | 02E0, 02FD, BLE 0B20 | USB GIP, BT HidPad | GameInput / XInput | xpad; BT hid-microsoft | `xbox-one-s` | *xbox-one* |
 | Xbox Series X\|S | 045E:0B12 | BLE 0B13 | USB GIP, BT HidPad | GameInput / XInput | xpad; BT hid-microsoft | `xbox-series` | `xbox-series` |
-| Xbox Elite (Series 1, no BT) | 045E:02E3 | — | none (dext does not match) | GameInput (paddles) / XInput | xpad | `xbox-elite-1` | *xbox-elite-2* |
+| Xbox Elite (Series 1, no BT) | 045E:02E3 | — | none (dext does not match) | GameInput (paddles) / XInput | xpad | `xbox-elite-1` | `xbox-elite-1` |
 | Xbox Elite Series 2 | 045E:0B00 | 0B05, BLE 0B22 | USB GIP, BT HidPad (paddles) | GameInput (paddles) | xpad (paddles since 6.1) | `xbox-elite-2` | `xbox-elite-2` |
 | Xbox Adaptive Controller | 045E:0B0A | 0B0C, BLE 0B21 | USB none (dext does not match), BT HidPad | GameInput / XInput | xpad; BT hid-generic | `xbox-adaptive` | `xbox-adaptive` |
 | Xbox Wireless Adapter | 045E:02E6, 02FE | — | none | the pads behind it report their own ids | xone (out of tree) | — | — |

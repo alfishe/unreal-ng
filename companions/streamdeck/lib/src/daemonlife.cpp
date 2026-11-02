@@ -213,6 +213,40 @@ int CurrentPid()
 #endif
 }
 
+bool NotifyReady(const std::string& fd, std::string* error)
+{
+    char* end = nullptr;
+    const long long n = std::strtoll(fd.c_str(), &end, 10);
+    if (fd.empty() || end == nullptr || *end != '\0' || n < 0)
+    {
+        if (error)
+            *error = "not a descriptor: '" + fd + "'";
+        return false;
+    }
+    static constexpr char kLine[] = "ready\n";
+#ifdef _WIN32
+    HANDLE pipe = reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(n));
+    DWORD written = 0;
+    const bool ok = WriteFile(pipe, kLine, sizeof(kLine) - 1, &written, nullptr) && written == sizeof(kLine) - 1;
+    const DWORD why = GetLastError();
+    CloseHandle(pipe);
+    if (!ok && error)
+        *error = "cannot write handle " + fd + " (error " + std::to_string(why) + ")";
+#else
+    const int d = static_cast<int>(n);
+    ssize_t written = -1;
+    do
+        written = write(d, kLine, sizeof(kLine) - 1);
+    while (written < 0 && errno == EINTR);
+    const bool ok = written == static_cast<ssize_t>(sizeof(kLine) - 1);
+    const int why = errno;
+    close(d);
+    if (!ok && error)
+        *error = "cannot write descriptor " + fd + ": " + std::strerror(why);
+#endif
+    return ok;
+}
+
 int ParentPid()
 {
 #ifdef _WIN32

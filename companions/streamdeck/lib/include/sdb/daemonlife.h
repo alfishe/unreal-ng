@@ -85,6 +85,9 @@ private:
 // The process that started this one (0 when unknown)
 [[nodiscard]] int ParentPid();
 [[nodiscard]] bool ProcessAlive(int pid);
+// --ready-fd N (daemon.md §7): the starter's pipe, inherited as descriptor N (on Windows the handle's value). Writes
+// "ready\n" once the automation port serves, then closes it; false (error) when N is no descriptor or the write fails
+bool NotifyReady(const std::string& fd, std::string* error = nullptr);
 
 class Parents
 {

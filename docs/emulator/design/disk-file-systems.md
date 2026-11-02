@@ -34,7 +34,7 @@ the label, its offset and size on the disk and the free bytes (-1 when not known
 | Medium | Probe (in this order) | Volume ids |
 |---|---|---|
 | Floppy | Profi CP/M (1024-byte sectors, the directory from byte 0, else Klug CP/M's from cylinder 2; see [Profi CP/M layout](#profi-cpm-layout); it ends the probe); ATM CP/M (the directory at #2000); TR-DOS (the system sector 9: label at +0xF5, free sectors; an empty catalogue on an ATM CP/M disk is no volume); MDOS (`SDOS` in the boot sector, the FAT reserving LSN 0-13; it ends the probe); FAT12 through `FloppyBlockDevice` (512-byte sectors, consecutive ids on track 0); +3DOS (skipped when FAT matched); MB-02 (the boot sector, the FAT, the root in the DIRS sector; it ends the probe); MB-01 (the boot sector anywhere on track 0, side 0, the FAT; it ends the probe); iS-DOS / TASiS (the descriptor in block 0) | `cpm`, `trdos`, `mdos`, `fat`, `plus3`, `mb02`, `mb01`, `isdos` |
-| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them, last a directory at the start of a track outside the other volumes (see [ATM CP/M layout](#atm-cpm-layout)); Profi CP/M: the partitions of the table after the `ProfiHDD` header at cylinder 1 (see [Profi CP/M layout](#profi-cpm-layout)), over a FAT volume too; MDOS3: the slots of each primary MBR partition of type #49, else of the whole device from its first sector that starts with `SDOS`: the first sector of a file of any FAT volume, wherever it lies (an `.md3` file, slot files copied onto a FAT16 card), or another sector of the first 4096 (an `.md3` written to the disk whole); looked for after iS-DOS; BS-DOS 309: the floppies @1..@255 of the first primary MBR partition of type #47; iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary of the image's geometry and in the 1008 sectors (a cylinder of 16 heads of 63) after the end of every volume found, a device found adding its own end (the HDD driver places the devices one after the other, a cylinder of the geometry it was told apart); outside the other volumes | `fat`, `p1`..`p4`, `cpm-<cylinder>` (ATM and Profi CP/M), `mdos-<slot>`, `mb02-<n>`, `isdos`, `isdos-<cylinder>`, `isdos-lba<sector>` (off the image's cylinders) |
+| Hard disk, card | FAT: a superfloppy, else MBR partitions 1-4 (each through a sub-range device); ATM CP/M: the drives of the configuration record in sector 0, then the `.CDS` descriptors kept on them, last a directory at the start of a track outside the other volumes (see [ATM CP/M layout](#atm-cpm-layout)); Profi CP/M: the partitions of the table after the `ProfiHDD` header at cylinder 1 (see [Profi CP/M layout](#profi-cpm-layout)), over a FAT volume too; MDOS3: the slots of each primary MBR partition of type #49, else of the whole device from its first sector that starts with `SDOS`: the first sector of a file of any FAT volume, wherever it lies (an `.md3` file, slot files copied onto a FAT16 card), or another sector of the first 4096 (an `.md3` written to the disk whole); looked for after iS-DOS; BS-DOS 309: the floppies @1..@255 of the first primary MBR partition of type #47; ProfROM MFS: the subpartitions of each primary MBR partition of type #53 (see [ProfROM MFS layout](#profrom-mfs-layout)); iS-DOS: the whole disk from LBA 0, else a descriptor at each cylinder boundary of the image's geometry and in the 1008 sectors (a cylinder of 16 heads of 63) after the end of every volume found, a device found adding its own end (the HDD driver places the devices one after the other, a cylinder of the geometry it was told apart); outside the other volumes | `fat`, `p1`..`p4`, `cpm-<cylinder>` (ATM and Profi CP/M), `mdos-<slot>`, `mb02-<n>`, `mfs-<n>`, `mfs-<n>-<m>`, `isdos`, `isdos-<cylinder>`, `isdos-lba<sector>` (off the image's cylinders) |
 
 A cylinder is the device's native geometry (heads x sectors), else 16 x 63 as the ATM-Turbo HDD driver lays out its
 devices (`ATM_HDD.HDD` has devices at cylinders 70, 103, ...). At most 4096 cylinders are scanned. A device found
@@ -198,6 +198,24 @@ partition holds. BS-DOS turns an LSN into track, side and sector by the boot sec
 at `((track * 2 + side) * 11 + sector - 1) * 2` of the floppy, 11 sectors a track whatever the boot sector says
 (93 x 2 x 11 fill the 2 MiB; a floppy of 11 sectors a track is the `.mb2` image as it is). Each floppy that opens
 is a volume `mb02-<n>`; one never formatted (FF17 formats them one by one) is left out.
+
+## ProfROM MFS layout
+
+The hard disk file system of ProfROM (Scorpion ZS-256 and GMX on SMUC, ProfROM 5.00 and 6.x; `Docs/!vars.txt` of the ProfROM sets in
+`PR439633.zip`, checked on disks the 5.00 and 6.44 partition managers made): a primary MBR partition of type #53
+(the 6.44 manager starts it at LBA 63). Its first two sectors are the subpartition catalogue: 16-byte descriptors,
+at most 63, `#54 #AA` at `+#3FE`. A descriptor: `+0` the type in bits 0-2 (1 TR-DOS, 2 MicroDOS, 3 iS-DOS, 4 bad
+sectors; bit 7 the boot one), `+1` the absolute LBA (4 bytes), `+6` the size in sectors (2 bytes), `+#A` the name
+(6 bytes, blanks after it). A TR-DOS subpartition is a collection of disks: a 2-sector catalogue (`TRT #AA` at
+`+#3FC`, 16-byte descriptors, at most 51: `+0` `%00x00001`, bit 5 write protected, `+1` the LBA, `+6` `#0501`, `+#A`
+the name), each disk #501 sectors, an empty one and then the 640 KiB TRD; the manager allocates all of them at once,
+unformatted. The collection is a volume `mfs-<n>` (n the subpartition's number from 1) whose files are its disks as
+`NAME.trd`: `cat` gives the TRD, `put` takes a floppy image of any format with TR-DOS tracks onto the disk of that
+name or the first unformatted one (the catalogue takes the name), `mv` renames it in the catalogue, `rm` clears it.
+Each formatted disk is also a TR-DOS volume `mfs-<n>-<m>` (m the disk's slot from 1), written back to its sectors
+after each change; a write-protected one is read only. An iS-DOS subpartition is an iS-DOS device, volume `mfs-<n>`;
+MicroDOS is not read (a note). A second #53 partition gives `mfs-p<number>-...`. LBA 2 of the disk holds the
+monitor's mounted drives; it is left alone.
 
 ## MB-01 layout
 

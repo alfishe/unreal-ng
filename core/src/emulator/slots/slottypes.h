@@ -55,6 +55,7 @@ enum class Src : uint16_t
     ScorpionYellowReconstruction,
     ScorpionProfRom,
     MameScorpion,
+    GmxApollonov,
     // ATM Turbo
     AtmMicroArtManual,
     AtmSchematicSheet6,

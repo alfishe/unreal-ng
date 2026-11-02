@@ -1,5 +1,7 @@
 #include "runcontroller.h"
 
+#include <QFileInfo>
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QRegularExpression>
@@ -66,11 +68,17 @@ QString RunController::How() const
 
 nlohmann::json RunController::RunDocument() const
 {
-    // includes expanded: the run file lives elsewhere, so relative include paths would not resolve from there; the
-    // editor's "included_from" marks (absolute paths) stay out of it
+    // includes expanded: the run file lives elsewhere, so relative include paths would not resolve from there, and
+    // the relative pictures and $scenario paths are rebased onto its folder; the editor's "included_from" marks
+    // (absolute paths) stay out of it
     nlohmann::json d = _doc->Resolved();
     if (d.contains("root"))
+    {
         sdb::scn::io::StripIncludeMarks(d["root"]);
+        if (!_runFile.isEmpty())
+            sdb::scn::io::RebasePaths(d["root"], _doc->BaseDir().toStdString(),
+                                      QFileInfo(_runFile).absolutePath().toStdString());
+    }
     return d;
 }
 

@@ -991,6 +991,15 @@
    "params": "picture? (one of osd_keyboard_pictures, next, prev; next)"
   },
   {
+   "id": "osd.keyboard_style",
+   "label": "Keyboard style",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "style? (one of osd_keyboard_styles: photo, schematic, hybrid; next, prev; next)"
+  },
+  {
    "id": "run.pace_set",
    "label": "Pace",
    "group": "Run",
@@ -1568,6 +1577,23 @@
    "kind": "press",
    "held": false,
    "gui": true
+  },
+  {
+   "id": "ctl.open",
+   "label": "Open the Controllers window",
+   "group": "Controllers",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "ctl.learn",
+   "label": "Learn a device's controls",
+   "group": "Controllers",
+   "kind": "press",
+   "held": false,
+   "gui": true,
+   "params": "device"
   },
   {
    "id": "osd.quick_menu",

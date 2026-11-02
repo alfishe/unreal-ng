@@ -137,7 +137,7 @@ std::string NoHistory(Emulator& emulator, const ActionValue& value)
     if (std::string why = NoTtd(emulator, value); !why.empty())
         return why;
     return emulator.GetContext()->pTimeTravelHooks->PublishedCursor().history ? std::string()
-                                                                                : std::string("record first");
+                                                                                : std::string(kNoHistory);
 }
 
 ActionRules TtdRules(uint32_t scope, bool history)
@@ -481,7 +481,7 @@ ActionResult SeekByUnit(const ActionCall& call, const std::string& unit, int64_t
     const int64_t steps = static_cast<int64_t>(std::llround(call.value.delta));
     const ttd::TTDCursor cursor = context->pTimeTravelHooks->PublishedCursor();
     if (!cursor.history)
-        return ActionResult::Failure("not_now", "record first");
+        return ActionResult::Failure("not_now", kNoHistory);
     const Point from = CursorPoint(cursor);
     ActionResult result = ActionResult::Success();
     if (steps == 0)

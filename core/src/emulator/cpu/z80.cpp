@@ -769,12 +769,14 @@ void Z80::Z80Step(bool skipBreakpoints)
             // and an opcode fetch - which samples the bus half a T-state earlier than a data read - only fits it
             // on an even T-state. The board's WAIT logic stretches an opcode fetch from RAM that would start on
             // an odd T-state by one T-state (SC15.1 EPLD equations: M1 & RAM select & phase, normal mode only).
-            // Fetches from ROM, data accesses, I/O and the interrupt acknowledge never wait. RAM select, not the
+            // Fetches from ROM, data accesses, I/O and the interrupt acknowledge never wait. The GMX card has the
+            // same wait on its own 7 MHz grid in turbo only (EVEN_M1_TURBO, GMX design 2.6). RAM select, not the
             // address: RAM paged in at #0000 counts. Only the instruction's first M1 is checked: every prefix M1
             // is 4 T, so a later M1 inherits the parity. docs/inprogress/2026-09-28-m1-contention/
             // contention-by-machine.md section 6
             // CPU-LIBRARY-MIGRATION(even-m1): a contention-hook rule on the engine's M1 access kind
-            if (config.even_M1 && (cpu.tt & cpu.rate) && state.hw_turbo_ratio <= 1 &&
+            if (config.even_M1 && (cpu.tt & cpu.rate) &&
+                (config.even_M1 & (state.hw_turbo_ratio <= 1 ? EVEN_M1_NORMAL : EVEN_M1_TURBO)) &&
                 (cpu.pch >= 0x40 || !memory.IsBank0ROM())) [[unlikely]]
                 cpu.tt += cpu.rate;
 
@@ -1438,8 +1440,9 @@ void Z80::HaltedM1()
     const EmulatorState& state = _context->emulatorState;
     const uint16_t fetch = static_cast<uint16_t>(cpu.pc + 1);
 
-    // Scorpion Even M1: the board looks at the fetch, so at the RAM select of the byte after the HALT
-    if (config.even_M1 && (cpu.tt & cpu.rate) && state.hw_turbo_ratio <= 1 &&
+    // Scorpion / GMX Even M1: the board looks at the fetch, so at the RAM select of the byte after the HALT
+    if (config.even_M1 && (cpu.tt & cpu.rate) &&
+        (config.even_M1 & (state.hw_turbo_ratio <= 1 ? EVEN_M1_NORMAL : EVEN_M1_TURBO)) &&
         (fetch >= 0x4000 || !_context->pMemory->IsBank0ROM()))
         cpu.tt += cpu.rate;
 

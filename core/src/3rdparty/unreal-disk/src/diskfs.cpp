@@ -12,7 +12,9 @@
 #include "unrealdisk/fatfs.h"
 #include "unrealdisk/fatvolumereader.h"
 #include "unrealdisk/floppyblockdevice.h"
+#include "unrealdisk/floppyformats.h"
 #include "unrealdisk/isdosfs.h"
+#include "unrealdisk/loaders/loader_trd.h"
 #include "unrealdisk/mb01fs.h"
 #include "unrealdisk/mb02fs.h"
 #include "unrealdisk/mdosfs.h"
@@ -36,6 +38,11 @@ constexpr uint64_t kMdos3Search = 4096;
 constexpr uint64_t kIsdosChainWindow = 16 * 63;
 /// A BS-DOS 309 virtual floppy on its #47 partition: 2 MiB
 constexpr uint64_t kBsdosDisc = 4096;
+/// ProfROM's MFS (MBR type #53, Scorpion ZS-256 / GMX on SMUC): a disk of a TR-DOS collection is #501 sectors, an
+/// empty one, then the 640 KiB TRD
+constexpr uint8_t kMfsPartitionType = 0x53;
+constexpr uint64_t kMfsDisk = 0x501;
+constexpr size_t kMfsTrd = 640 * 1024;
 
 std::string Lower(std::string text)
 {
@@ -459,6 +466,331 @@ struct TrdosDriver : DiskFs::Driver
     }
 
     TrdosFileSystem fs;
+};
+
+/// A disk of an MFS TR-DOS collection: TrdosDriver on the TRD read from the device when the volume is first used
+/// (a collection holds up to 51 disks, opening the device builds none); every change goes back to its sectors at once
+struct MfsTrdosDriver : DiskFs::Driver
+{
+    MfsTrdosDriver(BlockDevice& device, uint64_t lba, std::string title) : device(device), lba(lba), title(std::move(title)) {}
+
+    bool All(std::vector<DiskFsEntry>& out, std::vector<std::string>& notes, std::string& error) override
+    {
+        return Open(error) && trdos->All(out, notes, error);
+    }
+    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>* slack, std::string& error) override
+    {
+        return Open(error) && trdos->Read(path, data, slack, error);
+    }
+    bool Write(const std::string& path, const std::vector<uint8_t>& data, const DiskFsWriteOptions& options,
+               std::string& error) override
+    {
+        return Open(error) && trdos->Write(path, data, options, error) && Flush(error);
+    }
+    bool Delete(const std::string& path, std::string& error) override
+    {
+        return Open(error) && trdos->Delete(path, error) && Flush(error);
+    }
+    bool Rename(const std::string& path, const std::string& to, std::string& error) override
+    {
+        return Open(error) && trdos->Rename(path, to, error) && Flush(error);
+    }
+    bool SetLabel(const std::string& label, int64_t mtime, std::string& error) override
+    {
+        return Open(error) && trdos->SetLabel(label, mtime, error) && Flush(error);
+    }
+    bool HasLabel() const override { return true; }
+
+    /// The disk's TRD (after its empty first sector) as a floppy, once
+    bool Open(std::string& error)
+    {
+        if (trdos)
+            return true;
+        std::vector<uint8_t> trd(kMfsTrd);
+        for (uint64_t i = 0; i < kMfsTrd / kSector; i++)
+            if (!device.ReadSector(lba + 1 + i, trd.data() + i * kSector))
+            {
+                error = "the MFS disk's sector " + std::to_string(lba + 1 + i) + " does not read";
+                return false;
+            }
+        std::vector<std::string> warnings;
+        LoaderTRD loader({}, title);
+        image.reset(loader.parse(trd.data(), trd.size(), warnings));
+        if (!image)
+        {
+            error = "the MFS disk " + title + " holds no TRD";
+            return false;
+        }
+        trdos = std::make_unique<TrdosDriver>(*image);
+        return true;
+    }
+
+    /// The TRD's bytes back to the disk's sectors after its empty first one
+    bool Flush(std::string& error)
+    {
+        std::vector<uint8_t> trd;
+        if (!Serialize(*image, trd))
+        {
+            error = "the MFS disk lost a sector";
+            return false;
+        }
+        for (uint64_t i = 0; i < kMfsTrd / kSector; i++)
+            if (!device.WriteSector(lba + 1 + i, trd.data() + i * kSector))
+            {
+                error = "the MFS disk's sector " + std::to_string(lba + 1 + i) + " does not write";
+                return false;
+            }
+        return true;
+    }
+
+    /// TRD order: track 0 side 0, track 0 side 1 ..., 16 sectors of 256 bytes. `partial`: the tracks a shorter
+    /// image (SCL, a 40-track disk) lacks stay zero; else a missing sector fails
+    static bool Serialize(DiskImage& disk, std::vector<uint8_t>& out, bool partial = false)
+    {
+        out.assign(kMfsTrd, 0);
+        const size_t tracks = kMfsTrd / (16 * 256);
+        for (size_t t = 0; t < tracks; t++)
+        {
+            DiskImage::Track* track = disk.getTrack(static_cast<uint8_t>(t));
+            if (!track && partial)
+                continue;
+            if (!track)
+                return false;
+            for (uint8_t sector = 0; sector < 16; sector++)
+            {
+                const uint8_t* data = track->getDataForSector(sector);
+                if (!data && partial)
+                    continue;
+                if (!data)
+                    return false;
+                std::memcpy(out.data() + (t * 16 + sector) * 256, data, 256);
+            }
+        }
+        return true;
+    }
+
+    BlockDevice& device;
+    uint64_t lba;
+    std::string title;
+    std::unique_ptr<DiskImage> image;
+    std::unique_ptr<TrdosDriver> trdos;
+};
+
+/// An MFS TR-DOS collection as a directory of its disks: "NAME.trd" by the catalogue's names (unformatted slots too).
+/// Read gives the 640 KiB TRD; Write puts a floppy image of any format with TR-DOS tracks (TRD, SCL, FDI, ...) on
+/// the disk of that name, else on the first unformatted one, which takes the name; Rename renames a disk in the
+/// catalogue; Delete clears a disk (the slot stays, as ProfROM allocates them all at once)
+struct MfsCollectionDriver : DiskFs::Driver
+{
+    MfsCollectionDriver(BlockDevice& device, uint64_t lba, uint64_t size) : device(device), lba(lba), size(size) {}
+
+    struct Disk
+    {
+        uint32_t slot = 0;  ///< 0-50
+        uint64_t at = 0;
+        std::string name;
+        bool locked = false;
+        bool formatted = false;
+    };
+
+    bool Catalogue(uint8_t (&raw)[2 * kSector], std::string& error)
+    {
+        if (!device.ReadSector(lba, raw) || !device.ReadSector(lba + 1, raw + kSector) ||
+            std::memcmp(raw + 0x3FC, "TRT\xAA", 4) != 0)
+        {
+            error = "the MFS collection catalogue does not read";
+            return false;
+        }
+        return true;
+    }
+
+    bool Disks(std::vector<Disk>& out, std::string& error)
+    {
+        uint8_t raw[2 * kSector];
+        if (!Catalogue(raw, error))
+            return false;
+        for (uint32_t n = 0; n < 51; n++)
+        {
+            const uint8_t* d = raw + n * 16;
+            if ((d[0] & 0x1F) != 1)
+                continue;
+            Disk disk;
+            disk.slot = n;
+            disk.at = d[1] | d[2] << 8 | d[3] << 16 | static_cast<uint64_t>(d[4]) << 24;
+            if (disk.at < lba || disk.at + kMfsDisk > lba + size || disk.at + kMfsDisk > device.SectorCount())
+                continue;
+            std::string name(reinterpret_cast<const char*>(d + 10), 6);
+            while (!name.empty() && (name.back() == ' ' || name.back() == 0))
+                name.pop_back();
+            disk.name = Ascii(name);
+            disk.locked = (d[0] & 0x20) != 0;
+            uint8_t info[kSector];  // the TR-DOS info sector (track 0 sector 9) opens the TRD's 5th disk sector
+            disk.formatted = device.ReadSector(disk.at + 1 + 4, info) && info[0xE7] == 0x10;
+            out.push_back(std::move(disk));
+        }
+        return true;
+    }
+
+    static std::string FileName(const Disk& d) { return (d.name.empty() ? "disk" + std::to_string(d.slot + 1) : d.name) + ".trd"; }
+
+    bool All(std::vector<DiskFsEntry>& out, std::vector<std::string>&, std::string& error) override
+    {
+        std::vector<Disk> disks;
+        if (!Disks(disks, error))
+            return false;
+        for (const Disk& d : disks)
+        {
+            DiskFsEntry e;
+            e.name = e.path = FileName(d);
+            e.size = kMfsTrd;
+            e.attributes = d.locked ? "R" : "";
+            e.fields = {{"slot", d.slot + 1}, {"lba", static_cast<int64_t>(d.at)}, {"formatted", d.formatted ? 1 : 0}};
+            out.push_back(std::move(e));
+        }
+        return true;
+    }
+
+    bool Find(const std::string& path, Disk& out, std::string& error)
+    {
+        std::vector<Disk> disks;
+        if (!Disks(disks, error))
+            return false;
+        for (int pass = 0; pass < 2; pass++)
+            for (const Disk& d : disks)
+                if (pass == 0 ? FileName(d) == path : Lower(FileName(d)) == Lower(path))
+                {
+                    out = d;
+                    return true;
+                }
+        error = "no disk " + path + " in the MFS collection";
+        return false;
+    }
+
+    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    {
+        Disk d;
+        if (!Find(path, d, error))
+            return false;
+        data.assign(kMfsTrd, 0);
+        for (uint64_t i = 0; i < kMfsTrd / kSector; i++)
+            if (!device.ReadSector(d.at + 1 + i, data.data() + i * kSector))
+            {
+                error = "the disk's sector " + std::to_string(d.at + 1 + i) + " does not read";
+                return false;
+            }
+        return true;
+    }
+
+    /// The catalogue name of a host name: "game.trd" -> "game" (6 characters at most)
+    static bool CatalogueName(const std::string& path, std::string& name, std::string& error)
+    {
+        name = Unescape(path.substr(path.front() == '/'));
+        const size_t dot = name.rfind('.');
+        if (dot != std::string::npos && Lower(name.substr(dot)) == ".trd")
+            name.erase(dot);
+        if (name.empty() || name.size() > 6 || name.find('/') != std::string::npos)
+        {
+            error = "an MFS disk name is 1-6 characters (" + path + ")";
+            return false;
+        }
+        return true;
+    }
+
+    bool SetName(const Disk& d, const std::string& name, std::string& error)
+    {
+        uint8_t raw[2 * kSector];
+        if (!Catalogue(raw, error))
+            return false;
+        uint8_t* field = raw + d.slot * 16 + 10;
+        std::memset(field, ' ', 6);
+        std::memcpy(field, name.data(), name.size());
+        const uint64_t sector = d.slot * 16 / kSector;
+        if (!device.WriteSector(lba + sector, raw + sector * kSector))
+        {
+            error = "the MFS collection catalogue does not write";
+            return false;
+        }
+        return true;
+    }
+
+    bool Write(const std::string& path, const std::vector<uint8_t>& data, const DiskFsWriteOptions&, std::string& error) override
+    {
+        std::string name;
+        if (!CatalogueName(path, name, error))
+            return false;
+        std::unique_ptr<DiskImage> image;
+        std::string format;
+        if (!FloppyFormats::LoadData({}, data.data(), data.size(), path, image, format).Ok() || !image)
+        {
+            error = "not a floppy image unreal-disk reads (" + path + ")";
+            return false;
+        }
+        std::string why;
+        std::vector<uint8_t> trd;
+        if (!LoaderTRD::isTrdosGeometry(image.get(), &why) || !MfsTrdosDriver::Serialize(*image, trd, true))
+        {
+            error = "the image has no TR-DOS tracks: " + why;
+            return false;
+        }
+        std::vector<Disk> disks;
+        if (!Disks(disks, error))
+            return false;
+        const Disk* target = nullptr;
+        for (const Disk& d : disks)
+            if (Lower(d.name) == Lower(Ascii(name)))
+                target = &d;
+        for (const Disk& d : disks)
+            if (!target && !d.formatted)
+                target = &d;
+        if (!target)
+        {
+            error = "the MFS collection has no unformatted disk left";
+            return false;
+        }
+        if (target->locked)
+        {
+            error = "the MFS disk " + FileName(*target) + " is write protected";
+            return false;
+        }
+        for (uint64_t i = 0; i < kMfsTrd / kSector; i++)
+            if (!device.WriteSector(target->at + 1 + i, trd.data() + i * kSector))
+            {
+                error = "the disk's sector " + std::to_string(target->at + 1 + i) + " does not write";
+                return false;
+            }
+        return SetName(*target, name, error);
+    }
+
+    bool Delete(const std::string& path, std::string& error) override
+    {
+        Disk d;
+        if (!Find(path, d, error))
+            return false;
+        if (d.locked)
+        {
+            error = "the MFS disk " + path + " is write protected";
+            return false;
+        }
+        const uint8_t zero[kSector] = {};
+        for (uint64_t i = 0; i < kMfsTrd / kSector; i++)
+            if (!device.WriteSector(d.at + 1 + i, zero))
+            {
+                error = "the disk's sector " + std::to_string(d.at + 1 + i) + " does not write";
+                return false;
+            }
+        return true;
+    }
+
+    bool Rename(const std::string& path, const std::string& to, std::string& error) override
+    {
+        Disk d;
+        std::string name;
+        return Find(path, d, error) && CatalogueName(to, name, error) && SetName(d, name, error);
+    }
+
+    BlockDevice& device;
+    uint64_t lba;
+    uint64_t size;
 };
 
 struct Plus3Driver : DiskFs::Driver
@@ -1973,7 +2305,7 @@ void DiskFs::Probe()
                     fats.emplace_back(window, partition.first);
                     add(std::move(p), std::move(driver));
                 }
-                else
+                else if (partition.type != kMfsPartitionType)  // ProfROM's MFS: read below
                     _notes.push_back("partition " + std::to_string(number) + " (type " + std::to_string(partition.type) +
                                      ") has no FAT volume that opens");
             }
@@ -2178,6 +2510,127 @@ void DiskFs::Probe()
     };
     addMdos3();
 
+    // ProfROM's MFS (the Scorpion ZS-256 and GMX on SMUC; ProfROM 5.00 and 6.x, Docs/!vars.txt of the ProfROM sets):
+    // an MBR partition of type #53 starts with a 1024-byte catalogue of subpartitions (#54 #AA at its end, 16 bytes
+    // each: type in bits 0-2 1 TR-DOS / 2 MicroDOS / 3 iS-DOS / 4 bad, bit 7 the boot one; the absolute LBA; the size
+    // in sectors at +6; the name at +#A). A TR-DOS subpartition is a collection of disks: its own 1024-byte catalogue
+    // ("TRT" #AA at the end; bits 0-4 = 1 a disk, bit 5 write protected; the LBA; the name at +#A), each disk #501
+    // sectors, the first one empty, then the TRD. Volumes "mfs-<subpartition>-<disk>" by number from 1
+    std::vector<std::pair<uint64_t, std::string>> mfsIsdos;  ///< iS-DOS subpartitions: LBA, id
+    auto mfsName = [](const uint8_t* at, size_t size) {
+        std::string name(reinterpret_cast<const char*>(at), size);
+        while (!name.empty() && (name.back() == ' ' || name.back() == 0))
+            name.pop_back();
+        return Ascii(name);
+    };
+    if (s0[510] == 0x55 && s0[511] == 0xAA)
+        for (uint32_t number = 0; number < 4; number++)
+        {
+            const uint8_t* entry = s0 + 446 + number * 16;
+            const uint64_t first = entry[8] | entry[9] << 8 | entry[10] << 16 | static_cast<uint64_t>(entry[11]) << 24;
+            uint64_t count = entry[12] | entry[13] << 8 | entry[14] << 16 | static_cast<uint64_t>(entry[15]) << 24;
+            if (entry[4] != kMfsPartitionType || count == 0 || first >= device.SectorCount())
+                continue;
+            count = std::min(count, device.SectorCount() - first);
+            const std::string partition = "partition " + std::to_string(number + 1) + " (MFS)";
+            uint8_t catalogue[2 * kSector];
+            if (!device.ReadSector(first, catalogue) || !device.ReadSector(first + 1, catalogue + kSector) ||
+                catalogue[0x3FE] != 0x54 || catalogue[0x3FF] != 0xAA)
+            {
+                _notes.push_back(partition + " has no subpartition catalogue");
+                continue;
+            }
+            taken.emplace_back(first, first + count);
+            const std::string prefix = number == 0 ? "mfs-" : "mfs-p" + std::to_string(number + 1) + "-";
+            for (uint32_t sub = 0; sub < 63; sub++)
+            {
+                const uint8_t* d = catalogue + sub * 16;
+                const uint8_t type = d[0] & 0x07;
+                if (type == 0)
+                    continue;
+                const uint64_t lba = d[1] | d[2] << 8 | d[3] << 16 | static_cast<uint64_t>(d[4]) << 24;
+                // The size field holds 16 bits (51 disks fit); none written: up to the partition's end
+                const uint64_t written = d[6] | d[7] << 8;
+                const uint64_t size = written ? written : first + count - std::min(lba, first + count);
+                const std::string name = mfsName(d + 10, 6);
+                const std::string id = prefix + std::to_string(sub + 1);
+                if (lba >= device.SectorCount())
+                {
+                    _notes.push_back(partition + ": subpartition " + name + " starts past the disk");
+                    continue;
+                }
+                if (type == 3)
+                {
+                    mfsIsdos.emplace_back(lba, id);
+                    continue;
+                }
+                if (type != 1)
+                {
+                    _notes.push_back(partition + ": subpartition " + name + " is " +
+                                     (type == 2 ? "MicroDOS (not read)" : type == 4 ? "a bad-sector one" : "of type " + std::to_string(type)));
+                    continue;
+                }
+                uint8_t disks[2 * kSector];
+                if (!device.ReadSector(lba, disks) || !device.ReadSector(lba + 1, disks + kSector) ||
+                    std::memcmp(disks + 0x3FC, "TRT\xAA", 4) != 0)
+                {
+                    _notes.push_back(partition + ": TR-DOS subpartition " + name + " has no collection catalogue");
+                    continue;
+                }
+                {
+                    DiskFsVolume v;
+                    v.id = id;
+                    v.fs = "mfs";
+                    v.system = "MFS TR-DOS collection " + name;
+                    v.label = name;
+                    v.offset = lba * kSector;
+                    v.bytes = size * kSector;
+                    v.writable = device.IsWritable();
+                    add(std::move(v), std::make_unique<MfsCollectionDriver>(device, lba, size));
+                }
+                size_t blank = 0;
+                for (uint32_t n = 0; n < 51; n++)
+                {
+                    const uint8_t* disk = disks + n * 16;
+                    if ((disk[0] & 0x1F) != 1)
+                        continue;
+                    const uint64_t at = disk[1] | disk[2] << 8 | disk[3] << 16 | static_cast<uint64_t>(disk[4]) << 24;
+                    const std::string title = mfsName(disk + 10, 6);
+                    if (at + kMfsDisk > device.SectorCount() || at < lba || at + kMfsDisk > lba + size)
+                    {
+                        _notes.push_back(partition + ": disk " + title + " of " + name + " lies outside it");
+                        continue;
+                    }
+                    // The info sector (TRD sector 9, the disk's 5th): a TR-DOS disk's ID #10, its free sectors and title
+                    uint8_t info[kSector];
+                    if (!device.ReadSector(at + 1 + 4, info))
+                    {
+                        _notes.push_back(partition + ": disk " + title + " of " + name + " does not read");
+                        continue;
+                    }
+                    if (info[0xE7] != 0x10)
+                    {
+                        blank++;
+                        continue;
+                    }
+                    const bool locked = (disk[0] & 0x20) != 0;
+                    DiskFsVolume v;
+                    v.id = id + "-" + std::to_string(n + 1);
+                    v.fs = "trdos";
+                    v.system = "TR-DOS, MFS " + name + "/" + title;
+                    // The disk title of the info sector as on a floppy; the collection's names in system
+                    v.label = mfsName(info + 0xF5, 8);
+                    v.freeBytes = static_cast<int64_t>(info[0xE5] | info[0xE6] << 8) * 256;
+                    v.offset = (at + 1) * kSector;
+                    v.bytes = kMfsTrd;
+                    v.writable = device.IsWritable() && !locked;
+                    add(std::move(v), std::make_unique<MfsTrdosDriver>(device, at, title));
+                }
+                if (blank)
+                    _notes.push_back(partition + ": " + std::to_string(blank) + " unformatted disk(s) in " + name);
+            }
+        }
+
     // BS-DOS 309 (the divIDE HDD BIOS, bsdos309-hdd_bios.a80): the first primary MBR partition of type #47 holds the
     // virtual floppies @1..@255 back to back, 2 MiB each. The BIOS places a floppy's track, side and sector (as
     // BS-DOS computes them from the LSN with the boot sector's SPT) at ((track * 2 + side) * 11 + sector - 1) * 2:
@@ -2235,9 +2688,9 @@ void DiskFs::Probe()
         }
 
     // iS-DOS: the whole disk is one device, or devices start at cylinder boundaries (the ATM-Turbo HDD driver)
-    auto isdosAt = [&](uint64_t lba, const std::string& id) {
+    auto isdosAt = [&](uint64_t lba, const std::string& id, bool claimed = false) {
         for (const auto& [first, end] : taken)
-            if (lba >= first && lba < end)
+            if (!claimed && lba >= first && lba < end)
                 return false;
         uint8_t s[kSector];
         if (!device.ReadSector(lba, s) || !IsdosFileSystem::IsDescriptor(s))
@@ -2257,6 +2710,9 @@ void DiskFs::Probe()
         add(std::move(v), std::make_unique<IsdosDriver>(std::move(fs)));
         return true;
     };
+    for (const auto& [lba, id] : mfsIsdos)
+        if (!isdosAt(lba, id, true))
+            _notes.push_back("the MFS iS-DOS subpartition at LBA " + std::to_string(lba) + " has no iS-DOS device");
     if (isdosAt(0, "isdos"))
         return;
     // The driver keeps each device's first cylinder in its own settings (ide+.blk set by idetune.com, ZX Format 5),

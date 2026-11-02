@@ -80,6 +80,8 @@ public:
     virtual int Pid() const = 0;
     /// true once it ended (never blocks)
     virtual bool Exited(int& code, bool& crashed) = 0;
+    /// true once it said it serves (LaunchSpec::readyFlag; never blocks); false when it cannot say
+    virtual bool Ready() { return false; }
     virtual void Terminate() = 0;
     virtual void Kill() = 0;
 };
@@ -89,6 +91,8 @@ struct LaunchSpec
     std::string path;
     std::vector<std::string> args;
     std::string logFile;
+    /// The daemon's `--ready-fd`: the launcher appends it with the descriptor of a pipe it watches (IProcess::Ready)
+    std::string readyFlag;
 };
 
 class ILauncher
@@ -243,6 +247,7 @@ private:
     bool _released = false;               ///< the lease on _child / the adopted daemon was given back
     bool _userStopped = false, _userStarted = false, _restart = false, _stopping = false;
     int64_t _stopAt = 0;                  ///< quit asked at
+    bool _readySeen = false;  ///< ours said it serves (--ready-fd): looked at once
     int64_t _startedAt = 0, _healthyAt = 0, _nextHealth = 0, _restartAt = 0, _failedUntil = 0, _nextDeckCheck = 0;
     int _healthFails = 0, _failures = 0, _restarts = 0, _decksAttached = 0;
     int _appliedPid = 0;                  ///< the daemon the settings were applied to

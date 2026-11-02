@@ -20,6 +20,15 @@
 /// bytes. A copied byte whose value goes to more than two places before it is written again is a table (a font
 /// unpacked from a pool of rows: each glyph printed all over the screen; the sprites a level unpacks), the source of
 /// what is drawn from it; each value written into a buffer goes to one place (two: both screens).
+///
+/// Drawn frames: the screen writes with a source, in order, form a drawing pass until a screen byte is written again
+/// (a rewrite of a byte one of the last few writes wrote is a shifted sprite's carry into the next column: it stays
+/// in the pass, the later source counts), or after two screens' worth of writes; not at a frame's end (a back buffer
+/// copied to the screen takes longer than a frame). In a pass, the bytes of one byte column on consecutive
+/// pixel lines whose sources lie a constant step apart are a column piece; pieces in neighbouring columns join when
+/// the sources lie a constant step apart on every line they share and the model base + line * rowStep + column *
+/// colStep holds for every byte. What joins is one picture drawn as a whole (a sprite frame, a glyph, a tile), with
+/// the mask byte merged into each graphic byte when there was one (AND with the screen before the OR).
 
 #include <cstdint>
 #include <memory>
@@ -53,6 +62,8 @@ public:
 
     /// The source bytes drawn to the screen, sorted by key
     std::vector<DrawnByte> Build() const;
+    /// The pictures drawn as a whole, sorted by base then shape (ends the drawing pass in progress)
+    std::vector<DrawnFrame> BuildFrames();
     size_t MemoryBytes() const;
 
 private:

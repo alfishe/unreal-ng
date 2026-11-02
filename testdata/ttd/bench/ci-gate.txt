@@ -6,6 +6,7 @@
 # belong in a stored baseline.
 # Columns: <configuration>/<workload> <metric> <value> <tolerance percent>
 # Tolerance 0 = exact; heap metrics follow the allocator's growth policy.
+# ATM3/idle rows updated 2026-10-31 (GMX phase 7, DS12887 periodic flag): the Ds12887 blob (id 18) carries the periodic divider position, 8 bytes more (state v3); the idle ROM sees the clock's PF, so RAM and compression rows moved slightly; the blob now changes every capture while a periodic rate runs (bm9 ds12887 rows).
 48K/idle bm2_work_compress_calls_opf 1.033333 0
 48K/idle bm2_work_compress_input_bpf 4232.533333 0
 48K/idle bm2_work_decoded_opf 0.000000 0
@@ -63,12 +64,12 @@
 48K/idle bm9_ram_steady_bpf 25.016949 0
 48K/idle checkpoints 61.000000 0
 48K/idle frames 60.000000 0
-ATM3/idle bm2_work_compress_calls_opf 0.783333 0
-ATM3/idle bm2_work_compress_input_bpf 3208.533333 0
+ATM3/idle bm2_work_compress_calls_opf 0.800000 0
+ATM3/idle bm2_work_compress_input_bpf 3276.800000 0
 ATM3/idle bm2_work_decoded_opf 0.000000 0
-ATM3/idle bm2_work_delta_base_bpf 37888.000000 0
-ATM3/idle bm2_work_device_blobs_bpf 158.283333 0
-ATM3/idle bm2_work_device_state_bpf 43639.000000 0
+ATM3/idle bm2_work_delta_base_bpf 41984.000000 0
+ATM3/idle bm2_work_device_blobs_bpf 163.550000 0
+ATM3/idle bm2_work_device_state_bpf 43647.000000 0
 ATM3/idle bm2_work_pages_visited_opf 0.000000 0
 ATM3/idle bm2_work_scanned_bpf 69632.000000 0
 ATM3/idle bm2_work_scanned_ram_bpf 0.000000 0
@@ -79,13 +80,13 @@ ATM3/idle bm3_device_regions_bpf 0.000000 0
 ATM3/idle bm3_input_journal_bpf 0.000000 0
 ATM3/idle bm3_journal_writes_opf 0.000000 0
 ATM3/idle bm3_page_refs_bpf 2954.533333 25
-ATM3/idle bm3_ram_payload_bpf 6608.683333 0
+ATM3/idle bm3_ram_payload_bpf 6614.133333 0
 ATM3/idle bm3_total_bpf 65097.966667 25
 ATM3/idle bm3_write_journal_bpf 735.766667 25
 ATM3/idle bm4_resident_bpf 98911.466667 25
 ATM3/idle bm4_resident_bytes 5934688.000000 25
-ATM3/idle bm7_file_bpf 5936.716667 0
-ATM3/idle bm7_file_bytes 356203.000000 0
+ATM3/idle bm7_file_bpf 5946.650000 0
+ATM3/idle bm7_file_bytes 356799.000000 0
 ATM3/idle bm9_device.atachannel_bpf 0.850000 0
 ATM3/idle bm9_device.atachannel_bytes 4256.000000 0
 ATM3/idle bm9_device.atachannel_first_bytes 51.000000 0
@@ -118,10 +119,10 @@ ATM3/idle bm9_device.covox_bpf 7.883333 0
 ATM3/idle bm9_device.covox_bytes 13.000000 0
 ATM3/idle bm9_device.covox_first_bytes 37.000000 0
 ATM3/idle bm9_device.covox_steady_bpf 7.389831 0
-ATM3/idle bm9_device.ds12887_bpf 1.066667 0
-ATM3/idle bm9_device.ds12887_bytes 340.000000 0
-ATM3/idle bm9_device.ds12887_first_bytes 64.000000 0
-ATM3/idle bm9_device.ds12887_steady_bpf 0.000000 0
+ATM3/idle bm9_device.ds12887_bpf 6.516667 0
+ATM3/idle bm9_device.ds12887_bytes 348.000000 0
+ATM3/idle bm9_device.ds12887_first_bytes 79.000000 0
+ATM3/idle bm9_device.ds12887_steady_bpf 5.288136 0
 ATM3/idle bm9_device.evoavrvolatile_bpf 2.166667 0
 ATM3/idle bm9_device.evoavrvolatile_bytes 72.000000 0
 ATM3/idle bm9_device.evoavrvolatile_first_bytes 54.000000 0

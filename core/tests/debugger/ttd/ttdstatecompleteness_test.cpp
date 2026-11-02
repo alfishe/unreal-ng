@@ -260,5 +260,5 @@ TEST_P(TTD_StateCompleteness_Test, SeekRestoresEveryPortWrittenStateInTrDos)
 
 INSTANTIATE_TEST_SUITE_P(CreatableModels, TTD_StateCompleteness_Test,
                          ::testing::Values("48K", "128k", "PENTAGON", "PLUS2", "PLUS2A", "PLUS3", "SCORPION",
-                                           "PROFSCORP", "ATM710", "ATM3", "PROFI"),
+                                           "PROFSCORP", "GMX", "ATM710", "ATM3", "PROFI"),
                          [](const ::testing::TestParamInfo<const char*>& info) { return std::string(info.param); });

@@ -1,0 +1,39 @@
+{
+  "family": "xbox-elite-1-cross",
+  "images": [
+    {
+      "view": "front",
+      "title": "Xbox Elite Wireless Controller (Series 1, model 1698), front and back, the cross D-pad",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "the outline (trace.py, the half mirrored, overlap 0.990) and the control positions: a straight top view of a model 1698 with the faceted D-pad, scaled to 153 mm across; 108 mm deep traced",
+          "source": "the owner's reference photo (2026-10-31)",
+          "use": "measured geometry only; no pixels shipped",
+          "retrieved": "2026-10-31"
+        },
+        {
+          "what": "front: the satin metal plate round Guide, the metal bumpers, the 1 / 2 profile switch under View / Menu; no Share, no profile lights",
+          "source": "https://commons.wikimedia.org/wiki/File:Xbox_One_Elite_Controller_(front).jpg",
+          "author": "Mliu92",
+          "licence": "CC BY-SA 3.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-31"
+        },
+        {
+          "what": "back: the four metal paddles P1-P4 (P1 / P2 on the right hand, upper / lower), the hair-trigger locks beside the battery cover; no USB-C port (micro-USB on the top edge)",
+          "source": "https://commons.wikimedia.org/wiki/File:Xbox_One_Elite_Controller_(rear).jpg",
+          "author": "Mliu92",
+          "licence": "CC BY-SA 3.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-31",
+          "note": "drawn as the pad turned over towards the viewer (triggers at the bottom), so the right hand's paddles stay on the right; positions measured on the photo scaled to 153 mm, about 2 mm"
+        }
+      ]
+    }
+  ]
+}

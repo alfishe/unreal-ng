@@ -9,8 +9,10 @@
 #include "debugger/ttd/ttdds12887.h"
 
 #include "common/collectionhelper.h"
+#include "common/filehelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/io/iiobusdevice.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "emulator/video/ulacontention.h"
@@ -65,6 +67,7 @@ PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : Por
 {
     _savedP7FFDValid = false;
     BindRtc(_smucNvram.GetRtc());
+    _smucInterrupts = std::make_unique<SmucInterrupts>(_smucNvram.GetRtc(), context->emulatorState.scorpion.pFFBA);
 }
 
 PortDecoder_Scorpion256::~PortDecoder_Scorpion256()
@@ -73,6 +76,10 @@ PortDecoder_Scorpion256::~PortDecoder_Scorpion256()
         _context->pCore->GetZ80()->SetMachineStepHook(nullptr);
     if (_turboWaitsInstalled && _context->pCore)
         _context->pCore->RemoveBusOverlay(_turboOverlay.get());
+    // Battery-backed state outlives the machine ([SMUC] NvramFile)
+    const std::string nvramPath = SmucNvramPath();
+    if (_nvramLoaded && !nvramPath.empty() && !_smucNvram.SaveImage(nvramPath))
+        MLOGWARNING("PortDecoder_Scorpion256: cannot save the SMUC NVRAM to '%s'", nvramPath.c_str());
     MLOGDEBUG("PortDecoder_Scorpion256::~PortDecoder_Scorpion256()");
 }
 /// endregion </Constructors / Destructors>
@@ -121,6 +128,13 @@ void PortDecoder_Scorpion256::reset()
     _smucNvram.ResetSerialLinkState();
     for (uint8_t& ideReg : _smucIdeRegs)
         ideReg = 0x00;
+    LoadSmucNvram();
+    // ISA RESET DRV follows the Z80's RESET
+    if (_smucIsaCard)
+        _smucIsaCard->Reset();
+    // The 8259 has no RESET pin: it keeps its programming; #FFBA D3 = 0 above cuts its INT off the Z80
+    _smucInterrupts->Attach(IsSmucFitted() && _context->pCore ? _context->pCore->GetZ80() : nullptr);
+    _smucInterrupts->Update();
 
     // Explicitly force screen to SCREEN_NORMAL
     _screen->SetActiveScreen(SCREEN_NORMAL);
@@ -242,7 +256,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     // usual. Applies to every Scorpion configuration (MM_SCORP base ZS-256 and
     // MM_PROFSCORP alike). The effective speed changes at the next frame
     // boundary (Z80::Z80FrameCycle composes host speed x turbo)
-    switch (port & 0xC023)
+    switch (_turboPlusHost ? (port & 0xC023) : 0)
     {
         case 0x4021:
             _state->scorpion.turbo = 1;     // IN #7FFD family - 7 MHz
@@ -262,7 +276,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     // switch deferred to the frame boundary that test always saw 3.5 MHz,
     // left the "Computer speed" menu item disabled and the flip-flop stuck on
     // (profrom-service-monitor-turbo.md, profrom-nmi-gaps-and-findings.md 8.4)
-    if ((port & 0xC023) == 0x4021 || (port & 0xC023) == 0x0021)
+    if (_turboPlusHost && ((port & 0xC023) == 0x4021 || (port & 0xC023) == 0x0021))
     {
         _context->pCore->GetZ80()->ApplyHardwareTurboNow();
         SyncTurboWaits();
@@ -324,6 +338,14 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = port;
         disp.wasHandledInline = true;
     }
+    // The SMUC's ISA window: a card that decodes the address drives the bus instead of the keyboard
+    else if (uint16_t isaOffset = 0; SmucIsaAddress(port, isaOffset))
+    {
+        result = _smucIsaCard->Read(isaOffset);
+        _lastPortDecoded = true;
+        disp.decodedPort = port;
+        disp.wasHandledInline = true;
+    }
     else if (IsPort_FE(port))
     {
         // Call default implementation
@@ -373,7 +395,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = port;
         disp.wasHandledInline = true;
     }
-    else if (isBeta128 && !(_state->flags & CF_TRDOS) && !(_state->p1FFD & 0x02)
+    else if (isBeta128 && !(_state->flags & (CF_TRDOS | CF_DOSPORTS)) && !(_state->p1FFD & 0x02)
              && !_state->scorpion.dosTrigger)
     {
         // Beta128 FDC off the bus: with no TR-DOS session, the Shadow Monitor
@@ -543,6 +565,13 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
         disp.wasDecoded = true;
         disp.wasHandledInline = true;
     }
+    else if (uint16_t isaOffset = 0; SmucIsaAddress(port, isaOffset))
+    {
+        _smucIsaCard->Write(isaOffset, value);
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+    }
     else if (IsPort_FE(port))
     {
         Default_Port_FE_Out(port, value, pc);
@@ -574,7 +603,8 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     // the Shadow Monitor is paged (#1FFD bit1 - the monitor talks to the FDC
     // with the session closed, hardware-reference 12.3) or the magic-button
     // DOS trigger is armed (MAME selects the same DOS I/O shadow view on it)
-    else if (isBeta128 && ((state.flags & CF_TRDOS) || (state.p1FFD & 0x02)
+    // CF_DOSPORTS also covers the GMX #1FFD bit 2 TR-DOS page (ScorpionMemory::UpdateModelBanks)
+    else if (isBeta128 && ((state.flags & (CF_TRDOS | CF_DOSPORTS)) || (state.p1FFD & 0x02)
                            || state.scorpion.dosTrigger))
     {
         // Mirrors (e.g. OUT (#3CFF),A drive-select with A on A15-A8) dispatch
@@ -796,6 +826,78 @@ bool PortDecoder_Scorpion256::IsPort_7EFD(uint16_t port)
     return result;
 }
 
+bool PortDecoder_Scorpion256::s_nvramPersistence = true;
+
+void PortDecoder_Scorpion256::LoadSmucNvram()
+{
+    // The clock cells and the EEPROM come from [SMUC] NvramFile once, at power-on; a Z80 reset does not touch them.
+    // The machine's first reset can run before the IDE scheme fits the board: the first SMUC access loads it then
+    if (_nvramLoaded || !IsSmucFitted())
+        return;
+    _nvramLoaded = true;
+    const std::string nvramPath = SmucNvramPath();
+    if (!nvramPath.empty() && _smucNvram.LoadImage(nvramPath))
+        return;
+    // The one image every firmware shared before the files were per ROM: its settings carry over, and the firmware
+    // initializes them itself when they are another's
+    const std::string sharedPath = SmucNvramBasePath();
+    if (!sharedPath.empty() && sharedPath != nvramPath && FileHelper::FileExists(sharedPath) &&
+        _smucNvram.LoadImage(sharedPath))
+        return;
+    // No saved image yet: the one the config ships (the firmware's own first initialization), else blank cells
+    const char* initialPath = _context->config.smuc_nvram_initial_path;
+    if (initialPath[0] != '\0' && !_smucNvram.LoadImage(initialPath))
+        MLOGWARNING("PortDecoder_Scorpion256: cannot read the SMUC NVRAM image '%s'", initialPath);
+}
+
+std::string PortDecoder_Scorpion256::SmucNvramPath() const
+{
+    const std::string path = SmucNvramBasePath();
+    if (path.empty())
+        return {};
+    // One image per firmware: each ROM keeps its own settings, signature and checksums, and a firmware that finds
+    // another's cells initializes them (ProfROM 5.00 resets the clock to its 18.10.98 too)
+    const std::string rom = SmucNvramRomName();
+    if (rom.empty())
+        return path;
+    std::filesystem::path keyed = FileHelper::ToFsPath(path);
+    const auto stem = keyed.stem().u8string();
+    const auto extension = keyed.extension().u8string();
+    keyed.replace_filename(FileHelper::ToFsPath(std::string(stem.begin(), stem.end()) + "-" + rom +
+                                                std::string(extension.begin(), extension.end())));
+    const auto text = keyed.u8string();
+    return std::string(text.begin(), text.end());
+}
+
+std::string PortDecoder_Scorpion256::SmucNvramBasePath() const
+{
+    const char* path = _context->config.smuc_nvram_path;
+    if (!s_nvramPersistence || path[0] == '\0')
+        return {};
+    // A bare name lives in the settings folder, beside the other files a machine keeps (the app's own folder is
+    // read-only in a bundle)
+    if (FileHelper::ToFsPath(path).is_relative())
+        return FileHelper::PathCombine(FileHelper::GetWritablePath(), path);
+    return path;
+}
+
+std::string PortDecoder_Scorpion256::SmucNvramRomName() const
+{
+    const CONFIG& config = _context->config;
+    const char* rom = config.mem_model == MM_GMX       ? config.gmx_rom_path
+                      : config.mem_model == MM_PROFSCORP ? config.prof_rom_path
+                                                         : config.scorp_rom_path;
+    // The file name alone; the config writes it with either separator ("rom\\gmx644.rom")
+    std::string name(rom);
+    const size_t slash = name.find_last_of("/\\");
+    if (slash != std::string::npos)
+        name.erase(0, slash + 1);
+    const size_t dot = name.find_last_of('.');
+    if (dot != std::string::npos && dot > 0)
+        name.erase(dot);
+    return name;
+}
+
 PortDecoder::RtcBinding PortDecoder_Scorpion256::GetRtcBinding()
 {
     RtcBinding binding;
@@ -806,6 +908,7 @@ PortDecoder::RtcBinding PortDecoder_Scorpion256::GetRtcBinding()
     }
     binding.chip = &_smucNvram.GetRtc();
     binding.ports = "SMUC: #DFBA address or data, latched by #FFBA bit 7";
+    binding.nvramFile = SmucNvramPath();
     return binding;
 }
 
@@ -905,6 +1008,64 @@ bool PortDecoder_Scorpion256::IsPort_KempstonMouse(uint16_t port, uint8_t& outRe
         return false;
 
     return Default_IsPort_KempstonMouse(port, outRegister);
+}
+
+bool PortDecoder_Scorpion256::SmucIsaAddress(uint16_t port, uint16_t& offset) const
+{
+    // Z80 0ED11CBA111GF110 -> ISA 1IHGFEDCBA (Black Cat, zx-ports-full-table.txt line 94): A15 = 0, A12 = A11 = 1,
+    // A7-A5 = 111, A2-A0 = 110 fixed; A14 / A13 are ISA A4 / A3, A10-A8 ISA A2-A0, A4 / A3 ISA A6 / A5. The pattern
+    // carries no source for ISA A8 (I) and A7 (H): taken from #FFBA D2 / D1, the two bits the firmware sets on its
+    // ISA path (ProfROM page 7 #15CD OR #06, #F7 at power-on) and has no other use for (hardware reference §5.2).
+    // With them set the window is ISA #380-#3FF, where the COM1 probe at #7AFE (#3FA; GMX 6.44 page 23 #2021)
+    // looks; with #FFBA = 0 (the loader, the 128 menu) it is #200-#27F.
+    // The window is the keyboard's own address space (#xxFE with A15 = 0, A12 = A11 = 1: #7FFE is ISA #27F / #2FF /
+    // #37F / #3FF, SMUC0.0c table 3), so it is live only while the board's DOS ports are (TR-DOS, the DOS trigger).
+    // The Shadow Monitor latch (#1FFD bit 1) alone does not open it: the monitor scans the keyboard there with
+    // #FFBA = #77, and the GMX 6.44 serial probe runs in TR-DOS (MAME, Unreal, ZXMAK2 and Xpeccy gate the whole
+    // SMUC on the DOS state only)
+    if (!_smucIsaCard || (port & 0x98E7) != 0x18E6 || !IsSmucFitted())
+        return false;
+    const EmulatorState& state = *_state;
+    if (!((state.flags & (CF_TRDOS | CF_DOSPORTS)) || state.scorpion.dosTrigger))
+        return false;
+    const uint8_t sys = state.scorpion.pFFBA;
+    const auto isa = static_cast<uint32_t>(0x200 | ((sys & 0x04) << 6) | ((sys & 0x02) << 6) | ((port & 0x0010) << 2) | ((port & 0x0008) << 2) |
+                                           ((port & 0x4000) >> 10) | ((port & 0x2000) >> 10) | ((port >> 8) & 0x07));
+    return _smucIsaCard->Decodes(isa, offset);
+}
+
+PortDecoder::NetworkCapabilities PortDecoder_Scorpion256::DescribeNetwork()
+{
+    NetworkCapabilities caps = PortDecoder::DescribeNetwork();
+    if (!IsSmucFitted())
+        return caps;
+    const sprinterisa::SlotConfig& config = _context->config.smucIsa;
+    const auto kind = static_cast<sprinterisa::CardKind>(config.kind);
+    NetworkCapabilities::Slot slot;
+    slot.id = "smuc.isa";
+    slot.bus = "isa";
+    slot.label = "SMUC ISA-8 slot (I/O #200-#3FF through the DOS ports, A8 / A7 = #FFBA D2 / D1)";
+    slot.configured = kind == sprinterisa::CardKind::None ? std::string() : sprinterisa::KindKey(kind);
+    slot.networkCard = kind == sprinterisa::CardKind::Modem || kind == sprinterisa::CardKind::Dual16552;
+    slot.base = config.base;
+    slot.irq = config.irq;
+    slot.portKey = slot.id + ".uart0";
+    slot.peer.assign(config.peer, strnlen(config.peer, sizeof(config.peer)));
+    slot.fit = [this](IIoBusDevice* device, std::string& why) {
+        (void)why;
+        _smucIsaCard = device;
+        return true;
+    };
+    slot.notFitted = [this](const std::string& why) {
+        (void)why;
+        _smucIsaCard = nullptr;
+    };
+    slot.setPeer = [this](int channel, const std::string& peer) {
+        if (channel == 0)
+            std::snprintf(_context->config.smucIsa.peer, sizeof(_context->config.smucIsa.peer), "%s", peer.c_str());
+    };
+    caps.expansionSlots.push_back(std::move(slot));
+    return caps;
 }
 
 /// TR-DOS selected: an open session or the armed magic-button DOS trigger (MiSTer
@@ -1044,6 +1205,7 @@ void PortDecoder_Scorpion256::Port_1FFD(uint8_t value, uint16_t pc)
 /// LC16 behavioral model (io/rtc/smucnvram.h)
 uint8_t PortDecoder_Scorpion256::ReadSMUCPort(uint16_t port)
 {
+    LoadSmucNvram();
     EmulatorState& state = *_state;
 
     // Board absent: nothing decodes the family, the bus floats. Constant #FF
@@ -1067,8 +1229,10 @@ uint8_t PortDecoder_Scorpion256::ReadSMUCPort(uint16_t port)
             return 0x3F;
 
         case 0x0004:  // #5FBE - revision register
-        case 0x2004:  // #7EBE/#7FBE - 8259 PIC: "interrupt controller" probe
             return 0x57;
+
+        case 0x2004:  // #7EBE/#7FBE - the 8259, A8 = its A0
+            return _smucInterrupts->Read(port);
 
         case 0x8004:  // #D8BE - IDE data high byte (16-bit path)
             if (_ide.Scheme() == IDE_SMUC)
@@ -1098,6 +1262,7 @@ uint8_t PortDecoder_Scorpion256::ReadSMUCPort(uint16_t port)
 
 void PortDecoder_Scorpion256::WriteSMUCPort(uint16_t port, uint8_t value)
 {
+    LoadSmucNvram();
     EmulatorState& state = *_state;
 
     // Board absent: no latch behind the window, the write is lost
@@ -1109,6 +1274,7 @@ void PortDecoder_Scorpion256::WriteSMUCPort(uint16_t port, uint8_t value)
         case 0xA000:  // #FFBA - bit 7 CMOS data phase / IDE control block, bit 0 IDE reset, bits 4/6/5 = SDA/SCL/WP
             state.scorpion.pFFBA = value;
             _smucNvram.WriteSerialLink(value);
+            _smucInterrupts->Update();   // D3: the 8259's INT on the Z80
             if (!(value & 0x01) && _ide.Scheme() == IDE_SMUC)
                 _ide.ResetUnits();  // 0 resets (IDE design Q3): MAME smuc.cpp, and ProfROM 4.01 keeps
                                     // D0 = 1 and pulses it low to reset (page 7 #15C7); UnrealSpeccy has it inverted
@@ -1116,13 +1282,20 @@ void PortDecoder_Scorpion256::WriteSMUCPort(uint16_t port, uint8_t value)
 
         case 0x8000:  // #DFBA - RTC address or data, latched by #FFBA bit 7
             if (state.scorpion.pFFBA & 0x80)
+            {
                 _smucNvram.GetRtc().WriteData(value);
+                _smucInterrupts->Update();   // B's interrupt enables arm the 8259's IR0
+            }
             else
                 _smucNvram.GetRtc().WriteAddress(value);
             break;
 
         case 0x2000:  // #7FBA - virtual FDD latch
             state.scorpion.p7FBA = value;
+            break;
+
+        case 0x2004:  // #7EBE/#7FBE - the 8259
+            _smucInterrupts->Write(port, value);
             break;
 
         case 0x8004:  // #D8BE - IDE data high byte latch
@@ -1137,7 +1310,7 @@ void PortDecoder_Scorpion256::WriteSMUCPort(uint16_t port, uint8_t value)
                 _smucIdeRegs[static_cast<uint8_t>((port >> 8) & 0x07)] = value;
             break;
 
-        default:      // PIC / version / revision / IDE high byte: nothing to latch
+        default:      // version / revision: read-only
             break;
     }
 }

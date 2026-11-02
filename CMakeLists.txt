@@ -349,6 +349,10 @@ if (UNREAL_STREAMDECK AND NOT UNREAL_STREAMDECK_SKIPPED)
     if (TARGET unreal-qt AND TARGET unreal-streamdeck)
         add_dependencies(unreal-qt unreal-streamdeck)  # `build.sh unreal-qt` refreshes the daemon its supervisor runs
     endif ()
+    # data/streamdeck/catalogue.json from the action registry (tools/actioncatalogue)
+    if (TARGET unrealng::core AND NOT CMAKE_CROSSCOMPILING)
+        add_subdirectory(tools/actioncatalogue)
+    endif ()
 endif ()
 
 # ========================================
@@ -498,10 +502,14 @@ if (BUILD_QT_APPS)
         set(SUITE_STUDIO_APP "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Applications/Stream Deck Studio.app")
         if(TARGET unreal-streamdeck)
             # data/streamdeck (the idle screen's theme, icons): Contents/Resources/streamdeck, found by the daemon in
-            # Contents/MacOS and by the nested studio (companions/streamdeck/lib/src/datadir.cpp)
+            # Contents/MacOS and by the nested studio (companions/streamdeck/lib/src/datadir.cpp); beside it the test
+            # software the scenarios open as "$data/..." (testsoft, testtapes, testsnapshots)
             list(APPEND MACOS_PACKAGE_COMMANDS
                 COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal-streamdeck" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/MacOS/unreal-streamdeck"
                 COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/streamdeck" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/streamdeck"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testsoft" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/testsoft"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testtapes" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/testtapes"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testsnapshots" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/testsnapshots"
             )
         endif()
         if(TARGET unreal-streamdeck-studio)
@@ -635,7 +643,8 @@ if (BUILD_QT_APPS)
             )
         endif()
 
-        # Stream Deck companion beside unreal-qt.exe, its data (streamdeck/) beside it; the studio shares the suite's Qt
+        # Stream Deck companion beside unreal-qt.exe, its data (streamdeck/ and the test software its scenarios open:
+        # testsoft/, testtapes/, testsnapshots/) beside it; the studio shares the suite's Qt
         # DLLs (windeployqt below)
         if(TARGET unreal-streamdeck)
             list(APPEND WIN_PACKAGE_COMMANDS
@@ -644,6 +653,12 @@ if (BUILD_QT_APPS)
                     "${SUITE_STAGING_DIR}/"
                 COMMAND ${CMAKE_COMMAND} -E copy_directory
                     "${DATA_PATH}/streamdeck" "${SUITE_STAGING_DIR}/streamdeck"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/testsoft" "${SUITE_STAGING_DIR}/testsoft"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/testtapes" "${SUITE_STAGING_DIR}/testtapes"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/testsnapshots" "${SUITE_STAGING_DIR}/testsnapshots"
             )
         endif()
         set(_win_deploy_studio)
@@ -803,7 +818,8 @@ if (BUILD_QT_APPS)
             )
         endif()
 
-        # Stream Deck companion beside unreal-qt, its data (streamdeck/) beside it; the udev rule where the DEB installs
+        # Stream Deck companion beside unreal-qt, its data (streamdeck/, testsoft/, testtapes/, testsnapshots/) beside it;
+        # the udev rule where the DEB installs
         # it (lib/udev/rules.d: copy it to /etc/udev/rules.d for access to the deck without root).
         # tools/package-appimage.sh takes all three into the AppImage.
         if(TARGET unreal-streamdeck)
@@ -813,6 +829,12 @@ if (BUILD_QT_APPS)
                     "${SUITE_STAGING_DIR}/"
                 COMMAND ${CMAKE_COMMAND} -E copy_directory
                     "${DATA_PATH}/streamdeck" "${SUITE_STAGING_DIR}/streamdeck"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/testsoft" "${SUITE_STAGING_DIR}/testsoft"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/testtapes" "${SUITE_STAGING_DIR}/testtapes"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/testsnapshots" "${SUITE_STAGING_DIR}/testsnapshots"
                 COMMAND ${CMAKE_COMMAND} -E copy
                     "${CMAKE_SOURCE_DIR}/companions/streamdeck/linux/70-unreal-streamdeck.rules"
                     "${SUITE_STAGING_DIR}/lib/udev/rules.d/70-unreal-streamdeck.rules"

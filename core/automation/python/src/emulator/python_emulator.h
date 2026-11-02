@@ -6889,7 +6889,7 @@ namespace PythonBindings
             live["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
             live["mouse_ports_decoded"] = mouseDecoded;
             live["mouse_routing_note"] = mouseNote;
-            const bool scorpion = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP);
+            const bool scorpion = IsScorpionModel(config.mem_model);
             if (scorpion)
                 live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
             else
@@ -7049,6 +7049,9 @@ namespace PythonBindings
                 }
                 d["sprinter"] = StateNodeToPy(sprinter);
             }
+            // GMX: the card's register file (the /state/paging `gmx` view)
+            if (config.mem_model == MM_GMX)
+                d["gmx"] = StateNodeToPy(DeviceState::GmxPaging(context));
             d["banks"] = banks;
             return d;
         }, "Tagged paging latches + bank table (P1-2 design)")

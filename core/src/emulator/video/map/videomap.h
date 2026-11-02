@@ -181,6 +181,7 @@ struct VideoState
     bool atmBorderBright = false;
     bool flashPhase = false;       ///< AlCo PMC blinks FLASH
     bool profiMonochrome = false;
+    uint16_t gmxScrollStart = 0;   ///< GMX: the scroller's start address in bytes (#7AFD / #7CFD, gmxgeometry.h)
     uint16_t zxScreenPage = 5;     ///< the page the ZX renderer draws from
     uint16_t ramMask = 0xFF;
     const uint32_t* atmPalette = nullptr;   ///< ATM / AlCo #FF palette cells (16)

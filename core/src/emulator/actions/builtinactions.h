@@ -52,6 +52,9 @@ int64_t SeekFrames(const SeekCurve& curve, double delta, double rate, double fps
 /// ttd.seek_by: the call's delta in its unit (the `unit` param, else the instance's scrub unit), the marks crossed
 ActionResult SeekBy(const ActionCall& call);
 
+/// Why a move through the history cannot run (`not_now`): nothing recorded yet, and how to get it
+inline constexpr const char* kNoHistory = "no time travel history: press TTD REC to record";
+
 /// Who set a context, as NC_SURFACE_CONTEXT and the surface protocol's `ctx.by` name it: "companion:<id>",
 /// "host-device:<id>", "webapi:<client>", "gui", ...
 std::string SetterName(const ActionOrigin& origin);

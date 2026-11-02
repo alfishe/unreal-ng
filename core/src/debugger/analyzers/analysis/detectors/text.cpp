@@ -4,19 +4,34 @@
 /// wrote, read by a routine on a print path: one that reads a font (a Font claim: the ROM character set or one the
 /// font detector found), runs a glyph blit (one byte by 8 rows to the pixels, three or more frames on one lattice of
 /// 8: the font of the game, which the font detector can only name once the text is known) or prints through the ROM
-/// (RST $10, the ROM print routines), itself or through a callee (two calls deep). The terminator is a zero after the run, bit 7 on its last character, a length byte before it,
-/// or none (the printing code holds the count). Text in a buffer: bytes only block copies wrote (a room's name copied
-/// to the room buffer and printed from there) are text when they are printable in every source the copies brought
-/// them from (the page the copy read: code and text copied out of a 128K bank the start did not map); the text is claimed
-/// in the buffer and in each source. What a block copy took to the screen is a picture,
-/// not text, at either end. A byte the glyph reader reads (an instruction that reads a font's bytes) is pixels too: a
-/// blitter that draws the characters and the sprites (Hungry Horace) reads both, the text is what selects a glyph.
+/// (RST $10, the ROM print routines), itself or through a callee (two calls deep). The terminator is a zero after the
+/// run, bit 7 on its last character, a length byte before it, a control code the printing routine read next (a line
+/// break, a colour), or none (the printing code holds the count). Text in a buffer: bytes only block copies wrote (a
+/// room's name copied to the room buffer and printed from there) are text when they are printable in every source the
+/// copies brought them from (the page the copy read: code and text copied out of a 128K bank the start did not map);
+/// the text is claimed in the buffer and in each source. What a block copy took to the screen is a picture, not text,
+/// at either end. A byte the glyph reader reads (an instruction that reads a font's bytes) is pixels too: a blitter
+/// that draws the characters and the sprites (Hungry Horace) reads both, the text is what selects a glyph. A routine
+/// that read more than a 16 K bank (a random number generator walking memory, a checksum) reads no glyphs, whatever
+/// font bytes it met on its way.
+///
+/// Text through its glyphs' index: an instruction that read through an index (IndexUse: LD L,A / LD H,n / LD A,(HL))
+/// taken from bytes no code wrote reads a font, whatever its layout (8 bytes a glyph, one pixel column a page, widths
+/// for a proportional font), when those bytes are words: at least kMinGlyphCodes distinct codes, nearly all printable
+/// (bit 7 aside: it marks a last character) and most of them letters or spaces. A tile map's codes run over the whole
+/// byte range, a tune's notes index their pitches with digits and letters mixed. The bytes whose values a font reader
+/// took are printed, by the routine that read them, with no print path needed. Such a run needs a terminator of its own (a
+/// zero, bit 7, a length byte, a control code) and the shape of a word: at least half of its characters other than
+/// spaces are letters. A level map of printable tile codes has no terminator; a blank filler, a score's digits and the
+/// expressions of a BASIC line (`n)=`, `f(i)`) select glyphs as well, but say nothing a word does. What the glyph reader
+/// reads is pixels.
 ///
 /// Source remnant: a run of bytes no code touched (the stack aside) that parses as tokenized assembler source - at
 /// least four lines of [line number lo, hi][length][text] with rising line numbers - is Unused, with the decoded
 /// lines as its text.
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <map>
 #include <set>
@@ -35,6 +50,10 @@ constexpr uint32_t kMinText = 3;
 constexpr uint32_t kMinRemnant = 64;
 constexpr int kMinSourceLines = 4;
 constexpr uint32_t kMinBufferCopy = 16;  ///< the shortest block copy whose destination is a buffer (records.cpp)
+constexpr uint32_t kMemoryWalk = 0x4000;  ///< bytes a routine read in all: more is a walk over memory, no glyph read
+constexpr size_t kMinGlyphCodes = 8;          ///< distinct codes a font reader took
+constexpr uint32_t kGlyphPrintablePct = 95;  ///< of its selectors, printable (bit 7 aside)
+constexpr uint32_t kGlyphLetterPct = 75;     ///< of its selectors, letters or spaces
 constexpr uint32_t kDisplayStart = 0x4000;
 constexpr uint32_t kDisplayEnd = 0x5B00;
 
@@ -59,6 +78,34 @@ bool IsPrintSignature(const std::string& label)
 {
     static const char* const kPrint[] = {"PRINT_A_1", "PRINT_A_2", "PRINT_OUT", "PR_STRING", "PO_MSG"};
     return std::any_of(std::begin(kPrint), std::end(kPrint), [&](const char* p) { return label == p; });
+}
+
+/// @p routine read more than kMemoryWalk bytes in all
+bool WalksMemory(const Routine& routine)
+{
+    uint32_t bytes = 0;
+    for (const Interval& read : routine.profile.reads)
+        bytes += read.hi - read.lo + 1;
+    return bytes > kMemoryWalk;
+}
+
+bool WalksMemory(const L1Result& l1, PhysKey instruction)
+{
+    const Routine* r = l1.RoutineOf(instruction);
+    return r != nullptr && WalksMemory(*r);
+}
+
+/// At least one letter and at least half of the characters other than spaces
+bool WordShaped(const std::string& text)
+{
+    uint32_t letters = 0;
+    uint32_t others = 0;
+    for (const char c : text)
+        if (std::isalpha(static_cast<unsigned char>(c)) != 0)
+            ++letters;
+        else if (c != ' ')
+            ++others;
+    return letters != 0 && letters >= others;
 }
 
 /// A blit that draws characters: 8 x 8 frames one byte wide to the pixels, at least three frames on one lattice of 8
@@ -87,6 +134,8 @@ std::set<uint32_t> PrintRoutines(DetectorContext& context, const std::vector<med
     {
         const Routine& routine = l1.routines[i];
         bool prints = printEntries.count(routine.z80) != 0;
+        if (WalksMemory(routine))
+            continue;
         for (const Interval& read : routine.profile.reads)
             for (const Region* f : fonts)
                 if (read.lo <= f->hi && read.hi >= f->lo)
@@ -110,6 +159,17 @@ std::set<uint32_t> PrintRoutines(DetectorContext& context, const std::vector<med
             if (const Routine* r = l1.RoutineOf(b.loop->header))
                 out.insert(l1.IndexOf(*r));
     return out;
+}
+
+/// The byte at @p z80 was read by one of the routines @p readers (Z80 entries)
+bool ReadBy(const DetectorContext& context, uint16_t z80, const std::set<uint16_t>& readers)
+{
+    const ByteUse& u = context.Use(z80);
+    for (const PhysKey reader : {u.firstReader, u.lastReader})
+        if (const Routine* r = reader != kNoKey ? context.l1.RoutineOf(reader) : nullptr)
+            if (readers.count(r->z80) != 0)
+                return true;
+    return false;
 }
 
 /// 0: not on a print path; 1: prints itself; 2: through a callee (two calls deep)
@@ -138,7 +198,42 @@ void PrintedText(DetectorContext& context)
     const L1Result& l1 = context.l1;
     const std::vector<media::Blit> blits = media::FindBlits(context, media::FindDisplay(context));
     const std::set<uint32_t> printers = PrintRoutines(context, blits);
-    if (printers.empty())
+
+    // The font readers among the index readers (see the file comment), and per selector byte the reader of its glyph
+    struct Selected
+    {
+        std::set<uint8_t> codes;
+        uint32_t bytes = 0;
+        uint32_t printable = 0;
+        uint32_t letters = 0;
+    };
+    std::map<PhysKey, Selected> selectedBy;
+    for (const IndexUse& u : l1.indexes)
+    {
+        const ByteUse* use = l1.UseAt(u.selector);
+        uint8_t v = 0;
+        if (use == nullptr || (use->flags & use::kWrite) != 0 || !l1.StartByte(u.selector, v))
+            continue;
+        const auto c = static_cast<uint8_t>(v & 0x7F);
+        Selected& s = selectedBy[u.instruction];
+        ++s.bytes;
+        if (!Printable(c))
+            continue;
+        s.codes.insert(c);
+        ++s.printable;
+        if (c == ' ' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+            ++s.letters;
+    }
+    std::set<PhysKey> indexReaders;
+    for (const auto& [instruction, s] : selectedBy)
+        if (s.codes.size() >= kMinGlyphCodes && s.printable * 100 >= s.bytes * kGlyphPrintablePct &&
+            s.letters * 100 >= s.bytes * kGlyphLetterPct)
+            indexReaders.insert(instruction);
+    std::map<PhysKey, uint16_t> glyphOf;  // selector -> the glyph reader (Z80)
+    for (const IndexUse& u : l1.indexes)
+        if (indexReaders.count(u.instruction) != 0)
+            glyphOf.emplace(u.selector, u.z80);
+    if (printers.empty() && glyphOf.empty())
         return;
 
     // The block copies into buffers: (destination, length, source), the lowest byte of each range; the source's page
@@ -215,13 +310,14 @@ void PrintedText(DetectorContext& context)
             {
                 const ByteUse& u = context.Use(static_cast<uint16_t>(g));
                 for (const PhysKey reader : {u.firstReader, u.lastReader})
-                    if (reader != kNoKey)
+                    if (reader != kNoKey && !WalksMemory(l1, reader))
                         glyphReaders.insert(reader);
             }
     for (const media::Blit& b : blits)
         if (GlyphBlit(b))
             for (const uint16_t reader : b.readers)
                 glyphReaders.insert(context.Key(reader));
+    glyphReaders.insert(indexReaders.begin(), indexReaders.end());
 
     // Per byte: read, never written (or written by block copies only: text in a buffer), printable, by a printing
     // reader
@@ -229,6 +325,8 @@ void PrintedText(DetectorContext& context)
     std::vector<uint16_t> readerOf(0x10000, 0);
     std::vector<uint8_t> valueOf(0x10000, 0);
     std::vector<uint8_t> buffered(0x10000, 0);
+    std::vector<uint8_t> indexed(0x10000, 0);  // printed only as its glyph's index
+    std::vector<uint16_t> glyphReaderOf(0x10000, 0);
     for (uint32_t a = 0; a <= 0xFFFF; ++a)
     {
         const auto z80 = static_cast<uint16_t>(a);
@@ -261,6 +359,15 @@ void PrintedText(DetectorContext& context)
                 readerOf[a] = r->z80;
             }
         }
+        if (best == 0)
+            if (const auto g = glyphOf.find(context.Key(z80)); g != glyphOf.end())
+            {
+                best = 1;
+                indexed[a] = 1;
+                glyphReaderOf[a] = g->second;
+                const Routine* r = u.firstReader != kNoKey ? l1.RoutineOf(u.firstReader) : nullptr;
+                readerOf[a] = r != nullptr ? r->z80 : g->second;
+            }
         depthOf[a] = static_cast<uint8_t>(best);
     }
 
@@ -304,8 +411,26 @@ void PrintedText(DetectorContext& context)
                 r.geometry.terminator = "zero";
             else if (before == length)
                 r.geometry.terminator = "length";
+            else if (after < 0x20 && ReadBy(context, static_cast<uint16_t>(b + 1), readers))
+                r.geometry.terminator = "control";
             else
                 r.geometry.terminator = "count-in-code";
+            const bool byIndex =
+                std::all_of(indexed.begin() + a, indexed.begin() + b + 1, [](uint8_t i) { return i != 0; });
+            if ((byIndex && buffered[a] == 0 && r.geometry.terminator == "count-in-code") ||
+                (byIndex && !WordShaped(r.geometry.text)))
+            {
+                a = b + 1;
+                continue;
+            }
+            std::set<uint16_t> glyphs;
+            for (uint32_t i = a; i <= b; ++i)
+                if (indexed[i] != 0)
+                    glyphs.insert(glyphReaderOf[i]);
+            for (const uint16_t g : glyphs)
+                r.evidence.push_back(Evidence{"glyph", g, 0, "its codes are the index of the glyphs read there"});
+            if (byIndex)
+                r.confidence = 850;
             r.geometry.width = static_cast<uint16_t>(length);
             for (const uint16_t reader : readers)
             {

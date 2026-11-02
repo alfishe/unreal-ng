@@ -755,8 +755,8 @@ void MenuManager::createMachineMenu()
     std::vector<TMemModel> models = manager->GetAvailableModels();
     const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
 
-    // The models this build can create (a port decoder and a config folder: Config::IsModelCreatable). GMX, KAY,
-    // QUORUM, LSY256 and PHOENIX are in the model table but have neither yet, so they stay out of the menu
+    // The models this build can create (a port decoder and a config folder: Config::IsModelCreatable). KAY, QUORUM,
+    // LSY256 and PHOENIX are in the model table but have neither yet, so they stay out of the menu
 
     for (const auto& model : models)
     {

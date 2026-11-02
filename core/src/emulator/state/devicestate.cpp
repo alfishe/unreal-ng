@@ -1554,6 +1554,11 @@ StateNode ScreenMode(EmulatorContext* context)
         case M_PMC: ret["eff7_hwmc"] = true; break;
         case M_PHR: ret["eff7_512"] = true; break;
         case M_P384: ret["overscan"] = true; break;
+        case M_GMX:
+            ret["gmx_640x200"] = true;
+            ret["framebuffer"] = "736x288";
+            ret["raster"] = "312 lines x 224 T (69888 T frame), 5 pixels per T in the paper window";
+            break;
         case M_PROFIHR:
             ret["profi_hires"] = true;
             ret["framebuffer"] = "608x288";
@@ -1702,7 +1707,7 @@ StateNode Contention(EmulatorContext* context)
     ret["io_rule"] = z80->ioContention ? ContentionRuleName(rule) : "none";
     // The Scorpion's waits outside the contention rule: Even M1 at 3.5 MHz, and the Turbo+ logic firmware
     ret["even_m1"] = context->config.even_M1 != 0;
-    if (context->config.mem_model == MM_SCORP || context->config.mem_model == MM_PROFSCORP)
+    if (context->config.mem_model == MM_SCORP || context->config.mem_model == MM_PROFSCORP)  // the GMX has no Turbo+ logic
         ret["scorpion_turbo_logic"] =
             context->config.scorpionTurboLogic == ScorpionTurboLogic::SC153 ? "SC15.3" : "SC15.1";
     // The ATM Turbo 2+ v7.10's RAM waits at 7 MHz (Atm710TurboOverlay): active, off (3.5 MHz) or contention_off

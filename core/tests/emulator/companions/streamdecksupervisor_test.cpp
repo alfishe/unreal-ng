@@ -62,6 +62,7 @@ public:
         crashed = this->crashed;
         return exited;
     }
+    bool Ready() override { return ready; }
     void Terminate() override
     {
         ++terminates;
@@ -82,6 +83,7 @@ public:
     }
 
     bool exited = false;
+    bool ready = false;  ///< it wrote its --ready-fd line
     int code = 0;
     bool crashed = false;
     int terminates = 0, kills = 0;
@@ -260,6 +262,7 @@ TEST_F(StreamDeckSupervisor_Test, ModeDeckStartsItWhenADeckIsAttachedAndKeepsItW
                                                "--viewers", "37050",       "--host",   "127.0.0.1:8090",
                                                "--parent", std::to_string(kOwnPid), "--activity", "flash"};
     EXPECT_EQ(spec.args, expected);
+    EXPECT_EQ(spec.readyFlag, "--ready-fd") << "the launcher appends it with the pipe's descriptor";
 
     At(1200);
     EXPECT_EQ(State(), "running");
@@ -643,6 +646,29 @@ TEST_F(StreamDeckSupervisor_Test, AStartThatFindsOneRunningEndsAndTheRunningOneI
     At(1100);
     EXPECT_EQ(State(), "adopted");
     EXPECT_EQ(_world.starts.size(), 1u);
+}
+
+TEST_F(StreamDeckSupervisor_Test, ADaemonThatSaysItServesIsLookedAtOnTheNextStepNotTheNextHealthTick)
+{
+    // a slow start (a first launch scanned by the OS): nothing answers at the first look
+    _world.upOnStart = false;
+    Attach(Mode::Always);
+    At(0);
+    ASSERT_EQ(_world.starts.size(), 1u);
+    At(200);
+    ASSERT_EQ(State(), "starting");
+    const size_t looks = _world.Count("GET /api/v1/health");
+    At(450);
+    EXPECT_EQ(_world.Count("GET /api/v1/health"), looks) << "silent: the next look waits for the 2 s tick";
+
+    _world.up = true;
+    _world.pid = _launcher->last->Pid();
+    _launcher->last->ready = true;  // its --ready-fd line
+    At(700);
+    EXPECT_EQ(State(), "running") << "looked at once, " << Supervisor::kHealthEveryMs << " ms early";
+    const size_t after = _world.Count("GET /api/v1/health");
+    At(950);
+    EXPECT_EQ(_world.Count("GET /api/v1/health"), after) << "once: then the usual cadence";
 }
 
 TEST_F(StreamDeckSupervisor_Test, TheBinaryComesFromTheEnvironmentThenTheSettingThenTheHost)
