@@ -14,6 +14,7 @@
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
+#include "debugger/targets/cpuview.h"
 #include "emulator/state/statenodejson.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
@@ -179,6 +180,21 @@ inline BreakpointManager* PythonBreakpoints(Emulator& self, const std::string& c
         throw py::value_error("cpu must be 'main', 'gs' or 'ms'");
     EmulatorContext* ctx = self.GetContext();
     return ctx && ctx->pDebugManager ? ctx->pDebugManager->GetBreakpointsManager(cpu) : nullptr;
+}
+
+/// The CPU a register, memory or disassembly call names ("" or "main": the main CPU; "gs" / "ms": a sound card's,
+/// cpuview.h): ValueError for an unknown name, RuntimeError for a card CPU that is not there
+inline DebugCpuId PythonCpu(Emulator& self, const std::string& name)
+{
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (name.empty())
+        return cpu;
+    if (!DebugManager::ParseCpuName(name, cpu))
+        throw py::value_error("cpu must be 'main', 'gs' or 'ms'");
+    const std::string error = CpuView::Select(self.GetContext(), name, cpu);
+    if (!error.empty())
+        throw std::runtime_error(error);
+    return cpu;
 }
 
 /// bp / bp_read / bp_write / bp_port_in / bp_port_out: the options as keyword arguments (BreakpointManager::
@@ -2048,7 +2064,10 @@ namespace PythonBindings
                 Z80State* z80 = self.GetZ80State();
                 return z80 ? z80->iy : 0;
             }, "Get IY register")
-            .def("get_registers", [](Emulator& self) -> py::dict {
+            // cpu "gs" / "ms": the sound card CPU's, the same keys with card_time for t (cpuview.h)
+            .def("get_registers", [](Emulator& self, const std::string& cpu) -> py::dict {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return StateNodeToPy(CpuView::FlatRegisters(self.GetContext(), card)).cast<py::dict>();
                 py::dict regs;
                 Z80State* z80 = self.GetZ80State();
                 if (z80) {
@@ -2076,8 +2095,13 @@ namespace PythonBindings
                     regs["t"] = static_cast<uint32_t>(z80->t);  // CPU T-states since the frame's start
                 }
                 return regs;
-            }, "Get all registers as dictionary")
-            .def("get_register", [](Emulator& self, const std::string& name) -> py::object {
+            }, "Get all registers as dictionary (cpu: 'main', 'gs', 'ms')", py::arg("cpu") = "")
+            .def("get_register", [](Emulator& self, const std::string& name, const std::string& cpu) -> py::object {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    uint16_t value = 0;
+                    return CpuView::GetRegister(self.GetContext(), card, name, value) ? py::cast(value) : py::none();
+                }
                 Z80State* z80 = self.GetZ80State();
                 if (!z80)
                     return py::none();
@@ -2086,27 +2110,51 @@ namespace PythonBindings
                 if (!Z80::GetRegisterValue(z80, name, value, is16bit))
                     return py::none();
                 return py::cast(value);
-            }, "Get register value by name", py::arg("name"))
-            .def("set_register", [](Emulator& self, const std::string& name, uint16_t value) -> bool {
+            }, "Get register value by name", py::arg("name"), py::arg("cpu") = "")
+            .def("set_register", [](Emulator& self, const std::string& name, uint16_t value, const std::string& cpu) -> bool {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    // An unknown register or a value out of range is false, as for the main CPU; the past refuses
+                    const std::string refused = CpuView::SetRegister(&self, card, "python register", name, value);
+                    if (refused.rfind("unknown register", 0) == 0)
+                        return false;
+                    if (!refused.empty())
+                        throw std::runtime_error(refused);
+                    return true;
+                }
                 // A tool edit (TTD records it); refused in the recorded past: a script error
                 std::string refused;
                 const bool set = self.SetRegisterFromTool("python register", name, value, &refused);
                 if (!refused.empty())
                     throw std::runtime_error(refused);
                 return set;
-            }, "Set register value by name", py::arg("name"), py::arg("value"))
+            }, "Set register value by name", py::arg("name"), py::arg("value"), py::arg("cpu") = "")
 
             // Memory access: direct (non-mutating) reads so inspecting
             // memory never drives the ProfROM quadrant machine
-            .def("mem_read", [](Emulator& self, uint16_t addr) -> uint8_t {
+            // cpu "gs" / "ms": the sound card CPU's view (cpuview.h)
+            .def("mem_read", [](Emulator& self, uint16_t addr, const std::string& cpu) -> uint8_t {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    std::vector<uint8_t> byte;
+                    CpuView::Read(self.GetContext(), card, addr, 1, byte);
+                    return byte.empty() ? 0xFF : byte[0];
+                }
                 Memory* mem = self.GetMemory();
                 return mem ? mem->DirectReadFromZ80Memory(addr) : 0;
-            }, "Read byte from memory")
-            .def("mem_write", [](Emulator& self, uint16_t addr, uint8_t value) {
+            }, "Read byte from memory", py::arg("addr"), py::arg("cpu") = "")
+            .def("mem_write", [](Emulator& self, uint16_t addr, uint8_t value, const std::string& cpu) {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    const std::string refused = CpuView::Write(&self, card, "Python memory write", addr, {value});
+                    if (!refused.empty())
+                        throw std::runtime_error(refused);
+                    return;
+                }
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
                 self.EditMemoryFromToolOrThrow("Python memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
-            }, "Write byte to memory")
+            }, "Write byte to memory", py::arg("addr"), py::arg("value"), py::arg("cpu") = "")
             .def("mem_read_word", [](Emulator& self, uint16_t addr) -> uint16_t {
                 Memory* mem = self.GetMemory();
                 if (!mem) return 0;
@@ -2349,6 +2397,10 @@ namespace PythonBindings
             // TD-3 Phase 1: sparse non-zero block overview (same core source
             // as GET /memory/map and MCP inspect_state 'memory_map')
             .def("memory_map", [](Emulator& self, const std::string& viewName, int minRun, int maxBlocks) -> py::dict {
+                // view "gs" / "ms": the sound card CPU's four windows {cpu, windows: [{start, size, kind, page,
+                // offset}]} (cpuview.h)
+                if (viewName == "gs" || viewName == "ms")
+                    return StateNodeToPy(CpuView::Windows(self.GetContext(), PythonCpu(self, viewName))).cast<py::dict>();
                 Memory* mem = self.GetMemory();
                 EmulatorContext* ctx = self.GetContext();
                 py::dict result;
@@ -2385,7 +2437,7 @@ namespace PythonBindings
                 }
                 result["blocks"] = blocks;
                 return result;
-            }, "Sparse non-zero memory block overview (view: 'address'|'ram')",
+            }, "Sparse non-zero memory block overview (view: 'address'|'ram'; 'gs'|'ms': a sound card CPU's windows)",
                py::arg("view") = "address", py::arg("min_run") = 64, py::arg("max_blocks") = 48)
             .def("mem_hexdump", [](Emulator& self, uint16_t addr, int len) -> std::string {
                 Memory* mem = self.GetMemory();
@@ -3896,10 +3948,23 @@ namespace PythonBindings
                  "Read a label table from RAM into a set (scanner=, page=, offset=, set=, policy=)")
 
             // Disassembly
-            .def("disasm", [](Emulator& self, int address, int count) -> py::list {
+            .def("disasm", [](Emulator& self, int address, int count, const std::string& cpu) -> py::list {
                 py::list result;
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) {
+                    return result;
+                }
+                // cpu "gs" / "ms": the sound card CPU's code, from its PC by default (cpuview.h)
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    uint16_t at = 0;
+                    CpuView::GetRegister(ctx, card, "pc", at);
+                    if (address >= 0)
+                        at = static_cast<uint16_t>(address);
+                    const StateNode listing = CpuView::Disasm(ctx, card, at, static_cast<size_t>(std::clamp(count < 1 ? 10 : count, 1, 100)));
+                    if (const StateNode* instructions = listing.find("instructions"))
+                        for (const StateNode& line : instructions->items)
+                            result.append(StateNodeToPy(line));
                     return result;
                 }
                 Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
@@ -3974,7 +4039,8 @@ namespace PythonBindings
                     addr += cmdLen;
                 }
                 return result;
-            }, py::arg("address") = -1, py::arg("count") = 10, "Disassemble code at address (default: PC)")
+            }, py::arg("address") = -1, py::arg("count") = 10, py::arg("cpu") = "",
+               "Disassemble code at address (default: PC; cpu 'gs' / 'ms': a sound card CPU's)")
             
             // Physical page disassembly
             .def("disasm_page", [](Emulator& self, const std::string& type, int page, int offset, int count) -> py::list {

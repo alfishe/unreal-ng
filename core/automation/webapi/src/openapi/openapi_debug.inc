@@ -436,3 +436,43 @@
         ["properties"]["alignment"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["responses"]["200"]["description"] =
         "space, count, matches[] (address or page + offset, context_start, context), truncated, range";
+
+    // The sound card CPU (cpuview.h): ?cpu= on the register, memory, disassembly and memory map routes
+    {
+        const char* text = "main (default), gs (the General Sound slot card's CPU) or ms (the MultiSound's General "
+                           "Sound): the CPU whose registers / memory view / code it is. 400 for another name, 404 "
+                           "for a card CPU that is not there now (a card without a CPU, an empty slot)";
+        const std::pair<const char*, const char*> routes[] = {
+            {"/api/v1/emulator/{id}/registers", "get"},        {"/api/v1/emulator/{id}/registers/{name}", "put"},
+            {"/api/v1/emulator/{id}/memory/{addr}", "get"},    {"/api/v1/emulator/{id}/memory/{addr}", "put"},
+            {"/api/v1/emulator/{id}/disasm", "get"},           {"/api/v1/emulator/{id}/memory/map", "get"},
+            {"/api/v1/emulator/{id}/memory/info", "get"},      {"/api/v1/emulator/{id}/memory/read/{address}", "get"}};
+        for (const auto& [path, verb] : routes)
+        {
+            Json::Value& operation = paths[path][verb];
+            Json::Value cpu;
+            cpu["name"] = "cpu";
+            cpu["in"] = "query";
+            cpu["required"] = false;
+            cpu["description"] = text;
+            cpu["schema"]["type"] = "string";
+            cpu["schema"]["enum"].append("main");
+            cpu["schema"]["enum"].append("gs");
+            cpu["schema"]["enum"].append("ms");
+            operation["parameters"].append(cpu);
+            operation["responses"]["404"]["description"] = "Emulator instance not found, or the card CPU is not there";
+        }
+        // POST /memory/write takes it in the body
+        Json::Value& write = paths["/api/v1/emulator/{id}/memory/write"]["post"];
+        write["requestBody"]["content"]["application/json"]["schema"]["properties"]["cpu"]["type"] = "string";
+        write["requestBody"]["content"]["application/json"]["schema"]["properties"]["cpu"]["description"] = text;
+        write["responses"]["404"]["description"] = "Emulator instance not found, or the card CPU is not there";
+        paths["/api/v1/emulator/{id}/registers"]["get"]["description"] =
+            paths["/api/v1/emulator/{id}/registers"]["get"]["description"].asString() +
+            " With cpu=gs / ms the card CPU's registers in the same shape plus cpu; special has card_time (the "
+            "card's own clock) instead of t.";
+        paths["/api/v1/emulator/{id}/memory/map"]["get"]["description"] =
+            paths["/api/v1/emulator/{id}/memory/map"]["get"]["description"].asString() +
+            " With cpu=gs / ms: {cpu, windows: [{start, size, kind (rom, ram, none), page, offset}]}, the card CPU's "
+            "four 16K windows.";
+    }

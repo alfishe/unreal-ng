@@ -664,3 +664,90 @@ TEST_F(McpDebugTools_Test, ControlExecution_CallbacksListAndManage)
     EXPECT_TRUE(refused.isError);
     EXPECT_NE(refused.text.find("No callback 9"), std::string::npos) << refused.text;
 }
+
+/// The sound card CPU (cpuview.h) through MCP: inspect_state's cpu goes to the register, memory, code, map and
+/// breakpoint routes (not to the machine's banks), and a card CPU that is not there is said, not hidden
+TEST_F(McpDebugTools_Test, InspectState_CpuGoesToTheCardRoutes)
+{
+    Json::Value registers;
+    registers["cpu"] = "gs";
+    registers["special"]["pc"] = 0x0123;
+    _caller->routes["GET /api/v1/emulator/emu-1/registers?cpu=gs"] = {200, registers};
+    Json::Value windows;
+    windows["cpu"] = "gs";
+    Json::Value window;
+    window["start"] = 0x4000;
+    window["kind"] = "ram";
+    window["page"] = 1;
+    windows["windows"].append(window);
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/map?view=address&min_run=64&max_blocks=48&cpu=gs"] = {200, windows};
+
+    Json::Value args;
+    args["aspects"].append("registers");
+    args["aspects"].append("memory_map");
+    args["aspects"].append("disasm");
+    args["aspects"].append("memory_banks");
+    args["cpu"] = "gs";
+    const mcp::ToolResult result = Run("inspect_state", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[registers] cpu gs:"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("the CPU's windows"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ram page 1"), std::string::npos) << result.text;
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/disasm?count=8&cpu=gs"), nullptr);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/state/memory"), nullptr) << "the banks stay the machine's";
+
+    Json::Value missing;
+    missing["message"] = "cpu ms not available: no card with a CPU in its slot";
+    _caller->routes["GET /api/v1/emulator/emu-1/registers?cpu=ms"] = {404, missing};
+    Json::Value absent;
+    absent["aspects"].append("registers");
+    absent["cpu"] = "ms";
+    const mcp::ToolResult refused = Run("inspect_state", absent);
+    EXPECT_NE(refused.text.find("[registers] unavailable: cpu ms not available"), std::string::npos) << refused.text;
+}
+
+TEST_F(McpDebugTools_Test, CardCpu_SetRegisterAndMemoryAccessNameTheCpu)
+{
+    Json::Value args;
+    args["action"] = "set_register";
+    args["name"] = "a";
+    args["value"] = 16;
+    args["cpu"] = "gs";
+    ASSERT_FALSE(Run("control_execution", args).isError);
+    EXPECT_NE(_caller->Last("PUT", "/api/v1/emulator/emu-1/registers/a?cpu=gs"), nullptr);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/registers?cpu=gs"), nullptr) << "the readback is the card's";
+
+    Json::Value read;
+    read["action"] = "read";
+    read["space"] = "gs";
+    read["offset"] = "0x4000";
+    read["length"] = 4;
+    const mcp::ToolResult readResult = Run("memory_access", read);
+    ASSERT_FALSE(readResult.isError) << readResult.text;
+    bool sawCardRead = false;
+    for (const FakeCaller::RecordedCall& call : _caller->calls)
+        sawCardRead |= call.method == "GET" && call.path.find("/memory/read/") != std::string::npos &&
+                       call.path.find("&cpu=gs") != std::string::npos;
+    EXPECT_TRUE(sawCardRead);
+    EXPECT_NE(readResult.text.find("the gs CPU's view"), std::string::npos) << readResult.text;
+
+    Json::Value write;
+    write["action"] = "write";
+    write["space"] = "gs";
+    write["offset"] = "0x4000";
+    write["hex"] = "0102";
+    const mcp::ToolResult written = Run("memory_access", write);
+    ASSERT_FALSE(written.isError) << written.text;
+    const FakeCaller::RecordedCall* post = _caller->Last("POST", "/api/v1/emulator/emu-1/memory/write");
+    ASSERT_NE(post, nullptr);
+    EXPECT_EQ(post->body["cpu"].asString(), "gs");
+    EXPECT_NE(written.text.find("into the gs CPU's view."), std::string::npos) << written.text;
+
+    Json::Value kept;
+    kept["bytes_written"] = 1;
+    _caller->routes["POST /api/v1/emulator/emu-1/memory/write"] = {200, kept};
+    const mcp::ToolResult partial = Run("memory_access", write);
+    EXPECT_NE(partial.text.find("Wrote 1 bytes into the gs CPU's view (1 kept by a read-only window)."),
+              std::string::npos)
+        << partial.text;
+}

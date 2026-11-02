@@ -35,6 +35,13 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
 - [x] Tests: the machine's NeoGS (`TheMachinesCardStopsWhereItLoops`), live MCP
   `tools/verification/mcp/test_gs_debugger.py`.
 - [x] `GET /breakpoints/groups` per CPU (`?cpu=gs`, Lua / Python `bp_groups(cpu)`, MCP `bp_groups` `cpu`), 2026-10-27.
+- [x] The card CPU's registers, memory, disassembly and windows on every plane (2026-11-02, branch `gs-cpu-surfaces`):
+  core `CpuView` (`core/src/debugger/targets/cpuview.h`), `MemoryRead` spaces `gs` / `ms`, REST `?cpu=` on
+  `/registers`, `/memory`, `/disasm`, `/memory/map`, `/memory/info`, CLI `--cpu`, Lua / Python `cpu`, MCP
+  `inspect_state` `cpu`, `memory_access` spaces `gs` / `ms`. Tests: `CpuView_Test.*`.
+- [ ] Card CPU step in / over / out on every plane (design §5.3: a one-shot park at the next card boundary, a Step
+  stop of the card CPU; REST `/step*` `?cpu=`).
+- [ ] The Qt remote adapter's card CPU (`debuggers/qt/adapter/remotemachine.cpp`) over `?cpu=gs`.
 
 ### C. Read-value script callbacks (design §8A.7)
 

@@ -1027,6 +1027,10 @@ void CLIProcessor::HandleDisasm(const ClientSession& session, const std::vector<
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+    // --cpu gs / ms: the sound card CPU's code from its PC (cli-processor-cardcpu.cpp)
+    if (HandleCardCpuCommand(session, *emulator, "disasm", args,
+                             [&](const std::vector<std::string>& rest) { HandleDisasm(session, rest); }))
+        return;
 
     Memory* memory = emulator->GetMemory();
     std::unique_ptr<Z80Disassembler>& disassembler = emulator->GetDebugManager()->GetDisassembler();

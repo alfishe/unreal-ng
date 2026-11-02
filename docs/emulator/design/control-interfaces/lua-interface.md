@@ -688,6 +688,11 @@ regs = get_registers()   -- pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr q
 -- t = CPU T-states since the frame's start
 v = get_register("memptr")        -- any name of the register table, nil when unknown
 ok = set_register("im", 2)        -- false for an unknown name or im > 2 / iff1, iff2 > 1
+-- The sound card CPU (General Sound / NeoGS; "ms": the MultiSound's): the CPU name last. get_registers has
+-- card_time instead of t; an unknown name or a card CPU that is not there is a script error
+regs = get_registers("gs");  pc = get_register("pc", "gs");  set_register("a", 0x10, "gs")
+b = mem_read(0x4000, "gs");  mem_write(0x4000, 1, "gs");  lines = disasm(-1, 8, "gs")  -- from the card's PC
+w = memory_map("gs")              -- {cpu, windows = {{start, size, kind = "rom"|"ram"|"none", page, offset}, ...}}
 
 -- Properties
 id = emu:get_id()
