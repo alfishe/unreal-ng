@@ -1322,13 +1322,12 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
                 }
                 else if (op == "play" || op == "toggle")
                 {
-                    if (!tape.EnsureImageLoaded())
+                    const TapePlayResult played = tape.Play();
+                    if (played == TapePlayResult::NoBlocks)
                         return Conflict("Tape image has no loadable blocks");
-                    if (state == TapePlaybackState::Paused)
-                        tape.ResumePlaybackFromPause();
-                    else
-                        tape.StartPlaybackAtCursor();
-                    message = state == TapePlaybackState::Paused ? "Tape playback resumed" : "Tape playback started";
+                    message = played == TapePlayResult::Resumed  ? "Tape playback resumed"
+                              : played == TapePlayResult::Queued ? "Tape playback starts when the tape is in"
+                                                                 : "Tape playback started";
                 }
                 else if (op == "pause")
                 {

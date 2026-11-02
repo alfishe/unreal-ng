@@ -149,7 +149,8 @@ int CmdRun(const Args& a)
                      "usage: unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] "
                      "[--host URL] [--wait] [--dry-run] [--seconds N] [--device S|emu] [--mirror] "
                      "[--viewers [PORT] | --no-viewers] [--parent PID[,PID]] [--with-parent] [--companion FILE] "
-                     "[--no-surface] [--activity scenario|off|flash|line] [--lock FILE | --no-lock] [--idle]\n");
+                     "[--no-surface] [--activity scenario|off|flash|line] [--lock FILE | --no-lock] [--idle] "
+                     "[--ready-fd N]\n");
         return kBadUsage;
     }
     // The processes this run lives for (daemon.md §7): --parent PID[,PID], --with-parent (the starter)
@@ -452,6 +453,10 @@ int CmdRun(const Args& a)
         self.host = DefaultHost();
         lock.Publish(self);
     }
+    // the starter waits on --ready-fd instead of polling /health (daemon.md §7): the port serves from here
+    if (a.Has("ready-fd") && rc == kOk)
+        if (std::string rerr; !life::NotifyReady(a.Str("ready-fd"), &rerr))
+            std::printf("note: --ready-fd: %s\n", rerr.c_str());
 
     // the watcher: requested loads (nav to a scenario) and changed files of watched decks
     // the watcher: also the parents' watch (their process handles, polled, no thread of its own)

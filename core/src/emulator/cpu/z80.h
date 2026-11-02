@@ -1085,4 +1085,7 @@ public:
     /// Maskable interrupts accepted since the CPU was made (HandleINT; the monitoring planes' interrupts per frame).
     /// Statistics only: not machine state, not in snapshots or TTD checkpoints
     uint64_t interruptsAccepted = 0;
+    /// ... of them, those accepted while halted since the last reset (a HALT-paced loop; the TTD timeline's `halt`
+    /// tag reads its growth between frames). Statistics only
+    uint64_t interruptsAcceptedHalted = 0;
 };

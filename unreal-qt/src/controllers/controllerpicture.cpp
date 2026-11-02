@@ -7,6 +7,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMouseEvent>
+#include <QPaintEngine>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPolygonF>
@@ -102,6 +103,7 @@ bool ControllerPicture::load(const QString& imageSet, const QString& view)
     _hotspots.clear();
     _size = {};
     _raster = QImage();
+    _cache = QImage();
     _svg->load(QByteArray());
     _view = view.isEmpty() ? QStringLiteral("front") : view;
     if (_view.contains('/') || _view.contains('\\') || _view.contains(QStringLiteral("..")))
@@ -255,18 +257,7 @@ void ControllerPicture::paintEvent(QPaintEvent*)
                          _compact ? tr("No picture") : tr("No picture for this device"));
         return;
     }
-    if (_raster.isNull())
-        _svg->render(&painter, image);
-    else
-    {
-        // A photo is letterboxed into the design canvas (device-database.md §9), as the hotspot editor placed it
-        const double fit = std::min(image.width() / _raster.width(), image.height() / _raster.height());
-        const QSizeF drawn(_raster.width() * fit, _raster.height() * fit);
-        painter.setRenderHint(QPainter::SmoothPixmapTransform);
-        painter.drawImage(QRectF(image.center().x() - drawn.width() / 2, image.center().y() - drawn.height() / 2,
-                                 drawn.width(), drawn.height()),
-                          _raster);
-    }
+    drawPicture(painter, image);
     const double scale = image.width() / _size.width();
     const QColor lit = _lit;
     const QColor selected(0, 140, 255, 120);
@@ -374,6 +365,47 @@ void ControllerPicture::paintEvent(QPaintEvent*)
             y += step;
         }
     }
+}
+
+void ControllerPicture::drawPicture(QPainter& painter, const QRectF& image)
+{
+    // The cache covers the whole device pixels the picture touches, its origin on a device pixel: the copy is the
+    // picture as a direct draw would have put it, with no resampling. The engine's device is the real target: a
+    // widget rendered into an image (grab) has the widget as painter.device(), the image's pixel ratio here
+    const QPaintDevice* device = painter.paintEngine() ? painter.paintEngine()->paintDevice() : painter.device();
+    const qreal ratio = device ? device->devicePixelRatio() : 1.0;
+    const QPointF origin(std::floor(image.left() * ratio) / ratio, std::floor(image.top() * ratio) / ratio);
+    const QSize pixels(static_cast<int>(std::ceil((image.right() - origin.x()) * ratio)),
+                       static_cast<int>(std::ceil((image.bottom() - origin.y()) * ratio)));
+    if (_cache.isNull() || _cacheRect != image || _cache.size() != pixels || _cache.devicePixelRatio() != ratio)
+    {
+        _cache = QImage(pixels, QImage::Format_ARGB32_Premultiplied);
+        _cache.setDevicePixelRatio(ratio);
+        _cache.fill(Qt::transparent);
+        _cacheRect = image;
+        QPainter cache(&_cache);
+        cache.setRenderHint(QPainter::Antialiasing);
+        const QRectF at = image.translated(-origin);
+        if (_raster.isNull())
+            _svg->render(&cache, at);
+        else
+        {
+            // A photo is letterboxed into the design canvas (device-database.md §9), as the hotspot editor placed it
+            const double fit = std::min(at.width() / _raster.width(), at.height() / _raster.height());
+            const QSizeF drawn(_raster.width() * fit, _raster.height() * fit);
+            cache.setRenderHint(QPainter::SmoothPixmapTransform);
+            cache.drawImage(QRectF(at.center().x() - drawn.width() / 2, at.center().y() - drawn.height() / 2,
+                                   drawn.width(), drawn.height()),
+                            _raster);
+        }
+    }
+    painter.drawImage(origin, _cache);
+}
+
+void ControllerPicture::hideEvent(QHideEvent* event)
+{
+    _cache = QImage();  // a closed dialog or a folded card holds no picture memory
+    QWidget::hideEvent(event);
 }
 
 void ControllerPicture::mousePressEvent(QMouseEvent* event)

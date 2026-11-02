@@ -67,6 +67,12 @@ public:
     void reset() override;
     /// Power-off clears #00 as well
     void PowerCycle() override;
+    /// RM_DOS (the disk autostart's quick reset): skip the loader, back to the plane it chose before the reset
+    void ApplyBootROMDefaults(ROMModeEnum mode) override;
+    /// The card has no RESET= choice: RM_128, the loader. RM_DOS skips the loader once the firmware has booted;
+    /// before that the loader runs and the TR-DOS start waits for the end of the boot (OnFirmwareBooted)
+    ROMModeEnum ResolveResetROMMode(ROMModeEnum mode) override;
+    bool IsAutostartDeferred() const override { return _dosEntryPending || _dosEntryDue; }
 
     uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
@@ -76,7 +82,7 @@ public:
     /// The card's turbo: #7EFD bit 7 alone, no host Turbo+ waits or /INT stretches; the card's Even M1 wait in turbo
     /// (EVEN_M1_TURBO) and the frame #00 bit 7 selects. Called by reset and the TTD restores
     void SyncTurboWaits() override;
-    /// Runs the CPU reset a RECONF write asked for, at the end of that instruction
+    /// Runs the CPU reset a RECONF write asked for, or the deferred TR-DOS start, at the end of that instruction
     void OnMachineStep(uint32_t t) override;
     void OnMachineFrameRollover(uint32_t frameLength) override;
 
@@ -125,6 +131,14 @@ public:
     }
     /// TTD restore: the pending RECONF and its step hook
     void RestoreReconfigurationPending(bool pending);
+
+    /// The firmware boot and the TR-DOS start a disk autostart deferred to its end (BOOT_* bits, TTD and the state
+    /// report)
+    static constexpr uint8_t BOOT_FIRMWARE_RUNNING = 0x01;  // reset since the firmware last reached its menu
+    static constexpr uint8_t BOOT_DOS_PENDING = 0x02;       // an autostart waits for that
+    static constexpr uint8_t BOOT_DOS_DUE = 0x04;           // the menu came: TR-DOS starts after this instruction
+    uint8_t BootState() const;
+    void RestoreBootState(uint8_t bits);
     /// endregion </Register file>
 
 protected:
@@ -135,8 +149,21 @@ protected:
     void SyncFrame();
     void RunReconfiguration();
     void RefreshStepHook();
+    /// The firmware has booted (the menu's 48 KEY-SCAN, the Pentagon scheme or a state brought in): a deferred
+    /// autostart goes on
+    void OnFirmwareBooted();
+    /// The quick reset into TR-DOS a disk autostart asked for before the boot ended
+    void RunDeferredDosEntry();
 
     bool _reconfPending = false;
+    /// Power-on and every reset run the loader and ProfROM's set-up; RM_DOS can skip them only after one boot
+    bool _firmwareRunning = true;
+    bool _dosEntryPending = false;
+    bool _dosEntryDue = false;
+    /// #7EFD's plane bits at the last reset, for ApplyBootROMDefaults right after it
+    uint8_t _planeBeforeReset = 0;
+    /// The SMUC virtual drive latch #7FBA at the last reset (the same use)
+    uint8_t _p7FBABeforeReset = 0;
 
     // Z-Controller SD slot: the card outlives a reset
     class GmxSdSlot : public IMediaSlot

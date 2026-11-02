@@ -907,9 +907,10 @@ void Core::ResetKeepingClock(ROMModeEnum mode)
 
 void Core::Reset(ROMModeEnum mode)
 {
-    // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
-    // The GMX card has no RESET= choice: its CPU always starts at page 0 of the plane, the loader (GMX design 2.4)
-    _mode = (_config->mem_model == MM_GMX) ? RM_128 : mode;
+    // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM).
+    // The model may start elsewhere: the GMX card always starts in its loader, a disk autostart's RM_DOS included
+    // until the firmware has booted (PortDecoder_ScorpionGMX::ResolveResetROMMode)
+    _mode = _portDecoder ? _portDecoder->ResolveResetROMMode(mode) : mode;
 
     // The battery clock keeps its time over the reset, which restarts the emulated time it runs on
     if (Ds12887* rtc = _portDecoder ? _portDecoder->RtcChip() : nullptr)

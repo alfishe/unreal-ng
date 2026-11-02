@@ -20,7 +20,7 @@ verbs use it, and so do the tools (`zxdisk` here, the unreal-asm tools `zxasm`, 
 | block devices | `unrealdisk/blockdevice.h`, `subrangedevice.h`, `floppyblockdevice.h` | `BlockDevice`: a disk as 512-byte sectors (the emulator's `IBlockDevice`); `SubRangeDevice` a window of one (a partition); `FloppyBlockDevice` a floppy of uniform 512-byte sectors as one |
 | FAT | `unrealdisk/fatvolumereader.h` | `FatVolumeReader`: FAT12 / 16 / 32 on a block device, MBR or superfloppy, long names, chains and extents |
 | code pages | `unrealdisk/unicode.h` | `UnicodeHelper`: UTF-8 / UTF-16 / code points, CP866 and CP1251 |
-| any file system | `unrealdisk/diskfs.h` | `DiskFs`: the volumes of a floppy or a block device (TR-DOS, +3DOS, iS-DOS, ATM CP/M, MB-02, MB-01, MDOS and FAT floppies; FAT partitions, ATM CP/M and Profi CP/M partitions, iS-DOS devices at cylinder boundaries, MDOS3 virtual disks, BS-DOS 309 floppies of a #47 partition), `List` / `Stat` / `Read` by volume and path, `Write`, `Delete`, `Rename` and the Set calls on every one of them ([design](../../../../docs/emulator/design/disk-file-systems.md)) |
+| any file system | `unrealdisk/diskfs.h` | `DiskFs`: the volumes of a floppy or a block device (TR-DOS, +3DOS, iS-DOS, ATM CP/M, MB-02, MB-01, MDOS and FAT floppies; FAT partitions, ATM CP/M and Profi CP/M partitions, iS-DOS devices at cylinder boundaries, MDOS3 virtual disks, BS-DOS 309 floppies of a #47 partition, ProfROM MFS: the disks of its TR-DOS collections and its iS-DOS subpartitions), `List` / `Stat` / `Read` by volume and path, `Write`, `Delete`, `Rename` and the Set calls on every one of them ([design](../../../../docs/emulator/design/disk-file-systems.md)) |
 | host settings | `unrealdisk/options.h` | `LoaderOptions` (the TR-DOS sector interleave) |
 
 ## Example
@@ -49,6 +49,9 @@ zxdisk ls ISDOS50.FDI SHELL -r                   # the tree under SHELL
 zxdisk cat dss_1_62_92.img pics/sample.bmp -o sample.bmp
 zxdisk put game.trd loader.bin LOADER.C --start 0x6000   # onto a TR-DOS or +3DOS floppy, saved back
 zxdisk put plus3.dsk prog.bas RUN.BAS --type program --start 10 --attributes R   # a +3DOS program, autostart 10
+zxdisk volumes gmx-mfs.img                       # mfs-1 MFS TR-DOS collection "games", mfs-1-1 TR-DOS ... (ProfROM HDD)
+zxdisk put gmx-mfs.img edge.scl EDGE --volume mfs-1   # a floppy image onto the collection's first unformatted disk
+zxdisk cat gmx-mfs.img EDGE.trd -o edge.trd --volume mfs-1
 ```
 
 A floppy in any format the library reads; any other file is a raw hard disk image (`--offset n` skips a header).

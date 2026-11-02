@@ -512,20 +512,9 @@ void EmulatorBinding::tapePlay()
 
     EmulatorPauseBracket bracket(m_emulator.get());
 
-    // Parse-once (idempotent); paused -> resume the frozen position IN PLACE
-    // (FR-6), otherwise start at the consumption cursor
-    if (!context->pTape->EnsureImageLoaded())
-    {
-        return;
-    }
-    if (context->pTape->GetPlaybackState() == TapePlaybackState::Paused)
-    {
-        context->pTape->ResumePlaybackFromPause();
-    }
-    else
-    {
-        context->pTape->StartPlaybackAtCursor();
-    }
+    // Paused -> resume the frozen position IN PLACE (FR-6), otherwise start at the consumption cursor; a tape
+    // still on its way (a load while a TTD recording runs) plays once it lands
+    context->pTape->Play();
 }
 
 void EmulatorBinding::tapePause()

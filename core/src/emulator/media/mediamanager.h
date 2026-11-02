@@ -326,6 +326,9 @@ public:
     /// The attached medium (tests, peripherals' diagnostics); nullptr if empty.
     /// Only valid on the emulation thread or while the emulator is not running
     Medium* GetMedium(const std::string& slotId);
+    /// A medium put in that is not in its slot yet: a change while a TTD recording runs lands at the next frame
+    /// boundary (an event of the recording there), even on a parked machine. Any thread
+    bool HasIncoming(const std::string& slotId) const;
 
     /// Replace the "is the machine executing?" check (tests drive the queue
     /// without a running main loop). nullptr restores the emulator's state

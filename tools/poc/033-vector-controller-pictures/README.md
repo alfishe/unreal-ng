@@ -8,8 +8,8 @@
 
 The controllers dialog shows the selected host device with a callout per control and lights the controls while they
 are held (`unreal-qt/src/controllers/controllerpicture.cpp`). Until now the pictures were line drawings from
-`tools/controllers/make_fallback_images.py`. Q-1 asked whether the image set should be retouched photos or vector
-art; the owner answered on 2026-10-23: vector, made the way POC 031 made the on-screen keyboards. This POC draws the
+`tools/controllers/make_fallback_images.py` (removed 2026-11-01, once its last set, the keyboard, was drawn here).
+Q-1 asked whether the image set should be retouched photos or vector art; the owner answered on 2026-10-23: vector, made the way POC 031 made the on-screen keyboards. This POC draws the
 first set.
 
 ## Goals

@@ -77,6 +77,15 @@ constexpr uint64_t TAPE_PILOT_TAIL_TSTATES = 150000;
 /// position the read-gap watchdog / manual pause leaves behind (in-flight
 /// block and pulse cursor survive); `Ended` is the natural end-of-tape stop
 /// (image and cursor survive, the cursor sits past the last block).
+/// What a play request did (Tape::Play)
+enum class TapePlayResult : uint8_t
+{
+    Started,   ///< from the consumption cursor
+    Resumed,   ///< a paused tape, in place
+    Queued,    ///< the tape is on its way (a load while a TTD recording runs): it plays once it is in the deck
+    NoBlocks   ///< no tape, or one without a loadable block
+};
+
 enum class TapePlaybackState : uint8_t
 {
     Idle,
@@ -201,6 +210,7 @@ protected:
     std::string _attachedPath;     // the medium's source, mirrored into coreState.tapeFilePath
     std::string _attachedFormatId;
     uint64_t _attachGeneration = 0;
+    bool _playWhenAttached = false;  // Play() while the tape was on its way (TapePlayResult::Queued)
 
     TapeBlock* _currentTapeBlock;       // Shortcut to current block object
     // Consumption cursor: index of the NEXT block to deliver to the CPU, by signal
@@ -286,6 +296,12 @@ public:
     /// cursor and dangle _currentTapeBlock). Returns true when blocks are
     /// available.
     bool EnsureImageLoaded();
+
+    /// The play button of every surface (CLI, WebAPI, MCP, Python, Lua, the host actions, the Qt deck): a paused
+    /// tape resumes in place (FR-6), else it starts at the consumption cursor. A tape still on its way to the deck
+    /// (MediaManager::HasIncoming: a load while a TTD recording runs lands at the next frame boundary) is queued
+    /// and starts from its first block when it lands; a stop drops the request. The caller holds the CPU
+    TapePlayResult Play();
 
     /// The tape slot puts a medium in: the deck stops, drops what it played and
     /// plays `image` from its first block (the medium keeps owning it).

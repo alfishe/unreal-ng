@@ -70,17 +70,36 @@ page `#39` (`#3B` with `#7FFD` bit 3), the standard attribute byte per 8x1 pixel
 curl -s "$BASE/emulator/$EMU_ID/state/screen" | jq '{video_mode, framebuffer, gmx_640x200}'
 curl -s "$BASE/emulator/$EMU_ID/capture/screen" | jq -r .data | base64 -d > gmx.png     # 736x288
 
-# Edge Grinder: insert, wait for the 128 menu (#7EFD = #40, ~75 s: the monitor's IDE probe times out without a
-# drive, as on the board and in Unreal), Enter = "128 TR-DOS", any key on the controls screen, then #7EFD = #C8
+# Edge Grinder: insert, wait for the 128 menu (#7EFD & #7F = #40, frame 317 = 6.4 s on 6.44), Enter = "128 TR-DOS",
+# any key on the controls screen, then #7EFD = #C8 (a disk inserted before the reset boots on its own, see below)
 curl -s -X POST "$BASE/emulator/$EMU_ID/disk/A/insert" -H 'Content-Type: application/json' \
      -d "{\"path\": \"$PWD/testdata/machines/gmx/edgegrinder/EGGMX.TRD\"}"
-curl -s "$BASE/emulator/$EMU_ID/state/paging" | jq -r '.gmx.port_7efd.value'               # wait for 0x40
+curl -s "$BASE/emulator/$EMU_ID/state/paging" | jq -r '.gmx.port_7efd.value'   # 0x40 / 0xC0 (bit 7 = turbo)
 curl -s -X POST "$BASE/emulator/$EMU_ID/keyboard/tap" -H 'Content-Type: application/json' -d '{"key":"ENTER"}'
 ```
 
 `inspect_state aspects:["video"]` and the video map (`/video/layout`, `/video/pixel`, `/video/address`, family `gmx`) follow the same geometry: a pixel's
 sources are the pixel and attribute bytes after the scroll. Verified 2026-10-30 (wt-gmx-impl): the monitor's test
 screen, the Scorpion GMX 128 menu, Edge Grinder's attract mode in 640x200.
+
+## Disks at power-on, firmware choice, hard disk
+
+- **Autostart.** A disk the media manager boots (`/disk/A/insert` with autostart, the Qt drop, `--disk`) at power-on
+  waits for ProfROM to finish: the loader, the monitor's logo and tests run first, then the deferred TR-DOS start
+  resets into the plane's TR-DOS with `#7FBA` D7 set (the real drive A). The end of the boot is the first 48 BASIC
+  KEY-SCAN (`IN #FE` at pc `#0296` on the plane's 48 ROM page) from the menu's IM 1 interrupt: frame 338 on 6.44,
+  313 on v5.00. Paging writes are no sign (the monitor-call stub writes `#7EFD = #40` from `#0050` at frame 112).
+  A disk inserted into a booted machine starts TR-DOS at once. Tests: `GmxAutostart_Test.*` in
+  `core/tests/emulator/gmx_boot_test.cpp`.
+- **Firmware.** `data/configs/gmx/unreal.ini` `GMX=rom\gmx644.rom` (ProfROM + GMX 6.44, the default) or
+  `GMX=rom\gmx.rom` (Boot ROM V 5.00). There is no WebAPI switch: change the ini and restart. Programs that need v5
+  RAM variables (GMX Commander) hang on 6.44; programs that check for v5.XX.40+ (Phanes) refuse 5.00 with a message.
+  Each firmware keeps its own CMOS / NVRAM file (signature `#64` for 5.00, `#65` for 6.44), so switching does not
+  re-initialize the other's settings. Compatibility per program:
+  [software-compatibility.md](../../docs/inprogress/2026-10-07-gmx/software-compatibility.md).
+- **Hard disk.** An image on `ide0.master` (media slot), ProfROM sees it after a cold reset with Caps Shift + 5 held;
+  the 6.44 Partition manager formats MFS. `zxdisk` and the unreal-disk `DiskFs` read and write MFS partitions
+  (`docs/emulator/design/disk-file-systems.md`, "ProfROM MFS layout").
 
 ## Turbo, frame, Magic
 

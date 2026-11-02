@@ -35,6 +35,7 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 | `--activity LOOK` | How every deck shows what other surfaces do, over the scenarios' own `settings.activity`: `scenario`, `off`, `flash`, `line` (unreal-qt passes its setting) |
 | `--idle` | No product scenario: the idle one on every deck until a scenario is loaded |
 | `--lock FILE` / `--no-lock` | Another single-instance lock file (default: [below](#one-daemon-and-its-starters)), or none (tests, a second daemon on purpose) |
+| `--ready-fd N` | Write `ready` to the inherited descriptor N (on Windows: the handle's value) once the automation port serves, then close it; unreal-qt's supervisor passes a pipe and looks at once instead of polling |
 
 ## The surface client
 
@@ -189,7 +190,8 @@ The executable's path is the real one (links resolved: `/usr/bin` on the DEB, th
 `run` prints the folder it took (`data: ...`), or a note when there is none: then `$data` paths do not load and the
 idle screen is the drawn title. Every release package carries `data/streamdeck` where row 2 or 3 finds it:
 `UnrealNG.app/Contents/Resources/streamdeck`, `streamdeck/` beside the executables (Windows ZIP, Linux tarball,
-AppImage `usr/bin`), `/usr/lib/unreal-ng/streamdeck` (DEB) ([packaging.md §6](../../inprogress/2026-10-19-streamdeck-integration/packaging.md#6-data)).
+AppImage `usr/bin`), `/usr/lib/unreal-ng/streamdeck` (DEB) ([packaging.md §6](../../inprogress/2026-10-19-streamdeck-integration/packaging.md#6-data)),
+and beside it the test software the scenarios open as `$data/...`: `testsoft/`, `testtapes/`, `testsnapshots/`.
 
 Picture paths in faces and the strip (`face.image`, `strip.image`):
 
@@ -198,7 +200,8 @@ Picture paths in faces and the strip (`face.image`, `strip.image`):
 | `$data/streamdeck/...` | under the data directory |
 | `$icons/name.svg` | `$data/icons/name.svg` |
 | `...png#xywh=x,y,w,h` | a region of the file in its pixels ([W3C media fragment](https://www.w3.org/TR/media-frags/#naming-space), `pixel:` allowed); the parts of the region outside the picture are black |
-| anything else | as written (relative to the daemon's working directory) |
+| `$scenario/...`, a relative path | the scenario file's folder; in an included file its own folder (rebased onto the including file's when the include is resolved) |
+| anything else | as written |
 
 An image strip (`strip.content: image`) is drawn edge to edge, from the crumbs (or the left edge) to the right edge,
 aspect kept.

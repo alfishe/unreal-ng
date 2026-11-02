@@ -7,8 +7,9 @@
 /// superfloppy (Estex DSS, NedoOS, any FAT12 / 16 / 32), the ATM CP/M partitions (the configuration record in sector 0,
 /// the .CDS descriptors, else a directory at a track start, read only), iS-DOS / TASiS devices: the whole disk, or runs
 /// of cylinders as the ATM-Turbo HDD driver lays them out (a descriptor at a cylinder boundary), the BS-DOS 309 floppies
-/// of a #47 partition, and the virtual disks of an MDOS3 partition (MBR type #49, or the whole device from its first
-/// "SDOS" sector). Reading everywhere; writing, deleting and renaming files on every one of them (a block device that
+/// of a #47 partition, the virtual disks of an MDOS3 partition (MBR type #49, or the whole device from its first
+/// "SDOS" sector), and ProfROM's MFS (MBR type #53, the Scorpion ZS-256 / GMX on SMUC): the disks of its TR-DOS
+/// collections and its iS-DOS subpartitions. Reading everywhere; writing, deleting and renaming files on every one of them (a block device that
 /// takes writes).
 ///
 /// Standard C++ only: the emulator (its media verbs `volumes`, `files`, `read` on every automation plane, the
@@ -37,8 +38,11 @@ struct DiskFsVolume
                      ///< (an MBR partition), "cpm" (an ATM or Profi CP/M floppy), "mb02", "mdos", "cpm-<cylinder>" (an ATM CP/M
                      ///< hard disk partition), "isdos-<cylinder>" (an iS-DOS device on a hard disk), "mdos-<slot>"
                      ///< (an MDOS3 virtual disk; "mdos-p<partition>-<slot>" with two #49 partitions or more), "mb02-<n>"
-                     ///< (the BS-DOS 309 floppy @n of a #47 partition)
-    std::string fs;        ///< trdos, plus3, isdos, cpm, fat12, fat16, fat32
+                     ///< (the BS-DOS 309 floppy @n of a #47 partition), "mfs-<subpartition>" (an MFS TR-DOS collection, its disks
+                     ///< as NAME.trd files, or an MFS iS-DOS subpartition), "mfs-<subpartition>-<disk>" (a disk of
+                     ///< the collection as a TR-DOS volume; "mfs-p<partition>-..." past the first #53 partition),
+                     ///< numbers from 1
+    std::string fs;        ///< trdos, plus3, isdos, cpm, fat12, fat16, fat32, mfs (an MFS TR-DOS collection)
     std::string system;    ///< what it reads as: "TR-DOS", "+3DOS", "iS-DOS Chic", "iS-DOS Classic", "FAT16"
     std::string label;     ///< the disk title or volume label
     uint64_t offset = 0;   ///< block media: the volume's first byte on the disk

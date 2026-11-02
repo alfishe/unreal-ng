@@ -6,7 +6,7 @@
   R1 / R2 standing above the top edge. The back, turned over towards the viewer (the triggers at the bottom, the
   right hand still right), shows the paddles L4 L5 R4 R5. A trackpad shows the finger as a stick's dot and its
   pressure as a thin bar under it; the thumb on a stick lights the cap. Replaces the line drawing of
-  `tools/controllers/make_fallback_images.py`; the control names and their analog kinds are kept.
+  the former `tools/controllers/make_fallback_images.py`; the control names and their analog kinds are kept.
 
 Everything is measured on Valve's reference drawing of the Deck (steamdeck_2d_20220202.pdf, sheet 2, scale 1:1, the
 vector paths read in millimetres): the outline (traced from the front view, the right half mirrored, overlap 0.977),

@@ -3,11 +3,24 @@
   "images": [
     {
       "view": "front",
-      "source": "tools/controllers/make_fallback_images.py",
+      "title": "Generic PC keyboard, 104 keys ANSI",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
       "author": "unreal-ng",
       "licence": "same as the repository",
-      "terms": "generated line drawing, no photo",
-      "retouch": "none"
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "the key pitch 19.05 mm and the 104-key ANSI layout: the main block of 15 units, the navigation block and the keypad a quarter unit apart, the key widths of the bottom rows",
+          "source": "https://en.wikipedia.org/wiki/Keyboard_layout#Physical_layouts and ISO/IEC 9995-1",
+          "retrieved": "2026-11-01"
+        },
+        {
+          "what": "the cap: about 18 mm at the skirt, the top about 5 mm narrower and set back on a sculpted profile",
+          "source": "https://deskthority.net/wiki/Keycap",
+          "retrieved": "2026-11-01"
+        }
+      ]
     }
   ]
 }

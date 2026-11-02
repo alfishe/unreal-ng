@@ -16,13 +16,13 @@
           "retrieved": "2026-10-23"
         },
         {
-          "what": "control positions and sizes, colours",
-          "source": "https://commons.wikimedia.org/wiki/File:Xbox_Series_Controller_Carbon_Black.jpg",
-          "author": "UKER",
-          "licence": "CC BY-SA 4.0",
-          "use": "reference only, not traced",
-          "retrieved": "2026-10-23",
-          "note": "measured to about 1 mm on a near-orthographic photo"
+          "what": "the outline (trace.py, the half mirrored, overlap 0.999) and the control positions and sizes, scaled to 153 mm: the hybrid D-pad on its disc, the Share key under View / Menu, the trigger tips over the bumpers",
+          "source": "https://www.xbox.com/en-US/accessories/controllers/xbox-wireless-controller (111101_Gallery-0_4, Carbon Black)",
+          "author": "Microsoft",
+          "licence": "product render",
+          "use": "measured geometry only (trace.py outline, positions); no pixels shipped",
+          "retrieved": "2026-11-01",
+          "note": "measured to about 0.5 mm"
         }
       ]
     }

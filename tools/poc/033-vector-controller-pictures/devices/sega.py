@@ -2,8 +2,9 @@
 
 - `md6-pad`: the SEGA Six Button Control Pad (Mega Drive MK-1653 / Genesis "6 Button Arcade Pad", the Japanese
   Fighting Pad 6B has the same shell): the D-pad on a round dish, Start in the middle, A B C over X Y Z on a second
-  dish, Mode on the top right edge. Replaces the line drawing of `tools/controllers/make_fallback_images.py`; the
-  control names are the retro ones that set used (up / down / left / right, a b c x y z, start, mode).
+  dish, Mode on the top right edge. Replaces the line drawing of the former
+  `tools/controllers/make_fallback_images.py`; the control names are the retro ones that set used (up / down /
+  left / right, a b c x y z, start, mode).
 
 The outline is measured with trace.py on Retro-Bit's product shot of its licensed MK-1653 reissue seen from above
 (the silhouette, the left half mirrored, overlap 0.993), scaled to 140 mm: the width SEGA's FightingPad 6B reissue

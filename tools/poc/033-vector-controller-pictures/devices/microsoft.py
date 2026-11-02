@@ -4,8 +4,8 @@
   aluminium shell (magnesium colour) round the edge, the satin top inside it. The whole puck turns (`knob`, an
   encoder: the widget draws a dot on the ring where it has turned to), the top presses (`push`, its hotspot the
   middle of the top), the hand on it (`touch`) has no place of its own and stays a tag under the puck. Replaces the
-  line drawing of `tools/controllers/make_fallback_images.py`; the control names, their hotspots and the encoder
-  (36 steps, its ring) are kept.
+  line drawing of the former `tools/controllers/make_fallback_images.py`; the control names, their hotspots and the
+  encoder (36 steps, its ring) are kept.
 
 The size is Microsoft's (59 mm across, 30 mm high, the base 54 mm); the proportions of the top and the colours are
 read on Microsoft's product shots. The Dial has no print on the top (its logo is on the base), so nothing is left out.

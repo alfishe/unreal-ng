@@ -1,8 +1,10 @@
-# Status: TODO
+# Status: DONE
 
 GMX (`MM_GMX`, "ZS Scorpion + GMX", 2048K): **design written 2026-10-07, revised 2026-10-30 with the original manual,
-real software and the current firmware; nothing implemented.** The model is not creatable today. Plan:
-[design.md](design.md) section 7; tests: [tdd-plan.md](tdd-plan.md).
+real software and the current firmware; phases 1-8 implemented and on master (2026-10-30 - 2026-11-01).** Model `GMX`;
+usage: [.recipe/machines/gmx.md](../../../.recipe/machines/gmx.md); the software tried on it:
+[software-compatibility.md](software-compatibility.md). Plan: [design.md](design.md) section 7; tests:
+[tdd-plan.md](tdd-plan.md).
 
 ## Phases
 
@@ -23,6 +25,14 @@ real software and the current firmware; nothing implemented.** The model is not 
   (`data/configs/gmx/smuc-nvram-initial.bin`, what the monitor itself writes into blank cells, so CMOS and NVRAM
   checksums pass). The fast test lists "128 bytes CMOS found, NVRAM found, Interrupt controller found, Modem
   found"; HDD and SD "not found" only while no medium is inserted ([evidence/](evidence/))
+- [x] Phase 8 (2026-11-01): software and the hard disk. A disk autostart right after power-on waits for the
+  firmware boot (its end: the first 48 BASIC KEY-SCAN, `IN #FE` at `#0296` on the plane's 48 ROM page, frame 338 on
+  6.44 and 313 on 5.00; the monitor-call stub's `#7EFD = #40` at frame 112 is too early), then does the quick reset into the plane's TR-DOS with drive A on the floppy (`#7FBA` D7; a reset
+  left it on the hard disk image: `A>` and no `boot`); the SMUC NVRAM file is kept per firmware
+  (`<NvramFile stem>-<rom stem>.bin`: ProfROM v5.00 signs its CMOS `#64`, 6.44 `#65`, each re-inits the other's, v5.00
+  to its 18.10.98 default date); ProfROM MFS hard disks (MBR type `#53`) in unreal-disk / zxdisk (TR-DOS collections,
+  iS-DOS subpartitions; [disk-file-systems.md](../../emulator/design/disk-file-systems.md#profrom-mfs-layout)); the
+  software from the collection run on the model ([software-compatibility.md](software-compatibility.md))
 
 Done so far:
 - [x] Source survey 2026-10-07: Unreal Speccy (zx-evo fork), MAME, pico-speccy, the 1999 and 2004 articles, the Black_Cat

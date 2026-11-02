@@ -6,7 +6,9 @@
 /// an ellipse, a rectangle or a polygon) lit while its control is pressed (a stick's dot follows the stick, a
 /// trigger fills), and a callout per control on its side, sorted by the anchor's height, naming the control and its
 /// binding. A click on a hotspot reports the control. Compact (a connector card's retro device, ui-ux.md §4): the
-/// picture alone, no callouts, the hotspots lit in the card's colour.
+/// picture alone, no callouts, the hotspots lit in the card's colour. The picture itself is drawn once into a cache at
+/// the device's pixels (again on a new set, a new size or another screen's pixel ratio); a repaint of the live values
+/// copies it and draws the lights over it. A hidden widget drops its cache.
 
 #include <QColor>
 #include <QImage>
@@ -70,6 +72,7 @@ signals:
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 
 private:
     struct Hotspot
@@ -93,9 +96,13 @@ private:
     /// A hotspot's shape in widget coordinates
     QPainterPath shapeOf(const Hotspot& spot) const;
     int calloutWidth() const;
+    /// Draw the picture (the SVG or the photo) at @p image: from the cache, filled first when stale
+    void drawPicture(QPainter& painter, const QRectF& image);
 
     QSvgRenderer* _svg = nullptr;
     QImage _raster;  ///< a photo set's front.png / front.jpg (then _svg is empty)
+    QImage _cache;   ///< the picture as drawn at _cacheRect (device pixels); null when stale
+    QRectF _cacheRect;  ///< the widget rectangle the cache was drawn for
     QSizeF _size;
     std::vector<Hotspot> _hotspots;
     std::map<std::string, QString> _captions;

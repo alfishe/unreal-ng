@@ -34,7 +34,10 @@
 // or card image (512-byte sectors): MBR or superfloppy FAT partitions (Estex DSS, NedoOS), ATM CP/M partitions (the
 // configuration record in sector 0 and the .CDS descriptors), iS-DOS devices (the whole disk or at cylinder
 // boundaries), MDOS3 virtual disks (an .md3 container, an MBR partition of type #49, slot files on a FAT16 card), the
-// BS-DOS 309 floppies of a #47 partition.
+// BS-DOS 309 floppies of a #47 partition, ProfROM's MFS (an MBR partition of type #53, Scorpion ZS-256 / GMX on
+// SMUC): a TR-DOS collection "mfs-N" lists its disks as NAME.trd (cat exports one, put imports a TRD / SCL / FDI ...
+// onto the disk of that name or the first unformatted one, mv renames, rm clears), each disk "mfs-N-M" a TR-DOS
+// volume; iS-DOS subpartitions "mfs-N".
 // `--offset n` skips n bytes of a hard disk image's header (HDF: 22 + the identify block).
 //
 // Exit code 0 on success, 1 on errors, 2 on bad usage.
