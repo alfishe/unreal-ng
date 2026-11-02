@@ -5,13 +5,18 @@
 
 #include "sideviews.h"
 
+#include <QCheckBox>
+#include <QComboBox>
+#include <QHBoxLayout>
 #include <QHeaderView>
+#include <QLabel>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollBar>
 #include <QStyledItemDelegate>
+#include <QVBoxLayout>
 
 #include <set>
 
@@ -252,48 +257,166 @@ void BreakpointsView::contextMenuEvent(QContextMenuEvent *event)
 
 //------------------------------ HistoryView -------------------------------//
 
-HistoryView::HistoryView(QWidget *parent):
-    QListWidget(parent),
+HistoryView::HistoryView(Emulator * e, QWidget *parent):
+    QWidget(parent),
+    e(e),
     m_cpu(nullptr)
 {
-    tight_list(this);
-    //The line saying there is no history has no address
-    connect(this, &QListWidget::itemActivated, this, [this](QListWidgetItem * item) {
+    QVBoxLayout * layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(2);
+    //Whose history over the whole width (a device's name read whole), below it recording and the counts
+    m_source = new QComboBox(this);
+    m_source->setToolTip(tr("Whose history: the processor's instructions or a device's records"));
+    m_source->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    layout->addWidget(m_source);
+    QHBoxLayout * row = new QHBoxLayout();
+    row->setContentsMargins(2, 0, 2, 0);
+    row->setSpacing(12);
+    m_record = new QCheckBox(tr("Record"), this);
+    m_record->setToolTip(tr("Keep this device's records (a ring of the newest); off again when the debugger closes"));
+    row->addWidget(m_record);
+    m_count = new QLabel(this);
+    m_count->setToolTip(tr("Records kept of written"));
+    row->addWidget(m_count, 1);
+    layout->addLayout(row);
+    m_list = new QListWidget(this);
+    tight_list(m_list);
+    m_list->setContextMenuPolicy(Qt::CustomContextMenu);
+    layout->addWidget(m_list, 1);
+
+    connect(m_source, &QComboBox::currentIndexChanged, this, [this](int) {
+        m_list->clear();
+        m_shown.clear();
+        m_lines.clear();
+        refresh(m_cpu, m_fmt);
+    });
+    connect(m_record, &QCheckBox::toggled, this, [this](bool on) {
+        const std::string device = m_source->currentData().toString().toStdString();
+        if (device.empty() || !this->e->loaded || this->e->dm == nullptr) return;
+        DeviceManager * dm = this->e->dm;
+        this->e->invoke([dm, &device, on]() {
+            for (unsigned int i = 0; i < dm->device_count; i++)
+                if (auto * h = dynamic_cast<History *>(dm->get_device(i)->device.get()); h != nullptr && h->device() == device)
+                    h->set_recording(on);
+        });
+        refresh(m_cpu, m_fmt);
+    });
+    //The line saying there is nothing has no address
+    connect(m_list, &QListWidget::itemActivated, this, [this](QListWidgetItem * item) {
         if (item->data(Qt::UserRole).isValid()) emit activated(item->data(Qt::UserRole).toUInt());
     });
+    connect(m_list, &QWidget::customContextMenuRequested, this, &HistoryView::menu);
+}
+
+void HistoryView::set_read_only(bool on)
+{
+    m_read_only = on;
+    m_record->setEnabled(!on && !m_source->currentData().toString().isEmpty());
+}
+
+//The processor's instructions first, then every device that keeps a history, as the machine lists them
+void HistoryView::list_sources()
+{
+    std::vector<std::pair<QString, QString>> sources;
+    if (e->loaded && e->dm != nullptr) {
+        DeviceManager * dm = e->dm;
+        e->invoke([dm, &sources]() {
+            for (unsigned int i = 0; i < dm->device_count; i++)
+                if (auto * h = dynamic_cast<History *>(dm->get_device(i)->device.get())) {
+                    const std::string what = h->summary().what;
+                    sources.emplace_back(QString::fromStdString(what + " (" + h->device() + ")"),
+                                         QString::fromStdString(h->device()));
+                }
+        });
+    }
+    if (m_source->count() == (int)sources.size() + 1) return;
+    const QSignalBlocker block(m_source);
+    m_source->clear();
+    m_source->addItem(tr("Executed instructions"), QString());
+    for (const auto &s : sources) m_source->addItem(s.first, s.second);
 }
 
 void HistoryView::refresh(CPU * cpu, const CodeFormatter &fmt)
 {
-    //Read again while the machine runs: the same list stays as it is, a new one keeps the reader's place (at the
-    //newest it follows them)
-    const std::vector<unsigned int> h = cpu != nullptr ? cpu->get_history() : std::vector<unsigned int>();
-    if (cpu == m_cpu && h == m_shown && count() > 0) return;
-    const bool atNewest = verticalScrollBar()->value() == verticalScrollBar()->maximum();
-    const int place = verticalScrollBar()->value();
-    clear();
-    m_cpu = cpu;
-    m_shown = h;
-    if (cpu == nullptr) return;
-    if (h.empty()) {
-        addItem(tr("Nothing recorded yet: the history starts with the debugger"));
-        return;
+    m_fmt = fmt;
+    list_sources();
+    const QString device = m_source->currentData().toString();
+    m_record->setVisible(!device.isEmpty());
+    m_record->setEnabled(!m_read_only && !device.isEmpty());
+    if (device.isEmpty()) show_cpu(cpu);
+    else {
+        m_cpu = cpu;
+        show_device(device.toStdString());
     }
-    for (size_t i = 0; i < h.size(); i++) {
-        QListWidgetItem * item = new QListWidgetItem(fmt(h[i]), this);
-        item->setData(Qt::UserRole, h[i]);
-    }
-    if (atNewest) scrollToBottom();
-    else verticalScrollBar()->setValue(place);
 }
 
-void HistoryView::contextMenuEvent(QContextMenuEvent *event)
+template <typename Fill> void HistoryView::relist(Fill fill)
 {
-    QListWidgetItem * item = itemAt(event->pos());
+    QScrollBar * bar = m_list->verticalScrollBar();
+    const bool atNewest = bar->value() == bar->maximum();
+    const int place = bar->value();
+    m_list->clear();
+    fill();
+    if (atNewest) m_list->scrollToBottom();
+    else bar->setValue(place);
+}
+
+void HistoryView::show_cpu(CPU * cpu)
+{
+    //Read again while the machine runs: the same list stays as it is
+    const std::vector<unsigned int> h = cpu != nullptr ? cpu->get_history() : std::vector<unsigned int>();
+    m_count->setText(h.empty() ? QString() : QString::number(h.size()));
+    if (cpu == m_cpu && h == m_shown && m_list->count() > 0) return;
+    m_cpu = cpu;
+    m_shown = h;
+    relist([this, cpu, &h]() {
+        if (cpu == nullptr) return;
+        if (h.empty()) {
+            m_list->addItem(tr("Nothing recorded yet: the history starts with the debugger"));
+            return;
+        }
+        for (unsigned int a : h) {
+            QListWidgetItem * item = new QListWidgetItem(m_fmt(a), m_list);
+            item->setData(Qt::UserRole, a);
+        }
+    });
+}
+
+void HistoryView::show_device(const std::string &device)
+{
+    if (!e->loaded || e->dm == nullptr) return;
+    History::Summary summary;
+    std::vector<std::string> lines;
+    DeviceManager * dm = e->dm;
+    e->invoke([dm, &device, &summary, &lines]() {
+        for (unsigned int i = 0; i < dm->device_count; i++)
+            if (auto * h = dynamic_cast<History *>(dm->get_device(i)->device.get()); h != nullptr && h->device() == device) {
+                summary = h->summary();
+                if (summary.recording) lines = h->records(256);
+            }
+    });
+    {
+        const QSignalBlocker block(m_record);
+        m_record->setChecked(summary.recording);
+    }
+    m_count->setText(summary.recording ? tr("%1 kept of %2").arg(summary.kept).arg(summary.written) : QString());
+    if (lines == m_lines && m_list->count() > 0) return;
+    m_lines = lines;
+    relist([this, &summary, &lines]() {
+        if (!summary.recording) m_list->addItem(tr("Not recording: Record keeps its newest records"));
+        else if (lines.empty()) m_list->addItem(tr("Nothing recorded yet"));
+        for (const std::string &l : lines) m_list->addItem(QString::fromStdString(l));
+    });
+}
+
+void HistoryView::menu(const QPoint &at)
+{
+    QListWidgetItem * item = m_list->itemAt(at);
     if (item == nullptr || m_cpu == nullptr || !item->data(Qt::UserRole).isValid()) return;
-    setCurrentItem(item);
+    m_list->setCurrentItem(item);
     const unsigned int address = item->data(Qt::UserRole).toUInt();
-    exec_address_menu(this, event->globalPos(), AddressTarget{m_cpu, address, tr("in the history")});
+    exec_address_menu(this, m_list->viewport()->mapToGlobal(at), AddressTarget{m_cpu, address, tr("in the history")});
 }
 
 //------------------------------ DevicesView -------------------------------//

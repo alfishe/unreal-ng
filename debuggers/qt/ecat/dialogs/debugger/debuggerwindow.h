@@ -26,6 +26,7 @@ class StackView;
 class BreakpointsView;
 class HistoryView;
 class DevicesView;
+class AddressRouter;
 
 //One window for the whole machine. Each processor has a tab with its listing,
 //registers and flags; below are the memory dumps (each processor's address
@@ -107,6 +108,9 @@ private:
     bool m_paused;
     bool m_online = true;
     bool follow_online();
+    AddressRouter * m_router;
+    //The machine only seen or changed too: every view follows (editors closed, actions off)
+    void set_read_only(bool on);
     int m_device_tick;
 
     CpuPane * pane();

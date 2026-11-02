@@ -15,6 +15,8 @@
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
 #include <QCommandLineParser>
 #include <QDir>
 #include <QElapsedTimer>
@@ -928,6 +930,14 @@ int main(int argc, char * argv[])
                     if (side->tabText(i) == "History") side->setCurrentIndex(i);
         });
         QTimer::singleShot(2700, [dbg, path]() { dbg->grab().save(QString(path).replace(".png", "-history-running.png")); });
+        // A device's history recorded while it runs on: the board's port accesses
+        QTimer::singleShot(2800, [dbg]() {
+            if (QComboBox * source = static_cast<DebuggerWindow *>(dbg)->findChild<HistoryView *>()->findChild<QComboBox *>()) {
+                source->setCurrentIndex(source->findData("board.ports"));
+                if (QCheckBox * record = static_cast<DebuggerWindow *>(dbg)->findChild<HistoryView *>()->findChild<QCheckBox *>())
+                    record->setChecked(true);
+            }
+        });
         QTimer::singleShot(3000, [m]() { m->debug_pause(); });
         QTimer::singleShot(3500, [m]() {
             ecatshim::CPU * c = m->dm->get_cpus().front();
@@ -950,18 +960,13 @@ int main(int argc, char * argv[])
                 for (int i = 0; i < devices->topLevelItemCount(); i++)
                     if (devices->topLevelItem(i)->data(0, Qt::UserRole).toString() == "ay") devices->topLevelItem(i)->setExpanded(true);
             }
-            QTimer::singleShot(300, [dbg, m, path]() {
+            QTimer::singleShot(300, [dbg, m, path, remote]() {
                 dbg->grab().save(QString(path).replace(".png", "-gs.png"));
-                // Every device's history an entry of its own: the main CPU's opened, its newest records
-                if (DevicesView * devices = static_cast<DebuggerWindow *>(dbg)->findChild<DevicesView *>()) {
-                    for (int i = 0; i < devices->topLevelItemCount(); i++) {
-                        QTreeWidgetItem * item = devices->topLevelItem(i);
-                        const bool cpu = item->data(0, Qt::UserRole).toString() == "cpu history";
-                        item->setExpanded(cpu);
-                        if (cpu) devices->scrollToItem(item, QAbstractItemView::PositionAtTop);
-                    }
-                    dbg->grab().save(QString(path).replace(".png", "-histories.png"));
-                }
+                // The board's port history recorded before the pause, in the history tab
+                if (QTabWidget * side = tabs_with(static_cast<DebuggerWindow *>(dbg), "History"))
+                    for (int i = 0; i < side->count(); i++)
+                        if (side->tabText(i) == "History") side->setCurrentIndex(i);
+                dbg->grab().save(QString(path).replace(".png", "-histories.png"));
                 // The main Z80 again: the listing across the #8000 window's start, the pages tab
                 auto * w = static_cast<DebuggerWindow *>(dbg);
                 w->select_cpu(m->dm->get_cpus().front());
@@ -970,8 +975,20 @@ int main(int argc, char * argv[])
                 if (QTabWidget * t = tabs_with(w, "pages"))
                     for (int i = 0; i < t->count(); i++)
                         if (t->tabText(i) == "pages") t->setCurrentIndex(i);
-                QTimer::singleShot(400, [dbg, path]() {
+                QTimer::singleShot(400, [dbg, m, path, remote]() {
                     dbg->grab().save(QString(path).replace(".png", "-banks.png"));
+                    // Remote, the emulator closed by whoever runs this (up to 15 s): the last state gray, the devices'
+                    if (remote && wait_for([m]() { return !m->debug_online(); }, 15000)) {
+                        if (QTabWidget * side = tabs_with(static_cast<DebuggerWindow *>(dbg), "Devices"))
+                            for (int i = 0; i < side->count(); i++)
+                                if (side->tabText(i) == "Devices") side->setCurrentIndex(i);
+                        wait_for([]() { return false; }, 1500);
+                        dbg->grab().save(QString(path).replace(".png", "-offline.png"));
+                        // Offline nothing changes the machine: every action but the views' moves is off
+                        for (QToolBar * bar : dbg->findChildren<QToolBar *>())
+                            for (QAction * a : bar->actions())
+                                if (!a->text().isEmpty()) printf("offline action %s: %s\n", a->isEnabled() ? "on" : "off", qPrintable(a->text()));
+                    }
                     QApplication::quit();
                 });
             });

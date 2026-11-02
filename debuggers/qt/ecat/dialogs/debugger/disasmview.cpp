@@ -497,6 +497,7 @@ void DisasmView::repaint_changed()
 
 void DisasmView::toggle_breakpoint(unsigned int address)
 {
+    if (AddressRouter::read_only_at(this)) return;
     CPU * c = cpu;
     Emulator * em = e;
     e->invoke([c, em, address]() {
@@ -755,6 +756,7 @@ void DisasmView::wheelEvent(QWheelEvent *event)
 
 void DisasmView::start_edit(int line)
 {
+    if (AddressRouter::read_only_at(this)) return;
     const DisasmBuffer::Line &l = m_buf->at(line);
     m_edit_line = line;
     const QString text = bytes_text(l);

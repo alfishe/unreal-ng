@@ -203,6 +203,7 @@ void RegistersView::contextMenuEvent(QContextMenuEvent *event)
 
 void RegistersView::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    if (AddressRouter::read_only_at(this)) return;
     const int i = first_row() + event->pos().y() / m_rh;
     if (i < 0 || i >= (int)m_regs.size() || m_regs[i].name.empty()) return;
     const CpuRegister &reg = m_regs[i];
@@ -351,6 +352,7 @@ void FlagsView::paintEvent(QPaintEvent *event)
 
 void FlagsView::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    if (AddressRouter::read_only_at(this)) return;
     int x = x_first();
     for (const auto &f : m_flags) {
         const int w = cell_width(f.first);

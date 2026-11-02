@@ -9,7 +9,11 @@
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QGraphicsColorizeEffect>
 #include <QHeaderView>
+#include <QIcon>
+#include <QImage>
+#include <QPixmap>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -27,6 +31,7 @@
 #include <cmath>
 
 #include "addressmenu.h"
+#include "celleditor.h"
 #include "bankstrip.h"
 #include "debugstyle.h"
 #include "debugutil.h"
@@ -48,6 +53,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     //Everything is built at 100 %, the scale of the setup comes after: the
     //font of the views is process-wide and may still be a closed window's
     dbg::set_zoom(1.0);
+    m_router = new AddressRouter(this);
     m_ui_font = font();
     setWindowTitle(tr("Debugger"));
     setWindowFlags(windowFlags() | Qt::WindowMinMaxButtonsHint);
@@ -130,7 +136,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     m_side_tabs = new QTabWidget(m_split_bottom);
     m_stack = new StackView(current_cpu(), m_side_tabs);
     m_breakpoints = new BreakpointsView(m_side_tabs);
-    m_history = new HistoryView(m_side_tabs);
+    m_history = new HistoryView(e, m_side_tabs);
     m_devices = new DevicesView(e, m_side_tabs);
     m_side_tabs->addTab(m_stack, tr("Stack"));
     m_side_tabs->addTab(m_breakpoints, tr("Breakpoints"));
@@ -148,7 +154,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         }
     };
     //The address menu of every view: its requests come here
-    AddressRouter * router = new AddressRouter(this);
+    AddressRouter * router = m_router;
     connect(router, &AddressRouter::show_code, this, [this](CPU * cpu, unsigned int address) {
         select_cpu(cpu);
         if (CpuPane * p = pane()) {
@@ -282,6 +288,27 @@ QString DebuggerWindow::code_text(unsigned int address)
     return p->code->describe(address);
 }
 
+//A toolbar icon whose off state reads as off: gray, half seen (the platform's own barely pales a coloured one)
+static QIcon tool_icon(const char * path)
+{
+    const QIcon icon(path);
+    QIcon out;
+    for (const int size : {20, 40}) {
+        const QPixmap on = icon.pixmap(QSize(size, size), 1.0);
+        out.addPixmap(on, QIcon::Normal);
+        QImage off = on.toImage().convertToFormat(QImage::Format_ARGB32);
+        for (int y = 0; y < off.height(); y++) {
+            QRgb * line = reinterpret_cast<QRgb *>(off.scanLine(y));
+            for (int x = 0; x < off.width(); x++) {
+                const int g = 96 + qGray(line[x]) / 3;
+                line[x] = qRgba(g, g, g, qAlpha(line[x]) / 2);
+            }
+        }
+        out.addPixmap(QPixmap::fromImage(off), QIcon::Disabled);
+    }
+    return out;
+}
+
 void DebuggerWindow::build_toolbar(QWidget * host)
 {
     QToolBar * tb = new QToolBar(host);
@@ -291,7 +318,7 @@ void DebuggerWindow::build_toolbar(QWidget * host)
 
     auto add = [this, tb](const char * icon, const QString &text, const QKeySequence &key,
                           void (*command)(Emulator *, CPU *)) -> QAction * {
-        QAction * a = tb->addAction(QIcon(icon), text);
+        QAction * a = tb->addAction(tool_icon(icon), text);
         if (!key.isEmpty()) {
             a->setShortcut(key);
             a->setShortcutContext(Qt::WindowShortcut);
@@ -313,7 +340,7 @@ void DebuggerWindow::build_toolbar(QWidget * host)
 
 
     //The processor in front: steps
-    m_to_pc = tb->addAction(QIcon(":/icons/undo"), tr("Show PC"));
+    m_to_pc = tb->addAction(tool_icon(":/icons/undo"), tr("Show PC"));
     m_to_pc->setShortcut(QKeySequence(Qt::Key_Asterisk));
     connect(m_to_pc, &QAction::triggered, this, [this]() { if (CpuPane * p = pane()) p->code->show_pc(); });
     addAction(m_to_pc);
@@ -325,7 +352,7 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     m_step_out = add(":/icons/top", tr("Step out of the routine"), QKeySequence(Qt::CTRL | Qt::Key_F8),
         [](Emulator * e, CPU * c) { e->debug_step_out(c); });
 
-    m_to_cursor = tb->addAction(QIcon(":/icons/finish"), tr("Run to the cursor"));
+    m_to_cursor = tb->addAction(tool_icon(":/icons/finish"), tr("Run to the cursor"));
     m_to_cursor->setShortcut(QKeySequence(Qt::Key_F4));
     m_to_cursor->setToolTip(tr("Run to the cursor") + " (F4)");
     addAction(m_to_cursor);
@@ -347,7 +374,7 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     m_goto->setMaximumWidth(dbg::text_width(QFontMetrics(dbg::font()), "0000000000000"));
     m_goto->setToolTip(tr("An address to show in the listing"));
     tb->addWidget(m_goto);
-    m_go = tb->addAction(QIcon(":/icons/next"), tr("Go to the address"));
+    m_go = tb->addAction(tool_icon(":/icons/next"), tr("Go to the address"));
     auto go_to = [this]() {
         CpuPane * p = pane();
         if (p == nullptr) return;
@@ -363,14 +390,14 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     tb->addSeparator();
 
     //Breakpoints. F2 turns the one at the cursor on and off
-    m_bp_add = tb->addAction(QIcon(":/icons/add"), tr("Breakpoint at the cursor"));
+    m_bp_add = tb->addAction(tool_icon(":/icons/add"), tr("Breakpoint at the cursor"));
     m_bp_add->setToolTip(tr("Breakpoint at the cursor") + " (F2)");
     connect(m_bp_add, &QAction::triggered, this, [this]() {
         CpuPane * p = pane();
         if (p != nullptr && !p->cpu->has_breakpoint(p->code->cursor_address()))
             p->code->toggle_breakpoint(p->code->cursor_address());
     });
-    m_bp_remove = tb->addAction(QIcon(":/icons/remove"), tr("Remove the breakpoint at the cursor"));
+    m_bp_remove = tb->addAction(tool_icon(":/icons/remove"), tr("Remove the breakpoint at the cursor"));
     connect(m_bp_remove, &QAction::triggered, this, [this]() {
         CpuPane * p = pane();
         if (p != nullptr && p->cpu->has_breakpoint(p->code->cursor_address()))
@@ -384,7 +411,7 @@ void DebuggerWindow::build_toolbar(QWidget * host)
         if (CpuPane * p = pane()) p->code->toggle_breakpoint(p->code->cursor_address());
     });
 
-    m_bp_clear = tb->addAction(QIcon(":/icons/cancel"), tr("Remove all breakpoints"));
+    m_bp_clear = tb->addAction(tool_icon(":/icons/cancel"), tr("Remove all breakpoints"));
     connect(m_bp_clear, &QAction::triggered, this, [this]() {
         CPU * c = current_cpu();
         if (c == nullptr || c->get_breakpoints().empty()) return;
@@ -429,7 +456,7 @@ void DebuggerWindow::build_toolbar(QWidget * host)
                                       QKeySequence(QKeySequence::ZoomOut).toString(QKeySequence::NativeText),
                                       QKeySequence(Qt::CTRL | Qt::Key_0).toString(QKeySequence::NativeText)));
     tb->addWidget(m_zoom_label);
-    QAction * close_action = tb->addAction(QIcon(":/icons/exit"), tr("Close"));
+    QAction * close_action = tb->addAction(tool_icon(":/icons/exit"), tr("Close"));
     connect(close_action, &QAction::triggered, this, &QDialog::close);
     if (QToolButton * b = qobject_cast<QToolButton*>(tb->widgetForAction(close_action)))
         b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
@@ -455,7 +482,7 @@ void DebuggerWindow::update_actions()
     CpuPane * p = pane();
     //Offline (a remote machine whose emulator is gone) the last state is read only: the views move, nothing else
     const bool loaded = e->loaded && p != nullptr;
-    const bool live = loaded && e->debug_online();
+    const bool live = loaded && !m_router->read_only();
     const bool stepping = live && e->debug_stepping();
     const bool held = live && !stepping && e->debug_paused();
     const bool running = live && !held;
@@ -490,7 +517,7 @@ void DebuggerWindow::update_actions()
 void DebuggerWindow::run_command(void (*command)(Emulator *, CPU *))
 {
     CPU * c = current_cpu();
-    if (c == nullptr || !e->loaded || !e->debug_online()) return;
+    if (c == nullptr || !e->loaded || m_router->read_only()) return;
     mark_all();
     Emulator * em = e;
     e->invoke([em, c, command]() { command(em, c); });
@@ -563,6 +590,8 @@ void DebuggerWindow::show_state()
         text = tr("Running");
     }
     m_state->setText(text);
+    //Read whole: the label as wide as its text
+    m_state->setMinimumWidth(std::max((int)std::lround(200 * dbg::zoom(dbg::Zoom::Frame, m_zoom)), m_state->sizeHint().width()));
     update_actions();
 }
 
@@ -622,6 +651,7 @@ bool DebuggerWindow::follow_online()
         if (!e->debug_online()) return true;
     }
     m_online = e->debug_online();
+    set_read_only(!m_online);
     if (m_online) {
         m_serial = e->debug_serial();
         m_paused = e->debug_paused() && !e->debug_stepping();
@@ -629,6 +659,26 @@ bool DebuggerWindow::follow_online()
     }
     show_state();
     return true;
+}
+
+void DebuggerWindow::set_read_only(bool on)
+{
+    //The last state read, every view of it gray: seen, scrolled, copied, not current
+    if (on) {
+        QGraphicsColorizeEffect * gray = new QGraphicsColorizeEffect(m_split_main);
+        gray->setColor(QColor(128, 128, 128));
+        gray->setStrength(1.0);
+        m_split_main->setGraphicsEffect(gray);
+    } else {
+        m_split_main->setGraphicsEffect(nullptr);
+    }
+    m_router->set_read_only(on);
+    if (on)
+        for (CellEditor * editor : findChildren<CellEditor *>())
+            if (editor->isVisible()) emit editor->cancelled();
+    m_memory_tabs->set_read_only(on);
+    m_history->set_read_only(on);
+    update_actions();
 }
 
 //The steps a browser takes: round numbers, the same way back

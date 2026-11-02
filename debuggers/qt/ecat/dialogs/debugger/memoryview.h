@@ -147,6 +147,8 @@ public:
     MemoryView * view() const { return m_view; }
     void refresh();
     void mark_stop();
+    //Only seen: no file is loaded into the memory
+    void set_read_only(bool on);
 
 private:
     Emulator * e;
@@ -155,6 +157,7 @@ private:
     QLineEdit * m_address;
     QToolButton * m_base_button;
     QToolButton * m_word_button;
+    QToolButton * m_load_button = nullptr;
     QLineEdit * m_find;
     QHBoxLayout * m_row;
     QLabel * m_status;
@@ -186,6 +189,7 @@ public:
     void show_address(CPU * cpu, unsigned int address);
     //The page that holds a processor's address, in the pages tab, at that byte
     void show_page(CPU * cpu, unsigned int address);
+    void set_read_only(bool on);
 
 signals:
     //A value was changed in one of the dumps

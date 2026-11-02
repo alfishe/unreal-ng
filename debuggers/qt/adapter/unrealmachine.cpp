@@ -369,54 +369,73 @@ void to_tree(const StateNode &n, ecatshim::DeviceNode &out)
 
 // One device's history (the machine's history registry): an entry of its own in the Devices tab, every device's
 // apart. The summary is its mode and counts, opened the newest records; read as a snapshot, the machine runs on
-class HistoryDevice : public ecatshim::ComputerDevice
+// A history record as one line: "frame 12  pc 32785  kind ram", a nested part in braces, a list in brackets
+std::string line_text(const StateNode &n)
+{
+    if (n.kind == StateNode::Kind::Object) {
+        std::string line;
+        for (const auto &m : n.members) {
+            const std::string part = m.second.kind == StateNode::Kind::Object ? "{" + line_text(m.second) + "}" : line_text(m.second);
+            line += (line.empty() ? "" : "  ") + m.first + " " + part;
+        }
+        return line;
+    }
+    if (n.kind == StateNode::Kind::Array) {
+        std::string line;
+        for (const StateNode &i : n.items) line += (line.empty() ? "" : " ") + line_text(i);
+        return "[" + line + "]";
+    }
+    return scalar_text(n);
+}
+
+// One device's history in the core's registry for the History tab: its counts, the newest records, recording on or
+// off. Read on the emulation thread (the view invokes)
+class HistoryDevice : public ecatshim::History
 {
 public:
-    HistoryDevice(::Emulator * emu, const std::string &device) : m_emu(emu), m_device(device)
+    HistoryDevice(::Emulator * emu, const std::string &device, std::set<std::string> * ours)
+        : m_emu(emu), m_device(device), m_ours(ours)
     {
         name = device + " history";
         type = "history";
     }
-    bool get_tree(bool deep, ecatshim::DeviceNode &out) override
+    std::string device() const override { return m_device; }
+    Summary summary() override
     {
-        out = ecatshim::DeviceNode{name, std::string(), {}};
-        StateNode records;
-        m_emu->GetContext()->histories.With(m_device, [&out, &records, deep](history::IDeviceHistory &h) {
+        Summary out;
+        m_emu->GetContext()->histories.With(m_device, [&out](history::IDeviceHistory &h) {
             const history::Stats s = h.GetStats();
-            out.value = s.config.mode == history::Mode::Off
-                            ? h.What() + ": off"
-                            : h.What() + ": " + history::ModeName(s.config.mode) + ", " + std::to_string(s.kept) +
-                                  " kept of " + std::to_string(s.written);
-            if (deep) records = h.Records(kShown);
+            out.what = h.What();
+            out.recording = s.config.mode != history::Mode::Off;
+            out.kept = s.kept;
+            out.written = s.written;
         });
-        if (!deep) return true;
-        if (records.items.empty()) {
-            out.children.push_back(ecatshim::DeviceNode{"", "no records", {}});
-            return true;
-        }
-        // Newest first, as a reader looks for what just happened; a flat record reads as one line
-        for (size_t i = records.items.size(); i-- > 0;) {
-            const StateNode &r = records.items[i];
-            ecatshim::DeviceNode c;
-            c.name = "[" + std::to_string(records.items.size() - 1 - i) + "]";
-            bool flat = r.kind == StateNode::Kind::Object;
-            for (const auto &m : r.members) flat = flat && is_scalar(m.second);
-            if (flat) {
-                for (const auto &m : r.members) c.value += (c.value.empty() ? "" : "  ") + m.first + " " + scalar_text(m.second);
-            } else {
-                to_tree(r, c);
-            }
-            out.children.push_back(std::move(c));
-        }
-        return true;
+        return out;
     }
-    std::vector<DeviceFieldInfo> get_device_fields() override { return {}; }
-    bool get_field(const std::string &, unsigned int, unsigned int, DeviceFieldValue &) override { return false; }
+    std::vector<std::string> records(unsigned int count) override
+    {
+        std::vector<std::string> out;
+        StateNode records;
+        m_emu->GetContext()->histories.With(m_device, [&records, count](history::IDeviceHistory &h) { records = h.Records(count); });
+        for (const StateNode &r : records.items) out.push_back(line_text(r));
+        return out;
+    }
+    void set_recording(bool on) override
+    {
+        bool done = false;
+        m_emu->GetContext()->histories.With(m_device, [&done, on](history::IDeviceHistory &h) {
+            std::string error;
+            done = h.Configure(on ? history::Config{.mode = history::Mode::Ring} : history::Config{}, error);
+        });
+        if (!done) return;
+        if (on) m_ours->insert(m_device);
+        else m_ours->erase(m_device);
+    }
 
 private:
-    static constexpr size_t kShown = 64;
     ::Emulator * m_emu;
     std::string m_device;
+    std::set<std::string> * m_ours;
 };
 
 // A core device report (DeviceState) of the device catalog: the Devices tab's entry (title, summary, the report as a
@@ -922,10 +941,15 @@ public:
             for (const StateNode &r : reports->items) present.insert(r.find("id")->s);
         for (const DeviceState::ReportEntry &entry : DeviceState::CatalogEntries())
             if (present.count(entry.id)) m_dm.add(std::make_shared<ReportDevice>(e, entry));
-        // Every device history, each an entry of its own
+        // Every device's history for the History tab; a processor's ("cpu", "zxbus.1.cpu") comes through its CPU
         const StateNode histories = ctx->histories.List();
-        for (const StateNode &h : histories.items)
-            if (const StateNode * device = h.find("device")) m_dm.add(std::make_shared<HistoryDevice>(e, device->s));
+        for (const StateNode &h : histories.items) {
+            const StateNode * device = h.find("device");
+            if (device == nullptr || device->s == "cpu" ||
+                (device->s.size() > 4 && device->s.compare(device->s.size() - 4, 4, ".cpu") == 0))
+                continue;
+            m_dm.add(std::make_shared<HistoryDevice>(e, device->s, &m_histories_ours));
+        }
 
         dm = &m_dm;
         loaded = true;
@@ -956,10 +980,9 @@ public:
         for (const auto &o : m_observers) mc.RemoveObserverById(o.first, o.second);
         set_debug_listener(nullptr);
         // The histories the debugger switched on, off again
-        std::vector<std::string> ours;
-        if (m_cpu_history_ours) ours.push_back("cpu");
+        std::set<std::string> ours = m_histories_ours;
         for (const auto &card : m_cards)
-            if (!card->history_ours().empty()) ours.push_back(card->history_ours());
+            if (!card->history_ours().empty()) ours.insert(card->history_ours());
         for (const std::string &device : ours)
             m_emu->GetContext()->histories.With(device, [](history::IDeviceHistory &h) {
                 std::string error;
@@ -978,7 +1001,7 @@ public:
         m_emu->GetContext()->histories.With("cpu", [this](history::IDeviceHistory &h) {
             if (h.GetStats().config.mode != history::Mode::Off) return;
             std::string error;
-            m_cpu_history_ours = h.Configure(history::Config{.mode = history::Mode::Ring}, error);
+            if (h.Configure(history::Config{.mode = history::Mode::Ring}, error)) m_histories_ours.insert("cpu");
         });
         m_main->m_debug = ecatshim::DEBUG_BRAKES;
     }
@@ -1089,7 +1112,7 @@ private:
     std::shared_ptr<ZxMapper> m_mapper;
     QSettings m_settings;
     std::vector<std::pair<std::string, uint64_t>> m_observers;
-    bool m_cpu_history_ours = false;  // the debugger turned `cpu` on: off again when it goes
+    std::set<std::string> m_histories_ours;  // the histories the debugger turned on: off again when it goes
     std::mutex m_listener_mutex;
     std::function<void()> m_listener;
     std::atomic<unsigned int> m_serial{0};

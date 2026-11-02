@@ -103,6 +103,26 @@ public:
     virtual bool debug_writable(unsigned int) { return true; }
 };
 
+// Not in ecat: one device's history as the core records it (a controller's commands, a chip's register writes, a
+// card's events), the History tab's source; not a Devices tab entry. A processor's executed instructions come
+// through its CPU (get_history), these never name one
+class History : public ComputerDevice {
+public:
+    struct Summary {
+        std::string what;       // "FDC commands"
+        bool recording = false;
+        uint64_t kept = 0;
+        uint64_t written = 0;
+    };
+    // The registry's name of the device ("beta128", "zxbus.1.ports")
+    virtual std::string device() const = 0;
+    virtual Summary summary() = 0;
+    // The newest @p count records, oldest first, a line each
+    virtual std::vector<std::string> records(unsigned int count) = 0;
+    // A ring on or off; what the debugger turned on it turns off when it goes
+    virtual void set_recording(bool on) = 0;
+};
+
 // Not in ecat: a memory made of pages a processor maps into its windows (RAM, ROM, a card's RAM). The debugger
 // groups them under one tab, a page at a time
 class Memory : public AddressableDevice {
@@ -225,7 +245,7 @@ public:
     // A remote machine's connection: false while its emulator is gone and it waits for a suitable one (it reattaches
     // by itself, the listener tells both). The last state stays readable; nothing runs, steps or changes
     virtual bool debug_online() const { return true; }
-    // The status text while offline ("No emulator: waiting for one at 127.0.0.1:8090")
+    // The status text while offline ("Waiting for PENTAGON at 127.0.0.1:8090")
     virtual std::string debug_offline_text() const { return std::string(); }
 
     virtual std::string read_setup(const std::string &section, const std::string &key, const std::string &def) = 0;

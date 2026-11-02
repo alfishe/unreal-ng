@@ -217,6 +217,11 @@ void PagedMemory::size_tree()
     m_split->setSizes(QList<int>() << tree << width() - tree);
 }
 
+void PagedMemory::set_read_only(bool on)
+{
+    m_panel->set_read_only(on);
+}
+
 void PagedMemory::mark_stop()
 {
     if (isVisible()) update_mapping(true);

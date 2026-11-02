@@ -9,6 +9,10 @@
 #include <map>
 
 #include <QListWidget>
+
+class QCheckBox;
+class QComboBox;
+class QLabel;
 #include <QTreeWidget>
 #include <QWidget>
 
@@ -76,24 +80,40 @@ private:
     CPU * m_cpu = nullptr;
 };
 
-//Where PC has been, the newest last and in view, for a processor that keeps it
-class HistoryView : public QListWidget
+//What happened, the newest last and in view: where the processor's PC has been, or one device's records (a
+//controller's commands, a chip's register writes) chosen above the list, each device's apart. A device records
+//only when switched on: the debugger switches off again what it switched on
+class HistoryView : public QWidget
 {
     Q_OBJECT
 public:
-    explicit HistoryView(QWidget *parent);
+    HistoryView(Emulator * e, QWidget *parent);
     void refresh(CPU * cpu, const CodeFormatter &fmt);
+    //Only seen: recording is not switched
+    void set_read_only(bool on);
 
 signals:
     void activated(unsigned int address);
     void toggle_breakpoint(unsigned int address);
 
-protected:
-    void contextMenuEvent(QContextMenuEvent *event) override;
-
 private:
+    Emulator * e;
+    QComboBox * m_source;
+    QCheckBox * m_record;
+    QLabel * m_count;
+    QListWidget * m_list;
     CPU * m_cpu;
+    CodeFormatter m_fmt;
     std::vector<unsigned int> m_shown;
+    std::vector<std::string> m_lines;
+    bool m_read_only = false;
+
+    void list_sources();
+    void show_cpu(CPU * cpu);
+    void show_device(const std::string &device);
+    //The list's lines again, the reader's place kept (at the newest it follows them)
+    template <typename Fill> void relist(Fill fill);
+    void menu(const QPoint &at);
 };
 
 //The machine's devices as the core's device catalog lists them: each entry's

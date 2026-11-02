@@ -27,6 +27,12 @@ public:
     explicit AddressRouter(QObject * parent) : QObject(parent) {}
     static AddressRouter * of(const QWidget * w);
 
+    //The machine's state seen, not changed (a remote one whose emulator is gone): the window sets it as its state
+    //changes, every view asks it before it changes anything
+    bool read_only() const { return m_read_only; }
+    void set_read_only(bool on);
+    static bool read_only_at(const QWidget * w);
+
 signals:
     void show_code(CPU * cpu, unsigned int address);
     void show_memory(CPU * cpu, unsigned int address);
@@ -34,6 +40,10 @@ signals:
     void toggle_breakpoint(CPU * cpu, unsigned int address);
     void run_to(CPU * cpu, unsigned int address);
     void set_pc(CPU * cpu, unsigned int address);
+    void read_only_changed(bool on);
+
+private:
+    bool m_read_only = false;
 };
 
 //The actions of an address, as the debuggers have them (IDA's jump and

@@ -18,6 +18,19 @@ AddressRouter * AddressRouter::of(const QWidget * w)
     return top ? top->findChild<AddressRouter*>(QString(), Qt::FindDirectChildrenOnly) : nullptr;
 }
 
+void AddressRouter::set_read_only(bool on)
+{
+    if (on == m_read_only) return;
+    m_read_only = on;
+    emit read_only_changed(on);
+}
+
+bool AddressRouter::read_only_at(const QWidget * w)
+{
+    const AddressRouter * r = of(w);
+    return r != nullptr && r->read_only();
+}
+
 static QString hex(unsigned int value, int digits)
 {
     return '#' + fmt_num(value, 16, digits);
@@ -43,9 +56,12 @@ void add_address_actions(QMenu * menu, const QWidget * from, const AddressTarget
     menu->addSection(title);
 
     const bool can = r != nullptr && cpu != nullptr;
-    const auto act = [&](const QString &icon, const QString &text, void (AddressRouter::*signal)(CPU*, unsigned int)) {
+    //What changes the machine: not while it is only seen
+    const bool changes = can && !r->read_only();
+    const auto act = [&](const QString &icon, const QString &text, void (AddressRouter::*signal)(CPU*, unsigned int),
+                         bool change = false) {
         QAction * x = menu->addAction(icon.isEmpty() ? QIcon() : QIcon(icon), text);
-        x->setEnabled(can);
+        x->setEnabled(change ? changes : can);
         if (can) QObject::connect(x, &QAction::triggered, r, [r, signal, cpu, a]() { emit (r->*signal)(cpu, a); });
         return x;
     };
@@ -53,11 +69,11 @@ void add_address_actions(QMenu * menu, const QWidget * from, const AddressTarget
     act(QString(), QObject::tr("Show in memory"), &AddressRouter::show_memory);
     act(QString(), QObject::tr("Show its page"), &AddressRouter::show_page);
     menu->addSeparator();
-    act(QString(), QObject::tr("Run to here"), &AddressRouter::run_to);
-    act(QString(), QObject::tr("Set PC here"), &AddressRouter::set_pc);
+    act(QString(), QObject::tr("Run to here"), &AddressRouter::run_to, true);
+    act(QString(), QObject::tr("Set PC here"), &AddressRouter::set_pc, true);
     const bool bp = cpu != nullptr && cpu->has_breakpoint(a);
     act(bp ? ":/icons/remove" : ":/icons/add", bp ? QObject::tr("Remove the breakpoint") : QObject::tr("Set a breakpoint"),
-        &AddressRouter::toggle_breakpoint);
+        &AddressRouter::toggle_breakpoint, true);
     menu->addSeparator();
 
     //Copy: the address, and what is there as the processor reads it

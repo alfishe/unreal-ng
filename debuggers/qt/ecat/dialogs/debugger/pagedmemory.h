@@ -23,6 +23,7 @@ public:
 
     void refresh();
     void mark_stop();
+    void set_read_only(bool on);
     //The page holding the offset of the memory, its dump at the place
     void show_page(Memory * memory, unsigned int offset);
 

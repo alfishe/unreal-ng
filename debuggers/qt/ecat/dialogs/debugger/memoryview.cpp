@@ -473,7 +473,7 @@ void MemoryView::keyPressEvent(QKeyEvent *event)
 //Every byte of the cell is memory: a register is shown, not edited
 bool MemoryView::can_write(unsigned int address, unsigned int count) const
 {
-    if (!m_src.write) return false;
+    if (!m_src.write || AddressRouter::read_only_at(this)) return false;
     if (!m_src.writable) return true;
     for (unsigned int i = 0; i < count; i++)
         if (address + i < m_src.size && !m_src.writable(address + i)) return false;
@@ -616,6 +616,7 @@ MemoryPanel::MemoryPanel(Emulator * e, const MemorySource &source, QWidget *pare
     load_button->setIcon(QIcon(":/icons/open"));
     load_button->setToolTip(tr("Load a file at the cursor"));
     connect(load_button, &QToolButton::clicked, this, &MemoryPanel::load_file);
+    m_load_button = load_button;
     h->addWidget(load_button);
 
     QToolButton * save_button = new QToolButton(this);
@@ -669,6 +670,11 @@ void MemoryPanel::refresh()
     }
     m_view->refresh();
     show_cursor(m_view->cursor());
+}
+
+void MemoryPanel::set_read_only(bool on)
+{
+    if (m_load_button != nullptr) m_load_button->setEnabled(!on);
 }
 
 void MemoryPanel::mark_stop()
@@ -758,6 +764,7 @@ void MemoryPanel::find_next()
 
 void MemoryPanel::load_file()
 {
+    if (AddressRouter::read_only_at(this)) return;
     const QString name = QFileDialog::getOpenFileName(this, tr("Load into memory"),
                                                       QString::fromStdString(e->get_last_path()));
     if (name.isEmpty()) return;
@@ -887,6 +894,12 @@ void MemoryTabs::refresh()
 {
     for (MemoryPanel * m : m_panels) m->refresh();
     if (m_paged != nullptr) m_paged->refresh();
+}
+
+void MemoryTabs::set_read_only(bool on)
+{
+    for (MemoryPanel * m : m_panels) m->set_read_only(on);
+    if (m_paged != nullptr) m_paged->set_read_only(on);
 }
 
 void MemoryTabs::mark_stop()
