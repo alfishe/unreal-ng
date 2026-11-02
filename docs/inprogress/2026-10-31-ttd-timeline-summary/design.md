@@ -27,7 +27,9 @@ Every source below is filled by the recording as it is today; the query reads th
 
 A device's state blob may carry time fields that change every frame (a card's own clock), so a blob's change says
 nothing about activity. The timeline counts only the device memory regions (card RAM, video RAM, fonts: what a CPU or
-DMA wrote) and the port traffic of each device; the blobs (registers, clocks, palettes) are not counted.
+DMA wrote) and the port traffic of each device; the blobs (registers, clocks, palettes) are not counted. The engine
+keeps each blob as a region of its own (`device.<instance>`, ids from `TTDRegionId::DeviceStateFirst`): those are left
+out of `regions`.
 
 Not in the recording, so not in the timeline: HALT idle time inside a frame (only whether the frame ended in HALT), sound
 energy, a screen picture (the screenshot stream is registered but off), interrupts per frame outside RZX and the

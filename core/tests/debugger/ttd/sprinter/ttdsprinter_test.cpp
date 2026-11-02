@@ -645,6 +645,21 @@ TEST_F(TTDSprinterMachine_Test, AReplayAfterASeekReadsTheRecordedSectorsNotTheIm
         EXPECT_GT(slotSectors, 0u);
         EXPECT_EQ(slotSectors, sectors) << "one medium read";
         EXPECT_TRUE(disk) << "the DSS boot is a disk phase";
+
+        // The video RAM is a device region: the DSS prompt and MD's output changed it in some frames, never more
+        // than the recording holds
+        const auto vram = std::find_if(tl.regions.begin(), tl.regions.end(),
+                                       [](const ttd::TTDTimelineDevice& r) { return r.name == "sprinter.vram"; });
+        ASSERT_NE(vram, tl.regions.end());
+        const size_t v = static_cast<size_t>(vram - tl.regions.begin());
+        uint64_t vramFrames = 0;
+        for (const ttd::TTDTimelinePhase& p : tl.phases)
+            if (v < p.facts.regionFrames.size())
+                vramFrames += p.facts.regionFrames[v];
+        EXPECT_GT(vramFrames, 0u);
+        EXPECT_LE(vramFrames, tl.toFrame - tl.fromFrame + 1);
+        for (const ttd::TTDTimelineDevice& r : tl.regions)
+            EXPECT_NE(r.name.rfind("device.", 0), 0u) << r.name << ": a device-state blob is not device memory";
     }
 
     // Before running on, a throwaway replay elsewhere (a frame-cache build of a later frame): the run continues from

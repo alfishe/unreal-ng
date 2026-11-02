@@ -336,9 +336,10 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
     const int16_t ula = ports.UlaDevice();
     for (const std::string& slot : engine.MediaReads().SlotNames())
         result.media.push_back({slot, 0});
+    // Device memory: every region but the machine RAM and the engine's device-state blobs (registers, clocks)
     std::vector<uint32_t> deviceRegions;   // engine region index per result.regions
     for (uint32_t r = 0; r < regions.size(); ++r)
-        if (r != ramRegion)
+        if (r != ramRegion && static_cast<uint16_t>(regions[r].id) < static_cast<uint16_t>(TTDRegionId::DeviceStateFirst))
         {
             deviceRegions.push_back(r);
             result.regions.push_back({regions[r].name, 0});
