@@ -7,6 +7,7 @@
 
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
+#include "emulator/slots/portowners.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 
@@ -25,6 +26,9 @@ DivMmcPaging::DivMmcPaging(EmulatorContext* context) : _context(context)
         _spiTap.SetDevice(static_cast<uint8_t>(i), i ? "sd1" : "sd0");
         _card[i].SetBusTap(&_spiTap, static_cast<uint8_t>(i));
         _card[i].SetClock([this]() { return _context && _context->pPortDecoder ? _context->pPortDecoder->EmulatedMicroseconds() : 0; });
+        _card[i].AttachHistory(_context, [context = _context, i]() {
+            return slots::PortOwnerName(context, 0x00E7, "divmmc") + (i ? ".sd1" : ".sd0");
+        });
     }
 }
 

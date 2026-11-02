@@ -210,7 +210,7 @@ real machine, not an emulation choice.
 | Fact | Source |
 |---|---|
 | Peters Plus offered "ISA -> Spectrum-BUS adapter" as option 9 | INFO_014 |
-| Users asked for GS; "Sprinter cannot take a GS" was a period complaint | DISK `DOCS/IM2.TXT:1269`; [zxpress article "Спринтер: для чего?"](https://zxpress.ru/article.php?id=11761) |
+| Users asked for GS; "Sprinter cannot take a GS" was a period complaint | DISK `DOCS/IM2.TXT:1269`; [zxpress article "Спринтер: для чего?" ("Sprinter: what for?")](https://zxpress.ru/article.php?id=11761) |
 | No schematic or port document of the adapter was found | collection-wide search (`zxbus`, `adapter`, `Spectrum-bus`) |
 | MAME: `ISA8_ZXBUS` installs the **whole ISA I/O space** `#0000-#FFFF` as ZX-bus I/O, one ZX-bus slot on it, no memory, IRQ, NMI or WAIT passed; "FIXME: determine ZXBUS clock" | MAME `zxbus_adapter.cpp:13-38` |
 | MAME's ZX-bus cards: `nemoide`, `neogs` (and `smuc` for GMX) | MAME `bus.cpp:84-93` |

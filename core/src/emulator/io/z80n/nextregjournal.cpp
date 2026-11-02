@@ -17,26 +17,10 @@ const char* NextRegSourceName(NextRegSource source)
     }
 }
 
-void NextRegJournal::SetCapacity(size_t capacity)
-{
-    _ring.assign(std::max<size_t>(capacity, 1), NextRegWriteEvent{});
-    _head = 0;
-    _count = 0;
-    _evicted = 0;
-}
-
-void NextRegJournal::Clear()
-{
-    _head = 0;
-    _count = 0;
-    _evicted = 0;
-}
-
 void NextRegJournal::Record(uint32_t frame, uint32_t t, uint16_t pc, NextRegSource source, uint8_t reg, uint8_t value,
                             uint8_t previous, int16_t beamLine, int16_t beamHc)
 {
-    NextRegWriteEvent& e = _ring[_head];
-    e.seq = ++_seq;
+    NextRegWriteEvent e;
     e.frame = frame;
     e.t = t;
     e.pc = pc;
@@ -46,35 +30,7 @@ void NextRegJournal::Record(uint32_t frame, uint32_t t, uint16_t pc, NextRegSour
     e.previous = previous;
     e.beamLine = beamLine;
     e.beamHc = beamHc;
-    _head = (_head + 1) % _ring.size();
-    if (_count < _ring.size())
-        _count++;
-    else
-        _evicted++;
-}
-
-std::vector<NextRegWriteEvent> NextRegJournal::Query(const NextRegJournalQuery& query) const
-{
-    std::vector<NextRegWriteEvent> out;
-    const size_t first = (_head + _ring.size() - _count) % _ring.size();
-    for (size_t i = 0; i < _count; i++)
-    {
-        const NextRegWriteEvent& e = _ring[(first + i) % _ring.size()];
-        if (e.seq <= query.since)
-            continue;
-        if (query.frameFrom >= 0 && e.frame < query.frameFrom)
-            continue;
-        if (query.frameTo >= 0 && e.frame > query.frameTo)
-            continue;
-        if (!query.regs.empty() && std::find(query.regs.begin(), query.regs.end(), e.reg) == query.regs.end())
-            continue;
-        if (!query.sources.empty() && std::find(query.sources.begin(), query.sources.end(), e.source) == query.sources.end())
-            continue;
-        out.push_back(e);
-    }
-    if (query.limit && out.size() > query.limit)
-        out.erase(out.begin(), out.end() - static_cast<std::ptrdiff_t>(query.limit));
-    return out;
+    NextJournal::Record(e);
 }
 
 namespace
@@ -171,4 +127,17 @@ bool NextRegJournalQueryFromStrings(const std::string& regs, const std::string& 
         query.limit = static_cast<size_t>(value);
     }
     return true;
+}
+
+std::vector<NextRegWriteEvent> NextRegJournal::Query(const NextRegJournalQuery& query) const
+{
+    return Select(query.since, query.limit, [&query](const NextRegWriteEvent& e) {
+        if (query.frameFrom >= 0 && e.frame < query.frameFrom)
+            return false;
+        if (query.frameTo >= 0 && e.frame > query.frameTo)
+            return false;
+        if (!query.regs.empty() && std::find(query.regs.begin(), query.regs.end(), e.reg) == query.regs.end())
+            return false;
+        return query.sources.empty() || std::find(query.sources.begin(), query.sources.end(), e.source) != query.sources.end();
+    });
 }

@@ -1,6 +1,7 @@
 #include <benchmark/benchmark.h>
 
 #include <cstdlib>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,36 @@ struct PassThroughOverlay : HostBusOverlay
     uint8_t onRead(uint16_t, uint8_t normal, bool, bool) override { return normal; }
     void onWrite(uint16_t, uint8_t, bool) override {}
 };
+
+/// UNREAL_BENCH_HISTORIES: the device histories a run records into (rings of their default size): "all", or device
+/// ids separated by commas ("cpu", "zxbus.1.cpu,board.ports"); unset or empty: all off. The label names them
+std::string SwitchHistories(EmulatorContext* context)
+{
+    const char* value = std::getenv("UNREAL_BENCH_HISTORIES");
+    if (!value || !*value)
+        return "";
+    std::vector<std::string> devices;
+    if (std::string(value) == "all")
+    {
+        for (const StateNode& entry : context->histories.List().items)
+            if (const StateNode* device = entry.find("device"))
+                devices.push_back(device->s);
+    }
+    else
+    {
+        std::stringstream stream(value);
+        for (std::string item; std::getline(stream, item, ',');)
+            if (!item.empty())
+                devices.push_back(item);
+    }
+    size_t on = 0;
+    for (const std::string& device : devices)
+        on += context->histories.With(device, [](history::IDeviceHistory& h) {
+            std::string error;
+            h.Configure({ .mode = history::Mode::Ring }, error);
+        });
+    return " + histories " + std::string(value) + " (" + std::to_string(on) + " on)";
+}
 } // namespace
 
 static void RunHostFrame(benchmark::State& state, const char* model, bool debug, bool overlay = false,
@@ -59,6 +90,7 @@ static void RunHostFrame(benchmark::State& state, const char* model, bool debug,
 
     if (setup)
         setup(context);
+    const std::string histories = SwitchHistories(context);
 
     PassThroughOverlay passThrough;
     if (overlay)
@@ -69,7 +101,7 @@ static void RunHostFrame(benchmark::State& state, const char* model, bool debug,
 
     if (overlay)
         context->pCore->RemoveBusOverlay(&passThrough);
-    state.SetLabel(std::string(model) + (debug ? " debug" : " fast") + (overlay ? " + pass-through overlay" : ""));
+    state.SetLabel(std::string(model) + (debug ? " debug" : " fast") + (overlay ? " + pass-through overlay" : "") + histories);
     state.SetItemsProcessed(state.iterations());
     manager->RemoveEmulator(emulator->GetUUID());
 }

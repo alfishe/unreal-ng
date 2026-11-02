@@ -49,7 +49,7 @@ One horizontal tick (DA0 step) = 16 masters = 4 T at 3.5 MHz. A turbo T = 2 mast
 - /TURBO is made on the controller board: VG93 (U1) **HLD, pin 28, is wired to READY (pin 32) and to the net
   TURBO**, which also feeds U12:D (LN2) -> /MOTOR. HLD high = head loaded = motor on -> /TURBO high -> D = 1 ->
   normal speed. Without the controller /TURBO floats, R5 holds D high: no turbo (manual p5: "при снятом
-  контроллере она влияния не оказывает").
+  контроллере она влияния не оказывает", "with the controller removed it has no effect").
 - Nothing else drives /TURBO or U25:A (no port bit, no INT term). **The VG93 HLD is the only thing that drops
   turbo** (xpeccy-plus's claim is confirmed). HLD rises with any type II/III command or type I with h=1 and drops
   after 15 index pulses without a command (WD1793 behavior; without a disk there are no index pulses).
@@ -99,7 +99,8 @@ between (c = 2 mod 4; odd turbo T). m0 = master clock at the start of T1.
 **Rule: a RAM memory cycle gets 2 waits if its T1 starts on an even turbo T, 3 if odd.** T3 always starts
 on the slot edge right after the CPU's DRAM cycle. Status: the gate logic is traced; the phase-B miss is inferred
 from the propagation budget (71 ns from the T1 falling edge to the F2 edge). The manual's turbo fix (p5:
-"емкость 200-400 пф на землю в одно из мест на ноги 4(U44), 3(U45) или 6(U45)") puts the capacitor exactly on
+"емкость 200-400 пф на землю в одно из мест на ноги 4(U44), 3(U45) или 6(U45)", "a 200-400 pF capacitor to ground at one of
+pins 4 (U44), 3 (U45) or 6 (U45)") puts the capacitor exactly on
 G14 / REQ / D, which slows the request's rising edge and so makes the miss certain: it confirms that this path is
 the timing-critical one. A one-wait phase B would be the "fast" board without the capacitor; the Tact Meter
 figure below rules it out on the measured board.
@@ -132,7 +133,7 @@ from INT = F2 edge. Only valid with turbo on and HLD low.
 
 `turbo-alt-rules.py`: with the 88208 ratio (1.2306) only the 2/3 rule fits (2/1 -> 104262, 2/2 -> 95573,
 3/3 -> 81920 for the same loop). The loop body of Tact Meter 1.0 is not known; the INC DE : JP fit is a
-consistency check, not a proof. Unreal_NS `PROFI_TURBO` 116920 = 1.673x of 69888 and the manual's "в 1.7 раза"
+consistency check, not a proof. Unreal_NS `PROFI_TURBO` 116920 = 1.673x of 69888 and the manual's "в 1.7 раза" ("1.7 times")
 mean a mix of ROM and RAM code (ROM 2x, RAM 1.1-1.5x), not a single rule.
 
 ### A7. INT in turbo (traced circuit, inferred consequence)

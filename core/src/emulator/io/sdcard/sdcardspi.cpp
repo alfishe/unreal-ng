@@ -7,6 +7,7 @@
 
 #include "common/statebytes.h"
 #include "emulator/bus/bustap.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/io/storage/rawimage.h"
 #include "emulator/io/storage/sessionwritemap.h"
 
@@ -348,12 +349,12 @@ void SdCardSpi::queueBlock(uint64_t block, int latencyBytes)
     _out.push_back(static_cast<uint8_t>(crc >> 8));
     _out.push_back(static_cast<uint8_t>(crc));
     _blocksRead++;
-    if (_onTrace)
+    if (Observed()) [[unlikely]]
     {
         SdTraceEvent event;
         event.kind = SdTraceEvent::Kind::ReadBlock;
         event.block = block;
-        _onTrace(event);
+        Emit(event);
     }
     if (_tap && _tap->Active()) [[unlikely]]
         _tap->SdBlock(_tapSlot, false, block, true);
@@ -462,13 +463,13 @@ void SdCardSpi::finishWrite()
         if (_onWrite)
             _onWrite(_writeBlock);
     }
-    if (_onTrace)
+    if (Observed()) [[unlikely]]
     {
         SdTraceEvent event;
         event.kind = SdTraceEvent::Kind::WriteBlock;
         event.block = _writeBlock;
         event.ok = ok;
-        _onTrace(event);
+        Emit(event);
     }
     if (_tap && _tap->Active()) [[unlikely]]
         _tap->SdBlock(_tapSlot, true, _writeBlock, ok);
@@ -494,10 +495,58 @@ void SdCardSpi::checkCommandStart(uint8_t index, bool answerPending, bool busyPe
         _tap->Finding(BusRule::CommandDropsAnswer, _tapSlot, index);
 }
 
+void SdCardSpi::AttachHistory(EmulatorContext* context, std::function<std::string()> device)
+{
+    _historyContext = context;
+    _history = std::make_unique<SdHistory>(context != nullptr ? &context->histories : nullptr, std::move(device),
+                                           "SD card commands and blocks", 1024);
+}
+
+void SdCardSpi::Emit(const SdTraceEvent& event)
+{
+    if (_onTrace)
+        _onTrace(event);
+    if (_history && _history->On() && !(_historyContext && _historyContext->ttdReplayActive)) [[unlikely]]
+    {
+        SdHistoryRecord record;
+        record.event = event;
+        record.us = _clockUs ? _clockUs() : 0;
+        if (_historyContext)
+            record.frame = _historyContext->emulatorState.frame_counter;
+        (*_history)->Push(record);
+    }
+}
+
+void SdHistoryRecord::ToState(StateNode& node) const
+{
+    node["frame"] = int64_t(frame);
+    node["us"] = int64_t(us);
+    switch (event.kind)
+    {
+        case SdTraceEvent::Kind::Command:
+            node["type"] = "command";
+            node["cmd"] = std::string(event.app ? "ACMD" : "CMD") + std::to_string(event.index);
+            node["argument"] = int64_t(event.argument);
+            node["crc_ok"] = event.crcValid;
+            if (event.r1 != 0xFF)
+                node["r1"] = int(event.r1);
+            break;
+        case SdTraceEvent::Kind::ReadBlock:
+            node["type"] = "read";
+            node["block"] = int64_t(event.block);
+            break;
+        case SdTraceEvent::Kind::WriteBlock:
+            node["type"] = "write";
+            node["block"] = int64_t(event.block);
+            node["ok"] = event.ok;
+            break;
+    }
+}
+
 void SdCardSpi::onCommand()
 {
     const bool tap = _tap && _tap->Active();
-    if (!_onTrace && !tap) [[likely]]
+    if (!Observed() && !tap) [[likely]]
     {
         onCommandBody();
         return;
@@ -522,8 +571,7 @@ void SdCardSpi::onCommand()
         if (it != _out.end())
             event.r1 = *it;
     }
-    if (_onTrace)
-        _onTrace(event);
+    Emit(event);
     if (tap)
         _tap->SdCommand(_tapSlot, event.index, event.app, event.argument, event.crcValid, event.r1);
 }

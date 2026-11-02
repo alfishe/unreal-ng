@@ -44,11 +44,11 @@ Related: [network adapters TDD](../2026-09-30-nedoos-integration/tdd-network.md)
 | Slot | ATM Turbo 2+ **INTERNAL I/O** connector (2 x 12 pins, rows A12/B12 on the silkscreen) | manual p.3-4, PCB |
 | UART | TL16C550C, PLCC-44 (silkscreen "DD2 - 16C550CFN") | PCB image, datasheet in the repo |
 | UART clock | 1.8432 MHz crystal, 22 pF / 50 pF, 1 MΩ bias resistor | PCB image |
-| Baud | 1843200 / (16 x divisor): divisor 1 = 115200, 2 = 57600, 3 = 38400 ... | manual p.6 ("Делитель частоты 1 = 115200; 2 = 57600; 3 = 38400") |
+| Baud | 1843200 / (16 x divisor): divisor 1 = 115200, 2 = 57600, 3 = 38400 ... | manual p.6 ("Делитель частоты 1 = 115200; 2 = 57600; 3 = 38400", "frequency divisor 1 = 115200; 2 = 57600; 3 = 38400") |
 | Address decode | GAL16V8 (DD1): CT7..CT4 vs jumpers SET7..SET4, plus CT3 | `ATM2-ESP32.PLD` |
 | Radio | Wemos D1 Mini ESP32 (ESP32-WROOM): TX/RX/RTS/CTS wired to the UART | PCB image, `wemos_D1_Mini_ESP32_pinout.jpg` |
 | ESP firmware as shipped | Espressif AT firmware. Setup is `AT+UART=115200,8,1,0,3` (RTS+CTS), `AT+CWMODE=1`, `AT+CWJAP=...` | manual p.7 |
-| Pass-through | A second header on the card carries the bus on to more cards | forum post ("Имеет пасстру"), PCB |
+| Pass-through | A second header on the card carries the bus on to more cards | forum post ("Имеет пасстру", "has a pass-through"), PCB |
 | Speed claim | "More than 3 times faster than the standard ATM2 port" (the KBC RS-232 at 38400) | forum post |
 | Compatibility | "Compatible with UniProg and Analytic". Rev 1.5 moved the address from #F8 to #F0 "for compatibility with UniProg" | forum post, manual p.13 |
 
@@ -60,7 +60,7 @@ Revisions (manual appendix G):
 | 1.5 | Only the GAL changed (CT3 = 0) | #F0..#F7 |
 | 2.0 | Cosmetic PCB changes | #F0..#F7 |
 
-The GitHub commit "Смена порта с F8 на F0" (2025-05-07) holds both GAL builds, `ATM2-ESP32-F8.jed` and
+The GitHub commit "Смена порта с F8 на F0" ("port change from F8 to F0", 2025-05-07) holds both GAL builds, `ATM2-ESP32-F8.jed` and
 `ATM2-ESP32-F0.jed`. The two PLD sources differ only in the CT3 polarity.
 
 ### GAL equations (Rev 1.5/2.0, `GAL/ATMIO-ESP32-F0.zip`, also manual appendix A)
@@ -85,8 +85,8 @@ gerbers, open question 4). The connector's RS line
 
 ### The ATM side: INTERNAL I/O and ports #FA / #FB
 
-From "Описание архитектуры и портов ATM2+.doc" (NedoPC atmturbo SVN, `doc/ver_7_10`), section 4
-"Порт внешних устройств", and the assembly manual "Сборка и Наладка Турбо2+.doc" / "TURBO 2+ Assembly
+From "Описание архитектуры и портов ATM2+.doc" ("description of the ATM2+ architecture and ports",
+NedoPC atmturbo SVN, `doc/ver_7_10`), section 4 "Порт внешних устройств" ("external devices port"), and the assembly manual "Сборка и Наладка Турбо2+.doc" (assembly and setup of the Turbo 2+) / "TURBO 2+ Assembly
 and Configuration Manual.doc":
 
 - `in/out #nnFA = %nnnnnnnn11111010 (A0=A2=0, A1=1)`. #FA is the data port: IORD'/IOWR' strobes on
@@ -287,7 +287,7 @@ through `OS_SETUART`. `scrnet` (`src/scrnet/main.asm:2826`) mentions the card on
 
 Online (each returned HTTP 200 with curl on 2026-10-02):
 
-- [zx-pk.ru thread 36278 "ATM2IOESP - WiFi модем для ATM2 в формате IO expansion"](https://zx-pk.ru/threads/36278-atm2ioesp-wifi-modem-dlya-atm2-v-formate-io-expansion.html):
+- [zx-pk.ru thread 36278 "ATM2IOESP - WiFi модем для ATM2 в формате IO expansion" ("a WiFi modem for the ATM2 in the IO expansion format")](https://zx-pk.ru/threads/36278-atm2ioesp-wifi-modem-dlya-atm2-v-formate-io-expansion.html):
   the announcement, the software list and the repo link. The thread has a single post.
 - [Kulicheg/ATM2IOESP on GitHub](https://github.com/Kulicheg/ATM2IOESP): PCB (Sprint Layout `.lay6`,
   gerbers), GAL sources and JEDs, datasheets, manual.
@@ -295,7 +295,7 @@ Online (each returned HTTP 200 with curl on 2026-10-02):
     installation, addresses, espcom.ini, AT setup, appendix A (GAL), B (programming), G (revisions).
   - [GAL folder](https://github.com/Kulicheg/ATM2IOESP/tree/main/GAL): `ATMIO-ESP32-F0.zip` /
     `ATMIO-ESP32-F8.zip` (PLD, JED, simulation).
-  - [Commit "Смена порта с F8 на F0"](https://github.com/Kulicheg/ATM2IOESP/commit/71c2fb9927ef57134c5024109280d8b3dc6704ee).
+  - [Commit "Смена порта с F8 на F0" ("port change from F8 to F0")](https://github.com/Kulicheg/ATM2IOESP/commit/71c2fb9927ef57134c5024109280d8b3dc6704ee).
   - [PCB Rev 02 image](https://raw.githubusercontent.com/Kulicheg/ATM2IOESP/main/PCB/pcb_rev02.PNG):
     component values, connector pinout.
   - [TL16C550C datasheet (repo copy)](https://raw.githubusercontent.com/Kulicheg/ATM2IOESP/main/Datasheets/tl16c550c.pdf).
@@ -304,7 +304,7 @@ Online (each returned HTTP 200 with curl on 2026-10-02):
   [esp-com.c](https://raw.githubusercontent.com/alfishe/NedoOS/main/src/kapps/common/esp-com.c),
   [esp-com2.c](https://raw.githubusercontent.com/alfishe/NedoOS/main/src/kapps/common/esp-com2.c),
   [espcom.ini](https://raw.githubusercontent.com/alfishe/NedoOS/main/release/ini/espcom.ini),
-  [commit 9f6c7880 "Добавлена поддержка ATM2IOESP"](https://github.com/alfishe/NedoOS/commit/9f6c78806f68d001a54eee6f7c08e22086a4a7ad).
+  [commit 9f6c7880 "Добавлена поддержка ATM2IOESP" ("added ATM2IOESP support")](https://github.com/alfishe/NedoOS/commit/9f6c78806f68d001a54eee6f7c08e22086a4a7ad).
 - [NedoOS site](http://nedoos.ru/), [ATM Turbo site (NedoPC)](http://atmturbo.nedopc.com/),
   [ATM Turbo schematics page](http://atmturbo.nedopc.com/atmshem.htm).
 - Emulator code:
@@ -321,7 +321,7 @@ Local only (NedoPC SVN `svn://svn.nedopc.com/atmturbo`, which curl cannot check)
   "IOWR', IORD' (#FA) - read/write external ports (connectors INTERNAL and EXTERNAL I/O)" from D16/D17,
   and the CT0..CT7 bus shared by the printer, the external address bus and the DAC.
 - `pcad/ver_7_10/cp7_1.pdf` (main sheet: D16/D36 decode, D87 IO buffer, D51 CT latch, D70/R39 BUSY,
-  INTERNAL I/O table), `cp7_2.pdf` (parts list: R39 = 10 kΩ), `bom.pdf` (555АП6 = 74(LS,ALS)245 only).
+  INTERNAL I/O table), `cp7_2.pdf` (parts list: R39 = 10 kΩ), `bom.pdf` (555АП6 / 555AP6 = 74(LS,ALS)245 only).
   Rendered with PyMuPDF and read as images (open questions 1-3).
 - `pcad/ver_8_0_zorel/АТМ Турбо 8.01+.pcb` (P-CAD ASCII, with a netlist): same reference designators as
   7.10, used to confirm every 7.10 net reading (D16, D36, D70, D87, D97, D51, R97, X3, I1).
@@ -335,10 +335,10 @@ Added 2026-10-02 for the open questions (HTTP 200 with curl unless noted):
   [commit 8ecb00e](https://github.com/Kulicheg/ATM2IOESP/commit/8ecb00e), 2025-05-24. Rendered and
   net-traced (open questions 4, 5). The resistor values come from
   [pcb_rev02.PNG](https://raw.githubusercontent.com/Kulicheg/ATM2IOESP/main/PCB/pcb_rev02.PNG).
-- MicroArt manual "Многофункциональный компьютер ATM Turbo" (1991) on ZXPRESS:
+- MicroArt manual "Многофункциональный компьютер ATM Turbo" ("Multifunctional computer ATM Turbo", 1991) on ZXPRESS:
   [book index](https://zxpress.ru/book.php?id=170),
   [D16 decoder description](https://zxpress.ru/ru/books/chapter/2349),
-  [connectors: "Внешний порт"](https://zxpress.ru/ru/books/chapter/2353),
+  [connectors: "Внешний порт" ("External port")](https://zxpress.ru/ru/books/chapter/2353),
   [appendix 2 port table](https://zxpress.ru/ru/books/chapter/2356),
   [Ver 4.50 schematic scan](https://zxpress.ru/chapters_images/atmturbo-6.jpg) (open question 6).
 - UniProg on ATM: [zx-pk.ru thread 14779, page 3](https://zx-pk.ru/threads/14779-programmator-uniprog-(by-microart)/page3.html)
@@ -487,7 +487,7 @@ was used to confirm each 7.10 reading). Card evidence comes from the Rev 2 gerbe
    connector I1 paragraph) agrees. Caveat: this is the standard behavior of a floating LS-TTL
    input, not a measurement on a real board.
 2. **Full #FA/#FB decode - answered: A2..A0 with A1 = 1, A3..A15 ignored.** The ports come from
-   **D16 (555ИД7 = 74LS138)**. Select inputs: A (pin 1) = `A0`, B (pin 2) = `A2`, C (pin 3) =
+   **D16 (555ИД7 / 555ID7 = 74LS138)**. Select inputs: A (pin 1) = `A0`, B (pin 2) = `A2`, C (pin 3) =
    `WR'`. Enables: G2A' (pin 4) = `A1` through the inverter **D36** (pins 1→2), G2B' (pin 5) =
    `IORQ'`, G1 (pin 6) = `M1'`. Outputs: Y0 `IOWR'` (#FA write), Y1 `PRWR'` (#FB write), Y2
    `BRDWR'` (#FE write), Y3 `FFWR'`, Y4 `IORD'` (#FA read), Y5 `PRRD'` (#FB read), Y6 `KEYRD'` (#FE
@@ -498,13 +498,13 @@ was used to confirm each 7.10 reading). Card evidence comes from the Rev 2 gerbe
    hardware. `M1'` on G1 also keeps interrupt-acknowledge cycles off these ports. The doc's
    `%nnnnnnnn11111010` pattern (`Описание архитектуры и портов ATM2+.doc`, section 4) names the
    canonical port, not a full decode.
-3. **#FB read with no printer - answered: #FF.** `PRRD'` enables one gate of **D70 (555ЛП8 =
+3. **#FB read with no printer - answered: #FF.** `PRRD'` enables one gate of **D70 (555ЛП8 / 555LP8 =
    74LS125)** whose input is `CTBUSY'` and whose output is D7 (cp7_1: D70 pins 4/5/6; netlist
    `D70.4 = ~PRRD`, `D70.5 = ~CTBUSY`, `D70.6 = D7`). `CTBUSY'` has a pull-up to +5 V: **R39**
    on 7.10 (10 kΩ per the cp7_2 parts list), R97 on 8.0+. Nothing drives D0..D6, so they float
    high through D97. With no printer the read is **#FF**. The ATM2+ port doc says the same in
-   words: D0-D6 "Всегда установлены в 1", and D7 = 1 means the printer is not ready, "или просто
-   отключен" (section on #FB input). `CTBUSY'` exists only on the Centronics/EXTERNAL I/O connector
+   words: D0-D6 "Всегда установлены в 1" ("always set to 1"), and D7 = 1 means the printer is not ready,
+   "или просто отключен" ("or simply switched off") (section on #FB input). `CTBUSY'` exists only on the Centronics/EXTERNAL I/O connector
    X3, not on INTERNAL I/O, so the card can never affect a #FB read.
 4. **UART CS wiring - answered.** TL16C550C **CS0 (pin 14) and CS1 (pin 15) are tied to +5 V**
    (same copper net as VCC pin 44). **CS2' (pin 16) is the GAL's pin 15** (`!CS2`), silk "CS".
@@ -535,10 +535,11 @@ was used to confirm each 7.10 reading). Card evidence comes from the Rev 2 gerbe
      place of ±12 V. The card works there unchanged.
    - **ATM Turbo (1) v4.50 (our `ATM450`):** the bus exists, under another name and with another
      decode. The MicroArt manual calls the connector the **"External port"** ("Внешний порт",
-     ОНП-24): GND, +5 V, +12 V, D0-D7, "CTS0-CTS7 - адресное пространство внешней шины", IORD,
+     ОНП-24 / ONP-24): GND, +5 V, +12 V, D0-D7, "CTS0-CTS7 - адресное пространство внешней шины"
+     ("CTS0-CTS7: the external bus address space"), IORD,
      IOWR, RS. MicroArt designed UniProg for it
-     ([chapter "Периферия, ее подключение и разъемы"](https://zxpress.ru/ru/books/chapter/2353)).
-     The decoder is again D16 ("D16 - IOWR, IORD - запись, чтение внешних устройств",
+     ([chapter "Периферия, ее подключение и разъемы" ("peripherals, their connection and connectors")](https://zxpress.ru/ru/books/chapter/2353)).
+     The decoder is again D16 ("D16 - IOWR, IORD - запись, чтение внешних устройств", "D16: IOWR, IORD, write and read of external devices",
      [chapter 2349](https://zxpress.ru/ru/books/chapter/2349)). Appendix 2 gives "EXTERNAL PORTS:
      IN & OUT WITH A2=A0=0" ([chapter 2356](https://zxpress.ru/ru/books/chapter/2356)). On the
      4.50 schematic scan ([atmturbo-6.jpg](https://zxpress.ru/chapters_images/atmturbo-6.jpg)),
@@ -547,19 +548,20 @@ was used to confirm each 7.10 reading). Card evidence comes from the Rev 2 gerbe
      low-resolution scan]. Still open: the connector's pin order (the text lists no -12 V) and
      whether the 4.50 IO data lines are buffered as on 7.10.
 7. **UniProg and "Analytic" addresses - partly answered.** "Analytic" is the company
-   **Аналитик-ТС**, which co-developed the **Z-Contact 1200** V.22 modem with MicroArt. The modem
-   mounts "вторым этажом" on I1 (assembly manual, I1 paragraph and the Z-Contact advertisement in
+   **Аналитик-ТС** (Analitik-TS), which co-developed the **Z-Contact 1200** V.22 modem with MicroArt. The modem
+   mounts "вторым этажом" ("as a second storey") on I1 (assembly manual, I1 paragraph and the Z-Contact advertisement in
    `Сборка и Наладка Турбо2+.doc`). So "compatible with UniProg and Analytic" means the UniProg
    programmer and the Z-Contact modem. NedoPC's Maksagor reports that the UniProg ZX software works
-   on ATM "через его порт внешних устройств #FFFA" and the printer port
+   on ATM "через его порт внешних устройств #FFFA" ("through its external devices port #FFFA") and the printer port
    ([zx-pk.ru thread 14779, page 4](https://zx-pk.ru/threads/14779-programmator-uniprog-(by-microart)/page4.html);
    see also [page 3](https://zx-pk.ru/threads/14779-programmator-uniprog-(by-microart)/page3.html)).
    **The CT bus addresses that UniProg and Z-Contact decode were not found.** The card's own
    manual (appendix G) only implies that UniProg sits in the #F8..#FF range, because Rev 1.5 left
-   it "для совместимости с UniProg". The UniProg 1.2 article ("Радиолюбитель" No. 9, 1993) and the
+   it "для совместимости с UniProg" ("for compatibility with UniProg"). The UniProg 1.2 article ("Радиолюбитель" (Radioliubitel) No. 9, 1993) and the
    Z-Contact manual were not available.
 8. **TASiS `tasiterm.com` - partly answered.** TASiTERM is by Maksagor (NedoPC). v0.971
-   (31.12.2024) "внесен экспериментальный драйвер под разъем внешних IO-портов АТМ", a driver that
+   (31.12.2024) "внесен экспериментальный драйвер под разъем внешних IO-портов АТМ" ("an experimental driver for the
+   ATM external IO port connector was added"), a driver that
    "still awaits its testers" ([ATM news page](http://atmturbo.nedopc.com/atmnews.htm), New Year
    2025 entry). Drivers are separate files: the user renames the chosen one to `tasiterm.drv`, and
    settings live in `tasiterm.set` (same page, v0.97 entry). NedoOS's `espcom.ini` comType does

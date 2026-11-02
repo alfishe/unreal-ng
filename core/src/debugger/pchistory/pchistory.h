@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "debugger/history/exechistory.h"
 #include "emulator/state/statenode.h"
 
 class Emulator;
@@ -31,7 +32,8 @@ public:
         uint8_t page = 0;  ///< the physical page of that kind
     };
 
-    explicit PcHistory(EmulatorContext* context) : _context(context) {}
+    /// Registers the execution history `cpu` in the machine's histories (off)
+    explicit PcHistory(EmulatorContext* context);
 
     /// Start (clearing what was kept) or stop recording; stopping keeps the entries for reading
     void Arm(bool on);
@@ -64,6 +66,7 @@ public:
 
 private:
     EmulatorContext* _context;
+    ExecHistory _exec;  ///< `cpu`: the device history face of the same hook (any mode, limit, stream)
     std::array<Entry, kCapacity> _ring{};
     size_t _next = 0;
     uint64_t _total = 0;

@@ -517,18 +517,17 @@ private:
     /// idle, holding 0 (the gate may then hold until the next entry, handleStep). HQ, x1, the lazy sync on
     bool sleepsThroughSilence() const;
 
-    /// region <Automation tap (MCP M7j)>
+    /// region <AY history>
 public:
-    void setLogSink(AYLogSink sink, void* context) override
+    /// Set with the emulation thread parked (SoundManager at creation)
+    void setHistory(AYHistory* history) override
     {
-        _logSink = sink;
-        _logSinkContext = context;
+        _history = history;
     }
 
 protected:
-    AYLogSink _logSink = nullptr;
-    void* _logSinkContext = nullptr;
-    /// endregion </Automation tap>
+    AYHistory* _history = nullptr;
+    /// endregion </AY history>
 
     /// region <PortDevice interface methods>
 public:

@@ -1,6 +1,6 @@
 # Memory spaces on every automation surface
 
-Status: done 2026-10-08 (steps 1-5: one registry, MCP `memory_access`; one address form; TTD over spaces; video RAM watchpoints; docs and recipes). Owner request: "нужно ли как-то менять automation planes, чтобы иметь доступ ко всем возможностям и градациям памяти; если да - дизайн, делаем".
+Status: done 2026-10-08 (steps 1-5: one registry, MCP `memory_access`; one address form; TTD over spaces; video RAM watchpoints; docs and recipes). Owner request: "do the automation planes need changes to give access to all memory capabilities and gradations; if yes - design it, we do it".
 
 ## 1. The problem
 

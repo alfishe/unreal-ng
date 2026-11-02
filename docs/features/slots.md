@@ -45,10 +45,15 @@ slots:
   zxbus.2 = moonsound [jp1=open]  fit real, active
   zxbus.3 = soundrive [mode=both]  fit real, active
 built-in devices:
-  ay (YM2149 / AY-3-8910): replaced by tsfm
-  beta128 (Beta-128 (VG93)): active
-  kempston-joystick (Kempston joystick): active
+  ay (YM2149 / AY-3-8910): replaced by tsfm  ports #E002/#E000 #E002/#A000
+  beta128 (Beta-128 (VG93)): active  ports #1F #3F #5F #7F #FF
+  kempston-joystick (Kempston joystick): active  ports #21/#01
 ```
+
+The report is the machine's device registry: every card and every built-in device comes with its `functions` and
+its `ports`, the claims it answers (`range` as text, `mask` and `match` as numbers: port p is the device's when
+`(p & mask) == match`, `port` the documented port when the claim names one, `direction`, `iorqge`, `gate`). A
+debugger attributes a port access to the device by these claims.
 
 `slots catalog` lists every card with its options and how it would fit this machine now: where the planner would put
 it, the fit, and `fits`, `needs-replace` (it would remove a card; the list says which) or `refused` (the machine

@@ -623,6 +623,38 @@ TEST_F(Disassembler_Test, labelResolutionInMnemonics)
     delete debugManager;
 }
 
+TEST_F(Disassembler_Test, listingStyleScope)
+{
+    DebugManager* debugManager = new DebugManager(_context);
+    _context->pDebugManager = debugManager;
+    LabelManager* labelManager = debugManager->GetLabelManager();
+    ASSERT_NE(labelManager, nullptr);
+    ASSERT_TRUE(labelManager->AddLabel("Start", 0x0000, UINT16_MAX, UINT16_MAX, "code"));
+    ASSERT_TRUE(labelManager->AddLabel("table", 0x8020, UINT16_MAX, UINT16_MAX, "data"));
+
+    uint8_t len = 0;
+    {
+        Z80Disassembler::ListingStyleScope style({true, false});
+        // Upper case for mnemonics and registers; labels keep theirs
+        EXPECT_EQ(_disasm->disassembleSingleCommand({0x00}, 0x0000, &len), "NOP");
+        EXPECT_EQ(_disasm->disassembleSingleCommand({0xDD, 0x77, 0xFE}, 0x0000, &len), "LD (IX-#02),A");
+        // A 16-bit immediate stays a number, however it matches a label
+        EXPECT_EQ(_disasm->disassembleSingleCommand({0x21, 0x00, 0x00}, 0x9000, &len), "LD HL,#0000");
+        // Operands used as addresses keep the label: JP / CALL nn, (nn), JR
+        EXPECT_EQ(_disasm->disassembleSingleCommand({0xC3, 0x00, 0x00}, 0x9000, &len), "JP Start (#0000)");
+        EXPECT_EQ(_disasm->disassembleSingleCommand({0xCD, 0x00, 0x00}, 0x9000, &len), "CALL Start (#0000)");
+        EXPECT_EQ(_disasm->disassembleSingleCommand({0x2A, 0x20, 0x80}, 0x9000, &len), "LD HL,(table (#8020))");
+        EXPECT_EQ(_disasm->disassembleSingleCommand({0x18, 0x1E}, 0x8000, &len), "JR table (#8020)");
+        // Truncated input in the same case
+        EXPECT_EQ(_disasm->disassembleSingleCommand({0xCD, 0x00}, 0x9000, &len), "CALL ??");
+    }
+    // The scope gone, the default listing again
+    EXPECT_EQ(_disasm->disassembleSingleCommand({0x21, 0x00, 0x00}, 0x9000, &len), "ld hl,Start (#0000)");
+
+    _context->pDebugManager = nullptr;
+    delete debugManager;
+}
+
 TEST_F(Disassembler_Test, tableRegressionJumpCallForms)
 {
     DecodedInstruction decoded;

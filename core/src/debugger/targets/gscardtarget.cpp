@@ -60,10 +60,10 @@ void GSCardTarget::Attach()
     if (want == _attached)
         return;
     if (_attached && _attached == card)
-        _attached->setDebugHooks(nullptr);
+        _attached->setDebuggerHooks(nullptr);
     _attached = nullptr;
     _pending = Stop{};
-    if (want && want->setDebugHooks(this))
+    if (want && want->setDebuggerHooks(this))
         _attached = want;
 }
 

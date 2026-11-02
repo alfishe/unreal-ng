@@ -22,8 +22,8 @@ There are **two** BaseConf FPGA trees in `P/fpga`, and they differ in port seman
 
 | Tree | Status | Evidence |
 |---|---|---|
-| `P/fpga/baseconf/trunk` | **Frozen legacy** BaseConf (~2014 RTL; last touched 2021 only to delete binaries). Matches the PDF manual "версия от 27.10.2014" (`D/Baseconf/zxevo_base_configuration.pdf`). | `git log -- fpga/baseconf` → d002a853 2021-02-28 "removing .rbf/.sof" |
-| `P/fpga/base_trdemu/trunk` | **Current, released BaseConf** ("trdemu" = TR-DOS / VG93 software-emulation hooks). All post-2020 development (444 palette, 8-bit Kempston, ULA+ fixes, SD-contention fix, "removed completely xxBE read ports"). Ships as `P/cfgs/standalone_base_trdemu/trunk/zxevo_fw.bin`. Documented by `P/fpga/base_trdemu/trunk/doc/zxevo_trdemu.odt` ("версия от 27.02.2020"). | `P/cfgs/standalone_base_trdemu/trunk/README:1-4` ("pentevo/avr/baseconf/trunk as 'avr', pentevo/fpga/base_trdemu/trunk as 'fpga'"); `git log -- fpga/base_trdemu` (commits 2021-2026, e.g. 663b8cf2 2023-06-17 "baseconf: removed completely xxBE read ports from RTL", 6bab9e30 2024-02-10, 7f535dfb "baseconf: compiled") |
+| `P/fpga/baseconf/trunk` | **Frozen legacy** BaseConf (~2014 RTL; last touched 2021 only to delete binaries). Matches the PDF manual "version of 27.10.2014" (`D/Baseconf/zxevo_base_configuration.pdf`). | `git log -- fpga/baseconf` → d002a853 2021-02-28 "removing .rbf/.sof" |
+| `P/fpga/base_trdemu/trunk` | **Current, released BaseConf** ("trdemu" = TR-DOS / VG93 software-emulation hooks). All post-2020 development (444 palette, 8-bit Kempston, ULA+ fixes, SD-contention fix, "removed completely xxBE read ports"). Ships as `P/cfgs/standalone_base_trdemu/trunk/zxevo_fw.bin`. Documented by `P/fpga/base_trdemu/trunk/doc/zxevo_trdemu.odt` ("version of 27.02.2020"). | `P/cfgs/standalone_base_trdemu/trunk/README:1-4` ("pentevo/avr/baseconf/trunk as 'avr', pentevo/fpga/base_trdemu/trunk as 'fpga'"); `git log -- fpga/base_trdemu` (commits 2021-2026, e.g. 663b8cf2 2023-06-17 "baseconf: removed completely xxBE read ports from RTL", 6bab9e30 2024-02-10, 7f535dfb "baseconf: compiled") |
 | `P/fpga/base_trdemu/newirq` | WIP branch (2026-01) adding enhanced IRQ controller at `#14BD..#16BD`; does not even compile (`rd_irq_stat = (1'b0, ...}` typo). **Ignore.** | `diff trunk/z80/zports.v newirq/z80/zports.v` |
 
 Both configs use the same AVR firmware tree `P/avr/baseconf/trunk`.
@@ -44,7 +44,7 @@ Citation shorthand below: `T/` = `P/fpga/base_trdemu/trunk/`, `L/` = `P/fpga/bas
 ### A.1 Global facts
 
 - FPGA: Altera ACEX EP1K50QC208; fclk = 28 MHz; Z80 clocked at 3.5/7/14 MHz by `T/z80/zclock.v`.
-- RAM: 4 MB DRAM, 256 × 16K pages (page register 8 bits; DRAM word address 21 bits × 16 bit = 4 MB) — `T/top.v:289` (`cpu_addr [20:0]`), doc `zxevo_trdemu.odt` §4 "4 мегабайта ОЗУ и 512 килобайт ПЗУ".
+- RAM: 4 MB DRAM, 256 × 16K pages (page register 8 bits; DRAM word address 21 bits × 16 bit = 4 MB) — `T/top.v:289` (`cpu_addr [20:0]`), doc `zxevo_trdemu.odt` §4 "4 megabytes of RAM and 512 kilobytes of ROM".
 - ROM: 512 KB flash (Am29F040/M29F040), 32 × 16K pages; ROM page = `page[4:0]` (`T/z80/zmem.v:187`); pins `rompg0_n = ~rompg[0]`, `dos_n = rompg[1]`, `rompg2..4 = rompg[2..4]` (`T/top.v:364-368`, pins in `T/quartus/top.qsf:140-144`). Commented-out "adr_fix" block (`T/top.v:352-362`) notes the ATM2-style ROM address wiring ("need to split and re-build old ATM romfiles") — i.e. the flash's A14/A15 are driven by the inverted/DOS-named signals; the ROM image layout in the file must be built accordingly (see §C).
 - Port decoding is **always at least on A7..A0**; mainboard ports are never visible to ZX-Bus cards (porthit blocks IORQ to the bus) — `T/z80/zbus.v:46-50`, doc §4.
 - Unclaimed port reads and the IM2 vector read return **#FF** (`drive_ff = (~(iorq2_n|iorqge2) & ~rd_n) | ~(m1_n|iorq_n)`, `T/z80/zbus.v:50`).
@@ -182,7 +182,7 @@ Evidence: `T/video/video_sync_v.v` localparams (VPERIOD_*, INT_BEG_*), `T/video/
 
 ### A.8 Virtual TR-DOS / "trdemu" (VG93 software emulation) — hardware half
 
-This is the mechanism the ERS / Evo-DOS uses to emulate drives from images (SD/HDD/RAM) **while running the original, unpatched TR-DOS ROM**. Sources: `T/z80/zdos.v:36-99`, `T/z80/zports.v:82-89,797-799,921-930,937`, `T/mem/atm_pager.v:54-59,124-132`, `T/top.v:544-569`, doc `zxevo_trdemu.odt` §"Программный эмулятор ВГ93".
+This is the mechanism the ERS / Evo-DOS uses to emulate drives from images (SD/HDD/RAM) **while running the original, unpatched TR-DOS ROM**. Sources: `T/z80/zdos.v:36-99`, `T/z80/zports.v:82-89,797-799,921-930,937`, `T/mem/atm_pager.v:54-59,124-132`, `T/top.v:544-569`, doc `zxevo_trdemu.odt` §"Программный эмулятор ВГ93" ("Software VG93 emulator").
 
 1. **Arm**: software writes a drive mask to **`#13BD`** (D3..0; bit n = drive n emulated). Reset 0 (all real).
 2. **Bus effect**: for an emulated drive, `vg_cs_n` is forced high → the real WD1793 is **not selected** (`vg_matched_n = fdd_mask[vg_a]`, `zports.v:797-799`). `vg_a` is the drive number latched from the last `#FF` write (for an `OUT (#FF)` the check uses the **newly written** value because `vg_rdwr_fclk` is registered after the write).
@@ -450,7 +450,7 @@ The ERS does not reset C.bit7; it relies on the power-up default of 0. For RDCFG
 
 #### 2.1 Physical/framing
 - AVR is SPI master. `SPCR=0b01110000` means SPE, **DORD=1 (LSB first)**, MSTR, mode 0. `SPSR=1` means SPI2X (fosc/2 = 5.53 MHz) (`AVR/spi.c:7-11`). The FPGA shifts LSB-first: `regnum <= {sdo, regnum[7:1]}` (`FPGA/slave/slavespi.v:155`). All signals are resynchronized to `fclk` (`:79-100`).
-- **Register number** is shifted in while `spics_n = 1`. The FPGA clears it to 0 on every `spics_n` 0->1 edge (`FPGA/slave/slavespi.v:147-157`; `FPGA/slave/spi_fmt.txt` "установка номера - при spics_n=1 ...", "после передерга spics_n 0->1 номер заново надо ставить").
+- **Register number** is shifted in while `spics_n = 1`. The FPGA clears it to 0 on every `spics_n` 0->1 edge (`FPGA/slave/slavespi.v:147-157`; `FPGA/slave/spi_fmt.txt` "the number is set while spics_n=1 ...", "after toggling spics_n 0->1 the number must be set again").
 - **Data** is shifted while `spics_n = 0`. Strobes and latches fire on `spics_n` 0->1 (`scs_n_01`) (`FPGA/slave/slavespi.v:210-283`).
 - **MISO**: on either CS edge `shift_out` is loaded with **status** (when CS=1) or with the selected register's read data (when CS=0) (`FPGA/slave/slavespi.v:172-184`). So the byte clocked while sending the register number returns the **status**, and the byte clocked during the data phase returns register data.
 - AVR access routine `zx_spi_send(addr,data,mask)` (`AVR/zx.c:54-69`): CS low then high (latch status) -> `status = spi_send(addr)` (CS high) -> CS low -> `ret = spi_send(data)` -> CS high (strobe). If `status & mask` (a wait pending), it immediately services the wait. Normal traffic uses mask 0x7F.
@@ -928,7 +928,7 @@ There are two implementations, one per ROM build.
 - **Write protection:** `trdemu_wr_disable` blocks writes to #FE until the next M1 (`zdos.v:91-98`).
 - **Exit:** `OUT (#BE),A` clears `in_trdemu` immediately (unlike the NMI exit, which waits 2 M1 cycles).
 - **fdd_mask** is written with `OUT (#13BD),A` (low nibble = drives A–D) and read back from `#13BD`.
-- **Status readback:** reading `#FF` returns INTRQ/DRQ plus the last value written in bits 4..0 (DOC, section "Программный эмулятор ВГ93").
+- **Status readback:** reading `#FF` returns INTRQ/DRQ plus the last value written in bits 4..0 (DOC, section "Программный эмулятор ВГ93", "Software VG93 emulator").
 - DOC describes the whole design: "…the next instruction is fetched from RAM page #FE… the code there emulates the controller transparently and returns to ROM by executing `OUT (#BE),A`, placed so that TR-DOS ROM execution continues directly after the instruction that caused the entry."
 
 **Software** (`ROM/page1/dos_fe/dos_fe.a80`):
@@ -1139,7 +1139,7 @@ Grepping kernel and SDK found no TS-Conf ports (`#xxAF`); "tsconf" appears only 
 
 | Path | Content | Relevance |
 |---|---|---|
-| `D/Baseconf/zxevo_base_configuration.pdf` (49 p., "версия от 27.10.2014") | Official BaseConf user manual — **legacy** port map (#xxBE readback, #00BD/#01BD breakpoint, #2F/#4F/#6F/#8F RAM-disk ports, #FF read = last 6 bits). Contains all tables in §A (memory ports p.10-13, speed p.14, video p.14-20, NMI/#BE p.22-25, I/O ports p.26-40, Gluk p.28-33, SD p.33, IDE p.34-36, FDC p.37-38, RS-232 p.38-41, port summary p.42-45, history p.46-49). | Legacy. The 2020 successor is `P/fpga/base_trdemu/trunk/doc/zxevo_trdemu.odt` (same structure, #xxBD + trdemu section). |
+| `D/Baseconf/zxevo_base_configuration.pdf` (49 p., "version of 27.10.2014") | Official BaseConf user manual — **legacy** port map (#xxBE readback, #00BD/#01BD breakpoint, #2F/#4F/#6F/#8F RAM-disk ports, #FF read = last 6 bits). Contains all tables in §A (memory ports p.10-13, speed p.14, video p.14-20, NMI/#BE p.22-25, I/O ports p.26-40, Gluk p.28-33, SD p.33, IDE p.34-36, FDC p.37-38, RS-232 p.38-41, port summary p.42-45, history p.46-49). | Legacy. The 2020 successor is `P/fpga/base_trdemu/trunk/doc/zxevo_trdemu.odt` (same structure, #xxBD + trdemu section). |
 | `D/GluExt/version_ext.md` | Gluk extension protocol: `#EFF7`.7, `#DFF7`/`#BFF7`; write `0x0C`=0 to disable EEPROM mode; EXTSW at `0xF0` (any `0xF0..0xFF` in BaseConf): `00` CONF_VERSION, `01` BOOTLOADER_VERSION, `02` PS2 keyboard log, `03` RDCFG (modes register), `0E` CONFIG (TS-Conf config interface), `10` SPIFL (SPI flash, TS-Conf). Recommends resetting EXTSW to 0 after use. | Version reporting (see §B) |
 | `D/revC/zxevo_user_manual.pdf` (2012) / `D/revb/ZXEvo_user_manual.pdf` | Board manual. AVR = bootloader (fixed) + configuration (zxevo_fw.bin); configurations TEST&SERVICE and BASECONF; ROM image `zxevo.rom` for the 29F040 whose base is **EVO RESET SERVICE**, flashable from TEST&SERVICE or from ERS itself (p.21-22). | ROM/firmware context |
 | `D/ZXEvo_firmware_update.pdf` (2012) | Bootloader update: `ZXEVO_FW.BIN` in SD root (FAT12/16/32), hold SoftReset at power-on; beep codes 1..5 (no card / read error / no FS / no file / corrupt); or XMODEM-CRC over RS-232 115200 8N2. | AVR bootloader |

@@ -19,6 +19,7 @@
 #include <emulator/emulatorcontext.h>
 #include <emulator/ports/portdecoder.h>
 #include <emulator/ports/portdiagrecorder.h>
+#include <emulator/slots/portowners.h>
 
 namespace PythonBindings
 {
@@ -71,7 +72,8 @@ inline std::optional<uint16_t> codeFromObject(const pybind11::object& code, cons
     throw std::invalid_argument("Unknown code: " + name);
 }
 
-inline pybind11::dict eventToDict(const PortTraceEvent& e, const std::vector<PortTraceCodeName>& codes)
+inline pybind11::dict eventToDict(const PortTraceEvent& e, const std::vector<PortTraceCodeName>& codes,
+                                  const slots::PortOwners& owners)
 {
     pybind11::dict d;
     d["timestamp"] = e.timestamp;
@@ -82,6 +84,8 @@ inline pybind11::dict eventToDict(const PortTraceEvent& e, const std::vector<Por
     d["value"] = e.value;
     d["pc"] = e.pc;
     d["device"] = std::string(PortDiagnosticRecorder::DeviceIdToString(e.deviceId));
+    // The registry device whose claim covers the access ("" = the board's own port)
+    d["owner"] = owners.Find(e.rawPort, e.isOut(), e.cfTrdosActive());
     d["direction"] = e.isOut() ? "OUT" : "IN";
     d["decoded"] = e.wasDecoded();
     d["had_handler"] = e.hadHandler();
@@ -297,8 +301,9 @@ inline void registerPortTraceBindings(EmulatorClass& emulatorClass)
              [](Emulator& self) -> py::list {
                  py::list result;
                  const auto codes = codeTable(self);
+                 const auto owners = slots::PortOwners::Of(self.GetContext());
                  for (const auto& e : requireRecorder(self)->getAll())
-                     result.append(eventToDict(e, codes));
+                     result.append(eventToDict(e, codes, owners));
                  return result;
              },
              "All buffered events as list of dicts")
@@ -306,8 +311,9 @@ inline void registerPortTraceBindings(EmulatorClass& emulatorClass)
              [](Emulator& self, size_t count) -> py::list {
                  py::list result;
                  const auto codes = codeTable(self);
+                 const auto owners = slots::PortOwners::Of(self.GetContext());
                  for (const auto& e : requireRecorder(self)->getLast(count))
-                     result.append(eventToDict(e, codes));
+                     result.append(eventToDict(e, codes, owners));
                  return result;
              },
              "Last N buffered events", py::arg("count"))
@@ -315,8 +321,9 @@ inline void registerPortTraceBindings(EmulatorClass& emulatorClass)
              [](Emulator& self, uint64_t timestamp) -> py::list {
                  py::list result;
                  const auto codes = codeTable(self);
+                 const auto owners = slots::PortOwners::Of(self.GetContext());
                  for (const auto& e : requireRecorder(self)->getSince(timestamp))
-                     result.append(eventToDict(e, codes));
+                     result.append(eventToDict(e, codes, owners));
                  return result;
              },
              "Events with timestamp >= given absolute T-state", py::arg("timestamp"))

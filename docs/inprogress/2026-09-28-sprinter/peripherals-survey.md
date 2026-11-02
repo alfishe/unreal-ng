@@ -113,7 +113,7 @@ The downloaded materials and an index are kept outside the repository, in the ow
 | **sp2000s** | 2003 | SOJ video RAM chips; BIOS 3.03 / 3.04 changed the logic firmware to remove video artifacts | - | covered by the 3.04 firmware |
 | **sp2003s** ("SPRIN_3M") | 2003, small batch after 2009 | unreleased Peters design, built by loxic | - | same as sp2000 |
 | **sp2016s** (Mick) | 2016-2017 | none (ATX power connector, PS/2 keyboard socket added 2017, SMD parts) | ATX, PS/2 | same as sp2000 |
-| **sp2022d** (RomanRom2) | 2021-11 onward | **512 KB video RAM, 512 KB ROM** (2022D); EP1K30 or EP1K50 logic chip; optional MB8877A in place of the КР1818ВГ93 floppy controller | ATX-20, PS/2 socket, new DAC and audio mods | 512 KB unused by known software (§9 Q5) |
+| **sp2022d** (RomanRom2) | 2021-11 onward | **512 KB video RAM, 512 KB ROM** (2022D); EP1K30 or EP1K50 logic chip; optional MB8877A in place of the КР1818ВГ93 (KR1818VG93) floppy controller | ATX-20, PS/2 socket, new DAC and audio mods | 512 KB unused by known software (§9 Q5) |
 | **EP1K50 boards** | 2016+ | a larger logic chip; BIOS 3.05+ carries a loader for both chips ([bios-versions.md](bios-versions.md)) | - | no effect (we emulate the logic, not the chip) |
 
 Example: an sp2000-light running ProPlay. The program maps ISA I/O into window 3 and reads GS status at
@@ -347,7 +347,7 @@ target or MAME notes.
   - the BIOS now reads the `ALL MODE` port (2026-09-24);
   - LDConf restores `ALL MODE` and the screen position after it loads a new configuration (2026-09-27).
   - Two removals point the other way. The scale port `ACEX.SCALE` was **removed** from the BIOS start-up
-    (2026-08-26), and the Spectrum launcher **dropped its use of the accelerator** ("убрал аксель из кода",
+    (2026-08-26), and the Spectrum launcher **dropped its use of the accelerator** ("убрал аксель из кода", "removed the accelerator from the code",
     2026-08-26).
 
 **The "tmkonf" accelerator extension** is a correction to §5.6 and §8 item 2. Andrei Holub wrote it in MAME

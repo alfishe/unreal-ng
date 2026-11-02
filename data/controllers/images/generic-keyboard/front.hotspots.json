@@ -1035,7 +1035,7 @@
     },
     {
       "control": "key.lshift",
-      "label": "Shift",
+      "label": "Left Shift",
       "shape": {
         "rect": [
           124,
@@ -1244,7 +1244,7 @@
     },
     {
       "control": "key.rshift",
-      "label": "Shift",
+      "label": "Right Shift",
       "shape": {
         "rect": [
           1107,
@@ -1263,7 +1263,7 @@
     },
     {
       "control": "key.lctrl",
-      "label": "Ctrl",
+      "label": "Left Ctrl",
       "shape": {
         "rect": [
           124,
@@ -1282,7 +1282,7 @@
     },
     {
       "control": "key.lgui",
-      "label": "Win",
+      "label": "Left Win",
       "shape": {
         "rect": [
           224,
@@ -1301,7 +1301,7 @@
     },
     {
       "control": "key.lalt",
-      "label": "Alt",
+      "label": "Left Alt",
       "shape": {
         "rect": [
           325,
@@ -1339,7 +1339,7 @@
     },
     {
       "control": "key.ralt",
-      "label": "Alt",
+      "label": "Right Alt",
       "shape": {
         "rect": [
           926,
@@ -1358,7 +1358,7 @@
     },
     {
       "control": "key.rgui",
-      "label": "Win",
+      "label": "Right Win",
       "shape": {
         "rect": [
           1026,
@@ -1396,7 +1396,7 @@
     },
     {
       "control": "key.rctrl",
-      "label": "Ctrl",
+      "label": "Right Ctrl",
       "shape": {
         "rect": [
           1227,
@@ -1681,7 +1681,7 @@
     },
     {
       "control": "key.kp_divide",
-      "label": "/",
+      "label": "Num /",
       "shape": {
         "rect": [
           1688,
@@ -1700,7 +1700,7 @@
     },
     {
       "control": "key.kp_multiply",
-      "label": "*",
+      "label": "Num *",
       "shape": {
         "rect": [
           1768,
@@ -1719,7 +1719,7 @@
     },
     {
       "control": "key.kp_minus",
-      "label": "-",
+      "label": "Num -",
       "shape": {
         "rect": [
           1848,
@@ -1738,7 +1738,7 @@
     },
     {
       "control": "key.kp_7",
-      "label": "7",
+      "label": "Num 7",
       "shape": {
         "rect": [
           1608,
@@ -1757,7 +1757,7 @@
     },
     {
       "control": "key.kp_8",
-      "label": "8",
+      "label": "Num 8",
       "shape": {
         "rect": [
           1688,
@@ -1776,7 +1776,7 @@
     },
     {
       "control": "key.kp_9",
-      "label": "9",
+      "label": "Num 9",
       "shape": {
         "rect": [
           1768,
@@ -1795,7 +1795,7 @@
     },
     {
       "control": "key.kp_plus",
-      "label": "+",
+      "label": "Num +",
       "shape": {
         "rect": [
           1848,
@@ -1814,7 +1814,7 @@
     },
     {
       "control": "key.kp_4",
-      "label": "4",
+      "label": "Num 4",
       "shape": {
         "rect": [
           1608,
@@ -1833,7 +1833,7 @@
     },
     {
       "control": "key.kp_5",
-      "label": "5",
+      "label": "Num 5",
       "shape": {
         "rect": [
           1688,
@@ -1852,7 +1852,7 @@
     },
     {
       "control": "key.kp_6",
-      "label": "6",
+      "label": "Num 6",
       "shape": {
         "rect": [
           1768,
@@ -1871,7 +1871,7 @@
     },
     {
       "control": "key.kp_1",
-      "label": "1",
+      "label": "Num 1",
       "shape": {
         "rect": [
           1608,
@@ -1890,7 +1890,7 @@
     },
     {
       "control": "key.kp_2",
-      "label": "2",
+      "label": "Num 2",
       "shape": {
         "rect": [
           1688,
@@ -1909,7 +1909,7 @@
     },
     {
       "control": "key.kp_3",
-      "label": "3",
+      "label": "Num 3",
       "shape": {
         "rect": [
           1768,
@@ -1928,7 +1928,7 @@
     },
     {
       "control": "key.kp_enter",
-      "label": "Enter",
+      "label": "Num Enter",
       "shape": {
         "rect": [
           1848,
@@ -1947,7 +1947,7 @@
     },
     {
       "control": "key.kp_0",
-      "label": "0",
+      "label": "Num 0",
       "shape": {
         "rect": [
           1608,
@@ -1966,7 +1966,7 @@
     },
     {
       "control": "key.kp_decimal",
-      "label": ".",
+      "label": "Num .",
       "shape": {
         "rect": [
           1768,

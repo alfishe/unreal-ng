@@ -366,6 +366,17 @@ void SoundChip_GeneralSound::traceEvent(GSTraceSide side, uint16_t port, uint8_t
     _portTrace.record(event);
 }
 
+void SoundChip_GeneralSound::traceIdle(uint16_t head, int64_t start, uint64_t iterations)
+{
+    GSTraceEvent event;
+    event.timestamp = start;
+    event.frameNumber = currentFrameNumber();
+    event.pc = head;
+    event.side = GSTraceSide::Idle;
+    event.iterations = static_cast<uint32_t>(std::min<uint64_t>(iterations, UINT32_MAX));
+    _portTrace.record(event);
+}
+
 /// endregion </Diagnostics>
 
 /// region <Frame lifecycle>
@@ -1019,6 +1030,14 @@ void SoundChip_GeneralSound::runToDebug(int64_t targetGsCycles)
         _runner.runToDebug<ClassicRunPolicy>(targetGsCycles, _debugHooks);
     else
         _runner.runToDebug(targetGsCycles, _debugHooks);
+}
+
+void SoundChip_GeneralSound::runToRecord(int64_t targetGsCycles)
+{
+    if (_classicTiming)
+        _runner.runToRecord<ClassicRunPolicy>(targetGsCycles);
+    else
+        _runner.runToRecord(targetGsCycles);
 }
 
 bool SoundChip_GeneralSound::setDebugHooks(IGSDebugHooks* hooks)

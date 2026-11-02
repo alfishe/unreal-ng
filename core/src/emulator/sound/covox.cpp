@@ -18,6 +18,8 @@
 
 Covox::Covox(EmulatorContext* context, size_t sampleRate)
     : _context(context)
+    , _history(ChipHistoryRegistry(context), [context]() { return ChipHistoryDevice(context, PORT_RIGHT_B, "covox"); },
+               "DAC writes", kChipWriteRing)
     , _fitment(!context->config.sound.sd           ? Fitment::Mono
                : context->config.sound.sdMode == 1 ? (context->config.sound.covoxFB ? Fitment::Mode1Mono : Fitment::Mode1)
                : context->config.sound.sdMode == 2 ? Fitment::Mode2
@@ -318,6 +320,8 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
     _dacValue[static_cast<int>(ch)] = value;
     if (_context && _context->chipRegisterWatch) [[unlikely]]
         ReportChipRegisterWrite(_context, SoundChipKind::Dac, 0, static_cast<uint16_t>(ch), value);
+    if (_history.On()) [[unlikely]]
+        RecordChipWrite(_context, _history, SoundChipKind::Dac, 0, static_cast<uint16_t>(ch), value);
     _writtenThisFrame[static_cast<int>(ch)] = true;
     _staleFrameCount[static_cast<int>(ch)] = 0;
 

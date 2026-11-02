@@ -9,6 +9,7 @@
 #include "debugger/ttd/gmx/ttdgmxpaging.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/slots/portowners.h"
 #include "emulator/sound/audio.h"
 #include "emulator/video/screen.h"
 
@@ -27,6 +28,7 @@ PortDecoder_ScorpionGMX::PortDecoder_ScorpionGMX(EmulatorContext* context) : Por
     _zc.SetTap(&_spiTap);
     _sdCard.SetBusTap(&_spiTap, 0);
     _sdCard.SetClock([this]() { return EmulatedMicroseconds(); });
+    _sdCard.AttachHistory(_context, [context = _context]() { return slots::PortOwnerName(context, 0x0057, "sd-zc"); });
     _sdCard.setWriteListener([this](uint64_t) {
         if (_context->pMediaManager)
             _context->pMediaManager->NoteWrite(_sdSlot.Descriptor().id);

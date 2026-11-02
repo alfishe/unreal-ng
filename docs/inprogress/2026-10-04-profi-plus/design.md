@@ -29,7 +29,7 @@ reference until then.
 
 ### 2.1 Facts from the documentation (research 2026-10-04, collection `profi/documentation/profi-plus/`)
 
-- **Port list** (Concurrent BIOS manual, "Описание портов PROFI, PROFI+, PROFI 2+", `PLUSDOC/bios2.txt` pp. 13-14):
+- **Port list** (Concurrent BIOS manual, "Описание портов PROFI, PROFI+, PROFI 2+" ("description of the PROFI, PROFI+, PROFI 2+ ports"), `PLUSDOC/bios2.txt` pp. 13-14):
   RTC `#FF/#DF` address, `#BF/#9F` data; 8251 `#F3` control / `#D3` data; COM control `#B3/#93` (write D0 =
   interrupt enable; read D0 = RI, D7 = DCD); 8253 `#EF` control, `#CF/#AF/#8F` channels 2 / 1 / 0 (the COM baud
   clock); IDE `#EB/#CB/#AB/#8B`; 8255 `#E7` control, `#C7/#A7/#87` C / B / A; VG93 `#E3/#C3/#A3/#83`, system `#3F`;

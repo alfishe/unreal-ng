@@ -113,7 +113,8 @@ manager (16K windows, two maps switched by 7FFD D4) — that is 710-family, not
 450.
 
 The 4.50 board itself is documented in the MicroArt manual "Многофункциональный
-компьютер ATM Turbo — Инструкция по наладке. Описание компьютера" (~1992):
+компьютер ATM Turbo — Инструкция по наладке. Описание компьютера" ("Multifunctional computer
+ATM Turbo: setup instructions, computer description", ~1992):
 [index](https://zxpress.ru/book.php?id=170),
 [appendix 2 port table](https://zxpress.ru/ru/books/chapter/2356),
 schematic sheets [Ver 4.50](https://zxpress.ru/chapters_images/atmturbo-6.jpg)
@@ -130,7 +131,7 @@ What it confirms:
 | `#7DFD` palette, 6 bits | appendix 2 | both emulators |
 | `#FE` read bit 7 = Z from the protected PLM | schematic D45 | timing undocumented |
 | Turbo = hardware switch latched on `OUT (#FE)` | chapter "TURBO" | non-goal R8 |
-| RAM maximum 512 KiB | assembly notes (565РУ7) | ZXMAK2 "ATM450 512K" |
+| RAM maximum 512 KiB | assembly notes (565РУ7, a Soviet 256-Kbit DRAM) | ZXMAK2 "ATM450 512K" |
 
 ## 4. Our prewire inventory (verified 2026-10-01)
 

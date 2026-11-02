@@ -173,31 +173,31 @@ erDiagram
 #### Original Assembly Source Code Block
 ```assembly
         STRUCT app
-flags           BYTE ;флаги (всегда в начале структуры)
-id              BYTE ;номер задачи (0=свободно)
-parentid        BYTE ;номер родительской задачи
-mainpg          BYTE ;главная страница задачи (там userkernel)
+flags           BYTE ;flags (always at the start of the structure)
+id              BYTE ;task number (0=free)
+parentid        BYTE ;parent task number
+mainpg          BYTE ;main page of the task (userkernel is there)
 stdin           BYTE
 stdout          BYTE
 stderr          BYTE
 lasttime        BYTE
-border          BYTE ;текущий цвет бордера 0..15
-screen          BYTE ;текущий номер экрана ;fd_user + 8*screen
-gfxmode         BYTE ;текущий видеорежим ;значение для 0xbd77
+border          BYTE ;current border colour 0..15
+screen          BYTE ;current screen number ;fd_user + 8*screen
+gfxmode         BYTE ;current video mode ;value for 0xbd77
 gfxkeep         BYTE ;b7 = keep gfx pages
 scr0low         BYTE ;pages
 scr0high        BYTE ;pages
 scr1low         BYTE ;pages
 scr1high        BYTE ;pages
 childresult     WORD ;filled by closed child
-textcuraddr     WORD ;адрес курсора на экране
-curcolor        BYTE ;текущий атрибут при печати
+textcuraddr     WORD ;cursor address on the screen
+curcolor        BYTE ;current attribute for printing
 dta             WORD ;data transfer address
-vol             BYTE ;текущий драйв (volume)
-dircluster      DWORD ;текущая директория
-dir             BLOCK DIR_sz ;временный буфер для чтения каталога
-bdosstack       BLOCK bdosstack_sz ;стек при вызове BDOS
-pal             BLOCK 32 ;палитра (EGA/VGA 32 байта)
+vol             BYTE ;current drive (volume)
+dircluster      DWORD ;current directory
+dir             BLOCK DIR_sz ;temporary buffer for reading a directory
+bdosstack       BLOCK bdosstack_sz ;stack during a BDOS call
+pal             BLOCK 32 ;palette (EGA/VGA 32 bytes)
         ENDS
 ```
 

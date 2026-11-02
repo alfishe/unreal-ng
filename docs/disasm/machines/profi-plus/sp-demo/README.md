@@ -6,7 +6,7 @@
 ## The symptom
 
 `SP.COM` is a music demo from the `DEMOS` folder of the PQ-DOS 2023 hard-disk image: a menu of four AY tunes
-(keys 1-4, Space exits), credited "Coding By Кулагин Александр, Graphics By Белоусов Александр", 08.03.1993. At
+(keys 1-4, Space exits), credited "Coding By Кулагин Александр, Graphics By Белоусов Александр" (Alexander Kulagin, Alexander Belousov), 08.03.1993. At
 the top of the screen it shows a logo: 22 x 4 character cells at column 21, row 3 of the 512 x 240 hi-res screen.
 In the emulator the logo appears as scattered colored dashes. The picture is the same in all four music parts, and
 the same under PQ-DOS on `PROFI-PLUS` and under Micco CP/M on a stock `PROFI`.

@@ -35,6 +35,7 @@
 #include "emulator/sound/chips/gs/gsmailbox.h"  // GSForwardMailbox (switch snapshots)
 #include "emulator/sound/chips/gs/gshostclock.h" // GSClassicTiming
 #include "emulator/sound/chips/gs/gsdebughooks.h"
+#include "debugger/history/exechistory.h"
 #include "3rdparty/unreal-z80/z80cpu.h"     // Z80CpuRegisters
 
 /// Which personality is fitted (introspection/switching; GSCardImplementation
@@ -384,6 +385,29 @@ public:
         (void)hooks;
         return false;
     }
+    /// A card CPU debugger's hooks (GSCardTarget): bound as they are, or behind the execution history's recorder while
+    /// that history is on. The same contract as setDebugHooks
+    bool setDebuggerHooks(IGSDebugHooks* hooks)
+    {
+        _debuggerHooks = hooks;
+        return bindHooks();
+    }
+    /// The history the card CPU's instructions go to (`<slot>.cpu`, exechistory.h): the machine's (SoundManager) or
+    /// the slot card's; nullptr detaches. Bound at the next run
+    void attachExecHistory(history::DeviceHistory<ExecRecord>* history, const EmulatorContext* context)
+    {
+        _execHistory = history;
+        _execContext = context;
+    }
+    /// That history (nullptr: none attached); a debugger reads it as a snapshot and may switch it on
+    history::DeviceHistory<ExecRecord>* execHistory() const
+    {
+        return _execHistory;
+    }
+    /// The instruction at `pc` into the execution history (the runner's record loop, the recorder)
+    void recordExecStep(uint16_t pc);
+    /// The idle loop at `head` slept through `iterations` times: one record (ExecRecord::idle) while recording
+    void recordExecIdle(uint16_t head, uint64_t iterations);
     /// The 16K page behind a card CPU address now (as the emulation maps it, not a table). Flash and ROM count as
     /// ROM pages
     struct CardPage
@@ -446,6 +470,8 @@ public:
     /// Structured event trace (host ports, card-side activity, DAC fetches,
     /// interrupts) - opt-in, mirrors the main-Z80 port tracer's session
     /// model but scoped to this card. See gsporttrace.h.
+    /// The history the trace records into (gsporttrace.h): the machine's (SoundManager), nullptr for the card's own
+    virtual void attachPortTrace(GSHistory* history) = 0;
     virtual void startPortTrace() = 0;
     virtual void stopPortTrace() = 0;
     virtual void pausePortTrace() = 0;
@@ -511,4 +537,75 @@ protected:
     bool _hostGainUnity = true;   ///< every gain at unity: the output path is the card's own, untouched
     bool _hostGainDirty = false;  ///< a gain changed: the card emits its level again at the next frame start
     /// endregion </Host channel gains>
+
+protected:
+    /// Before a card run (the card on a boundary): the execution history switched on or off since the last run puts
+    /// its recorder in or takes it out. One load and a compare a run, never per instruction
+    void syncExecHistory()
+    {
+        if (_execHistory && _execHistory->On() != _execBound) [[unlikely]]
+            bindHooks();
+    }
+    /// The run records its instructions without a debugger's hooks: the record loop (GSCardRunner::runToRecord).
+    /// Only asked after the hooks' test, so the fast loop pays one more test a run
+    bool execRecording() const;
+
+private:
+    /// The hooks the card runs with while its execution history is on and a debugger's hooks are bound: each
+    /// instruction into the history, then the debugger's hooks as they would be called alone (without a debugger the
+    /// card runs its record loop instead, no hooks at all)
+    class ExecRecorder final : public IGSDebugHooks
+    {
+    public:
+        explicit ExecRecorder(GeneralSoundCard& card) : _card(card) {}
+        IGSDebugHooks* inner = nullptr;
+
+        void beforeStep(uint16_t pc) override;
+        void endRun(uint16_t pc) override
+        {
+            if (inner)
+                inner->endRun(pc);
+        }
+        uint8_t onMemoryRead(uint16_t pc, uint16_t addr, uint8_t value) override
+        {
+            return inner ? inner->onMemoryRead(pc, addr, value) : value;
+        }
+        void onMemoryWrite(uint16_t pc, uint16_t addr, uint8_t value) override
+        {
+            if (inner)
+                inner->onMemoryWrite(pc, addr, value);
+        }
+        uint8_t onPortIn(uint16_t pc, uint16_t port, uint8_t value) override
+        {
+            return inner ? inner->onPortIn(pc, port, value) : value;
+        }
+        void onPortOut(uint16_t pc, uint16_t port, uint8_t value) override
+        {
+            if (inner)
+                inner->onPortOut(pc, port, value);
+        }
+        void onEvent(GSCardEvent kind, uint16_t port, uint8_t value) override
+        {
+            if (inner)
+                inner->onEvent(kind, port, value);
+        }
+        void onBusMasterWrite(uint8_t master, uint8_t ramPage, uint16_t offset, uint8_t value) override
+        {
+            if (inner)
+                inner->onBusMasterWrite(master, ramPage, offset, value);
+        }
+
+    private:
+        GeneralSoundCard& _card;
+    };
+
+    /// The debugger's hooks alone, or the recorder in front of them while the history is on; the result of
+    /// setDebugHooks
+    bool bindHooks();
+
+    history::DeviceHistory<ExecRecord>* _execHistory = nullptr;
+    const EmulatorContext* _execContext = nullptr;
+    IGSDebugHooks* _debuggerHooks = nullptr;
+    bool _execBound = false;
+    ExecRecorder _execRecorder{ *this };
 };

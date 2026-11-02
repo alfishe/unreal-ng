@@ -42,10 +42,10 @@ so the 3D generator can read it as it is.
 
 ## Owner rules that carry over from POC 031
 
-- **Matte, dim highlights.** The owner rejected strong sheen three times as kitsch ("опять переборщил с засветкой").
+- **Matte, dim highlights.** The owner rejected strong sheen three times as kitsch ("overdid the highlights again").
   Roughness stays high, specular low; compare with the photos before showing.
-- **Never draw dirt, wear, patina or uneven tint**, even when the reference photo shows them ("никаких дефектов мы
-  не рисуем"). Take the geometry and the clean colour from the photo.
+- **Never draw dirt, wear, patina or uneven tint**, even when the reference photo shows them ("we draw no defects
+  at all"). Take the geometry and the clean colour from the photo.
 - **Correct references.** A colour or a size comes from a photo shot straight down in neutral light, or from the
   owner's photos. A front shot in yellow light is not for colours or depths.
 - **A comment or a forum post is not proof.** Every dimension states its source; an estimate is marked

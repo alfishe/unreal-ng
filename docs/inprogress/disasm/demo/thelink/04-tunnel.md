@@ -110,7 +110,7 @@ lookup table:
         LDIR
 
         LD HL,wasplan2r
-        LD DE,GSPLAN2RTMP       ;временно
+        LD DE,GSPLAN2RTMP       ;temporarily
         CALL DEHR21
         LD A,GSpglookup
         OUT (MPAG),A
@@ -120,7 +120,7 @@ lookup table:
         JP GSTUNNELGO
 ```
 
-(`временно` = "temporarily".) The plan goes to `#0000`; the lookup table is unpacked through the
+The plan goes to `#0000`; the lookup table is unpacked through the
 `#8000` window into card page 2 and later read through the `#C000` window, where `GSTUNNELGO`
 maps the same page with `OUT (MPAGEX),A`.
 
@@ -224,7 +224,7 @@ writing at `#8000`). After the last of the 3,072 bytes it emits `JP (IX)`: the c
 return address `GSTUNNELQ` in `IX`. 3,072 x 22 = 67,584 bytes per screen, five 16K pages; two
 copies, one per frame buffer, because the screen address is part of the code. The plan is read
 twice (once per copy) and is not needed after that, so its memory becomes the texture
-(`;теперь можно класть текстуру в #0000` = "now the texture can be put at #0000").
+(the author's comment: `;now the texture can be put at #0000`).
 
 **The budget.** One screen byte costs 10+11+6+10+11+8+7 = 63 t per texel, twice, plus 7+13 for
 the store: 146 t. 3,072 bytes = 448,512 t. At 24 MHz a 50 Hz frame is 480,000 t, so the drawing
@@ -239,20 +239,19 @@ Texels are the values `#78..#7F`. The first texel goes to `C`, the second to `B`
 address in `#7878..#7F7F`, and `LD A,(BC)` turns the pair into an attribute in one instruction.
 `GENTCOLOR` fills that 8 x 8 table (64 bytes spread over 8 pages of 256, at `#xx78-#xx7F`):
 
-- pass 1, "строим левые пиксели - зависят от L" (build the left pixels - they depend on L):
+- pass 1, "build the left pixels - they depend on L":
   `(H, L)` = `TCOLORS[L - #78]` - ink and BRIGHT;
-- pass 2, "строим правые пиксели - зависят от H" (build the right pixels - they depend on H): adds
+- pass 2, "build the right pixels - they depend on H": adds
   `TCOLORS[H - #78] * 8` - paper - and handles BRIGHT, which is per cell:
 
 ```
 ;bright+nobright=nobright+nobright
-;отсюда следует:
-;если нужен bright, то он уже есть в (HL)
-;если его нет в (DE), то он не нужен
+;hence:
+;if bright is needed, it is already in (HL)
+;if it is not in (DE), it is not needed
 ```
 
-"Bright + no bright = no bright + no bright. Hence: if bright is needed, it is already in (HL); if
-it is not in (DE), it is not needed." A cell is bright only if both texels are.
+A cell is bright only if both texels are.
 
 The palette, darkest to brightest, with two earlier tries left commented out:
 
@@ -267,7 +266,7 @@ Blue, blue, bright blue, red, magenta, cyan, white, white.
 
 On the ZX every pixel byte is `#0F`, so in each cell the left 4 pixels show paper (the second
 texel, `B`) and the right 4 show ink (the first texel, `C`). The author's comments call `C` the
-left pixel (`;левый пикс.=LSB`, "left pixel = low byte") - in screen terms it ends up on the right.
+left pixel (`;left pixel=LSB`) - in screen terms it ends up on the right.
 In a tunnel nobody can tell.
 
 ### 5.3 The texture: plasma from noise
@@ -288,10 +287,10 @@ The texture is computed, not loaded. Three loops over `#0000-#3FFF`:
 ```
 GSLOOP
 gsdrawscr=$+1
-        LD A,1                  ;рисуем в SCR2
+        LD A,1                  ;drawing into SCR2
         XOR 1
-        LD (gsdrawscr),A        ;теперь рисуем в SCR1
-;потом дадим его ZX'у
+        LD (gsdrawscr),A        ;now drawing into SCR1
+;later we give it to the ZX
         LD (GSTUNNELSP),SP
         LD IX,GSTUNNELQ
         LD A,GSpgprog1
@@ -330,7 +329,7 @@ quit, or 65,536 polls -> `GSRESET`), then point the DMA at the buffer just drawn
 **Dead code.** Between `GSSPEED` and `GSangle` sits an `IF 0` block: a "rhythm" that changed the
 speed at random (`GSRND`, a `seed*17 + 20981` generator, and an optional `gsspeedtime` hold).
 It is switched off, so the speed is constant and `GSRND` is assembled but never called. Two
-commented lines show yet another try: `;ADD A,32 ;правильное округление` ("correct rounding").
+commented lines show yet another try: `;ADD A,32 ;correct rounding`.
 
 ## 6. The ZX half (`TUNNELZX`)
 
@@ -366,7 +365,7 @@ that: it takes its return address from the stack like any `CALL` target and retu
 
 `QUIT` undoes it: command 2 to the card, the IM 2 table back to `#BF`, screen 0, its attributes
 cleared, `#EFF7` = 0, `RET` to the resident loop. It runs when the timer passes the end frame or
-when SPACE is pressed (`;можно жать RESET` - "you may press RESET").
+when SPACE is pressed (`;you may press RESET`).
 
 ### 6.2 BIGLOOP: 3,072 bytes into two screens
 
@@ -382,13 +381,13 @@ beam:
         JR NZ,$-3
         DI
         LD (PUSHKASP),SP
-;LD H,0 ;уже 0
+;LD H,0 ;already 0
         LD A,(HL)               ;1ST BYTE DISCARDED
 ```
 
 `#299` x 26 t is about 17,300 t, about 77 lines: the paper starts about 80 lines after the
 interrupt on a Pentagon. The note `298..A` is the author's; probably the delay values that work
-are `#298`..`#29A`. When the loop ends, `HL` = 0 (`уже 0` = "already 0"), so every `LD r,(HL)` from
+are `#298`..`#29A`. When the loop ends, `HL` = 0 (`already 0`), so every `LD r,(HL)` from
 now on is a ZX-DMA read of the next byte the card prepared. The first read is thrown away.
 
 Then the multicolour loop. The setup:
@@ -399,7 +398,7 @@ Then the multicolour loop. The setup:
         LD B,24
         LD DE,32
 loopmcscr=$+3
-        LD IX,#5820             ;линия 0: видим scr1, рисуем scr0
+        LD IX,#5820             ;line 0: we see scr1, draw scr0
         LD A,IXH
         XOR #80
         LD IYH,A
@@ -407,10 +406,10 @@ loopmcscr=$+3
         RLA
         SBC A,A
         AND 8
-        OR #17                  ;тот же экран, что в IY
+        OR #17                  ;the same screen as in IY
 ```
 
-("line 0: we see scr1, we draw scr0"; "the same screen as in IY".) `IX` = `#5820`, the end of
+`IX` = `#5820`, the end of
 attribute row 0 of screen 0; `IY` = `#D820`, the same row of screen 1 (page 7 at `#C000`); `A` =
 `#1F`, the `#7FFD` value that shows screen 1. `PUSH` writes downwards, so `SP` = `IX` fills
 `#5800-#581F`.
@@ -470,11 +469,10 @@ The order of bytes in the card's buffer follows from this: 96 groups of 32, each
   of the texture that overwrites them.
 - **Interrupts reduced to a beam sync.** The ZX half points IM 2 at `EI : RET` and calls the
   handler itself; the timer then counts loop passes (one per frame when the card keeps up).
-- **The author's doubts in the test bed.** "`;не помогает`" ("does not help") on an
-  `OUT (GSCOM),A` after the card reset; "`;зачем-то POKE #4092,0`", "`;зачем-то #38 (Load FX)`",
-  "`;зачем-то #D2 (Close Stream)`", "`;зачем-то #F5 (Busy on)`" ("for some reason ...") - the card
-  start was copied "`;как в RIFF TRACKER`" ("as in RIFF TRACKER") without knowing why each step
-  was there.
+- **The author's doubts in the test bed.** "`;does not help`" on an `OUT (GSCOM),A`
+  after the card reset; "`;for some reason POKE #4092,0`", "`;for some reason #38 (Load FX)`",
+  "`;for some reason #D2 (Close Stream)`", "`;for some reason #F5 (Busy on)`" - the card start was
+  copied "`;as in RIFF TRACKER`" without knowing why each step was there.
 - **A typo in a comment**: `GSpgprog1 ;16K*5: #82,03,83,04,85` - the fifth page is `#84`.
 - **Dead code**: the `IF 0` speed rhythm and `GSRND`; the `GSSETPGA` and `MOVEPAGE` macros (unused
   here); the `LD HL,0 / LD DE,1` before `GSWAIT0`, whose timeout is commented out;

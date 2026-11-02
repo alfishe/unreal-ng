@@ -276,7 +276,7 @@ Functions `ay-socket`, `kempston-joystick`. On a 128K / Pentagon it doubles the 
 removed. Conflicts: SounDrive mode 1 `#1F` (sample writes flip the chip select); a second Kempston (`#1F` read fight);
 Beta `#1F` protected by /DOS. Open: flip-flop reset wiring.
 
-#### Quadro-AY ("Квадрасистема", Amazing Soft Making)
+#### Quadro-AY ("Квадрасистема", "Quadro system", Amazing Soft Making)
 
 Decoder K555ID7 on A12, A15, /WR, enabled by /IORQ, A1 = 0, /M1 high (local collection `TURBO-AY.ZIP`,
 `quadro-ay.gif`). Chip TWO: `#D002/#D000` (`#FFFD`) and `#D002/#9000` (`#BFFD`); chip ONE: `#D002/#C000` (`#EFFD`)

@@ -821,3 +821,28 @@ TEST(ControllersUi_Test, PictureCacheFollowsSizeSetAndPixelRatio)
     EXPECT_EQ(frame(picture, 1), other) << "drawn again after a hide dropped the cache";
     ControllerPicture::SetUserDir(QString());
 }
+
+/// Every callout of a shipped picture names one control: four "D-pad" or two "LS" would not say which is which
+TEST(ControllersUi_Test, ShippedPicturesNameEveryCalloutOnce)
+{
+    const QDir images(ShippedControllers() + "/images");
+    int views = 0;
+    for (const QString& set : images.entryList(QDir::Dirs | QDir::NoDotAndDotDot))
+        for (const QString& name : QDir(images.filePath(set)).entryList({"*.hotspots.json"}))
+        {
+            QFile file(images.filePath(set + "/" + name));
+            ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+            std::map<QString, QString> seen;
+            for (const QJsonValue& value : QJsonDocument::fromJson(file.readAll()).object().value("controls").toArray())
+            {
+                const QJsonObject control = value.toObject();
+                const QString label = control.value("label").toString();
+                const QString id = control.value("control").toString();
+                const auto [it, fresh] = seen.emplace(label, id);
+                EXPECT_TRUE(fresh) << (set + "/" + name).toStdString() << ": \"" << label.toStdString()
+                                   << "\" names " << it->second.toStdString() << " and " << id.toStdString();
+            }
+            ++views;
+        }
+    EXPECT_GT(views, 50);
+}

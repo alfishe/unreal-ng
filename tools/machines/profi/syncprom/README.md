@@ -42,5 +42,5 @@ All of them are linked from the cross-check.
 | File | Contents |
 |:--|:--|
 | `profisync.py` | the decoder |
-| `printedmap.py` | the v5.0 album's printed sync PROM (p.9, "КОНДОР 1994"), retyped and checked against the scan |
+| `printedmap.py` | the v5.0 album's printed sync PROM (p.9, "КОНДОР 1994", i.e. Kondor 1994), retyped and checked against the scan |
 | `profisync-output.txt` | the output for the seven speccy4ever dumps and the printed map |

@@ -6,7 +6,7 @@ Design document for a high-level analyzer that captures interactions between the
 
 ## 1. Problem Statement
 
-The current [WD1793Collector](../../../core/src/emulator/io/fdc/wd1793_collector.h#15-143) provides **low-level port access logging** (every IN/OUT to FDC ports), which generates thousands of records per disk operation. This is valuable for hardware debugging but overwhelming for understanding *what the software is actually doing*.
+(2026-10-31: `WD1793Collector` is removed: it grew without a bound and nothing read it. The controller keeps a ring of its last commands instead, `WD1793::GetCommandHistory`, reported as `history` in `DeviceState::Fdc`.) The then-current `WD1793Collector` provided **low-level port access logging** (every IN/OUT to FDC ports), which generates thousands of records per disk operation. This is valuable for hardware debugging but overwhelming for understanding *what the software is actually doing*.
 
 **Goal**: Create a **Stage 1 (High-Level) Analyzer** that interprets the low-level FDC interactions and produces human-readable semantic events like:
 
@@ -63,7 +63,7 @@ graph TD
    - Interprets state to produce semantic events
 
 2. **`FDCEventInterpreter`** (New) - Command-level interpreter
-   - Wraps [WD1793Collector](../../../core/src/emulator/io/fdc/wd1793_collector.h#15-143) events
+   - Wraps `WD1793Collector` events
    - Converts low-level port accesses to command events
    - Tracks sector data flow
 
@@ -263,7 +263,7 @@ Extract from catalog entry at offset `0x08` (type byte).
 
 ### Phase 3: FDC Command Interpretation
 
-- [ ] Hook into [WD1793Collector](../../../core/src/emulator/io/fdc/wd1793_collector.h#15-143) for low-level events
+- [ ] Hook into `WD1793Collector` for low-level events
 - [ ] Aggregate port accesses into semantic FDC commands
 - [ ] Track sector data flow (read/write byte counts)
 - [ ] Detect head movement and seek patterns

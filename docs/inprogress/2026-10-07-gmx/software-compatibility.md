@@ -12,7 +12,7 @@ the `izzx-git` repositories) in the local collection. None of the images is stor
 
 | Program | Version, author | Source | 6.44 | 5.00 | Notes |
 |:--|:--|:--|:--|:--|:--|
-| Puzzle Bobble | 2024.08.08, izzx | `$Z/Games/P/Puzzle Bobble (2024)(izzx)/2024.08.08(EN)(GS, GMX).trd`, `$G/PB-*.zip PB.TRD` | works | loads | Reaches the difficulty menu within 60 s (28 files, ~1700 sectors). Its samples are for a General Sound, which the model refuses on a GMX (Ermolaev's article), so the game is silent |
+| Puzzle Bobble | 2024.08.08, izzx | `$Z/Games/P/Puzzle Bobble (2024)(izzx)/2024.08.08(EN)(GS, GMX).trd`, `$G/PB-*.zip PB.TRD` | works | loads | Reaches the difficulty menu within 60 s (28 files, ~1700 sectors) and uploads 415 KB of samples to the General Sound. Plays with sound on the config's NeoGS and on a classic GS with 512 KB (`slots plug zxbus.1 gs ram=512k`); a 128 KB GS stays silent (the samples do not fit) |
 | HeroQuest | v1.00, GMX version | `neogs-collection/zxart/gs/600900-HeroQuest/HeroQuestGMX_v1.00.1924trd.zip` | works | works | 640x200 title, language choice |
 | GMX Pic View | v1.2.2, izzx | `$Z/System Software/G/GMX Pic View (2020)(-)/v1.2.2(EN)(GMX)(Disk 1 of 2).trd` | works | works | Catalog, 640x200 pictures |
 | ANSI Viewer/Player | v0.6b, Alone Coder | `$Z/Applications/A/ANSI ViewerPlayer (2006)(Alone Coder)/v0.6b(EN)(GMX, ATM2).trd` | works | works | Menu and file panel |
@@ -50,6 +50,9 @@ mutes it, inserts the disk with autostart (and the SD folder when needed), scree
 keys a program asks for. Hangs were looked at with the port trace and memory reads (`/profiler/porttrace`,
 `/registers`, `/disasm`, `/memory/ram/{page}`), for example:
 
+- Puzzle Bobble's sound: the GS port trace (`/state/audio/gs/porttrace`) counts the host's data bytes and the card's
+  DAC fetches, a GS-only capture (`/audio/capture`, `source: gs`) during the game reads RMS 0.046 (NeoGS) and 0.066
+  (GS 512 KB), 0 with GS 128 KB.
 - Puzzle Bobble's "Loading..." at 25 s: the trace showed TR-DOS reading the catalog for each sample (`#5CDD` = the
   file name), and at 60 s the code sits in its menu loop (`HALT`, key read, `CP #36` / `#37` / `#20`).
 - VPlayer 0.1.6: the pixel pages `#39` / `#3B` hold the `#0F` pattern the player writes, the attribute page `#79` holds

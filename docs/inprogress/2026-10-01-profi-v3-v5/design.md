@@ -102,7 +102,7 @@ v5.0 album sheet 1п, and the MDESK P-CAD netlist for v3.2.
    for v5.
 3. The same test on v3 uses the v3.2 table. A15 replaces ROM14 there, so the v3 port set (4.1) is checked against
    the board's own PROM, not just against the manuals.
-4. The floppy data-separator PROMs ("ФАПЧ") of both boards are in the same collection; the emulator does not need
+4. The floppy data-separator PROMs ("ФАПЧ", the PLL) of both boards are in the same collection; the emulator does not need
    them (the WD1793 model takes whole bytes).
 
 ### 4.4 Floating bus on v3
@@ -238,7 +238,7 @@ READYT) and then checked it against every figure available
 |:--|:--|:--|
 | Tact Meter 1.0: 88208 T per frame (code in RAM) | XP+, one v3.2 board | 88222 (`INC DE : JP`, 1.2308x); the other rules tried give 81920-104262 |
 | Tact Meter 1.0: 143206 T (code in ROM) | XP+ | 139776 (ROM never waits: 2x) |
-| "в 1.7 раза" (overall speed-up) | MAN v3.2 p2 | between 1.33x (RAM) and 2x (ROM), so a mix |
+| "в 1.7 раза" ("1.7 times", overall speed-up) | MAN v3.2 p2 | between 1.33x (RAM) and 2x (ROM), so a mix |
 | 116920 T per frame | Unreal_NS `PRESET.PROFI_TURBO` | not reproduced; an unnamed meter, left as is |
 
 XP+'s own model ("2 waits on a slot edge, 3 between, VG93 HLD drops turbo") agrees with the schematic.

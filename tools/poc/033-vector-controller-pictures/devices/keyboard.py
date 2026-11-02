@@ -80,8 +80,18 @@ def cap(view, control, label, x, y, w, h, colors):
     elif label:
         style.label(view, label, cx, cy, 2.5 if len(label) <= 5 else 2.2, colors["legend"], control, face="sans",
                     opacity=0.8)
-    view.spot(control, label or "Space", ("rect", x + 0.55, y + 0.55, pw - 1.1, ph - 1.1),
+    view.spot(control, callout_name(name, label), ("rect", x + 0.55, y + 0.55, pw - 1.1, ph - 1.1),
               "left" if x + pw / 2 < 0 else "right", quiet=True)
+
+
+def callout_name(name, label):
+    """The callout of a key: its legend, the keypad's ("Num 1") and the two-sided modifiers' ("Left Shift") with their
+    place, as the main block and the keypad repeat legends"""
+    if name.startswith("kp_"):
+        return f"Num {label}"
+    if name[0] in "lr" and name[1:] in ("shift", "ctrl", "alt", "gui"):
+        return f"{'Left' if name[0] == 'l' else 'Right'} {label}"
+    return label or "Space"
 
 
 def keyboard():

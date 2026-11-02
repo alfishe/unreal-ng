@@ -89,8 +89,8 @@ Addresses come from the sjasmplus listing of `TEX28.asm`. The effect code is abo
 `#5900` to `#71E6`. It includes the two texturers (`#5A01-#5BFF`, `#5E01-#5FFF`), their patchers
 (`#5C00`, `#6000`), `sin256` at `#6E00`, the stack tables at `#6F82`/`#7082` and `VUjump` at `#7100`. The
 generators and `palgirl` follow (`#71E7`-`#7B59`). The author's `DISPLAY` lines mark them:
-"без инсталлеров конец кода" / "с инсталлерами конец кода" (end of code without / with the
-installers), and "можно затирать" (may be overwritten).
+"end of code without the installers" / "end of code with the
+installers", and "may be overwritten".
 
 ## 4. One-time set-up on the card (`instpp3.asm`)
 
@@ -128,8 +128,8 @@ CP #F0 : JR C,ok : SUB #20 : <next texture page> : ok: LD H,A
 ```
 
 The generator stores the opcodes as characters: `','` is `#2C` (INC L), `'-'` is `#2D` (DEC L),
-`'$'` is `#24` (INC H) and `'%'` is `#25` (DEC H). The author estimates "~3.5 байта на байт
-(2 страницы)" (about 3.5 bytes of code per byte, 2 pages): the code fills two 16K pages, `6` and
+`'$'` is `#24` (INC H) and `'%'` is `#25` (DEC H). The author estimates "~3.5 bytes per byte
+(2 pages)" (about 3.5 bytes of code per byte): the code fills two 16K pages, `6` and
 `#86`, at `#8000`.
 
 When the output reaches `#BFxx`, the generator writes `LD A,next : OUT (MPAG),A` into the current
@@ -175,9 +175,9 @@ flowchart LR
 The copy runs backwards in 8K pieces (`LDDR`, from `MPAGEX` to `MPAG`), from page +7 down to page +0.
 Each source page is overwritten only after it has been read. For the last piece, the "from" page
 wraps to +7, which already holds a copy of the texture's end. The author's comment says
-"в +7 копия конца текстуры" (page +7 holds a copy of the texture's end).
+"+7 holds a copy of the texture's end".
 
-The ball code keeps the row in `#D0..#EF` ("запас 16 на переполнение", 16 rows spare for
+The ball code keeps the row in `#D0..#EF` ("a reserve of 16 for overflow", 16 rows spare for
 overflow). After a line, if `H` has passed `#EF`, `BALLCODESAMPLE` subtracts `#20` and maps the next
 window (+8 wraps to +0). Inside a line, `H` can then run up to 16 rows either way without a check.
 
@@ -247,7 +247,7 @@ The 3D engine's X grows *upwards* on the screen and its Y *to the right* (the au
 The texture mapper's "scanlines" are therefore vertical on the screen, and a scanline is a run of
 consecutive bytes (`INC E` / `DEC E`). The map has only 64 rows of 256 bytes. Y 0..63 uses columns
 `#00-#3F`, and Y 64..127 uses the same rows in columns `#80-#BF`. That is the `texdec=1` mode,
-"с заворотом" (with wrap-around): when a scanline loop steps below row 0, it continues at row 63
+"with wrap-around": when a scanline loop steps below row 0, it continues at row 63
 with X xor `#80`.
 
 ## 6. The texture mapper (`texpp4.asm`, `vujump.asm`)
@@ -326,11 +326,11 @@ sequenceDiagram
    `texarea/H13` (`mH13_`) use the same trick.
 3. **Width and side.** `W = l12 - H12*dXL` is the width of the row through vertex 2, the widest
    one. `TRIMULLOOP` is a shift-and-add multiply by the multiplier held complemented in the top bits
-   of A (the author: "DEC A ;даст то же, что H12 CPL", gives the same as H12 CPL). The sign of W
+   of A (the author: "DEC A ;gives the same as H12 CPL"). The sign of W
    tells whether vertex 2 lies to the left or to the right of edge 1-3. A "right" triangle is
    drawn with `TEXTURERDEC` (right to left), and a "left" one with `TEXTURERINC`. A triangle whose widest
-   row is too narrow is dropped ("слишком узкий, может дать отрицательный сканлайн", too narrow, may give a
-   negative scanline).
+   row is too narrow is dropped ("too narrow, may give a
+   negative scanline").
 4. **Corner dispatch.** `t = H12 * dUV13` is the position on edge 1-3 at the row of vertex 2.
    `JP VUjump` (its low byte was patched with the corner index) goes to one of 24 handlers.
 5. **The handler** (`VUPATCH` + `dVU*` macros) knows along which side of the square edge 1-3 runs.
@@ -370,12 +370,12 @@ The layout of one texturer, in the author's own counts:
 
 | Part | Bytes | Author's comment |
 |---|---|---|
-| `TEXTURERINCMAX` | 36 x 7 + 3 | "(20+16)*7+3=255 байт кода для ширины ??..??" (bytes of code for widths ...) |
-| entry for width 0 | 1 | "это круглый адрес / 1 байт адрес для ширины 0" (a round address / 1-byte address for width 0) |
+| `TEXTURERINCMAX` | 36 x 7 + 3 | "(20+16)*7+3=255 bytes of code for widths ??..??" |
+| entry for width 0 | 1 | "this is a round address / 1-byte address for width 0" |
 | 16 x `JR`, 20 x `JP` | 32 + 60 | stubs into the long part |
-| `TEXTURERINC` | 15 x 7 + 2 + RET | "16*7-4=108 байт кода для ширины 16..0"; the last pixel is `LD A,(BC) : LD (DE),A` ("смещение=0", offset 0) |
-| entry table | 52 | "20+16+16=52 байт адресов" (bytes of addresses) |
-| | | "итого 256 байт" (256 bytes in all) |
+| `TEXTURERINC` | 15 x 7 + 2 + RET | "16*7-4=108 bytes of code for widths 16..0"; the last pixel is `LD A,(BC) : LD (DE),A` ("offset=0") |
+| entry table | 52 | "20+16+16=52 bytes of addresses" |
+| | | "256 bytes in total" |
 
 Dispatch costs three instructions. `TRISCANGO` computes the negative width in L, and `H` is the block's
 page:
@@ -396,9 +396,9 @@ same texture offset relative to the scanline's first texel: *k* x (dU, dV). So `
 (straight code, generated at assembly time with `DUP`/`IF`) writes those offsets into the `LD HL,nn`
 operands once per triangle, 4 pixels per group. `LD (op),HL` puts V into the operand's high byte,
 and after `EXX`, `LD A,H : LD (op),A` puts U into its low byte. It patches only as many pixels as W
-needs. The author adds one pixel to be safe: "на всякий случай патчим на 1 пиксель больше, чем W"
-(just in case we patch 1 pixel more than W), because "ошибка XL + ошибка XR + ошибка деления*H12 =
-.5+.5+?" (XL error + XR error + division error*H12). A scanline then only needs its start BC and
+needs. The author adds one pixel to be safe: "just in case we patch 1 pixel more than W",
+because "XL error + XR error + division error*H12 =
+.5+.5+?". A scanline then only needs its start BC and
 destination DE.
 
 The conditions in `PATCHVUINC` look strange after the conversion:
@@ -413,9 +413,9 @@ The original is `IF0 _V-___<1&1`. A cyclic shift left by 1 moves bit 15 to bit 0
 ### 6.4 Back faces and the VUjump opcode byte
 
 `VUjump` (`vujump.asm`) has 64 entries of 4 bytes, indexed by the three corners (6 bits; the
-author's comment: "младший байт адреса: %(V3)(U3)(V2)(U2)(V1)(U1)00", low byte of the address).
+author's comment: "low byte of the address: %(V3)(U3)(V2)(U2)(V1)(U1)00").
 24 entries are `JP VU......` or `JP P,VU......` followed by `NOP`. The other 40 are `DS 3` (three
-NOPs) + `NOP`, marked "невозможно" (impossible). I checked that the 24 are exactly the
+NOPs) + `NOP`, marked "impossible". I checked that the 24 are exactly the
 combinations where the three corners are different.
 
 The opcode byte of an entry is **also data**. After W is known, `TRI` does:
@@ -430,14 +430,13 @@ The opcode byte of an entry is **also data**. After W is known, `TRI` does:
 
 A face is drawn only if its side byte agrees with the entry's opcode in the way its screen
 side (left or right) requires. That is the **back-face test**, with no cross product. The record's
-comment explains how to flip a texture: "#C300 ;для переворота текстуры надо #F200 и переставить VU"
-(to flip the texture use #F200 and swap the VU).
+comment explains how to flip a texture: "#C300 ;to flip the texture use #F200 and swap the VU".
 
 *Unconfirmed:* for 18 of the 24 entries the choice of `JP` / `JP P` matches the winding of the
 three corners on the texture square. For 6 entries it does not (for example `VU001011`), and I
 could not find the rule. The `P` flag at the jump comes from `ADD A,A` on 2t, so `JP P` is
-presumably always taken; the author's note there reads "знак=P после умножения" (sign = P after the
-multiplication). If it were not taken, execution would fall through the NOPs into the next entry.
+presumably always taken; the author's note there reads "sign=P after the
+multiplication". If it were not taken, execution would fall through the NOPs into the next entry.
 
 ### 6.5 The stack is the loop counter
 
@@ -452,8 +451,8 @@ or `DW TRIQ`. Each table ends on a 256-byte boundary. `TRIDRAW` sets
         LD SP,HL
 ```
 
-The height is negative, so SP points h-1 entries before the last one ("l=254 для высоты 1 (сразу
-выход)", L = 254 for height 1: exit at once). Each scanline ends with the texturer's `RET`, which
+The height is negative, so SP points h-1 entries before the last one ("l=254 for height 1 (exit
+at once)"). Each scanline ends with the texturer's `RET`, which
 pops `TRILINE`. After the upper half it pops `TRIDRAW23`, which switches to edge 2-3 and its table,
 and finally `TRIQ`. There is no loop counter and no `DJNZ`: the return addresses count the rows.
 
@@ -493,7 +492,7 @@ bytes, one per pixel row. Each byte is two pixels in the Pentagon format: one co
 bit 7, the other in bits 2..0 + bit 6.
 
 The second chunk comes out **lower row first**: `INC B` then `DEC B` saves an instruction. The
-ZX side undoes this with `mirrorchunks=1`, "строки 0,1,3,2,4,5,7,6..." (lines 0,1,3,2,4,5,7,6),
+ZX side undoes this with `mirrorchunks=1`, "lines 0,1,3,2,4,5,7,6...",
 in `MKOUT16C`:
 
 ```
@@ -507,8 +506,8 @@ in `MKOUT16C`:
 ```
 
 The column steps come from `TTRANSCHX` (`#20,#60,#20,#A0,#20,#60,#20,#1F`, sum = -1). They move
-the write pointer between the four "слой" (layers) of the screen, each with a "верх,низ" (top,
-bottom) part.
+the write pointer between the four "layers" of the screen, each with a "top,bottom"
+part.
 
 ## 8. The ZX half (`TEXZX`)
 
@@ -517,7 +516,7 @@ to `#7800` and "returns" into the copy (`PUSH DE : RET` with DE = `#7800`). The 
 
 1. clears `#C000-#D7FF` and `#E000-#F7FF` of pages 4, 5, 6, 7 (`TEXCL1800PG`);
 2. sets `#EFF7` = 1 (16 colours; [01-the-machine.md](01-the-machine.md));
-3. generates `OUT16C` right behind itself (`#794F` up, about 13.8 KB; "13K кода для 256X128");
+3. generates `OUT16C` right behind itself (`#794F` up, about 13.8 KB; "13K of code for 256X128");
 4. waits for the start frame and runs `BIGLOOP`.
 
 **OUT16C.** There are 64 iterations, each for two pixel lines (y and y-64). Each iteration is
@@ -539,24 +538,23 @@ of two lines in both pages of the 16-colour screen. In total: 64 x 2 x 4 x 32 = 
 **HL does two jobs.** `BIGLOOP` loads `LD HL,#1617` and patches it to `#1C1D` for the other screen.
 H and L are the two `#7FFD` values of the screen being drawn. As an address, HL is somewhere in
 `#0000-#3FFF`, so every `LD D,(HL)` is a ZX-DMA read ([03-the-frame.md](03-the-frame.md)). The
-first byte is read and dropped: "LD A,(HL) ;первый байт неверен" (the first byte is wrong).
+first byte is read and dropped: "LD A,(HL) ;the first byte is wrong".
 
 **Screen flip.** One immediate operand stores the state:
 
 ```
         LD A,#17^#1D
-        XOR #1D                 ;видим scr1, рисуем scr0
-        LD ($-1),A              ;теперь видим scr0, рисуем scr1
+        XOR #1D                 ;we see scr1, draw scr0
+        LD ($-1),A              ;now we see scr0, draw scr1
 ```
 
-The translations are "we see scr1, draw scr0" and "now we see scr0, draw scr1". A alternates `#17` /
+The comments are translated from the author's Russian. A alternates `#17` /
 `#1D`.
 
 **Interrupts during the blit.** SP points into the screen. Lines that start at `#xx00` or `#xx80`
-end with `LD (nn),DE` instead of the last `PUSH`. The author: "для 8 линий в #C080..#C780, 7 линий
-#C900..#CF00, 7 линий #D100..#D700 надо LD (..),DE вместо последнего PUSH" (for these lines the last
-PUSH must be LD (..),DE), and "будет 32 таких линии вместо 22, а то запарно проверять" (there will
-be 32 such lines instead of 22, otherwise it is a pain to check). The IM 2 handler then writes DE
+end with `LD (nn),DE` instead of the last `PUSH`. The author: "for 8 lines in #C080..#C780, 7 lines
+#C900..#CF00, 7 lines #D100..#D700 the last PUSH must be LD (..),DE", and "there will
+be 32 such lines instead of 22, otherwise it is a pain to check". The IM 2 handler then writes DE
 where the CPU pushed the return address. Chapter 03 explains why.
 
 **Budget.** One 16 KB picture is 8,192 x (7 + 7 + 11) = 204,800 T-states for the reads and
@@ -564,17 +562,17 @@ pushes, plus 512 `LD SP`. A Pentagon frame is 71,680 T, so the copy takes almost
 face therefore shows at most one new picture every third frame, about 16-17 per second. This is a
 calculation from the code, not a measurement. I did not measure the card's drawing time.
 
-**QUIT** (end frame reached, or Space: "можно жать RESET", you may press RESET): command 2, page 0,
+**QUIT** (end frame reached, or Space: "you may press RESET"): command 2, page 0,
 black attributes, `#EFF7` = 0, `RET` to the resident loop, which moves on to the credits.
 
 ## 9. The test harness in `TEX28.asm`
 
 ALASM ran the source after assembling it, so `TEX28.asm` contains a whole mini demo:
 
-- `GO` at `#7800`: card reset, the card program sent with GS commands `#18`/`#19` ("как в RIFF
-  TRACKER", as in RIFF TRACKER) and started with `#13`. It uploads 5 data pages and 1 code page,
+- `GO` at `#7800`: card reset, the card program sent with GS commands `#18`/`#19` ("as in RIFF
+  TRACKER") and started with `#13`. It uploads 5 data pages and 1 code page,
   installs the resident loop and IM 2, and starts the music. The author marks some steps with
-  "зачем-то" (for some reason): `POKE #4092,0`, command `#38` (Load FX), `#D2` (Close Stream),
+  "for some reason": `POKE #4092,0`, command `#38` (Load FX), `#D2` (Close Stream),
   `#F5` (Busy on).
 - `zxtimings`: `DW 224,224*4-20`, the face from frame 224 to 876.
 - `ORG #C000,pgeffects+1` : `JR $`, where the test stops.
@@ -604,10 +602,9 @@ The objects come from `ObjTab` + `SAVEOBJ4.asm` in ALASM, and from `SAVEBIN` in 
   time.
 - **No timeout on the first wait.** In the frame handshake, `WAITER0` waits for command 0 forever
   (`;JP C,GSRESET` is commented out). Only the second wait has the 65,536-poll timeout.
-- **The comments tell the tuning story:** `incW` "1=исключает выскакивание за текстуру, но
-  дергается" (1 = prevents running out of the texture, but jitters); `texborder` "против
-  выскакивания" (against running out); `trisortmesspop` "1=сокращает код без потери скорости"
-  (shortens the code without losing speed).
+- **The comments tell the tuning story:** `incW` "1=prevents running out of the texture, but
+  jitters"; `texborder` "against running out"; `trisortmesspop` "1=shortens the code without
+  losing speed".
 
 ## Try it
 

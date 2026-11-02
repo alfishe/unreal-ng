@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "emulator/io/z80n/nextjournal.h"
+
 /// The door a register write came through
 enum class NextRegSource : uint8_t
 {
@@ -34,6 +36,9 @@ struct NextRegWriteEvent
     uint8_t previous = 0;
     int16_t beamLine = -1;  ///< where the beam was (line counter with NR #64 applied, pixel clock in the row); -1: not known.
     int16_t beamHc = -1;    ///< A copper MOVE is stamped with the clock it was done on, not the CPU's time of the catch-up
+
+    /// The record of the history and the journal reports (portdecoder_next_state.cpp)
+    void ToState(StateNode& node) const;
 };
 
 /// "07,02" / "0x07" / "#07": register numbers; "nextreg,copper": source names. Empty = no filter
@@ -51,35 +56,20 @@ bool NextRegJournalQueryFromStrings(const std::string& regs, const std::string& 
                                     const std::string& from, const std::string& to, const std::string& limit,
                                     NextRegJournalQuery& query, std::string& error);
 
-class NextRegJournal
+class NextRegJournal : public NextJournal<NextRegWriteEvent>
 {
 public:
     static constexpr size_t kDefaultCapacity = 65536;
 
-    explicit NextRegJournal(size_t capacity = kDefaultCapacity) { SetCapacity(capacity); }
-
-    bool Enabled() const { return _enabled; }
-    void SetEnabled(bool on) { _enabled = on; }
-    /// Resizes the ring (the content is dropped)
-    void SetCapacity(size_t capacity);
-    size_t Capacity() const { return _ring.size(); }
-    size_t Size() const { return _count; }
-    uint64_t Evicted() const { return _evicted; }
-    /// The seq of the newest event (0: none yet)
-    uint64_t LastSeq() const { return _seq; }
-    void Clear();
+    explicit NextRegJournal(size_t capacity = kDefaultCapacity)
+        : NextJournal("nextreg", "NextREG writes (instruction, port, copper, board)", capacity)
+    {
+    }
 
     void Record(uint32_t frame, uint32_t t, uint16_t pc, NextRegSource source, uint8_t reg, uint8_t value, uint8_t previous,
                 int16_t beamLine = -1, int16_t beamHc = -1);
+    using NextJournal::Record;
 
     /// The matches, oldest first, the newest `limit` of them
     std::vector<NextRegWriteEvent> Query(const NextRegJournalQuery& query) const;
-
-private:
-    std::vector<NextRegWriteEvent> _ring;
-    size_t _head = 0;   ///< where the next event goes
-    size_t _count = 0;
-    uint64_t _seq = 0;
-    uint64_t _evicted = 0;
-    bool _enabled = false;
 };

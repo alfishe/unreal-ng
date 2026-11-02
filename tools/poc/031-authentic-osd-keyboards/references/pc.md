@@ -25,7 +25,7 @@ owner.
 
 ## 1. ATM-Turbo 512 (v4.50 board)
 
-**Keyboard.** The NedoPC description table "Технические характеристики разных моделей ATM-turbo" gives the keyboard
+**Keyboard.** The NedoPC description table "Specifications of the different ATM-turbo models" gives the keyboard
 controller row per board:
 
 | | ATM-turbo 512 (v4.50) | ATM-turbo 2 (v6.40) | TURBO 2+ (v7.10) |
@@ -55,7 +55,7 @@ Side notes:
 
 ## 2. ATM-Turbo 2+ (v7.00 / v7.10 boards)
 
-**Keyboard.** atmdscr.htm, section "Управление XT(AT)-клавиатурой на TURBO 2+ (платы 7.00-7.10)": "From version
+**Keyboard.** atmdscr.htm, section "XT(AT) keyboard control on TURBO 2+ (boards 7.00-7.10)": "From version
 7.00 the computer has an 8031 chip … it made it possible to connect an IBM XT keyboard (or a modern AT keyboard, you
 only need another ROM)". The page talks of "the extended keyboard (101 keys)".
 
@@ -108,7 +108,7 @@ Notes:
   ENTER.
 - KP9 = CS+5 and KP3 = CS+8 come straight from the table. They look like a slip in the original binary, but every
   version carries them.
-- The controller ANDs its virtual matrix with the native port D45 ("Добавка идет командой OR", active-low), so a
+- The controller ANDs its virtual matrix with the native port D45 ("the addition is done with an OR instruction", active-low), so a
   real ZX matrix keyboard works in parallel (`atm_xt.txt`, mode 0).
 
 **Other functions** (`atm_xt.txt`, atmdscr.htm, `at40.txt`, `atm_at41.asm`):
@@ -203,10 +203,10 @@ same matrix-from-host behaviour.
 ## 5. ZXM-Phoenix v1.0 (`MM_PHOENIX`)
 
 **Keyboard.** Mick (Mikhail Tarasov), 2008-2009, design discussed on zx-pk.ru. Manual `ZXM-Phoenix_manual_v03.pdf`,
-§5 "Клавиатура": "We decided not to fit a traditional keyboard controller [here: a matrix keyboard], because the
+§5 "Keyboard": "We decided not to fit a traditional keyboard controller [here: a matrix keyboard], because the
 standard keyboard is hard to get. The answer is a PS/2 keyboard that the atmega8515 microcontroller program
-(by Caro) turns into the standard keyboard. The keyboard plugs into connector XS2." Feature list: "Клавиатура –
-внешняя PS2 (эмулируемая)", mouse PS/2 Kempston (XS3). Photo `phoenix-rev01-board-ps2-sockets.jpg` (micklab.ru,
+(by Caro) turns into the standard keyboard. The keyboard plugs into connector XS2." Feature list: "Keyboard –
+external PS2 (emulated)", mouse PS/2 Kempston (XS3). Photo `phoenix-rev01-board-ps2-sockets.jpg` (micklab.ru,
 rev 01, 2010) shows two PS/2 mini-DIN sockets at the bottom left and the ATmega8515 labelled "ZXM Phoenix Multi Card
 Bios v2.7 by Caro". The era is 2009+, so a PS/2 104-key keyboard. **No ZX matrix keyboard connector** is mentioned in
 the manual. Whether the board has one: UNVERIFIED. The ZX picture is then the emulated matrix, not a physical
@@ -360,7 +360,7 @@ grey modifiers belong to Model M and its Cherry / BTC copies). Legends:
 
 Keycap profile: cylindrical, sculpted by row (OEM-like).
 
-Russian ЙЦУКЕН legends (Windows layout, matches the photo): Q Й, W Ц, E У, R К, T Е, Y Н, U Г, I Ш, O Щ, P З, [ Х,
+Russian ЙЦУКЕН (the Russian standard layout) legends (Windows layout, matches the photo): Q Й, W Ц, E У, R К, T Е, Y Н, U Г, I Ш, O Щ, P З, [ Х,
 ] Ъ, A Ф, S Ы, D В, F А, G П, H Р, J О, K Л, L Д, ; Ж, ' Э, Z Я, X Ч, C С, V М, B И, N Т, M Ь, , Б, . Ю, / `.`, ` Ё.
 
 Typical brands in Russia in the 1990s / 2000s (BTC, Mitsumi, Chicony, Cherry, Genius/KYE, later Sven, Defender):
@@ -371,7 +371,8 @@ existed. UNVERIFIED how common.
 
 Photo `ms7004-soviet-keyboard.jpg` (Wikimedia Commons). A DEC LK201 derivative: dark brown/black case, off-white
 alphanumeric caps, grey function / edit caps. Legends black, Cyrillic upper and Latin lower on the same cap. Special
-keys РУС/ЛАТ, ФКС, СУ, КМП, ТАБ; a function strip with labels (ПАУЗА, УСТ. РЕЖИМА …). A possible third, exotic ATM
+keys РУС/ЛАТ (Russian / Latin), ФКС (lock), СУ (control), КМП (compose), ТАБ (tab); a function strip with labels
+(ПАУЗА (pause), УСТ. РЕЖИМА (set mode) …). A possible third, exotic ATM
 picture. Its layout geometry is not researched here. UNVERIFIED.
 
 ## 8. Photos saved (`photos/pc/`)
@@ -390,7 +391,7 @@ picture. Its layout geometry is not researched here. UNVERIFIED.
 | `ms7004-soviet-keyboard.jpg` | Soviet MS 7004 | Commons `File:Keyboard MS 7004 (14906723198).jpg` |
 
 Not saved: a photo of a real ATM-Turbo 2+ with its keyboard (Commons `File:Computer_board_atmturbo2.jpg` exists, but
-the download hit a Wikimedia rate limit), and an ES-1841 XT keyboard (Commons `File:Раскладка клавиатуры ЕС1841.jpg`,
+the download hit a Wikimedia rate limit), and an ES-1841 XT keyboard (Commons `File:Раскладка клавиатуры ЕС1841.jpg`, "ES1841 keyboard layout",
 same). Licences of the Commons files were not recorded (rate limit). Check them before any image goes into the repo.
 
 ## 9. Sources
@@ -415,8 +416,8 @@ Web:
   firmware page http://atmturbo.nedopc.com/atmshem.htm
 - ZX-Evolution: http://nedopc.com/zxevo/zxevo_eng.php, http://nedopc.com/zxevo/zxevo.php
 - ZX-Evo AVR firmware: https://github.com/tslabs/zx-evo/blob/master/pentevo/avr/current/kbmap.c, `zx.c`, `ps2.c`
-- ZXM-Phoenix: http://micklab.ru/My%20Computer/ZXMPhoenix.htm (history, specs "Клавиатура – внешняя PS2
-  (эмулируемая)"), https://pk8000.narod.ru/zx/phoenix.html with `zxm-phoenix_manual_by_mick.7z` (manual v03 §5) and
+- ZXM-Phoenix: http://micklab.ru/My%20Computer/ZXMPhoenix.htm (history, specs "Keyboard – external PS2
+  (emulated)"), https://pk8000.narod.ru/zx/phoenix.html with `zxm-phoenix_manual_by_mick.7z` (manual v03 §5) and
   `zxm-phoenix_techref_by_mick.7z` (`MC2PH_27.zip`: HEX + TXT); forum
   https://zx-pk.ru/threads/9310-kompyuter-quot-zxm-phoenix-quot-klon-rozhdennyj-na-forume.html (not read)
 - deskthority: https://deskthority.net/wiki/IBM_Model_F (XT / AT notes, keycap profile, PBT), image files above

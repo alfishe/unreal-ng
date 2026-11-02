@@ -274,9 +274,9 @@ If any sector fails verification, TR-DOS reports a format error. This is why you
 TR-DOS **physically tests the drive** to determine the track count. It does NOT rely on stored configuration:
 
 ```asm
-;Адрес #1FCA. Определение количества дорожек дисковода.
-;Вход: установите время перемещения головки дисковода.
-;Выход: в #5CD7 и регистре A будет количество дорожек дисковода.
+;Address #1FCA. Determine the number of tracks of the drive.
+;Input: set the drive head stepping time.
+;Output: #5CD7 and register A hold the number of tracks of the drive.
 
 x1FCA       CALL    x3E08       ; Get head step rate
             OR      #11         ; Build SEEK command
@@ -339,8 +339,8 @@ x3DF9       LD      (HL),A      ; Store in drive type table
 
 **From disassembly line 6378:**
 ```
-;Внимание, ошибка!!! Не проверяется количество сторон дисковода 
-; и предполагается, что он односторонний.
+;Attention, bug!!! The number of sides of the drive is not checked
+; and it is assumed to be single-sided.
 ```
 
 Translation: **"WARNING, ERROR!!! The number of drive sides is NOT checked and it is assumed to be single-sided."**
@@ -355,8 +355,8 @@ Translation: **"WARNING, ERROR!!! The number of drive sides is NOT checked and i
 **Location:** `x3200` ($3200) in TR-DOS 5.04T
 
 ```asm
-;Адрес #3200. Выбор формата диска. 
-;Устанавливает #5CE6 и #5CE8, а в аккумуляторе возвращает тип дисковода.
+;Address #3200. Disk format selection.
+;Sets #5CE6 and #5CE8, and returns the drive type in the accumulator.
 
 x3200       LD      HL,x322C    ; Print "PRESS T FOR TURBO FORMAT..."
             RST     #18

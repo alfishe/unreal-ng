@@ -15,6 +15,7 @@
 #include "emulator/io/z80n/nextregjournal.h"
 #include "emulator/memory/memory.h"
 #include "emulator/state/devicestate.h"
+#include "emulator/state/statenodejson.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
 TEST(NextRegJournal_Test, RingKeepsTheNewestAndCountsTheEvicted)
@@ -151,5 +152,36 @@ TEST(NextRegJournal_Test, TheNextRegInstructionIsInTheTtdPortWriteJournalAsThePa
     EXPECT_EQ(data.port, kPortRegData);
     EXPECT_EQ(data.value, kValue);
     EXPECT_EQ(data.pc, kProgram) << "the address of the NEXTREG instruction";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// The journals are device histories on the pattern: listed, switched by either side, the same events. Off: no memory
+TEST(NextRegJournal_Test, TheJournalsAreDeviceHistories)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    PortDecoder_Next* ports = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    for (const char* device : { "nextreg", "next-int", "divmmc" })
+        EXPECT_TRUE(context->histories.With(device, [](history::IDeviceHistory&) {})) << device;
+    NextBoard& board = ports->Board();
+    EXPECT_EQ(board.Journal().History().GetStats().config.mode, history::Mode::Off);
+
+    ASSERT_TRUE(context->histories.With("nextreg", [](history::IDeviceHistory& h) {
+        std::string error;
+        EXPECT_TRUE(h.Configure({ .mode = history::Mode::Capture, .limit = 0 }, error)) << error;
+    }));
+    EXPECT_TRUE(board.Journal().Enabled()) << "the history's configuration switches the journal";
+    board.WriteNextReg(0x16, 0x20);
+    ASSERT_EQ(board.Journal().Query(NextRegJournalQuery{}).size(), 1u);
+    std::string json;
+    context->histories.With("nextreg", [&](history::IDeviceHistory& h) { json = StateNodeToJsonText(h.Records(0)); });
+    EXPECT_NE(json.find("\"source\":\"nextreg\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"reg\":\"0x16\""), std::string::npos) << json;
+
+    board.Journal().SetEnabled(false);
+    board.WriteNextReg(0x16, 0x21);
+    EXPECT_EQ(board.Journal().Size(), 1u) << "held: readable, nothing more";
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

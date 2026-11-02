@@ -37,9 +37,9 @@ measurement to four digits.
 
 | Page | v5, emulated | v3, emulated | A real 5.06 (solegstar, zx-pk 21644, 2013) |
 |:--|:--|:--|:--|
-| Ports | "Порт атрибутов не реализован" (no floating bus), Kempston, #7FFD not readable | - | "порт FF реализован (доработка)": his board has the #FF fix |
-| Configuration, 3.5 MHz | video WAIT on: Takt/INT 68096, memory "с торможением" (69892-68823); WAIT off (`WaitConfig=pentagon` or `contention` off): Takt/INT 69888, 312 lines, "Profi\48K", "без торможения" | 512K found; TR-DOS 5.03 | Pentagon-type sync PROM, so SB8 most likely in its PENTAGON position: Takt/INT 73024, "без торможения" (72962-72946), INT "Too short!" |
-| Configuration, TURBO | Takt/INT 114688 (1.64x of 69888), "раздельным полем памяти" (110622-115715), "TURBO - включилось!" | - | Takt/INT 122976 (1.68x of 73024), "раздельным полем памяти" (121592-124816), "TURBO - включилось!" |
+| Ports | "Порт атрибутов не реализован" ("attribute port not implemented": no floating bus), Kempston, #7FFD not readable | - | "порт FF реализован (доработка)" ("port FF implemented (modification)"): his board has the #FF fix |
+| Configuration, 3.5 MHz | video WAIT on: Takt/INT 68096, memory "с торможением" ("with slowdown", 69892-68823); WAIT off (`WaitConfig=pentagon` or `contention` off): Takt/INT 69888, 312 lines, "Profi\48K", "без торможения" ("without slowdown") | 512K found; TR-DOS 5.03 | Pentagon-type sync PROM, so SB8 most likely in its PENTAGON position: Takt/INT 73024, "без торможения" (72962-72946), INT "Too short!" |
+| Configuration, TURBO | Takt/INT 114688 (1.64x of 69888), "раздельным полем памяти" ("with a separate memory field", 110622-115715), "TURBO - включилось!" ("TURBO switched on!") | - | Takt/INT 122976 (1.68x of 73024), "раздельным полем памяти" (121592-124816), "TURBO - включилось!" |
 
 The emulated v5 behaves like the photographed board where the two can be compared: no waits with the Pentagon
 setup, the same memory class and a turbo gain within 3 % (the v5 turbo waits are an approximation). The test's
@@ -75,7 +75,7 @@ Both load and run on both boards (the Qarx menu, its scroller and the game scree
 in the top border on a correct board; border and paper pictures in line on v5) have not been judged yet: the effect
 has to be found in the running program.
 
-## BIOS 2.0 "Тест быстродействия" (hi-res)
+## BIOS 2.0 "Тест быстродействия" (speed test, hi-res)
 
 The BIOS test menu's speed test runs in hi-res and is scaled to the 12 MHz crystal (3 MHz = 1.00; solegstar,
 [zx-pk 21644 p.11](https://zx-pk.ru/threads/21644-plata-protsessora-profi-v5-06/page11.html)). termik's real 5.06

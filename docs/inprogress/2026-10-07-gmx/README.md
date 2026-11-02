@@ -17,7 +17,7 @@ GMX is the Graphic Memory eXpander (Scorpion Ltd / MOA, 1998): a memory and vide
 
 ## What the 2026-10-30 revision found
 
-- **The original manual** ("GMX (Graphic Memory eXpander). Руководство по подключению, программированию и работе",
+- **The original manual** ("GMX (Graphic Memory eXpander). Manual for installation, programming and operation",
   Scorpion, 22.11.1998, from the archived scorpion.ru) is now in [references/](references/), with the rev.2022 edition (same programming section). It settles most of the
   conflicts between emulators: `#7EFD` bit 2 blocks Magic **and** lifts the `#7FFD` lock (Q3); the scroller is a
   write-only byte start address with the low four bits zero (Q4); `#00` bits 0-3 pick and reload the FPGA scheme, which

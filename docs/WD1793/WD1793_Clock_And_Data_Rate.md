@@ -119,7 +119,7 @@ One HD byte arrives every 16 µs. In T-states:
 At 3.5 MHz the TR-DOS loop needs 58 T but a new byte comes every 56 T. The CPU falls 2 T further
 behind with every byte. It starts at most ~28 T ahead, so within the first 15-30 bytes of each sector
 a byte is overwritten before it was read: **Lost Data** on every sector. The AXLR article says it
-plainly: "без турбы это не работает" ("without turbo it does not work"); the mod requires the 7 MHz
+plainly: "without turbo it does not work"; the mod requires the 7 MHz
 CPU turbo.
 
 What the chip does (datasheet p.11-14):
