@@ -140,7 +140,11 @@ uint8_t Vs10xxDecoder::SciPort::exchange(uint8_t mosi)
             if (_op == 0x03)
                 miso = static_cast<uint8_t>(_owner.readRegister(_addr));
             else if (_op == 0x02)
+            {
                 _owner.writeRegister(_addr, static_cast<uint16_t>((_hi << 8) | mosi));
+                if (_owner.onSciWrite) [[unlikely]]
+                    _owner.onSciWrite(_addr, static_cast<uint16_t>((_hi << 8) | mosi));
+            }
             break;
         default:
             return 0x00;

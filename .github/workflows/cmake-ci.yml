@@ -201,6 +201,16 @@ jobs:
         working-directory: build/bin
         run: ./streamdeck-tests
 
+      # The terminal debuggers (debuggers/tui) need neither Qt nor the core: on by default, built with the newest gcc
+      - name: Build terminal debuggers
+        run: cmake --build build --target unreal-tui-debugger unreal-tui-debugger-tsconf tui-debugger-tests --parallel
+
+      - name: Run terminal debugger tests
+        working-directory: build/bin
+        run: |
+          ./unreal-tui-debugger-tests
+          ./unreal-tui-debugger-tsconf-tests
+
   # ========================================
   # Stream Deck companion (companions/streamdeck): the daemon, sdctl, the studio and both test binaries (libsdb unit
   # tests and the device wire v2 / daemon route conformance suite, docs/inprogress/2026-10-19-streamdeck-integration/
@@ -439,3 +449,236 @@ jobs:
         run: |
           export PATH="/mingw64/bin:$(cygpath -u "${{ env.QT_ROOT_DIR }}")/bin:$PATH"
           ./streamdeck-studio-tests.exe
+
+  # ========================================
+  # Debuggers (debuggers/README.md): the Qt debugger unreal-debugger (the core in its own process; its --self-check
+  # drives the debugger API and the window's editors offscreen) and the terminal debuggers with their tests, on every
+  # platform. Jobs of their own: BUILD_QT_APPS=OFF and TESTS=OFF, the core and the debuggers only.
+  # ========================================
+  build-debuggers-linux:
+    needs: throttle
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: ci-debuggers-linux-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+    container:
+      image: ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cmake -S . -B build-dbg -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_QT_APPS=OFF \
+            -DTESTS=OFF \
+            -DUNREAL_DEBUGGER_QT=ON
+
+      - name: Build
+        run: >-
+          cmake --build build-dbg --parallel --target
+          unreal-debugger unreal-tui-debugger unreal-tui-debugger-tsconf tui-debugger-tests
+
+      - name: Run terminal debugger tests
+        working-directory: build-dbg/bin
+        run: |
+          ./unreal-tui-debugger-tests
+          ./unreal-tui-debugger-tsconf-tests
+
+      - name: Run unreal-debugger --self-check (offscreen)
+        working-directory: build-dbg/bin
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./unreal-debugger --self-check
+
+  build-debuggers-macos:
+    needs: throttle
+    runs-on: macos-15
+    timeout-minutes: 45
+    concurrency:
+      group: ci-debuggers-macos-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.3'
+          host: 'mac'
+          target: 'desktop'
+          arch: 'clang_64'
+          cache: true
+
+      - name: Install build dependencies
+        run: brew install ninja
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-dbg -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}" \
+            -DBUILD_QT_APPS=OFF \
+            -DTESTS=OFF \
+            -DTRANTOR_USE_TLS=none \
+            -DBUILD_C-ARES=OFF \
+            -DUNREAL_DEBUGGER_QT=ON
+
+      - name: Build
+        run: >-
+          cmake --build build-dbg --parallel --target
+          unreal-debugger unreal-tui-debugger unreal-tui-debugger-tsconf tui-debugger-tests
+
+      - name: Run terminal debugger tests
+        working-directory: build-dbg/bin
+        run: |
+          ./unreal-tui-debugger-tests
+          ./unreal-tui-debugger-tsconf-tests
+
+      - name: Run unreal-debugger --self-check (offscreen)
+        working-directory: build-dbg/bin
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./unreal-debugger --self-check
+
+  build-debuggers-windows-msvc:
+    needs: throttle
+    runs-on: windows-2022
+    timeout-minutes: 45
+    concurrency:
+      group: ci-debuggers-msvc-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.3'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      - name: Setup MSVC
+        uses: egor-tensin/vs-shell@v2
+        with:
+          arch: x64
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build-dbg -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}" \
+            -DBUILD_QT_APPS=OFF \
+            -DTESTS=OFF \
+            -DENABLE_PYTHON_AUTOMATION=OFF \
+            -DTRANTOR_USE_TLS=none \
+            -DBUILD_C-ARES=OFF \
+            -DUNREAL_DEBUGGER_QT=ON
+
+      - name: Build
+        shell: bash
+        run: >-
+          cmake --build build-dbg --parallel --target
+          unreal-debugger unreal-tui-debugger unreal-tui-debugger-tsconf tui-debugger-tests
+
+      - name: Run terminal debugger tests
+        shell: bash
+        working-directory: build-dbg/bin
+        run: |
+          ./unreal-tui-debugger-tests.exe
+          ./unreal-tui-debugger-tsconf-tests.exe
+
+      # Qt's DLLs from the PATH and its plugins from QT_PLUGIN_PATH, both set by install-qt-action
+      - name: Run unreal-debugger --self-check (offscreen)
+        shell: bash
+        working-directory: build-dbg/bin
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./unreal-debugger.exe --self-check
+
+  build-debuggers-windows-mingw:
+    needs: throttle
+    runs-on: windows-latest
+    timeout-minutes: 45
+    concurrency:
+      group: ci-debuggers-mingw-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.3'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_mingw'
+          cache: true
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          cache: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      - name: Configure
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build-dbg -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_PREFIX_PATH="$(cygpath -u "${{ env.QT_ROOT_DIR }}")" \
+            -DBUILD_QT_APPS=OFF \
+            -DTESTS=OFF \
+            -DENABLE_PYTHON_AUTOMATION=OFF \
+            -DTRANTOR_USE_TLS=none \
+            -DBUILD_C-ARES=OFF \
+            -DUNREAL_DEBUGGER_QT=ON
+
+      - name: Build
+        shell: msys2 {0}
+        run: >-
+          cmake --build build-dbg --parallel --target
+          unreal-debugger unreal-tui-debugger unreal-tui-debugger-tsconf tui-debugger-tests
+
+      # MSYS2's gcc runtime first: Qt's mingw_64\bin carries an older libstdc++ the binaries cannot use
+      - name: Run terminal debugger tests
+        shell: msys2 {0}
+        working-directory: build-dbg/bin
+        run: |
+          export PATH="/mingw64/bin:$PATH"
+          ./unreal-tui-debugger-tests.exe
+          ./unreal-tui-debugger-tsconf-tests.exe
+
+      - name: Run unreal-debugger --self-check (offscreen)
+        shell: msys2 {0}
+        working-directory: build-dbg/bin
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          export PATH="/mingw64/bin:$(cygpath -u "${{ env.QT_ROOT_DIR }}")/bin:$PATH"
+          ./unreal-debugger.exe --self-check

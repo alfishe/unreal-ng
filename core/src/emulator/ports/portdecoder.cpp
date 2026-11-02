@@ -367,6 +367,10 @@ void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, [[maybe_unused
         RecordPortTrace(/*isOut=*/false, port, result, pc, disp);
     }
 
+    // 4. The port histories of the registry's devices (one count test while they are off)
+    if (_portHistories.AnyOn()) [[unlikely]]
+        _portHistories.Record(port, result, false, _state && (_state->flags & CF_TRDOS), pc);
+
     // 4. Future: Analyzer notifications can be added here
 }
 
@@ -417,6 +421,9 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
 void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc,
                                     const PortDecodeDisposition& disp)
 {
+    if (_portHistories.AnyOn()) [[unlikely]]
+        _portHistories.Record(port, value, true, _state && (_state->flags & CF_TRDOS), pc);
+
     // 1. Breakpoint handling
     if (_context->pDebugManager != nullptr)
     {

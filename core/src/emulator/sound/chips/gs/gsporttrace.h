@@ -7,6 +7,9 @@
 #include <vector>
 
 #include "common/ringbuffer.h"
+#include "debugger/history/devicehistory.h"
+
+class EmulatorContext;
 
 /// ============================================================================
 /// GENERAL SOUND PORT/ACTIVITY TRACER
@@ -20,7 +23,9 @@
 /// as seen by the MAIN Z80). Both are folded into one event stream here so a
 /// single trace answers "is the GS coprocessor alive and doing DAC pushes".
 ///
-/// Runtime-gated by FeatureManager feature "porttrace_gs" (alias "ptgs").
+/// The events go to a device history (debugger/history/devicehistory.h): SoundManager owns the machine's one, named
+/// by the card's slot in the registry (`zxbus.1`), and every personality it fits (LLE, LW, NeoGS) records into it, so
+/// a personality switch keeps the trace; a card on its own (a test, a card inside another card) records into its own.
 /// ============================================================================
 
 /// Which side of the card originated the event
@@ -31,6 +36,7 @@ enum class GSTraceSide : uint8_t
     DacFetch = 2,   // GS Z80 read in 0x6000-0x7FFF: DAC channel sample latch
     Interrupt = 3,  // 37.5 kHz periodic interrupt accepted (or NMI)
     ZxDma = 4,      // NeoGS ZX-DMA byte: the host read or wrote card RAM through #0000-#3FFF
+    Idle = 5,       // the firmware's idle poll loop slept through (GSCardRunner): pc its head, iterations how often
 };
 
 namespace GSTraceFlags
@@ -50,10 +56,20 @@ struct GSTraceEvent
     uint8_t  channel = 0;     // DacFetch: channel index 0-3. ZxDma: card RAM address 20:16
     GSTraceSide side = GSTraceSide::Host;
     uint8_t  flags = 0;       // GSTraceFlags bitfield
+    uint32_t iterations = 0;  // Idle: the loop's iterations the sleep stood for (their port reads are not recorded)
 
     bool isOut() const { return flags & GSTraceFlags::kDirectionOut; }
     bool isNmi() const { return flags & GSTraceFlags::kNmi; }
+
+    void ToState(StateNode& node) const;
 };
+
+/// The GS card's history (gsporttrace.h)
+using GSHistory = history::DeviceHistory<GSTraceEvent>;
+
+/// The registry id of the General Sound card on this machine (the slot of the card on the GS host ports); `gs`
+/// when the registry names none
+std::string GSHistoryDevice(const EmulatorContext* context);
 
 /// Cheap always-on activity counters (no ring buffer, no feature flag) - the
 /// first thing to check when triaging "is the GS coprocessor doing anything
@@ -128,53 +144,68 @@ inline void accumulateGSActivityCounters(GSActivityCounters& dst, const GSActivi
     }
 }
 
-/// Single-producer (GS coprocessor callbacks, emulator thread), occasional
-/// consumers (CLI/WebAPI/MCP/Lua/Python). Deliberately smaller/simpler than
-/// PortDiagnosticRecorder (no filter DSL, no export formats) - the GS port
-/// space is 12 addresses wide and a raw capture is already small.
+/// The card's face of its history: the session verbs of the GS port trace (start, stop, pause, resume, clear) on
+/// whichever history the card records into. Single producer (the card, emulator thread), occasional consumers
+/// (CLI / WebAPI / MCP / Lua / Python).
 class GSPortTraceRecorder
 {
 public:
     static constexpr size_t kDefaultCapacity = 65536;  // 1.5 MB - GS traffic is orders of magnitude sparser than main-Z80
 
-    GSPortTraceRecorder() : _events(std::make_unique<RingBuffer<GSTraceEvent>>(kDefaultCapacity)) {}
+    GSPortTraceRecorder() : _own("gs", "GS port and activity events", kDefaultCapacity), _history(&_own) {}
 
+    /// The machine's history (SoundManager), or the card's own for nullptr. Set with the emulation thread parked
+    void attach(GSHistory* history, const EmulatorContext* context)
+    {
+        _history = history ? history : &_own;
+        _context = context;
+    }
+
+    /// A new session: the ring empty, recording
     void start()
     {
-        _events->clear();
-        _capturing.store(true, std::memory_order_release);
+        std::string error;
+        _history->Configure({ .mode = history::Mode::Ring, .limit = kDefaultCapacity }, error);
+        _stopped.store(false, std::memory_order_release);
     }
-    void stop() { _capturing.store(false, std::memory_order_release); }
-    void pause() { _paused.store(true, std::memory_order_release); }
-    void resume() { _paused.store(false, std::memory_order_release); }
-    void clear() { _events->clear(); }
-
-    bool isCapturing() const
+    /// The session ends; its events stay readable until the next start or clear
+    void stop()
     {
-        return _capturing.load(std::memory_order_acquire) && !_paused.load(std::memory_order_acquire);
+        _history->Pause(true);
+        _stopped.store(true, std::memory_order_release);
     }
-    bool isArmed() const { return _capturing.load(std::memory_order_acquire); }
+    void pause() { _history->Pause(true); }
+    void resume()
+    {
+        if (!_stopped.load(std::memory_order_acquire))
+            _history->Pause(false);
+    }
+    void clear() { _history->Clear(); }
+
+    bool isCapturing() const { return _history->On(); }
+    bool isArmed() const
+    {
+        return !_stopped.load(std::memory_order_acquire) && _history->GetStats().config.mode != history::Mode::Off;
+    }
 
     void record(const GSTraceEvent& event)
     {
-        if (isCapturing())
-            _events->push(event);
+        // A silent TTD replay re-executes what the history already holds
+        if (_history->On() && !(_context && ReplayActive(_context)))
+            _history->Push(event);
     }
 
-    std::vector<GSTraceEvent> getAll() const { return _events->getAll(); }
-    std::vector<GSTraceEvent> getLast(size_t count) const
-    {
-        std::vector<GSTraceEvent> all = _events->getAll();
-        if (all.size() <= count)
-            return all;
-        return std::vector<GSTraceEvent>(all.end() - static_cast<long>(count), all.end());
-    }
-    size_t eventCount() const { return _events->size(); }
-    uint64_t totalProduced() const { return _events->totalEventsProduced(); }
-    uint64_t totalEvicted() const { return _events->totalEventsEvicted(); }
+    std::vector<GSTraceEvent> getAll() const { return _history->Snapshot(); }
+    std::vector<GSTraceEvent> getLast(size_t count) const { return _history->Snapshot(count); }
+    size_t eventCount() const { return static_cast<size_t>(_history->GetStats().kept); }
+    uint64_t totalProduced() const { return _history->GetStats().written; }
+    uint64_t totalEvicted() const { return _history->GetStats().dropped; }
 
 private:
-    std::atomic<bool> _capturing{false};
-    std::atomic<bool> _paused{false};
-    std::unique_ptr<RingBuffer<GSTraceEvent>> _events;
+    static bool ReplayActive(const EmulatorContext* context);
+
+    GSHistory _own;
+    GSHistory* _history;
+    const EmulatorContext* _context = nullptr;
+    std::atomic<bool> _stopped{ false };
 };

@@ -2,7 +2,7 @@
 
 #include "debugger/analyzers/analyzermanager.h"
 #include "emulator/emulatorcontext.h"
-#include "emulator/sound/chips/iturbosounddevice.h"  // ITurboSoundDevice (tap installed via the slot interface)
+#include "emulator/sound/chips/ayhistory.h"
 #include "emulator/sound/soundmanager.h"
 
 #include <algorithm>
@@ -21,122 +21,78 @@ static std::string generateAYLogUUID()
 AYLogAnalyzer::AYLogAnalyzer(EmulatorContext* context)
     : _context(context), _uuid(generateAYLogUUID())
 {
-    _ring.resize(_capacity);
 }
 
-AYLogAnalyzer::~AYLogAnalyzer()
+AYHistory* AYLogAnalyzer::History() const
 {
-    // Taps are removed by AnalyzerManager on deactivation
+    return _context && _context->pSoundManager ? _context->pSoundManager->ayHistory() : nullptr;
 }
 
 void AYLogAnalyzer::onActivate(AnalyzerManager* manager)
 {
     _manager = manager;
-
-    // Install the tap on the TurboSound wrapper — it is the registered port
-    // device that receives every AY OUT (#FFFD / #BFFD) and knows which of
-    // its two chips is active at the moment of the write
-    bool installed = false;
-    if (_context && _context->pSoundManager)
+    // No AY (e.g. a model without one): nothing records, so callers can tell "started" from "actually recording"
+    // via isRecording()
+    if (AYHistory* ay = History())
     {
-        ITurboSoundDevice* turboSound = _context->pSoundManager->getTurboSound();
-        if (turboSound)
-        {
-            turboSound->setLogSink(&AYLogAnalyzer::onAYWrite, this);
-            installed = true;
-        }
+        std::string error;
+        ay->Configure({ .mode = history::Mode::Ring, .limit = _capacity }, error);
     }
-
-    // No TurboSound (e.g. model without AY) — stay inactive so callers can
-    // distinguish "started" from "actually recording" via getEntryCount()
-    _active.store(installed, std::memory_order_release);
 }
 
 void AYLogAnalyzer::onDeactivate()
 {
-    // Remove the tap regardless of what activation found
-    if (_context && _context->pSoundManager)
+    if (AYHistory* ay = History())
     {
-        ITurboSoundDevice* turboSound = _context->pSoundManager->getTurboSound();
-        if (turboSound)
-        {
-            turboSound->setLogSink(nullptr, nullptr);
-        }
+        std::string error;
+        ay->Configure({ .mode = history::Mode::Off }, error);
     }
-
-    _active.store(false, std::memory_order_release);
     _manager = nullptr;
 }
 
 void AYLogAnalyzer::clear()
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-    _writeIndex = 0;
-    _count = 0;
-    _dropped = 0;
+    if (AYHistory* ay = History())
+        ay->Clear();
 }
 
 void AYLogAnalyzer::setCapacity(size_t capacity)
 {
-    capacity = std::clamp(capacity, MIN_CAPACITY, MAX_CAPACITY);
+    _capacity = std::clamp(capacity, MIN_CAPACITY, MAX_CAPACITY);
+    AYHistory* ay = History();
+    if (ay && ay->On())
+    {
+        std::string error;
+        ay->Configure({ .mode = history::Mode::Ring, .limit = _capacity }, error);
+    }
+}
 
-    std::lock_guard<std::mutex> lock(_mutex);
-    _capacity = capacity;
-    _ring.assign(_capacity, AYLogRecord{});
-    _writeIndex = 0;
-    _count = 0;
-    _dropped = 0;
+bool AYLogAnalyzer::isRecording() const
+{
+    const AYHistory* ay = History();
+    return ay && ay->On();
 }
 
 size_t AYLogAnalyzer::getEntryCount() const
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-    return _count;
+    const AYHistory* ay = History();
+    return ay ? static_cast<size_t>(ay->GetStats().kept) : 0;
+}
+
+size_t AYLogAnalyzer::getDroppedCount() const
+{
+    const AYHistory* ay = History();
+    return ay ? static_cast<size_t>(ay->GetStats().dropped) : 0;
 }
 
 std::vector<AYLogRecord> AYLogAnalyzer::getEntries(size_t offset, size_t limit) const
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-
-    if (offset >= _count)
+    const AYHistory* ay = History();
+    if (!ay)
         return {};
-
-    const size_t available = _count - offset;
-    const size_t take = limit == 0 ? available : std::min(limit, available);
-
-    std::vector<AYLogRecord> result;
-    result.reserve(take);
-
-    // Oldest valid entry position in the ring
-    const size_t start = (_writeIndex + _capacity - _count) % _capacity;
-    for (size_t i = 0; i < take; i++)
-    {
-        result.push_back(_ring[(start + offset + i) % _capacity]);
-    }
-
-    return result;
-}
-
-void AYLogAnalyzer::onAYWrite(void* context, const AYLogRecord& record)
-{
-    AYLogAnalyzer* self = static_cast<AYLogAnalyzer*>(context);
-    if (!self->_active.load(std::memory_order_relaxed))
-        return;
-
-    // TTD silent-replay suppression (same observational rule as AnalyzerManager)
-    if (self->_context && self->_context->ttdReplayActive)
-        return;
-
-    std::lock_guard<std::mutex> lock(self->_mutex);
-    if (self->_count < self->_capacity)
-    {
-        self->_count++;
-    }
-    else
-    {
-        // Ring full — overwrite the oldest entry and count it as dropped
-        self->_dropped++;
-    }
-    self->_ring[self->_writeIndex] = record;
-    self->_writeIndex = (self->_writeIndex + 1) % self->_capacity;
+    std::vector<AYLogRecord> all = ay->Snapshot();
+    if (offset >= all.size())
+        return {};
+    const size_t take = limit == 0 ? all.size() - offset : std::min(limit, all.size() - offset);
+    return { all.begin() + static_cast<std::ptrdiff_t>(offset), all.begin() + static_cast<std::ptrdiff_t>(offset + take) };
 }

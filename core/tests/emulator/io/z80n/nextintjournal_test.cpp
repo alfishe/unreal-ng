@@ -42,6 +42,7 @@ constexpr uint8_t VectorOf(unsigned source) { return static_cast<uint8_t>(kVecto
 TEST(NextIntJournal_Test, RingQueryAndNames)
 {
     NextIntJournal journal(3);
+    journal.SetEnabled(true);
     for (uint8_t i = 0; i < 5; i++)
     {
         NextIntEvent e;

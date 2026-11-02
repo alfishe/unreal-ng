@@ -145,6 +145,13 @@ public:
 
     // ZX-bus slots: the machine's buses, slots and cards (implementation: api/slots_api.cpp over SlotControl,
     // core/src/emulator/slots/slotcontrol.h; ZX-bus slots architecture.md §9). A change restarts the machine
+    // Device histories: off / ring / capture / stream per registry device (api/history_api.cpp over HistoryControl)
+    ADD_METHOD_TO(EmulatorAPI::getHistories, "/api/v1/emulator/{id}/history", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getHistory, "/api/v1/emulator/{id}/history/{device}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postHistoryConfig, "/api/v1/emulator/{id}/history/{device}/config", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::postHistoryClear, "/api/v1/emulator/{id}/history/{device}/clear", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::postHistoryPause, "/api/v1/emulator/{id}/history/{device}/pause", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::postHistoryResume, "/api/v1/emulator/{id}/history/{device}/resume", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getSlots, "/api/v1/emulator/{id}/slots", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getSlotsCatalog, "/api/v1/emulator/{id}/slots/catalog", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getSlotsMatrix, "/api/v1/emulator/{id}/slots/matrix", drogon::Get);
@@ -405,6 +412,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundActive, "/api/v1/emulator/state/audio/moonsound", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundPartActive, "/api/v1/emulator/state/audio/moonsound/{part}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateFdcActive, "/api/v1/emulator/state/fdc", drogon::Get);
+    // The device catalog: the state reports this machine has (api/state_device_api.cpp, DeviceState::Catalog)
+    ADD_METHOD_TO(EmulatorAPI::getStateDevices, "/api/v1/emulator/{id}/state/devices", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateDevicesActive, "/api/v1/emulator/state/devices", drogon::Get);
     // ZX-MultiSound and its MIDI synthesizer (api/state_device_api.cpp, DeviceState::MultiSound / Midi, MidiControl)
     ADD_METHOD_TO(EmulatorAPI::getStateAudioMultiSound, "/api/v1/emulator/{id}/state/audio/multisound", drogon::Get);
     // The Sprinter's ISA Wild Sound (api/state_device_api.cpp, DeviceState::WildSound)
@@ -1512,6 +1522,23 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void postControlAudioMidi(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
+    // Device histories (api/history_api.cpp)
+    void getHistories(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void getHistory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id, const std::string& device) const;
+    void postHistoryConfig(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                           const std::string& device) const;
+    void postHistoryClear(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                          const std::string& device) const;
+    void postHistoryPause(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                          const std::string& device) const;
+    void postHistoryResume(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                           const std::string& device) const;
     // ZX-bus slots (api/slots_api.cpp)
     void getSlots(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                   const std::string& id) const;
@@ -1551,6 +1578,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                     const std::string& chip) const;
     void getStateFdcActive(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getStateDevices(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateDevicesActive(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getStateIde(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateIdeActive(const drogon::HttpRequestPtr& req,

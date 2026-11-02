@@ -183,7 +183,10 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _audio = std::make_unique<NextAudio>(_context);
     _audio->SetTimeSource([this]() { return Now(); });
     if (_context->pSoundManager)
+    {
         _context->pSoundManager->attachModelAudioSource(_audio.get());
+        _audio->SetHistory(_context->pSoundManager->ayHistory());  // the machine's AY history: the Next's three AYs
+    }
     for (unsigned i = 0; i < 2; i++)
     {
         const std::string id = Slot(i).Descriptor().id;
@@ -194,6 +197,7 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         _sd[i].setTraceListener([this, i](const SdTraceEvent& event) { RecordSdEvent(i, event); });
         _sd[i].SetBusTap(&_spiTap, static_cast<uint8_t>(i));
         _sd[i].SetClock([this]() { return EmulatedMicroseconds(); });
+        _sd[i].AttachHistory(_context, [i]() { return std::string(i ? "sd1" : "sd0"); });
         _spiTap.SetDevice(static_cast<uint8_t>(i), i ? "sd1" : "sd0");
     }
     // 16 CPU clocks per byte at any speed (spi_master.vhd); the export's scale is the 28 MHz one
@@ -205,10 +209,50 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         _context->pMediaManager->RegisterSlot(_sdSlot1);
     }
     _context->pConditionMachine = this;
+    // The journals on the device history pattern (the SD one stays the journal's: sd0 / sd1 are the cards' own)
+    _context->histories.Add(&_board->Journal().History());
+    _context->histories.Add(&_intJournal.History());
+    _context->histories.Add(&_divMmc->Journal().History());
+    _context->histories.Add(&_copperHistory);
+    _context->histories.Add(&_dmaHistory);
+    _context->histories.Add(&_uartHistory);
+    _dma.SetBlockListener([this](const NextDma& dma) {
+        if (!_dmaHistory.On() || _context->ttdReplayActive) [[likely]]
+            return;
+        NextDmaRecord r;
+        r.frame = _context->emulatorState.frame_counter;
+        if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+        {
+            r.tacts = z80->t;
+            r.pc = z80->m1_pc;
+        }
+        const NextDma::PortView from = dma.AToB() ? dma.PortA() : dma.PortB();
+        const NextDma::PortView to = dma.AToB() ? dma.PortB() : dma.PortA();
+        r.source = from.address;
+        r.sourceIo = from.io;
+        r.destination = to.address;
+        r.destinationIo = to.io;
+        r.length = dma.BlockLength();
+        r.mode = dma.Mode();
+        r.restart = dma.AutoRestart();
+        _dmaHistory.Push(r);
+    });
+    _uart.SetHistory(&_uartHistory, [context = _context](uint64_t& frame) {
+        frame = context->emulatorState.frame_counter;
+        return !context->ttdReplayActive;
+    });
 }
 
 PortDecoder_Next::~PortDecoder_Next()
 {
+    _context->histories.Remove(&_board->Journal().History());
+    _context->histories.Remove(&_intJournal.History());
+    _context->histories.Remove(&_divMmc->Journal().History());
+    _context->histories.Remove(&_copperHistory);
+    _context->histories.Remove(&_dmaHistory);
+    _context->histories.Remove(&_uartHistory);
+    _dma.SetBlockListener(nullptr);
+    _uart.SetHistory(nullptr, nullptr);
     // The peers outlive the decoder (the network manager owns them): they must not call back into this one
     for (unsigned i = 0; i < NextUart::kChannels; i++)
         if (ISerialPeer* peer = _uart.Peer(i))
@@ -1273,6 +1317,13 @@ void PortDecoder_Next::WatchMagic(BreakpointManager& manager)
 /// door, stops the machine BEFORE the MOVE writes (true: the copper holds the instruction until it runs on)
 bool PortDecoder_Next::OnCopperStep(const NextCopper::Step& step)
 {
+    if (_copperHistory.On() && !_context->ttdReplayActive) [[unlikely]]
+    {
+        const NextCopper& copper = _board->Copper();
+        _copperHistory.Push(NextCopperRecord{ _context->emulatorState.frame_counter, step.pc, step.isMove, step.reg,
+                                              step.value, static_cast<uint16_t>(copper.BeamLine(step.at)),
+                                              static_cast<uint16_t>(copper.BeamHc(step.at)) });
+    }
     if (_breakpointActive || !_context->pDebugManager || !_context->pEmulator)
         return false;
     BreakpointManager& manager = *_context->pDebugManager->GetBreakpointsManager();

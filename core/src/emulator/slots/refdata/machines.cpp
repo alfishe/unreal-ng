@@ -120,11 +120,80 @@ constexpr PortClaim kNextKempstonClaims[] = {
     { .mask = 0x00FF, .match = 0x001F, .dir = Dir::In, .port = 0x001F },
     { .mask = 0x00FF, .match = 0x0037, .dir = Dir::In, .port = 0x0037 },
 };
+// The Next board's own devices, as PortDecoder_Next decodes them (its port report, portdecoder_next_reports.cpp):
+// named so that their port accesses and histories are theirs. No functions: none of them takes a card's place
+constexpr PortClaim kNextRegClaims[] = {
+    { .mask = 0xFFFF, .match = 0x243B, .port = 0x243B },
+    { .mask = 0xFFFF, .match = 0x253B, .port = 0x253B },
+};
+constexpr PortClaim kNextMouseClaims[] = {
+    { .mask = 0xFFFF, .match = 0xFADF, .dir = Dir::In, .port = 0xFADF },
+    { .mask = 0xFFFF, .match = 0xFBDF, .dir = Dir::In, .port = 0xFBDF },
+    { .mask = 0xFFFF, .match = 0xFFDF, .dir = Dir::In, .port = 0xFFDF },
+};
+constexpr PortClaim kNextDmaClaims[] = {
+    { .mask = 0x00FF, .match = 0x006B, .port = 0x006B },  // zxnDMA
+    { .mask = 0x00FF, .match = 0x000B, .port = 0x000B },  // Z80 DMA
+};
+// A15:A11 = 00010, A10 xor (A9 and A8) = 1, A7:A0 = #3B: #133B, #143B, #153B, #163B (and their mirrors in A10:A8)
+constexpr PortClaim kNextUartClaims[] = {
+    { .mask = 0xFFFF, .match = 0x133B, .port = 0x133B },
+    { .mask = 0xFFFF, .match = 0x143B, .port = 0x143B },
+    { .mask = 0xFFFF, .match = 0x153B, .port = 0x153B },
+    { .mask = 0xFFFF, .match = 0x163B, .port = 0x163B },
+};
+constexpr PortClaim kNextCtcClaims[] = { { .mask = 0xF8FF, .match = 0x183B, .port = 0x183B } };
+constexpr PortClaim kNextI2cClaims[] = {
+    { .mask = 0xFFFF, .match = 0x103B, .port = 0x103B },
+    { .mask = 0xFFFF, .match = 0x113B, .port = 0x113B },
+};
+constexpr PortClaim kNextLayer2Claims[] = { { .mask = 0xFFFF, .match = 0x123B, .port = 0x123B } };
+constexpr PortClaim kNextSpriteClaims[] = {
+    { .mask = 0xFFFF, .match = 0x303B, .port = 0x303B },
+    { .mask = 0x00FF, .match = 0x0057, .dir = Dir::Out, .port = 0x0057 },
+    { .mask = 0x00FF, .match = 0x005B, .dir = Dir::Out, .port = 0x005B },
+};
+constexpr PortClaim kNextUlaPlusClaims[] = {
+    { .mask = 0xFFFF, .match = 0xBF3B, .dir = Dir::Out, .port = 0xBF3B },
+    { .mask = 0xFFFF, .match = 0xFF3B, .port = 0xFF3B },
+};
+constexpr PortClaim kNextDivMmcClaims[] = { { .mask = 0x00FF, .match = 0x00E3, .port = 0x00E3 } };
+constexpr PortClaim kNextSpiClaims[] = {
+    { .mask = 0x00FF, .match = 0x00E7, .dir = Dir::Out, .port = 0x00E7 },
+    { .mask = 0x00FF, .match = 0x00EB, .port = 0x00EB },
+};
+// Soundrive 1 / 2, Covox, Profi Covox, GS Covox, SpecDrum (NR #08 bit 3 and the per-port enables); #1F and #DF after
+// the joystick's and the mouse's claims: the board answers them by its enables
+constexpr PortClaim kNextDacClaims[] = {
+    { .mask = 0x00FF, .match = 0x001F, .dir = Dir::Out, .port = 0x001F },
+    { .mask = 0x00FF, .match = 0x000F, .dir = Dir::Out, .port = 0x000F },
+    { .mask = 0x00FF, .match = 0x004F, .dir = Dir::Out, .port = 0x004F },
+    { .mask = 0x00FF, .match = 0x005F, .dir = Dir::Out, .port = 0x005F },
+    { .mask = 0x00FF, .match = 0x00F1, .dir = Dir::Out, .port = 0x00F1 },
+    { .mask = 0x00FF, .match = 0x00F3, .dir = Dir::Out, .port = 0x00F3 },
+    { .mask = 0x00FF, .match = 0x00F9, .dir = Dir::Out, .port = 0x00F9 },
+    { .mask = 0x00FF, .match = 0x00FB, .dir = Dir::Out, .port = 0x00FB },
+    { .mask = 0x00FF, .match = 0x003F, .dir = Dir::Out, .port = 0x003F },
+    { .mask = 0x00FF, .match = 0x00B3, .dir = Dir::Out, .port = 0x00B3 },
+    { .mask = 0x00FF, .match = 0x00DF, .dir = Dir::Out, .port = 0x00DF },
+};
 constexpr BuiltInDef kNextBuiltIns[] = {
     { .id = "ay", .name = "AY-3-8912", .socket = "ay-socket", .functions = kAyFunctions, .claims = kAy128Claims },
     { .id = "ula", .name = "ULA `#FE` (keyboard, beeper, border)", .claims = kUlaClaims },
     { .id = "kempston-joystick", .name = "Kempston joystick (two connectors, `#1F` / `#37`)",
       .functions = kKempstonFunctions, .claims = kNextKempstonClaims },
+    { .id = "nextreg", .name = "NextREG select / data (`#243B` / `#253B`)", .claims = kNextRegClaims },
+    { .id = "kempston-mouse", .name = "Kempston mouse (`#FADF`, `#FBDF`, `#FFDF`)", .claims = kNextMouseClaims },
+    { .id = "dma", .name = "zxnDMA (`#6B`; Z80 DMA mode `#0B`)", .claims = kNextDmaClaims },
+    { .id = "uart", .name = "UARTs: ESP and Pi (`#133B`-`#163B`)", .claims = kNextUartClaims },
+    { .id = "ctc", .name = "CTC, eight channels (`#183B`-`#1F3B`)", .claims = kNextCtcClaims },
+    { .id = "i2c", .name = "I2C: RTC (`#103B` SCL, `#113B` SDA)", .claims = kNextI2cClaims },
+    { .id = "layer2", .name = "Layer 2 control (`#123B`)", .claims = kNextLayer2Claims },
+    { .id = "sprites", .name = "Sprites (`#303B`, attributes `#57`, patterns `#5B`)", .claims = kNextSpriteClaims },
+    { .id = "ula-plus", .name = "ULA+ (`#BF3B`, `#FF3B`)", .claims = kNextUlaPlusClaims },
+    { .id = "divmmc", .name = "DivMMC control (`#E3`)", .claims = kNextDivMmcClaims },
+    { .id = "spi", .name = "SPI: the SD cards (`#E7` select, `#EB` data)", .claims = kNextSpiClaims },
+    { .id = "dac", .name = "DACs: Soundrive, Covox, SpecDrum", .claims = kNextDacClaims },
 };
 constexpr Src kSpectrum128Sources[] = { Src::SinclairWiki128Edge, Src::Spectrum128ServiceManual, Src::Wos128kFaq };
 constexpr Src kPlus2Sources[] = { Src::SinclairWiki128Edge, Src::SinclairWikiPlus2, Src::Wos128kFaq };

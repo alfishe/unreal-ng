@@ -34,6 +34,7 @@ Report results. Wait for explicit "commit" instruction.
 | `unreal-qt/` | Qt desktop UI (Debugger, Memory Viewer, Screen Viewer). |
 | `unreal-screen-viewer/` | Standalone Screen Viewer. |
 | `unreal-videowall/` | Standalone Video Wall. |
+| `debuggers/` | Debuggers: `qt/` (unreal-debugger), `tui/` (classic and TS-Conf terminal debuggers over WebSocket). |
 | `scratch/` | Git-ignored. ALL test artifacts go here. |
 | `docs/` | Documentation. `docs/inprogress/` for active design work. |
 | `.recipe/` | AI agent recipes (MCP/WebAPI automation). |

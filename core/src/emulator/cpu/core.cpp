@@ -524,6 +524,8 @@ bool Core::Init()
     {
         // A fitted card that cannot be built refuses the machine with the reason (SlotManager::BuildError)
         result = _slotManager->BuildCards();
+        if (_portDecoder)
+            _portDecoder->GetPortHistories().Build(_context);  // a history for every device the slots have now
         if (!result)
             _initError = _slotManager->BuildError();
     }

@@ -19,54 +19,6 @@ const char* NextIntKindName(NextIntKind kind)
     return "int_ack";
 }
 
-void NextIntJournal::SetCapacity(size_t capacity)
-{
-    _ring.assign(std::max<size_t>(capacity, 1), NextIntEvent{});
-    _head = 0;
-    _count = 0;
-    _evicted = 0;
-}
-
-void NextIntJournal::Clear()
-{
-    _head = 0;
-    _count = 0;
-    _evicted = 0;
-}
-
-void NextIntJournal::Record(NextIntEvent event)
-{
-    event.seq = ++_seq;
-    _ring[_head] = event;
-    _head = (_head + 1) % _ring.size();
-    if (_count < _ring.size())
-        _count++;
-    else
-        _evicted++;
-}
-
-std::vector<NextIntEvent> NextIntJournal::Query(const NextIntJournalQuery& query) const
-{
-    std::vector<NextIntEvent> out;
-    const size_t first = (_head + _ring.size() - _count) % _ring.size();
-    for (size_t i = 0; i < _count; i++)
-    {
-        const NextIntEvent& e = _ring[(first + i) % _ring.size()];
-        if (e.seq <= query.since)
-            continue;
-        if (query.frameFrom >= 0 && e.frame < query.frameFrom)
-            continue;
-        if (query.frameTo >= 0 && e.frame > query.frameTo)
-            continue;
-        if (!query.kinds.empty() && std::find(query.kinds.begin(), query.kinds.end(), e.kind) == query.kinds.end())
-            continue;
-        out.push_back(e);
-    }
-    if (query.limit && out.size() > query.limit)
-        out.erase(out.begin(), out.end() - static_cast<std::ptrdiff_t>(query.limit));
-    return out;
-}
-
 namespace
 {
 std::vector<std::string> Split(const std::string& text)
@@ -143,4 +95,15 @@ bool NextIntJournalQueryFromStrings(const std::string& kinds, const std::string&
         query.limit = static_cast<size_t>(value);
     }
     return true;
+}
+
+std::vector<NextIntEvent> NextIntJournal::Query(const NextIntJournalQuery& query) const
+{
+    return Select(query.since, query.limit, [&query](const NextIntEvent& e) {
+        if (query.frameFrom >= 0 && e.frame < query.frameFrom)
+            return false;
+        if (query.frameTo >= 0 && e.frame > query.frameTo)
+            return false;
+        return query.kinds.empty() || std::find(query.kinds.begin(), query.kinds.end(), e.kind) != query.kinds.end();
+    });
 }

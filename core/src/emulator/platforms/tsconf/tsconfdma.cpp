@@ -333,6 +333,8 @@ void TsConfDma::Finish()
     _interrupts.RaiseDma();
     if (eventWatch && *eventWatch && onActivity) [[unlikely]]
         onActivity(false, 1);
+    if (onFinish) [[unlikely]]
+        onFinish();
 }
 
 bool TsConfDma::WritesCram() const

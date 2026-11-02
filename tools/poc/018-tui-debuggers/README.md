@@ -1,5 +1,7 @@
 # 018 - TUI Debuggers (classic + TSConf fork)
 
+**2026-10-31: moved on to [debuggers/tui/](../../../debuggers/README.md) (`unreal-tui-debugger`, `unreal-tui-debugger-tsconf`, over the WebSocket by default).** This folder keeps the POC as it was concluded.
+
 Standalone recreations of the UnrealSpeccy debugger UIs as cross-platform C++20
 terminal applications, driven entirely through a swappable backend interface:
 stubbed golden data today, live emulator integration through WebAPI already

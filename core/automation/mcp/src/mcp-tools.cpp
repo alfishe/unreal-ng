@@ -19,6 +19,7 @@
 #include "mcp-analysis.h"
 #include "mcp-media.h"
 #include "mcp-bus.h"
+#include "mcp-history.h"
 #include "mcp-slots.h"
 #include "mcp-actions.h"
 #include "mcp-streamdeck.h"
@@ -2252,7 +2253,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_magic_port", "next_audio", "next_input", "next_uart", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
-                               "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound"})
+                               "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound", "devices"})
     {
         allowed.append(aspect);
     }
@@ -2299,6 +2300,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "'audio_midi' = its MIDI line and SAM2695 synthesizer (16 parts: program, preset name, volume, pan, voices, "
         "notes sounding; polyphony, counters, bank; a panic is invoke_api POST /api/v1/emulator/{id}/control/audio/midi "
         "{action: panic}), "
+        "'devices' = the device catalog: the state reports this machine has (id, title, one-line summary, REST route, "
+        "CLI command, Lua / Python function, and the aspect here that shows each), "
         "'execution' = the execution arbiter (phase; intent run / pause with who set it, why and when; main loop "
         "parked or not; the command holding the CPU and whether it drives the Z80; the queue behind it; the run-control "
         "claim; counters; driver_violations = moments two threads executed the Z80, 0 on a correct run), "
@@ -2564,11 +2567,11 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
                     aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi" && aspect != "execution" &&
-                    aspect != "monitor" && aspect != "audio_wildsound")
+                    aspect != "monitor" && aspect != "audio_wildsound" && aspect != "devices")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound, devices"));
                     return;
                 }
             }
@@ -3081,6 +3084,17 @@ void RegisterInspectState(ToolRegistry& registry)
                             // monitoring::Call `all` for this instance: the process and the instance's values
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", "/api/v1/monitor?instance=" + UrlEncodeSegment(id), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "devices")
+                        {
+                            // Core DeviceState::Catalog via the WebAPI: the state reports this machine has
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/devices"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -3687,6 +3701,22 @@ void RegisterInspectState(ToolRegistry& registry)
                                         out << ", DRIVER VIOLATIONS " << value["driver_violations"].asUInt64();
                                 }
                             }
+                            else if (aspect == "devices")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[devices] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[devices] " << value["reports"].size() << " reports";
+                                    for (const Json::Value& r : value["reports"])
+                                    {
+                                        out << "\n  " << r["id"].asString() << ": " << r["title"].asString();
+                                        if (!r["summary"].asString().empty())
+                                            out << " (" << r["summary"].asString() << ")";
+                                        out << ", aspect " << r["mcp"].asString();
+                                    }
+                                }
+                            }
                             else if (aspect == "rtc")
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
@@ -4229,6 +4259,27 @@ void RegisterInspectState(ToolRegistry& registry)
                                             out << "\n  " << drives[i]["letter"].asString() << ": " << drives[i]["path"].asString()
                                                 << " track " << drives[i]["track"].asInt() << (drives[i]["motor_on"].asBool() ? " motor on" : "")
                                                 << (drives[i]["write_protected"].asBool() ? " wp" : "");
+                                    // The last commands of the history (the report keeps up to 64)
+                                    const Json::Value& history = value["history"];
+                                    if (history.isArray() && !history.empty())
+                                    {
+                                        out << "\n  commands " << value["history_state"]["written"].asInt64() << " ("
+                                            << value["history_state"]["mode"].asString() << "), the last:";
+                                        const Json::ArrayIndex first = history.size() > 8 ? history.size() - 8 : 0;
+                                        for (Json::ArrayIndex i = first; i < history.size(); ++i)
+                                        {
+                                            const Json::Value& h = history[i];
+                                            char line[96];
+                                            snprintf(line, sizeof(line), "\n    #%02X %s T%u S%u drive %u side %u pc #%04X ",
+                                                     h["command"].asUInt(), h["name"].asCString(), h["track"].asUInt(),
+                                                     h["sector"].asUInt(), h["drive"].asUInt(), h["side"].asUInt(), h["pc"].asUInt());
+                                            out << line;
+                                            if (h["done"].asBool())
+                                                out << "status " << h["status"].asUInt() << " in " << h["duration"].asInt64() << " T";
+                                            else
+                                                out << "not done";
+                                        }
+                                    }
                                 }
                             }
                             else if (aspect == "audio_ay")
@@ -4396,7 +4447,16 @@ void RegisterInspectState(ToolRegistry& registry)
                                                 << slot["hostedCard"].asString();
                                     }
                                     for (const Json::Value& builtIn : value["builtIns"])
+                                    {
                                         out << "\n  built-in " << builtIn["id"].asString() << ": " << builtIn["state"].asString();
+                                        // Its ports: the claims a port access is attributed by
+                                        if (builtIn["ports"].isArray() && !builtIn["ports"].empty())
+                                        {
+                                            out << ", ports";
+                                            for (const Json::Value& port : builtIn["ports"])
+                                                out << " " << port["range"].asString();
+                                        }
+                                    }
                                 }
                             }
                             else if (aspect == "audio_covox")
@@ -7189,6 +7249,7 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterStreamDeck(*registry);
     // bus_analyzer: peripheral bus traces, checks, SD card timing (docs/inprogress/2026-10-11-bus-analyzer)
     RegisterBusAnalyzer(*registry);
+    RegisterDeviceHistory(*registry);
     // audio_mixer: the mixer's rows and channels, the levels, the sound settings
     RegisterAudioMixer(*registry);
 

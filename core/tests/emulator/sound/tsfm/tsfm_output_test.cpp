@@ -18,6 +18,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/chips/ayhistory.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/soundchip_turbosound.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
@@ -44,12 +45,6 @@ constexpr uint32_t PENTAGON_FRAME = 71680;
 
 /// Frame buffer size in bytes (interleaved int16 stereo, audio.h layout)
 constexpr size_t FRAME_BUFFER_BYTES = MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(int16_t);
-
-/// Log-sink trampoline: the sink is a plain function pointer
-void LogSinkTrampoline(void* context, const AYLogRecord& record)
-{
-    static_cast<std::vector<AYLogRecord>*>(context)->push_back(record);
-}
 
 /// The FM note used by MuteAtHoldInput and TsfmGain: channel 2 (the OPN CSM
 /// channel), three modulators at TL 0x7F (silent), carrier at TL 0 (the
@@ -187,10 +182,13 @@ protected:
 
         // AY log taps + native-rate taps (SSG on both devices, FM taps on
         // TSFM only - they must carry pure silence)
-        std::vector<AYLogRecord> legacyLog;
-        std::vector<AYLogRecord> tsfmLog;
-        legacy->setLogSink(LogSinkTrampoline, &legacyLog);
-        tsfm->setLogSink(LogSinkTrampoline, &tsfmLog);
+        AYHistory legacyHistory("legacy", "AY register writes");
+        AYHistory tsfmHistory("tsfm", "AY register writes");
+        std::string error;
+        ASSERT_TRUE(legacyHistory.Configure({ .mode = history::Mode::Capture }, error));
+        ASSERT_TRUE(tsfmHistory.Configure({ .mode = history::Mode::Capture }, error));
+        legacy->setHistory(&legacyHistory);
+        tsfm->setHistory(&tsfmHistory);
         legacy->getNativeTap()->activate();
         tsfm->getNativeTap()->activate();
         tsfm->getFmNativeTap(0)->activate();
@@ -324,6 +322,10 @@ protected:
         }
 
         // AY log records: same everything, chip index swapped
+        const std::vector<AYLogRecord> legacyLog = legacyHistory.Snapshot();
+        const std::vector<AYLogRecord> tsfmLog = tsfmHistory.Snapshot();
+        legacy->setHistory(nullptr);
+        tsfm->setHistory(nullptr);
         ASSERT_EQ(tsfmLog.size(), legacyLog.size()) << "log record counts differ";
         for (size_t i = 0; i < legacyLog.size(); i++)
         {

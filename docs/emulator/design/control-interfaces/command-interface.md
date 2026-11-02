@@ -844,8 +844,21 @@ once (`core/src/emulator/state/devicestate.h`, a small dependency-free tree);
 each interface only converts it (JSON / dict / table / text). Adding a report
 to the core makes it available everywhere; interfaces never re-implement it.
 
+**The device catalog** (`core/src/emulator/state/devicecatalog.h`) says which of these reports a machine has: it
+builds every report of its table and lists the ones whose `available` is true, in a fixed order, each with `id`,
+`title`, a one-line `summary` taken from the report (`description`, else `model` / `controller` / `type` / `card` /
+`name`), and the name every plane gives it: `route` (REST, under `/api/v1/emulator/{id}/`), `cli`, `script` (Lua and
+Python) and `mcp` (the `inspect_state` aspect). A front end (a debugger's device view, a companion) lists the machine's
+devices from it instead of knowing the routes and probing them. A Pentagon with TSFM and no General Sound card lists
+`execution`, `screen`, `contention`, `slots`, `ay` (`TurboSound FM (2 x YM2203, SSG halves)`), `fm`, `fdc`, ...; the
+same machine with a NeoGS adds `gs`. The `all` form lists every report of the table, an absent one with `available`
+false and why (`description`: the report's own reason, such as `General Sound card not fitted (plug one: ...)`, or
+`not on this machine` - an AY report without a chip). The set changes only with the machine's devices: a slot change makes a new
+emulator instance, which the WebSocket `instances` topic announces, so the catalog has no topic of its own.
+
 | Report | CLI | WebAPI | Lua | Python | MCP `inspect_state` aspect |
 | :--- | :--- | :--- | :--- | :--- | :--- |
+| Device catalog: the reports this machine has, with id, title, summary and each plane's name (WebSocket: a `call` of the route) | `state devices [all]` (`--json`) | `GET /state/devices[?all=1]` | `devices_state([all])` | `devices_state(all=False)` | `devices` (the present ones) |
 | AY / SSG overview (chip count, slot device, `psg_clock_hz` = the AY clock now, 1500000 on a Profi in hi-res, `active_chip`, each chip's `latched_register`) | `state audio ay` | `GET /state/audio/ay` | `audio_ay_state()` | `audio_ay_state()` | `audio_ay` (overview + every chip) |
 | AY / SSG chip N (registers decoded, `latched_register`, `selected`) | `state audio ay N` | `GET /state/audio/ay/N` | `audio_ay_state(N)` | `audio_ay_state(N)` | `audio_ay` |
 | TurboSound FM overview | `state audio fm` | `GET /state/audio/fm` | `audio_fm_state()` | `audio_fm_state()` | `audio_fm` (overview + both chips) |
@@ -3867,6 +3880,21 @@ The network settings change the ZX-bus network cards the same way (owner decisio
 machine and applies the other keys of the request to it; settings without a card change apply in place (`accepted`).
 WebAPI `POST /network/config` (with `replaceIfIncompatible` / `dryRun` / `mediaDisposition`), MCP `emulator_manage`
 `network_configure` (`settings`), Lua / Python `network_configure`, and the Qt Network window's card boxes do the same.
+
+### 14a. Device Histories
+
+The history of each device's own state machine (the WD1793 commands, the AY register writes, the GS port and
+activity events), named by the device's registry id (`beta128`,
+`zxbus.1`): off (zero cost), a ring (the standby mode), a capture with any limit, and a stream to a JSON Lines file.
+Module doc: [device-history.md](../debugger/device-history.md) (REST, WebSocket, MCP, Python, Lua).
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `history` | | | Every device history: device, what it records, mode, limit, written, kept, dropped, the stream | ✅ Implemented |
+| `history <device>` | | `[N]` | The device's stats and its newest N records (all by default), oldest first | ✅ Implemented |
+| `history <device> mode` | | `<off\|ring\|capture> [limit=N] [stream=<file>] [stream_limit=N]` | Configure: ring size or capture cap (0: none); `stream=` a file every record goes to as well, empty to stop it. Starts afresh | ✅ Implemented |
+| `history <device> clear` | | | Drop the records and counts | ✅ Implemented |
+| `history <device> pause` | `resume` | | Hold the history: nothing recorded, the records kept; `resume` goes on | ✅ Implemented |
 
 ### 15. Game Controllers
 

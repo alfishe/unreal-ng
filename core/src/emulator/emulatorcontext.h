@@ -66,6 +66,7 @@ namespace ttd { class TimeTravelController; class ITimeTravelHooks; class ITTDWr
 namespace rzx { class RzxPlayer; }
 
 #include "debugger/ttd/ttdprobe.h"  // inline member - needs full definition
+#include "debugger/history/devicehistory.h"  // inline member: the histories of the machine's devices
 
 // Create callback type for audio
 // User in emulator/sound/soundmanager and client/GUI
@@ -335,7 +336,8 @@ public:
         kStepWorkEngine = 1u << 5,           ///< the machine runs on its own instruction engine (Z80::SetEngine)
         kStepWorkPcHistory = 1u << 6,        ///< a debugger records the PC history (PcHistory::Arm)
         kStepWorkScriptEdits = 1u << 7,      ///< a logic callback's writes wait for the boundary (ScriptCallbackManager)
-        // Next free: 1u << 8
+        kStepWorkExecHistory = 1u << 8,      ///< the main CPU's execution history `cpu` is on (PcHistory, exechistory.h)
+        // Next free: 1u << 9
     };
     std::atomic<uint32_t> stepWork{0};
 
@@ -376,6 +378,10 @@ public:
     // Z80 M1 cycle, DecodePortOut) reads `ttdProbe.IsArmed()` with one
     // predictable branch. Cost when not armed: ~1 cycle.
     ttd::TTDAccessProbe ttdProbe;
+
+    // The histories of the machine's devices (debugger/history/devicehistory.h), by registry id: each device
+    // registers its own while it lives; every automation plane reads and configures them here
+    history::Registry histories;
 
     // Per-frame coverage collection (reverse-search index). Read on the
     // instruction-fetch path, so it is a plain bool rather than a call into

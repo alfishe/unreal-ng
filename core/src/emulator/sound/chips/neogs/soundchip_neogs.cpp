@@ -11,6 +11,7 @@
 #include "common/statebytes.h"
 #include "debugger/targets/gscardtarget.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
@@ -57,6 +58,17 @@ using namespace statebytes;
 
 /// region <Construction>
 
+void SoundChip_NeoGS::Mp3Record::ToState(StateNode& node) const
+{
+    static const char* const kNames[16] = { "MODE", "STATUS", "REG2", "CLOCKF", "DECODE_TIME", "AUDATA", "WRAM",
+                                            "WRAMADDR", "HDAT0", "HDAT1", "AIADDR", "VOL", "REG12", "AICTRL0",
+                                            "AICTRL1", "AICTRL2" };
+    node["frame"] = int64_t(frame);
+    node["reg"] = int(reg);
+    node["reg_name"] = kNames[reg & 0x0F];
+    node["value"] = int(value);
+}
+
 SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& config, size_t sampleRate)
     : _context(context)
     , _config(config)
@@ -81,6 +93,7 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
     _runner.bind(_cpu, this);
 
     _sd = std::make_unique<SdCardSpi>();
+    _sd->AttachHistory(_context, [context = _context]() { return GSHistoryDevice(context) + ".sd"; });
     // TTD: the card's protocol state is in the blob, its sectors are not; a
     // guest write changes the medium, so it is a replay barrier (the media
     // manager's rule: at most one a frame)
@@ -101,6 +114,14 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
         _spi.attach(NeoGSSpi::MC, &_sciDevice);
         _spi.attach(NeoGSSpi::MD, &_sdiDevice);
         _dma.attachMp3(_mp3.get());
+        _mp3History = std::make_unique<history::Registered<Mp3Record>>(
+            _context ? &_context->histories : nullptr,
+            [context = _context]() { return GSHistoryDevice(context) + ".mp3"; }, "MP3 decoder SCI writes", 1024);
+        _mp3->onSciWrite = [this](uint8_t reg, uint16_t value) {
+            if (_mp3History->On() && !(_context && _context->ttdReplayActive)) [[unlikely]]
+                (*_mp3History)->Push({ .frame = _context ? _context->emulatorState.frame_counter : 0, .reg = reg,
+                                       .value = value });
+        };
         _dma.attachMp3Data(&_sdiDevice);
     }
     _dma.attachSd(&_sdDevice);
@@ -1062,6 +1083,17 @@ void SoundChip_NeoGS::traceEvent(GSTraceSide side, uint16_t port, uint8_t value,
     _portTrace.record(event);
 }
 
+void SoundChip_NeoGS::traceIdle(uint16_t head, int64_t start, uint64_t iterations)
+{
+    GSTraceEvent event;
+    event.timestamp = start;
+    event.frameNumber = currentFrameNumber();
+    event.pc = head;
+    event.side = GSTraceSide::Idle;
+    event.iterations = static_cast<uint32_t>(std::min<uint64_t>(iterations, UINT32_MAX));
+    _portTrace.record(event);
+}
+
 /// endregion </Frame lifecycle and host sync>
 
 /// region <Host ports>
@@ -1408,6 +1440,11 @@ uint8_t SoundChip_NeoGS::intVectorCb(Z80CPU* /*cpu*/, void* userData)
 void SoundChip_NeoGS::runToDebug(int64_t target)
 {
     _runner.runToDebug(target, _debugHooks);
+}
+
+void SoundChip_NeoGS::runToRecord(int64_t target)
+{
+    _runner.runToRecord(target);
 }
 
 bool SoundChip_NeoGS::setDebugHooks(IGSDebugHooks* hooks)

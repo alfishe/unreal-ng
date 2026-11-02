@@ -3,6 +3,7 @@
 #include "common/modulelogger.h"
 
 #include "portdecoder_tsconf.h"
+#include "emulator/slots/portowners.h"
 #include "emulator/platforms/tsconf/tsconfprogramsnapshot.h"
 #include "loaders/snapshot/snapshotcapture.h"
 
@@ -51,6 +52,19 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     // media manager's rule)
     _zc.SetDevice(&_sdCard);
     _dma.eventWatch = &_context->machineEventWatch;
+    _dma.onFinish = [this]() {
+        if (_dmaHistory.On() && !_context->ttdReplayActive)
+        {
+            const uint64_t frame = _context->emulatorState.frame_counter;
+            _dmaHistory->UpdateLast([frame](TsDmaRecord& r) {
+                if (!r.done)
+                {
+                    r.done = true;
+                    r.endFrame = frame;
+                }
+            });
+        }
+    };
     _dma.onActivity = [this](bool started, uint8_t value) {
         GSReportHostEvent(_context, started ? GSCardEvent::TsDmaStart : GSCardEvent::TsDmaDone, value);
     };
@@ -77,6 +91,7 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     _zc.SetTap(&_spiTap);
     _sdCard.SetBusTap(&_spiTap, 0);
     _sdCard.SetClock([this]() { return EmulatedMicroseconds(); });
+    _sdCard.AttachHistory(_context, [context = _context]() { return slots::PortOwnerName(context, 0x0057, "sd-zc"); });
     // The VDAC2 card keeps time in raster tacts; it closes a frame once the
     // engine has accounted all of it (the DMA's last SPI bytes included)
     _engine.SetFrameEndListener([this]() {
@@ -728,6 +743,36 @@ uint8_t PortDecoder_TSConf::ReadRegister(uint8_t reg)
     }
 }
 
+std::string PortDecoder_TSConf::RegistersDevice() const
+{
+    return slots::PortOwnerName(_context, 0x00AF, "ts-registers");
+}
+
+/// The register write, after the board latched it; a DMA_CTRL write is a launch too (after it: the counters it took)
+void PortDecoder_TSConf::RecordRegister(uint8_t reg, uint8_t value)
+{
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint64_t frame = _context->emulatorState.frame_counter;
+    const uint16_t tacts = z80 ? static_cast<uint16_t>(z80->t) : 0;
+    const uint16_t pc = z80 ? z80->m1_pc : 0;
+    if (_registerHistory.On())
+        _registerHistory->Push({ .frame = frame, .tacts = tacts, .pc = pc, .reg = reg, .value = value });
+    if (reg != TsConfReg::DmaCtrl || !_dmaHistory.On())
+        return;
+    TsDmaRecord record;
+    record.frame = frame;
+    record.tacts = tacts;
+    record.pc = pc;
+    record.device = static_cast<uint8_t>(((value >> 4) & 0x08) | (value & 0x07));
+    record.flags = _ts.dmaFlags;
+    record.source = _ts.dmaSrc << 1;
+    record.destination = _ts.dmaDst << 1;
+    record.burst = static_cast<uint16_t>(_ts.regs[TsConfReg::DmaLen] + 1);
+    record.blocks = static_cast<uint16_t>(_ts.regs[TsConfReg::DmaNum] + 1);
+    record.aborted = _dmaRunningAtWrite;
+    _dmaHistory->Push(record);
+}
+
 void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
 {
     if (reg >= TsConfReg::kCount)
@@ -795,11 +840,14 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
             _dma.WriteAddress(reg, value);
             break;
         case TsConfReg::DmaCtrl:
+            _dmaRunningAtWrite = _dma.Busy();
             _dma.Launch(value);
             break;
         default:
             break;
     }
+    if ((_registerHistory.On() || _dmaHistory.On()) && !_context->ttdReplayActive) [[unlikely]]
+        RecordRegister(reg, value);
 }
 
 void PortDecoder_TSConf::EnterSpectrum128Paging([[maybe_unused]] uint16_t pc)

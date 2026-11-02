@@ -46,6 +46,8 @@ static int16_t TrimToI16(float value)
 
 SoundChip_Moonsound::SoundChip_Moonsound(EmulatorContext* context, size_t coreRate)
     : _context(context)
+    , _history(ChipHistoryRegistry(context), [context]() { return ChipHistoryDevice(context, PORT_FM_ADDR1, "moonsound"); },
+               "OPL4 register writes", kChipWriteRing)
     , _coreRate(coreRate)
 {
     _logger = context->pModuleLogger;
@@ -378,6 +380,9 @@ void SoundChip_Moonsound::portDeviceOutMethod(uint16_t port, uint8_t value)
             if (_context && _context->chipRegisterWatch) [[unlikely]]
                 ReportChipRegisterWrite(_context, SoundChipKind::Opl4, 0,
                                         static_cast<uint16_t>((_fmBank << 8) | _fmLatch[_fmBank]), value);
+            if (_history.On()) [[unlikely]]
+                RecordChipWrite(_context, _history, SoundChipKind::Opl4, 0,
+                                static_cast<uint16_t>((_fmBank << 8) | _fmLatch[_fmBank]), value);
             break;
 
         case PORT_FM_ADDR2:
@@ -399,6 +404,8 @@ void SoundChip_Moonsound::portDeviceOutMethod(uint16_t port, uint8_t value)
                 _opl4.WriteWave(chipTimeNow(), _waveLatch, value);
                 if (_context && _context->chipRegisterWatch) [[unlikely]]
                     ReportChipRegisterWrite(_context, SoundChipKind::Opl4Wave, 0, _waveLatch, value);
+                if (_history.On()) [[unlikely]]
+                    RecordChipWrite(_context, _history, SoundChipKind::Opl4Wave, 0, _waveLatch, value);
             }
             break;
 

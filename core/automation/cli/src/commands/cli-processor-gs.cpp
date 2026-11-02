@@ -28,6 +28,7 @@ const char* GsTraceSideName(GSTraceSide side)
         case GSTraceSide::DacFetch: return "DAC";
         case GSTraceSide::Interrupt: return "INT";
         case GSTraceSide::ZxDma: return "ZXDMA";
+        case GSTraceSide::Idle: return "IDLE";
     }
     return "?";
 }
@@ -165,6 +166,8 @@ void CLIProcessor::HandleGSPortTrace(const ClientSession& session, const std::ve
                 ss << " ch=" << std::dec << (int)e.channel;
             if (e.side == GSTraceSide::Interrupt && e.isNmi())
                 ss << " (NMI)";
+            if (e.side == GSTraceSide::Idle)
+                ss << " x" << std::dec << e.iterations;
             ss << std::dec << NEWLINE;
         }
     }
