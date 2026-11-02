@@ -250,7 +250,7 @@ The Scorpion ZX screen (page 5/7) with the Scorpion raster (MAME inherits, UNR `
 | Kempston joystick `#1F` (DOS off), Kempston mouse `#FADF/#FBDF/#FFDF` (buttons, X, Y, wheel nibble) | MAME `:342-346` | MAME |
 | Covox `#DD`, Centronics, RS-232 (`#1FFD` bit 3) | MAME `:182-185, 644`; xpeccy-plus `scorpion.c` (`#DD` covox) | MAME, Xpeccy |
 | Keyboard | ZX matrix; the ProfROM "Ext" key is CS+SS+key (ZXBY: "Tab = Ext", F8/F9/F10 = Ext+1/9/0 for OSZ); MAME carries the Scorpion PC-keyboard controller ROM `scrpkey.rom` (`:906-907`) but does not emulate it | ZXBY, MAME |
-| General Sound | does not work with the card (1999 article, D07 Q14); MAME has a GS ROM region marked TODO (`:909-911`) | D07, MAME |
+| General Sound | the 1999 article says it does not work with the card (D07 Q14), the official site names the 20.04.99 firmware as the fix, Puzzle Bobble (2024) needs it; MAME has a GS ROM region marked TODO (`:909-911`). The model fits a GS (2026-11-02) | D07, MAME |
 | ZX-bus | MAME: two `zxbus_gmx_cards` slots on all Scorpion classes (`:513-515`) | MAME |
 | ESP-12 Wi-Fi card, BomgeMoon OPL3 | used by OSZ (`_Doc/ReadMe.txt`) | OSZ |
 

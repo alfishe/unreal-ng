@@ -168,8 +168,8 @@ with identical columns are merged.
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | **ts** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | **tsfm** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **gs** | A | ✓ | ✓ | ✓ | **X** (does not work with GMX (1999); forced plug only) | A | ✓ | ✓ | A | A | A | A |
-| **gs-lw** | A | ✓ | ✓ | ✓ | **X** (does not work with GMX (1999); forced plug only) | A | ✓ | ✓ | A | A | A | A |
+| **gs** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
+| **gs-lw** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
 | **neogs** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
 | **moonsound** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | **X** (`#7E` palette, board wins) | A | A | A |
 | **covox-fb** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | **X** (`#FB` is the board's `covox`) | A | A | A | A |

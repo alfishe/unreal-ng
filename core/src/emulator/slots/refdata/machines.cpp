@@ -216,6 +216,9 @@ constexpr BuiltInDef kScorpionBuiltIns[] = {
 };
 constexpr Src kScorpionSources[] = { Src::ScorpionPortGuide, Src::ScorpionYellowReconstruction,
                                      Src::SpectrumExpert02, Src::MameScorpion };
+// GmxApollonov is history only: the 1999 article said the classic General Sound does not work with the card, the
+// official site then named the firmware of 20.04.99 as the fix, and current GMX software (Puzzle Bobble 2024) plays
+// through a GS, so the slots carry no rule against it
 constexpr Src kGmxSources[] = { Src::ScorpionPortGuide, Src::ScorpionYellowReconstruction, Src::MameScorpion,
                                 Src::GmxApollonov };
 constexpr Src kProfScorpionSources[] = { Src::ScorpionTurboPlusNetlist, Src::ScorpionProfRom, Src::ScorpionPortGuide,
