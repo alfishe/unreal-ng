@@ -68,6 +68,7 @@
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/ttdsessiontypes.h"  // the session's status, results and options, shared with the controller
 #include "emulator/sound/soundmanager.h"  // SoundManager::HostOutputHold (replay hold)
+#include "emulator/video/screenmemoryspan.h"  // the picture's memory at a boundary (timeline `screen`)
 #include "ttdcheckpoint.h"
 #include "ttdexternalevents.h"
 #include "ttdfileinfo.h"
@@ -84,6 +85,7 @@
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
 #include "ttdcoverageindex.h"
+#include "ttdtimeline.h"
 #include "ttdperipheralregistry.h"
 #include "ttdportjournal.h"
 #include "ttdportsearch.h"
@@ -1264,6 +1266,11 @@ public:
         std::optional<TTDCoverageKind> kind = std::nullopt,
         uint64_t bucketSize = 0,
         size_t limit = 100) const;
+
+    /// @brief The timeline summary (TD-5, docs/inprogress/2026-10-31-ttd-timeline-summary): per bucket of frames
+    /// the facts the session holds, and the phases they make. Reads only what the recording stores (no replay);
+    /// a fact it cannot give is named in `missing`
+    TTDTimelineResult QueryTimeline(const TTDTimelineOptions& options) const;
     
     /// @brief Step back one instruction (TDD §10.2 + §16 row 2).
     ///
@@ -1936,6 +1943,8 @@ private:
     /// The live machine's memory regions as the engine sees them: machine RAM, then each region source's
     std::vector<TTDRegionDesc> LiveRegions() const;
     uint64_t _shadowLastStart = 0;         ///< the last captured frame's start in machine time
+    std::vector<ScreenMemorySpan> _shadowScreenSpans;   ///< the picture's memory at the boundary (reused)
+    std::vector<TTDScreenRange> _shadowScreenRanges;
     uint64_t _shadowLastBase = 0;          ///< emulatorState.t_states at that capture
     uint64_t _shadowLastLength = 0;        ///< the length of the frame before it (0: none yet)
     uint64_t _shadowRomSignature = 0;      ///< the ROM set's, hashed once per shadow session

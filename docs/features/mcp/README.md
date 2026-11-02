@@ -207,6 +207,7 @@ the internals).
 | `export_clip` | `from_frame`, `to_frame`, `path`, optional `chunk` | Write frames from..to as a lossless clip into the directory `path` (final picture, plane B when `zxdlss` is on, frame meta) in one call; not while recording |
 | `bookmark_add` / `bookmark_list` / `bookmark_delete` / `seek_bookmark` | `label`, optional `frame`/`tinframe` | Named points in time |
 | `coverage_probe` / `coverage_scan` / `coverage_summary` | `frame` or `from_frame`/`to_frame`, `kind`, `addr_from`/`addr_to`, `phys_page` (0..255 or `rom`), `limit`, `order` (`oldest` / `newest`), `ranges`, … | Which frames touched which addresses, without replaying; the scan's text lists the frames as runs, the cursor of a cut list, and says when the answer is not exact (no `phys_page`) |
+| `timeline` | optional `from_frame`/`to_frame`, `min_phase_ms` (shortest phase, default 200), `ports`, `buckets` (adds an overview of `limit` buckets, default 20; `bucket_size`) | Start here on an unknown recording: the history cut into phases of the same activity (`tape`, `disk`, `input`, `net`, `sound`, `screen`, `burst`, `halt`, `paging`), each with its frames, facts, keys, devices and busiest frame; the text lists every phase, the events and what is missing (`halt` after a session loaded from a file). Reads the session only, no replay |
 
 Addresses may be integers or strings such as `"0x5800"`. Everything that moves
 through history (`seek`, the step actions, `reverse_*`, `find_last`) needs a

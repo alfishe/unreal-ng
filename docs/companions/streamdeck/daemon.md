@@ -190,7 +190,8 @@ The executable's path is the real one (links resolved: `/usr/bin` on the DEB, th
 `run` prints the folder it took (`data: ...`), or a note when there is none: then `$data` paths do not load and the
 idle screen is the drawn title. Every release package carries `data/streamdeck` where row 2 or 3 finds it:
 `UnrealNG.app/Contents/Resources/streamdeck`, `streamdeck/` beside the executables (Windows ZIP, Linux tarball,
-AppImage `usr/bin`), `/usr/lib/unreal-ng/streamdeck` (DEB) ([packaging.md §6](../../inprogress/2026-10-19-streamdeck-integration/packaging.md#6-data)).
+AppImage `usr/bin`), `/usr/lib/unreal-ng/streamdeck` (DEB) ([packaging.md §6](../../inprogress/2026-10-19-streamdeck-integration/packaging.md#6-data)),
+and beside it the test software the scenarios open as `$data/...`: `testsoft/`, `testtapes/`, `testsnapshots/`.
 
 Picture paths in faces and the strip (`face.image`, `strip.image`):
 

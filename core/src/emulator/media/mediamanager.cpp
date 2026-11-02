@@ -1555,6 +1555,13 @@ Medium* MediaManager::GetMedium(const std::string& slotId)
     return it == _slots.end() ? nullptr : it->second.attached.get();
 }
 
+bool MediaManager::HasIncoming(const std::string& slotId) const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _slots.find(slotId);
+    return it != _slots.end() && it->second.incoming != nullptr;
+}
+
 /// region <Helpers>
 
 void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::vector<std::unique_ptr<Medium>>& retired)

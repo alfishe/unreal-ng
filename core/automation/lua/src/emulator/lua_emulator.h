@@ -2927,13 +2927,8 @@ public:
             // Parse-once (idempotent); paused -> resume the frozen position
             // in place, otherwise start at the consumption cursor — the same
             // semantics as `tape play` / POST /tape/play
-            if (!ctx->pTape->EnsureImageLoaded())
-                return false;
-            if (ctx->pTape->GetPlaybackState() == TapePlaybackState::Paused)
-                ctx->pTape->ResumePlaybackFromPause();
-            else
-                ctx->pTape->StartPlaybackAtCursor();
-            return true;
+            // A tape still on its way (a load while a TTD recording runs) plays once it lands
+            return ctx->pTape->Play() != TapePlayResult::NoBlocks;
         });
 
         lua.set_function("tape_stop", [this]() -> bool {
@@ -6168,6 +6163,16 @@ public:
             for (const auto& [key, value] : argsTable)
                 options[key.as<std::string>()] = TtdOptionText(value);
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-summary", options)));
+        });
+
+        // ttd_timeline{from_frame=, to_frame=, bucket_size=, limit=, buckets=, ports=, min_phase_ms=}: the recording cut
+        // into phases of the same activity, from what the session holds (no replay)
+        lua.set_function("ttd_timeline", [this](sol::this_state ts, sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("timeline", options)));
         });
 
         // A memory at a past checkpoint and what changed between two, from the store (no seek):

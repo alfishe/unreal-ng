@@ -10,6 +10,8 @@ These are the "answer the question backwards" primitives:
 
 - *Who wrote this memory?* → `find-last`
 - *What ran just before the crash?* → `reverse-step` / `reverse-continue`
+- *What happened in this recording, and where?* → `timeline` first (MCP `timeline`: the phases with their tags and
+  busiest frames, one call, no replay), then the queries below on a phase
 - *Which frames touched this address range?* → coverage probe/scan/summary
 - *In which frames did a game profile's probe fire?* → `probe-frames` (MCP `probe_frames`: the probes as the profile
   writes them, `if:` included; a replay of the window, the machine stays)
@@ -29,6 +31,11 @@ time_travel {"action":"coverage_probe","frame":11782,"kind":"executed",
 time_travel {"action":"coverage_scan","from_frame":11000,"to_frame":12000,"kind":"written",
              "addr_from":"0x8000","addr_to":"0xBFFF","phys_page":5,"limit":200}
 time_travel {"action":"coverage_summary","kind":"executed"}
+# the recording cut into phases (start here on an unknown session):
+time_travel {"action":"timeline"}   # min_phase_ms (default 200); buckets=true adds an overview
+#   each phase: tags (screen = bytes the renderer shows were written, on every video family; tape only with a tape in;
+#   disk, sound, burst, paging, halt), the devices it used ({device,in,out} ports, {slot,sectors} host-read media,
+#   {region,frames} card / video memory), its busiest frame: seek there next; `missing` says what the session lacks
 # a profile's probes over the history ("shot" and "died" of a haptic profile):
 time_travel {"action":"probe_frames","from_frame":11000,"to_frame":12000,
              "probes":[{"probe":"exec","address":"0x8A14"},

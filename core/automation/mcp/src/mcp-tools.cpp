@@ -5309,7 +5309,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
                                "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
-                               "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary",
+                               "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
                                "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
                                "memory_at", "memory_diff"})
@@ -5366,6 +5366,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "most max_frames frames of from_frame..to_frame, as blocks with those frames, rarest first; addr_from / "
         "addr_to where the page was mapped at the first frame's start, else phys_page and page offsets), "
         "'coverage_summary' (bucketed activity heatmap). "
+        "'timeline' (start here on an unknown recording: the history cut into phases of the same activity - tags tape, "
+        "disk, input, net, sound, screen, burst, halt, paging - each with its frames, facts, keys, devices used and the "
+        "busiest frame to seek to; one call instead of a loop of coverage_summary / port_events / memory_diff; reads "
+        "what the session stores, no replay; facts it cannot give are listed as missing; from_frame, to_frame, "
+        "buckets=true adds an overview of limit buckets (default 20; bucket_size sets their size), ports=false skips the "
+        "per-device port counts, min_phase_ms the shortest phase, default 200). "
         "Write journal (who wrote an address last, answered at once; off by default): 'journal_on' / 'journal_off' "
         "switch it at any moment, also while recording (each on-off span is a segment); 'journal_build' builds it by "
         "replaying frames from_frame..to_frame (default: the whole session; about 2-4 ms per frame; not while "
@@ -5556,7 +5562,14 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["max_frames"]["description"] =
         "coverage_rare: an address is rare when at most this many frames touched it (default 1, at most 1000)";
     schema["properties"]["bucket_size"]["type"] = "integer";
-    schema["properties"]["bucket_size"]["description"] = "Frames per bucket for coverage_summary (default: auto)";
+    schema["properties"]["bucket_size"]["description"] = "Frames per bucket for coverage_summary / timeline (default: auto)";
+    schema["properties"]["buckets"]["type"] = "boolean";
+    schema["properties"]["buckets"]["description"] = "timeline: also return an overview of limit buckets (default false: the phases)";
+    schema["properties"]["ports"]["type"] = "boolean";
+    schema["properties"]["ports"]["description"] = "timeline: count the port records per device (default true)";
+    schema["properties"]["min_phase_ms"]["type"] = "integer";
+    schema["properties"]["min_phase_ms"]["description"] =
+        "timeline: the shortest phase in ms of machine time, also the window frames are tagged over (default 200)";
     schema["properties"]["probes"]["type"] = "array";
     schema["properties"]["probes"]["items"]["type"] = "object";
     schema["properties"]["probes"]["description"] =
@@ -6469,6 +6482,71 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         if (body["truncated"].asBool())
                             out << "\n[TRUNCATED] the list holds the rarest " << body["blocks"].size()
                                 << "; narrow the range or raise limit";
+                        done(ToolResult::Ok(out.str(), std::move(body)));
+                    });
+                }
+                else if (action == "timeline")
+                {
+                    std::string query = "/ttd/timeline?";
+                    for (const char* field : {"from_frame", "to_frame", "bucket_size", "limit", "min_phase_ms"})
+                        if (args.isMember(field))
+                            query += std::string(field) + "=" + std::to_string(args[field].asUInt64()) + "&";
+                    for (const char* field : {"buckets", "ports"})
+                        if (args.isMember(field))
+                            query += std::string(field) + "=" + (args[field].asBool() ? "true" : "false") + "&";
+                    query.pop_back();
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        // Every phase in the text: an agent may read only this
+                        const Json::Value& devices = body["devices"];
+                        std::ostringstream out;
+                        out << "Timeline " << body["from_frame"].asUInt64() << ".." << body["to_frame"].asUInt64() << " ("
+                            << body["to_frame"].asUInt64() - body["from_frame"].asUInt64() + 1 << " frames";
+                        if (body["bucket_count"].asUInt64())
+                            out << ", " << body["bucket_count"].asUInt64() << " buckets of "
+                                << body["bucket_size"].asUInt64() << " frames";
+                        out << (body["truncated"].asBool() ? ", window cut at the limit" : "") << "): "
+                            << body["phases"].size() << " phases";
+                        for (const Json::Value& p : body["phases"])
+                        {
+                            std::string tags;
+                            for (const Json::Value& t : p["tags"])
+                                tags += (tags.empty() ? "" : ",") + t.asString();
+                            out << "\n" << p["frame_start"].asUInt64() << ".." << p["frame_end"].asUInt64() << " "
+                                << (tags.empty() ? "-" : tags) << ": exec " << p["executed"].asUInt() << ", written "
+                                << p["written"].asUInt() << ", screen " << p["screen_frames"].asUInt() << " fr, halted "
+                                << p["halted_frames"].asUInt() << " fr, in " << p["in"].asUInt64() << ", out "
+                                << p["out"].asUInt64();
+                            if (p["ula_reads"].asUInt64())
+                                out << ", #FE reads " << p["ula_reads"].asUInt64();
+                            if (p["sectors"].asUInt64())
+                                out << ", sectors " << p["sectors"].asUInt64();
+                            if (p["keys"].size() > 0)
+                            {
+                                out << ", keys";
+                                for (const Json::Value& k : p["keys"])
+                                    out << " " << k.asString();
+                            }
+                            for (const Json::Value& d : p["devices"])
+                                if (d.isMember("slot"))
+                                    out << "; " << d["slot"].asString() << " " << d["sectors"].asUInt64() << " sectors";
+                                else if (d.isMember("region"))
+                                    out << "; " << d["region"].asString() << " changed " << d["frames"].asUInt64()
+                                        << " fr";
+                                else if (d["device"].asUInt() < devices.size())
+                                    out << "; " << devices[d["device"].asUInt()]["name"].asString() << " in "
+                                        << d["in"].asUInt64() << " out " << d["out"].asUInt64();
+                            out << "; busiest frame " << p["busiest_frame"].asUInt64();
+                        }
+                        for (const Json::Value& e : body["events"])
+                            out << "\nevent " << e["frame"].asUInt64() << " " << e["kind"].asString() << " "
+                                << e["text"].asString();
+                        for (const Json::Value& m : body["missing"])
+                            out << "\nmissing " << m["fact"].asString() << ": " << m["reason"].asString();
                         done(ToolResult::Ok(out.str(), std::move(body)));
                     });
                 }

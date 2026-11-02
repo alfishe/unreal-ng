@@ -3078,13 +3078,8 @@ namespace PythonBindings
                 // Parse-once (idempotent); paused -> resume the frozen position
                 // in place, otherwise start at the consumption cursor — the same
                 // semantics as `tape play` / POST /tape/play
-                if (!ctx->pTape->EnsureImageLoaded())
-                    return false;
-                if (ctx->pTape->GetPlaybackState() == TapePlaybackState::Paused)
-                    ctx->pTape->ResumePlaybackFromPause();
-                else
-                    ctx->pTape->StartPlaybackAtCursor();
-                return true;
+                // A tape still on its way (a load while a TTD recording runs) plays once it lands
+                return ctx->pTape->Play() != TapePlayResult::NoBlocks;
             }, "Start (or resume in place) tape playback")
             .def("tape_stop", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
@@ -6574,7 +6569,27 @@ namespace PythonBindings
                 return TtdCoveragePy(TtdRunPy(self, "coverage-summary", options));
             }, "Activity heatmap over from_frame..to_frame (coverage index)",
                 py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = py::none(),
-                py::arg("bucket_size") = 0, py::arg("limit") = 100);
+                py::arg("bucket_size") = 0, py::arg("limit") = 100)
+
+            .def("ttd_timeline", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj, uint64_t bucketSize,
+                                    size_t limit, bool buckets, bool ports, unsigned minPhaseMs) -> py::object {
+                std::map<std::string, std::string> options{
+                    {"from_frame", std::to_string(fromFrame)}, {"bucket_size", std::to_string(bucketSize)},
+                    {"limit", std::to_string(limit)},          {"buckets", buckets ? "true" : "false"},
+                    {"ports", ports ? "true" : "false"},       {"min_phase_ms", std::to_string(minPhaseMs)}};
+                if (!toFrameObj.is_none())
+                    options["to_frame"] = TtdOptionTextPy(toFrameObj);
+                const ttd::TTDReply reply = TtdRunPy(self, "timeline", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The recording cut into phases of the same activity (tape, disk, input, net, sound, screen, burst, halt, "
+               "paging), each with its facts; from what the session holds, no replay",
+                py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("bucket_size") = 0,
+                py::arg("limit") = 20, py::arg("buckets") = false, py::arg("ports") = true, py::arg("min_phase_ms") = 200);
 
         // ================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI/Lua:
