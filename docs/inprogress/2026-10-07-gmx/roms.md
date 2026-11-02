@@ -76,7 +76,9 @@ view as ours (plane = bits 6-4 of `#7EFD`).
 
 `software/commanders/GMXCOM.ZIP` ("GMX Commander v1.0", FION 2002) in the local collection (`software/commanders/`), the
 `izzx-git/OSZ` multitasking OS (upstream: [OSZ](https://github.com/izzx-git/OSZ), made for the GMX), and the board test
-(scheme 6) inside the flash are candidates for the boot and video tests; none has been run.
+(scheme 6) inside the flash are candidates for the boot and video tests. GMX Commander and fourteen other programs
+from the collection were run on 2026-11-01/02: [software-compatibility.md](software-compatibility.md) (GMX Commander
+needs a hard disk and firmware 5.00).
 
 Since 2026-10-30 `testdata/machines/gmx/` holds two programs written for the real board (see its README and
 [research-2026-10-30-software.md](research-2026-10-30-software.md)): Edge Grinder (`edgegrinder/EGGMX.TRD`) and OSZ

@@ -1,15 +1,17 @@
 # GMX (Scorpion ZS-256 + Graphic Memory eXpander, 2048K)
 
 **Created:** 2026-10-07 - **Revised:** 2026-10-30 (original manual, real software, current firmware, the web Unreal
-Speccy model) - **Status:** design only, not implemented - see [TODO.md](TODO.md)
+Speccy model) - **Status:** implemented (phases 1-8 on master, 2026-11-01); the machine is model `GMX`, usage in
+[.recipe/machines/gmx.md](../../../.recipe/machines/gmx.md), the software tried on it in
+[software-compatibility.md](software-compatibility.md) - see [TODO.md](TODO.md)
 
 ## What this is
 
 GMX is a plug-in card (Scorpion Ltd / MOA, 1998) for the Scorpion ZS-256 Turbo and Turbo+ boards. It sits in the Z80
 socket and brings 2 MB of RAM, a 512 KB flash with the ROM planes and FPGA schemes, a second RAM window, a Profi-style
 `#DFFD` page extension, a ROM plane register, a 7 MHz turbo bit and a 640x200 16-color text/graphics mode with a hardware
-scroller. The enum `MM_GMX` and the model row ("ZS Scorpion + GMX", `RAM_2048`) exist; the machine cannot be created
-(no port decoder factory case, no config folder, ROM loader asserts).
+scroller. In unreal-ng it is model `GMX` ("ZS Scorpion + GMX", `MM_GMX`, `RAM_2048`), config folder
+`data/configs/gmx/`, decoder `PortDecoder_ScorpionGMX` on top of the Scorpion 256 and its SMUC.
 
 GMX is the Graphic Memory eXpander (Scorpion Ltd / MOA, 1998): a memory and video expansion with no MIDI part.
 
@@ -59,6 +61,7 @@ GMX is the Graphic Memory eXpander (Scorpion Ltd / MOA, 1998): a memory and vide
 | [research-2026-10-30-software.md](research-2026-10-30-software.md) | the ports, video and paging Edge Grinder and OSZ use, their docs, the fixtures and what each tests |
 | [research-2026-10-30-web-unreal.md](research-2026-10-30-web-unreal.md) | the web Unreal Speccy GMX model read from its wasm, the `gmx644.rom` flash blocks, its front end |
 | [references/](references/) | the 1998 manual: the original Word file and its UTF-8 text |
+| [software-compatibility.md](software-compatibility.md) | the GMX software from the collection run on the model: what works, what needs what |
 | [TODO.md](TODO.md) | status marker, phase checklist, open questions with recommendations |
 
 ## Related
