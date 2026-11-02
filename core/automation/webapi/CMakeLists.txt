@@ -191,6 +191,7 @@ set(COMMON_SOURCES
     src/api/tape_disk_api.cpp
     src/api/rzx_api.cpp
     src/api/media_api.cpp
+    src/api/history_api.cpp
     src/api/slots_api.cpp
     src/api/controllers_api.cpp
     src/api/signature_api.cpp

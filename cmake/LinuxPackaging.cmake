@@ -26,6 +26,8 @@ if(TARGET unreal-streamdeck)
     install(FILES "${CMAKE_SOURCE_DIR}/companions/streamdeck/linux/70-unreal-streamdeck.rules"
         DESTINATION lib/udev/rules.d COMPONENT Suite)
 endif()
+# The debuggers (debuggers/README.md), the Qt one on the suite's private Qt
+list(APPEND _suite_targets ${SUITE_DEBUGGERS})
 install(TARGETS ${_suite_targets} RUNTIME DESTINATION lib/unreal-ng COMPONENT Suite)
 set_target_properties(${_suite_targets} PROPERTIES INSTALL_RPATH "$ORIGIN/lib")
 foreach(_app IN LISTS _suite_targets)

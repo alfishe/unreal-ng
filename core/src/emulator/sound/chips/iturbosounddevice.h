@@ -176,8 +176,8 @@ public:
     {
         return nullptr;
     }
-    /// Install/remove the AY port-write log tap; inert while sink == nullptr
-    virtual void setLogSink(AYLogSink sink, void* context) = 0;
+    /// The AY history the port writes go to (ayhistory.h); none: nothing recorded
+    virtual void setHistory(AYHistory* history) = 0;
     /// endregion </Chips, taps, log>
 
     /// region <Ports>

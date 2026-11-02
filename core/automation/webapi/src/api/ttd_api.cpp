@@ -625,6 +625,12 @@ void EmulatorAPI::getTTDCoverageSummary(const HttpRequestPtr& req,
     RespondTTD(id, "coverage-summary", OptionsFromQuery(req, "coverage-summary"), callback);
 }
 
+void EmulatorAPI::getTTDTimeline(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    RespondTTD(id, "timeline", OptionsFromQuery(req, "timeline"), callback);
+}
+
 }  // namespace v1
 }  // namespace api
 

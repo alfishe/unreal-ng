@@ -147,6 +147,7 @@ void Z80::Reset()
     int_gate = true;       // Allow external interrupts
     nmi_in_progress = false;  // Clear NMI flag
     _nmi_pending_count = 0;   // No NMI requested
+    interruptsAcceptedHalted = 0;   // HALT waits count from the reset
 
     tt = 0;  // Scaled to CPU frequency multiplier cycle count
     t = 0;   // Reset cycle counter for deterministic state
@@ -452,7 +453,10 @@ bool Z80::RunHaltedIdle(bool skipBreakpoints)
     const uint16_t fetch = static_cast<uint16_t>(pc + 1);  // the byte after the HALT (HaltedM1)
     const uint32_t evenM1Period = _context->config.even_M1 ? 2u : 1u;
     uint32_t busPeriod = 1;
-    uint32_t handledWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep;
+    // The execution history `cpu` has the HALT already (the step that ran it): the repeated fetches are no new
+    // instructions
+    uint32_t handledWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep |
+                           EmulatorContext::kStepWorkExecHistory;
     // A TTD replay's input playback: the fetches that start before its next event (ServiceInput takes it at the
     // first boundary at or past its time, as per step)
     uint32_t inputDue = UINT32_MAX;
@@ -608,7 +612,7 @@ bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
 UNREAL_NOINLINE void Z80::RunHaltedIdleAfterWork(bool skipBreakpoints)
 {
     constexpr uint32_t kIdleWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep |
-                                   EmulatorContext::kStepWorkTtdInput;
+                                   EmulatorContext::kStepWorkTtdInput | EmulatorContext::kStepWorkExecHistory;
     if (_context->stepWork.load(std::memory_order_relaxed) & ~kIdleWork)
     {
         NoteHaltedIdleRefused();
@@ -1179,8 +1183,10 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
         }
         else
         {
-            // A debugger's PC history (PcHistory::Arm): the instruction about to run and its window's page
-            if ((work & EmulatorContext::kStepWorkPcHistory) && _context->pDebugManager) [[unlikely]]
+            // A debugger's PC history (PcHistory::Arm) or the execution history `cpu`: the instruction about to run
+            // and its window's page
+            if ((work & (EmulatorContext::kStepWorkPcHistory | EmulatorContext::kStepWorkExecHistory)) &&
+                _context->pDebugManager) [[unlikely]]
                 _context->pDebugManager->GetPcHistory()->Record(pc);
             if ((work & EmulatorContext::kStepWorkEngine) && _engine)
             {
@@ -2109,6 +2115,7 @@ void Z80::HandleINT(uint8_t vector)
 {
     Z80& cpu = *this;
     interruptsAccepted++;
+    interruptsAcceptedHalted += cpu.halted ? 1 : 0;
 
     // A machine on its own engine: the acknowledge cycle, the pushes and the vector read are the engine's
     // (ICpuEngine); one test per accepted INT, not per instruction

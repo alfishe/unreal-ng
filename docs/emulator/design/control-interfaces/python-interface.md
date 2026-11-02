@@ -499,9 +499,24 @@ def companion_revoke(id: str) -> int:
         timers, register banks) or the wavetable half (part='pcm': 24 slots with envelopes).
         available=False without the card; ValueError for another part"""
 
+    def devices_state(self, all: bool = False) -> dict:
+        """The device catalog: {available, reports[{id, title, available, summary, route, cli, script, mcp}]},
+        the state reports this machine has; `script` names the method here that returns each.
+        all=True: the absent ones too, available False with description (why)"""
+
     def fdc_state(self) -> dict:
         """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
-        signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""
+        signals (intrq/drq), beta128_register, density, selected_drive, drives[4],
+        history (the command history) and history_state"""
+
+    # Device histories by registry id (../debugger/device-history.md): off / ring / capture, a JSON Lines stream.
+    # An unknown device raises KeyError, a bad mode or stream file ValueError
+    def history_list(self) -> dict: ...
+    def history(self, device: str, last: int = 0) -> dict: ...
+    def history_config(self, device: str, mode: str = None, limit: int = None, stream: str = None,
+                       stream_limit: int = None) -> dict: ...
+    def history_clear(self, device: str) -> dict: ...
+    def history_pause(self, device: str, paused: bool = True) -> dict: ...  # hold / go on
 
     def contention_state(self) -> dict:
         """Memory contention report: rule (none/ula48/ula128/gatearray), applicable, switch,
@@ -595,7 +610,7 @@ emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.spc/.sta/.ltp/.zxt, or a folde
 emu.tape_eject()                      # the tape leaves the tape slot (while TTD records: at the next frame boundary)
 
 # Transport (same semantics as `tape play|pause|stop|rewind|seek`)
-emu.tape_play()    # start at consumption cursor; resumes in place when paused
+emu.tape_play()    # start at consumption cursor; resumes in place when paused; queued for a tape still landing
 emu.tape_pause()   # freeze mid-block (idempotent); False when not playing
 emu.tape_stop()    # terminal stop: invalidates the loaded image
 emu.tape_rewind()  # rewind to block 0, image kept
@@ -1794,6 +1809,10 @@ now = emu.ttd_memory_at('cpu', offset=0x5C00, length=64)
 # {'space': 'cpu', 'banks': [{'window': 3, 'addr': '0xC000', 'kind': 'ram', 'page': 0, 'name': 'RAM 0'}, ...], 'hex': ...}
 diff = emu.ttd_memory_diff('neogs.ram', from_frame=150, to_frame=600)
 # {'space': 'neogs.ram', 'changed_bytes': 812, 'ranges': [{'offset': 4096, 'length': 64}, ...], 'truncated': False, ...}
+
+timeline = emu.ttd_timeline(min_phase_ms=500)   # also from_frame, to_frame, buckets, limit, bucket_size, ports
+# {'from_frame': ..., 'phases': [{'frame_start': ..., 'frame_end': ..., 'tags': ['halt', 'input'],
+#   'keys': ['A'], 'busiest_frame': ..., ...}, ...], 'events': [...], 'missing': [{'fact': 'writes', ...}], ...}
 
 summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50, limit=100)
 # {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,

@@ -146,7 +146,7 @@ local ok, why = tape_load("/path/to/game.tap")  -- A tape (.tap/.tzx/.spc/.sta/.
 local ok = tape_eject()                     -- The tape leaves the tape slot (while TTD records: at the next frame boundary)
 
 -- Transport (same semantics as `tape play|pause|stop|rewind|seek`)
-tape_play()      -- start at consumption cursor; resumes in place when paused
+tape_play()      -- start at consumption cursor; resumes in place when paused; queued for a tape still landing
 tape_pause()     -- freeze mid-block (idempotent); false when not playing
 tape_stop()      -- terminal stop: invalidates the loaded image
 tape_rewind()    -- rewind to block 0, image kept
@@ -545,7 +545,14 @@ ok, msg = midi_panic()     -- every voice stops (a TTD live input)
 ms  = audio_moonsound_state()       -- MoonSound OPL4: NEW/NEW2, latches, mix, wave_memory, keyed channels/slots
 msf = audio_moonsound_state("fm")   -- its 18 FM channels, timers, register banks
 msp = audio_moonsound_state("pcm")  -- its 24 wavetable slots, envelopes, register file
-fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
+dev = devices_state()       -- the reports this machine has: reports[i] = {id, title, available, summary, route, cli, script, mcp}; devices_state(true): the absent ones too, with description
+fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4], history
+-- Device histories by registry id (../debugger/device-history.md): off / ring / capture, a JSON Lines stream
+history_list()
+history("beta128", 8)       -- stats + the newest 8 records
+history_config("beta128", {mode = "capture", limit = 0, stream = "scratch/fdc.jsonl"})
+history_clear("beta128")
+history_pause("zxbus.1")    -- hold the GS history (nothing recorded, the records kept); history_pause("zxbus.1", false) goes on
 ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (task_file, command, atapi)
 cd = cdaudio_state()        -- CD drives' audio: drives[] (slot, disc + tracks, audio status / head / track / index, drive_volume, mixer)
 r = cdaudio("play", "", {track=2})   -- verbs: status, play (track/to, lba/frames, msf/end), pause, resume, stop, volume, mixer
@@ -1350,6 +1357,11 @@ local cpu = ttd_memory_at{space = "cpu", frame = 150, tinframe = 20000, offset =
 local now = ttd_memory_at{space = "cpu", offset = 0x5C00, length = 64}
 local diff = ttd_memory_diff{space = "neogs.ram", from_frame = 150, to_frame = 600}
 -- { space = "neogs.ram", changed_bytes = ..., ranges = { {offset = 4096, length = 64}, ... }, truncated = false }
+
+local timeline = ttd_timeline{min_phase_ms = 500}   -- also from_frame, to_frame, buckets, limit, bucket_size, ports
+-- { from_frame = ..., to_frame = ..., phases = { {frame_start = ..., frame_end = ...,
+--   tags = {"halt", "input"}, executed = ..., keys = {"A"}, busiest_frame = ..., ...}, ... },
+--   events = {...}, missing = { {fact = "writes", reason = "the write journal is off"} }, ... }
 
 local summary = ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50, limit = 100}
 -- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,

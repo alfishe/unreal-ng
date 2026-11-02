@@ -21,56 +21,6 @@ std::string NextSdCommandName(uint8_t index, bool app)
     return std::string(app ? "ACMD" : "CMD") + std::to_string(index);
 }
 
-void NextSdJournal::SetCapacity(size_t capacity)
-{
-    _ring.assign(std::max<size_t>(capacity, 1), NextSdEvent{});
-    _head = 0;
-    _count = 0;
-    _evicted = 0;
-}
-
-void NextSdJournal::Clear()
-{
-    _head = 0;
-    _count = 0;
-    _evicted = 0;
-}
-
-void NextSdJournal::Record(NextSdEvent event)
-{
-    event.seq = ++_seq;
-    _ring[_head] = event;
-    _head = (_head + 1) % _ring.size();
-    if (_count < _ring.size())
-        _count++;
-    else
-        _evicted++;
-}
-
-std::vector<NextSdEvent> NextSdJournal::Query(const NextSdJournalQuery& query) const
-{
-    std::vector<NextSdEvent> out;
-    const size_t first = (_head + _ring.size() - _count) % _ring.size();
-    for (size_t i = 0; i < _count; i++)
-    {
-        const NextSdEvent& e = _ring[(first + i) % _ring.size()];
-        if (e.seq <= query.since)
-            continue;
-        if (query.frameFrom >= 0 && e.frame < query.frameFrom)
-            continue;
-        if (query.frameTo >= 0 && e.frame > query.frameTo)
-            continue;
-        if (query.card >= 0 && e.card != query.card)
-            continue;
-        if (!query.kinds.empty() && std::find(query.kinds.begin(), query.kinds.end(), e.kind) == query.kinds.end())
-            continue;
-        out.push_back(e);
-    }
-    if (query.limit && out.size() > query.limit)
-        out.erase(out.begin(), out.end() - static_cast<std::ptrdiff_t>(query.limit));
-    return out;
-}
-
 namespace
 {
 std::vector<std::string> Split(const std::string& text)
@@ -156,4 +106,17 @@ bool NextSdJournalQueryFromStrings(const std::string& kinds, const std::string& 
         query.limit = static_cast<size_t>(value);
     }
     return true;
+}
+
+std::vector<NextSdEvent> NextSdJournal::Query(const NextSdJournalQuery& query) const
+{
+    return Select(query.since, query.limit, [&query](const NextSdEvent& e) {
+        if (query.frameFrom >= 0 && e.frame < query.frameFrom)
+            return false;
+        if (query.frameTo >= 0 && e.frame > query.frameTo)
+            return false;
+        if (query.card >= 0 && e.card != query.card)
+            return false;
+        return query.kinds.empty() || std::find(query.kinds.begin(), query.kinds.end(), e.kind) != query.kinds.end();
+    });
 }

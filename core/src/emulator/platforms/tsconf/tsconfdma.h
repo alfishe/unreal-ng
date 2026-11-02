@@ -60,6 +60,8 @@ public:
     const bool* eventWatch = nullptr;
     std::function<void(bool write, uint32_t byteAddress, uint8_t value)> onAccess;
     std::function<void(bool started, uint8_t value)> onActivity;
+    /// A transfer ended (its history completes the record); empty: nothing
+    std::function<void()> onFinish;
 
     void Reset();
 

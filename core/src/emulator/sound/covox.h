@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "emulator/sound/audio.h"
+#include "emulator/sound/chips/chipwritehistory.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
@@ -111,6 +112,7 @@ public:
 
 protected:
     EmulatorContext* _context;
+    ChipWriteHistory _history;  ///< the DAC writes, by channel (chipwritehistory.h)
 
     // Fitment baked in at construction (see Fitment doc, public section)
     Fitment _fitment;

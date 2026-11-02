@@ -21,6 +21,7 @@
 TEST(NextDivMmcJournal_Test, RingQueryAndNames)
 {
     NextDivMmcJournal journal(3);
+    journal.SetEnabled(true);
     for (uint8_t i = 0; i < 5; i++)
     {
         NextDivMmcEvent e;

@@ -28,7 +28,10 @@
 #   Windows  x86_64 (MSVC), x86_64-MinGW, arm64   portable .zip
 # Every package carries the Stream Deck companion (-DUNREAL_STREAMDECK=ON): the daemon
 # unreal-streamdeck and Stream Deck Studio (layout per platform:
-# docs/inprogress/2026-10-19-streamdeck-integration/packaging.md).
+# docs/inprogress/2026-10-19-streamdeck-integration/packaging.md), and the debuggers
+# (debuggers/README.md): unreal-debugger (Qt, on the suite's Qt) and the terminal debuggers
+# unreal-tui-debugger and unreal-tui-debugger-tsconf (no SDL3 pixel window in packages:
+# -DUNREAL_TUI_SDL=OFF), beside unreal-qt (macOS: UnrealNG.app/Contents/MacOS).
 #
 # Dependencies: everything except Qt is vendored and linked statically. Qt comes
 # from the Qt SDK - on Linux baked into the project's build image
@@ -148,6 +151,7 @@ jobs:
             -DUNREAL_PACKAGE_VERSION="$UNREAL_PACKAGE_VERSION" \
             -DUNREAL_BUNDLE_QT=ON \
             -DUNREAL_STREAMDECK=ON \
+            -DUNREAL_TUI_SDL=OFF \
             -DUNREAL_PACKAGE_BASENAME=UnrealNG-Suite-Linux-x86_64
 
       - name: Build
@@ -192,6 +196,11 @@ jobs:
             PATH=/usr/bin:/bin squashfs-root/usr/bin/unreal-streamdeck --help
           env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR -u PATH \
             PATH=/usr/bin:/bin QT_QPA_PLATFORM=offscreen squashfs-root/usr/bin/unreal-streamdeck-studio --help
+          # The debuggers: the Qt one on the image's Qt, the terminal ones
+          env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR -u PATH \
+            PATH=/usr/bin:/bin QT_QPA_PLATFORM=offscreen squashfs-root/usr/bin/unreal-debugger --help
+          squashfs-root/usr/bin/unreal-tui-debugger --help
+          squashfs-root/usr/bin/unreal-tui-debugger-tsconf --help
           rm -rf squashfs-root
 
       - name: Upload DEB
@@ -261,6 +270,10 @@ jobs:
           test -f /usr/lib/unreal-ng/testsnapshots/z80/newbench.z80          # "$data/..." of the scenarios
           unreal-streamdeck --help
           QT_QPA_PLATFORM=offscreen unreal-streamdeck-studio --help
+          # The debuggers
+          QT_QPA_PLATFORM=offscreen unreal-debugger --help
+          unreal-tui-debugger --help
+          unreal-tui-debugger-tsconf --help
 
   # ========================================
   # Windows MSVC Build (x86_64 and native arm64)
@@ -322,6 +335,7 @@ jobs:
             -DBENCHMARKS=OFF \
             -DENABLE_PYTHON_AUTOMATION=OFF \
             -DUNREAL_STREAMDECK=ON \
+            -DUNREAL_TUI_SDL=OFF \
             -DTRANTOR_USE_TLS=none \
             -DBUILD_C-ARES=OFF \
             -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
@@ -363,6 +377,14 @@ jobs:
           /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
             QT_QPA_PLATFORM=windows QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES=1 \
             /usr/bin/timeout 60 ./unreal-streamdeck-studio.exe --help
+          # The debuggers beside it: the Qt one on the same Qt DLLs, the terminal ones
+          /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
+            QT_QPA_PLATFORM=windows QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES=1 \
+            /usr/bin/timeout 60 ./unreal-debugger.exe --help
+          /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
+            /usr/bin/timeout 60 ./unreal-tui-debugger.exe --help
+          /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
+            /usr/bin/timeout 60 ./unreal-tui-debugger-tsconf.exe --help
 
       - name: Name packages
         shell: bash
@@ -441,6 +463,7 @@ jobs:
             -DBENCHMARKS=OFF \
             -DENABLE_PYTHON_AUTOMATION=OFF \
             -DUNREAL_STREAMDECK=ON \
+            -DUNREAL_TUI_SDL=OFF \
             -DTRANTOR_USE_TLS=none \
             -DBUILD_C-ARES=OFF \
             -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
@@ -482,6 +505,14 @@ jobs:
           /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
             QT_QPA_PLATFORM=windows QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES=1 \
             /usr/bin/timeout 60 ./unreal-streamdeck-studio.exe --help
+          # The debuggers beside it: the Qt one on the same Qt DLLs, the terminal ones
+          /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
+            QT_QPA_PLATFORM=windows QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES=1 \
+            /usr/bin/timeout 60 ./unreal-debugger.exe --help
+          /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
+            /usr/bin/timeout 60 ./unreal-tui-debugger.exe --help
+          /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
+            /usr/bin/timeout 60 ./unreal-tui-debugger-tsconf.exe --help
 
       - name: Name packages
         shell: bash
@@ -574,6 +605,7 @@ jobs:
             -DOPENSSL_USE_STATIC_LIBS=TRUE \
             -DBUILD_QT_APPS=ON \
             -DUNREAL_STREAMDECK=ON \
+            -DUNREAL_TUI_SDL=OFF \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
             -DTRANTOR_USE_TLS=none \
@@ -648,6 +680,23 @@ jobs:
           rm libs.txt
           # and through the DMG root's link
           "Stream Deck Studio.app/Contents/MacOS/unreal-streamdeck-studio" --help > /dev/null
+
+      # The debuggers: helpers of UnrealNG.app (Contents/MacOS), the Qt one on the bundle's Qt
+      - name: Verify the debuggers in the bundle
+        working-directory: build/packages/UnrealNG-Suite
+        run: |
+          for f in unreal-debugger unreal-tui-debugger unreal-tui-debugger-tsconf; do
+            test -x "UnrealNG.app/Contents/MacOS/$f"
+            codesign --verify --strict "UnrealNG.app/Contents/MacOS/$f"
+          done
+          unset QT_PLUGIN_PATH QML2_IMPORT_PATH
+          DYLD_PRINT_LIBRARIES=1 UnrealNG.app/Contents/MacOS/unreal-debugger --help 2> libs.txt || { cat libs.txt; exit 1; }
+          if grep -v "$PWD/UnrealNG.app/" libs.txt | grep -E 'Qt[A-Za-z]+\.framework|libqcocoa'; then
+            echo "::error::unreal-debugger loads Qt from outside UnrealNG.app"; exit 1
+          fi
+          rm libs.txt
+          UnrealNG.app/Contents/MacOS/unreal-tui-debugger --help
+          UnrealNG.app/Contents/MacOS/unreal-tui-debugger-tsconf --help
 
       - name: Upload package
         uses: actions/upload-artifact@v7

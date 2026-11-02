@@ -123,34 +123,6 @@ StateNode NextRegs(EmulatorContext* context)
 
 namespace
 {
-StateNode EventNode(const NextRegWriteEvent& e, const NextRegInfo* table, size_t count)
-{
-    StateNode n = StateNode::Object();
-    n["seq"] = static_cast<uint64_t>(e.seq);
-    n["frame"] = static_cast<uint64_t>(e.frame);
-    n["t"] = static_cast<uint64_t>(e.t);
-    n["pc"] = StringHelper::Format("0x%04X", e.pc);
-    if (e.beamLine >= 0)
-    {
-        n["beam_line"] = int(e.beamLine);
-        n["beam_hc"] = int(e.beamHc);
-    }
-    n["source"] = NextRegSourceName(e.source);
-    n["reg"] = Hex8(e.reg);
-    for (size_t i = 0; i < count; i++)
-        if (table[i].number == e.reg)
-        {
-            n["name"] = table[i].name;
-            break;
-        }
-    n["value"] = Hex8(e.value);
-    n["previous"] = Hex8(e.previous);
-    const std::string decoded = NextRegDecode(e.reg, e.value);
-    if (!decoded.empty())
-        n["decoded"] = decoded;
-    return n;
-}
-
 StateNode JournalState(const NextRegJournal& journal)
 {
     StateNode n = StateNode::Object();
@@ -171,11 +143,13 @@ StateNode NextRegJournalReport(EmulatorContext* context, const NextRegJournalQue
         return Unavailable();
     const NextRegJournal& journal = decoder->Board().Journal();
     StateNode n = JournalState(journal);
-    size_t count;
-    const NextRegInfo* table = NextRegTable(count);
     StateNode events = StateNode::Array();
     for (const NextRegWriteEvent& e : journal.Query(query))
-        events.push(EventNode(e, table, count));
+    {
+        StateNode ev = StateNode::Object();
+        e.ToState(ev);
+        events.push(std::move(ev));
+    }
     n["events"] = std::move(events);
     n["now"] = StringHelper::Format("frame %llu", static_cast<unsigned long long>(context->emulatorState.frame_counter));
     return n;
@@ -252,25 +226,7 @@ StateNode NextSdReport(EmulatorContext* context, const NextSdJournalQuery& query
     for (const NextSdEvent& e : decoder->SdJournal().Query(query))
     {
         StateNode ev = StateNode::Object();
-        ev["seq"] = e.seq;
-        ev["frame"] = int(e.frame);
-        ev["t"] = int(e.t);
-        ev["pc"] = Hex16(e.pc);
-        ev["card"] = int(e.card);
-        ev["kind"] = NextSdKindName(e.kind);
-        if (e.kind == NextSdKind::Command)
-        {
-            ev["command"] = NextSdCommandName(e.index, e.app);
-            ev["argument"] = StringHelper::Format("0x%08X", e.argument);
-            ev["r1"] = e.r1 == 0xFF ? StateNode("none") : StateNode(Hex8(e.r1));
-            ev["crc_valid"] = e.crcValid;
-        }
-        else
-        {
-            ev["block"] = e.block;
-            if (e.kind == NextSdKind::WriteBlock)
-                ev["ok"] = e.ok;
-        }
+        e.ToState(ev);
         events.push(std::move(ev));
     }
     n["events"] = std::move(events);
@@ -363,35 +319,7 @@ StateNode NextDivMmcReport(EmulatorContext* context, const NextDivMmcJournalQuer
     for (const NextDivMmcEvent& e : divmmc.Journal().Query(query))
     {
         StateNode ev = StateNode::Object();
-        ev["seq"] = e.seq;
-        ev["frame"] = int(e.frame);
-        ev["t"] = int(e.t);
-        ev["pc"] = Hex16(e.pc);
-        ev["kind"] = NextDivMmcKindName(e.kind);
-        if (e.kind == NextDivMmcKind::MapIn || e.kind == NextDivMmcKind::MapOut)
-            ev["address"] = Hex16(e.address);
-        if (e.kind == NextDivMmcKind::MapIn)
-        {
-            ev["entry"] = NextDivMmcEntryName(e.address);
-            ev["map"] = e.instant ? "instant" : "delayed";
-        }
-        if (e.kind == NextDivMmcKind::EsxCall)
-        {
-            ev["call"] = Hex8(e.call);
-            if (const char* name = NextEsxCallName(e.call))
-                ev["name"] = name;
-            ev["return_address"] = Hex16(e.returnAddress);
-            ev["basic_rom"] = e.basicRom;
-            ev["af"] = Hex16(e.af);
-            ev["bc"] = Hex16(e.bc);
-            ev["de"] = Hex16(e.de);
-            ev["hl"] = Hex16(e.hl);
-        }
-        else
-        {
-            ev["mapped"] = e.mapped;
-            ev["control"] = Hex8(e.control);
-        }
+        e.ToState(ev);
         events.push(std::move(ev));
     }
     n["events"] = std::move(events);
@@ -545,28 +473,7 @@ StateNode NextNmiReport(EmulatorContext* context, const NextIntJournalQuery& que
     for (const NextIntEvent& e : decoder->IntJournal().Query(query))
     {
         StateNode ev = StateNode::Object();
-        ev["seq"] = e.seq;
-        ev["frame"] = int(e.frame);
-        ev["t"] = int(e.t);
-        ev["pc"] = Hex16(e.pc);
-        ev["kind"] = NextIntKindName(e.kind);
-        ev["source"] = e.source;
-        if (e.kind == NextIntKind::IntAck)
-        {
-            if (e.hasVector)
-                ev["vector"] = Hex8(e.vector);
-        }
-        else if (e.kind == NextIntKind::NmiRequest)
-        {
-            ev["accepted"] = e.accepted;
-            if (!e.accepted)
-                ev["reason"] = e.reason;
-        }
-        else if (e.kind == NextIntKind::Reset)
-        {
-            ev["reset_bits"] = int(e.value);
-            ev["reset_last"] = ResetBitsName(e.value);
-        }
+        e.ToState(ev);
         events.push(std::move(ev));
     }
     n["events"] = std::move(events);
@@ -1104,3 +1011,115 @@ StateNode Next(EmulatorContext* context)
     return n;
 }
 }  // namespace DeviceState
+
+// region <The journals' records (nextjournal.h): the reports above and the device histories>
+
+void NextRegWriteEvent::ToState(StateNode& n) const
+{
+    const NextRegWriteEvent& e = *this;
+    n["seq"] = static_cast<uint64_t>(e.seq);
+    n["frame"] = static_cast<uint64_t>(e.frame);
+    n["t"] = static_cast<uint64_t>(e.t);
+    n["pc"] = StringHelper::Format("0x%04X", e.pc);
+    if (e.beamLine >= 0)
+    {
+        n["beam_line"] = int(e.beamLine);
+        n["beam_hc"] = int(e.beamHc);
+    }
+    n["source"] = NextRegSourceName(e.source);
+    n["reg"] = Hex8(e.reg);
+    if (const NextRegInfo* info = FindNextReg(e.reg))
+        n["name"] = info->name;
+    n["value"] = Hex8(e.value);
+    n["previous"] = Hex8(e.previous);
+    const std::string decoded = NextRegDecode(e.reg, e.value);
+    if (!decoded.empty())
+        n["decoded"] = decoded;
+}
+
+void NextSdEvent::ToState(StateNode& ev) const
+{
+    const NextSdEvent& e = *this;
+    ev["seq"] = e.seq;
+    ev["frame"] = int(e.frame);
+    ev["t"] = int(e.t);
+    ev["pc"] = Hex16(e.pc);
+    ev["card"] = int(e.card);
+    ev["kind"] = NextSdKindName(e.kind);
+    if (e.kind == NextSdKind::Command)
+    {
+        ev["command"] = NextSdCommandName(e.index, e.app);
+        ev["argument"] = StringHelper::Format("0x%08X", e.argument);
+        ev["r1"] = e.r1 == 0xFF ? StateNode("none") : StateNode(Hex8(e.r1));
+        ev["crc_valid"] = e.crcValid;
+    }
+    else
+    {
+        ev["block"] = e.block;
+        if (e.kind == NextSdKind::WriteBlock)
+            ev["ok"] = e.ok;
+    }
+}
+
+void NextDivMmcEvent::ToState(StateNode& ev) const
+{
+    const NextDivMmcEvent& e = *this;
+    ev["seq"] = e.seq;
+    ev["frame"] = int(e.frame);
+    ev["t"] = int(e.t);
+    ev["pc"] = Hex16(e.pc);
+    ev["kind"] = NextDivMmcKindName(e.kind);
+    if (e.kind == NextDivMmcKind::MapIn || e.kind == NextDivMmcKind::MapOut)
+        ev["address"] = Hex16(e.address);
+    if (e.kind == NextDivMmcKind::MapIn)
+    {
+        ev["entry"] = NextDivMmcEntryName(e.address);
+        ev["map"] = e.instant ? "instant" : "delayed";
+    }
+    if (e.kind == NextDivMmcKind::EsxCall)
+    {
+        ev["call"] = Hex8(e.call);
+        if (const char* name = NextEsxCallName(e.call))
+            ev["name"] = name;
+        ev["return_address"] = Hex16(e.returnAddress);
+        ev["basic_rom"] = e.basicRom;
+        ev["af"] = Hex16(e.af);
+        ev["bc"] = Hex16(e.bc);
+        ev["de"] = Hex16(e.de);
+        ev["hl"] = Hex16(e.hl);
+    }
+    else
+    {
+        ev["mapped"] = e.mapped;
+        ev["control"] = Hex8(e.control);
+    }
+}
+
+void NextIntEvent::ToState(StateNode& ev) const
+{
+    const NextIntEvent& e = *this;
+    ev["seq"] = e.seq;
+    ev["frame"] = int(e.frame);
+    ev["t"] = int(e.t);
+    ev["pc"] = Hex16(e.pc);
+    ev["kind"] = NextIntKindName(e.kind);
+    ev["source"] = e.source;
+    if (e.kind == NextIntKind::IntAck)
+    {
+        if (e.hasVector)
+            ev["vector"] = Hex8(e.vector);
+    }
+    else if (e.kind == NextIntKind::NmiRequest)
+    {
+        ev["accepted"] = e.accepted;
+        if (!e.accepted)
+            ev["reason"] = e.reason;
+    }
+    else if (e.kind == NextIntKind::Reset)
+    {
+        ev["reset_bits"] = int(e.value);
+        ev["reset_last"] = DeviceState::ResetBitsName(e.value);
+    }
+}
+
+// endregion

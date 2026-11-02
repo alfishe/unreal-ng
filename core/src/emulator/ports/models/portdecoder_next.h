@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "emulator/ports/models/portdecoder_spectrum128.h"
+#include "emulator/io/z80n/nexthistory.h"
 
 class ScreenNext;
 
@@ -359,6 +360,10 @@ private:
     NextCtc _ctc;
     NextUart _uart;
     NextDma _dma;
+    // The histories beside the journals (nexthistory.h), registered while the decoder lives
+    history::DeviceHistory<NextCopperRecord> _copperHistory{ "copper", "instructions the copper completes", 4096 };
+    history::DeviceHistory<NextDmaRecord> _dmaHistory{ "dma", "blocks the DMA finishes", 1024 };
+    history::DeviceHistory<NextUartRecord> _uartHistory{ "uart", "bytes the UARTs send and receive", 4096 };
     bool _dmaRequestLate = false;  // the enable came in this instruction: the bus goes over after the next one's M1
     std::unique_ptr<NextAudio> _audio;
     bool WriteDacPort(uint16_t port, uint8_t value);

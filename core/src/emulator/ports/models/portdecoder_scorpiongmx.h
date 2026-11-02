@@ -149,7 +149,8 @@ protected:
     void SyncFrame();
     void RunReconfiguration();
     void RefreshStepHook();
-    /// The firmware has booted (the 128 menu, the Pentagon scheme or a state brought in): a deferred autostart goes
+    /// The firmware has booted (the menu's 48 KEY-SCAN, the Pentagon scheme or a state brought in): a deferred
+    /// autostart goes on
     void OnFirmwareBooted();
     /// The quick reset into TR-DOS a disk autostart asked for before the boot ended
     void RunDeferredDosEntry();

@@ -46,6 +46,24 @@ bool Applies(const CardDef& card, const CardOptions& options, const When& when)
     return when.option == Opt::None || (OptionBits(card, options, when.option) & when.anyOf) != 0;
 }
 
+/// One port claim: the range as text and as numbers (a front end that attributes a port access to its device tests
+/// (port & mask) == match), the direction, the IORQGE and the gate; `port` the documented port when the claim names one
+StateNode PortNode(const PortClaim& claim)
+{
+    StateNode port = StateNode::Object();
+    port["range"] = FormatPortRange(claim.mask, claim.match);
+    port["mask"] = static_cast<int>(claim.mask);
+    port["match"] = static_cast<int>(claim.match & claim.mask);
+    if (claim.port != 0)
+    {
+        port["port"] = static_cast<int>(claim.port);
+    }
+    port["direction"] = DirName(claim.dir);
+    port["iorqge"] = Describe(claim.iorqge).id;
+    port["gate"] = Describe(claim.gate).id;
+    return port;
+}
+
 /// `networkOff`: the runtime feature `network` is off - a power switch of the network devices (owner decision
 /// 2026-10-05): a fitted ZX-bus network card stays in its slot, unpowered, and its state says so
 StateNode SlotNode(const SlotManager::Slot& slot, const SlotPlanner& planner, bool networkOff)
@@ -109,12 +127,7 @@ StateNode SlotNode(const SlotManager::Slot& slot, const SlotPlanner& planner, bo
             {
                 continue;
             }
-            StateNode port = StateNode::Object();
-            port["range"] = FormatPortRange(claim.mask, claim.match);
-            port["direction"] = DirName(claim.dir);
-            port["iorqge"] = Describe(claim.iorqge).id;
-            port["gate"] = Describe(claim.gate).id;
-            ports.push(std::move(port));
+            ports.push(PortNode(claim));
         }
         node["ports"] = std::move(ports);
         StateNode media = StateNode::Array();
@@ -243,6 +256,38 @@ StateNode Slots(EmulatorContext* context)
         {
             b["source"] = builtIn.source;
         }
+        // Its functions and ports from the machine's declaration, as a card's: the device registry in one report
+        const BuiltInDef* def = nullptr;
+        for (const BuiltInDef& candidate : result.machine->builtIns)
+        {
+            if (builtIn.id == candidate.id)
+            {
+                def = &candidate;
+            }
+        }
+        StateNode functions = StateNode::Array();
+        StateNode ports = StateNode::Array();
+        if (def != nullptr)
+        {
+            if (def->socket != nullptr)
+            {
+                b["socket"] = def->socket;
+            }
+            if (def->chip != nullptr && def->chip[0] != '\0')
+            {
+                b["chip"] = def->chip;
+            }
+            for (const Function function : def->functions)
+            {
+                functions.push(Describe(function).id);
+            }
+            for (const PortClaim& claim : def->claims)
+            {
+                ports.push(PortNode(claim));
+            }
+        }
+        b["functions"] = std::move(functions);
+        b["ports"] = std::move(ports);
         builtIns.push(std::move(b));
     }
     node["builtIns"] = std::move(builtIns);

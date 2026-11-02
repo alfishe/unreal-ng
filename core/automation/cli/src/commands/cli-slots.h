@@ -214,7 +214,17 @@ inline std::string ListText(const StateNode& report)
     {
         out += "built-in devices:\n";
         for (const StateNode& builtIn : builtIns->items)
-            out += "  " + Text(builtIn.find("id")) + " (" + Text(builtIn.find("name")) + "): " + Text(builtIn.find("state")) + "\n";
+        {
+            out += "  " + Text(builtIn.find("id")) + " (" + Text(builtIn.find("name")) + "): " + Text(builtIn.find("state"));
+            // Its ports from the machine's declaration (the registry a debugger attributes port accesses by)
+            if (const StateNode* ports = builtIn.find("ports"); ports != nullptr && ports->size() > 0)
+            {
+                out += "  ports";
+                for (const StateNode& port : ports->items)
+                    out += " " + Text(port.find("range"));
+            }
+            out += "\n";
+        }
     }
     if (const StateNode* log = report.find("log"); log != nullptr && log->size() > 0)
     {

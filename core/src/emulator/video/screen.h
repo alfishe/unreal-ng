@@ -9,6 +9,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "emulator/video/map/videowritelog.h"
+#include "emulator/video/screenmemoryspan.h"
 #include "emulator/video/temporaleffects.h"
 #include "stdafx.h"
 
@@ -1274,6 +1275,11 @@ public:
     /// Current screen state - the single source for every automation module
     /// Virtual: a model family with its own renderer (TS-Conf) describes its modes
     virtual ScreenState DescribeScreenState() const;
+
+    /// The memory the picture is read from now (`out` is replaced): a write there changes what the frame shows (the
+    /// TTD timeline's `screen` tag, captured at every frame boundary of a recording, so it must stay cheap). Base: what
+    /// the ZX, ATM, AlCo and Profi renderers read in the current mode, a ZX layout as the 6,912 bytes of its page
+    virtual void DescribeDisplayedMemory(std::vector<ScreenMemorySpan>& out) const;
 
     /// The state a video family's debug mapper reads beyond the shared latches
     /// (videomap::VideoState::familyView): null for the classic families; a

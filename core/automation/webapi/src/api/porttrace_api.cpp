@@ -9,6 +9,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/ports/portdecoder.h>
 #include <emulator/ports/portdiagrecorder.h>
+#include <emulator/slots/portowners.h>
 #include <json/json.h>
 
 #include "../emulator_api.h"
@@ -104,7 +105,15 @@ void codeToJson(Json::Value& v, uint16_t code, const std::vector<PortTraceCodeNa
         }
 }
 
-Json::Value eventToJson(const PortTraceEvent& e, size_t index, const std::vector<PortTraceCodeName>& codes)
+/// The machine's device registry as port owners (an empty one without a slot manager)
+slots::PortOwners ownersOf(const std::string& id)
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    return slots::PortOwners::Of(emulator ? emulator->GetContext() : nullptr);
+}
+
+Json::Value eventToJson(const PortTraceEvent& e, size_t index, const std::vector<PortTraceCodeName>& codes,
+                        const slots::PortOwners& owners)
 {
     char buf[8];
     Json::Value v;
@@ -122,6 +131,8 @@ Json::Value eventToJson(const PortTraceEvent& e, size_t index, const std::vector
     v["pc"] = buf;
     v["direction"] = e.isOut() ? "OUT" : "IN";
     v["device"] = PortDiagnosticRecorder::DeviceIdToString(e.deviceId);
+    // The registry device whose claim covers the access: a card's slot or a built-in's id ("" = the board's own)
+    v["owner"] = owners.Find(e.rawPort, e.isOut(), e.cfTrdosActive());
     v["decoded"] = e.wasDecoded();
     v["had_handler"] = e.hadHandler();
     v["beta128_gated"] = e.wasBeta128Gated();
@@ -391,8 +402,9 @@ void EmulatorAPI::getPortTraceEvents(const HttpRequestPtr& req,
     body["session"] = statusToJson(recorder, decoder);
     body["events"] = Json::Value(Json::arrayValue);
     const std::vector<PortTraceCodeName> codes = decoder ? decoder->GetPortTraceCodeTable() : std::vector<PortTraceCodeName>{};
+    const slots::PortOwners owners = ownersOf(id);
     for (size_t i = 0; i < events.size(); i++)
-        body["events"].append(eventToJson(events[i], i, codes));
+        body["events"].append(eventToJson(events[i], i, codes, owners));
 
     sendJson(callback, body);
 }

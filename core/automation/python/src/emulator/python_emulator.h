@@ -134,6 +134,7 @@
 #include <emulator/io/sprinter/isa/isaaccess.h>
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
+#include <emulator/state/devicecatalog.h>
 #include <emulator/state/devicestate.h>
 #include <common/stringhelper.h>
 #include <debugger/ports/nextregwrite.h>
@@ -143,6 +144,7 @@
 #include <emulator/io/z80n/nextsdjournal.h>
 #include <emulator/bus/bustrace.h>
 #include <emulator/io/z80n/nextreportquery.h>
+#include <debugger/history/historycontrol.h>
 #include "../bindings/python_porttrace.h"
 #include "../bindings/python_vdac2.h"
 
@@ -596,6 +598,25 @@ inline StateNode PyToStateNode(const pybind11::handle& value)
     }
     return StateNode(py::str(value).cast<std::string>());
 }
+
+namespace python_history
+{
+/// HistoryControl for the instance; a refusal raises (ValueError: bad request, KeyError: no such history)
+inline StateNode Run(Emulator& self, const HistoryRequest& request)
+{
+    HistoryReply reply = HistoryControl::Execute(self.GetContext(), request);
+    if (reply.httpStatus != 200)
+    {
+        const StateNode* error = reply.body.find("error");
+        const std::string message = error ? error->s : "history request failed";
+        if (reply.httpStatus == 404)
+            throw pybind11::key_error(message);
+        throw pybind11::value_error(message);
+    }
+    return std::move(reply.body);
+}
+}  // namespace python_history
+
 
 /// A surface verb (actions::surfaces::Call: views, target, sessions, pin, readouts, activity, ...) with its args as
 /// keywords; the reply every plane returns
@@ -3078,13 +3099,8 @@ namespace PythonBindings
                 // Parse-once (idempotent); paused -> resume the frozen position
                 // in place, otherwise start at the consumption cursor — the same
                 // semantics as `tape play` / POST /tape/play
-                if (!ctx->pTape->EnsureImageLoaded())
-                    return false;
-                if (ctx->pTape->GetPlaybackState() == TapePlaybackState::Paused)
-                    ctx->pTape->ResumePlaybackFromPause();
-                else
-                    ctx->pTape->StartPlaybackAtCursor();
-                return true;
+                // A tape still on its way (a load while a TTD recording runs) plays once it lands
+                return ctx->pTape->Play() != TapePlayResult::NoBlocks;
             }, "Start (or resume in place) tape playback")
             .def("tape_stop", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
@@ -5072,9 +5088,59 @@ namespace PythonBindings
                  "One RESET DRV pulse to both ISA slots")
             .def("isa_latch", [](Emulator& self, int value) { return PyIsaCycle(self, "latch", 0, py::int_(0), value); },
                  py::arg("value"), "Write the #9FBD latch (A19-A14, AEN bit 6, RESET bit 7)")
+            .def("devices_state", [](Emulator& self, bool all) -> py::object {
+                return StateNodeToPy(DeviceState::Catalog(self.GetContext(), all));
+            }, py::arg("all") = false,
+               "The state reports this machine has: id, title, summary, REST route, CLI command, Lua / Python function, "
+               "MCP aspect; all=True: the absent ones too, each with why")
             .def("fdc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Fdc(self.GetContext()));
             }, "Beta Disk WD1793 state report: registers, status bits, FSM, signals, drives")
+            // Device histories (core/src/debugger/history/historycontrol.h): a bad request raises ValueError, a device
+            // without a history KeyError
+            .def("history_list", [](Emulator& self) -> py::object {
+                HistoryRequest request;
+                request.verb = "list";
+                return StateNodeToPy(python_history::Run(self, request));
+            }, "Every device history: device (registry id), what, mode, limit, written, kept, dropped, stream")
+            .def("history", [](Emulator& self, const std::string& device, size_t last) -> py::object {
+                HistoryRequest request;
+                request.verb = "read";
+                request.device = device;
+                request.last = last;
+                return StateNodeToPy(python_history::Run(self, request));
+            }, py::arg("device"), py::arg("last") = 0,
+               "One device's history: stats and records (oldest first, the newest `last`; 0 = all)")
+            .def("history_config",
+                 [](Emulator& self, const std::string& device, std::optional<std::string> mode,
+                    std::optional<uint64_t> limit, std::optional<std::string> stream,
+                    std::optional<uint64_t> streamLimit) -> py::object {
+                     HistoryRequest request;
+                     request.verb = "config";
+                     request.device = device;
+                     request.mode = mode;
+                     request.limit = limit;
+                     request.stream = stream;
+                     request.streamLimit = streamLimit;
+                     return StateNodeToPy(python_history::Run(self, request));
+                 },
+                 py::arg("device"), py::arg("mode") = py::none(), py::arg("limit") = py::none(),
+                 py::arg("stream") = py::none(), py::arg("stream_limit") = py::none(),
+                 "Configure a device history: mode off / ring / capture, limit (ring size; capture cap, 0 = none), "
+                 "stream (a JSON Lines file, '' = none), stream_limit; omitted fields keep their value")
+            .def("history_clear", [](Emulator& self, const std::string& device) -> py::object {
+                HistoryRequest request;
+                request.verb = "clear";
+                request.device = device;
+                return StateNodeToPy(python_history::Run(self, request));
+            }, py::arg("device"), "Drop a device history's records and counts")
+            .def("history_pause", [](Emulator& self, const std::string& device, bool paused) -> py::object {
+                HistoryRequest request;
+                request.verb = paused ? "pause" : "resume";
+                request.device = device;
+                return StateNodeToPy(python_history::Run(self, request));
+            }, py::arg("device"), py::arg("paused") = true,
+               "Hold a device history (nothing recorded, the records kept); paused=False goes on")
             .def("contention_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Contention(self.GetContext()));
             }, "Memory contention report: rule, switch, interface, contended slots, per-kind waits while debugging")
@@ -5312,6 +5378,7 @@ namespace PythonBindings
                         case GSTraceSide::DacFetch: ev["side"] = "dac"; break;
                         case GSTraceSide::Interrupt: ev["side"] = "interrupt"; break;
                         case GSTraceSide::ZxDma: ev["side"] = "zxdma"; break;
+                        case GSTraceSide::Idle: ev["side"] = "idle"; break;
                     }
                     ev["direction"] = e.isOut() ? "out" : "in";
                     ev["port"] = e.port;
@@ -5320,6 +5387,7 @@ namespace PythonBindings
                     if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
                     if (e.side == GSTraceSide::ZxDma) ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
                     if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
+                    if (e.side == GSTraceSide::Idle) ev["iterations"] = e.iterations;
                     result.append(ev);
                 }
                 return result;
@@ -6574,7 +6642,27 @@ namespace PythonBindings
                 return TtdCoveragePy(TtdRunPy(self, "coverage-summary", options));
             }, "Activity heatmap over from_frame..to_frame (coverage index)",
                 py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = py::none(),
-                py::arg("bucket_size") = 0, py::arg("limit") = 100);
+                py::arg("bucket_size") = 0, py::arg("limit") = 100)
+
+            .def("ttd_timeline", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj, uint64_t bucketSize,
+                                    size_t limit, bool buckets, bool ports, unsigned minPhaseMs) -> py::object {
+                std::map<std::string, std::string> options{
+                    {"from_frame", std::to_string(fromFrame)}, {"bucket_size", std::to_string(bucketSize)},
+                    {"limit", std::to_string(limit)},          {"buckets", buckets ? "true" : "false"},
+                    {"ports", ports ? "true" : "false"},       {"min_phase_ms", std::to_string(minPhaseMs)}};
+                if (!toFrameObj.is_none())
+                    options["to_frame"] = TtdOptionTextPy(toFrameObj);
+                const ttd::TTDReply reply = TtdRunPy(self, "timeline", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The recording cut into phases of the same activity (tape, disk, input, net, sound, screen, burst, halt, "
+               "paging), each with its facts; from what the session holds, no replay",
+                py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("bucket_size") = 0,
+                py::arg("limit") = 20, py::arg("buckets") = false, py::arg("ports") = true, py::arg("min_phase_ms") = 200);
 
         // ================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI/Lua:

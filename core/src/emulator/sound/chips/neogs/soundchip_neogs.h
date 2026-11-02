@@ -47,6 +47,7 @@
 #include "emulator/sound/chips/neogs/neogsspi.h"
 #include "emulator/sound/chips/neogs/neogszxdma.h"
 #include "emulator/sound/chips/neogs/vs10xx.h"
+#include "debugger/history/devicehistory.h"
 #include "sysdefs.h"
 
 class EmulatorContext;
@@ -154,6 +155,8 @@ public:
 
     const GSActivityCounters& getActivityCounters() const override { return _activityCounters; }
     void resetActivityCounters() override { _activityCounters = GSActivityCounters{}; }
+
+    void attachPortTrace(GSHistory* history) override { _portTrace.attach(history, _context); }
 
     void startPortTrace() override { _portTrace.start(); }
     void stopPortTrace() override { _portTrace.stop(); }
@@ -329,10 +332,17 @@ private:
     bool sleepAllowed() const
     {
         return !_nmiPending && _resetRequest == ResetKind::None && _nextTicksPerCycle == _ticksPerCycle &&
-               !_portTrace.isCapturing() && !Z80CpuIntPossible(_cpu);
+               !Z80CpuIntPossible(_cpu);
     }
     int64_t sleepHardStop() const { return std::min(_dma.nextEvent(), _zx.nextEvent()); }
     void onStepsSkipped(uint64_t steps) { _activityCounters.cpuSteps += steps; }
+    /// One sleep, one record in each history that is on (the event trace's Idle, the execution history's idle)
+    void onSlept(uint16_t head, int64_t start, uint64_t iterations)
+    {
+        if (_portTrace.isCapturing()) [[unlikely]]
+            traceIdle(head, start, iterations);
+        recordExecIdle(head, iterations);
+    }
     bool sleepQuietEventsBefore(int64_t end);
     // Forced: the fast and the debug loop both call it, and an outlined call per instruction costs the fast one 4 %
     __forceinline void onStep()
@@ -370,13 +380,17 @@ private:
     /// The catch-up: the fast loop, or the debug loop while a debugger's hooks are set (one test per run)
     void runTo(int64_t target)
     {
+        syncExecHistory();
         if (_debugHooks) [[unlikely]]
             runToDebug(target);
+        else if (execRecording()) [[unlikely]]
+            runToRecord(target);
         else
             _runner.runTo(target);
     }
-    /// Out of line: the debug loop's code stays away from the fast loop's
+    /// Out of line: the debug loop's and the execution history's code stay away from the fast loop's
     void runToDebug(int64_t target);
+    void runToRecord(int64_t target);
 
     uint8_t readMem(uint16_t addr)
     {
@@ -470,6 +484,7 @@ private:
     void onHostCommandWrite(uint8_t value);
 
     void traceEvent(GSTraceSide side, uint16_t port, uint8_t value, bool isOut, uint8_t channel = 0, uint8_t extraFlags = 0);
+    void traceIdle(uint16_t head, int64_t start, uint64_t iterations);
     uint32_t currentFrameNumber() const;
     void markReplayBarrier(ttd::TTDExternalEventKind kind, const char* reason);
     bool openSdImage(const std::string& path); // no media manager: the card opens the image itself
@@ -522,6 +537,15 @@ private:
     bool _sdWriteProtect = false; // the slot's write-protect switch (SSTAT bit 2)
     std::string _sdSource;        // the attached medium's source path
     std::unique_ptr<Vs10xxDecoder> _mp3; // absent with MP3Support=none
+    /// The MP3 decoder's SCI register writes, `<slot>.mp3` (with the decoder only)
+    struct Mp3Record
+    {
+        uint64_t frame = 0;
+        uint8_t reg = 0;
+        uint16_t value = 0;
+        void ToState(StateNode& node) const;
+    };
+    std::unique_ptr<history::Registered<Mp3Record>> _mp3History;
     NeoGSDma _dma;
     NeoGSZxDma _zx{*this, _dma, _mem};
     bool _zxLateStartLogged = false;

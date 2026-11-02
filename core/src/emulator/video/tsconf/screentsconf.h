@@ -55,6 +55,10 @@ public:
     /// The TS mode with its geometry ("TS16 320x200"), its pixel format and
     /// the RAM pages it reads (V_PAGE based)
     ScreenState DescribeScreenState() const override;
+    /// The graphics layer's pages (by V_CONFIG mode), the tile map and tile graphics of the enabled tile layers, the
+    /// sprite graphics, and the FT812's memory while the VDAC2 card shows its picture. CRAM and the sprite file live in
+    /// the TS-Conf state, not counted
+    void DescribeDisplayedMemory(std::vector<ScreenMemorySpan>& out) const override;
     /// Draw the beam's dots up to frame tact `raster` (not beyond what the CPU
     /// reached): a DMA CRAM write draws what came before it first (TIM-5)
     void DrawTo(uint32_t raster);

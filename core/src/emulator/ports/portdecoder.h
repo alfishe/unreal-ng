@@ -16,6 +16,7 @@
 #include "emulator/io/serial/uart16550.h"
 #include "emulator/io/fdc/fdc.h"
 #include "emulator/io/ide/ideadapter.h"
+#include "emulator/ports/porthistory.h"
 #include "emulator/ports/portdiagrecorder.h"
 #include "emulator/slots/portclaimtable.h"   // guards the Qt `slots` macro itself
 #include "debugger/ttd/ttdserializable.h"  // ttd::PeripheralId / TTDSerializable (leaf header)
@@ -428,6 +429,7 @@ public:
     /// region <Fields>
 protected:
     EmulatorContext* _context = nullptr;
+    PortHistories _portHistories;
 
     EmulatorState* _state = nullptr;
     snapshot::ISnapshotCommitPolicy* _snapshotPolicy = nullptr;   ///< not owned (SetSnapshotPolicy)
@@ -750,6 +752,12 @@ public:
 
     /// Recorder access for transports/tests. nullptr while the feature is off.
     /// Once returned the pointer stays valid for the decoder's lifetime
+    /// The port accesses of each registry device (porthistory.h)
+    PortHistories& GetPortHistories()
+    {
+        return _portHistories;
+    }
+
     PortDiagnosticRecorder* getPortTraceRecorder()
     {
         return _portTraceFeatureCache.load(std::memory_order_acquire) ? _portTrace.get() : nullptr;

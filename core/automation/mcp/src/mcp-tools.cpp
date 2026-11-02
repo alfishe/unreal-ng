@@ -19,6 +19,7 @@
 #include "mcp-analysis.h"
 #include "mcp-media.h"
 #include "mcp-bus.h"
+#include "mcp-history.h"
 #include "mcp-slots.h"
 #include "mcp-actions.h"
 #include "mcp-streamdeck.h"
@@ -2252,7 +2253,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_magic_port", "next_audio", "next_input", "next_uart", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
-                               "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound"})
+                               "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound", "devices"})
     {
         allowed.append(aspect);
     }
@@ -2299,6 +2300,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "'audio_midi' = its MIDI line and SAM2695 synthesizer (16 parts: program, preset name, volume, pan, voices, "
         "notes sounding; polyphony, counters, bank; a panic is invoke_api POST /api/v1/emulator/{id}/control/audio/midi "
         "{action: panic}), "
+        "'devices' = the device catalog: the state reports this machine has (id, title, one-line summary, REST route, "
+        "CLI command, Lua / Python function, and the aspect here that shows each), "
         "'execution' = the execution arbiter (phase; intent run / pause with who set it, why and when; main loop "
         "parked or not; the command holding the CPU and whether it drives the Z80; the queue behind it; the run-control "
         "claim; counters; driver_violations = moments two threads executed the Z80, 0 on a correct run), "
@@ -2564,11 +2567,11 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
                     aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi" && aspect != "execution" &&
-                    aspect != "monitor" && aspect != "audio_wildsound")
+                    aspect != "monitor" && aspect != "audio_wildsound" && aspect != "devices")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound, devices"));
                     return;
                 }
             }
@@ -3081,6 +3084,17 @@ void RegisterInspectState(ToolRegistry& registry)
                             // monitoring::Call `all` for this instance: the process and the instance's values
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", "/api/v1/monitor?instance=" + UrlEncodeSegment(id), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "devices")
+                        {
+                            // Core DeviceState::Catalog via the WebAPI: the state reports this machine has
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/devices"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -3687,6 +3701,22 @@ void RegisterInspectState(ToolRegistry& registry)
                                         out << ", DRIVER VIOLATIONS " << value["driver_violations"].asUInt64();
                                 }
                             }
+                            else if (aspect == "devices")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[devices] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[devices] " << value["reports"].size() << " reports";
+                                    for (const Json::Value& r : value["reports"])
+                                    {
+                                        out << "\n  " << r["id"].asString() << ": " << r["title"].asString();
+                                        if (!r["summary"].asString().empty())
+                                            out << " (" << r["summary"].asString() << ")";
+                                        out << ", aspect " << r["mcp"].asString();
+                                    }
+                                }
+                            }
                             else if (aspect == "rtc")
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
@@ -4229,6 +4259,27 @@ void RegisterInspectState(ToolRegistry& registry)
                                             out << "\n  " << drives[i]["letter"].asString() << ": " << drives[i]["path"].asString()
                                                 << " track " << drives[i]["track"].asInt() << (drives[i]["motor_on"].asBool() ? " motor on" : "")
                                                 << (drives[i]["write_protected"].asBool() ? " wp" : "");
+                                    // The last commands of the history (the report keeps up to 64)
+                                    const Json::Value& history = value["history"];
+                                    if (history.isArray() && !history.empty())
+                                    {
+                                        out << "\n  commands " << value["history_state"]["written"].asInt64() << " ("
+                                            << value["history_state"]["mode"].asString() << "), the last:";
+                                        const Json::ArrayIndex first = history.size() > 8 ? history.size() - 8 : 0;
+                                        for (Json::ArrayIndex i = first; i < history.size(); ++i)
+                                        {
+                                            const Json::Value& h = history[i];
+                                            char line[96];
+                                            snprintf(line, sizeof(line), "\n    #%02X %s T%u S%u drive %u side %u pc #%04X ",
+                                                     h["command"].asUInt(), h["name"].asCString(), h["track"].asUInt(),
+                                                     h["sector"].asUInt(), h["drive"].asUInt(), h["side"].asUInt(), h["pc"].asUInt());
+                                            out << line;
+                                            if (h["done"].asBool())
+                                                out << "status " << h["status"].asUInt() << " in " << h["duration"].asInt64() << " T";
+                                            else
+                                                out << "not done";
+                                        }
+                                    }
                                 }
                             }
                             else if (aspect == "audio_ay")
@@ -4396,7 +4447,16 @@ void RegisterInspectState(ToolRegistry& registry)
                                                 << slot["hostedCard"].asString();
                                     }
                                     for (const Json::Value& builtIn : value["builtIns"])
+                                    {
                                         out << "\n  built-in " << builtIn["id"].asString() << ": " << builtIn["state"].asString();
+                                        // Its ports: the claims a port access is attributed by
+                                        if (builtIn["ports"].isArray() && !builtIn["ports"].empty())
+                                        {
+                                            out << ", ports";
+                                            for (const Json::Value& port : builtIn["ports"])
+                                                out << " " << port["range"].asString();
+                                        }
+                                    }
                                 }
                             }
                             else if (aspect == "audio_covox")
@@ -5309,7 +5369,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
                                "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
-                               "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary",
+                               "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
                                "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
                                "memory_at", "memory_diff"})
@@ -5366,6 +5426,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "most max_frames frames of from_frame..to_frame, as blocks with those frames, rarest first; addr_from / "
         "addr_to where the page was mapped at the first frame's start, else phys_page and page offsets), "
         "'coverage_summary' (bucketed activity heatmap). "
+        "'timeline' (start here on an unknown recording: the history cut into phases of the same activity - tags tape, "
+        "disk, input, net, sound, screen, burst, halt, paging - each with its frames, facts, keys, devices used and the "
+        "busiest frame to seek to; one call instead of a loop of coverage_summary / port_events / memory_diff; reads "
+        "what the session stores, no replay; facts it cannot give are listed as missing; from_frame, to_frame, "
+        "buckets=true adds an overview of limit buckets (default 20; bucket_size sets their size), ports=false skips the "
+        "per-device port counts, min_phase_ms the shortest phase, default 200). "
         "Write journal (who wrote an address last, answered at once; off by default): 'journal_on' / 'journal_off' "
         "switch it at any moment, also while recording (each on-off span is a segment); 'journal_build' builds it by "
         "replaying frames from_frame..to_frame (default: the whole session; about 2-4 ms per frame; not while "
@@ -5556,7 +5622,14 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["max_frames"]["description"] =
         "coverage_rare: an address is rare when at most this many frames touched it (default 1, at most 1000)";
     schema["properties"]["bucket_size"]["type"] = "integer";
-    schema["properties"]["bucket_size"]["description"] = "Frames per bucket for coverage_summary (default: auto)";
+    schema["properties"]["bucket_size"]["description"] = "Frames per bucket for coverage_summary / timeline (default: auto)";
+    schema["properties"]["buckets"]["type"] = "boolean";
+    schema["properties"]["buckets"]["description"] = "timeline: also return an overview of limit buckets (default false: the phases)";
+    schema["properties"]["ports"]["type"] = "boolean";
+    schema["properties"]["ports"]["description"] = "timeline: count the port records per device (default true)";
+    schema["properties"]["min_phase_ms"]["type"] = "integer";
+    schema["properties"]["min_phase_ms"]["description"] =
+        "timeline: the shortest phase in ms of machine time, also the window frames are tagged over (default 200)";
     schema["properties"]["probes"]["type"] = "array";
     schema["properties"]["probes"]["items"]["type"] = "object";
     schema["properties"]["probes"]["description"] =
@@ -6472,6 +6545,71 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         done(ToolResult::Ok(out.str(), std::move(body)));
                     });
                 }
+                else if (action == "timeline")
+                {
+                    std::string query = "/ttd/timeline?";
+                    for (const char* field : {"from_frame", "to_frame", "bucket_size", "limit", "min_phase_ms"})
+                        if (args.isMember(field))
+                            query += std::string(field) + "=" + std::to_string(args[field].asUInt64()) + "&";
+                    for (const char* field : {"buckets", "ports"})
+                        if (args.isMember(field))
+                            query += std::string(field) + "=" + (args[field].asBool() ? "true" : "false") + "&";
+                    query.pop_back();
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        // Every phase in the text: an agent may read only this
+                        const Json::Value& devices = body["devices"];
+                        std::ostringstream out;
+                        out << "Timeline " << body["from_frame"].asUInt64() << ".." << body["to_frame"].asUInt64() << " ("
+                            << body["to_frame"].asUInt64() - body["from_frame"].asUInt64() + 1 << " frames";
+                        if (body["bucket_count"].asUInt64())
+                            out << ", " << body["bucket_count"].asUInt64() << " buckets of "
+                                << body["bucket_size"].asUInt64() << " frames";
+                        out << (body["truncated"].asBool() ? ", window cut at the limit" : "") << "): "
+                            << body["phases"].size() << " phases";
+                        for (const Json::Value& p : body["phases"])
+                        {
+                            std::string tags;
+                            for (const Json::Value& t : p["tags"])
+                                tags += (tags.empty() ? "" : ",") + t.asString();
+                            out << "\n" << p["frame_start"].asUInt64() << ".." << p["frame_end"].asUInt64() << " "
+                                << (tags.empty() ? "-" : tags) << ": exec " << p["executed"].asUInt() << ", written "
+                                << p["written"].asUInt() << ", screen " << p["screen_frames"].asUInt() << " fr, halted "
+                                << p["halted_frames"].asUInt() << " fr, in " << p["in"].asUInt64() << ", out "
+                                << p["out"].asUInt64();
+                            if (p["ula_reads"].asUInt64())
+                                out << ", #FE reads " << p["ula_reads"].asUInt64();
+                            if (p["sectors"].asUInt64())
+                                out << ", sectors " << p["sectors"].asUInt64();
+                            if (p["keys"].size() > 0)
+                            {
+                                out << ", keys";
+                                for (const Json::Value& k : p["keys"])
+                                    out << " " << k.asString();
+                            }
+                            for (const Json::Value& d : p["devices"])
+                                if (d.isMember("slot"))
+                                    out << "; " << d["slot"].asString() << " " << d["sectors"].asUInt64() << " sectors";
+                                else if (d.isMember("region"))
+                                    out << "; " << d["region"].asString() << " changed " << d["frames"].asUInt64()
+                                        << " fr";
+                                else if (d["device"].asUInt() < devices.size())
+                                    out << "; " << devices[d["device"].asUInt()]["name"].asString() << " in "
+                                        << d["in"].asUInt64() << " out " << d["out"].asUInt64();
+                            out << "; busiest frame " << p["busiest_frame"].asUInt64();
+                        }
+                        for (const Json::Value& e : body["events"])
+                            out << "\nevent " << e["frame"].asUInt64() << " " << e["kind"].asString() << " "
+                                << e["text"].asString();
+                        for (const Json::Value& m : body["missing"])
+                            out << "\nmissing " << m["fact"].asString() << ": " << m["reason"].asString();
+                        done(ToolResult::Ok(out.str(), std::move(body)));
+                    });
+                }
                 else if (action == "coverage_summary")
                 {
                     std::string query = "/ttd/coverage/summary?";
@@ -7111,6 +7249,7 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterStreamDeck(*registry);
     // bus_analyzer: peripheral bus traces, checks, SD card timing (docs/inprogress/2026-10-11-bus-analyzer)
     RegisterBusAnalyzer(*registry);
+    RegisterDeviceHistory(*registry);
     // audio_mixer: the mixer's rows and channels, the levels, the sound settings
     RegisterAudioMixer(*registry);
 

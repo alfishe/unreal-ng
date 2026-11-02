@@ -84,54 +84,6 @@ const char* NextDivMmcEntryName(uint16_t address)
     return "rom3_routine";
 }
 
-void NextDivMmcJournal::SetCapacity(size_t capacity)
-{
-    _ring.assign(std::max<size_t>(capacity, 1), NextDivMmcEvent{});
-    _head = 0;
-    _count = 0;
-    _evicted = 0;
-}
-
-void NextDivMmcJournal::Clear()
-{
-    _head = 0;
-    _count = 0;
-    _evicted = 0;
-}
-
-void NextDivMmcJournal::Record(NextDivMmcEvent event)
-{
-    event.seq = ++_seq;
-    _ring[_head] = event;
-    _head = (_head + 1) % _ring.size();
-    if (_count < _ring.size())
-        _count++;
-    else
-        _evicted++;
-}
-
-std::vector<NextDivMmcEvent> NextDivMmcJournal::Query(const NextDivMmcJournalQuery& query) const
-{
-    std::vector<NextDivMmcEvent> out;
-    const size_t first = (_head + _ring.size() - _count) % _ring.size();
-    for (size_t i = 0; i < _count; i++)
-    {
-        const NextDivMmcEvent& e = _ring[(first + i) % _ring.size()];
-        if (e.seq <= query.since)
-            continue;
-        if (query.frameFrom >= 0 && e.frame < query.frameFrom)
-            continue;
-        if (query.frameTo >= 0 && e.frame > query.frameTo)
-            continue;
-        if (!query.kinds.empty() && std::find(query.kinds.begin(), query.kinds.end(), e.kind) == query.kinds.end())
-            continue;
-        out.push_back(e);
-    }
-    if (query.limit && out.size() > query.limit)
-        out.erase(out.begin(), out.end() - static_cast<std::ptrdiff_t>(query.limit));
-    return out;
-}
-
 namespace
 {
 std::vector<std::string> Split(const std::string& text)
@@ -208,4 +160,15 @@ bool NextDivMmcJournalQueryFromStrings(const std::string& kinds, const std::stri
         query.limit = static_cast<size_t>(value);
     }
     return true;
+}
+
+std::vector<NextDivMmcEvent> NextDivMmcJournal::Query(const NextDivMmcJournalQuery& query) const
+{
+    return Select(query.since, query.limit, [&query](const NextDivMmcEvent& e) {
+        if (query.frameFrom >= 0 && e.frame < query.frameFrom)
+            return false;
+        if (query.frameTo >= 0 && e.frame > query.frameTo)
+            return false;
+        return query.kinds.empty() || std::find(query.kinds.begin(), query.kinds.end(), e.kind) != query.kinds.end();
+    });
 }

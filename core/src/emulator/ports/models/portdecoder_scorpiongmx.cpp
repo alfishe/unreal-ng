@@ -9,6 +9,7 @@
 #include "debugger/ttd/gmx/ttdgmxpaging.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/slots/portowners.h"
 #include "emulator/sound/audio.h"
 #include "emulator/video/screen.h"
 
@@ -27,6 +28,7 @@ PortDecoder_ScorpionGMX::PortDecoder_ScorpionGMX(EmulatorContext* context) : Por
     _zc.SetTap(&_spiTap);
     _sdCard.SetBusTap(&_spiTap, 0);
     _sdCard.SetClock([this]() { return EmulatedMicroseconds(); });
+    _sdCard.AttachHistory(_context, [context = _context]() { return slots::PortOwnerName(context, 0x0057, "sd-zc"); });
     _sdCard.setWriteListener([this](uint64_t) {
         if (_context->pMediaManager)
             _context->pMediaManager->NoteWrite(_sdSlot.Descriptor().id);
@@ -169,9 +171,20 @@ uint8_t PortDecoder_ScorpionGMX::DecodePortIn(uint16_t port, uint16_t pc)
     if (gmx.magicLock && (port & 0x00FF) == 0x00FF) [[unlikely]]
         gmx.magicLock = 0;
 
+    const uint8_t low = static_cast<uint8_t>(port);
+
+    // ProfROM's set-up is over once the Spectrum ROMs run: the first sign is the 48 BASIC KEY-SCAN (IN A,(C) at
+    // #0296, called from the IM 1 interrupt of the 128 menu) on the plane's own 48 ROM page. Paging writes are no
+    // sign: the loader hands over to plane 4 from RAM and the monitor-call stub writes #7EFD=#40 from ROM (#0050,
+    // frame 112) long before the logo and tests end (port traces: 6.44 KEY-SCAN from frame 338, v5.00 from 313)
+    if (_firmwareRunning && pc == 0x0296 && low == 0xFE) [[unlikely]]
+    {
+        if (_context->pMemory->GetROMPageForBank(0) == static_cast<uint16_t>(Plane() * 4 + 1))
+            OnFirmwareBooted();
+    }
+
     // Z-Controller: #77 reads 0 ("inserted, writable": the driver finds the card by initializing it; Unreal,
     // ZEsarUX and the BaseConf FPGA alike), #57 the byte the previous exchange received
-    const uint8_t low = static_cast<uint8_t>(port);
     if (low == 0x57 || low == 0x77)
     {
         const uint8_t value = (low == 0x57) ? _zc.ReadData() : 0x00;
@@ -301,10 +314,6 @@ void PortDecoder_ScorpionGMX::DecodePortOut(uint16_t port, uint8_t value, uint16
             break;
         case 0x7E:
             Out7EFD(value);
-            // ProfROM's set-up ends when it leaves its logo for the 128 menu from ROM: plane 4, 640x200 off (the
-            // loader's own hand-over to plane 4 runs from RAM, gmx644 trace: #5D2F, then #06A1 at frame 317)
-            if (_firmwareRunning && pc < 0x4000 && (value & 0x7F) == 0x40)
-                OnFirmwareBooted();
             break;
         default:  // 0xDF
             state.pDFFD = static_cast<uint8_t>(value & 0x07);
