@@ -132,7 +132,10 @@ protected:
     }
 };
 
-#define TEXT(r) ttd::TTDFindEventText(ttd::TTDFindEventQuery{}, r)
+static std::string HitsText(const ttd::TTDFindEventResult& r)
+{
+    return ttd::TTDFindEventText(ttd::TTDFindEventQuery{}, r);
+}
 
 namespace
 {
@@ -149,10 +152,10 @@ TEST_F(TTDFindEvent_Test, T1_CounterDecreased)
     const Where before = Here();
     const ttd::TTDFindEventResult first = Mem(ttd::TTDFindEventCond::Decreased);
     ASSERT_TRUE(first.error.empty()) << first.error;
-    ASSERT_EQ(first.hits.size(), 1u) << TEXT(first);
+    ASSERT_EQ(first.hits.size(), 1u) << HitsText(first);
     const ttd::TTDFindEventHit& h = first.hits[0];
     EXPECT_TRUE(h.hasPc);
-    EXPECT_EQ(h.pc, kDecPc) << TEXT(first);
+    EXPECT_EQ(h.pc, kDecPc) << HitsText(first);
     EXPECT_EQ(h.before, 5u);
     EXPECT_EQ(h.after, 4u);
     EXPECT_GT(h.time.tInFrame, 0u);
@@ -164,18 +167,18 @@ TEST_F(TTDFindEvent_Test, T1_CounterDecreased)
     ExpectUnmoved(before);
 
     const ttd::TTDFindEventResult three = Mem(ttd::TTDFindEventCond::Decreased, 0, 3);
-    ASSERT_EQ(three.hits.size(), 3u) << TEXT(three);
+    ASSERT_EQ(three.hits.size(), 3u) << HitsText(three);
     for (uint32_t k = 0; k < 3; ++k)
     {
         EXPECT_EQ(three.hits[k].before, 5u - k);
         EXPECT_EQ(three.hits[k].after, 4u - k);
         if (k)
-            EXPECT_EQ(three.hits[k].time.frame, three.hits[k - 1].time.frame + 2) << TEXT(three);
+            EXPECT_EQ(three.hits[k].time.frame, three.hits[k - 1].time.frame + 2) << HitsText(three);
     }
 
     const ttd::TTDFindEventResult last = Mem(ttd::TTDFindEventCond::Decreased, 0, 1, true);
-    ASSERT_EQ(last.hits.size(), 1u) << TEXT(last);
-    EXPECT_EQ(last.hits[0].after, before.value) << TEXT(last);
+    ASSERT_EQ(last.hits.size(), 1u) << HitsText(last);
+    EXPECT_EQ(last.hits[0].after, before.value) << HitsText(last);
     EXPECT_EQ(last.hits[0].before, before.value + 1u);
     EXPECT_EQ(last.hits[0].pc, kDecPc);
     EXPECT_GT(last.hits[0].time.frame, three.hits[2].time.frame);
@@ -192,7 +195,7 @@ TEST_F(TTDFindEvent_Test, T2_CounterConditions)
 {
     Record(Im2(kCountdown), 10, {0x05});
     const ttd::TTDFindEventResult eq = Mem(ttd::TTDFindEventCond::Equals, 2);
-    ASSERT_EQ(eq.hits.size(), 1u) << TEXT(eq);
+    ASSERT_EQ(eq.hits.size(), 1u) << HitsText(eq);
     EXPECT_EQ(eq.hits[0].after, 2u);
     EXPECT_EQ(eq.hits[0].pc, kDecPc);
     const ttd::TTDFindEventResult becomes = Mem(ttd::TTDFindEventCond::Becomes, 2);
@@ -205,13 +208,13 @@ TEST_F(TTDFindEvent_Test, T2_CounterConditions)
 
     // Equals: already 5 when the window starts
     const ttd::TTDFindEventResult eq5 = Mem(ttd::TTDFindEventCond::Equals, 5);
-    ASSERT_EQ(eq5.hits.size(), 1u) << TEXT(eq5);
+    ASSERT_EQ(eq5.hits.size(), 1u) << HitsText(eq5);
     EXPECT_FALSE(eq5.hits[0].hasPc);
     EXPECT_EQ(eq5.hits[0].time.frame, eq5.fromFrame);
 
     // Bit 0 goes 1 -> 0 at 5 -> 4 first; 1 -> 0 sets it again only at 4 -> 3? no: 4 = 100b, 3 = 011b sets it
     const ttd::TTDFindEventResult clear0 = Mem(ttd::TTDFindEventCond::BitClear, 0, 2);
-    ASSERT_EQ(clear0.hits.size(), 2u) << TEXT(clear0);
+    ASSERT_EQ(clear0.hits.size(), 2u) << HitsText(clear0);
     EXPECT_EQ(clear0.hits[0].before, 5u);
     EXPECT_EQ(clear0.hits[1].before, 3u);
     const ttd::TTDFindEventResult set0 = Mem(ttd::TTDFindEventCond::BitSet, 0);
@@ -220,14 +223,14 @@ TEST_F(TTDFindEvent_Test, T2_CounterConditions)
 
     // exact follows every write: the same changes, each with its PC
     const ttd::TTDFindEventResult exact = Mem(ttd::TTDFindEventCond::Decreased, 0, 3, false, true);
-    ASSERT_EQ(exact.hits.size(), 3u) << TEXT(exact);
+    ASSERT_EQ(exact.hits.size(), 3u) << HitsText(exact);
     const ttd::TTDFindEventResult bounds = Mem(ttd::TTDFindEventCond::Decreased, 0, 3);
     for (size_t k = 0; k < 3; ++k)
     {
         EXPECT_EQ(exact.hits[k].pc, kDecPc);
         EXPECT_EQ(exact.hits[k].time.frame, bounds.hits[k].time.frame);
         EXPECT_EQ(exact.hits[k].before, bounds.hits[k].before);
-        EXPECT_FALSE(exact.hits[k].text.empty()) << TEXT(exact);
+        EXPECT_FALSE(exact.hits[k].text.empty()) << HitsText(exact);
     }
 }
 
@@ -238,9 +241,9 @@ TEST_F(TTDFindEvent_Test, T3_ChangeInsideOneFrame)
     Record(Im2({0xFB, 0x76, 0x3E, 0xFF, 0x32, 0x00, 0xA0, 0xAF, 0x32, 0x00, 0xA0, 0x18, 0xF4}), 5);
     const ttd::TTDFindEventResult bounds = Mem(ttd::TTDFindEventCond::Changed);
     ASSERT_TRUE(bounds.error.empty()) << bounds.error;
-    EXPECT_TRUE(bounds.hits.empty()) << TEXT(bounds);
+    EXPECT_TRUE(bounds.hits.empty()) << HitsText(bounds);
     const ttd::TTDFindEventResult exact = Mem(ttd::TTDFindEventCond::Becomes, 0xFF, 1, false, true);
-    ASSERT_EQ(exact.hits.size(), 1u) << TEXT(exact);
+    ASSERT_EQ(exact.hits.size(), 1u) << HitsText(exact);
     EXPECT_EQ(exact.hits[0].pc, 0x800B);
     EXPECT_EQ(exact.hits[0].after, 0xFFu);
     EXPECT_NE(exact.hits[0].text.find("ld"), std::string::npos) << exact.hits[0].text;
@@ -252,14 +255,14 @@ TEST_F(TTDFindEvent_Test, T4_WordIncreased)
     // ei; halt; ld hl,#0100; ld (#A000),hl; loop: halt; jr loop
     Record(Im2({0xFB, 0x76, 0x21, 0x00, 0x01, 0x22, 0x00, 0xA0, 0x76, 0x18, 0xFD}), 4, {0xFF, 0x00});
     const ttd::TTDFindEventResult inc = Mem(ttd::TTDFindEventCond::Increased, 0, 5, false, false, 2);
-    ASSERT_EQ(inc.hits.size(), 1u) << TEXT(inc);
+    ASSERT_EQ(inc.hits.size(), 1u) << HitsText(inc);
     EXPECT_EQ(inc.hits[0].before, 0x00FFu);
     EXPECT_EQ(inc.hits[0].after, 0x0100u);
     EXPECT_EQ(inc.hits[0].pc, 0x800C);
     // The low byte alone went down: no decrease of the word
     EXPECT_TRUE(Mem(ttd::TTDFindEventCond::Decreased, 0, 5, false, false, 2).hits.empty());
     const ttd::TTDFindEventResult exact = Mem(ttd::TTDFindEventCond::Increased, 0, 5, false, true, 2);
-    ASSERT_EQ(exact.hits.size(), 1u) << TEXT(exact);
+    ASSERT_EQ(exact.hits.size(), 1u) << HitsText(exact);
     EXPECT_EQ(exact.hits[0].after, 0x0100u);
 }
 
@@ -276,16 +279,16 @@ TEST_F(TTDFindEvent_Test, T7_FirstRun)
     Record(Im2(kCaller), 8);
     const Where before = Here();
     const ttd::TTDFindEventResult four = Mem(ttd::TTDFindEventCond::Becomes, 4);
-    ASSERT_EQ(four.hits.size(), 1u) << TEXT(four);
+    ASSERT_EQ(four.hits.size(), 1u) << HitsText(four);
 
     ttd::TTDFindEventQuery q;
     q.kind = ttd::TTDFindEventKind::Exec;
     q.address = q.addressTo = kSub;
     const ttd::TTDFindEventResult first = Ask(q);
     ASSERT_TRUE(first.error.empty()) << first.error;
-    ASSERT_EQ(first.hits.size(), 1u) << TEXT(first);
+    ASSERT_EQ(first.hits.size(), 1u) << HitsText(first);
     EXPECT_EQ(first.hits[0].pc, kSub);
-    EXPECT_EQ(first.hits[0].time.frame, four.hits[0].time.frame) << TEXT(first);
+    EXPECT_EQ(first.hits[0].time.frame, four.hits[0].time.frame) << HitsText(first);
     EXPECT_GT(first.hits[0].time.tInFrame, four.hits[0].time.tInFrame);
     EXPECT_NE(first.hits[0].text.find("ret"), std::string::npos) << first.hits[0].text;
     EXPECT_TRUE(first.more);
@@ -293,7 +296,7 @@ TEST_F(TTDFindEvent_Test, T7_FirstRun)
     q.last = true;
     q.limit = 2;
     const ttd::TTDFindEventResult last = Ask(q);
-    ASSERT_EQ(last.hits.size(), 2u) << TEXT(last);
+    ASSERT_EQ(last.hits.size(), 2u) << HitsText(last);
     EXPECT_GT(last.hits[0].time.frame, last.hits[1].time.frame);
     EXPECT_GT(last.hits[0].time.frame, first.hits[0].time.frame);
     ExpectUnmoved(before);
@@ -313,10 +316,10 @@ TEST_F(TTDFindEvent_Test, T8_BorderChanges)
     q.limit = 5;
     const ttd::TTDFindEventResult all = Ask(q);
     ASSERT_TRUE(all.error.empty()) << all.error;
-    ASSERT_GE(all.hits.size(), 2u) << TEXT(all);
+    ASSERT_GE(all.hits.size(), 2u) << HitsText(all);
     const ttd::TTDFindEventHit& two = all.hits[all.hits.size() - 1];
     const ttd::TTDFindEventHit& one = all.hits[all.hits.size() - 2];
-    EXPECT_EQ(one.after, 1u) << TEXT(all);
+    EXPECT_EQ(one.after, 1u) << HitsText(all);
     EXPECT_EQ(one.pc, 0x800B);
     EXPECT_EQ(two.after, 2u);
     EXPECT_EQ(two.before, 1u);
@@ -326,7 +329,7 @@ TEST_F(TTDFindEvent_Test, T8_BorderChanges)
     q.value = 2;
     q.limit = 1;
     const ttd::TTDFindEventResult red = Ask(q);
-    ASSERT_EQ(red.hits.size(), 1u) << TEXT(red);
+    ASSERT_EQ(red.hits.size(), 1u) << HitsText(red);
     EXPECT_EQ(red.hits[0].pc, 0x8013);
     EXPECT_EQ(red.hits[0].time.frame, two.time.frame);
 }
@@ -345,7 +348,7 @@ TEST_F(TTDFindEvent_Test, T9_PortWrite)
     q.value = 0x17;
     const ttd::TTDFindEventResult r = Ask(q);
     ASSERT_TRUE(r.error.empty()) << r.error;
-    ASSERT_EQ(r.hits.size(), 1u) << TEXT(r);
+    ASSERT_EQ(r.hits.size(), 1u) << HitsText(r);
     EXPECT_EQ(r.hits[0].pc, 0x8006);
     EXPECT_EQ(r.hits[0].after, 0x17u);
     q.value = 0x10;
@@ -381,20 +384,20 @@ TEST_F(TTDFindEvent_Test, T10_KeyPresses)
     q.limit = 5;
     const ttd::TTDFindEventResult any = Ask(q);
     ASSERT_TRUE(any.error.empty()) << any.error;
-    ASSERT_EQ(any.hits.size(), 2u) << TEXT(any);
+    ASSERT_EQ(any.hits.size(), 2u) << HitsText(any);
     EXPECT_EQ(any.hits[0].time.frame, pressedAt[0]);
     EXPECT_EQ(any.hits[1].time.frame, pressedAt[1]);
     EXPECT_FALSE(any.more);
 
     q.key = "Q";
     const ttd::TTDFindEventResult qKey = Ask(q);
-    ASSERT_EQ(qKey.hits.size(), 1u) << TEXT(qKey);
+    ASSERT_EQ(qKey.hits.size(), 1u) << HitsText(qKey);
     EXPECT_EQ(qKey.hits[0].time.frame, pressedAt[1]);
 
     q.key = "SPACE";
     q.pressed = false;
     const ttd::TTDFindEventResult released = Ask(q);
-    ASSERT_EQ(released.hits.size(), 1u) << TEXT(released);
+    ASSERT_EQ(released.hits.size(), 1u) << HitsText(released);
     EXPECT_EQ(released.hits[0].time.frame, pressedAt[0] + 1);
 
     q.key = "NOSUCHKEY";
@@ -456,28 +459,28 @@ TEST_F(TTDFindEvent_Test, T5_SceneChange)
     q.limit = 10;
     const ttd::TTDFindEventResult scene = Ask(q);
     ASSERT_TRUE(scene.error.empty()) << scene.error;
-    ASSERT_EQ(scene.hits.size(), 2u) << TEXT(scene);   // the fill and the pixel clear, each over two frames
-    EXPECT_EQ(scene.hits[0].time.frame, three.hits[0].time.frame) << TEXT(scene);
-    EXPECT_GE(scene.hits[0].before, 6900u) << TEXT(scene);
+    ASSERT_EQ(scene.hits.size(), 2u) << HitsText(scene);   // the fill and the pixel clear, each over two frames
+    EXPECT_EQ(scene.hits[0].time.frame, three.hits[0].time.frame) << HitsText(scene);
+    EXPECT_GE(scene.hits[0].before, 6900u) << HitsText(scene);
     EXPECT_NE(scene.hits[0].why.find("over frames"), std::string::npos) << scene.hits[0].why;
-    EXPECT_GE(scene.hits[1].time.frame, five.hits[0].time.frame) << TEXT(scene);
-    EXPECT_LE(scene.hits[1].time.frame, five.hits[0].time.frame + 2) << TEXT(scene);
-    EXPECT_GE(scene.hits[1].before, 6000u) << TEXT(scene);
+    EXPECT_GE(scene.hits[1].time.frame, five.hits[0].time.frame) << HitsText(scene);
+    EXPECT_LE(scene.hits[1].time.frame, five.hits[0].time.frame + 2) << HitsText(scene);
+    EXPECT_GE(scene.hits[1].before, 6000u) << HitsText(scene);
     EXPECT_EQ(scene.framesReplayed, 0u);
 
     q.minChanged = 0;   // any change, frame by frame: every frame writes the sprite byte
     q.limit = 100;
     const ttd::TTDFindEventResult every = Ask(q);
-    EXPECT_GE(every.hits.size(), 10u) << TEXT(every);
+    EXPECT_GE(every.hits.size(), 10u) << HitsText(every);
 
     // Cleared: every pixel byte one value - the #AA fill, then the clear (the sprite byte comes before it)
     q.cond = ttd::TTDFindEventCond::Cleared;
     q.limit = 5;
     const ttd::TTDFindEventResult cleared = Ask(q);
-    ASSERT_EQ(cleared.hits.size(), 2u) << TEXT(cleared);
-    EXPECT_EQ(cleared.hits[0].time.frame, scene.hits[0].time.frame + 1) << TEXT(cleared);   // the fill's last frame
-    EXPECT_GT(cleared.hits[1].time.frame, scene.hits[1].time.frame) << TEXT(cleared);
-    EXPECT_LE(cleared.hits[1].time.frame, scene.hits[1].time.frame + 2) << TEXT(cleared);
+    ASSERT_EQ(cleared.hits.size(), 2u) << HitsText(cleared);
+    EXPECT_EQ(cleared.hits[0].time.frame, scene.hits[0].time.frame + 1) << HitsText(cleared);   // the fill's last frame
+    EXPECT_GT(cleared.hits[1].time.frame, scene.hits[1].time.frame) << HitsText(cleared);
+    EXPECT_LE(cleared.hits[1].time.frame, scene.hits[1].time.frame + 2) << HitsText(cleared);
     ExpectUnmoved(before);
 }
 
@@ -496,7 +499,7 @@ TEST_F(TTDFindEvent_Test, T6_ShadowScreenSwitch)
     q.limit = 10;
     const ttd::TTDFindEventResult r = Ask(q);
     ASSERT_TRUE(r.error.empty()) << r.error;
-    ASSERT_EQ(r.hits.size(), 1u) << TEXT(r);
+    ASSERT_EQ(r.hits.size(), 1u) << HitsText(r);
 
     ttd::TTDFindEventQuery p;
     p.kind = ttd::TTDFindEventKind::Port;
@@ -505,8 +508,8 @@ TEST_F(TTDFindEvent_Test, T6_ShadowScreenSwitch)
     p.hasValue = true;
     p.value = 0x0F;
     const ttd::TTDFindEventResult sw = Ask(p);
-    ASSERT_EQ(sw.hits.size(), 1u) << TEXT(sw);
-    EXPECT_EQ(r.hits[0].time.frame, sw.hits[0].time.frame) << TEXT(r);
+    ASSERT_EQ(sw.hits.size(), 1u) << HitsText(sw);
+    EXPECT_EQ(r.hits[0].time.frame, sw.hits[0].time.frame) << HitsText(r);
 }
 
 /// T11: a debugger edit (a barrier) inside the recording: the jump it makes is no hit, the barrier is listed
@@ -522,8 +525,8 @@ TEST_F(TTDFindEvent_Test, T11_BarrierIsNotAChange)
     });
     const ttd::TTDFindEventResult r = Mem(ttd::TTDFindEventCond::Changed);
     ASSERT_TRUE(r.error.empty()) << r.error;
-    EXPECT_TRUE(r.hits.empty()) << TEXT(r);
-    ASSERT_EQ(r.barriers.size(), 1u) << TEXT(r);
+    EXPECT_TRUE(r.hits.empty()) << HitsText(r);
+    ASSERT_EQ(r.barriers.size(), 1u) << HitsText(r);
     EXPECT_NE(r.barriers[0].find("poke"), std::string::npos);
 }
 
@@ -540,7 +543,7 @@ TEST_F(TTDFindEvent_Test, T12_WindowAndLimits)
     q.address = kDst;
     q.fromFrame = two.nextFromFrame;
     const ttd::TTDFindEventResult third = Ask(q);
-    ASSERT_EQ(third.hits.size(), 1u) << TEXT(third);
+    ASSERT_EQ(third.hits.size(), 1u) << HitsText(third);
     EXPECT_EQ(third.hits[0].before, 3u);
     EXPECT_EQ(third.fromFrame, two.nextFromFrame);
 
