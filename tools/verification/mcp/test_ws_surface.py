@@ -420,9 +420,16 @@ def test_a_client_that_stops_reading_is_closed_as_a_slow_consumer(s):
         slow.send({'op': 'snapshot'})
         asked += 1
         time.sleep(0.001)
-    # Reads nothing until the server closed it as a slow consumer: congested for `limit`, however loaded the host
+    # Reads nothing until the server closed it as a slow consumer: congested for `limit`, however loaded the host. It
+    # keeps asking meanwhile: on a loaded host one loop turn answers many requests with one view, so the first burst
+    # alone may leave the buffers short of the mark
     deadline = time.time() + limit + 30
     while ws_dropped(s) == before and time.time() < deadline:
+        try:
+            slow.send({'op': 'snapshot'})
+            asked += 1
+        except OSError:
+            pass  # the server closed it meanwhile
         time.sleep(0.05)
     expect(ws_dropped(s) == before + 1, f'the server closes it as a slow consumer within {limit + 30:.0f} s',
            (before, asked))

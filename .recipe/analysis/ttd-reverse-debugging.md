@@ -33,6 +33,9 @@ time_travel {"action":"coverage_scan","from_frame":11000,"to_frame":12000,"kind"
 time_travel {"action":"coverage_summary","kind":"executed"}
 # the recording cut into phases (start here on an unknown session):
 time_travel {"action":"timeline"}   # min_phase_ms (default 200); buckets=true adds an overview
+#   each phase: tags (screen = bytes the renderer shows were written, on every video family; tape only with a tape in;
+#   disk, sound, burst, paging, halt), the devices it used ({device,in,out} ports, {slot,sectors} host-read media,
+#   {region,frames} card / video memory), its busiest frame: seek there next; `missing` says what the session lacks
 # a profile's probes over the history ("shot" and "died" of a haptic profile):
 time_travel {"action":"probe_frames","from_frame":11000,"to_frame":12000,
              "probes":[{"probe":"exec","address":"0x8A14"},

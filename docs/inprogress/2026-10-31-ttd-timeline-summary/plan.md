@@ -79,8 +79,20 @@ table and the cost breakdown are in [design.md §6](design.md#6-costs).
   the phases stay the same: buckets off by default, `limit` 20.
 - `min_phase_ms` on UMT23X: 100 and 200 give the same four phases (typing, the burst after ENTER, a pause, the tape);
   500 merges the burst and the pause into the typing, 1000 leaves one phase: 200 by default.
-- Recording cost of the `halt` fact: one counter increment per accepted INT and two fields per checkpoint (B3
-  pending with step 6).
+- Recording cost of the `halt` fact: one counter increment per accepted INT and two fields per checkpoint; of the
+  screen layout: one `DescribeDisplayedMemory` call per checkpoint into reused vectors, interned against the last
+  layout (tens of ns against ~330 us a frame).
+- B3 (2026-11-01, Mac, load average 70-100, 8 interleaved rounds, minimum CPU time per row, base = github/master
+  c4f64fb44):
+
+  | Row | base, us | branch, us | A/B | A/A (6 rounds) |
+  |-----|---------:|-----------:|----:|----:|
+  | `Pentagon_WorstNormal` | 340.3 | 345.9 | +1.6 % | -0.6 % |
+  | `Pentagon_TtdRecordNormal` | 333.6 | 334.1 | +0.2 % | +0.6 % |
+  | `Pentagon_TtdRecordSoundOff` | 462.3 | 459.1 | -0.7 % | +0.7 % |
+  | `Pentagon_TsfmTune_TtdRecordNormal` | 950.0 | 909.9 | -4.2 % | +3.6 % |
+
+  Every A/B row is inside the A/A spread of the same host: no recording cost measurable (TL-3 holds).
 
 - Gate G on 48K, a real load (`scratch/ttd-timeline/after_load.py`: `load_software` autostart, the recording until
   the tape stops, then 1,500 frames; three runs): 3,520 frames, 26 ms, 5.8 KB. The phases are the ROM typing
@@ -107,6 +119,9 @@ table and the cost breakdown are in [design.md §6](design.md#6-costs).
   with a tape in the reads matter only for a recording started while the tape already played; S1 phase A runs with
   no tape and is no tape phase now, the rule is covered by `ttdtimeline_tape_test.cpp`.
 
-Progress: steps 1, 2, 3, 5 and G done (S1 tests green, `PhasesDoNotDependOnTheBuckets` added); step 4: the screen
-layouts of every video family done (`screendisplayedmemory_test.cpp`, `ttdtimeline_screen_test.cpp`); the devices,
-media slots and cards with their own CPU on every model next.
+Progress: all steps done. Step 4: the screen layouts of every video family (`screendisplayedmemory_test.cpp`,
+`ttdtimeline_screen_test.cpp`), the tape rule (`ttdtimeline_tape_test.cpp`), the host-read media slots and the device
+memory regions (the Sprinter IDE sectors and video RAM in `ttdsprinter_test.cpp`; the device-state blobs left out).
+Step 6: B3 above. Step 7 (2026-11-01, ee52875b2): clang zero warnings, full core-tests green; gcc 14.2 (CI image,
+docker on .20) zero warnings, 10,537 passed, 0 failed; MSVC 2019 and MinGW zero warnings, full core-tests 0 failed;
+the live MCP scripts 30/30 (`test_ws_surface` slow consumer made load proof: it keeps asking while it waits).
