@@ -448,6 +448,12 @@ offset}]}`). A card write lands as the card CPU's would (a ROM / flash window or
 `bytes_written` / `written` count what landed. 400 for another name, 404 when no card with a CPU is in the slot, 409 for an edit in the recorded past
 ([the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)).
 
+`?cpu=gs` on `POST /step`, `/steps` (body `count` 1-10000), `/stepover` and `/stepout` steps the card CPU: the
+machine resumes until the card's step ends and pauses again. The reply: `stop` (`cpu`, `reason` `step` /
+`breakpoint` / `pause` / `timeout`, `cpu_pc`, `breakpoint_id`, `address`, `access`), the card CPU's `pc` and `sp`,
+`main_pc`, `main_sp`, `state`; 409 when not paused or a step of that CPU is under way. The main CPU moves on to where
+the card catches up (a host port access or the frame end); none within 2 s (over / out 5 s) is a `timeout`.
+
 Every `format=binary` answer is the bytes alone (`application/octet-stream`) with the headers `X-Unreal-Space`
 (`cpu`, `ram5`, a region name), `X-Unreal-Address` and `X-Unreal-Length`, exposed to browser clients
 (`Access-Control-Expose-Headers`). Errors stay JSON with a 4xx status. The JSON formats are unchanged.

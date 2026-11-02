@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <memory>
 
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
+#include "debugger/disassembler/z80disasm.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -55,8 +57,8 @@ void GSCardTarget::OnCardCreated()
 void GSCardTarget::Attach()
 {
     GeneralSoundCard* card = Card();
-    // A waiting edit is made at a boundary of the debug loop too
-    GeneralSoundCard* want = _wanted || !_live.empty() || !_replay.empty() ? card : nullptr;
+    // A waiting edit is made at a boundary of the debug loop too, and an armed step parks at one
+    GeneralSoundCard* want = _wanted || !_live.empty() || !_replay.empty() || StepArmed() ? card : nullptr;
     if (want == _attached)
         return;
     if (_attached && _attached == card)
@@ -153,9 +155,136 @@ void GSCardTarget::Park(Stop stop, uint16_t boundaryPc)
     stop.cardTime = card ? card->cardTime() : 0;
     _lastStop = stop;
     _stopCount++;
-    if (_context && _context->pEmulator)
-        _context->pEmulator->OnTargetBreakpointHit(_id, *_breakpoints, stop.breakpointId, stop.address,
-                                                   stop.kind, stop.pc);
+    // Any stop ends an armed step: a breakpoint on the way is where it ended
+    _stepKind.store(StepKind::None, std::memory_order_release);
+    if (!_context || !_context->pEmulator)
+        return;
+    _parkedInside.store(true, std::memory_order_release);
+    if (stop.step)
+        _context->pEmulator->OnTargetStep(_id, boundaryPc);
+    else
+        _context->pEmulator->OnTargetBreakpointHit(_id, *_breakpoints, stop.breakpointId, stop.address, stop.kind,
+                                                   stop.pc);
+    _parkedInside.store(false, std::memory_order_release);
+}
+
+std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count)
+{
+    GeneralSoundCard* card = Card();
+    Z80CpuRegisters regs{};
+    if (!card || !card->cardRegisters(regs))
+        return std::string("cpu ") + Name() + " not available: no card with a CPU in its slot";
+    if (StepArmed())
+        return "a step of cpu " + std::string(Name()) + " is already under way";
+    if (kind == StepKind::None)
+        return "no step";
+    // Parked inside the card's run, the instruction at PC runs first and the next boundary is after it; else the
+    // next boundary is that instruction's own
+    const bool inside = ParkedInside();
+    const uint16_t pc = regs.pc;
+    _stepSp = regs.sp;
+    _stepReturning = false;
+    _stepSkip = (inside ? 0u : 1u) + std::max<uint32_t>(count, 1) - 1;
+    if (kind == StepKind::Over)
+    {
+        std::vector<uint8_t> bytes(Z80Disassembler::MAX_INSTRUCTION_LENGTH, 0);
+        for (size_t i = 0; i < bytes.size(); i++)
+            card->peekCardMemory(static_cast<uint16_t>(pc + i), bytes[i]);
+        // The machine's disassembler, or one of its own for a card without a machine (tests)
+        std::unique_ptr<Z80Disassembler> own;
+        Z80Disassembler* disassembler =
+            _context && _context->pDebugManager ? _context->pDebugManager->GetDisassembler().get() : nullptr;
+        if (!disassembler)
+            disassembler = (own = std::make_unique<Z80Disassembler>(_context)).get();
+        uint8_t length = 0;
+        if (disassembler->shouldStepOver(bytes))
+        {
+            disassembler->disassembleSingleCommand(bytes, pc, &length);
+            _stepTarget = static_cast<uint16_t>(pc + std::max<uint8_t>(length, 1));
+            _stepSkip = inside ? 0u : 1u;
+        }
+        else
+        {
+            kind = StepKind::In;
+            _stepSkip = inside ? 0u : 1u;
+        }
+    }
+    else if (kind == StepKind::Out)
+    {
+        // Parked inside, the instruction at PC runs without a boundary of its own first
+        _stepSkip = 0;
+        _stepReturning = inside && IsReturnAt(card, pc);
+        _stepReturnSp = regs.sp;
+    }
+    _stepKind.store(kind, std::memory_order_release);
+    Attach();
+    return {};
+}
+
+void GSCardTarget::CancelStep()
+{
+    _stepKind.store(StepKind::None, std::memory_order_release);
+}
+
+bool GSCardTarget::IsReturnAt(GeneralSoundCard* card, uint16_t pc) const
+{
+    uint8_t opcode = 0;
+    uint8_t next = 0;
+    if (!card || !card->peekCardMemory(pc, opcode))
+        return false;
+    if (opcode == 0xC9 || (opcode & 0xC7) == 0xC0)  // RET, RET cc
+        return true;
+    if (opcode != 0xED || !card->peekCardMemory(static_cast<uint16_t>(pc + 1), next))
+        return false;
+    // RETN, RETI and their aliases: ED 45 / 4D / 55 / 5D / 65 / 6D / 75 / 7D
+    return (next & 0xC7) == 0x45;
+}
+
+bool GSCardTarget::StepBoundary(uint16_t pc)
+{
+    // A direct run of the main CPU (its step) takes the card along: the card's step waits for the machine's own run
+    if (_context && _context->pEmulator && _context->pEmulator->IsDirectStepping())
+        return false;
+    const StepKind kind = _stepKind.load(std::memory_order_acquire);
+    GeneralSoundCard* card = Card();
+    Z80CpuRegisters regs{};
+    switch (kind)
+    {
+        case StepKind::In:
+            if (_stepSkip > 0)
+            {
+                _stepSkip--;
+                return false;
+            }
+            break;
+        case StepKind::Over:
+            if (_stepSkip > 0)
+            {
+                _stepSkip--;
+                return false;
+            }
+            if (pc != _stepTarget || !card || !card->cardRegisters(regs) || regs.sp < _stepSp)
+                return false;
+            break;
+        case StepKind::Out:
+            if (!card || !card->cardRegisters(regs))
+                return false;
+            // A return ran when SP rose over the return's own (RET cc not taken leaves it): else this boundary may
+            // be the next return
+            if (_stepReturning && regs.sp > _stepReturnSp)
+                break;
+            _stepReturning = regs.sp >= _stepSp && IsReturnAt(card, pc);
+            _stepReturnSp = regs.sp;
+            return false;
+        default:
+            return false;
+    }
+    Stop stop;
+    stop.step = true;
+    stop.address = pc;
+    stop.pc = pc;
+    Park(stop, pc);
+    return true;
 }
 
 void GSCardTarget::beforeStep(uint16_t pc)
@@ -170,11 +299,13 @@ void GSCardTarget::beforeStep(uint16_t pc)
                 pc = regs.pc;  // a set_reg moved it
         }
     }
+    bool parked = false;
     if (_pending.hit) [[unlikely]]
     {
         const Stop stop = _pending;
         _pending = Stop{};
         Park(stop, pc);
+        parked = true;
     }
     const uint16_t id = _breakpoints->HandlePCChange(pc);
     if (id != BRK_INVALID) [[unlikely]]
@@ -186,16 +317,24 @@ void GSCardTarget::beforeStep(uint16_t pc)
         stop.kind = BreakpointHitKind::Execute;
         stop.pc = pc;
         Park(stop, pc);
+        parked = true;
     }
+    // An armed step last: a stop at this boundary already ended it
+    if (!parked && _stepKind.load(std::memory_order_relaxed) != StepKind::None) [[unlikely]]
+        StepBoundary(pc);
 }
 
 void GSCardTarget::endRun(uint16_t pc)
 {
-    if (!_pending.hit)
-        return;
-    const Stop stop = _pending;
-    _pending = Stop{};
-    Park(stop, pc);
+    if (_pending.hit)
+    {
+        const Stop stop = _pending;
+        _pending = Stop{};
+        Park(stop, pc);
+    }
+    // Out of the card's loop: the hooks a step alone asked for come off
+    if (!StepArmed() && !_wanted && _attached && _live.empty() && _replay.empty()) [[unlikely]]
+        Attach();
 }
 
 uint8_t GSCardTarget::onMemoryRead(uint16_t pc, uint16_t addr, uint8_t value)

@@ -267,6 +267,26 @@ Json::Value StepStopJson(const Emulator& emulator)
     }
     return json;
 }
+
+/// A step route with ?cpu= (or the body's "cpu") naming a card CPU: that CPU's step (RunControl::CardStep); true
+/// when it replied (the step, or 400 / 404 for the cpu). The main CPU: false, the route goes on
+bool ReplyCardStep(const std::shared_ptr<Emulator>& emulator, const HttpRequestPtr& req,
+                   std::function<void(const HttpResponsePtr&)>& callback, const char* kind, bool counted)
+{
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!webapi_cpu::CpuOrError(emulator, req, callback, cpu))
+        return true;
+    if (cpu == DebugCpuId::Main)
+        return false;
+    unsigned count = 1;
+    if (counted)
+        if (auto json = req->getJsonObject(); json && json->isMember("count"))
+            count = (*json)["count"].asUInt();
+    ReplyRun(execution::RunControl(emulator).CardStep(webapi_session::RequesterOf(req, emulator->GetContext()), cpu,
+                                                      kind, count),
+             callback);
+    return true;
+}
 }  // namespace
 
 /// @brief POST /api/v1/emulator/{id}/step
@@ -279,6 +299,8 @@ void EmulatorAPI::step(const HttpRequestPtr& req, std::function<void(const HttpR
         return;
     try
     {
+        if (ReplyCardStep(emulator, req, callback, "in", false))
+            return;
         // RunControl (core/src/emulator/execution/runcontrol.h): the claim rule and the reply, shared with the actions
         ReplyRun(execution::RunControl(emulator).StepIn(webapi_session::RequesterOf(req, emulator->GetContext())), callback);
     }
@@ -302,6 +324,9 @@ void EmulatorAPI::stepsNow(const HttpRequestPtr& req, std::function<void(const H
 {
     auto emulator = getEmulatorOrError(id, callback);
     if (!emulator) return;
+    // A card CPU's instructions (?cpu=gs): its step in with the count
+    if (ReplyCardStep(emulator, req, callback, "in", true))
+        return;
 
     // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
     auto* ctx = emulator->GetContext();
@@ -373,6 +398,8 @@ void EmulatorAPI::stepOverNow(const HttpRequestPtr& req, std::function<void(cons
         return;
     try
     {
+        if (ReplyCardStep(emulator, req, callback, "over", false))
+            return;
         // RunControl (core/src/emulator/execution/runcontrol.h): the claim rule and the reply, shared with the actions
         ReplyRun(execution::RunControl(emulator).StepOver(webapi_session::RequesterOf(req, emulator->GetContext())), callback);
     }
@@ -399,6 +426,8 @@ void EmulatorAPI::stepOutNow(const HttpRequestPtr& req, std::function<void(const
         return;
     try
     {
+        if (ReplyCardStep(emulator, req, callback, "out", false))
+            return;
         // RunControl (core/src/emulator/execution/runcontrol.h): the claim rule and the reply, shared with the actions
         ReplyRun(execution::RunControl(emulator).StepOut(webapi_session::RequesterOf(req, emulator->GetContext())), callback);
     }

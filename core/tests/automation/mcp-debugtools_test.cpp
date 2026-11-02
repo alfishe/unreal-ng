@@ -751,3 +751,44 @@ TEST_F(McpDebugTools_Test, CardCpu_SetRegisterAndMemoryAccessNameTheCpu)
               std::string::npos)
         << partial.text;
 }
+
+// A card CPU's step goes to the step routes with ?cpu=, its registers follow; the text names where the card and the
+// main CPU stand. Another run action refuses the card CPU
+TEST_F(McpDebugTools_Test, CardCpu_StepsGoToTheCardsRoutes)
+{
+    Json::Value reply;
+    reply["status"] = "success";
+    reply["message"] = "Step over of cpu gs completed";
+    reply["stop"]["cpu"] = "gs";
+    reply["stop"]["reason"] = "step";
+    reply["stop"]["cpu_pc"] = 0x4003;
+    reply["pc"] = 0x4003;
+    reply["sp"] = 0x7F00;
+    reply["main_pc"] = 0x3D2F;
+    reply["state"] = "paused";
+    _caller->routes["POST /api/v1/emulator/emu-1/stepover?cpu=gs"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "step_over";
+    args["cpu"] = "gs";
+    const mcp::ToolResult result = Run("control_execution", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/stepover?cpu=gs"), nullptr);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/registers?cpu=gs"), nullptr) << "the card's registers";
+    EXPECT_NE(result.text.find("Step over of cpu gs completed. Card CPU gs at $4003; main CPU at $3D2F."),
+              std::string::npos)
+        << result.text;
+
+    args["action"] = "step_n";
+    args["count"] = 5;
+    ASSERT_FALSE(Run("control_execution", args).isError);
+    const FakeCaller::RecordedCall* steps = _caller->Last("POST", "/api/v1/emulator/emu-1/steps?cpu=gs");
+    ASSERT_NE(steps, nullptr);
+    EXPECT_EQ(steps->body["count"].asUInt(), 5u);
+
+    args["action"] = "run_frame";
+    const mcp::ToolResult refused = Run("control_execution", args);
+    EXPECT_TRUE(refused.isError);
+    EXPECT_NE(refused.text.find("a card CPU takes step, step_n, step_over and step_out"), std::string::npos)
+        << refused.text;
+}

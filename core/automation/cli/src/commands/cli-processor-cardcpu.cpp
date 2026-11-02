@@ -1,5 +1,6 @@
 // The sound card's CPU on the CLI (gs-debugger design §7.1): `--cpu gs|ms` on registers, memory and disasm, through
-// core CpuView (cpuview.h) as every other surface.
+// core CpuView (cpuview.h), and on step, steps, stepover and stepout through RunControl::CardStep, as every other
+// surface.
 
 #include "cli-processor.h"
 
@@ -7,6 +8,8 @@
 #include <debugger/targets/cpuview.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
+#include <emulator/emulatormanager.h>
+#include <emulator/execution/runcontrol.h>
 
 #include <algorithm>
 #include <cctype>
@@ -200,6 +203,53 @@ bool CLIProcessor::HandleCardCpuCommand(const ClientSession& session, Emulator& 
             }
             out << "  " << text << NEWLINE;
         }
+        session.SendResponse(out.str());
+        return true;
+    }
+
+    if (what == "step" || what == "steps" || what == "stepover" || what == "stepout")
+    {
+        // step [count] / steps <count> / stepover / stepout --cpu gs: the machine runs until the card's step ends
+        unsigned count = 1;
+        if (what == "step" || what == "steps")
+        {
+            uint16_t parsed = 1;
+            if ((what == "steps" && rest.empty()) ||
+                (!rest.empty() && (!ParseAddress(rest[0], parsed, 10000) || parsed == 0)))
+            {
+                session.SendResponse("Usage: " + what + (what == "steps" ? " <count 1-10000>" : " [count 1-10000]") +
+                                     " --cpu " + name + NEWLINE);
+                return true;
+            }
+            count = parsed;
+        }
+        std::shared_ptr<Emulator> shared = EmulatorManager::GetInstance()->GetEmulator(emulator.GetId());
+        if (!shared)
+        {
+            session.SendResponse("Error: the emulator is gone" + std::string(NEWLINE));
+            return true;
+        }
+        const char* kind = what == "stepover" ? "over" : what == "stepout" ? "out" : "in";
+        const execution::RunReply reply =
+            execution::RunControl(shared).CardStep(CliRequester(context), cpu, kind, count);
+        if (!reply.Ok())
+        {
+            session.SendResponse("Error: " + reply.message + NEWLINE);
+            return true;
+        }
+        StateNode body = reply.body;
+        const std::string reason = body.find("stop") && body["stop"].find("reason") ? body["stop"]["reason"].s : "";
+        out << reply.message;
+        if (reason == "breakpoint")
+        {
+            StateNode& stop = body["stop"];
+            out << ": breakpoint #" << stop["breakpoint_id"].i << " of cpu " << stop["cpu"].s << " ("
+                << stop["access"].s << " 0x" << Hex(static_cast<unsigned>(stop["address"].i), 4) << ")";
+        }
+        out << NEWLINE;
+        out << "  cpu " << name << " PC: 0x" << Hex(static_cast<unsigned>(body["pc"].i), 4) << "  SP: 0x"
+            << Hex(static_cast<unsigned>(body["sp"].i), 4) << "  main PC: 0x"
+            << Hex(static_cast<unsigned>(body["main_pc"].i), 4) << NEWLINE;
         session.SendResponse(out.str());
         return true;
     }

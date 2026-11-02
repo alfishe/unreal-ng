@@ -203,8 +203,39 @@ device). The memory spaces `gs` / `ms` of `MemoryRead` serve the binary reads.
 | WebSocket | the REST routes as `call`s | the same | the same |
 
 A name that is not `main`, `gs` or `ms` is a 400 (a script error, Python `ValueError`); a card CPU that is not there
-(no card with a CPU in its slot) is a 404 (`RuntimeError`, a Lua error, MCP `unavailable` with the reason). Stepping
-the card CPU is not there yet (gs-debugger design §5.3).
+(no card with a CPU in its slot) is a 404 (`RuntimeError`, a Lua error, MCP `unavailable` with the reason).
+
+**Stepping the card CPU** (gs-debugger design §5.3). A step of the card CPU arms a one-shot park at a card instruction
+boundary (`GSCardTarget::ArmStep`), resumes the machine and waits until it pauses again (`RunControl::CardStep`):
+
+- **in** (`count` 1-10000): after that many card instructions;
+- **over**: a CALL, RST, DJNZ or block instruction runs to the next instruction with SP at or above the entry SP; any
+  other instruction is a step in;
+- **out**: after a taken return (RET, RET cc, RETI, RETN) run with SP at or above the entry SP.
+
+The pause names the card CPU: `reason` `step`, `cpu`, `cpu_pc` (the snapshot's `pause`, the WebSocket `debug` topic's
+`paused` event). A breakpoint of any CPU on the way ends the step there (its stop is the breakpoint's). No end within
+2 s (over / out 5 s) pauses the machine with the reason `timeout`. The reply: `stop` (`cpu`, `reason` `step` /
+`breakpoint` / `pause` / `timeout`, `cpu_pc`, `breakpoint_id`, `address`, `access`), the card CPU's `pc` and `sp`, the
+main CPU's `main_pc` and `main_sp`, `state`.
+
+The card has no lock-step mode: it runs behind the main CPU and catches up at a host port access (#B3 / #BB) or at
+the frame end, and its step parks inside that catch-up. So the main CPU moves on during a card step, up to the point
+where the card catches up (at most a frame). Paused inside the card's run (after a card step or breakpoint) the next
+step starts from that boundary; paused between frames, the card's first boundary is the instruction at its PC.
+
+| Plane | Step in | Step over / out |
+| :--- | :--- | :--- |
+| CLI | `step [count] --cpu gs`, `steps <count> --cpu gs` | `stepover --cpu gs`, `stepout --cpu gs` |
+| Lua | `step("gs")`, `step(skip_bp, "gs")`, `steps(count, skip_bp, "gs")` | `stepover("gs")`, `step_out("gs")` |
+| Python | `emu.step(cpu="gs")`, `emu.steps(count, cpu="gs")` | `emu.stepover(cpu="gs")`, `emu.step_out(cpu="gs")` |
+| MCP | `control_execution` `step` / `step_n` `cpu` | `control_execution` `step_over` / `step_out` `cpu` |
+| REST | `POST /step?cpu=gs`, `POST /steps?cpu=gs {count}` | `POST /stepover?cpu=gs`, `POST /stepout?cpu=gs` |
+| WebSocket | the REST routes as `call`s | the same |
+
+Lua and Python return the reply as a table / dict with `ok` (`ok` false and `error` when refused: not paused, a step
+already under way). The other runs (frames, t-states, run until PC) stay the machine's: MCP refuses a card `cpu` on
+them.
 
 The card's events have named callbacks too (`gs_on_command`, `gs_on_data`, `gs_on_reply`, `gs_on_int`, `gs_on_nmi`,
 `gs_on_page`, `gs_on_dac_fetch`, `gs_on_clock_change`, `gs_on_dma_start`, `gs_on_dma_done`, `gs_on_gscfg0`, `gs_on_port_in(port)`,

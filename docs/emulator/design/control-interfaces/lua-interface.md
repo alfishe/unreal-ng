@@ -693,6 +693,9 @@ ok = set_register("im", 2)        -- false for an unknown name or im > 2 / iff1,
 regs = get_registers("gs");  pc = get_register("pc", "gs");  set_register("a", 0x10, "gs")
 b = mem_read(0x4000, "gs");  mem_write(0x4000, 1, "gs");  lines = disasm(-1, 8, "gs")  -- from the card's PC
 w = memory_map("gs")              -- {cpu, windows = {{start, size, kind = "rom"|"ram"|"none", page, offset}, ...}}
+-- Its steps: the machine runs until the card's step ends, then is paused; {ok, stop = {cpu, reason, cpu_pc, ...},
+-- pc, sp, main_pc, main_sp, state}, or {ok = false, error}
+r = step("gs");  r = steps(10, false, "gs");  r = stepover("gs");  r = step_out("gs")
 
 -- Properties
 id = emu:get_id()

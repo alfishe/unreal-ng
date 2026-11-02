@@ -1321,9 +1321,12 @@ void RegisterControlExecution(ToolRegistry& registry)
         "For bp_add of chipreg: one chip of the kind (TurboSound / TS-FM 0-1, the Next's AYs 0-2); absent: any";
     schema["properties"]["cpu"]["type"] = "string";
     schema["properties"]["cpu"]["description"] =
-        "For bp_* and set_register: whose breakpoints / register, main (default), gs (the CPU of the General Sound / "
-        "NeoGS card: execution, read, write, port and card events; a gs stop parks the machine, wait reports the card "
-        "instruction) or ms (the General Sound on a MultiSound card, the same way)";
+        "For bp_*, set_register and the steps: whose breakpoints / register / step, main (default), gs (the CPU of the "
+        "General Sound / NeoGS card: execution, read, write, port and card events; a gs stop parks the machine, wait "
+        "reports the card instruction) or ms (the General Sound on a MultiSound card, the same way). A card CPU's "
+        "step / step_n / step_over / step_out resumes the machine until the card ends it and pauses it again; the "
+        "main CPU moves on to where the card catches up (a host port access or the frame end); a breakpoint of any "
+        "CPU ends it first, none within 2 s (over / out 5 s) answers timeout";
     schema["properties"]["event"]["type"] = "string";
     schema["properties"]["event"]["description"] =
         "For bp_add of event: int, nmi, reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, "
@@ -1948,8 +1951,18 @@ void RegisterControlExecution(ToolRegistry& registry)
                     return;
                 }
 
-                // Execution-advancing actions: perform the call, then append registers
-                auto execute = [action, &args, &caller, id, done]() {
+                // Execution-advancing actions: perform the call, then append registers. A card CPU (cpu gs / ms)
+                // steps through the same routes with ?cpu=, and its registers follow
+                const bool cardCpu = args.isMember("cpu") && args["cpu"].asString() != "main";
+                const bool stepAction =
+                    action == "step" || action == "step_n" || action == "step_over" || action == "step_out";
+                if (cardCpu && !stepAction)
+                {
+                    done(ToolResult::Error("cpu " + args["cpu"].asString() + ": a card CPU takes step, step_n, "
+                                           "step_over and step_out; '" + action + "' runs the machine's CPU"));
+                    return;
+                }
+                auto execute = [action, &args, &caller, id, done, cardCpu, cpuQuery]() {
                     std::string method = "POST";
                     std::string path;
                     Json::Value body;
@@ -2037,8 +2050,10 @@ void RegisterControlExecution(ToolRegistry& registry)
                         return;
                     }
 
+                    if (cardCpu)
+                        path += cpuQuery;
                     const Json::Value* bodyPtr = body.isNull() ? nullptr : &body;
-                    caller.Call(method, path, bodyPtr, [summary, &caller, id, done](int status, Json::Value response) mutable {
+                    caller.Call(method, path, bodyPtr, [summary, &caller, id, done, cardCpu, cpuQuery](int status, Json::Value response) mutable {
                         // A breakpoint that ended a step says so (the structured result carries `stop`)
                         if (response.isObject() && response.isMember("stop") &&
                             response["stop"].get("reason", "").asString() == "breakpoint")
@@ -2048,6 +2063,31 @@ void RegisterControlExecution(ToolRegistry& registry)
                             std::snprintf(where, sizeof(where), "Stopped at breakpoint #%u (%s) at $%04X after %u instruction(s). ",
                                           stop.get("breakpoint_id", 0).asUInt(), stop.get("access", "").asString().c_str(),
                                           stop.get("address", 0).asUInt(), response.get("executed", 0).asUInt());
+                            summary = where;
+                            if (stop.isMember("cpu_pc"))
+                            {
+                                std::snprintf(where, sizeof(where), "Stopped at breakpoint #%u of cpu %s (%s) at $%04X, card instruction $%04X. ",
+                                              stop.get("breakpoint_id", 0).asUInt(), stop.get("cpu", "").asString().c_str(),
+                                              stop.get("access", "").asString().c_str(), stop.get("address", 0).asUInt(),
+                                              stop.get("cpu_pc", 0).asUInt());
+                                summary = where;
+                            }
+                        }
+                        else if (cardCpu && response.isObject() && response.isMember("stop"))
+                        {
+                            // The card CPU's step: where it ended, and where the main CPU stands now
+                            const Json::Value& stop = response["stop"];
+                            const std::string reason = stop.get("reason", "").asString();
+                            char where[160];
+                            if (reason == "step")
+                                std::snprintf(where, sizeof(where), "%s. Card CPU %s at $%04X; main CPU at $%04X. ",
+                                              response.get("message", "").asString().c_str(),
+                                              stop.get("cpu", "").asString().c_str(), stop.get("cpu_pc", 0).asUInt(),
+                                              response.get("main_pc", 0).asUInt());
+                            else
+                                std::snprintf(where, sizeof(where), "%s (reason %s). Card CPU at $%04X; main CPU at $%04X. ",
+                                              response.get("message", "").asString().c_str(), reason.c_str(),
+                                              response.get("pc", 0).asUInt(), response.get("main_pc", 0).asUInt());
                             summary = where;
                         }
                         if (status < 200 || status >= 300)
@@ -2061,7 +2101,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                                                    DescribeErrorBody(response) + hint));
                             return;
                         }
-                        caller.Call("GET", Endpoint(id, "/registers"), nullptr,
+                        caller.Call("GET", Endpoint(id, "/registers") + (cardCpu ? cpuQuery : std::string()), nullptr,
                                     [summary, response, done](int regStatus, Json::Value registers) mutable {
                                         if (regStatus == 200)
                                         {

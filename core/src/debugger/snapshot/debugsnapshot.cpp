@@ -248,6 +248,12 @@ StateNode PauseNode(Emulator* emulator)
         if (stop.breakpoint.cpu != DebugCpuId::Main)
             pause["cpu_pc"] = static_cast<int>(stop.breakpoint.cpuPc);
     }
+    else if (stop.reason == Emulator::DebugStop::Reason::Step && stop.breakpoint.step)
+    {
+        // Another CPU's step ended there (a sound card's): its instruction beside the main PC
+        pause["cpu"] = std::string(DebugCpuName(stop.breakpoint.cpu));
+        pause["cpu_pc"] = static_cast<int>(stop.breakpoint.cpuPc);
+    }
     return pause;
 }
 

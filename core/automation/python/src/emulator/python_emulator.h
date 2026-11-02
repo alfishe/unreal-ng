@@ -4,6 +4,7 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runpacer.h"
+#include "emulator/execution/runcontrol.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memorycounters.h"
@@ -195,6 +196,41 @@ inline DebugCpuId PythonCpu(Emulator& self, const std::string& name)
     if (!error.empty())
         throw std::runtime_error(error);
     return cpu;
+}
+
+inline pybind11::object StateNodeToPy(const StateNode& node);
+
+/// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out): the reply's body and ok = True, or
+/// ok = False and error. The machine runs until the card ends it, then is paused; the GIL is free meanwhile
+inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind, unsigned count)
+{
+    py::dict d;
+    std::shared_ptr<Emulator> shared = EmulatorManager::GetInstance()->GetEmulator(self.GetId());
+    if (!shared)
+    {
+        d["ok"] = false;
+        d["error"] = "no emulator";
+        return d;
+    }
+    // The automation gate as every step of a script: its session, or an implicit one
+    execution::script::Check(self, execution::Origin::Python);
+    const execution::Requester requester = execution::script::RequesterOf(self, execution::Origin::Python);
+    execution::RunReply reply;
+    {
+        py::gil_scoped_release release;  // the card runs until its step ends (up to 5 s)
+        reply = execution::RunControl(shared).CardStep(requester, cpu, kind, count);
+    }
+    if (reply.status == execution::RunReply::Status::Revoked)
+        throw std::runtime_error(reply.message);
+    if (!reply.Ok())
+    {
+        d["ok"] = false;
+        d["error"] = reply.message;
+        return d;
+    }
+    d = StateNodeToPy(reply.body).cast<py::dict>();
+    d["ok"] = true;
+    return d;
 }
 
 /// bp / bp_read / bp_write / bp_port_in / bp_port_out: the options as keyword arguments (BreakpointManager::
@@ -3031,22 +3067,33 @@ namespace PythonBindings
             // Execution control
             // step / steps return how the run ended: {executed, stopped, breakpoint_id, address, access}
             // (stopped: a breakpoint ended it - an execution one before its instruction)
-            .def("step", [](Emulator& self, bool skipBreakpoints) {
+            // cpu="gs" / "ms": the sound card CPU's step (PythonCardStep): the machine runs until the card ends it
+            .def("step", [](Emulator& self, bool skipBreakpoints, const std::string& cpu) {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return PythonCardStep(self, card, "in", 1);
                 execution::script::Check(self, execution::Origin::Python);
                 self.RunSingleCPUCycle(skipBreakpoints);
                 const Emulator::BreakpointStop& stop = self.LastDirectStop();
                 return StepOutcome(self, (stop.hit && stop.kind == BreakpointHitKind::Execute) ? 0u : 1u);
-            }, "Execute single CPU instruction; returns {executed, stopped, breakpoint_id, address, access}",
-               py::arg("skip_breakpoints") = true)
-            .def("steps", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+            }, "Execute single CPU instruction; returns {executed, stopped, breakpoint_id, address, access}. cpu='gs' / "
+               "'ms': one instruction of the sound card CPU; returns {ok, stop, pc, sp, main_pc, main_sp, state}",
+               py::arg("skip_breakpoints") = true, py::arg("cpu") = "")
+            .def("steps", [](Emulator& self, unsigned count, bool skipBreakpoints, const std::string& cpu) {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return PythonCardStep(self, card, "in", count);
                 execution::script::Check(self, execution::Origin::Python);
                 return StepOutcome(self, self.RunNCPUCycles(count, skipBreakpoints));
-            }, "Execute N CPU instructions; returns {executed, stopped, breakpoint_id, address, access}",
-               py::arg("count"), py::arg("skip_breakpoints") = false)
-            .def("stepover", [](Emulator& self) {
+            }, "Execute N CPU instructions; returns {executed, stopped, breakpoint_id, address, access}. cpu='gs' / "
+               "'ms': N (1-10000) instructions of the sound card CPU",
+               py::arg("count"), py::arg("skip_breakpoints") = false, py::arg("cpu") = "")
+            .def("stepover", [](Emulator& self, const std::string& cpu) -> py::object {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return PythonCardStep(self, card, "over", 1);
                 execution::script::Check(self, execution::Origin::Python);
                 self.StepOver();
-            }, "Step over call instructions")
+                return py::none();
+            }, "Step over call instructions; cpu='gs' / 'ms': the sound card CPU's (returns its step's reply)",
+               py::arg("cpu") = "")
 
             // Frame stepping
             .def("run_frame", [](Emulator& self, bool skipBreakpoints) {
@@ -6791,7 +6838,9 @@ namespace PythonBindings
                py::arg("role") = "view", py::arg("cpu") = "gs");
         }
 
-        emulatorClass.def("step_out", [](Emulator& self) -> py::dict {
+        emulatorClass.def("step_out", [](Emulator& self, const std::string& cpu) -> py::dict {
+            if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                return PythonCardStep(self, card, "out", 1);
             py::dict d;
             try
             {
@@ -6810,7 +6859,8 @@ namespace PythonBindings
                 d["error"] = e.what();
             }
             return d;
-        }, "Step out of the current subroutine (emulation ends paused)")
+        }, "Step out of the current subroutine (emulation ends paused); cpu='gs' / 'ms': the sound card CPU's",
+           py::arg("cpu") = "")
 
         .def("skip_until", [](Emulator& self, py::object pcValue, unsigned maxTStates) -> py::dict {
             py::dict d;

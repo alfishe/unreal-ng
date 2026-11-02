@@ -2,7 +2,7 @@
 """The sound card CPU as a debug target (gs-debugger design §4): control_execution bp_* with cpu "gs" set the card's
 breakpoints (the NeoGS of the PENTAGON), a card stop parks the machine and wait names the CPU and the card instruction,
 the lists are per CPU, the card refuses what it has not (NextREG, the host's events), and its registers, memory and code
-are read and written with cpu "gs" (core CpuView)"""
+are read and written with cpu "gs" (core CpuView), and it steps (RunControl::CardStep)"""
 
 import re
 import time
@@ -212,6 +212,62 @@ def test_the_card_cpu_from_python(s):
     output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
     expect(not r.is_error and 'card-ok' in output and 'not available' in output, 'the card CPU from Python',
            r.structured or r.text)
+    clear(s)
+
+
+def test_the_card_cpu_steps(s):
+    """control_execution step / step_n / step_over / step_out with cpu gs: the machine runs until the card's step ends
+    and is paused again; the text names where the card and the main CPU stand; a card breakpoint ends a step; Lua and
+    Python step it too"""
+    clear(s)
+    before = card_pc(s)
+    r = s.call('control_execution', {'action': 'step', 'cpu': 'gs'})
+    stop = (r.structured or {}).get('stop', {})
+    expect(stop.get('reason') == 'step' and stop.get('cpu') == 'gs', 'a step of the card CPU', r.structured)
+    expect(stop.get('cpu_pc') == r.structured.get('pc') == card_pc(s), 'the reply has the card PC', r.structured)
+    expect(re.search(r'Card CPU gs at \$[0-9A-F]{4}; main CPU at \$[0-9A-F]{4}', r.text), 'said in the text', r.text)
+    expect(r.structured.get('state') == 'paused', 'paused again', r.structured)
+    expect(card_pc(s) != before or r.structured.get('sp') is not None, 'the card moved on', (before, r.structured))
+
+    r = s.call('control_execution', {'action': 'step_n', 'count': 3, 'cpu': 'gs'})
+    expect((r.structured or {}).get('stop', {}).get('reason') == 'step', 'three card instructions', r.structured)
+    r = s.call('control_execution', {'action': 'step_over', 'cpu': 'gs'})
+    expect((r.structured or {}).get('stop', {}).get('reason') == 'step', 'a step over on the card', r.structured)
+
+    # A card breakpoint where the loader loops ends a step out of its top level
+    pc = card_pc(s)
+    s.call('control_execution', {'action': 'step', 'cpu': 'gs'})
+    s.call('control_execution', {'action': 'bp_add', 'address': pc, 'cpu': 'gs'})
+    r = s.call('control_execution', {'action': 'step_out', 'cpu': 'gs'})
+    stop = (r.structured or {}).get('stop', {})
+    expect(stop.get('reason') in ('breakpoint', 'step'), 'the step out ended', r.structured)
+    if stop.get('reason') == 'breakpoint':
+        expect(stop.get('cpu') == 'gs' and stop.get('cpu_pc') == pc and 'of cpu gs' in r.text,
+               "the card breakpoint's stop", (r.text, stop))
+    s.call('control_execution', {'action': 'bp_clear', 'cpu': 'gs'})
+
+    r = s.call('control_execution', {'action': 'run_frame', 'cpu': 'gs'}, ok=False)
+    expect(r.is_error and 'a card CPU takes step' in r.text, 'a frame run stays the machine\'s', r.text)
+    r = s.call('control_execution', {'action': 'step', 'cpu': 'ms'}, ok=False)
+    expect(r.is_error, 'no MultiSound card', r.text)
+
+    # A script drives the machine in a session of its own (it takes over MCP's implicit one)
+    code = ('take_control("gs-step") local r = step("gs") release_control() '
+            'if r.ok then print(r.ok, r.stop.reason, r.stop.cpu) else print("refused", r.error) end')
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/lua/exec', 'body': {'code': code}}, ok=False)
+    output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
+    expect('true\tstep\tgs' in output or 'true step gs' in output, 'Lua steps the card', output)
+
+    code = ('import unreal_emulator as ue\n'
+            'emu = ue.emu_get_selected()\n'
+            'emu.take_control("gs-step")\n'
+            'r = emu.steps(2, cpu="gs")\n'
+            'emu.release_control()\n'
+            'print("card-step", r["ok"], r["stop"]["reason"], r["cpu"])\n')
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/python/exec', 'body': {'code': code}}, ok=False)
+    if 'Python automation is not available' not in r.text:
+        output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
+        expect('card-step True step gs' in output, 'Python steps the card', output)
     clear(s)
 
 

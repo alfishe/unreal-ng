@@ -695,6 +695,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  steps <count> - Execute 1 to N CPU instructions" << NEWLINE;
     oss << "  stepover      - Execute instruction, skip calls and subroutines" << NEWLINE;
     oss << "  stepout       - Run until the current subroutine returns" << NEWLINE;
+    oss << "  ... --cpu gs|ms - step [count] / steps / stepover / stepout of the sound card CPU: the machine runs" << NEWLINE;
+    oss << "                  until the card's step ends (the main CPU moves on to the card's catch-up point)" << NEWLINE;
     oss << "  skip_until <pc> [max_tstates] - Fast-forward until PC reaches target" << NEWLINE;
     oss << "  pace [show|presets|set <preset> [ms]|interval <ms>|next|prev|start|stop|toggle|step] - Run at a pace (25 / 5 / 1 fps, a frame, lines, an instruction per interval); stops at a breakpoint" << NEWLINE;
     oss << "  memory <addr> - View memory at address" << NEWLINE;

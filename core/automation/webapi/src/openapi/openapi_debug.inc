@@ -475,4 +475,31 @@
             paths["/api/v1/emulator/{id}/memory/map"]["get"]["description"].asString() +
             " With cpu=gs / ms: {cpu, windows: [{start, size, kind (rom, ram, none), page, offset}]}, the card CPU's "
             "four 16K windows.";
+        // The steps: ?cpu= (or the body's cpu) gs / ms steps that card CPU (RunControl::CardStep)
+        const char* step = "main (default), gs or ms: the CPU that steps. A card CPU's step resumes the machine until "
+                           "the card ends it, then pauses it; the card runs as the main CPU's run takes it along (at "
+                           "a host port access or the frame end), so the main CPU moves on to that point. A breakpoint "
+                           "of any CPU on the way ends it; no end within 2 s (over / out 5 s) pauses with the reason "
+                           "timeout. The reply: stop {cpu, reason step / breakpoint / pause / timeout, cpu_pc, "
+                           "breakpoint_id, address, access}, the card CPU's pc and sp, the main CPU's main_pc and "
+                           "main_sp, state. 409 when not paused or a step of that CPU is under way";
+        for (const char* path : {"/api/v1/emulator/{id}/step", "/api/v1/emulator/{id}/steps",
+                                 "/api/v1/emulator/{id}/stepover", "/api/v1/emulator/{id}/stepout"})
+        {
+            Json::Value& operation = paths[path]["post"];
+            Json::Value cpu;
+            cpu["name"] = "cpu";
+            cpu["in"] = "query";
+            cpu["required"] = false;
+            cpu["description"] = step;
+            cpu["schema"]["type"] = "string";
+            cpu["schema"]["enum"].append("main");
+            cpu["schema"]["enum"].append("gs");
+            cpu["schema"]["enum"].append("ms");
+            operation["parameters"].append(cpu);
+            operation["responses"]["404"]["description"] = "Emulator instance not found, or the card CPU is not there";
+        }
+        paths["/api/v1/emulator/{id}/steps"]["post"]["description"] =
+            paths["/api/v1/emulator/{id}/steps"]["post"]["description"].asString() +
+            " With cpu=gs / ms: count (1-10000) instructions of that card CPU.";
     }

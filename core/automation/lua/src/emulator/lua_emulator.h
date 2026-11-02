@@ -5,6 +5,7 @@
 #include "emulator/memory/devicememory.h"
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runpacer.h"
+#include "emulator/execution/runcontrol.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
@@ -479,6 +480,38 @@ protected:
         if (!error.empty())
             throw std::runtime_error(error);
         return cpu;
+    }
+
+    /// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out): the reply's body and ok = true, or
+    /// ok = false and error. The machine runs until the card ends it, then is paused
+    sol::table CardStep(sol::state_view lua, DebugCpuId cpu, const char* kind, unsigned count) const
+    {
+        sol::table result = lua.create_table();
+        Emulator* emulator = effectiveEmulator();
+        std::shared_ptr<Emulator> shared =
+            emulator ? EmulatorManager::GetInstance()->GetEmulator(emulator->GetId()) : nullptr;
+        if (!shared)
+        {
+            result["ok"] = false;
+            result["error"] = "no emulator";
+            return result;
+        }
+        // The automation gate as every step of a script: its session, or an implicit one
+        execution::script::Check(*emulator, execution::Origin::Lua);
+        const execution::RunReply reply = execution::RunControl(shared).CardStep(
+            execution::script::RequesterOf(*emulator, execution::Origin::Lua), cpu, kind, count);
+        if (reply.status == execution::RunReply::Status::Revoked)
+            throw std::runtime_error(reply.message);
+        if (!reply.Ok())
+        {
+            result["ok"] = false;
+            result["error"] = reply.message;
+            return result;
+        }
+        for (const auto& [key, value] : reply.body.members)
+            result[key] = StateNodeToLua(lua.lua_state(), value);
+        result["ok"] = true;
+        return result;
     }
 
     /// The breakpoints of a CPU by its name ("main" or none, "gs": the sound card's CPU); null when there is none
@@ -2716,8 +2749,17 @@ public:
         lua.set_function("companion_revoke", [](const std::string& idOrName) -> size_t {
             return companion::CompanionRegistry::Instance().Revoke(idOrName);
         });
-        lua.set_function("step", [this, stepOutcome](sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+        // step([skip_bp], [cpu]), steps(count, [skip_bp], [cpu]), stepover([cpu]), step_out([cpu]): "gs" / "ms" steps
+        // the sound card CPU (CardStep; step("gs") too)
+        lua.set_function("step", [this, stepOutcome](sol::object first, sol::optional<std::string> cpuName,
+                                                     sol::this_state ts) -> sol::object {
             if (!effectiveEmulator()) return sol::lua_nil;
+            if (first.is<std::string>() && !cpuName)
+                cpuName = first.as<std::string>();
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+                return CardStep(sol::state_view(ts), cpu, "in", 1);
+            const sol::optional<bool> skipBP =
+                first.is<bool>() ? sol::optional<bool>(first.as<bool>()) : sol::optional<bool>();
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             Emulator& emulator = *effectiveEmulator();
             emulator.RunSingleCPUCycle(skipBP.value_or(true));
@@ -2726,18 +2768,28 @@ public:
             return stepOutcome(sol::state_view(ts), emulator, executed);
         });
 
-        lua.set_function("steps", [this, stepOutcome](unsigned count, sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+        lua.set_function("steps", [this, stepOutcome](unsigned count, sol::object second,
+                                                      sol::optional<std::string> cpuName, sol::this_state ts) -> sol::object {
             if (!effectiveEmulator()) return sol::lua_nil;
+            if (second.is<std::string>() && !cpuName)
+                cpuName = second.as<std::string>();
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+                return CardStep(sol::state_view(ts), cpu, "in", count);
+            const sol::optional<bool> skipBP =
+                second.is<bool>() ? sol::optional<bool>(second.as<bool>()) : sol::optional<bool>();
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             Emulator& emulator = *effectiveEmulator();
             const unsigned executed = emulator.RunNCPUCycles(count, skipBP.value_or(false));
             return stepOutcome(sol::state_view(ts), emulator, executed);
         });
 
-        lua.set_function("stepover", [this]() {
-            if (!effectiveEmulator()) return;
+        lua.set_function("stepover", [this](sol::optional<std::string> cpuName, sol::this_state ts) -> sol::object {
+            if (!effectiveEmulator()) return sol::lua_nil;
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+                return CardStep(sol::state_view(ts), cpu, "over", 1);
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->StepOver();
+            return sol::lua_nil;
         });
 
         // Frame stepping methods
@@ -6328,11 +6380,13 @@ public:
         // ====================================================================
 
         // Step out of the current subroutine (emulation ends paused)
-        lua.set_function("step_out", [this]() -> sol::table {
-            sol::state_view lua_view(*_lua);
+        lua.set_function("step_out", [this](sol::optional<std::string> cpuName, sol::this_state ts) -> sol::table {
+            sol::state_view lua_view(ts);
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
             if (!emulator) { result["error"] = "no emulator"; return result; }
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+                return CardStep(lua_view, cpu, "out", 1);
 
             try
             {

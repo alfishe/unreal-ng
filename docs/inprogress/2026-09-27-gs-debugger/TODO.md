@@ -39,8 +39,12 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
   core `CpuView` (`core/src/debugger/targets/cpuview.h`), `MemoryRead` spaces `gs` / `ms`, REST `?cpu=` on
   `/registers`, `/memory`, `/disasm`, `/memory/map`, `/memory/info`, CLI `--cpu`, Lua / Python `cpu`, MCP
   `inspect_state` `cpu`, `memory_access` spaces `gs` / `ms`. Tests: `CpuView_Test.*`.
-- [ ] Card CPU step in / over / out on every plane (design §5.3: a one-shot park at the next card boundary, a Step
-  stop of the card CPU; REST `/step*` `?cpu=`).
+- [x] Card CPU step in / over / out on every plane (2026-11-02, branch `gs-cpu-surfaces`): `GSCardTarget::ArmStep`
+  (a one-shot park at a card boundary), `RunControl::CardStep` (resume, wait, timeout), the pause reason `step` with
+  the CPU (`PauseCause::Step`, `Emulator::OnTargetStep`); REST `?cpu=` on `/step`, `/steps`, `/stepover`,
+  `/stepout`, CLI `--cpu`, Lua / Python `cpu`, MCP `control_execution` steps `cpu`. Tests:
+  `GSCardTarget_Test.AStepParksAtItsBoundary`, `ABreakpointEndsAStepOver`, `TheMachinesCardStepsThroughRunControl`,
+  `McpDebugTools_Test.CardCpu_StepsGoToTheCardsRoutes`. No lock-step: the main CPU runs on to the card's catch-up.
 - [ ] The Qt remote adapter's card CPU (`debuggers/qt/adapter/remotemachine.cpp`) over `?cpu=gs`.
 
 ### C. Read-value script callbacks (design §8A.7)
