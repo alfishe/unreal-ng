@@ -11,7 +11,7 @@ add_library(steamdeck-poc-timing STATIC common/timinglog.cpp)
 target_include_directories(steamdeck-poc-timing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/common)
 target_link_libraries(steamdeck-poc-timing PUBLIC SDL3::SDL3)
 
-add_library(steamdeck-poc-common STATIC common/emuhost.cpp common/deckcontrollers.cpp)
+add_library(steamdeck-poc-common STATIC common/emuhost.cpp common/crtpreset.cpp common/deckcontrollers.cpp)
 target_include_directories(steamdeck-poc-common PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/common
     ${CMAKE_SOURCE_DIR}/core/src
@@ -47,8 +47,26 @@ add_custom_target(steamdeck-poc-data
 add_dependencies(steamdeck-poc-data runtime-data)   # never copy the same folders at the same time
 add_dependencies(steamdeck-poc-all steamdeck-poc-data)
 
+# The CRT presets of unreal-qt (data/shaders/crt) as SPIR-V next to the binaries: shaders/crt/<key>/ (crtpreset.h)
+find_package(Python3 COMPONENTS Interpreter)
+find_program(GLSLANG glslangValidator)
+if (GLSLANG AND Python3_Interpreter_FOUND)
+    file(GLOB_RECURSE crt_sources CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/data/shaders/crt/*")
+    set(crt_stamp ${CMAKE_CURRENT_BINARY_DIR}/crt-presets.stamp)
+    add_custom_command(OUTPUT ${crt_stamp}
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/shaders/crt"
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/common/crt-convert.py
+                "${CMAKE_SOURCE_DIR}/data/shaders/crt" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/shaders/crt" ${GLSLANG}
+        COMMAND ${CMAKE_COMMAND} -E touch ${crt_stamp}
+        DEPENDS ${crt_sources} ${CMAKE_CURRENT_SOURCE_DIR}/common/crt-convert.py
+        VERBATIM)
+    add_custom_target(steamdeck-poc-crt DEPENDS ${crt_stamp})
+    add_dependencies(steamdeck-poc-all steamdeck-poc-crt)
+else()
+    message(STATUS "steamdeck-client: no glslangValidator or Python 3, the CRT presets are not built")
+endif()
+
 # Compile GLSL to SPIR-V and embed it as a C array header (<name>.spv.h, symbol <name>_spv)
-find_program(GLSLANG glslangValidator)   # needed from P-07 on (shaders)
 function(steamdeck_poc_shaders target)
     if (NOT GLSLANG)
         message(FATAL_ERROR "glslangValidator not found: needed to compile the shaders of ${target}")
