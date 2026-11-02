@@ -481,7 +481,7 @@ The Magic button (NMI) is ignored while `#7EFD` bit 2 is set.
 The 6.44 monitor drives a Z-Controller on the card: `#77` bit 1 = SD /CS (reads `#00`), `#57` the SPI byte. The card is
 the media slot `sd.zc` (alias `sd`, FAT32 only): `media action=insert slot=sd path=<image or folder>`; a folder becomes
 a FAT32 volume. OSZ (`testdata/machines/gmx/osz`: OS.TRD in A:, the `sdcard` folder in `sd`) reads it through the
-monitor. Slots: the General Sound is refused on a GMX unless forced (Ermolaev 1999: GS does not work with the card).
+monitor. Slots: the config fits a NeoGS on zxbus.1; a classic GS replaces it as on any Scorpion.
 
 ## State
 `inspect_state aspects:["paging"]` reports `gmx`: `port_00` (scheme, fixrom, blkext, blkex2, pentagon_int,

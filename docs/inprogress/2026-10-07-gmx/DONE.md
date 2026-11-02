@@ -9,6 +9,8 @@
   (d6555e918); phase 3 the 640x200 mode (f4315d276); phase 4 the turbo wait and the Pentagon frame (160914d2a);
   phase 5 the Z-Controller SD as a media slot (d014b4bd1); phase 6 evidence (e3c116e83); the loader's Pentagon schemes
   (1533c4d1d); phase 7 the SMUC peripherals of the 6.44 fast test (ccc18fbc4, f485570c3).
+- 2026-11-02: no slot rule against a General Sound on a GMX (Apollonov's 1999 article stays as history, the official
+  site named the 20.04.99 firmware as the fix); Puzzle Bobble plays its samples on the NeoGS and on a GS 512 KB.
 - Phase 8 (8649e564b and the follow-up): a disk autostart at power-on waits for the firmware boot (the first 48 BASIC
   KEY-SCAN) and starts TR-DOS on the floppy; the SMUC NVRAM file per firmware; ProfROM MFS hard disks in unreal-disk /
   zxdisk; fifteen programs from the collection run ([software-compatibility.md](software-compatibility.md)).
@@ -20,7 +22,5 @@
   [evidence/](evidence/).
 
 ## Follow-ups
-- General Sound on a GMX stays refused (Ermolaev's 1999 article): Puzzle Bobble and VIDEO03 run silent; VPlayer can
-  use a Covox.
 - VPlayer 0.1.6 (zxart) needs a sample in its own frame layout to be checked; 0.1.7 plays.
 - CP/M (CPMZSGMX) on its SMUC HDD partition `CPMZS0` was not set up.
