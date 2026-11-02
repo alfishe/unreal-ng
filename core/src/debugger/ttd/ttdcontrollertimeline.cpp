@@ -15,6 +15,7 @@
 
 #include "debugger/ttd/ttdcursorcell.h"
 #include "debugger/ttd/ttdportclassifier.h"
+#include "debugger/ttd/ttdscreenlayout.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
@@ -24,26 +25,6 @@ namespace ttd
 
 namespace
 {
-/// Models whose picture is the ZX screen of one RAM page: a session without the captured screen layouts (loaded
-/// from a file) still finds their screen from the 7FFD latch; the others report `screen` missing there
-bool HasUlaScreen(MEM_MODEL model)
-{
-    switch (model)
-    {
-        case MM_SPECTRUM48:
-        case MM_SPECTRUM128:
-        case MM_PLUS2:
-        case MM_PLUS2A:
-        case MM_PLUS3:
-        case MM_PENTAGON:
-        case MM_SCORP:
-        case MM_PROFSCORP:
-            return true;
-        default:
-            return false;
-    }
-}
-
 /// Most events reported; the rest are counted in the buckets only
 constexpr size_t kMaxEvents = 1000;
 

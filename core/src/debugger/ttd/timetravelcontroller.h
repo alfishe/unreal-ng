@@ -85,6 +85,7 @@
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
 #include "ttdcausechain.h"
+#include "ttdfindevent.h"
 #include "ttdcoverageindex.h"
 #include "ttdtimeline.h"
 #include "ttdperipheralregistry.h"
@@ -1278,6 +1279,12 @@ public:
     /// memory. Replays the frames it needs with the instruction and bus hooks and puts the machine back exactly
     /// where it stood; a live recording pauses for browsing
     TTDCauseResult QueryCauseChain(const TTDCauseQuery& query);
+
+    /// @brief Find event (docs/inprogress/2026-11-02-ttd-find-event): the first (or last) moments in a frame window
+    /// where a described event happened - a memory value meets a condition, the screen changed as a whole, an address
+    /// ran, a port access, a border change, a key. Frames are filtered from what the session stores; only the hit
+    /// frames are replayed. The machine is put back where it stood; a live recording pauses for browsing
+    TTDFindEventResult QueryFindEvent(const TTDFindEventQuery& query);
     
     /// @brief Step back one instruction (TDD §10.2 + §16 row 2).
     ///

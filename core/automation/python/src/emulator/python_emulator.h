@@ -6698,6 +6698,23 @@ namespace PythonBindings
                 py::arg("phys_page") = py::none(), py::arg("depth") = 4, py::arg("max_links") = 32,
                 py::arg("max_frames") = 50, py::arg("flags") = false, py::arg("text") = false);
 
+        emulatorClass.def("ttd_find_event", [](Emulator& self, const std::string& kind, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                options["kind"] = kind;
+                const ttd::TTDReply reply = TtdRunPy(self, "find-event", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The first (or last) moments an event happened. kind: mem (addr, cond changed / increased / decreased / "
+               "equals / becomes / differs / bit_set / bit_clear, value, bit, size, exact), screen (cond change / "
+               "cleared, min_changed), exec (addr, addr_to), port (dir, port, port_mask, value, value_mask), border "
+               "(value), key (key, pressed); order first / last, from_frame, to_frame, limit, text",
+                py::arg("kind"));
+
         // ================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI/Lua:
         // step out, skip until, memory find, screen digest, beam, frame cost,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """time_travel: record, stop, the history in status, seek back, the machine state follows, rare coverage,
 port events with their context, reverse-continue first per PC, memory-at the machine now, probe frames, the
-timeline, the cause chain"""
+timeline, the cause chain, find event"""
 
 import re
 import sys
@@ -159,6 +159,38 @@ def test_cause_chain_follows_the_frame_counter(s):
     r = s.call('time_travel', {'action': 'cause_chain'}, ok=False)
     expect(r.is_error and 'addr' in r.text, 'no target named', r.text)
 
+
+
+def test_find_event_names_the_moment(s):
+    # The history of test_record_stop_seek: the ROM's IM 1 handler counts FRAMES (#5C78) every frame
+    before = s.call('time_travel', {'action': 'status'}).text
+    r = s.call('time_travel', {'action': 'find_event', 'find': 'mem', 'addr': '0x5C78', 'cond': 'increased',
+                               'limit': 3})
+    hits = r.structured.get('hits', [])
+    expect(not r.is_error and len(hits) == 3, 'three increases', r.text)
+    expect(all(h.get('after') == (h.get('before') + 1) % 256 for h in hits), 'each by one', hits)
+    expect(all('pc' in h and h.get('text') for h in hits), 'the writer of each', hits)
+    expect(r.text.count('\n') >= 4 and '(#5C78' in r.text and 'increased' in r.text and 'more from frame' in r.text,
+           'one line per hit and the summary', r.text)
+    frames = [h['frame'] for h in hits]
+    expect(frames == sorted(frames), 'oldest first', frames)
+    r = s.call('time_travel', {'action': 'find_event', 'find': 'mem', 'addr': '0x5C78', 'cond': 'increased',
+                               'order': 'last'})
+    last = r.structured.get('hits', [])
+    expect(len(last) == 1 and last[0]['frame'] > frames[-1], 'the last increase is newer', r.text)
+    r = s.call('time_travel', {'action': 'find_event', 'find': 'exec', 'addr': '0x0038'})
+    run = r.structured.get('hits', [])
+    expect(not r.is_error and len(run) == 1 and run[0].get('pc') == 0x38, 'the first IM 1 entry', r.text)
+    r = s.call('time_travel', {'action': 'find_event', 'find': 'key'})
+    expect(not r.is_error and not r.structured.get('hits') and 'No hit' in r.text, 'no key: said so', r.text)
+    at_before = re.search(r'at frame (\d+)', before)
+    at_after = re.search(r'at frame (\d+)', s.call('time_travel', {'action': 'status'}).text)
+    expect((at_before and at_before.group(1)) == (at_after and at_after.group(1)), 'the position did not move',
+           (before[:200], at_after))
+    r = s.call('time_travel', {'action': 'find_event', 'find': 'mem', 'addr': '0x5C78', 'cond': 'equals'}, ok=False)
+    expect(r.is_error and 'value' in r.text, 'equals without value named', r.text)
+    r = s.call('time_travel', {'action': 'find_event'}, ok=False)
+    expect(r.is_error and 'find' in r.text, 'no kind named', r.text)
 
 if __name__ == '__main__':
     sys.exit(main(globals()))

@@ -37,10 +37,36 @@ The machine must be where it was after every query: position, registers, memory 
 
 ## Benchmarks: the one call against the old loop
 
-The scripts `scratch/ttd-find-event/live_event.py` (the T-programs) and `game_event.py` (a real game) answer each
+The script `scratch/ttd-find-event/live_event.py` (a 48K recording and Green Beret in play, 300 frames each) answers each
 question twice: the old loop of step 0 and one `find_event` call, both through WebAPI and through MCP. Columns: calls,
 reply bytes, MCP text characters, wall ms, and the ratios old / new.
 
 ## Measurements
 
-(filled as the steps land)
+2026-11-02, Apple M-series, `live_event.py` against a launched unreal-qt (release). Per question: the MCP old loop
+against the one MCP call (calls, MCP text characters, ms) and the REST reply bytes; frames found by each.
+
+| Question | Old loop (MCP) | `find_event` (MCP) | REST bytes old / new | Frame old / new |
+|----------|----------------|--------------------|----------------------|-----------------|
+| 48K FRAMES wraps to 0 (`mem becomes 0`) | 141 calls, 7241 chars, 1264 ms | 1 call, 144 chars, 8 ms | 14920 / 381 | 338 / 338 |
+| 48K FRAMES last increase (`order last`) | 4 calls, 393 chars, 105 ms | 1 call, 167 chars, 13 ms | 537 / 405 | 529 / 530 |
+| 48K first IM 1 entry (`exec #0038`) | 3 calls, 584 chars, 19 ms | 1 call, 174 chars, 8 ms | 667 / 385 | 201 / 201 |
+| 48K SPACE pressed (`key`) | 2 calls, 486 chars, 66 ms | 1 call, 135 chars, 8 ms | 1534 / 278 | 501 / 501 |
+| GB scene change 30 % (`screen`) | 301 calls, 60391 chars, 2815 ms | 1 call, 156 chars, 35 ms | 4192710 / 330 | none / 59 |
+| GB #A130 decreased (`mem`) | 63 calls, 3257 chars, 385 ms | 1 call, 133 chars, 10 ms | 6584 / 370 | 59 / 59 |
+| GB first run #A46B (`exec`) | 3 calls, 566 chars, 55 ms | 1 call, 175 chars, 9 ms | 653 / 391 | 59 / 59 |
+
+The two disagreements are the old loop's misses:
+
+- **Last increase.** `memory_at` reads frame starts, so the loop cannot see the write inside the session's last frame
+  (530, `#BF -> #C0` at t 1882, before the session end); it names the one before.
+- **Scene change.** Green Beret redraws over frames 59..61 (39 % in all), and no frame alone reaches 30 %: the
+  frame-by-frame diff finds nothing, the run rule (design §3) finds it. The old loop also moves 4 MB.
+
+The run found one bug, now fixed: through the verb an absent `pressed` read as false (released). T10 now asks through
+`TTDControl` too.
+
+**Judged: accepted.** Where the old loop is a scan (mem from boundaries, screen) the one call takes 63-301 times fewer
+calls, 24-387 times less MCP text and 37-155 times less time. Where it is already short (exec, key, `last`) still
+2-4 calls fewer, 2.4-3.6 times less text and 2-8 times less time, plus the instruction, the values and the why in one
+line, and two answers the old loop gets wrong.

@@ -348,6 +348,7 @@ private:
     TTDReply Markers();
     TTDReply Timeline(const TTDRequest& request);
     TTDReply CauseChain(const TTDRequest& request);
+    TTDReply FindEvent(const TTDRequest& request);
     TTDReply Bookmarks();
     TTDReply BookmarkAdd(const TTDRequest& request);
     TTDReply BookmarkDelete(const TTDRequest& request);
@@ -439,7 +440,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-delete",
         "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
-        "timeline", "cause-chain", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
+        "timeline", "cause-chain", "find-event", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
     return verbs;
 }
 
@@ -475,6 +476,9 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"timeline", {"from_frame", "to_frame", "bucket_size", "limit", "buckets", "ports", "min_phase_ms"}},
         {"cause-chain", {"addr", "phys_page", "reg", "frame", "tinframe", "depth", "max_links", "max_frames", "flags",
                          "text"}},
+        {"find-event", {"kind", "cond", "addr", "addr_to", "phys_page", "size", "value", "bit", "exact", "min_changed",
+                        "dir", "port", "port_mask", "value_mask", "key", "pressed", "order", "from_frame", "to_frame",
+                        "limit", "max_frames", "text"}},
         {"file-info", {"path"}},
         {"dump", {"path"}},
         {"load", {"path"}},
@@ -574,6 +578,8 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return Timeline(request);
     if (verb == "cause-chain")
         return CauseChain(request);
+    if (verb == "find-event")
+        return FindEvent(request);
     if (verb == "markers")
         return Markers();
     if (verb == "bookmarks")
@@ -2624,6 +2630,184 @@ TTDReply TTDControlBackend::CauseChain(const TTDRequest& request)
     reply.body["ms"] = res.ms;
     if (text)
         reply.body["text"] = TTDCauseChainText(res);
+    return reply;
+}
+
+TTDReply TTDControlBackend::FindEvent(const TTDRequest& request)
+{
+    TTDFindEventQuery q;
+    const std::string* kind = Option(request, "kind");
+    if (!kind || !TTDFindEventKindByName(*kind, q.kind))
+        return Fail(TTDControlError::BadRequest, "find-event needs kind: mem, screen, exec, port, border or key");
+    q.cond = q.kind == TTDFindEventKind::Screen ? TTDFindEventCond::Change : TTDFindEventCond::Changed;
+    if (const std::string* cond = Option(request, "cond"))
+        if (!TTDFindEventCondByName(*cond, q.cond))
+            return Fail(TTDControlError::BadRequest, "Invalid cond: '" + *cond +
+                                                         "' (mem: changed increased decreased equals becomes differs "
+                                                         "bit_set bit_clear; screen: change cleared)");
+    uint64_t n = 0;
+    auto number = [&](const char* name, uint64_t max, uint64_t& out) -> std::string {
+        const std::string* t = Option(request, name);
+        if (!t)
+            return "";
+        if (!ParseUpTo(*t, max, out))
+            return std::string("Invalid ") + name + ": '" + *t + "' (expected 0.." + std::to_string(max) + ")";
+        return "";
+    };
+    auto need = [&](const char* name) { return Fail(TTDControlError::BadRequest, std::string("find-event ") + *kind + " needs " + name); };
+#define FE_NUMBER(name, max, assign)                                         \
+    if (Option(request, name))                                               \
+    {                                                                        \
+        if (std::string bad = number(name, max, n); !bad.empty())            \
+            return Fail(TTDControlError::BadRequest, bad);                   \
+        assign;                                                              \
+    }
+    const bool mem = q.kind == TTDFindEventKind::Mem;
+    const bool exec = q.kind == TTDFindEventKind::Exec;
+    if (mem || exec)
+    {
+        if (!Option(request, "addr"))
+            return need("addr");
+        FE_NUMBER("addr", 0xFFFF, q.address = static_cast<uint16_t>(n));
+        q.addressTo = q.address;
+        FE_NUMBER("addr_to", 0xFFFF, q.addressTo = static_cast<uint16_t>(n));
+        if (const std::string* page = Option(request, "phys_page"))
+        {
+            std::optional<PhysPage> parsed;
+            if (!ParsePhysPage(*page, parsed))
+                return Fail(TTDControlError::BadRequest, "Invalid phys_page (expected 0..255 or rom)");
+            q.hasPage = true;
+            q.page = *parsed;
+        }
+    }
+    if (mem)
+    {
+        FE_NUMBER("size", 2, q.size = static_cast<uint8_t>(n));
+        if (q.size == 0)
+            return Fail(TTDControlError::BadRequest, "Invalid size: 1 or 2");
+        const bool valued = q.cond == TTDFindEventCond::Equals || q.cond == TTDFindEventCond::Becomes ||
+                            q.cond == TTDFindEventCond::Differs;
+        const bool bitted = q.cond == TTDFindEventCond::BitSet || q.cond == TTDFindEventCond::BitClear;
+        if (valued && !Option(request, "value"))
+            return need("value");
+        if (bitted && !Option(request, "bit"))
+            return need("bit");
+        FE_NUMBER("value", q.size == 2 ? 0xFFFF : 0xFF, q.value = static_cast<uint16_t>(n));
+        FE_NUMBER("bit", q.size == 2 ? 15 : 7, q.bit = static_cast<uint8_t>(n));
+        if (std::string flag = FlagOption(request, "exact", q.exact); !flag.empty())
+            return Fail(TTDControlError::BadRequest, flag);
+    }
+    if (q.kind == TTDFindEventKind::Screen)
+        FE_NUMBER("min_changed", 100, q.minChanged = static_cast<uint32_t>(n));
+    if (q.kind == TTDFindEventKind::Port)
+    {
+        if (const std::string* dir = Option(request, "dir"))
+        {
+            if (*dir != "in" && *dir != "out")
+                return Fail(TTDControlError::BadRequest, "Invalid dir: in or out");
+            q.portOut = *dir == "out";
+        }
+        if (!Option(request, "port"))
+            return need("port");
+        FE_NUMBER("port", 0xFFFF, q.port = static_cast<uint16_t>(n));
+        FE_NUMBER("port_mask", 0xFFFF, q.portMask = static_cast<uint16_t>(n));
+        FE_NUMBER("value_mask", 0xFF, q.valueMask = static_cast<uint8_t>(n));
+    }
+    if (q.kind == TTDFindEventKind::Port || q.kind == TTDFindEventKind::Border)
+        FE_NUMBER("value", q.kind == TTDFindEventKind::Border ? 7 : 0xFF, (q.value = static_cast<uint16_t>(n), q.hasValue = true));
+    if (q.kind == TTDFindEventKind::Key)
+    {
+        if (const std::string* key = Option(request, "key"))
+            q.key = *key;
+        // FlagOption reads an absent flag as false; pressed defaults to true
+        if (Option(request, "pressed"))
+            if (std::string flag = FlagOption(request, "pressed", q.pressed); !flag.empty())
+                return Fail(TTDControlError::BadRequest, flag);
+    }
+    if (const std::string* order = Option(request, "order"))
+    {
+        if (*order != "first" && *order != "last")
+            return Fail(TTDControlError::BadRequest, "Invalid order: first or last");
+        q.last = *order == "last";
+    }
+    FE_NUMBER("from_frame", UINT64_MAX, q.fromFrame = n);
+    FE_NUMBER("to_frame", UINT64_MAX, q.toFrame = n);
+    FE_NUMBER("limit", TTDFindEventQuery::kMaxLimit, q.limit = static_cast<uint32_t>(n));
+    FE_NUMBER("max_frames", TTDFindEventQuery::kMaxFramesReplayed, q.maxFrames = static_cast<uint32_t>(n));
+#undef FE_NUMBER
+    if (q.limit == 0)
+        return Fail(TTDControlError::BadRequest, "Invalid limit: 1.." + std::to_string(TTDFindEventQuery::kMaxLimit));
+    bool text = false;
+    if (std::string flag = FlagOption(request, "text", text); !flag.empty())
+        return Fail(TTDControlError::BadRequest, flag);
+
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    const TTDFindEventResult res = _manager->QueryFindEvent(q);
+    if (!res.error.empty())
+        return Fail(TTDControlError::BadRequest, res.error);
+
+    TTDReply reply;
+    StateNode event = StateNode::Object();
+    event["kind"] = TTDFindEventKindName(q.kind);
+    if (mem || q.kind == TTDFindEventKind::Screen)
+        event["cond"] = TTDFindEventCondName(q.cond);
+    event["order"] = q.last ? "last" : "first";
+    if (mem || exec)
+    {
+        event["addr"] = static_cast<unsigned>(q.address);
+        if (exec)
+            event["addr_to"] = static_cast<unsigned>(q.addressTo);
+        event["phys_page"] = PhysPageNode(res.page);
+    }
+    reply.body["event"] = event;
+    StateNode hits = StateNode::Array();
+    for (const TTDFindEventHit& h : res.hits)
+    {
+        StateNode node = StateNode::Object();
+        AddPosition(node, h.time);
+        if (h.hasPc)
+        {
+            node["pc"] = static_cast<unsigned>(h.pc);
+            node["code_page"] = PhysPageNode(h.codePage);
+            if (!h.text.empty())
+                node["text"] = h.text;
+        }
+        if (h.hasValues)
+        {
+            node["before"] = static_cast<unsigned>(h.before);
+            node["after"] = static_cast<unsigned>(h.after);
+        }
+        if (h.device)
+            node["device"] = true;
+        node["why"] = h.why;
+        hits.push(node);
+    }
+    reply.body["hits"] = hits;
+    StateNode window = StateNode::Object();
+    window["from_frame"] = res.fromFrame;
+    window["to_frame"] = res.toFrame;
+    reply.body["window"] = window;
+    reply.body["more"] = res.more;
+    if (res.more)
+        reply.body[q.last ? "next_to_frame" : "next_from_frame"] = q.last ? res.nextToFrame : res.nextFromFrame;
+    StateNode barriers = StateNode::Array();
+    for (const std::string& b : res.barriers)
+        barriers.push(StateNode(b));
+    reply.body["barriers"] = barriers;
+    if (!res.missing.empty())
+    {
+        StateNode missing = StateNode::Array();
+        for (const std::string& m : res.missing)
+            missing.push(StateNode(m));
+        reply.body["missing"] = missing;
+    }
+    reply.body["frames_scanned"] = res.framesScanned;
+    reply.body["frames_replayed"] = res.framesReplayed;
+    reply.body["ms"] = res.ms;
+    if (text)
+        reply.body["text"] = TTDFindEventText(q, res);
     return reply;
 }
 

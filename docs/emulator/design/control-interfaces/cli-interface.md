@@ -278,6 +278,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd probe-frames` | `ttd pf` | The frames a game profile's probes fired in (a replay of the window). | ✅ Implemented |
 | `ttd timeline` | `ttd tl` | The recording cut into phases of the same activity, each with its facts (no replay). | ✅ Implemented |
 | `ttd cause <addr>[:page] \| <reg>` | `ttd cause-chain` | Where a byte or a register got its value: the chain back to constants, port reads and the initial memory, one line per link (`--frame F [--tin T]`, `--depth N`, `--links N`, `--frames N`, `--flags`). | ✅ Implemented |
+| `ttd event <kind> ...` | `ttd find-event` | When did it happen: `mem <addr>[:page] [cond [V\|B]] [--size 2] [--exact]`, `screen [PERCENT\|cleared]`, `exec <addr>[-<to>][:page]`, `port <in\|out> <port> [value V] [--mask M]`, `border [COLOUR]`, `key [KEY] [--released]`; `--last`, `--from F`, `--to F`, `--limit N`. One line per hit: frame+t, PC, instruction, before -> after, why; then a summary. | ✅ Implemented |
 
 **Interactive session example** (post-mortem crash forensics):
 

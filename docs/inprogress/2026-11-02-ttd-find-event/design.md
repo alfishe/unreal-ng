@@ -7,7 +7,7 @@ Requirements: [README.md](README.md). Plan: [plan.md](plan.md).
 | Need | Already there | Gap |
 |------|---------------|-----|
 | A byte's value per frame | The engine's per-checkpoint piece changes: `ChangesAt(i, region)` lists the 4 KB pieces that got a new version, `PieceStore().Decode` reads one, `RestoreRegion` decodes a region once | No forward search, and a value is matched only for equality (`TTDSearchQuery::value`) |
-| Every CPU write with the old value | `FindAccesses` with `changes_only` (write journal, or the coverage-pruned replay) | Backward only, newest first |
+| Every CPU write with the old value | `FindAccesses` (write journal, or the coverage-pruned replay) | Backward only, newest first |
 | The screen's bytes per frame | The session's screen layout per checkpoint (`ScreenLayoutOf`, a ULA model falls back to page 5 / 7 from `p7FFD`), the piece changes | Only a yes/no per frame (`WroteScreen` in the timeline); no measure of how much of the picture changed |
 | First run of an address | Coverage index, `QueryCoverageScan` with `order=oldest`: the frame | The time inside the frame and the instruction: none forward (`reverse-continue` finds the last run before a moment) |
 | Port accesses, border | The IN / OUT port journals, `SearchPortEvents` (`TTDPortQuery`: port mask and value, value matching, trigger, direction, named events `border`, `key`...) | Nothing: it is wrapped |
@@ -41,15 +41,17 @@ cause chain.
 **mem (frame boundaries, the default).** Walk the checkpoints of the window in order (backwards for `last`). The byte or
 word is read once at the window's start with `RestoreRegion`. After that it is updated only when `ChangesAt(i, ram)`
 lists its piece: one `Decode` of 4 KB, with no replay. The condition compares the value at checkpoint i with the value
-at i-1. A hit frame is replayed once to find the write: `FindAccesses` with `changes_only` limited to that frame. The
-hit is the first write, in time order, after which the condition holds against the value at the frame's start. Then:
+at i-1. A hit frame is replayed once with the bus hook on the byte's writes. The hit is the first instruction, in time
+order, after whose writes the condition holds against the value at the frame's start (a word store's two writes are
+judged together). Then:
 
 - the hit gives frame, tinframe, PC and the old and new values;
 - if no CPU write explains the change (DMA, a ROM trap, a device), the hit keeps the frame and says `device`, as
   CC-5 does.
 
-**mem exact.** `FindAccesses` with `changes_only` over the window, in chunks (each hit list newest first, at most 10000,
-`next_before` continues). It is reversed for `first` and every write is checked against the condition. This finds a
+**mem exact.** `FindAccesses` (every write) over the window, in chunks (each hit list newest first, at most 10000,
+the next chunk before the oldest). They are sorted oldest first and every write is checked against the condition,
+the two writes of one word store as one change. Each hit frame is replayed once for the instruction text. This finds a
 change that comes back within a frame. It costs the write journal (if on) or the coverage-pruned replay of every frame
 that wrote the address.
 
@@ -68,17 +70,26 @@ Conditions:
 - `change`: a hit when the percentage is at least `minChanged`.
 - `cleared`: the pixel bytes are all one value, and they were not at the frame before.
 
+A redraw often takes more than one frame: an `LDIR` of the whole 6912 bytes runs about 145,000 T, two frames at
+3.5 MHz, so each frame alone changes under half of the picture. For `change` with `minChanged` above 5 %, consecutive
+frames that each change at least 5 % of the picture make one run, and the run is judged from the picture before its
+first frame to the picture after its last. The hit is the run's first frame, and the `why` names the frames
+("over frames 3..4"). With `minChanged` of 5 % or less every frame is judged alone. A barrier ends a run.
+
 A hit's `why` reads like "72 % of the screen changed (4,980 of 6,912 bytes; attributes 90 %)". Frame precision: the
-time is the frame's start. The writer with the most screen writes in the frame (coverage) is named when known.
+time is the frame's start, with no PC: many instructions draw one picture. `exec` or `mem exact` on a screen byte
+names a writer.
 
 **exec.** With the coverage index: `QueryCoverageScan(executed, address range, page, order)` gives the frame. That frame
 is replayed once with the M1 hook, which stops at the first (`first`) or last (`last`) start inside the range. The hit
 gives tinframe, PC and the registers' A / HL. Without coverage (a session loaded from a file): the frames are replayed
 forward with the hook, at most `max_frames` (default 1000), and the reply says the coverage was missing.
 
-**port / border.** `SearchPortEvents` with `TTDPortQuery`. For `port`: direction, mask, value. For `border`: the named
-event `border` with the value matched on bits 0-2 and trigger `Change`, so a repeated OUT of the same colour is not a
-hit. Search forward for `first`, `newestFirst` for `last`. Exact time and PC come from the journal.
+**port / border.** `SearchPortEvents` with `TTDPortQuery`. For `port`: direction, mask, value; forward for `first`,
+`newestFirst` for `last`. For `border`: the named event `border` (OUT to the ULA, bits 0-2), every record forward in
+chunks, a hit when the colour differs from the one before, which starts as the checkpoint's border colour at the
+window's start (the journal's `Change` trigger never counts its first record). A repeated OUT of the same colour is
+no hit. Exact time and PC come from the journal.
 
 **key.** The input journal's events of kind Key in the window, matched by key and pressed. Exact time. No PC (the
 press is the host's). The `why` adds the first ULA read after it that saw the key down (port journal, the `key`
@@ -100,7 +111,7 @@ MCP / CLI text: one line per hit, then a summary line:
 
 ```text
 f1834+21980 #8A14 ld (hl),a  (#A130 RAM 2) #03 -> #02  decreased
-f2210+0  screen 78 % changed (5,391 of 6,912 bytes; attributes 96 %)  most writes #6A00 ldir
+f2210+0  screen 78 % changed (5391 of 6912 bytes; attributes 96 %) over frames 2210..2211
 1 hit in frames 10..4810, 4800 scanned, 1 replayed, 6.2 ms
 ```
 
@@ -120,7 +131,7 @@ f2210+0  screen 78 % changed (5,391 of 6,912 bytes; attributes 96 %)  most write
 |-------|------|
 | CLI | `ttd event <kind> [args] [--last] [--from F] [--to F] [--limit N] [--exact]`: `ttd event mem #A130 decreased`, `ttd event screen 50`, `ttd event exec #8A14`, `ttd event port out #FE`, `ttd event border 2`, `ttd event key SPACE` |
 | WebAPI | `GET /api/v1/emulator/{id}/ttd/find-event?kind=&cond=&addr=&addr_to=&phys_page=&size=&value=&bit=&exact=&min_changed=&dir=&port=&port_mask=&value_mask=&key=&pressed=&order=&from_frame=&to_frame=&limit=&text=`, also as a socket `call` of the same route |
-| MCP | `time_travel {"action":"find_event", "kind", "cond", "addr", ...}`: the text of §4 |
+| MCP | `time_travel {"action":"find_event", "find", "cond", "addr", ...}`: the text of §4. The kind is `find`, because `kind` (the coverage kind) and `event` (the port event) already name other things in the tool; `order` also takes `first` / `last` |
 | Lua | `emu:ttd_find_event(kind, opts)` |
 | Python | `emu.ttd_find_event(kind, **opts)` |
 

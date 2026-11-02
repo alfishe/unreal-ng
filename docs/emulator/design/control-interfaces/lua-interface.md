@@ -1371,6 +1371,16 @@ local chain = ttd_cause_chain(0x5C78, {depth = 6})
 --   inputs = {"A=#03"}}, ... }, stops = 0, frames_traced = 2, ms = ... }
 local why = ttd_cause_chain("HL", {frame = 150, tinframe = 20000})
 
+-- When did it happen: kind mem / screen / exec / port / border / key, options as the WebAPI query
+-- (cond, addr, phys_page, size, value, bit, exact, min_changed, addr_to, dir, port, port_mask, value_mask, key,
+-- pressed, order = "first" | "last", from_frame, to_frame, limit, max_frames, text)
+local down = ttd_find_event("mem", {addr = 0xA130, cond = "decreased", limit = 3})
+-- { event = {kind = "mem", cond = "decreased", order = "first", addr = 41264, phys_page = 2},
+--   hits = { {frame = 1834, tinframe = 21980, pc = 0x8A14, text = "ld (hl),a", before = 3, after = 2,
+--   why = "(#A130 RAM 2) #03 -> #02  decreased"}, ... }, more = true, next_from_frame = ..., ms = ... }
+local scene = ttd_find_event("screen", {min_changed = 60})
+local fire = ttd_find_event("key", {key = "SPACE"})
+
 local summary = ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50, limit = 100}
 -- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,
 --   bucket_size = 50, bucket_count = 10, index_available = true,

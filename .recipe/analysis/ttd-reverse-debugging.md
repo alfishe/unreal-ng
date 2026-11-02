@@ -12,6 +12,9 @@ These are the "answer the question backwards" primitives:
 - *Why does this byte / register hold this value?* → `cause-chain` (MCP `cause_chain`: the writer, its source, that
   source's writer... back to a constant, a port read or the initial memory, in one call; no `find_last` +
   `disassemble` + `reverse_step` loop)
+- *When did it happen?* (a counter went down, the scene changed, a routine first ran, fire was pressed, the border
+  turned red) → `find-event` (MCP `find_event`: the first or last hits in a window, each with frame+t, PC, the
+  instruction and before -> after, in one call; no `memory_at` / screen diff / `coverage_scan` + step loop)
 - *What ran just before the crash?* → `reverse-step` / `reverse-continue`
 - *What happened in this recording, and where?* → `timeline` first (MCP `timeline`: the phases with their tags and
   busiest frames, one call, no replay), then the queries below on a phase
@@ -55,6 +58,16 @@ time_travel {"action":"reverse_continue","pcs":[33156,"0x82F0"]}
 time_travel {"action":"cause_chain","addr":"0x5C78"}            # the byte at the current position
 time_travel {"action":"cause_chain","reg":"HL","frame":11800,"tinframe":20000,"depth":6}
 #   one line per link: name = value, kind, f<frame>+<t>, PC, instruction, <- inputs; [stop: depth] = ask deeper there
+
+# when did it happen (frames filtered from the stored history, only hit frames replayed):
+time_travel {"action":"find_event","find":"mem","addr":"0xA130","cond":"decreased"}      # lives went down
+time_travel {"action":"find_event","find":"mem","addr":"0xA130","cond":"becomes","value":"0"}
+time_travel {"action":"find_event","find":"screen","min_changed":60,"limit":10}            # scene changes
+time_travel {"action":"find_event","find":"exec","addr":"0x8A14","order":"last"}            # its last run
+time_travel {"action":"find_event","find":"key","key":"SPACE"}                              # fire pressed
+time_travel {"action":"find_event","find":"border","value":2}                               # border turned red
+#   one line per hit: f<frame>+<t> PC instruction  why (before -> after); "more from frame N": from_frame=N goes on
+#   a value changed and back within one frame: "exact":true; a mem hit marked device: no CPU write explains it
 
 # follow-ups once find-last names a writer PC:
 debug_code  {"action":"disassemble","address":"0x8174","count":12}   # pc-16 window (= /disasm)

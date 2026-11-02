@@ -6247,6 +6247,19 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("cause-chain", options)));
         });
 
+        // ttd_find_event(kind, {cond=, addr=, addr_to=, phys_page=, size=, value=, bit=, exact=, min_changed=, dir=,
+        // port=, port_mask=, value_mask=, key=, pressed=, order=, from_frame=, to_frame=, limit=, max_frames=, text=}):
+        // the first (or last) moments an event happened. kind: mem, screen, exec, port, border, key
+        lua.set_function("ttd_find_event", [this](sol::this_state ts, const std::string& kind,
+                                                  sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            options["kind"] = kind;
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("find-event", options)));
+        });
+
         // A memory at a past checkpoint and what changed between two, from the store (no seek):
         // ttd_memory_at{space = "vram", frame = F, offset = 0x4805, length = 16}
         // ttd_memory_diff{space = "ram5", from_frame = F1, to_frame = F2, limit = 100}

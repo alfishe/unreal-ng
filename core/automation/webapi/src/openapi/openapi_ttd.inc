@@ -1070,3 +1070,64 @@
             ++i;
         }
     }
+
+    // =====================================================================
+    // GET /ttd/find-event — the moment something happened (TTD find event)
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/find-event"]["get"];
+        op["summary"] = "The first (or last) moments in a frame window where an event happened";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "One call for every 'when': kind mem (a byte or word meets cond: changed, increased, decreased, equals, "
+            "becomes, differs, bit_set, bit_clear; frame boundaries, or every CPU write with exact=true), screen (cond "
+            "change: at least min_changed % of the picture's bytes differ from the frame before; cleared: every pixel "
+            "byte one value), exec (an address or range ran), port (IN / OUT by port, mask and value), border (the "
+            "colour changed, or became value), key (a key pressed or released, from the input journal). Frames are "
+            "filtered from what the session stores; only the hit frames are replayed, for the write or the "
+            "instruction. The machine goes back where it stood; a live recording pauses for browsing. Reply: event "
+            "{kind, cond, order, addr, phys_page}, hits[] {frame, tinframe, pc, code_page, text, before, after, "
+            "device, why}, window {from_frame, to_frame}, more, next_from_frame | next_to_frame, barriers[], "
+            "missing[], frames_scanned, frames_replayed, ms, text (text=true).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"kind", "string", "mem, screen, exec, port, border or key (required)"},
+            {"cond", "string", "mem: changed (default), increased, decreased, equals, becomes, differs, bit_set, bit_clear; screen: change (default), cleared"},
+            {"addr", "string", "mem / exec: the Z80 address (decimal, 0x.., #..)"},
+            {"addr_to", "string", "exec: the range's last address (default addr)"},
+            {"phys_page", "string", "mem / exec: the RAM page, 0..255 or rom (mem default: the page mapped at the current position; exec default: any)"},
+            {"size", "integer", "mem: 1 or 2 bytes, little endian (default 1)"},
+            {"value", "string", "mem: V of equals / becomes / differs; port: the value; border: the colour 0..7"},
+            {"bit", "integer", "mem: B of bit_set / bit_clear"},
+            {"exact", "boolean", "mem: every CPU write instead of frame boundaries (finds a change undone in the same frame)"},
+            {"min_changed", "integer", "screen change: percent of the picture's bytes, 0..100 (default 50)"},
+            {"dir", "string", "port: in or out (default out)"},
+            {"port", "string", "port: the port number"},
+            {"port_mask", "string", "port: the bits of port compared (default 0xFFFF)"},
+            {"value_mask", "string", "port: the bits of value compared (default 0xFF)"},
+            {"key", "string", "key: a ZX key name (SPACE, Q, CAPS, SYMBOL, ENTER, ...; default any key)"},
+            {"pressed", "boolean", "key: presses (default true) or releases"},
+            {"order", "string", "first (default: the oldest hits) or last (the newest)"},
+            {"from_frame", "integer", "The window's first frame (default: the history's start)"},
+            {"to_frame", "integer", "The window's last frame (default: the history's end)"},
+            {"limit", "integer", "Hits, 1..100 (default 1); more + next_from_frame / next_to_frame continue"},
+            {"max_frames", "integer", "exec without the coverage index: frames replayed at most (default 1000)"},
+            {"text", "boolean", "Also return the hits as text, one line each and a summary (default false)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }

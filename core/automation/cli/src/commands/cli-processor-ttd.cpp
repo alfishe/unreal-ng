@@ -16,6 +16,7 @@
 ///   ttd bookmark [add|del|list] — agent bookmarks (advisory, never barriers)
 ///   ttd seek --bookmark <label> — seek to a bookmarked position
 ///   ttd cause <addr>|<reg>     — the cause chain: where a byte or a register got its value
+///   ttd event <kind> ...       — find event: when a value, the screen, a run, a port, the border or a key changed
 ///
 /// All commands operate on the currently selected emulator instance. The TTD
 /// engine requires the emulator to be paused for seek/step/resume operations
@@ -324,6 +325,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDCauseChain(session, context, args);
     }
+    else if (subcommand == "event" || subcommand == "find-event")
+    {
+        HandleTTDFindEvent(session, context, args);
+    }
     else if (subcommand == "coverage" || subcommand == "cov")
     {
         HandleTTDCoverage(session, context, args);
@@ -426,7 +431,17 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "      [--min-phase-ms N]              The recording cut into phases of the same activity (no replay)" << NEWLINE;
     ss << "  ttd cause <addr>[:page] | <reg> [--frame F [--tin T]] [--depth N] [--links N] [--frames N] [--flags]" << NEWLINE;
     ss << "      Where a byte or a register got its value: the chain back to constants, ports, initial memory" << NEWLINE;
-    ss << "  Aliases: rs=reverse-step, rc=reverse-continue, pf=probe-frames, tl=timeline, cause-chain=cause" << NEWLINE;
+    ss << "  ttd event <kind> ... [--last] [--from F] [--to F] [--limit N]   When did it happen (frames filtered, hits replayed)"
+       << NEWLINE;
+    ss << "    mem <addr>[:page] [changed|increased|decreased|equals V|becomes V|differs V|bit_set B|bit_clear B]" << NEWLINE;
+    ss << "        [--size 2] [--exact]          a byte / word; --exact follows every CPU write" << NEWLINE;
+    ss << "    screen [PERCENT|cleared]          a scene change: PERCENT of the picture differs (default 50)" << NEWLINE;
+    ss << "    exec <addr>[-<to>][:page]         an address (range) ran: its first / last start" << NEWLINE;
+    ss << "    port <in|out> <port> [value V] [--mask M] [--value-mask M]" << NEWLINE;
+    ss << "    border [COLOUR]                   the border changed (to COLOUR)" << NEWLINE;
+    ss << "    key [KEY] [--released]            a key pressed (released), from the input journal" << NEWLINE;
+    ss << "  Aliases: rs=reverse-step, rc=reverse-continue, pf=probe-frames, tl=timeline, cause-chain=cause, "
+          "find-event=event" << NEWLINE;
     ss << NEWLINE;
     ss << "Notes:" << NEWLINE;
     ss << "  - Seek/step/resume require the emulator to be paused." << NEWLINE;
@@ -1633,6 +1648,133 @@ void CLIProcessor::HandleTTDCauseChain(const ClientSession& session, EmulatorCon
         return;
     }
     const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"cause-chain", options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    std::string text = reply.body.find("text")->s;
+    std::string out;
+    for (char c : text)
+        out += c == '\n' ? std::string(NEWLINE) : std::string(1, c);
+    session.SendResponse(out);
+}
+
+/// `ttd event <kind> ... [--last] [--from F] [--to F] [--limit N]`: the first (or last) moments an event happened,
+/// one line per hit (find event)
+void CLIProcessor::HandleTTDFindEvent(const ClientSession& session, EmulatorContext* context,
+                                      const std::vector<std::string>& args)
+{
+    const std::string usage =
+        std::string("Usage: ttd event mem <addr>[:page] [cond [V|B]] [--size 2] [--exact] | screen [PERCENT|cleared] | "
+                    "exec <addr>[-<to>][:page] | port <in|out> <port> [value V] [--mask M] [--value-mask M] | "
+                    "border [COLOUR] | key [KEY] [--released];  [--last] [--from F] [--to F] [--limit N]") +
+        NEWLINE;
+    if (args.size() < 2)
+    {
+        session.SendResponse(usage);
+        return;
+    }
+    static const std::map<std::string, std::string> flags = {{"--from", "from_frame"},  {"--to", "to_frame"},
+                                                             {"--limit", "limit"},      {"--size", "size"},
+                                                             {"--mask", "port_mask"},   {"--value-mask", "value_mask"},
+                                                             {"--max-frames", "max_frames"}};
+    const std::string kind = args[1];
+    std::map<std::string, std::string> options = {{"text", "true"}, {"kind", kind}};
+    std::vector<std::string> words;
+    for (size_t i = 2; i < args.size(); ++i)
+    {
+        const auto flag = flags.find(args[i]);
+        if (flag != flags.end() && i + 1 < args.size())
+            options[flag->second] = args[++i];
+        else if (args[i] == "--last")
+            options["order"] = "last";
+        else if (args[i] == "--exact")
+            options["exact"] = "true";
+        else if (args[i] == "--released")
+            options["pressed"] = "false";
+        else if (!args[i].empty() && args[i][0] == '-' && args[i].size() > 1 && !std::isdigit(static_cast<unsigned char>(args[i][1])))
+        {
+            session.SendResponse(usage);
+            return;
+        }
+        else
+            words.push_back(args[i]);
+    }
+    auto addrPage = [&](std::string a) {
+        if (const size_t colon = a.find(':'); colon != std::string::npos)
+        {
+            options["phys_page"] = a.substr(colon + 1);
+            a = a.substr(0, colon);
+        }
+        if (const size_t dash = a.find('-'); kind == "exec" && dash != std::string::npos && dash > 0)
+        {
+            options["addr_to"] = a.substr(dash + 1);
+            a = a.substr(0, dash);
+        }
+        options["addr"] = a;
+    };
+    bool ok = true;
+    if (kind == "mem")
+    {
+        ok = !words.empty() && words.size() <= 3;
+        if (ok)
+        {
+            addrPage(words[0]);
+            if (words.size() >= 2)
+                options["cond"] = words[1];
+            if (words.size() == 3)
+                options[words[1].rfind("bit_", 0) == 0 ? "bit" : "value"] = words[2];
+        }
+    }
+    else if (kind == "screen")
+    {
+        ok = words.size() <= 1;
+        if (ok && words.size() == 1)
+        {
+            if (words[0] == "cleared" || words[0] == "change")
+                options["cond"] = words[0];
+            else
+                options["min_changed"] = words[0];
+        }
+    }
+    else if (kind == "exec")
+    {
+        ok = words.size() == 1;
+        if (ok)
+            addrPage(words[0]);
+    }
+    else if (kind == "port")
+    {
+        ok = words.size() == 2 || (words.size() == 4 && words[2] == "value");
+        if (ok)
+        {
+            options["dir"] = words[0];
+            options["port"] = words[1];
+            if (words.size() == 4)
+                options["value"] = words[3];
+        }
+    }
+    else if (kind == "border")
+    {
+        ok = words.size() <= 1;
+        if (ok && words.size() == 1)
+            options["value"] = words[0];
+    }
+    else if (kind == "key")
+    {
+        ok = words.size() <= 1;
+        if (ok && words.size() == 1)
+            options["key"] = words[0];
+    }
+    else
+        ok = false;
+    if (!ok)
+    {
+        session.SendResponse(usage);
+        return;
+    }
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"find-event", options});
     if (!reply.Ok())
     {
         session.SendResponse("Error: " + reply.message + NEWLINE);

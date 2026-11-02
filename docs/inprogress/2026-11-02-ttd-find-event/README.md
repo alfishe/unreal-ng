@@ -1,6 +1,7 @@
 # TTD find event: the moment something happened
 
-**Status 2026-11-02:** design. Plan row [#113](../PLAN.md). The second item of the agent UX roadmap, after the cause chain
+**Status 2026-11-02:** done on all six planes and accepted ([plan.md](plan.md#measurements): one call instead of 2-301,
+2.4-387 times less MCP text). Plan row [#113](../PLAN.md). The second item of the agent UX roadmap, after the cause chain
 ([2026-11-02-ttd-cause-chain](../2026-11-02-ttd-cause-chain/README.md)); explain-frame comes next. Accepted only if
 WebAPI / MCP measurements prove it (owner 2026-11-01).
 
