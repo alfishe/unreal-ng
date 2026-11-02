@@ -15,6 +15,7 @@
 #include "screen/textscreen.h"
 #include "ui/actions.h"
 #include "ui/keymap.h"
+#include "../../common/tests/offline-look.h"
 
 namespace {
 
@@ -98,7 +99,9 @@ int TestEmulKey() {
     return bad;
 }
 
-int main() {
+// --shots <folder>: also write the waiting screens as PPM pictures there
+int main(int argc, char** argv) {
+    const std::string shots = argc == 3 && std::string(argv[1]) == "--shots" ? argv[2] : "";
     Check(TestEmulKey() == 0, "tsconf: ` is mon.emul, Esc is not");
     const std::string goldenDir = std::string(UNREAL_TUI_APP_DIR) + "/tests/golden/";
     const std::vector<std::string> text = ReadLines(goldenDir + "tsconf.txt");
@@ -119,6 +122,20 @@ int main() {
     dbg::TextScreen screen(157, 30, 50);
     dbg::PaintTsconfFrame(screen, be, ui);
     CompareBand(screen, text, attr, 80, 156, 0, 29, "fork-band");
+
+    // -- the waiting screen as the window draws it: at start (no panels) and after a loss (the last state)
+    {
+        const auto check = [](bool ok, const std::string& what) { Check(ok, what); };
+        dbg::TextScreen start(157, 30, 50);
+        start.Clear();
+        dbg::PaintOffline(start, "a TS-Conf emulator at ws://127.0.0.1:28800");
+        dbg::testing::CheckOfflineLook(start, "tsconf-start", false, shots, check);
+        dbg::TextScreen lost(157, 30, 50);
+        lost.Clear();
+        dbg::PaintTsconfFrame(lost, be, ui);
+        dbg::PaintOffline(lost, "a TS-Conf emulator at ws://127.0.0.1:28800");
+        dbg::testing::CheckOfflineLook(lost, "tsconf-lost", true, shots, check);
+    }
     // pages window fork variant (x72..78, title + 4 rows; rightmost col background)
     CompareBand(screen, text, attr, 72, 78, 22, 26, "banks");
 

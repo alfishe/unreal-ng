@@ -118,6 +118,7 @@ public:
     void RunTo(int cpu, uint16_t addr) override;
 
     bool Online() override { return connected_; }
+    bool HasState() const override { return attachedOnce_; }
     std::string WaitingFor() const override;
 
     // Transport status for the UI
@@ -172,6 +173,7 @@ private:
     std::string instanceId_;
     bool connected_ = false;
     std::string endpoint_;
+    bool attachedOnce_ = false;  // HasState
     // The instance went away (its emulator closed, the server stopped): wait for a suitable one again
     void Lost();
     // The instance is still listed by the server (asked about once a second while attached)

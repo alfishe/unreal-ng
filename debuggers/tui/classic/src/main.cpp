@@ -41,8 +41,10 @@ struct TuiApp {
 
     void Repaint() {
         screen.Clear();
-        dbg::PaintClassicFrame(screen, *be, ui);
-        dbg::PaintSystemMenu(screen, ui, false, be->IsRunning());
+        if (be->HasState()) {
+            dbg::PaintClassicFrame(screen, *be, ui);
+            dbg::PaintSystemMenu(screen, ui, false, be->IsRunning());
+        }
         if (!be->Online()) dbg::PaintOffline(screen, be->WaitingFor());
     }
 

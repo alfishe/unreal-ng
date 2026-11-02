@@ -36,6 +36,14 @@ private:
     uint8_t brightLevel_;
 };
 
+// A grayed-out colour (a state that is not live): its luminance, dimmed into a dark band so the dialog over it stands
+// out while every panel stays readable
+inline Rgb GrayOf(Rgb c) {
+    const int l = (77 * c.r + 150 * c.g + 29 * c.b) >> 8;
+    const auto v = static_cast<uint8_t>(0x20 + l * 0x70 / 0xFF);
+    return Rgb{v, v, v};
+}
+
 // Decode paper nibble (attribute >> 4) or ink nibble (attribute & 0x0F).
 inline int PaperIndex(uint8_t attr) { return attr >> 4; }
 inline int InkIndex(uint8_t attr) { return attr & 0x0F; }

@@ -35,7 +35,11 @@ uint32_t Number(const Json* object, const char* key) {
 }  // namespace
 
 bool TsConfWebApiBackend::GetTsConf(TsConfState& out) {
-    if (!Attach()) return false;
+    // Offline the last board read stays (the grayed screen shows it)
+    if (!Attach()) {
+        if (tsValid_) out = ts_;
+        return tsValid_;
+    }
     if (Snapshots() == 0) GetRegs(0);
     if (tsAt_ != Snapshots()) {
         tsAt_ = Snapshots();
@@ -130,7 +134,7 @@ bool TsConfWebApiBackend::GetTsConf(TsConfState& out) {
 }
 
 std::vector<PcHistEntry> TsConfWebApiBackend::GetPcHistory(int) {
-    if (!Attach()) return {};
+    if (!Attach()) return hist_;  // offline: the last one read
     if (Snapshots() == 0) GetRegs(0);
     if (histAt_ != Snapshots()) {
         histAt_ = Snapshots();

@@ -10,6 +10,7 @@
 #include "tui/key-input.h"
 #include "ui/actions.h"
 #include "ui/keymap.h"
+#include "../../common/tests/offline-look.h"
 
 namespace {
 
@@ -428,14 +429,19 @@ void TestWaitsAndReconnects() {
     Check(!be.Attach(), "offline: no instance to attach to");
     Check(!be.Online(), "offline: not online");
     Check(be.WaitingFor() == "an emulator at ws://localhost:8090", "offline: the dialog names what it waits for");
+    Check(!be.HasState(), "never attached: no state to paint (no made-up zeros)");
 
+    // The whole screen paints under the dialog with nothing fetched yet (the panels index what the backend gives)
+    dbg::UiState ui;
     dbg::TextScreen screen(80, 30);
     screen.Clear();
+    dbg::PaintClassicFrame(screen, be, ui);
     dbg::PaintOffline(screen, be.WaitingFor());
-    Check(screen.AttrAt(0, 0) == dbg::kOffline, "offline: the screen is grayed out");
+    Check(screen.Grayed(0, 0) && screen.FrameGrayed(0), "offline: the screen and the panel frames are grayed out");
+    Check(screen.AttrAt(0, 0) == dbg::kBackgr, "offline: the colours stay (the renderers dim them)");
+    Check(!screen.Grayed(40, 15) && !screen.FrameGrayed(screen.Frames().size() - 1), "offline: the dialog is not");
 
     const int before = server.requests;
-    dbg::UiState ui;
     dbg::ActionContext ctx{be, ui, false, nullptr, nullptr};
     Check(dbg::HandleKey(ctx, dbg::KeyPress{dbg::Key::F7, 0, 0}), "offline: the dialog takes the keys");
     Check(server.requests == before, "offline: a key asks the server nothing (one look a second)");
@@ -450,6 +456,10 @@ void TestWaitsAndReconnects() {
     Check(be.PollExternalChanges(), "it goes: paint the dialog");
     Check(!be.Online(), "waiting again");
     Check(be.LastError().empty(), "reconnecting is the normal course: no error");
+    Check(be.HasState(), "lost: the last state stays to paint");
+    screen.Clear();
+    dbg::PaintClassicFrame(screen, be, ui);
+    Check(!screen.Grayed(0, 0), "a new frame starts live");
 
     server.list = "{\"emulators\":[{\"id\":\"e2\",\"model\":\"PENTAGON\"}]}";
     be.RetryNow();
@@ -460,9 +470,28 @@ void TestWaitsAndReconnects() {
     Check(!be.Online(), "the server stops: waiting");
 }
 
+// The waiting screen as the window draws it: at start (nothing read: no panels) and after a loss (the last state)
+void TestOfflineLook(const std::string& shots) {
+    const auto check = [](bool ok, const std::string& what) { Check(ok, what); };
+    dbg::TextScreen start(80, 30);
+    start.Clear();
+    dbg::PaintOffline(start, "an emulator at ws://127.0.0.1:18700");
+    dbg::testing::CheckOfflineLook(start, "classic-start", false, shots, check);
+
+    dbg::MockBackend be(dbg::CreateTestSetByName("golden-sample"));
+    dbg::UiState ui;
+    dbg::TextScreen lost(80, 30);
+    lost.Clear();
+    dbg::PaintClassicFrame(lost, be, ui);
+    dbg::PaintOffline(lost, "an emulator at ws://127.0.0.1:18700");
+    dbg::testing::CheckOfflineLook(lost, "classic-lost", true, shots, check);
+}
+
 }  // namespace
 
-int main() {
+// --shots <folder>: also write the waiting screens as PPM pictures there
+int main(int argc, char** argv) {
+    const std::string shots = argc == 3 && std::string(argv[1]) == "--shots" ? argv[2] : "";
     TestWidgetTraversal();
     TestVisualFocusBackgrounds();
     TestReadOnlyWidgets();
@@ -472,6 +501,7 @@ int main() {
     TestUnrealKeys();
     TestTerminalKeys();
     TestWaitsAndReconnects();
+    TestOfflineLook(shots);
 
     if (failures == 0) {
         std::printf("all classic tests passed\n");

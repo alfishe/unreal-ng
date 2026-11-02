@@ -18,6 +18,21 @@ void TextScreen::Clear() {
     chars_.assign(chars_.size(), kFillChar);
     attrs_.assign(attrs_.size(), kBackgr);
     frames_.clear();
+    gray_ = false;
+    grayFrames_ = 0;
+}
+
+void TextScreen::GrayExcept(int x, int y, int w, int h) {
+    gray_ = true;
+    keepX_ = x;
+    keepY_ = y;
+    keepW_ = w;
+    keepH_ = h;
+    grayFrames_ = frames_.size();
+}
+
+bool TextScreen::Grayed(int x, int y) const {
+    return gray_ && !(x >= keepX_ && x < keepX_ + keepW_ && y >= keepY_ && y < keepY_ + keepH_);
 }
 
 bool TextScreen::InBounds(int x, int y) const {

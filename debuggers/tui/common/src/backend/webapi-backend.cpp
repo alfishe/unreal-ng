@@ -141,6 +141,7 @@ bool WebApiBackend::EnsureInstance() {
     instanceId_ = id;
     model_ = model;
     connected_ = true;
+    attachedOnce_ = true;
     nextAlive_ = now + std::chrono::seconds(1);
     // Steps, stops and breakpoints of other clients come as topics (websocket-interface.md §3.3)
     pushed_ = http_->Subscribe("[\"debug.events\",\"run.state\"]");
@@ -504,10 +505,9 @@ Z80Regs WebApiBackend::GetRegs(int) {
     return regs_;
 }
 
+// Offline the readers below work on the last memory and registers read (the grayed screen shows them)
 BranchInfo WebApiBackend::GetBranchAtPc(int) {
-    if (!EnsureInstance()) return BranchInfo{};
-    if (!memValid_ && !FetchMemory()) return BranchInfo{};
-    if (!regsValid_ && !FetchRegs()) return BranchInfo{};
+    if (EnsureInstance() && ((!memValid_ && !FetchMemory()) || (!regsValid_ && !FetchRegs()))) return BranchInfo{};
     return UnrealBranchInfo(mem_.data(), regs_.pc, regs_);
 }
 
@@ -520,9 +520,9 @@ int64_t WebApiBackend::GetTimeDelta(int) {
 // -- memory / disassembly --------------------------------------------------------
 
 std::vector<uint8_t> WebApiBackend::ReadMemory(int, uint16_t addr, uint16_t len) {
+    // Always len bytes (the panels index them): offline the last memory read, the grayed screen shows it
     std::vector<uint8_t> out;
-    if (!EnsureInstance()) return out;
-    if (!memValid_ && !FetchMemory()) return out;
+    if (EnsureInstance() && !memValid_) FetchMemory();
     out.reserve(len);
     for (uint16_t i = 0; i < len; ++i) {
         out.push_back(mem_[static_cast<uint16_t>(addr + i)]);
@@ -549,8 +549,7 @@ void WebApiBackend::WriteMemory(int, uint16_t addr, const std::vector<uint8_t>& 
 
 std::vector<DisasmLine> WebApiBackend::Disassemble(int, uint16_t addr, int nLines, bool withLabels) {
     std::vector<DisasmLine> lines;
-    if (!EnsureInstance()) return lines;
-    if (!memValid_ && !FetchMemory()) return lines;
+    if (EnsureInstance() && !memValid_ && !FetchMemory()) return lines;
     lines.reserve(static_cast<size_t>(nLines));
     uint16_t pc = addr;
     for (int i = 0; i < nLines; ++i) {
@@ -568,7 +567,7 @@ std::vector<DisasmLine> WebApiBackend::Disassemble(int, uint16_t addr, int nLine
 }
 
 uint16_t WebApiBackend::PrevInstruction(int, uint16_t addr) {
-    if (!EnsureInstance() || (!memValid_ && !FetchMemory())) return addr;
+    if (EnsureInstance() && !memValid_ && !FetchMemory()) return addr;
     return UnrealPrevInstruction(mem_.data(), addr);
 }
 
@@ -894,7 +893,7 @@ std::optional<std::string> WebApiBackend::LabelFor(uint16_t addr) {
 }
 
 std::vector<std::pair<uint16_t, std::string>> WebApiBackend::LabelsInCurrentMap() {
-    if (!EnsureInstance()) return {};
+    EnsureInstance();
     return labels_;
 }
 

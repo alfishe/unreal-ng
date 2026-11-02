@@ -30,13 +30,16 @@ void PixelRenderer::PutPixel(int x, int y, uint32_t color) {
 
 void PixelRenderer::Render(const TextScreen& screen, const Palette& palette) {
     // 1. Precalculate 32-bit ARGB colors for the 16 palette entries.
+    //    The second set draws the grayed cells and frames (TextScreen::GrayExcept).
     uint32_t pal32[16];
+    uint32_t gray32[16];
+    const auto argb = [](Rgb c) {
+        return (0xFFu << 24) | (static_cast<uint32_t>(c.r) << 16) | (static_cast<uint32_t>(c.g) << 8) |
+               static_cast<uint32_t>(c.b);
+    };
     for (int i = 0; i < 16; ++i) {
-        const Rgb c = palette.ColorOf(i);
-        pal32[i] = (0xFFu << 24) |
-                   (static_cast<uint32_t>(c.r) << 16) |
-                   (static_cast<uint32_t>(c.g) << 8) |
-                   static_cast<uint32_t>(c.b);
+        pal32[i] = argb(palette.ColorOf(i));
+        gray32[i] = argb(GrayOf(palette.ColorOf(i)));
     }
 
     // 2. Render text cells.
@@ -51,8 +54,9 @@ void PixelRenderer::Render(const TextScreen& screen, const Palette& palette) {
                 continue;
             }
             const uint8_t code = screen.CharAt(cx, cy);
-            const uint32_t ink = pal32[InkIndex(attr)];
-            const uint32_t paper = pal32[PaperIndex(attr)];
+            const uint32_t* pal = screen.Grayed(cx, cy) ? gray32 : pal32;
+            const uint32_t ink = pal[InkIndex(attr)];
+            const uint32_t paper = pal[PaperIndex(attr)];
             const uint8_t* glyph = &kFont16[static_cast<size_t>(code) * 16];
 
             const int x0 = (cx * pixelWidth_) / cellWidth_;
@@ -86,20 +90,29 @@ void PixelRenderer::Render(const TextScreen& screen, const Palette& palette) {
     }
 
     // 3. Render 1-pixel hairline frames.
-    for (const auto& frame : screen.Frames()) {
-        const uint32_t col = pal32[(frame.color | 8) & 0x0F];
+    for (size_t i = 0; i < screen.Frames().size(); ++i) {
+        const FrameEntry& frame = screen.Frames()[i];
+        const bool grayed = screen.FrameGrayed(i);
+        const uint32_t col = (grayed ? gray32 : pal32)[(frame.color | 8) & 0x0F];
         const int x1 = (frame.x * pixelWidth_) / cellWidth_ - 1;
         const int x2 = ((frame.x + frame.w) * pixelWidth_) / cellWidth_;
         const int y1 = (frame.y * pixelHeight_) / cellHeight_ - 1;
         const int y2 = ((frame.y + frame.h) * pixelHeight_) / cellHeight_;
+        // A grayed frame stays under the dialog: not drawn over its cells
+        const auto put = [&](int x, int y) {
+            if (grayed && x >= 0 && y >= 0 &&
+                !screen.Grayed((x * cellWidth_) / pixelWidth_, (y * cellHeight_) / pixelHeight_))
+                return;
+            PutPixel(x, y, col);
+        };
 
         for (int xx = x1; xx <= x2; ++xx) {
-            PutPixel(xx, y1, col);
-            PutPixel(xx, y2, col);
+            put(xx, y1);
+            put(xx, y2);
         }
         for (int yy = y1 + 1; yy < y2; ++yy) {
-            PutPixel(x1, yy, col);
-            PutPixel(x2, yy, col);
+            put(x1, yy);
+            put(x2, yy);
         }
     }
 }

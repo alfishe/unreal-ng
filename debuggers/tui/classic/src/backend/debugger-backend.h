@@ -228,6 +228,8 @@ public:
     virtual bool Online() { return true; }
     // What the backend waits for, for the dialog ("a TS-Conf emulator at ws://localhost:8090")
     virtual std::string WaitingFor() const { return {}; }
+    // An emulator was read since the start: offline the panels show its last state, else nothing (no made-up zeros)
+    virtual bool HasState() const { return true; }
 };
 
 // Backend factory identifiers (CLI: --backend <name> [--endpoint <url/pipe>]).

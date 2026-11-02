@@ -71,32 +71,46 @@ bool RunSdlWindow(IDebuggerBackend& be, UiState& ui, TextScreen& screen,
             newRw = winWidth;
             newRh = winHeight;
         }
-        if (newRw != renderWidth || newRh != renderHeight) {
-            renderWidth = newRw;
-            renderHeight = newRh;
-            blitter.Resize(renderWidth, renderHeight);
-            if (texture) {
-                SDL_DestroyTexture(texture);
-            }
-            texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-                                        SDL_TEXTUREACCESS_STREAMING,
-                                        renderWidth, renderHeight);
+        if (newRw == renderWidth && newRh == renderHeight && texture) return false;
+        renderWidth = newRw;
+        renderHeight = newRh;
+        blitter.Resize(renderWidth, renderHeight);
+        if (texture) {
+            SDL_DestroyTexture(texture);
         }
+        texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                    SDL_TEXTUREACCESS_STREAMING,
+                                    renderWidth, renderHeight);
+        return true;
     };
 
-    auto updateAndPresent = [&]() {
-        repaint();
+    // Three costs, paid only when needed: show the texture (a move, an expose), blit the screen into it (a new size,
+    // a changed picture), paint the screen from the backend (input, a change of the emulator)
+    auto present = [&]() {
+        if (!texture) return;
+        SDL_RenderClear(renderer);
+        SDL_RenderTexture(renderer, texture, nullptr, nullptr);
+        SDL_RenderPresent(renderer);
+    };
+    auto blit = [&]() {
         blitter.Render(screen, palette);
         if (texture) {
             SDL_UpdateTexture(texture, nullptr, blitter.Pixels().data(),
                               renderWidth * static_cast<int>(sizeof(uint32_t)));
-            SDL_RenderClear(renderer);
-            SDL_RenderTexture(renderer, texture, nullptr, nullptr);
-            SDL_RenderPresent(renderer);
         }
+        present();
+    };
+    TextScreen shown = screen;
+    auto updateAndPresent = [&]() {
+        repaint();
+        if (screen == shown) return;
+        shown = screen;
+        blit();
     };
 
-    updateAndPresent();
+    repaint();
+    shown = screen;
+    blit();
 
     bool running = true;
     ActionContext ctx{be, ui, false, followCursor, [&] { running = false; }};
@@ -104,6 +118,8 @@ bool RunSdlWindow(IDebuggerBackend& be, UiState& ui, TextScreen& screen,
         SDL_Event event;
         if (SDL_WaitEventTimeout(&event, 50)) {
             bool needsRepaint = false;
+            bool needsBlit = false;
+            bool needsPresent = false;
             do {
                 if (event.type == SDL_EVENT_QUIT) {
                     running = false;
@@ -150,6 +166,7 @@ bool RunSdlWindow(IDebuggerBackend& be, UiState& ui, TextScreen& screen,
                         SDL_SetWindowSize(window, winWidth, winHeight);
                         recreateTextureIfNeeded();
                         needsRepaint = true;
+                        needsBlit = true;
                     } else if (cmdOrCtrl && isMinus) {
                         currentScale = std::max(0.75f, currentScale - 0.25f);
                         winWidth = static_cast<int>(basePixelWidth * currentScale);
@@ -157,6 +174,7 @@ bool RunSdlWindow(IDebuggerBackend& be, UiState& ui, TextScreen& screen,
                         SDL_SetWindowSize(window, winWidth, winHeight);
                         recreateTextureIfNeeded();
                         needsRepaint = true;
+                        needsBlit = true;
                     } else if (cmdOrCtrl && isZero) {
                         currentScale = (config.scale >= 0.5f && config.scale <= 5.0f) ? config.scale : 1.5f;
                         winWidth = static_cast<int>(basePixelWidth * currentScale);
@@ -164,20 +182,35 @@ bool RunSdlWindow(IDebuggerBackend& be, UiState& ui, TextScreen& screen,
                         SDL_SetWindowSize(window, winWidth, winHeight);
                         recreateTextureIfNeeded();
                         needsRepaint = true;
+                        needsBlit = true;
                     } else if (HandleKey(ctx, KeyFromSdl(key, mod))) {
                         needsRepaint = true;
                         if (!running) break;
                     }
-                } else if (event.type == SDL_EVENT_WINDOW_EXPOSED ||
-                           event.type == SDL_EVENT_WINDOW_RESIZED ||
+                } else if (event.type == SDL_EVENT_WINDOW_RESIZED ||
                            event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
-                    recreateTextureIfNeeded();
-                    needsRepaint = true;
+                    // The same picture at a new size: blit it again, nothing asked of the backend
+                    if (recreateTextureIfNeeded()) needsBlit = true;
+                    else needsPresent = true;
+                } else if (event.type == SDL_EVENT_WINDOW_EXPOSED) {
+                    needsPresent = true;  // a move or an uncovered part: the texture as it is
                 }
             } while (SDL_PollEvent(&event));
 
-            if (needsRepaint && running) {
-                updateAndPresent();
+            if (running) {
+                if (needsRepaint) {
+                    if (needsBlit) {
+                        repaint();
+                        shown = screen;
+                        blit();
+                    } else {
+                        updateAndPresent();
+                    }
+                } else if (needsBlit) {
+                    blit();
+                } else if (needsPresent) {
+                    present();
+                }
             }
         }
         // Another client of the emulator stepped or stopped it, or changed its breakpoints

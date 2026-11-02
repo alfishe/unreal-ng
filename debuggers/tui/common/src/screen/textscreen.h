@@ -42,7 +42,6 @@ constexpr uint8_t kFFrameError = 0x52;        // dialog error text
 constexpr uint8_t kFrmHeader = 0xD0;          // dialog title bar
 constexpr uint8_t kMenuInside = 0x70;         // menu body / enabled item
 constexpr uint8_t kMenuHeader = 0xF0;         // menu title
-constexpr uint8_t kOffline = 0x07;            // every cell while no emulator answers (PaintOffline)
 constexpr uint8_t kMenuCursor = 0xE0;         // selected menu item
 constexpr uint8_t kMenuItemDis = 0x7A;        // disabled menu item
 constexpr uint8_t kAttrTransparent = 0xFF;    // "do not draw this cell"
@@ -64,6 +63,8 @@ struct FrameEntry {
     int w;
     int h;
     uint8_t color;
+
+    bool operator==(const FrameEntry&) const = default;
 };
 
 class TextScreen {
@@ -105,6 +106,15 @@ public:
 
     const std::vector<FrameEntry>& Frames() const { return frames_; }
 
+    // Gray out every cell but the rect (x,y,w,h) and every frame recorded so far: the renderers draw them through
+    // GrayOf (a state that is not live under a dialog). Clear ends it
+    void GrayExcept(int x, int y, int w, int h);
+    bool Grayed(int x, int y) const;
+    bool FrameGrayed(size_t index) const { return index < grayFrames_; }
+
+    // The same picture (the window blits only a changed one)
+    bool operator==(const TextScreen&) const = default;
+
 private:
     bool InBounds(int x, int y) const;
 
@@ -114,6 +124,9 @@ private:
     std::vector<uint8_t> chars_;
     std::vector<uint8_t> attrs_;
     std::vector<FrameEntry> frames_;
+    bool gray_ = false;
+    int keepX_ = 0, keepY_ = 0, keepW_ = 0, keepH_ = 0;
+    size_t grayFrames_ = 0;
 };
 
 }  // namespace dbg

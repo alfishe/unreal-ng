@@ -417,9 +417,7 @@ void PaintSystemMenu(TextScreen& screen, const UiState& ui, bool isTsconf, bool 
 }
 
 void PaintOffline(TextScreen& screen, const std::string& waitingFor) {
-    // The last state stays readable, grayed out; only the dialog's frame is drawn (FilledFrame)
-    for (int y = 0; y < screen.Height(); ++y)
-        for (int x = 0; x < screen.Width(); ++x) screen.SetAttr(x, y, kOffline);
+    // The last state stays as it was, every cell and panel frame grayed out (the renderers dim them), under the dialog
     const std::string title = "no emulator";
     const std::string lines[] = {"Waiting for " + waitingFor, "It reconnects by itself", "Alt+F4 exits"};
     int width = static_cast<int>(title.size());
@@ -428,7 +426,8 @@ void PaintOffline(TextScreen& screen, const std::string& waitingFor) {
     const int height = 2 + static_cast<int>(std::size(lines));
     const int x = (screen.Width() - width) / 2;
     const int y = (screen.Height() - height) / 2;
-    screen.FilledFrame(x, y, width, height);
+    screen.GrayExcept(x, y, width, height);
+    screen.Frame(x, y, width, height, kFFrameFrame);
     screen.FillRect(x, y, width, height, kMenuInside);
     screen.FillRect(x, y, width, 1, kMenuHeader);
     screen.Tprint(x + (width - static_cast<int>(title.size())) / 2, y, title, kMenuHeader);

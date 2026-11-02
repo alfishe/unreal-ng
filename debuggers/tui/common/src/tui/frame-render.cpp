@@ -60,16 +60,17 @@ ftxui::Element RenderRow(const TextScreen& screen, const Palette& palette, int y
     while (x < width) {
         const uint8_t attr = screen.AttrAt(x, y);
         const bool transparent = attr == kAttrTransparent;
+        const bool gray = screen.Grayed(x, y);
         std::string text;
-        while (x < width && screen.AttrAt(x, y) == attr) {
+        while (x < width && screen.AttrAt(x, y) == attr && screen.Grayed(x, y) == gray) {
             text += Utf8OfCode(screen.CharAt(x, y));
             ++x;
         }
         if (transparent) {
             runs.push_back(ftxui::text(std::move(text)));
         } else {
-            const Rgb ink = palette.ColorOf(InkIndex(attr));
-            const Rgb paper = palette.ColorOf(PaperIndex(attr));
+            const Rgb ink = gray ? GrayOf(palette.ColorOf(InkIndex(attr))) : palette.ColorOf(InkIndex(attr));
+            const Rgb paper = gray ? GrayOf(palette.ColorOf(PaperIndex(attr))) : palette.ColorOf(PaperIndex(attr));
             runs.push_back(ftxui::text(std::move(text)) | ftxui::color(ToColor(ink)) |
                            ftxui::bgcolor(ToColor(paper)));
         }
