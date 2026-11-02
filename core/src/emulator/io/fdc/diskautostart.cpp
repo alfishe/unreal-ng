@@ -258,6 +258,10 @@ bool DiskAutostart::HandleCommandLoopHook(Z80& cpu)
     if (!(_context->emulatorState.flags & CF_TRDOS))
         return false;
 
+    // The model boots its firmware first (GMX right after power-on): its TR-DOS runs before the autostart's start
+    if (_context->pPortDecoder && _context->pPortDecoder->IsAutostartDeferred())
+        return false;
+
     bool changed = false;
     if (_coldStartFinishPending)
     {

@@ -30,11 +30,12 @@ struct GmxPagingState
     uint8_t lock7AFD;     ///< frozen #7AFD read-back
     uint8_t lock7EFD;     ///< frozen #7EFD read-back
     uint8_t reconfPending;  ///< 1 = a RECONF waits for the end of its instruction
-    uint8_t reserved[5];
+    uint8_t bootState;      ///< PortDecoder_ScorpionGMX::BOOT_* (0 in older blobs: a booted machine)
+    uint8_t reserved[4];
 };
 
 static_assert(sizeof(GmxPagingState) == 16, "GmxPagingState must be 16 bytes");
-static_assert(offsetof(GmxPagingState, reserved) + 5 == sizeof(GmxPagingState),
+static_assert(offsetof(GmxPagingState, reserved) + 4 == sizeof(GmxPagingState),
               "GmxPagingState has implicit trailing padding - resize reserved[]");
 
 class TTDGmxPaging : public TTDSerializable

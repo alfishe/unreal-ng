@@ -37,6 +37,7 @@ companion when its targets exist, so a build without it packages as before.
 | Studio | yes | Qt app; shares the suite's Qt where the platform allows |
 | `sdctl` | no | Developer tool; built in dev builds only |
 | Default scenario, themes, thumbnails, catalogue | yes | `data/streamdeck/` |
+| Test software the scenarios open | yes | `data/testsoft/`, `data/testtapes/`, `data/testsnapshots/` (about 1 MB), beside `streamdeck/` |
 | udev rule for `0FD9` | Linux | |
 
 ## 3. macOS
@@ -107,11 +108,14 @@ as on the other apps (into the same directory, so the DLLs are shared; the daemo
 | `data/streamdeck/thumbnails/` | `$data/streamdeck/thumbnails` | default scenario faces |
 | `catalogue.json` (generated at build time) | `$data/streamdeck/catalogue.json` | studio palette offline |
 | unreal-qt icons | `$data/icons` | faces (`$icons`) |
+| `data/testsoft/`, `data/testtapes/`, `data/testsnapshots/` | `$data/testsoft`, `$data/testtapes`, `$data/testsnapshots` | the scenarios' software keys (`media.open` with `$data/...`) |
 
 `data/streamdeck` ships in every package since 2026-10-20 (today: the idle screen's theme, `themes/unrealng`; the
 rows above that SD5 adds go into the same directory and ship with it). The daemon finds it through
 `companions/streamdeck/lib/src/datadir.cpp` (the first candidate that holds a `streamdeck/` directory; `run` prints
-`data: <dir>`, or a note when none is found):
+`data: <dir>`, or a note when none is found). Since 2026-11-01 `testsoft/`, `testtapes/` and `testsnapshots/` ship
+beside it in every package and in a build's `bin/`, so a scenario's `$data/testsnapshots/...` opens in a release (the
+release workflow checks one file in the DMG, the DEB and the AppImage):
 
 | Package | Copied to | The daemon's candidate that finds it | The studio's |
 |:--|:--|:--|:--|

@@ -33,6 +33,7 @@ GmxPagingState TTDGmxPaging::Snapshot() const
     blob.lock7EFD = gmx.lock7EFD;
     const auto* decoder = dynamic_cast<const PortDecoder_ScorpionGMX*>(_context->pPortDecoder);
     blob.reconfPending = (decoder && decoder->IsReconfigurationPending()) ? 1 : 0;
+    blob.bootState = decoder ? decoder->BootState() : 0;
     return blob;
 }
 
@@ -67,7 +68,10 @@ void TTDGmxPaging::TTDLoadState(const uint8_t* src)
 
     // The pending RECONF and its step hook; the caller rebuilds the banks (UpdateZ80Banks) from the latches
     if (auto* decoder = dynamic_cast<PortDecoder_ScorpionGMX*>(_context->pPortDecoder))
+    {
         decoder->RestoreReconfigurationPending(blob.reconfPending != 0);
+        decoder->RestoreBootState(blob.bootState);
+    }
 }
 
 uint64_t TTDGmxPaging::TTDHashState() const

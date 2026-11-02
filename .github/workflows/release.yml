@@ -187,6 +187,7 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN=1 ./UnrealNG-Suite-Linux-x86_64.AppImage --appimage-extract > /dev/null
           test -f squashfs-root/usr/lib/udev/rules.d/70-unreal-streamdeck.rules
           test -f squashfs-root/usr/bin/streamdeck/themes/unrealng/theme.json   # data beside the daemon
+          test -f squashfs-root/usr/bin/testsnapshots/z80/newbench.z80          # "$data/..." of the scenarios
           env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR -u PATH \
             PATH=/usr/bin:/bin squashfs-root/usr/bin/unreal-streamdeck --help
           env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR -u PATH \
@@ -257,6 +258,7 @@ jobs:
           # The Stream Deck companion: the daemon, the studio (the package's Qt) and the udev rule
           test -f /usr/lib/udev/rules.d/70-unreal-streamdeck.rules
           test -f /usr/lib/unreal-ng/streamdeck/themes/unrealng/theme.json   # data beside the real binaries
+          test -f /usr/lib/unreal-ng/testsnapshots/z80/newbench.z80          # "$data/..." of the scenarios
           unreal-streamdeck --help
           QT_QPA_PLATFORM=offscreen unreal-streamdeck-studio --help
 
@@ -628,6 +630,7 @@ jobs:
           studio="UnrealNG.app/Contents/Applications/Stream Deck Studio.app"
           test -x UnrealNG.app/Contents/MacOS/unreal-streamdeck
           test -f UnrealNG.app/Contents/Resources/streamdeck/themes/unrealng/theme.json
+          test -f UnrealNG.app/Contents/Resources/testsnapshots/z80/newbench.z80
           test -x "$studio/Contents/MacOS/unreal-streamdeck-studio"
           test "$(readlink "Stream Deck Studio.app")" = "$studio"
           test ! -e "$studio/Contents/Frameworks"   # Qt once, in UnrealNG.app
