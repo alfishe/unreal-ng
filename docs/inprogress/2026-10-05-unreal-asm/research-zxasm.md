@@ -119,7 +119,7 @@ newest is chosen. Keywords `#C6`-`#C9` mean Lite or 3.15+, `#CA`-`#CC` mean 3.15
 ### 6.1 Checked in the emulator
 
 `fcnv1` with four lines added (`Test   ld (hl),a:inc hl:djnz Test`, `       LD   A,(IX+5) ;комментарий`,
-`       db "  строка  ",13`, `       chd "b:test"`), written entirely by the codec's rules (no kept bytes) with
+`       db "  строка  ",13`, `       chd "b:test"`; the Russian words mean "comment" and "string"), written entirely by the codec's rules (no kept bytes) with
 `zxasm encode --version 3.15` (type `a`, extension "sm"), opens in ZAsm 3.15 (File > Load) and shows the text line for
 line: keyword case, blank runs, the blank after the opening quote, Russian text, the 3.15-only `CHD`. Own emulator
 instance, TTD recorded; screenshots kept with the research materials.

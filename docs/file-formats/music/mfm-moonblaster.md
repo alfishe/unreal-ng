@@ -343,7 +343,7 @@ struct WaveChannel {
   - `ALONEBTL.MFM` - "Alone Battle" from Ys-II by Bart Roymans (Zodiac), 1995
   - `DJINGLE1.MFM` - "End of Search / Rhumba Version" by R. v/d Moosdijk
   - `CRYOGENT.MFM`, `DERTIGAP.MFM`, `FEEDBACK.MFM`, `FOUNTAIN.MFM`, `JDK2.MFM`, `MEMORY.MFM`, `PALACEOD.MFM`, `PATSTORY.MFM`, `SALMON.MFM` - Various composers. In the collection's player ordering `CRYOGENT.MFM` is **melody 7**; it is the acceptance fixture for the OPL4 FM rearchitecture (`core/tests/emulator/sound/moonsound_mfm2_guest_test.cpp`, testdata `sound/moonsound/mfm-sample-2/`) and the file that exposed the 4-op master-ownership defect — see "Emulation notes" below.
-- **Player source code**: `mfm_player.asm` by Mick (Михаил), 2015 - Z80 assembly replayer implementation for ZX Spectrum adaptation
+- **Player source code**: `mfm_player.asm` by Mick (Mikhail), 2015 - Z80 assembly replayer implementation for ZX Spectrum adaptation
 - **Demo code**: `moonsound_demo.asm` - Integration example with player
 
 ### Emulation notes — CRYOGENT (melody 7)

@@ -82,11 +82,11 @@ start-up is [chapter 2](02-the-start.md).
 | Byte | Author's comment | Meaning |
 |---|---|---|
 | 0 | `dy` | current speed in lines per frame; 0 = standing |
-| 1 | `Y бара` (bar Y) | top line of the bar on the screen |
-| 2 | `Y графики бара` (bar picture Y) | first line of the picture shown in the bar |
+| 1 | `bar Y` | top line of the bar on the screen |
+| 2 | `bar picture Y` | first line of the picture shown in the bar |
 
 At the start bar *n* has Y = picture Y = `n*16`: the bars put the picture together unchanged. Only the bottom bar
-gets `dy = 1` (`;нижний бар запускаем сразу (dy=1):` - "start the bottom bar at once").
+gets `dy = 1` (`;start the bottom bar at once (dy=1):`).
 
 `gsmovebars` moves them once per frame:
 
@@ -97,18 +97,17 @@ So the fall is accelerated: 1, 2, 3, ... lines per frame. The bars leave in a ca
 starting about four frames after the bar below. The author's comment says 4, but the code compares with 5:
 
 ```asm
-;иначе (dy=0): если dy(n+1)=4, то dy=1
+;otherwise (dy=0): if dy(n+1)=4, then dy=1
         ...
-        LD A,(HL)               ;можем читать вне таблицы, но не пишем
+        LD A,(HL)               ;we may read outside the table, but do not write
         ...
         CP 5                    ;4
         JR NZ,$+3
-        INC (HL)                ;если dy(n+1)=4, то dy=1
+        INC (HL)                ;if dy(n+1)=4, then dy=1
 ```
 
-("otherwise (dy=0): if dy(n+1)=4, then dy=1"; "we may read outside the table, but do not write".) Stopped bars at
-`#C0` are also "restarted" by this rule, but they stop again at once. The comment at the top of the routine says so:
-`y=#C0 (т.к. остановленные перезапускаются)` - "y=#C0 (because stopped bars are restarted)".
+Stopped bars at `#C0` are also "restarted" by this rule, but they stop again at once. The comment at the top of the routine says so:
+`y=#C0 (because stopped bars are restarted)`.
 
 ### 3.2 Per-line tables
 
@@ -123,13 +122,12 @@ bytes, indexed by the line number in `IXL`:
 | `newatr` | `#4400`/`#4500` | address in `gsatr` (`#7800`) of its attribute row |
 | `atr` | `#4600`/`#4700` | the same for the previous frame |
 | `gstdhlGS` | `#4C00`/`#4D00` | line -> address of the line in `gsscr` |
-| `gstdhlZX` | `#4E00`/`#4F00` | line -> ZX screen address (`#4000`-`#57FF`); `;концы строк` - "line ends", because 32 is added later |
+| `gstdhlZX` | `#4E00`/`#4F00` | line -> ZX screen address (`#4000`-`#57FF`); `;line ends`, because 32 is added later |
 
 The code moves between the tables by changing `IXH` (`INC IXH`, `ADD A,4`, `SUB 6`), so one `IXL` is one line in
 all of them.
 
-`gsscr` is at `#6000`, below `#8000`, as the author requires (`;<#8000 и кратно #800` - "below #8000 and a multiple
-of #800"). Every address in the tables then has bit 7 of the high byte free. `gsdrawbars` uses that bit to record
+`gsscr` is at `#6000`, below `#8000`, as the author requires (`;<#8000 and a multiple of #800`). Every address in the tables then has bit 7 of the high byte free. `gsdrawbars` uses that bit to record
 **which ZX screen the line belongs to**: 0 = screen 5 (`#4000`), 1 = screen 7 (`#C000`).
 
 ### 3.3 Choosing the screen of each line
@@ -138,15 +136,15 @@ of #800"). Every address in the tables then has bit 7 of the high byte free. `gs
 picture lines. Then it walks the lines from the top:
 
 ```asm
-;если curatr!=newatr[line], то curscr=curscr xor #8000
-;(источник графики тот же,
-;этот бит при копировании будет игнорироваться)
+;if curatr!=newatr[line], then curscr=curscr xor #8000
+;(the graphics source is the same,
+;this bit is ignored when copying)
         ...
         SBC HL,DE
         JR Z,gsgensetscreensswapq
         LD A,IXL
         AND 7
-        JR Z,gsgensetscreensswapq ;не надо перекл.каждое знакоместо
+        JR Z,gsgensetscreensswapq ;no need to switch every character cell
         LD A,B
         XOR C                   ;#80
         LD B,A                  ;'(curscr xor #8000)
@@ -243,7 +241,7 @@ The card computes `n` like this (from `gsgenwaitswitch`):
         RR L
         SRL H
         RR L
-        INC L                   ;иначе можем получить остаток времени 1..3 такта
+        INC L                   ;otherwise we may get a remainder of 1..3 t-states
         LD A,127
         SUB L
 ```
@@ -282,10 +280,10 @@ from the interrupt to the first paper line. The source does not explain the 164 
 covers the interrupt and the ZX code between `HALT` and the first command, but this is not confirmed.
 
 ```asm
-;выводим все атрибуты atr[line] (не newatr!!!) в начале кадра:
+;output all attributes atr[line] (not newatr!!!) at the start of the frame:
 ```
 
-"output all attributes atr[line] (not newatr!!!) at the start of the frame". For every line where the attribute
+For every line where the attribute
 source changes, and at every character row start, the card emits a command for the attribute row of that line in that
 line's screen. An empty source gives `CMDBLACK`, which needs no data. Otherwise it gives `CMDGFX` with the 32 attribute
 bytes. Each command is subtracted from `t`.
@@ -303,25 +301,21 @@ remainder and `#17`. That `OUT` happens at the start of the paper and shows scre
 The author's comments describe the loop:
 
 ```asm
-;цикл мультиколора
-;сейчас мы в начале 0-й строки графического экрана
-;реально (для запаса времени) в конце предыдущей:
+;multicolour loop
+;now we are at the start of line 0 of the graphics screen
+;really (for a time margin) at the end of the previous one:
 ```
-
-"multicolour loop; now we are at the start of line 0 of the graphics screen; really (for a time margin) at the end of
-the previous one".
 
 The state is two counters: `counter`, the time used since the paper began, and `tswitch`, the time of the next
 switch. `gsgenfindswitch` scans `atr[]` forward from the current line, adding 224 per line, until bit 7 differs
 from the current screen. Then `gsgenifwehavetime` checks the gap:
 
 ```asm
-;есть время до переключения?
-;tswitch-counter>=428+15(+32+19+15 (добавка для CMDWAITSWITCH))
+;is there time before the switch?
+;tswitch-counter>=428+15(+32+19+15 (addition for CMDWAITSWITCH))
 ```
 
-"is there time before the switch? tswitch - counter >= 428+15 (+32+19+15, the addition for CMDWAITSWITCH)". In
-practice the test is whether at least `#200` t-states remain after the 66 of the wait command:
+In practice the test is whether at least `#200` t-states remain after the 66 of the wait command:
 
 - if yes, it emits the next command from the **futurecommands** queue (a `CMDGFX`, 443 t-states) or a `CMDDUMMY`
   when the queue is empty, adds its time, and checks again;
@@ -344,8 +338,8 @@ Lines that became empty are skipped:
 
 ```asm
         ADD A,A
-        JR Z,gsgentimegfxok     ;пустая графика => пустые атрибуты
-;они тогда будут уже отрисованы
+        JR Z,gsgentimegfxok     ;empty graphics => empty attributes
+;they will then be drawn already
 ```
 
 "empty graphics => empty attributes; they will already be drawn". The pixels stay, but the next border makes their
@@ -372,10 +366,10 @@ gsdogen0
         LDIR
         JR gsdogen0
 gsdogenq
-;команда "закончить кадр":
+;the "end frame" command:
         LD A,CMDENDFRAME
         LD (DE),A
-        RET                     ;конец генератора кадра
+        RET                     ;end of the frame generator
 ```
 
 ("the 'end frame' command"; "end of the frame generator".) `CMDTURBO` writes 0 to `#EFF7`. On the author's
@@ -412,7 +406,7 @@ BIGLOOP
 ENDFRAME
 PUSHKASP=$+1
         LD SP,0
-        CALL IMER               ;делает EI
+        CALL IMER               ;does EI
         JP BIGLOOP
 ```
 
@@ -463,7 +457,7 @@ It stores the end frame into `zxendtime` (self-modified), waits for the start fr
 and copies `#4000` to `#C000`. Both screens now hold the picture left by the rotating bars. The card's copy of that
 picture is `gameover`. The ZX and the card must agree on it without ever comparing: the card only sends changes.
 
-`QUIT` (the end frame, or Space: `;можно жать RESET` - "one may press RESET") sends command 2, restores the IM 2
+`QUIT` (the end frame, or Space: `;one may press RESET`) sends command 2, restores the IM 2
 table, selects `#10` (page 0, screen 5), blacks out the attributes, turns turbo back on and returns to the resident
 loop.
 
@@ -499,22 +493,21 @@ maps window 0 is covered in [chapter 1](01-the-machine.md).
 - **The card does the counting.** Every `CMD*TIME` is exact (`219`, `443`, `224`, `66 + 4n`). The card simulates
   the ZX's beam position to the t-state, 50 times a second, for a CPU it cannot see.
 - **Mid-frame screen switching as multicolour.** Two attribute sets per character row, chosen by the line at which
-  `#7FFD` bit 3 changes. The author calls it `цикл мультиколора` ("the multicolour loop").
+  `#7FFD` bit 3 changes. The author calls it `multicolour loop`.
 - **Rows mirrored once, at the start.** `GSSCRFLIP` reverses the bytes of every row so the ZX can write each row from its end
   with `PUSH`.
-- **One frame of latency on purpose.** The attributes come from `atr` (`не newatr!!!`) because the pixels of the new
+- **One frame of latency on purpose.** The attributes come from `atr` (`not newatr!!!`) because the pixels of the new
   state are written behind the beam during the current frame.
 - **Comment vs code:** the start condition of a bar is "dy of the bar below = 4" in the comment, `CP 5` in the code.
 - **Deliberate hangs:** two `JP C,$` in `gsgenifwehavetime` if the plan is late. Nothing recovers from them: the
   ZX waits for the card without a timeout.
-- **Leftover questions in the author's comments:** `newgfx=#4000 ;2 набора. переключать или копировать?` ("2 sets.
-  switch or copy?"). The answer in the code is copy (`GSEFFECT` copies `#200` bytes twice per frame). The constant
+- **Leftover questions in the author's comments:** `newgfx=#4000 ;2 sets. switch or copy?`. The answer in the code is copy (`GSEFFECT` copies `#200` bytes twice per frame). The constant
   `newgfx2` is never used.
 - **Dead code:** the `MOVEPAGE` macro and `RESMOVEPAGE` (test bench, never invoked), `CL1800PG` (called only from
   commented-out lines), and the commented-out `newatr[#C0]` sentinel in `gsdrawbars`, replaced by the one written at
   the end.
-- **The test bench in the same file:** its `GO` sends GS commands `#38` and `#D2` with the comment `;зачем-то` ("for
-  some reason"), and its hard reset carries `;не помогает` ("does not help"). After the `SAVEOBJ4` include there is
+- **The test bench in the same file:** its `GO` sends GS commands `#38` and `#D2` with the comment `;for some reason`,
+  and its hard reset carries `;does not help`. After the `SAVEOBJ4` include there is
   an unlabelled entry that puts `gameover` on the screen and jumps to the saver (`nenado`). Nothing in the file jumps
   to it.
 

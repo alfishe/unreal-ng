@@ -83,7 +83,7 @@ there. It lacks the "original waits".
 
 Sources: the launchers' READMEs (`ZX\README.ENG` of 2002, `ZX\_README.TXT` of v2.03 on the MAME-pack
 disk), the community launcher source `spectrum.asm`, doc.sprinter.ru "Работа с HDD и RAM-Disk через
-TR-DOS" (local copy under `documentation/doc-sprinter-ru/programmirovanie-v-tr-dos-dopolnitelnye-komandy/`).
+TR-DOS" ("Working with the HDD and RAM disk through TR-DOS"; local copy under `documentation/doc-sprinter-ru/programmirovanie-v-tr-dos-dopolnitelnye-komandy/`).
 
 ### 3.2 Worked example: a TRD from the hard disk (path C, as run on MAME, §9.2)
 
@@ -149,7 +149,7 @@ line goes into the RAM disk, but those TR-DOS versions never look there and read
 7 MHz: a mode with `/turbo` runs at 21 MHz, one without at 3.5 MHz. The claim "3.5-7.0 MHz in the ZX
 Spectrum configuration" (seen in secondary descriptions of the Sprinter) has no support in the PLD source or
 in the manual: the manual gives "21MHz/3.5MHz" (`sp2000_man.pdf` p. 4), and its only 7 MHz is the pixel clock
-of the 320-dot mode (p. 15: "42MHz … делится на 3, а затем на 2, получая 14 и 7 MHz для вывода пикселей").
+of the 320-dot mode (p. 15: "42MHz … is divided by 3 and then by 2, giving 14 and 7 MHz for the pixel output").
 The clock derivation from the 42 MHz counter is in [research-cpu-z84c15.md](research-cpu-z84c15.md) §1.1.
 
 **The PLD does not detect a mode.** The frequency follows one register bit, `TB_SW`, which only software
@@ -428,7 +428,7 @@ BIOS 3.04 decodes `#xxBB` to code `#32`, which nothing connects to a slot).
 | Format | Real Sprinter | Evidence |
 |---|---|---|
 | TRD | launcher → RAM disk → TR-DOS 7.0x drive A; or TR-DOS `/LOAD`; or the real floppy | §3, §5.4 |
-| SCL | launcher v2.03 only (`trdscl.a80` builds the TRD layout: catalog, disk info sector, files) | `changes.txt` "+ поддержка SCL" |
+| SCL | launcher v2.03 only (`trdscl.a80` builds the TRD layout: catalog, disk info sector, files) | `changes.txt` "+ SCL support" |
 | TAP / TZX | no file loader; the tape input on `KMPS` (EAR → `#FE` bit 6, PLD `TAPE_IN`, `SP2_ACEX.TDF:132`, `:388`, `:787`); MIC out = border bit 3 (`:747`) | Peters Plus "buffers for joystick, tape, ..." (`peters-plus/web-2003/arhitecture.htm`); assembly guide `KMPS` (Kempston + tape) |
 | SNA / Z80 | none | `spectrum.asm:45-47` (`[ ] Load TAP image`, `[ ] Load SNA file`) |
 | Real 5.25"/3.5" TR-DOS floppy | yes, TR-DOS 5.04 / 7.0x on the WD1793, 720 KB latch | ACC-6 (S3a) |
@@ -526,9 +526,9 @@ the media manager's floppy and tape slots, the screen OCR (`SpectrumScreenHas` i
 |---|---|
 | Community launcher v2.03 | `software/spectrum-mode/spectrum-exe-tt/spectrum.asm`, `trdscl.a80`, `changes.txt`, `param.txt` (local collection, see [materials.md](materials.md)) |
 | Peters Plus launcher | `software/spectrum-mode/zx-folder-hdd/SPECTRUM.EXE`, `README.ENG`; disassembly in this branch |
-| BIOS ZX functions | [zxgit.org/Tolik-Trek/Sprinter-BIOS](https://zxgit.org/Tolik-Trek/Sprinter-BIOS) `beta` `f546c4e`: `bios/rom/ZX/ZX_FUNC.ASM`, `ZX_MENU.ASM`, `bios/exp/FUNC_FOR_TRDOS.ASM`, `FUNC_RAM_ROM_DRV.ASM`, `ZX_MEM.TXT`, `doc/перехваты ресета.txt` |
+| BIOS ZX functions | [zxgit.org/Tolik-Trek/Sprinter-BIOS](https://zxgit.org/Tolik-Trek/Sprinter-BIOS) `beta` `f546c4e`: `bios/rom/ZX/ZX_FUNC.ASM`, `ZX_MENU.ASM`, `bios/exp/FUNC_FOR_TRDOS.ASM`, `FUNC_RAM_ROM_DRV.ASM`, `ZX_MEM.TXT`, `doc/перехваты ресета.txt` (file name: "reset hooks") |
 | TR-DOS 7.0x | `software/spectrum-mode/zx-sp-roms-tt/SP_TRDOS.ASM`, `TRDOS/TR_RMD_S.ASZ`, `TRDOS/TR_HDD_4.ASZ` |
-| TR-DOS extra commands | [doc.sprinter.ru](https://doc.sprinter.ru/) "Дополнительные команды TR-DOS" (local copy) |
+| TR-DOS extra commands | [doc.sprinter.ru](https://doc.sprinter.ru/) "Дополнительные команды TR-DOS" ("Extra TR-DOS commands"; local copy) |
 | PLD | `firmware/pld/sources/sprinter-computer-hard/ACEX/SP2_ACEX.TDF` (WAIT_ORIG, TAPE_IN, NMI_ON, ALL_MODE) |
 | MAME | `src/mame/sinclair/sprinter.cpp` (`kbd_fe_r` `:1669-1704`, `update_memory` `:320-380`, machine config `:1940-2025`), `spectrum.cpp:434-436`, `:785-792` |
 | Disk contents | MAME pack `sp_hdd_sys.chd` (`C:\ZX`, `C:\TRD`, `FN\FN.EXT`) |

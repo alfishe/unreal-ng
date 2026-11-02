@@ -50,8 +50,8 @@ stateDiagram-v2
 
 ```mermaid
 flowchart LR
-    X["14 MHz crystal"] --> D2["DD2.1 ТМ2<br/>÷2"] --> CLK7["7 MHz — CLK"]
-    X --> H["Video timing counter<br/>H0 H1 H2 H3 …<br/>(ИЕ7 chain)"]
+    X["14 MHz crystal"] --> D2["DD2.1 ТМ2 (TM2)<br/>÷2"] --> CLK7["7 MHz — CLK"]
+    X --> H["Video timing counter<br/>H0 H1 H2 H3 …<br/>(ИЕ7 / IE7 chain)"]
     H -- "H0 = 7 MHz phase<br/>H1 = 3.5 MHz phase" --> GAL
     CLK7 --> GAL["DD30 GAL22V10<br/>'TURBO'"]
     TRBFF["Turbo flip‑flop<br/>set by IN #7FFD<br/>reset by IN #1FFD / RES‑"] -- "TRB" --> GAL
@@ -145,7 +145,7 @@ simulated.
 |---|---|
 | All instruction timing (delay loops, `DJNZ` waits) | Frame interrupt (50 Hz) |
 | Tape `LOAD`/`SAVE` (ROM edge‑timing loops) | AY‑3‑8910 pitch/envelopes (own 1.75 MHz) |
-| Beeper music (bit‑banged `OUT (#FE)`) | FDC data rate (ВГ93 has its own 1 MHz clock and PLL) |
+| Beeper music (bit‑banged `OUT (#FE)`) | FDC data rate (ВГ93 / VG93 has its own 1 MHz clock and PLL) |
 | Border effects, raster tricks, multicolour | Screen refresh, `HALT` synchronisation |
 | Any "cycles per scanline" assumption | Keyboard, joystick, printer |
 | TR‑DOS step/settle delays implemented in software | |

@@ -1,6 +1,6 @@
 # FDC clock and data rate
 
-Research and outcome for the WD1793 (КР1818ВГ93) controller clock and the disk data rate: what
+Research and outcome for the WD1793 (КР1818ВГ93, KR1818VG93) controller clock and the disk data rate: what
 "turbo VG" on Spectrum clones really does, why a 3.5 MHz Spectrum cannot read HD floppies, and what
 the Sprinter needs for 1.44 MB disks.
 

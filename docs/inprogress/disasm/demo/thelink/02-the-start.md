@@ -86,7 +86,7 @@ One page needs padding: `baba.0` is 8 KB, and the line after it zero-fills the r
 ```asm
         ORG #C000,pgdata3
         INCBIN "baba.0"
-        DS (-$&#FFFF)           ;для маски (en: for the mask)
+        DS (-$&#FFFF)           ;for the mask
 ```
 
 ALASM's `DS -$` means "up to `#10000`"; the converter spelled it out. The comment says the card
@@ -238,21 +238,21 @@ bytes of code + a 6,912-byte screen) become the ZX's ninth "effect" page, `#D0`.
         LD A,C_GRST
         OUT (GSCTR),A
         XOR A
-        OUT (GSCOM),A           ;не помогает
+        OUT (GSCOM),A           ;does not help
         HALT
         HALT
         DI
 ```
 
-`OUT (#33),#80` is the GS hardware reset. The author's comment on the next line, "не помогает",
-means "does not help": writing 0 to the command register after the reset was an attempt that made
+`OUT (#33),#80` is the GS hardware reset. The author's comment on the next line, "does not help",
+says that writing 0 to the command register after the reset was an attempt that made
 no difference, and it stayed. Two `HALT`s give the firmware two frames (40 ms) to come up. From
 here to step 9 interrupts are off.
 
 ### Step 4: commands "for some reason"
 
 ```asm
-;зачем-то POKE #4092,0
+;for some reason POKE #4092,0
         LD DE,#4092
         SD E
         SC #18
@@ -262,15 +262,15 @@ here to step 9 interrupts are off.
         SD 0
         SC #19
         WC
-;зачем-то #38 (Load FX)
+;for some reason #38 (Load FX)
         SC #38
         WC
-;зачем-то #D2 (Close Stream)
+;for some reason #D2 (Close Stream)
         SC #D2
         WC
 ```
 
-"зачем-то" is "for some reason". The author copied a sequence that works and says honestly he
+The author copied a sequence that works and says honestly he
 does not know why each part is there: a write of 0 to card address `#4092`, then the standard
 commands `#38` and `#D2`. The macros come from `gsports.asm`:
 
@@ -292,7 +292,7 @@ data byte to it. Chapter 1 covers the GS command protocol.
         LD HL,WASGSPROG
         LD DE,GSPROG
         LD BC,LENGSPROG
-;как в RIFF TRACKER
+;as in RIFF TRACKER
 GSLOA20
         SD E
         SC #18
@@ -310,12 +310,12 @@ GSLOA20
         JR NZ,GSLOA20
 ```
 
-"как в RIFF TRACKER" - "as in RIFF TRACKER": the method comes from that tracker. Each of the 134
+"As in RIFF TRACKER": the method comes from that tracker. Each of the 134
 bytes costs a full address-and-write exchange, so it is slow per byte, but it needs nothing
 but the firmware's standard commands. Then:
 
 ```asm
-;зачем-то #F5 (Busy on)
+;for some reason #F5 (Busy on)
         SC #F5
         WC
 ;#13 Jump to Address
@@ -383,7 +383,7 @@ Then it waits for command 3 and points ZX-DMA at the first data page:
         OUT (DMA_LAD),A
         LD A,#80                ;TURN ON DMA MODE
         OUT (DMA_CST),A
-        OUT (ZXDATWR),A         ;признак для ZX "DMA ON"
+        OUT (ZXDATWR),A         ;flag for the ZX "DMA ON"
 ```
 
 The card's page numbers in this demo carry the 16 KB half in bit 7 (more in chapter 3). `RRCA`
@@ -396,33 +396,32 @@ answers, and waits until the ZX has read the answer:
 
 ```asm
         XOR A                   ;TURN OFF DMA MODE
-        OUT (DMA_CST),A         ;после этого ZX можно сбрасывать
-        OUT (ZXDATWR),A         ;признак для ZX "DMA OFF"
+        OUT (DMA_CST),A         ;after this the ZX may be reset
+        OUT (ZXDATWR),A         ;flag for the ZX "DMA OFF"
         IN A,(ZXSTAT)
         RLCA
-        JR C,$-3                ;ZX готов?
+        JR C,$-3                ;ZX ready?
 ```
 
-"после этого ZX можно сбрасывать" - "after this the ZX may be reset": once the DMA is off, a ZX
-reset can no longer push garbage into card memory. "ZX готов?" - "ZX ready?".
+"After this the ZX may be reset": once the DMA is off, a ZX reset can no longer push garbage
+into card memory.
 
 ### Step 6: the upload by ZX-DMA
 
 ```asm
         LD A,3
-        OUT (GSCOM),A           ;вкл. DMA
-;и ждем включения:
+        OUT (GSCOM),A           ;DMA on
+;and wait until it is on:
         WN
         GD
 ;
-;шлем страницы данных в GS:
+;send the data pages to the GS:
         LD A,pgdata1
         CALL GSDMASENDPG
         ...
 ```
 
-"вкл. DMA" - "DMA on"; "и ждем включения" - "and wait until it is on"; "шлем страницы данных в
-GS" - "send the data pages to the GS". The command goes straight to `GSCOM`, without `SC`/`WC`:
+The command goes straight to `GSCOM`, without `SC`/`WC`:
 the card program reads `ZXCMD` and never clears the command bit, so `WC` would not return.
 The answer is the data bit.
 
@@ -442,8 +441,8 @@ The ZX writes into its own ROM area. Nothing changes on the ZX, but each write i
 ZX-DMA into card RAM at the next address. One page: 16,384 x 21 T = 344,064 T, about 4.8 frames
 of 71,680 T. All 20 pages: about 6.9 million T, roughly two seconds with interrupts off.
 
-Then command 4 ("новый адрес DMA" - "new DMA address"), the 10 code pages, and command 5 ("выкл.
-DMA" - "DMA off"). The code pages land in card pages `#10`, `#90`, `#11`, `#91` ... `#94`: ten
+Then command 4 ("new DMA address"), the 10 code pages, and command 5 ("DMA off"). The code
+pages land in card pages `#10`, `#90`, `#11`, `#91` ... `#94`: ten
 consecutive 16 KB pieces of card memory.
 
 ### Steps 7 and 8: resident code and IM 2
@@ -478,7 +477,7 @@ That is why the handler sits at the odd-looking address `#BFBF`, and why `curpg`
 
 ```asm
         LD A,pgmusic
-        setpga                  ;заполняет curpg
+        setpga                  ;fills curpg
         CALL #C000
 
         LD HL,0
@@ -486,7 +485,7 @@ That is why the handler sits at the odd-looking address `#BFBF`, and why `curpg`
         EI
 ```
 
-"заполняет curpg" - "fills curpg". The music is initialised with interrupts still off, the frame
+The music is initialised with interrupts still off, the frame
 counter is zeroed, and from the `EI` on every frame plays the music. Frame 0 of the demo's clock
 is here.
 
@@ -561,11 +560,11 @@ ZXRES0
         PUSH AF
         LD C,(HL)
         INC HL
-        LD B,(HL)               ;время начала эффекта
+        LD B,(HL)               ;effect start time
         INC HL
         LD E,(HL)
         INC HL
-        LD D,(HL)               ;время конца эффекта
+        LD D,(HL)               ;effect end time
         INC HL
         PUSH HL
         CALL #C000
@@ -582,8 +581,7 @@ ZXRESNEXTPG
         RET
 ```
 
-"время начала эффекта" / "время конца эффекта" - "the effect's start time" / "end time". Each
-effect page is entered at `#C000` with `BC` = start frame and `DE` = end frame. `ZXRESNEXTPG`
+Each effect page is entered at `#C000` with `BC` = start frame and `DE` = end frame. `ZXRESNEXTPG`
 steps `#B0`, `#B1` ... `#B7`; after `#B7`, `INC A` gives `#B8` (bit 3 set) and `ADD A,#18` gives
 `#D0`, the credits page.
 
@@ -695,11 +693,11 @@ rotator and the bars.
 WASIMER
         DISP IMER
         EX DE,HL
-        EX (SP),HL              ;пишем DE вместо адреса возврата
+        EX (SP),HL              ;write DE in place of the return address
         LD (outimjp),HL
         LD (outimsp),SP
         LD SP,outimstack
-        PUSH DE                 ;hl до прерывания
+        PUSH DE                 ;HL from before the interrupt
         PUSH AF
         PUSH BC
         EX AF,AF'
@@ -735,9 +733,8 @@ bytes at a time. An ordinary handler would push its registers into the picture. 
 only the two bytes the CPU itself pushed:
 
 1. `EX DE,HL` / `EX (SP),HL`: the return address comes into `HL`, and the interrupted `DE` takes
-   its place on the interrupted stack ("пишем DE вместо адреса возврата" - "write DE in place of
-   the return address"); the interrupted `HL` is now in `DE` ("hl до прерывания" - "HL from
-   before the interrupt").
+   its place on the interrupted stack ("write DE in place of the return
+   address"); the interrupted `HL` is now in `DE` ("HL from before the interrupt").
 2. The return address and `SP` go into the operands of the last two instructions
    (self-modifying code); `SP` moves to its own stack at `#5F00`.
 3. The frame counter, the music: `curpg AND #18` keeps bit 3 (which screen is shown) and bit 4
@@ -842,8 +839,8 @@ answering for 65,536 polls (chapter 3).
   clearing `#D800`.
 - **The hidden ninth entry.** `zxtimings` has 8 entries for 9 pages; the credits page reads
   `ZXRESNEXTPG`'s code bytes as its timings and ignores them (section 2.6).
-- **The author's honesty.** "зачем-то" ("for some reason") four times, "не помогает" ("does not
-  help") once: the start sequence is partly cargo, kept because it works.
+- **The author's honesty.** "for some reason" four times, "does not help" once: the start
+  sequence is partly cargo, kept because it works.
 - **The IM 2 handler costs the interrupted stack 2 bytes, not 10.** That is what lets the effects
   run with `SP` inside a screen (section 2.8).
 - **`CL1800PG` clears the page `GO` runs in** and stops one byte before `GO` (section 2.4, step 10).

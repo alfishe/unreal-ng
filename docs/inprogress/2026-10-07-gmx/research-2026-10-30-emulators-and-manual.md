@@ -32,25 +32,25 @@ resource/netlist noise.
 
 ## 0. Resolutions from the original manual [MAN] (read this first)
 
-[MAN] = "GMX (Graphic Memory eXpander). Руководство по подключению, программированию и работе", Фирма Скорпион,
-СПб 1998, loader chapter "(c) 1998 MOA (Андрей Ларченко)", Word file "Документация к GMX271198.doc" (22.11.1998) in
+[MAN] = "GMX (Graphic Memory eXpander). Manual for installation, programming and operation", the Scorpion firm,
+St Petersburg 1998, loader chapter "(c) 1998 MOA (Andrey Larchenko)", Word file "Документация к GMX271198.doc" (GMX documentation) (22.11.1998) in
 https://web.archive.org/web/2006id_/http://www.scorpion.ru:80/spectrum/hard/gmx.zip (the Word file is in
 [references/GMX271198.doc](references/GMX271198.doc), its text in [references/GMX271198.txt](references/GMX271198.txt);
 section III holds the port descriptions). Where [MAN] conflicts with an emulator, [MAN] wins unless noted.
 
 | Topic | [MAN] statement | Effect on the conflicts below |
 |:--|:--|:--|
-| Reset | "При включении питания все порты сброшены в ноль. Сигнал RESET действует на все порты кроме порта глобальных установок xx00" | RESET clears all GMX latches except `#00` (MAME/UNR clear `#00` on reset too: a deviation) |
-| `#00` | fully decoded (A0-A7 = 0). D0-D2 CONF0-2 (FLEX8000 scheme number), D3 RECONF (reload the chosen scheme), D4 FIXROM (freezes `#7EFD` A16-A18; then reset neither clears them nor reloads the scheme), D5 BLKEXT (GMX ports off = plain ZS-256 Turbo+), D6 BLKEX2 (with BLKEXT: all xxFD ports off, `#7FFD` decoded "по FD при A15=0", standard ROM needed), **D7 ST/PENT: 0 = INT at the end of frame sync, 312-line frame; 1 = INT at its start, 320-line frame**. "Никогда не записывайте в него данные!" | RECONF reloads the FPGA (emulators: CPU reset, magic code = CONF). **Answers Q6/Q11: `#00` bit 7 selects Scorpion/Pentagon INT and frame length**; it is the `#7EFD` read bit 4 (ST/PENT) |
+| Reset | "At power-on all ports are cleared to zero. The RESET signal acts on all ports except the global settings port xx00" | RESET clears all GMX latches except `#00` (MAME/UNR clear `#00` on reset too: a deviation) |
+| `#00` | fully decoded (A0-A7 = 0). D0-D2 CONF0-2 (FLEX8000 scheme number), D3 RECONF (reload the chosen scheme), D4 FIXROM (freezes `#7EFD` A16-A18; then reset neither clears them nor reloads the scheme), D5 BLKEXT (GMX ports off = plain ZS-256 Turbo+), D6 BLKEX2 (with BLKEXT: all xxFD ports off, `#7FFD` decoded "by FD with A15=0", standard ROM needed), **D7 ST/PENT: 0 = INT at the end of frame sync, 312-line frame; 1 = INT at its start, 320-line frame**. "Never write data to it!" | RECONF reloads the FPGA (emulators: CPU reset, magic code = CONF). **Answers Q6/Q11: `#00` bit 7 selects Scorpion/Pentagon INT and frame length**; it is the `#7EFD` read bit 4 (ST/PENT) |
 | `#7EFD` write | D0 EWR (28F400 write enable), D1 Vpp, **D2 MagEnable: 0 = Magic button works, 1 = blocked**, D3 256x192 / 640x200, D4-D6 flash A16-A18, D7 Normal/Turbo | MAME layout confirmed |
-| `#7EFD` D2 and the lock | section 3.1: "действие разряда BLKPK1 ... отключается при установке разряда D2 порта 7EFD (MGEN)" | **Both MAME (Magic blocked) and UNR (`#7FFD` lock lifted) are right; an implementation needs both effects** |
+| `#7EFD` D2 and the lock | section 3.1: "the effect of bit BLKPK1 ... is switched off when bit D2 of port 7EFD (MGEN) is set" | **Both MAME (Magic blocked) and UNR (`#7FFD` lock lifted) are right; an implementation needs both effects** |
 | `#7EFD` read | D0 BLKPK1, D1 SCR, D2 Turbo, D3 Graphic, D4 ST/PENT, D5 BLKEXT, D6 BLK1, D7 BRD2 | matches MAME/UNR/PICO |
-| `#78FD` | D0-D6 = SYS0, /SYS1, SYS2, SYS3, SM0-2; "аппаратная инверсия бита D1 ... чтобы после сброса области #8000-#BFFF соответствовал банк #2"; read D7 = BRD1 | XOR 2 confirmed |
+| `#78FD` | D0-D6 = SYS0, /SYS1, SYS2, SYS3, SM0-2; "bit D1 is inverted in hardware ... so that after a reset bank #2 is at #8000-#BFFF"; read D7 = BRD1 | XOR 2 confirmed |
 | `#DFFD` | D0-D2 SM0-2 = page bits 4-6; page = SYS0-2, SYS3 (`#1FFD` D4), SM0-2; with two 256K SIMMs the banks are 0-#F and #40-#4F | formula confirmed; SIMM-dependent holes (Q10) |
-| `#1FFD` D2 | "TRDOS - принудительный выбор ПЗУ TRDOS" | confirmed |
-| Scroller | `#7AFD` low (8 bits) + `#7CFD` high (6 bits) = one 14-bit register; one pixel line = 80, one text row = 640; "младшие четыре бита аппаратно сбрасываются"; **write-only**; set only through the shadow monitor's RST 8 so Magic does not break the screen | **a byte start address with the low 4 bits forced to 0**: UNR's byte-offset model plus MAME's `& #F0`. MAME's `/80` line model is wrong for non-multiples of 80. (ZX-Format #07's "1 = one pixel line" is the earlier, superseded text) |
-| Screen pages | "графический экран расположен в банке **#39 (SCR=0) или #3A (SCR=1)** ... атрибуты ... (SM2=1) т.е. **#79 или #7A**"; linear from #C000, 80 bytes per line, 16000 bytes | **Screen 1 = `#3A/#7A`**, agreeing with OSZ, LW and Trident; MAME/UNR/PICO/EG `#3B` disagree (EG may run only on emulators, or `#3B` may alias on boards with one SIMM set - O) |
-| Magic latch | some read-back bits are latched on Magic; "снова открываются ... после «холостого» чтения порта #FF" | MAME's lock/IN #FF release confirmed |
+| `#1FFD` D2 | "TRDOS - forced selection of the TR-DOS ROM" | confirmed |
+| Scroller | `#7AFD` low (8 bits) + `#7CFD` high (6 bits) = one 14-bit register; one pixel line = 80, one text row = 640; "the low four bits are cleared in hardware"; **write-only**; set only through the shadow monitor's RST 8 so Magic does not break the screen | **a byte start address with the low 4 bits forced to 0**: UNR's byte-offset model plus MAME's `& #F0`. MAME's `/80` line model is wrong for non-multiples of 80. (ZX-Format #07's "1 = one pixel line" is the earlier, superseded text) |
+| Screen pages | "the graphic screen is in bank **#39 (SCR=0) or #3A (SCR=1)** ... attributes ... (SM2=1), i.e. **#79 or #7A**"; linear from #C000, 80 bytes per line, 16000 bytes | **Screen 1 = `#3A/#7A`**, agreeing with OSZ, LW and Trident; MAME/UNR/PICO/EG `#3B` disagree (EG may run only on emulators, or `#3B` may alias on boards with one SIMM set - O) |
+| Magic latch | some read-back bits are latched on Magic; "open again ... after a dummy read of port #FF" | MAME's lock/IN #FF release confirmed |
 | Flash map | #00000 loader, #02000 start-up scheme, #04000 working scheme, #06000 parameters, #08000-0FFFF 4 more schemes, #10000-1FFFF standard 48+128+TR-DOS 5.03, #20000-2FFFF GMX test, #30000 free, #40000-7FFFF Scorpion with shadow monitor | = planes 0 / 1 / 2 / 3 / 4-7, matches the F644 scan (§1.5) |
 | Pentagon scheme | 320-line frame, INT at the start of frame sync, 80 lines from INT to the active screen; `#7FFD` decoded at A1,A15 = 0, border at A0 = 0 | timing for the Pentagon INT profile |
 | Loader | DELETE during the 1-2 s prompt opens the menu, else the shadow monitor starts; schemes 1 start-up, 2 working, 4 Pentagon128, 5 Composit, 6 test, 7 reserve (3 skipped); the choice survives RESET except 6; "P" = flash from disk A: (needs +12 V on X7, jumper X8 for the loader block); yellow border stripes = hardware fault, red + beep = error; jumper X3 = Turbo button | boot flow §6 |
@@ -58,13 +58,13 @@ section III holds the port descriptions). Where [MAN] conflicts with an emulator
 Other web facts (same sub-agent):
 
 - ZX-Format #07 (official Scorpion text): "640*200(208)"; RAM 256K/512K/1M/1256K/2M, colour needs 2 SIMMs; **turbo
-  "1.8-1.9 при исполнении программ из ОЗУ. При работе с ПЗУ ровно в 2 раза"** - so RAM accesses in turbo do have
+  "1.8-1.9 when running programs from RAM. When running from ROM exactly 2 times"** - so RAM accesses in turbo do have
   waits (Q on contention, §4, is real; magnitude unknown).
-- Trident (My Speccy #01, 2004, zxpress id=10696): turbo by a system port or the monitor, "в режиме турбо INT
-  вытягивается до 132000 тактов" (meaning unclear: 2 x 69888 = 139776, not 132000); early boards had swapped
+- Trident (My Speccy #01, 2004, zxpress id=10696): turbo by a system port or the monitor, "in turbo mode INT
+  stretches to 132000 T-states" (meaning unclear: 2 x 69888 = 139776, not 132000); early boards had swapped
   bits in the second-window port (fixed; scheme 6 tests it).
 - Apollonov (ZX-Pilot #31 / City #17-18): GS does not work, no line sync output, 320x200 never made, 640 mode = 25 x 80
-  characters "во весь экран телевизора" (border nearly gone). The official site later says firmware of 20.04.99
+  characters "across the whole TV screen" (border nearly gone). The official site later says firmware of 20.04.99
   fixes GS problems (**CONFLICT**).
 - Flash chip: [MAN] bit names say 28F400, the official site says "28f040" (**CONFLICT**, 28F040 = 512K x 8, fits
   the 512 KB map better).
@@ -85,7 +85,7 @@ Other web facts (same sub-agent):
 | `#C000-#FFFF`: page `((#DFFD & 7) << 4) \| ((#1FFD & #10) >> 1) \| (#7FFD & 7)` (7 bits) | MAME `:663`, UNR `memory.cpp:100-102`, PICO `Scorpion.cpp:37-38`; software: OSZ `PageSlot3` (page bit 3 -> `#1FFD` bit 4 via `rlca/and #10`, bits 4-6 -> `#DFFD`) | H |
 | `#1FFD` bits 6-7 (the ZS-1024 page bits) are **not** used by GMX | MAME `:663` replaces the base `:211` formula; UNR GMX branch ignores them | H |
 | Normal screen: page 5, or 7 with `#7FFD` bit 3 | MAME `:264` (inherited) | H |
-| Page use by the firmware: `#77-#7F` belong to the shadow monitor; "for GMX pages 8 and #78 must not be given" to a resident | OSZ `_Doc/ReadMe.txt` ("#77-#7F - заняты теневым монитором"), OSZ `os_main.asm` comment before `Start_warm`; LW `changes.md:294` ("настройки монитора перенесены в страницу #78"), `:372` (navigator uses page `#7B` for FAT catalogs) | H |
+| Page use by the firmware: `#77-#7F` belong to the shadow monitor; "for GMX pages 8 and #78 must not be given" to a resident | OSZ `_Doc/ReadMe.txt` ("#77-#7F - taken by the shadow monitor"), OSZ `os_main.asm` comment before `Start_warm`; LW `changes.md:294` ("the monitor settings moved to page #78"), `:372` (navigator uses page `#7B` for FAT catalogs) | H |
 | Pages are wrapped to the fitted size (`% pages`); SIMM sets of 256/512/1024/1280/2048 KB are mentioned by the 1999 article | MAME `:661,663`; D07 Q10 | M |
 
 **CORRECTION (D07 README / consensus §1 "UNR: its memory.cpp has no GMX paging"):** it has. The
@@ -213,7 +213,7 @@ The Scorpion ZX screen (page 5/7) with the Scorpion raster (MAME inherits, UNR `
 | Attributes | one byte per 8 pixels (per pixel byte), same offset, page + `#40` | MAME `:685` (`+ (0x40 << 14)`), UNR `drawers.cpp:610` (`+ PAGE*0x40`), OSZ (`con_scr_real #39`, `con_atr_real #79`), EG (`#39` pixels, `#79` attributes) | H |
 | Attribute bits | 0-2 ink, 3-5 paper, 6 bright (both ink and paper), 7 flash (swaps ink/paper on the flash phase, 16 frames) | MAME `:686-688`, UNR `drawers.cpp:611-615` (`frame_counter & #10`) | H |
 | Screen 0 | pixels `#39`, attributes `#79` (`#7FFD` bit 3 = 0) | MAME `:676`, UNR `drawers.cpp:595`, PICO, OSZ, EG | H |
-| Screen 1 (`#7FFD` bit 3 = 1) | **CONFLICT:** `#3B / #7B` in MAME `:676`, UNR `drawers.cpp:595`, PICO `Video.cpp:6367`, ZXBY (debugger "page #39 / #3B") and EG (`LoaderGMX.asm:45, 987-997`: "screen 0 and page #7B", "screen 1 and page #79", flipped each frame); **`#3A / #7A`** in OSZ (`_Doc/ReadMe.txt`: "5, 7, #39, #3a, #79, #7a - video pages"; `os_main.asm:1550-1556`; its `set_scr3a` label but comment "включить экран 3b"), LW (`changes.md:419-420`: debugger `SCReen` takes "#39(57)/#3A(58)"), and the 2004 Trident article (D07 ART2: buffer `#3A / #7A`). LW's navigator using page `#7B` as a FAT buffer (`changes.md:372`) also argues against `#7B` being a screen | O (code: `#3B`; firmware author and the newer OS: `#3A`) |
+| Screen 1 (`#7FFD` bit 3 = 1) | **CONFLICT:** `#3B / #7B` in MAME `:676`, UNR `drawers.cpp:595`, PICO `Video.cpp:6367`, ZXBY (debugger "page #39 / #3B") and EG (`LoaderGMX.asm:45, 987-997`: "screen 0 and page #7B", "screen 1 and page #79", flipped each frame); **`#3A / #7A`** in OSZ (`_Doc/ReadMe.txt`: "5, 7, #39, #3a, #79, #7a - video pages"; `os_main.asm:1550-1556`; its `set_scr3a` label but comment "switch on screen 3b"), LW (`changes.md:419-420`: debugger `SCReen` takes "#39(57)/#3A(58)"), and the 2004 Trident article (D07 ART2: buffer `#3A / #7A`). LW's navigator using page `#7B` as a FAT buffer (`changes.md:372`) also argues against `#7B` being a screen | O (code: `#3B`; firmware author and the newer OS: `#3A`) |
 | Scroll | 14-bit offset `(#7CFD & #3F) << 8 \| #7AFD`. **CONFLICT:** MAME/PICO = line scroll, first line `offset / 80 mod 200` (`:679`, `Video.cpp:6370`); UNR = byte offset added to the linear address, wrapping at 16000 (`drawers.cpp:594, 604-605`). Real software (OSZ `gmxscroll`, `curscrl` "0-15999", stepped by 640 = 8 lines, wrapped at 16000; it computes a cell address as `row*640 + col + curscrl mod 16000`) is consistent with **both**: every value it writes is a multiple of 80 and of 16. Combined with MAME's `& #F0` the hardware likely has a 10-bit start address in 16-byte units (16000 / 16 = 1000 positions); a non-multiple of 80 would then shift the picture horizontally by 128-pixel steps (UNR model), which MAME's `/80` cannot express | O |
 | Line timing | the 640 pixels take 160 T of the 224 T line (4 pixels per T at 3.5 MHz): UNR draws one byte per 2 T (`drawers.cpp:600`, `n -= 2`) inside `R_320_200` = lines 76-275, columns 54-214 in 2-T units (`draw.cpp:14`); MAME doubles the dot clock (`:802`, line = 896 dots) | H |
 | Vertical position | UNR: 200 lines from raster line 76 (ZX paper starts at 80), i.e. 4 lines higher than the ZX paper; MAME: area `{80,719,80,279}` with a 24-pixel side and 40-line top/bottom border (`:699-704, 798-805`). Note MAME's INT timer is computed from `get_screen_area()` (`:217`), which changes in the extended mode: an artifact, not a hardware statement | M / O |
@@ -384,7 +384,7 @@ Web: see [Web sources](#web-sources).
 
 ## Web sources
 
-- [MAN]: https://web.archive.org/web/2006id_/http://www.scorpion.ru:80/spectrum/hard/gmx.zip ("Документация к GMX271198.doc")
+- [MAN]: https://web.archive.org/web/2006id_/http://www.scorpion.ru:80/spectrum/hard/gmx.zip ("Документация к GMX271198.doc", GMX documentation)
 - Official page: http://web.archive.org/web/2001/http://www.scorpion.ru/spectrum/hard/gmx.htm
 - ZX-Pilot #31 (Apollonov): https://zxpress.ru/article.php?id=9138 ; City #18: https://zxpress.ru/article.php?id=10414
 - My Speccy #01 (Trident): https://zxpress.ru/article.php?id=10696

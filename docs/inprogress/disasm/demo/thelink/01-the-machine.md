@@ -123,7 +123,7 @@ and sets bit 7 of `CST` (`#1F`). While it runs:
   ROM, and the card address moves on by one;
 - every Spectrum **write** to `#0000`-`#3FFF` goes into card RAM, address moving on too;
 - a read returns the byte fetched by the **previous** read: the first byte after a start is junk,
-  and every effect throws it away ("первый байт неправильный" - "the first byte is wrong");
+  and every effect throws it away ("the first byte is wrong");
 - if the card has not delivered the byte yet, the Spectrum is held with `/WAIT`.
 
 Only the card can start or stop it. The Spectrum then moves bytes at full memory speed with

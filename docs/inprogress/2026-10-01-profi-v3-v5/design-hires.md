@@ -50,7 +50,7 @@ numerators the model selects (v5 with ZQ3 20 MHz: 1, 2, 10, 20 -> 20 units per b
 | Phase | Work | Check |
 |:--|:--|:--|
 | H1 | The clock ratio denominator through every conversion; no machine changes. Unit tests on a synthetic 10/7 and 6/7 ratio: frame limit, rescale on a mid-frame switch, audio / screen / TTD unit conversions | full suite unchanged, golden rows unchanged, A/B of the classic machines |
-| H2 | Profi DS80: the CPU clock (`[PROFI] ZQ3MHz=16..24`, default 20, v5; v3 fixed 3 MHz), the frame (v3 320 lines with `0a1d`) and INT from the PROM's upper half (a `ProfiSyncPromFrame` row per half), the AY clock (`[PROFI] AyClock=old|new`, v5; v3 always 1.5 MHz in DS80), switching at the `#DFFD` write | TEST 4.30 / the BIOS hi-res speed test against the forum's figures (5.06: 1.50 and 2.45 at ZQ3 20 MHz; v3.2: "1 к 1"); Tact Meter in hi-res; the CP/M disk boots on both boards |
+| H2 | Profi DS80: the CPU clock (`[PROFI] ZQ3MHz=16..24`, default 20, v5; v3 fixed 3 MHz), the frame (v3 320 lines with `0a1d`) and INT from the PROM's upper half (a `ProfiSyncPromFrame` row per half), the AY clock (`[PROFI] AyClock=old|new`, v5; v3 always 1.5 MHz in DS80), switching at the `#DFFD` write | TEST 4.30 / the BIOS hi-res speed test against the forum's figures (5.06: 1.50 and 2.45 at ZQ3 20 MHz; v3.2: "1 к 1", "1 to 1"); Tact Meter in hi-res; the CP/M disk boots on both boards |
 | H3 | Waits in DS80 (v5 model rule; v3 turbo keeps its 2/3 rule at 6 MHz), the v3 DS80 floating bus | `ProfiWaitOverlay` tests for DS80; the speed-test figures |
 | H4 | Automation (the ZQ3 and AY clock options on every surface, the DS80 clock in state reports), recipes, docs, TTD round trip of a DS80 switch | the parity checklist |
 

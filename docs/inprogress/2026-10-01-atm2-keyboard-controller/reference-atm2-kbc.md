@@ -79,7 +79,7 @@ because the conversion only removed CR characters.
 | Connector | **I2 (ONP-10 header)**: 1 CD, 2 RX, 3 TX, 4 DTR, 5 GND, 7 RTS, 8 CTS, 9 RI. Uses DE-9 numbering, **DSR (pin 6) is not wired** | [S: SCH-710 cp7_2.pdf crop] |
 | MCU port map | P1.0 CD in, P1.1 CTS in, P1.2 RI in, P1.3 DTR out, P1.4 RTS out, P1.5 INT_T out, P1.6 /RES out, P1.7 W_ON out. P3.0 RX, P3.1 TX, P3.2 CLK_K (INT0), P3.3 /KEYRD (INT1), P3.4 VE1 in, P3.5 DATA_K, P3.6 /VWR, P3.7 /VRD | [S: FW32 :37-54; SCH-710] |
 | Z80 interrupt from MCU | P1.5 **INT_T** is ANDed (D38) with INT_D, giving INTZ, so the MCU can pull the Z80 /INT. The firmware never uses it (`en_int equ 0`). v4.1 enables it on RX overflow | [S: SCH-710 (D38 pins 12/13 -> 11 INTZ); FW32 :18, :260-271; FWPAGE v4.1 item 3] |
-| Line polarity | The drivers and receivers invert. Firmware writes P1.3/P1.4 = NOT(bit), and reads "CTS active" when P1.1 = 0. A Z80 bit value of 1 means the line is asserted at the connector | [S: FW32 :947-956, :1022-1029 ("Инверсия битов", "сигнал инверсный")]; driver inversion [inferred from 1488/1489-class parts] |
+| Line polarity | The drivers and receivers invert. Firmware writes P1.3/P1.4 = NOT(bit), and reads "CTS active" when P1.1 = 0. A Z80 bit value of 1 means the line is asserted at the connector | [S: FW32 :947-956, :1022-1029 ("bit inversion", "the signal is inverted")]; driver inversion [inferred from 1488/1489-class parts] |
 
 ### 1.2 How a Z80 read of #FE reaches the MCU
 
@@ -99,8 +99,8 @@ because the conversion only removed CR characters.
   - `movx @DPTR,A` with P2.0 = 1 writes D102, which drives the Z80 data bus, and its
     /VWR clears WAIT.
 
-  [S: FW32 :776-801 comments "Чтение регистра старшего байта адреса Z80",
-  "Бит выбора Адрес=0/Данные=1"; DOC-ASM d4.txt:504-507]
+  [S: FW32 :776-801 comments "Reading the Z80 address high byte register",
+  "Select bit Address=0/Data=1"; DOC-ASM d4.txt:504-507]
 * **No FIFO in hardware.** There is one byte register each way, and handshaking is
   by /WAIT only. [S: SCH-710; DOC-PORTS §2]
 * Disable path: **port #FF77 bit D6 = VE1**. When it is 1, "8031 functions disabled
@@ -119,7 +119,7 @@ because the conversion only removed CR characters.
 | Board | Keyboard MCU / COM | Source |
 |---|---|---|
 | ATM-turbo (v4.50 era, "ATM450" in emulators), ATM-turbo 2 v6.10-6.40 | **No 8031. #FE is a plain matrix port. No RS-232 via #FE.** v6.x IBM keyboard used 537RU10 RAM written via `#FEE7/#FFE7` (WCSF') and read via `#7DFD` | [S: DOC-ASM d4.txt:72-77, :427, :436; DOC-PORTS d1.txt:708, :735] |
-| v7.00 (yellow, NedoPC 2003-05) | 1816VE31 + RS-232 introduced ("Подключение IBM клавиатуры и стандартного RS232 реализовано на 1816ВЕ31") | [S: DOC-ASM d4.txt:77; PCAD readme ver_7_00] |
+| v7.00 (yellow, NedoPC 2003-05) | 1816VE31 + RS-232 introduced ("The IBM keyboard and standard RS232 connection is implemented on the 1816VE31") | [S: DOC-ASM d4.txt:77; PCAD readme ver_7_00] |
 | v7.10 (green, MicroART / NedoPC 2005+) | same circuit (sheet cp7_2) | [S: SCH-710] |
 | v7.18, 8.0 Zorel, 8.x | carry the same controller (a forum thread covers "ATM2+ (v7.xx) and ATM3 (v8.x)" controller firmwares). Not schematic-checked here | [S: svn atmturbo pcad tree; ZXPK-31077 title, page 403 to curl] [inferred for 8.x] |
 | ZX-Evo BaseConf ("ATM3" in unreal-ng) | no 8031 emulation of `#55` in pentevo (grep negative). Its COM port is the AVR 16550 at `#F8EF` | [S: grep of `svn/pentevo`; reference-evo-com-port.md] |
@@ -160,7 +160,7 @@ exist [S: FWPAGE]. See §9.
 * `set_speed` accepts only the divisor values 1, 2, 3, 6, 12, 24, 48, 96 (table slots
   1..8). **Any other value, including 0, leaves the baud rate unchanged but still
   resets all RX/TX pointers and counters** (= flush). [S: FW32 :1192-1245; DOC-PORTS
-  App.1 "Любое другое значение игнорируется, но все указатели ... сбрасываются"]
+  App.1 "Any other value is ignored, but all pointers ... are reset"]
   The doc lists "98 = 1200", but the code compares with **96**. [S: FW32 :1221 vs DOC-PORTS]
 
 Actual baud rates (computed from the table bytes [S: FW32 :1958-1980; FW31 :1994-2016]; arithmetic [inferred]):
@@ -526,14 +526,14 @@ Ctrl+Alt+Del / cmd 0x0D: Z80 reset pulse + full controller re-init (v3.2).
 Second pass 2026-10-02: each item is marked **answered**, **partly** or **open**, with its
 evidence. Schematic facts come from crops of the v7.10 sheet `cp7_2.pdf` (and `cp7_1.pdf`)
 in [pcad/ver_7_10](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/pcad/ver_7_10/);
-v8.x facts come from the netlist in the ASCII P-CAD file `АТМ Турбо 8.01+.pcb` in
+v8.x facts come from the netlist in the ASCII P-CAD file `АТМ Турбо 8.01+.pcb` ("ATM Turbo 8.01+") in
 [pcad/ver_8_0_zorel](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/pcad/ver_8_0_zorel/).
 Forum posts are on [zx-pk thread 31077](https://zx-pk.ru/threads/31077-o-zapuske-raznykh-proshivok-na-kontrollere-pc-klaviatury-v-atm2-(v7-xx)-i-atm3-(v8-x).html)
 (pages [2](https://zx-pk.ru/threads/31077-o-zapuske-raznykh-proshivok-na-kontrollere-pc-klaviatury-v-atm2-(v7-xx)-i-atm3-(v8-x)/page2.html),
 [3](https://zx-pk.ru/threads/31077-o-zapuske-raznykh-proshivok-na-kontrollere-pc-klaviatury-v-atm2-(v7-xx)-i-atm3-(v8-x)/page3.html),
 [4](https://zx-pk.ru/threads/31077-o-zapuske-raznykh-proshivok-na-kontrollere-pc-klaviatury-v-atm2-(v7-xx)-i-atm3-(v8-x)/page4.html))
 and the 92-page [zx-pk thread 17340](https://zx-pk.ru/threads/17340-atm-turbo-2-ver-7-10-sborka-i-naladka.html)
-("ATM Turbo 2+ ver 7.10 - сборка и наладка"). Both answer 200 to `curl` with a browser
+("ATM Turbo 2+ ver 7.10 - assembly and setup"). Both answer 200 to `curl` with a browser
 User-Agent; the old `archive/index.php/t-31077.html` URL now answers 404.
 
 1. **v4.0 / v4.1 firmware** - **answered** in §9 (sources, binaries, buffer sizes, Timer 2
@@ -571,7 +571,7 @@ User-Agent; the old `archive/index.php/t-31077.html` URL now answers 404.
    - D100 pin 7 (P1.6, `/RES` in the firmware) is drawn on the same reset line. The overbar
      cannot be read in the PDF (it falls on a wire), but the firmware pulls P1.6 low to reset
      the computer, so it must be `/RS` [inferred]. The MCU therefore **resets itself**: v2.2
-     and v3.1 rely on it ("`sjmp $` ; жду своего сброса" - wait for my own reset;
+     and v3.1 rely on it ("`sjmp $` ; wait for my own reset";
      `atm_at22.asm` :139-140, `atm_at31.asm` :224-225). Pull-down of `/RS`, then ~0.2 ms
      for R85/C11, then the MCU resets, P1 = #FF releases `/RS`, which recharges through
      R2/C1 in ~1 ms. The Z80 reset pulse is about 1 ms, not the firmware's 10 ms (v3.2m) or
@@ -580,8 +580,8 @@ User-Agent; the old `archive/index.php/t-31077.html` URL now answers 404.
      flushed**, the divisor goes back to 6, keyboard mode 0, `stat_rs` 0, DTR/RTS off
      (P1 = #FF). v4.1 no longer clears the clock (`at41.txt`). The 3.2m / 4.x warm path
      ("`reset:` ... `cjne @R0,#'A',prog` ... `jmp c0main`") is reached only on boards whose
-     MCU reset is decoupled. The headers of 3.2m and 4.1 say "для схемы с исправленным
-     RESET" (for the circuit with the corrected RESET).
+     MCU reset is decoupled. The headers of 3.2m and 4.1 say "for the circuit with the corrected
+     RESET".
    - That circuit is on **v8.01** (Zorel netlist): D99 (I8751) RST = net `RS\``, which
      reaches only jumper header X5 pin 2. X5.1 = D80.10, the inverted private power-on RC
      (R117 to +5 V, C58 to GND, VD23 discharge diode, on D80.11 = X5.3). X5.4 = `~RS`. P1.6
@@ -606,7 +606,7 @@ User-Agent; the old `archive/index.php/t-31077.html` URL now answers 404.
      /WR lasts 6 oscillator clocks (0.54 us at 11.0592 MHz); driving P3.6 by hand gives
      1.1 us. So MOVX-strobed images (2.2, 3.2m, 4.0) are marginal above ~10 MHz, and 3.1 /
      4.1 strobe by hand (`en_movx equ 0`).
-   - Errata "Зависание компьютера при работе с АТ клавиатурой" ([atm710re.htm](http://nedopc.com/ATMZAK/atm710re.htm)):
+   - Errata "Computer hangs when working with an AT keyboard" ([atm710re.htm](http://nedopc.com/ATMZAK/atm710re.htm)):
      a glitch on /KEYRD set D71 without reaching INT1 and hung the Z80; fix 750 pF from
      /KEYRD to +5 V (D76.9-14).
    - **Open:** a scope trace of /KEYRD -> /VWR on a real board.
@@ -645,11 +645,11 @@ User-Agent; the old `archive/index.php/t-31077.html` URL now answers 404.
      [8.10 rev. 2019](https://zx-pk.ru/threads/29717-atm-turbo-8-10-rev-2019.html) was not
      read.
    - **7.10 I2** to a PC-style DE-9 male, pin n to pin n:
-     [atm710re17.png](http://nedopc.com/ATMZAK/atm710re17.png) ("COM-порт (DB-9M папа)").
+     [atm710re17.png](http://nedopc.com/ATMZAK/atm710re17.png) ("COM port (DB-9M male)").
 
 7. **ATM CP/M terminal / modem programs using `#55`/`#02`/`#03`** - **answered (one found)**.
    - **ZXTERM** ("Test RS232 for ATM", `ZXTERM.M80` + `MODEM.INC` + `ZXTERM.COM`), on the
-     ATM site as "ZX-Terminal for DialUp (+исходники)", for "ATM2+ (+keybROM v3.x)":
+     ATM site as "ZX-Terminal for DialUp (+sources)", for "ATM2+ (+keybROM v3.x)":
      [zxterm.zip](http://atmturbo.nedopc.com/download/cpm/system/zxterm/zxterm.zip)
      (listed on [load_cpm.htm](http://atmturbo.nedopc.com/load_cpm.htm)).
    - Sequences: probe `55FE` -> `#AA`, `00FE` -> `#FF`; version `#01/#41/#81/#C1`, and **the
@@ -720,7 +720,7 @@ answers 200 but serves a JavaScript browser check, so the **directory listing** 
 | FW31 | Firmware v3.1 source `atm_at31.asm` | `.../ver_3_1_caro/` | [listing ver_3_1_caro](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/source/keyb_rom_805x/ver_3_1_caro/) | 200 |
 | FW22 | Firmware v2.2 source + readme | `.../ver_2_2_caro/` | [listing ver_2_2_caro](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/source/keyb_rom_805x/ver_2_2_caro/) | 200 |
 | FWPAGE | Firmware release notes v2.2 / v3.x / **v4.0 / v4.1** | — | [atmturbo.nedopc.com atm_at.htm](http://atmturbo.nedopc.com/download/shems/roms/atm_at.htm) | 200 |
-| DOC-PORTS | "Описание архитектуры и портов ATM2+.doc" (§1.2 #FE, §2 controller, App.1 i8031 programming incl. RS-232 commands) | `svn/atmturbo/doc/ver_7_10/` | [listing doc/ver_7_10](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/doc/ver_7_10/) | 200 |
+| DOC-PORTS | "Описание архитектуры и портов ATM2+.doc" ("ATM2+ architecture and ports description"; §1.2 #FE, §2 controller, App.1 i8031 programming incl. RS-232 commands) | `svn/atmturbo/doc/ver_7_10/` | [listing doc/ver_7_10](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/doc/ver_7_10/) | 200 |
 | DOC-ASM | "Сборка и Наладка Турбо2+.doc" / "TURBO 2+ Assembly and Configuration Manual.doc" (versions, IBM keyboard circuit, jumpers, errata) | same | same listing | 200 |
 | BOM | "Bill of material.doc" | same | same listing | 200 |
 | SCH-710 | v7.10 schematics `cp7_1.pdf` (clock F0), `cp7_2.pdf` (D100, D104-D106, I2, D71, D103), `cp7.pdf` (placement) | `svn/atmturbo/pcad/ver_7_10/` | [listing pcad/ver_7_10](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/pcad/ver_7_10/); mirror [Kulicheg/ATM_Turbo Docs/schematics](https://github.com/Kulicheg/ATM_Turbo) | 200 / 200 |
@@ -735,8 +735,8 @@ answers 200 but serves a JavaScript browser check, so the **directory listing** 
 | MR | Moon Rabbit `drivers/atm-uart.asm` (NedoOS tree; identical in `svn/nedoos`) | `github/NedoOS/src/moon-rabbit-zx/drivers/atm-uart.asm` | [atm-uart.asm](https://github.com/alfishe/NedoOS/blob/main/src/moon-rabbit-zx/drivers/atm-uart.asm) | 200 |
 | MR-K | Kulicheg Moon Rabbit fusion `uart-atm.asm` | — | [uart-atm.asm](https://github.com/Kulicheg/ATM_Turbo/blob/main/NedoOS/mrabbit-fusion/drivers/uart-atm.asm) | 200 |
 | IOESP | ATM2IOESP hardware (TL16C550C + ESP32, GAL, manual) | — | [Kulicheg/ATM2IOESP](https://github.com/Kulicheg/ATM2IOESP) | 200 |
-| ZXPK-36278 | zx-pk.ru "ATM2IOESP - WiFi модем для ATM2" | — | [zx-pk thread 36278](https://zx-pk.ru/threads/36278-atm2ioesp-wifi-modem-dlya-atm2-v-formate-io-expansion.html) | **403** to curl (read via WebFetch) |
-| ZXPK-31077 | zx-pk.ru "О запуске разных прошивок на контроллере PC-клавиатуры в ATM2+ (v7.xx) и ATM3 (v8.x)" | — | [zx-pk archive t-31077](https://zx-pk.ru/archive/index.php/t-31077.html) | **403** (not read; needs a browser) |
+| ZXPK-36278 | zx-pk.ru "ATM2IOESP - WiFi modem for ATM2" | — | [zx-pk thread 36278](https://zx-pk.ru/threads/36278-atm2ioesp-wifi-modem-dlya-atm2-v-formate-io-expansion.html) | **403** to curl (read via WebFetch) |
+| ZXPK-31077 | zx-pk.ru "On running different firmware on the PC keyboard controller in ATM2+ (v7.xx) and ATM3 (v8.x)" | — | [zx-pk archive t-31077](https://zx-pk.ru/archive/index.php/t-31077.html) | **403** (not read; needs a browser) |
 | EMU-UNREAL | UnrealSpeccy ATM_KBD (`input.cpp` 411-417 gate, 467-550 read) | `github/unreal-speccy/input.cpp` | [alfishe/unreal-speccy input.cpp](https://github.com/alfishe/unreal-speccy/blob/master/input.cpp) | 200 |
 | EMU-UNREAL (nedopc 0.39, NS) | `tools/unreal_fix/0.39.0/nedopc/input.cpp:496`, `Unreal_NS/SRC/input.cpp:927` | `github/zxevo.pentevo/...` | [nedopc input.cpp](https://github.com/aaydev/zxevo.pentevo/blob/main/tools/unreal_fix/0.39.0/nedopc/input.cpp), [Unreal_NS input.cpp](https://github.com/aaydev/zxevo.pentevo/blob/main/tools/unreal_fix/0.39.0/Unreal_NS/SRC/input.cpp) | 200 / 200 |
 | EMU-UNREAL (TSLabs) | `Unreal/input.cpp:400,450` | `github/zx-evo-unreal` | [tslabs input.cpp](https://github.com/tslabs/zx-evo-unreal/blob/master/Unreal/input.cpp) | 200 |
@@ -755,8 +755,8 @@ crops), `qpdf`, `curl`. Nothing was installed.
 ## 9. Firmware v4.0 / v4.1 (found after the first pass)
 
 The archives are linked only from the ATM-turbo news page
-([oldnews9.htm](http://atmturbo.nedopc.com/oldnews9.htm): "исходники прилагаются
-в архиве"), not from the firmware page. Both ship the assembly source, a
+([oldnews9.htm](http://atmturbo.nedopc.com/oldnews9.htm): "the sources are included
+in the archive"), not from the firmware page. Both ship the assembly source, a
 `.bin`, a `.hex` and release notes:
 
 | Archive | Contents | Date |

@@ -33,8 +33,8 @@ The dump keeps no sector IDs, but the Profi reads one track by its IDs: on cylin
 - The floppy driver `HDD22.DRV` (#094D) makes the sector number from the CP/M record (record / 8 + 1) and asks for
   R = 9 instead of 5 while the logical track is 0: block 2 (the file `BOOTK.COM`, the boot sector) lies in it.
 - Every Profi floppy imaged with its IDs (103 FDIs of `PROFI_DISK.ZIP`, the UDI / TD0 copies) has the IDs 1, 2, 3,
-  4, 9 on that track. SteinBlume's author compares the Quorum `.qdi` with it: "QDI походу отличается от PRO только тем,
-  что в нулевой дорожке пятый сектор имеет номер 5, а не 9" (zx-pk.ru, thread 11294, 2013-05-28).
+  4, 9 on that track. SteinBlume's author compares the Quorum `.qdi` with it: "QDI seems to differ from PRO only in
+  that on track zero the fifth sector has number 5, not 9" (zx-pk.ru, thread 11294, 2013-05-28).
 
 CP/M itself leaves the IDs to the BIOS (CP/M 2.2 `SECTRAN` / the DPH's `XLT` translate 128-byte records only; with
 1024-byte sectors the BIOS numbers them). So the loader gives cylinder 0 side 0 the IDs 1, 2, 3, 4, 9: with 1..5 the
@@ -53,10 +53,11 @@ is refused with the reason (export as UDI to keep it). A loaded image writes bac
 
 ## References
 
-- Алексей Тарасов, "Работа с файлами в ОС CP/M на компьютере «Profi»", Habr, 2024-08-21:
-  <https://habr.com/ru/articles/837664/> (`ReadFile.pro`, "образ диска в формате «PRO»"); also
+- Alexey Tarasov, "Работа с файлами в ОС CP/M на компьютере «Profi»" (Working with files in CP/M on the Profi
+  computer), Habr, 2024-08-21: <https://habr.com/ru/articles/837664/> (`ReadFile.pro`, "a disk image in the PRO
+  format"); also
   <https://habr.com/ru/articles/837144/> and <https://habr.com/ru/articles/837392/> (more `.pro` disks)
-- SteinBlume, CP/M Disk Image Explorer (`.pro` = "образ CP/M диска Профи"): <https://zx-pk.ru/threads/26454>
-- zx-pk.ru, "Просмотр образов CP/M дисков" (PRO vs QDI, the directory from track 0):
+- SteinBlume, CP/M Disk Image Explorer (`.pro` = "Profi CP/M disk image"): <https://zx-pk.ru/threads/26454>
+- zx-pk.ru, "Просмотр образов CP/M дисков" (Viewing CP/M disk images; PRO vs QDI, the directory from track 0):
   <https://zx-pk.ru/threads/11294>
 - CP/M 2.2 Alteration Guide (Digital Research, 1979), `SECTRAN` and the disk parameter header

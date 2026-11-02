@@ -72,7 +72,7 @@ but never materialized.
 
 ## Community / references
 
-- zx-pk.ru thread **"Игры под Spec256"** (2017+, init. Spectramine):
+- zx-pk.ru thread **"Игры под Spec256"** (Games for Spec256) (2017+, init. Spectramine):
   https://zx-pk.ru/threads/28471-igry-pod-spec256.html
 - Wikipedia: [ZX Spectrum graphic modes](https://en.wikipedia.org/wiki/ZX_Spectrum_graphic_modes)
 - Yantra Games ZX256 (Arjun Nair, 2005, archived):

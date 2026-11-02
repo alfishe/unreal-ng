@@ -72,7 +72,7 @@ side has a clock for the other; the frame counter `timer` (`#BF02`) lives only o
 The card's loop in the rotator (`GSROTAT7.asm`, `GSLOOP`) draws, stamps the logo, and then:
 
 ```asm
-;GS ожидает конец кадра у ZX
+;the GS waits for the end of the frame on the ZX
         LD HL,0
         LD DE,1
 GSWAIT0 ADD HL,DE
@@ -83,9 +83,9 @@ GSWAIT0 ADD HL,DE
 
         XOR A                   ;TURN OFF DMA MODE
         OUT (DMA_CST),A
-;после этого ZX можно сбрасывать
-        OUT (ZXDATWR),A         ;признак для ZX "DMA OFF"
-;GS ожидает обнуления (ZX запросит данные)
+;after this the ZX may be reset
+        OUT (ZXDATWR),A         ;the sign for the ZX "DMA OFF"
+;the GS waits for the zeroing (the ZX will request data)
         LD HL,0
         LD DE,1
 GSWAIT1 ADD HL,DE
@@ -97,9 +97,8 @@ GSWAIT1 ADD HL,DE
         RET NZ                  ;QUIT
 ```
 
-The author's comments: "GS ожидает конец кадра у ZX" - "the GS waits for the end of the frame on
-the ZX"; "после этого ZX можно сбрасывать" - "after this the ZX may be reset"; "признак для ZX" -
-"the sign for the ZX"; "GS ожидает обнуления (ZX запросит данные)" - "the GS waits for the zeroing
+The author's comments (translated from Russian): "the GS waits for the end of the frame on
+the ZX"; "after this the ZX may be reset"; "the sign for the ZX"; "the GS waits for the zeroing
 (the ZX will request data)". The code actually waits for a **non-zero** command there: `1`
 continues, anything else (`2`) returns from the effect.
 
@@ -118,7 +117,7 @@ Then the DMA address is set to the finished buffer and the DMA started:
         OUT (DMA_LAD),A
         LD A,#80                ;TURN ON DMA MODE
         OUT (DMA_CST),A
-        OUT (ZXDATWR),A         ;признак для ZX "DMA ON"
+        OUT (ZXDATWR),A         ;the sign for the ZX "DMA ON"
         JP GSLOOP
 ```
 
@@ -136,18 +135,18 @@ pages. The loop, with the author's comments:
 ```asm
 BIGLOOP
         HALT
-;даем знать GS'у, что кадр готов
-;и DMA надо выключить:
+;let the GS know that the frame is ready
+;and the DMA must be turned off:
         XOR A
         OUT (GSCOM),A
 
         LD A,#1D^#17
-        XOR #1D                 ;видим scr1, рисуем scr0
+        XOR #1D                 ;we see scr1, draw scr0
         LD ($-1),A
         setpga
-;теперь видим scr0, рисуем scr1
+;now we see scr0, draw scr1
 
-;и ждем выключения:
+;and wait for it to turn off:
         WN
         GD
 zxendtime=$+1
@@ -159,11 +158,11 @@ zxendtime=$+1
         LD A,#7F
         IN A,(#FE)
         RRA                     ;space
-        JP NC,QUIT              ;можно жать RESET
-;даем знать GS'у, что надо включить DMA
+        JP NC,QUIT              ;one may press RESET
+;let the GS know that the DMA must be turned on
         LD A,1
         OUT (GSCOM),A
-;и ждем включения:
+;and wait for it to turn on:
         WN
         GD
 ```
@@ -230,7 +229,7 @@ it was. Some units use this freedom: in the 16-colour parts `HL` holds two `#7FF
 **The first byte is stale.** ZX-DMA answers a read with the byte fetched by the *previous* read,
 and starts fetching the next one. The first read after the DMA starts gets an old latch value.
 Every unit throws it away. In the rotator it is `LD A,(HL) ;1ST BYTE DISCARDED`; elsewhere the
-comment is "первый байт неверен" - "the first byte is wrong". unreal-ng models the same latch
+comment is "the first byte is wrong". unreal-ng models the same latch
 (`NeoGSZxDma::onRead`: "The byte fetched by the previous read; this read starts the next fetch").
 
 **The stack is the write pointer.** `PUSH DE` stores two bytes in 11 T-states and moves the pointer
@@ -337,11 +336,11 @@ but limits the copy to what fits between two interrupts (see the T-state table i
 
 ```asm
         EX DE,HL
-        EX (SP),HL              ;пишем DE вместо адреса возврата
+        EX (SP),HL              ;we write DE instead of the return address
         LD (outimjp),HL
         LD (outimsp),SP
         LD SP,outimstack
-        PUSH DE                 ;hl до прерывания
+        PUSH DE                 ;hl from before the interrupt
         ...
 outimsp=$+1
         LD SP,0
@@ -351,18 +350,17 @@ outimjp=$+1
         JP 0
 ```
 
-"пишем DE вместо адреса возврата" - "we write DE instead of the return address"; "hl до
-прерывания" - "HL from before the interrupt". The return address leaves the stack into the
+"We write DE instead of the return address"; "HL from before the interrupt". The return address leaves the stack into the
 operand of the final `JP`. The interrupted `DE` takes its place, and `POP DE` reads it back at the
 end. The 16-colour parts copy with interrupts **on**: girl and mill's copy takes more than four
 frames, so it has to. The author states the rule next to their blit generator (`MKOUT16C` in
 `hedge12.asm` and `baba4.asm`):
 
 ```
-;копируем из NGS линейный буфер 16C на экран      (copy the linear 16-colour buffer from the NGS to the screen)
-;снизу вверх                                      (bottom up)
-;обработчик прерывания должен класть в стек DE вместо адреса   (the interrupt handler must put DE on the stack
-;возврата                                                      instead of the return address)
+;copy the linear 16-colour buffer from the NGS to the screen
+;bottom up
+;the interrupt handler must put DE on the stack instead of the return
+;address
 ```
 
 Why `DE` and not any value: in `LD D,(HL) : LD E,(HL) : PUSH DE`, the two bytes below `SP` are
@@ -372,7 +370,7 @@ it works bottom-up, towards lower addresses. One case is left: the end of a run 
 256-byte boundary. There the word below `SP` is outside the area. For it the generator replaces
 the last `PUSH DE` by `LD (nn),DE`, which keeps `SP` two bytes higher. An interrupt then writes
 `DE` over the two bytes `LD (nn),DE` stores, which is the same value
-("у посл. линий третей надо LD (..),DE вместо последнего PUSH" - "the last lines of the thirds
+("the last lines of the thirds
 need `LD (..),DE` instead of the last `PUSH`"). [9. Girl and mill](09-girl-and-mill.md) section 7
 walks through it.
 
@@ -409,8 +407,8 @@ GSRESET
 ```
 
 DMA off, 10 MHz, ROM back, normal paging, `RST 0`: the card's firmware starts as after power-on.
-This is how the card recovers when the Spectrum is reset in the middle of an effect ("можно жать
-RESET" - "one may press RESET", next to the SPACE check). Every effect carries its own copy, and
+This is how the card recovers when the Spectrum is reset in the middle of an effect ("one may press
+RESET", next to the SPACE check). Every effect carries its own copy, and
 the card's resident loop ends in one ([2.11](02-the-start.md)).
 
 The other waits have no timeout:
@@ -433,7 +431,7 @@ data in the stream, and how the Spectrum stores it.
 | Rotator (`GSROTAT7`) | 6,912 bytes, the whole screen, reversed | `HALT` at the top; 3,456 `PUSH`es into the hidden screen | `DI` |
 | Rotating bars (`GSRBAR24`) | a header and four lists of (address, byte) records | `POP` the counts with `SP` at `#00xx`; before each list an NMI to the card (`FORCENMI`, `OUT (GSCTR),#40`) makes the card's handler at `#0066` re-point the DMA; one dummy read per list | `DI` for three lists; the fourth ends at the frame interrupt (`VIEWBARIM`) |
 | Multi-bars (`GSMULBA3`) | a **program**: command bytes with operands | `LD H,(HL) : JP (HL)` dispatches on the high byte of a page-aligned handler; the handlers fill or clear rows with `PUSH`, waste a scan line, or wait an exact time and switch the shown screen mid-frame | on, vector -> `RET`; `#EFF7` = `#10` ("noturbo"), because the card counts the stream's T-states |
-| Hedgehog (`hedge12`) | 16-colour picture, 7,168 reads | no `HALT`; generated `OUT16C`; per 16 bytes read, 14 stored; no dummy read (comment: "первый байт неверен (попадет в D)" - "the first byte is wrong (would go to D)", and that first `D` is never stored) | on, `DE` rule |
+| Hedgehog (`hedge12`) | 16-colour picture, 7,168 reads | no `HALT`; generated `OUT16C`; per 16 bytes read, 14 stored; no dummy read (comment: "the first byte is wrong (would go to D)", and that first `D` is never stored) | on, `DE` rule |
 | Girl and mill (`baba4`) | 16-colour screen, 24,576 bytes | no `HALT`; no screen flip: always pages 6 and 7; generated `OUT16C`, 12,288 `PUSH`es; `HL` = `#1E1F` is both the read address and the two pages (`H` = `#7FFD` `#1E`, page 6; `L` = `#1F`, page 7) | on, `DE` rule |
 | Textured face (`TEX28`) | 16-colour picture, 16,384 bytes (lines 32-159) | `HALT` at the top; generated `OUT16C`; `HL` = `#1617` / `#1C1D` | on, `DE` rule |
 
@@ -443,7 +441,7 @@ Two more differences in the handshake itself:
   of `timer` with command 0 (`OUT (GSDAT),A`). The card reads it from `ZXDATRD` after stopping the
   DMA, and animates by the number of frames that passed (girl and mill moves at most 5 steps per
   picture). Those cards do not answer command 0 (`;OUT (ZXDATWR),A` is commented out). The
-  Spectrum waits with `WD` ("пока не примет" - "until it takes it") instead of `WN : GD`.
+  Spectrum waits with `WD` ("until it takes it") instead of `WN : GD`.
 - **The pace.** The tunnel and the rotator `HALT` once per loop; the face too. The hedgehog and
   girl and mill do not (`;HALT` is commented out): they run as fast as the card answers. Multi-bars
   has no `HALT` at the top either, but it `HALT`s before starting its stream, so its stream
@@ -491,7 +489,7 @@ frame; the rotator, with 6,912, every second frame.
 - **The flip patches the wrong-looking operand.** `LD ($-1),A` after `XOR #1D` rewrites the `XOR`'s
   operand, not the `LD A`'s. The same three lines are in the rotator, rotating bars, hedgehog and
   the face.
-- **"первый байт неверен"** ("the first byte is wrong") is the ZX-DMA read latch, not a bug. The
+- **"The first byte is wrong"** is the ZX-DMA read latch, not a bug. The
   hedgehog's blit drops its first pair for its own reasons, so it can skip the dummy read.
 - **The timeout comment is stale.** `;48t` on `GSWAIT0` counts a `JP C,GSRESET` that is commented
   out in every unit.

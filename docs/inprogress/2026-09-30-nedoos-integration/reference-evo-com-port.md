@@ -190,7 +190,7 @@ to BaseConf, with the same flags
 
 | Input | Value | Source |
 |---|---|---|
-| AVR clock | 11.0592 MHz (1 cycle = 90.4 ns) | crystal Q2 "11.059Mhz" on the ATmega128's XTAL pins ([`kicad/rev_d/eva.kicad_pcb`](https://github.com/alfishe/pentevo/blob/master/kicad/rev_d/eva.kicad_pcb), also rev A-C P-CAD sheets); `-DF_CPU=11059200UL` ([`avr/baseconf/trunk/build/Makefile:24`](https://github.com/alfishe/pentevo/blob/master/avr/baseconf/trunk/build/Makefile)); BaseConf manual p.40 "F_CPU = 11059200 (для ZXEvo)" ([zx-evo-docs](https://github.com/tslabs/zx-evo-docs/blob/main/Baseconf/zxevo_base_configuration.pdf)) |
+| AVR clock | 11.0592 MHz (1 cycle = 90.4 ns) | crystal Q2 "11.059Mhz" on the ATmega128's XTAL pins ([`kicad/rev_d/eva.kicad_pcb`](https://github.com/alfishe/pentevo/blob/master/kicad/rev_d/eva.kicad_pcb), also rev A-C P-CAD sheets); `-DF_CPU=11059200UL` ([`avr/baseconf/trunk/build/Makefile:24`](https://github.com/alfishe/pentevo/blob/master/avr/baseconf/trunk/build/Makefile)); BaseConf manual p.40 "F_CPU = 11059200 (для ZXEvo)" ("for ZXEvo") ([zx-evo-docs](https://github.com/tslabs/zx-evo-docs/blob/main/Baseconf/zxevo_base_configuration.pdf)) |
 | SPI | F_CPU / 2 = 5.53 MHz, 16 cycles a byte; 5 bytes per access (status, #42 + index, #40 + data) | `BC-AVR/spi.c:9-10`, `zx.c:54-69, 578-633`, FPGA [`slave/spi_fmt.txt`](https://github.com/alfishe/pentevo/blob/master/fpga/baseconf/trunk/slave/spi_fmt.txt) |
 | Release | the CS rising edge after the #40 transfer, +2-3 FPGA clocks (~0.1 us) | `BC-FPGA/slave/slavespi.v:199, 269` |
 | INT6 service (ISR) | ~37 cycles: only sets `FLAG_SPI_INT` | `BC-AVR/interrupts.c:324-329`; listing `<__vector_7>` |

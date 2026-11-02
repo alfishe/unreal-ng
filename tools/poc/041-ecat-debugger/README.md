@@ -14,7 +14,7 @@ Build: configure with `-DBUILD_ECAT_DEBUGGER_POC=ON`, then `tools/build/build.sh
 build's `bin/`.
 
 Can the debugger of eCat3 (Mikhail Revzin's emulator of Soviet machines, <https://github.com/Ptr314/ecat3>, GPL-3.0)
-be the Qt debugger of unreal-ng? The owner showed its window on 2026-10-29 (УК-НЦ, three processors) and asked whether
+be the Qt debugger of unreal-ng? The owner showed its window on 2026-10-29 (УК-НЦ, the UKNC, three processors) and asked whether
 unreal-ng can have one like it. Feature: [`docs/inprogress/2026-09-28-debugger-model`](../../../docs/inprogress/2026-09-28-debugger-model/)
 (the "modern GUI skin", `gui-main-debugger.md`); POC 035 picks the GUI technology, this POC tries one finished,
 working design on our core.
