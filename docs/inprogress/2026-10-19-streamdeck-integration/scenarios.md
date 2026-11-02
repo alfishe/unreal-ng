@@ -359,5 +359,6 @@ generated from that document's spec. No default scenario ships until then; the m
 - Software keys reference `$testdata` only in developer builds; the release scenario uses the software that ships in
   `data/` (`testsoft`, `testtapes`), and the generator checks every path exists. Found 2026-10-20: `data/testsoft`,
   `testtapes` and `testsnapshots` (about 1 MB) are in no package and not in a build's `bin/` (`$data` is the folder
-  holding `streamdeck/`): shipping them beside `streamdeck/` is SD8's.
+  holding `streamdeck/`): shipping them beside `streamdeck/` is SD8's. Done 2026-11-01: every package and a build's
+  `bin/` carry them beside `streamdeck/` ([packaging.md §6](packaging.md#6-data)).
 - The release scenario contains no `shell`, `open`, `keys` and no `webapi` step (ACC-5).

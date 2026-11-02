@@ -14,13 +14,15 @@ if(TARGET unreal-mcp-bridge)
     list(APPEND _suite_targets unreal-mcp-bridge)
 endif()
 # The Stream Deck companion (-DUNREAL_STREAMDECK=ON): the daemon and the studio beside the suite, its data
-# (lib/unreal-ng/streamdeck, found beside the real binaries), its udev rule
+# (lib/unreal-ng/streamdeck, found beside the real binaries; the test software its scenarios open as "$data/..." beside
+# it), its udev rule
 if(TARGET unreal-streamdeck)
     list(APPEND _suite_targets unreal-streamdeck)
     if(TARGET unreal-streamdeck-studio)
         list(APPEND _suite_targets unreal-streamdeck-studio)
     endif()
-    install(DIRECTORY "${DATA_PATH}/streamdeck" DESTINATION lib/unreal-ng COMPONENT Suite)
+    install(DIRECTORY "${DATA_PATH}/streamdeck" "${DATA_PATH}/testsoft" "${DATA_PATH}/testtapes"
+        "${DATA_PATH}/testsnapshots" DESTINATION lib/unreal-ng COMPONENT Suite)
     install(FILES "${CMAKE_SOURCE_DIR}/companions/streamdeck/linux/70-unreal-streamdeck.rules"
         DESTINATION lib/udev/rules.d COMPONENT Suite)
 endif()
