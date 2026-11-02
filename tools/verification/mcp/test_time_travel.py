@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """time_travel: record, stop, the history in status, seek back, the machine state follows, rare coverage,
 port events with their context, reverse-continue first per PC, memory-at the machine now, probe frames, the
-timeline"""
+timeline, the cause chain"""
 
 import re
 import sys
@@ -134,6 +134,31 @@ def test_timeline_names_the_phases_in_the_text(s):
     expect('missing ports' in r.text, 'ports=false named', r.text)
     r = s.call('time_travel', {'action': 'timeline', 'from_frame': 10_000_000}, ok=False)
     expect(r.is_error and 'history' in r.text, 'a window past the history is an error', r.text)
+
+
+def test_cause_chain_follows_the_frame_counter(s):
+    # The history of test_record_stop_seek: the ROM's IM 1 handler counts FRAMES (#5C78) every frame -
+    # LD HL,(FRAMES) / INC HL / LD (FRAMES),HL - so its chain is a store of L, computed from the loaded byte, and so on
+    # back one frame per round until the depth cuts it
+    before = s.call('time_travel', {'action': 'status'}).text
+    r = s.call('time_travel', {'action': 'cause_chain', 'addr': '0x5C78'})
+    links = r.structured.get('links', [])
+    expect(not r.is_error and links and links[0].get('kind') == 'store', 'the store first', r.text)
+    kinds = [l.get('kind') for l in links]
+    expect('computed' in kinds and 'load' in kinds, 'computed and load links', kinds)
+    expect(any(l.get('stop') == 'depth' for l in links) and '[stop: depth]' in r.text, 'the depth cut said', r.text)
+    expect(r.text.count('\n') >= len(links) and '(#5C78' in r.text and 'ld (' in r.text.lower(), 'one line per link', r.text)
+    at_before = re.search(r'at frame (\d+)', before)
+    at_after = re.search(r'at frame (\d+)', s.call('time_travel', {'action': 'status'}).text)
+    expect((at_before and at_before.group(1)) == (at_after and at_after.group(1)), 'the position did not move',
+           (before[:200], at_after))
+    r = s.call('time_travel', {'action': 'cause_chain', 'reg': 'SP', 'depth': 1})
+    expect(not r.is_error and len(r.structured.get('links', [])) >= 2, 'a register pair: both bytes', r.text)
+    r = s.call('time_travel', {'action': 'cause_chain', 'reg': 'Q'}, ok=False)
+    expect(r.is_error and 'reg' in r.text, 'a bad register named', r.text)
+    r = s.call('time_travel', {'action': 'cause_chain'}, ok=False)
+    expect(r.is_error and 'addr' in r.text, 'no target named', r.text)
+
 
 if __name__ == '__main__':
     sys.exit(main(globals()))

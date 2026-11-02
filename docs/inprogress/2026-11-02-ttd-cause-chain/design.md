@@ -76,9 +76,17 @@ the decoder's class and memory form, and on the record's bus events, never on th
 | `LD A,I`, `LD A,R` | A | I / R (`constant` leaf for R: the refresh counter; I followed) |
 | ALU, `CP` (F only), `INC r` / `DEC r` / 16-bit `INC` `DEC` `ADD` `ADC` `SBC`, rotates on registers, `CPL` `NEG` `DAA`, `SET` / `RES` on registers, block pointer and counter updates, `DJNZ`'s B | each register written | the value registers it reads (its memory operand's address registers excluded) and the data bytes it reads (`computed`); F is listed when read, followed only with `flags` |
 
+A pointer or counter update (`INC rr` / `DEC rr`, LDI's HL and DE, the SP of PUSH / POP / CALL / RET) gives its low
+byte from the low byte alone: the carry goes up only, so `L` after `LDIR` is not from `H`.
+
 A record whose outputs do not include the name asked for is not its producer. The register search walks the trace
 back from the instruction that read the register; past the frame's start it traces the frame before, up to
-`maxFrames`.
+`maxFrames` (the frame of the moment counts only when instructions of it come before the moment). Each traced frame
+leaves the set of registers it wrote: a later search for another byte skips the frames that never wrote it without
+tracing them again (IXH and IXL, a pair never written, cost the frames once).
+
+The interrupt acknowledge's pushes and IM 2 vector reads go through the bus hook like an instruction's
+(`Z80::HandleINT` writes the stack directly, without the `wd` path).
 
 ## 5. The walk
 
@@ -102,6 +110,10 @@ the instruction). A memory input's value is the byte read; its producer must hav
 did not, something other than the CPU wrote the byte in between (a device, a ROM trap, DMA): the link is `device`
 (leaf) with both values and the window. The same for an `initial` byte whose value differs from the session start's.
 
+**Loops.** A register updated from itself by the same instruction again and again (LDIR's HL, DE and BC, `INC HL`
+in a loop body, `DJNZ`'s B) is one link: `repeated N times, the first at f..+..`, its inputs the first iteration's,
+followed from there. The run is searched back as far as `maxFrames` from the link.
+
 **Stops.** A link that cannot go on carries `stop`: `depth`, `max_links`, `max_frames`, `session_start`,
 `barrier` (a marker the replay cannot cross, with its kind and time).
 
@@ -110,9 +122,10 @@ did not, something other than the CPU wrote the byte in between (a device, a ROM
 JSON (REST, the socket call, MCP `structuredContent`):
 
 ```text
-{ target: {kind, name, address, page, register, at},
-  links: [ { id, parent, depth, kind, name, value, frame, t, pc, page, text, inputs: [names], detail, stop } ],
-  stops: n, frames_replayed: n, ms: x }
+{ target: {kind, name, addr, phys_page | reg, frame, tinframe},
+  links: [ { id, parent, depth, kind, name, value, frame, tinframe, pc, code_page, text, inputs: ["A=#03"], detail,
+             stop } ],
+  stops: n, frames_traced: n, ms: x, text (text=true) }
 ```
 
 MCP / CLI text: one line per link, indented by depth, newest first:
@@ -137,10 +150,14 @@ MCP / CLI text: one line per link, indented by depth, newest first:
 
 | Plane | Form |
 |-------|------|
-| CLI | `ttd cause <addr>[:page] | <reg> [frame [t]] [depth N] [links N] [frames N] [flags]` |
-| WebAPI | `GET /api/v1/emulator/{id}/ttd/cause-chain?addr=&page=&reg=&frame=&t=&depth=&max_links=&max_frames=&flags=`, the socket `call` of the same route |
-| MCP | `time_travel {"action":"cause_chain", "addr" or "reg", "frame", "t", "depth", "max_links", "max_frames", "flags"}`: the text of §6 |
-| Lua / Python | `ttd_cause_chain(target, options)`: the JSON as a table / dict |
+| CLI | `ttd cause <addr>[:page] \| <reg> [--frame F [--tin T]] [--depth N] [--links N] [--frames N] [--flags]` (alias `ttd cause-chain`): the text of §6 |
+| WebAPI | `GET /api/v1/emulator/{id}/ttd/cause-chain?addr=&phys_page=&reg=&frame=&tinframe=&depth=&max_links=&max_frames=&flags=&text=`, the socket `call` of the same route |
+| MCP | `time_travel {"action":"cause_chain", "addr" (+ "phys_page") or "reg", "frame", "tinframe", "depth", "max_links", "max_frames", "flags"}`: the text of §6 |
+| Lua / Python | `ttd_cause_chain(target, options)` (a number: an address; a register name: a register): the JSON as a table / dict |
+
+All six go through one verb, `cause-chain` of `TTDControl` (`ttdcontrol.cpp`), which calls
+`TimeTravelController::QueryCauseChain` (`ttdcontrollercausechain.cpp`); the source rules are
+`TTDExplainInstruction` (`ttdcausechain.cpp`).
 
 Docs: command-interface.md (the verb), webapi-interface.md, cli-interface.md, lua-interface.md,
 python-interface.md, the MCP README, the reverse-debugging recipe.

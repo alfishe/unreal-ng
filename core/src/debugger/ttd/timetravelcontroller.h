@@ -84,6 +84,7 @@
 #include "emulator/media/mediareadjournal.h"
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
+#include "ttdcausechain.h"
 #include "ttdcoverageindex.h"
 #include "ttdtimeline.h"
 #include "ttdperipheralregistry.h"
@@ -1271,6 +1272,12 @@ public:
     /// the facts the session holds, and the phases they make. Reads only what the recording stores (no replay);
     /// a fact it cannot give is named in `missing`
     TTDTimelineResult QueryTimeline(const TTDTimelineOptions& options) const;
+
+    /// @brief The cause chain (docs/inprogress/2026-11-02-ttd-cause-chain): where the value of a memory byte or a
+    /// register at a moment came from, as a tree of links back to constants, port reads and the session's initial
+    /// memory. Replays the frames it needs with the instruction and bus hooks and puts the machine back exactly
+    /// where it stood; a live recording pauses for browsing
+    TTDCauseResult QueryCauseChain(const TTDCauseQuery& query);
     
     /// @brief Step back one instruction (TDD §10.2 + §16 row 2).
     ///
@@ -1598,6 +1605,10 @@ private:
     /// @param targetTInFrame Position within the frame to stop at, in TTD
     ///        time units (FrameSpan() = the whole frame).
     void ReplayWithinFrame(uint64_t targetFrame, uint32_t targetTInFrame);
+
+    /// The cause chain's frame trace: the frame of checkpoint @p cpIndex replayed up to @p endT with the instruction
+    /// and bus hooks (ttdcontrollercausechain.cpp). The caller saved the live machine
+    std::shared_ptr<TTDFrameTrace> TraceCauseFrame(size_t cpIndex, uint32_t endT);
 
     /// @brief Run the CPU until the current frame reaches `targetTInFrame`
     /// (TTD time units) or ends. A hardware turbo may switch on the way, so

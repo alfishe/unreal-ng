@@ -631,6 +631,12 @@ void EmulatorAPI::getTTDTimeline(const HttpRequestPtr& req, std::function<void(c
     RespondTTD(id, "timeline", OptionsFromQuery(req, "timeline"), callback);
 }
 
+void EmulatorAPI::getTTDCauseChain(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    RespondTTD(id, "cause-chain", OptionsFromQuery(req, "cause-chain"), callback);
+}
+
 }  // namespace v1
 }  // namespace api
 

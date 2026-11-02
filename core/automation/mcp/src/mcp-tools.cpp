@@ -5310,7 +5310,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
-                               "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
+                               "cause_chain", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
                                "memory_at", "memory_diff"})
     {
@@ -5372,6 +5372,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "what the session stores, no replay; facts it cannot give are listed as missing; from_frame, to_frame, "
         "buckets=true adds an overview of limit buckets (default 20; bucket_size sets their size), ports=false skips the "
         "per-device port counts, min_phase_ms the shortest phase, default 200). "
+        "'cause_chain' (why does a byte or a register hold its value: one call instead of find_last + disassemble + "
+        "reverse_step loops; addr (with phys_page) or reg (A, HL, IX, SP, E'...), at frame / tinframe (default: the "
+        "current position); the answer is the chain back from the value, one line per link: the instruction that "
+        "wrote it (time, PC, text) and its inputs, followed as deep as depth (default 4) and max_links (default 32) "
+        "allow, down to constants, port reads, interrupt pushes and the session's initial memory; a register's "
+        "producer is searched back up to max_frames frames (default 50); flags=true follows F too; the machine "
+        "stays where it was). "
         "Write journal (who wrote an address last, answered at once; off by default): 'journal_on' / 'journal_off' "
         "switch it at any moment, also while recording (each on-off span is a segment); 'journal_build' builds it by "
         "replaying frames from_frame..to_frame (default: the whole session; about 2-4 ms per frame; not while "
@@ -5408,7 +5415,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["frame"]["type"] = "integer";
     schema["properties"]["frame"]["description"] =
         "Frame number: target for seek (required), optional start point for resume (default: the current point), optional position for bookmark_add "
-        "(default: current position), frame to test for coverage_probe";
+        "(default: current position), frame to test for coverage_probe, the moment for cause_chain (default: the "
+        "current position)";
     schema["properties"]["tinframe"]["type"] = "integer";
     schema["properties"]["tinframe"]["description"] =
         "T-states within 'frame' for seek / resume / bookmark_add (default 0). A seek without it lands at the frame's end "
@@ -5458,7 +5466,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["addr"]["type"] = "string";
     schema["properties"]["addr"]["description"] =
         "find_last: single Z80 address (integer, '0x5800', '#5800' or '$5800'); with space vram / cache an offset in "
-        "that memory";
+        "that memory. cause_chain: the memory byte to explain";
     schema["properties"]["space"]["type"] = "string";
     schema["properties"]["space"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* space : {"ram", "vram", "cache", "cpu"})
@@ -5560,7 +5568,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "10000), or max buckets for coverage_summary (default 100)";
     schema["properties"]["max_frames"]["type"] = "integer";
     schema["properties"]["max_frames"]["description"] =
-        "coverage_rare: an address is rare when at most this many frames touched it (default 1, at most 1000)";
+        "coverage_rare: an address is rare when at most this many frames touched it (default 1, at most 1000); "
+        "cause_chain: frames searched back for a register's producer (default 50, at most 1000)";
     schema["properties"]["bucket_size"]["type"] = "integer";
     schema["properties"]["bucket_size"]["description"] = "Frames per bucket for coverage_summary / timeline (default: auto)";
     schema["properties"]["buckets"]["type"] = "boolean";
@@ -5570,6 +5579,16 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["min_phase_ms"]["type"] = "integer";
     schema["properties"]["min_phase_ms"]["description"] =
         "timeline: the shortest phase in ms of machine time, also the window frames are tagged over (default 200)";
+    schema["properties"]["reg"]["type"] = "string";
+    schema["properties"]["reg"]["description"] =
+        "cause_chain: the register to explain - A F B C D E H L IXH IXL IYH IYL I R, a pair AF BC DE HL IX IY SP, or "
+        "primed A' ... L' / AF' ... HL'";
+    schema["properties"]["depth"]["type"] = "integer";
+    schema["properties"]["depth"]["description"] = "cause_chain: links from the target to a leaf, 1..16 (default 4)";
+    schema["properties"]["max_links"]["type"] = "integer";
+    schema["properties"]["max_links"]["description"] = "cause_chain: links in the whole tree, 1..256 (default 32)";
+    schema["properties"]["flags"]["type"] = "boolean";
+    schema["properties"]["flags"]["description"] = "cause_chain: follow F as an input too (default false: listed only)";
     schema["properties"]["probes"]["type"] = "array";
     schema["properties"]["probes"]["items"]["type"] = "object";
     schema["properties"]["probes"]["description"] =
@@ -6483,6 +6502,43 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             out << "\n[TRUNCATED] the list holds the rarest " << body["blocks"].size()
                                 << "; narrow the range or raise limit";
                         done(ToolResult::Ok(out.str(), std::move(body)));
+                    });
+                }
+                else if (action == "cause_chain")
+                {
+                    if (args.isMember("addr") == args.isMember("reg"))
+                    {
+                        done(ToolResult::Error("Action 'cause_chain' needs 'addr' (a memory byte) or 'reg' (a register)"));
+                        return;
+                    }
+                    auto text = [](const Json::Value& v) {
+                        return v.isString() ? v.asString() : std::to_string(v.asUInt64());
+                    };
+                    std::string query = "/ttd/cause-chain?text=true";
+                    for (const char* field : {"addr", "phys_page", "reg"})
+                        if (args.isMember(field))
+                            query += std::string("&") + field + "=" + UrlEncodeSegment(text(args[field]));
+                    for (const char* field : {"frame", "tinframe", "depth", "max_links", "max_frames"})
+                        if (args.isMember(field))
+                            query += std::string("&") + field + "=" + std::to_string(args[field].asUInt64());
+                    if (args.isMember("flags"))
+                        query += std::string("&flags=") + (args["flags"].asBool() ? "true" : "false");
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        // The chain as indented lines: an agent may read only this
+                        std::string out = body["text"].asString();
+                        bool cut = false;
+                        for (const Json::Value& l : body["links"])
+                            cut = cut || l["stop"].asString() == "depth" || l["stop"].asString() == "max_links";
+                        if (cut)
+                            out += "Links marked [stop: depth] / [stop: max_links] go further: ask again with a larger "
+                                   "depth / max_links, or at that link's name and frame.\n";
+                        body.removeMember("text");
+                        done(ToolResult::Ok(out, std::move(body)));
                     });
                 }
                 else if (action == "timeline")
