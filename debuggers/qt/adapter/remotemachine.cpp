@@ -330,6 +330,28 @@ void to_tree(const QJsonValue &v, ecatshim::DeviceNode &out)
     }
 }
 
+// One device's history (GET /history/{device}): an entry of its own in the Devices tab, every device's apart. The
+// summary is its mode and counts, opened the newest records
+class RemoteHistory : public ecatshim::ComputerDevice
+{
+public:
+    RemoteHistory(RemoteMachine * m, const std::string &device, const std::string &what)
+        : m_m(m), m_device(device), m_what(what)
+    {
+        name = device + " history";
+        type = "history";
+    }
+    std::vector<DeviceFieldInfo> get_device_fields() override { return {}; }
+    bool get_field(const std::string &, unsigned int, unsigned int, DeviceFieldValue &) override { return false; }
+    bool get_tree(bool deep, ecatshim::DeviceNode &out) override;
+
+private:
+    static constexpr int kShown = 64;
+    RemoteMachine * m_m;
+    std::string m_device;
+    std::string m_what;
+};
+
 // A WebAPI state report of the device catalog (GET /state/devices): the Devices tab's entry (title, the catalog's
 // summary, the report as a tree) and, for scripts, device fields (the leaves of its JSON, dotted paths as names)
 class RemoteReport : public ecatshim::ComputerDevice
@@ -454,6 +476,7 @@ public:
         clear_run_to();
         // Debug mode as it was before the debugger came
         if (m_attached) m_http.json("PUT", m_base + "/debugmode", QJsonObject{{"enabled", m_debug_before}});
+        if (m_cpu_history_ours) m_http.json("POST", m_base + "/history/cpu/config", QJsonObject{{"mode", "off"}});
         m_http.json("DELETE", m_base + "/control/session");
     }
 
@@ -515,6 +538,12 @@ public:
                                                     r.value("title").toString().toStdString(),
                                                     m_base + "/" + r.value("route").toString()));
         }
+        // Every device history, each an entry of its own
+        for (const QJsonValue &v : histories().value("histories").toArray()) {
+            const QJsonObject h = v.toObject();
+            m_dm.add(std::make_shared<RemoteHistory>(this, h.value("device").toString().toStdString(),
+                                                     h.value("what").toString().toStdString()));
+        }
 
         dm = &m_dm;
         loaded = true;
@@ -538,6 +567,17 @@ public:
             m_catalog_age.start();
         }
         return m_catalog;
+    }
+    // The device histories with their modes and counts, read again when half a second old (the Devices tab's
+    // summaries of every one)
+    QJsonObject histories()
+    {
+        std::lock_guard<std::mutex> lock(m_catalog_mutex);
+        if (!m_histories_age.isValid() || m_histories_age.elapsed() > 500) {
+            m_histories = m_http.json("GET", m_base + "/history");
+            m_histories_age.start();
+        }
+        return m_histories;
     }
     const QString &base() const { return m_base; }
 
@@ -614,13 +654,28 @@ public:
         {
             std::lock_guard<std::mutex> lock(m_catalog_mutex);
             m_catalog_age.invalidate();
+            m_histories_age.invalidate();
         }
         m_dirty = true;
         m_online = true;
         if (m_attached) {
             m_debug_before = m_http.json("GET", m_base + "/debugmode").value("enabled").toBool();
             m_http.json("PUT", m_base + "/debugmode", QJsonObject{{"enabled", true}});
-            m_http.json("GET", m_base + "/debug/pchist?depth=1");
+            m_cpu_history_ours = false;
+            start_cpu_history();
+        }
+    }
+
+    // The execution history `cpu` on while the debugger is (a ring), unless the user has it some way already: read
+    // as a snapshot, the machine runs on
+    void start_cpu_history()
+    {
+        for (const QJsonValue &v : m_http.json("GET", m_base + "/history").value("histories").toArray()) {
+            const QJsonObject h = v.toObject();
+            if (h.value("device").toString() != "cpu" || h.value("mode").toString() != "off") continue;
+            int status = 0;
+            m_http.json("POST", m_base + "/history/cpu/config", QJsonObject{{"mode", "ring"}}, &status);
+            m_cpu_history_ours = status == 200;
         }
     }
 
@@ -650,8 +705,7 @@ public:
         if (!m_attached) m_debug_before = m_http.json("GET", m_base + "/debugmode").value("enabled").toBool();
         m_attached = true;
         m_http.json("PUT", m_base + "/debugmode", QJsonObject{{"enabled", true}});
-        // The first read of the history starts recording it
-        m_http.json("GET", m_base + "/debug/pchist?depth=1");
+        start_cpu_history();
         m_cpu->m_debug = ecatshim::DEBUG_BRAKES;
         changed();
     }
@@ -777,6 +831,8 @@ private:
     QString m_base;
     QJsonObject m_catalog;
     QElapsedTimer m_catalog_age;
+    QJsonObject m_histories;
+    QElapsedTimer m_histories_age;
     std::mutex m_catalog_mutex;
     QString m_id;
     QByteArray m_session;
@@ -796,6 +852,7 @@ private:
     uint64_t m_bp_generation = 0;
     bool m_bp_dirty = true;
     bool m_attached = false;
+    bool m_cpu_history_ours = false;  // the debugger turned `cpu` on: off again when it goes
     bool m_debug_before = false;
 
     QThread * m_waiter = nullptr;
@@ -1044,6 +1101,44 @@ bool RemoteReport::get_tree(bool deep, ecatshim::DeviceNode &out)
     return true;
 }
 
+bool RemoteHistory::get_tree(bool deep, ecatshim::DeviceNode &out)
+{
+    out = ecatshim::DeviceNode{name, std::string(), {}};
+    for (const QJsonValue &v : m_m->histories().value("histories").toArray()) {
+        const QJsonObject h = v.toObject();
+        if (h.value("device").toString().toStdString() != m_device) continue;
+        const std::string mode = h.value("mode").toString().toStdString();
+        out.value = mode == "off" ? m_what + ": off"
+                                  : m_what + ": " + mode + ", " + std::to_string((long long)h.value("kept").toDouble()) +
+                                        " kept of " + std::to_string((long long)h.value("written").toDouble());
+    }
+    if (!deep) return true;
+    const QJsonObject read =
+        m_m->http().json("GET", m_m->base() + "/history/" + QString::fromStdString(m_device) + "?last=" + QString::number(kShown));
+    const QJsonArray records = read.value("records").toArray();
+    if (records.isEmpty()) {
+        out.children.push_back(ecatshim::DeviceNode{"", "no records", {}});
+        return true;
+    }
+    // Newest first, as a reader looks for what just happened
+    for (int i = records.size() - 1; i >= 0; i--) {
+        ecatshim::DeviceNode c;
+        c.name = "[" + std::to_string(records.size() - 1 - i) + "]";
+        // A flat record reads as one line ("frame 12  pc 32785  kind ram"), a nested one as a tree
+        const QJsonObject r = records[i].toObject();
+        bool flat = true;
+        for (auto it = r.begin(); it != r.end(); ++it) flat = flat && !it.value().isObject() && !it.value().isArray();
+        if (flat) {
+            for (auto it = r.begin(); it != r.end(); ++it)
+                c.value += (c.value.empty() ? "" : "  ") + it.key().toStdString() + " " + scalar_text(it.value());
+        } else {
+            to_tree(records[i], c);
+        }
+        out.children.push_back(std::move(c));
+    }
+    return true;
+}
+
 unsigned int RemoteZ80::get_pc()
 {
     return num(m_m->snap().regs, "special", "pc");
@@ -1150,11 +1245,10 @@ bool RemoteZ80::stack_address(int i, unsigned int &address)
 
 std::vector<unsigned int> RemoteZ80::get_history()
 {
-    // Newest first in the answer, oldest first as ecat keeps it
+    // Oldest first, as ecat keeps it: the execution history `cpu`, a snapshot (the machine runs on)
     std::vector<unsigned int> r;
-    const QJsonArray entries = m_m->http().json("GET", m_m->base() + "/debug/pchist?depth=256").value("entries").toArray();
-    for (const QJsonValue &e : entries) r.push_back((unsigned int)e.toObject().value("address").toInt());
-    std::reverse(r.begin(), r.end());
+    const QJsonArray records = m_m->http().json("GET", m_m->base() + "/history/cpu?last=256").value("records").toArray();
+    for (const QJsonValue &e : records) r.push_back((unsigned int)e.toObject().value("pc").toInt());
     return r;
 }
 

@@ -921,6 +921,13 @@ int main(int argc, char * argv[])
         machine->debug_run(true);
         ecatshim::Emulator * m = machine.get();
         const QString path = parser.value(shotOpt);
+        // The history tab while the machine runs (read once a second, the machine not held)
+        QTimer::singleShot(300, [dbg]() {
+            if (QTabWidget * side = tabs_with(static_cast<DebuggerWindow *>(dbg), "History"))
+                for (int i = 0; i < side->count(); i++)
+                    if (side->tabText(i) == "History") side->setCurrentIndex(i);
+        });
+        QTimer::singleShot(2700, [dbg, path]() { dbg->grab().save(QString(path).replace(".png", "-history-running.png")); });
         QTimer::singleShot(3000, [m]() { m->debug_pause(); });
         QTimer::singleShot(3500, [m]() {
             ecatshim::CPU * c = m->dm->get_cpus().front();
@@ -945,6 +952,16 @@ int main(int argc, char * argv[])
             }
             QTimer::singleShot(300, [dbg, m, path]() {
                 dbg->grab().save(QString(path).replace(".png", "-gs.png"));
+                // Every device's history an entry of its own: the main CPU's opened, its newest records
+                if (DevicesView * devices = static_cast<DebuggerWindow *>(dbg)->findChild<DevicesView *>()) {
+                    for (int i = 0; i < devices->topLevelItemCount(); i++) {
+                        QTreeWidgetItem * item = devices->topLevelItem(i);
+                        const bool cpu = item->data(0, Qt::UserRole).toString() == "cpu history";
+                        item->setExpanded(cpu);
+                        if (cpu) devices->scrollToItem(item, QAbstractItemView::PositionAtTop);
+                    }
+                    dbg->grab().save(QString(path).replace(".png", "-histories.png"));
+                }
                 // The main Z80 again: the listing across the #8000 window's start, the pages tab
                 auto * w = static_cast<DebuggerWindow *>(dbg);
                 w->select_cpu(m->dm->get_cpus().front());

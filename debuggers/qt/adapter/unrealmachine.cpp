@@ -27,9 +27,9 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/history/exechistory.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
-#include "debugger/pchistory/pchistory.h"
 #include "debugger/search/memorysearch.h"
 #include "debugger/targets/gscardtarget.h"
 #include "emulator/emulator.h"
@@ -367,6 +367,58 @@ void to_tree(const StateNode &n, ecatshim::DeviceNode &out)
     }
 }
 
+// One device's history (the machine's history registry): an entry of its own in the Devices tab, every device's
+// apart. The summary is its mode and counts, opened the newest records; read as a snapshot, the machine runs on
+class HistoryDevice : public ecatshim::ComputerDevice
+{
+public:
+    HistoryDevice(::Emulator * emu, const std::string &device) : m_emu(emu), m_device(device)
+    {
+        name = device + " history";
+        type = "history";
+    }
+    bool get_tree(bool deep, ecatshim::DeviceNode &out) override
+    {
+        out = ecatshim::DeviceNode{name, std::string(), {}};
+        StateNode records;
+        m_emu->GetContext()->histories.With(m_device, [&out, &records, deep](history::IDeviceHistory &h) {
+            const history::Stats s = h.GetStats();
+            out.value = s.config.mode == history::Mode::Off
+                            ? h.What() + ": off"
+                            : h.What() + ": " + history::ModeName(s.config.mode) + ", " + std::to_string(s.kept) +
+                                  " kept of " + std::to_string(s.written);
+            if (deep) records = h.Records(kShown);
+        });
+        if (!deep) return true;
+        if (records.items.empty()) {
+            out.children.push_back(ecatshim::DeviceNode{"", "no records", {}});
+            return true;
+        }
+        // Newest first, as a reader looks for what just happened; a flat record reads as one line
+        for (size_t i = records.items.size(); i-- > 0;) {
+            const StateNode &r = records.items[i];
+            ecatshim::DeviceNode c;
+            c.name = "[" + std::to_string(records.items.size() - 1 - i) + "]";
+            bool flat = r.kind == StateNode::Kind::Object;
+            for (const auto &m : r.members) flat = flat && is_scalar(m.second);
+            if (flat) {
+                for (const auto &m : r.members) c.value += (c.value.empty() ? "" : "  ") + m.first + " " + scalar_text(m.second);
+            } else {
+                to_tree(r, c);
+            }
+            out.children.push_back(std::move(c));
+        }
+        return true;
+    }
+    std::vector<DeviceFieldInfo> get_device_fields() override { return {}; }
+    bool get_field(const std::string &, unsigned int, unsigned int, DeviceFieldValue &) override { return false; }
+
+private:
+    static constexpr size_t kShown = 64;
+    ::Emulator * m_emu;
+    std::string m_device;
+};
+
 // A core device report (DeviceState) of the device catalog: the Devices tab's entry (title, summary, the report as a
 // tree) and, for scripts, ecat device fields (the leaves, dotted paths as names)
 class ReportDevice : public ecatshim::ComputerDevice
@@ -605,14 +657,11 @@ public:
     }
     std::vector<unsigned int> get_history() override
     {
-        // Oldest first, as ecat keeps it; read only where the machine stands still
+        // Oldest first, as ecat keeps it: the execution history `cpu`, a snapshot (the machine runs on)
         std::vector<unsigned int> r;
-        ::Emulator * emu = m_emu;
-        emu->RunWhileParked([emu, &r]() {
-            PcHistory * h = emu->GetDebugManager() ? emu->GetDebugManager()->GetPcHistory() : nullptr;
-            if (h == nullptr) return;
-            for (const PcHistory::Entry &e : h->Newest(256)) r.push_back(e.address);
-            std::reverse(r.begin(), r.end());
+        m_emu->GetContext()->histories.With("cpu", [&r](history::IDeviceHistory &h) {
+            if (auto * exec = dynamic_cast<history::DeviceHistory<ExecRecord> *>(&h))
+                for (const ExecRecord &e : exec->Snapshot(256)) r.push_back(e.pc);
         });
         return r;
     }
@@ -699,6 +748,26 @@ public:
         if (GSCardTarget * t = target()) t->Peek((uint16_t)a, v);
         return v;
     }
+    std::vector<unsigned int> get_history() override
+    {
+        // Oldest first, as ecat keeps it: the card's execution history (`<slot>.cpu`), a snapshot (the card runs on).
+        // Off it comes on the first time it is looked at (it costs the card's idle sleep its records), off again when
+        // the debugger goes
+        std::vector<unsigned int> r;
+        GSCardTarget * t = target();
+        history::DeviceHistory<ExecRecord> * h = t ? t->Card()->execHistory() : nullptr;
+        if (h == nullptr) return r;
+        if (h->GetStats().config.mode == history::Mode::Off) {
+            std::string error;
+            if (!h->Configure(history::Config{.mode = history::Mode::Ring}, error)) return r;
+            m_history_ours = h->Device();
+        }
+        for (const ExecRecord &e : h->Snapshot(256)) r.push_back(e.pc);
+        return r;
+    }
+    // The history this CPU switched on ("" none): the machine turns it off when it goes
+    const std::string &history_ours() const { return m_history_ours; }
+
     bool poke_mem(unsigned int a, unsigned int v) override
     {
         bool done = false;
@@ -770,6 +839,7 @@ public:
 
 private:
     DebugCpuId m_id;
+    std::string m_history_ours;
     ecatshim::AddressableDevice * m_ram = nullptr;
     ecatshim::AddressableDevice * m_rom = nullptr;
 
@@ -852,6 +922,10 @@ public:
             for (const StateNode &r : reports->items) present.insert(r.find("id")->s);
         for (const DeviceState::ReportEntry &entry : DeviceState::CatalogEntries())
             if (present.count(entry.id)) m_dm.add(std::make_shared<ReportDevice>(e, entry));
+        // Every device history, each an entry of its own
+        const StateNode histories = ctx->histories.List();
+        for (const StateNode &h : histories.items)
+            if (const StateNode * device = h.find("device")) m_dm.add(std::make_shared<HistoryDevice>(e, device->s));
 
         dm = &m_dm;
         loaded = true;
@@ -881,6 +955,16 @@ public:
         MessageCenter &mc = MessageCenter::DefaultMessageCenter();
         for (const auto &o : m_observers) mc.RemoveObserverById(o.first, o.second);
         set_debug_listener(nullptr);
+        // The histories the debugger switched on, off again
+        std::vector<std::string> ours;
+        if (m_cpu_history_ours) ours.push_back("cpu");
+        for (const auto &card : m_cards)
+            if (!card->history_ours().empty()) ours.push_back(card->history_ours());
+        for (const std::string &device : ours)
+            m_emu->GetContext()->histories.With(device, [](history::IDeviceHistory &h) {
+                std::string error;
+                h.Configure(history::Config{}, error);
+            });
         EmulatorManager::GetInstance()->RemoveEmulator(m_emu->GetId());
     }
 
@@ -890,7 +974,12 @@ public:
     {
         if (!on) return;
         m_emu->DebugOn();
-        PcHistory::SetArmed(m_emu.get(), true);
+        // The execution history `cpu` on while the debugger is (a ring), unless the user has it some way already
+        m_emu->GetContext()->histories.With("cpu", [this](history::IDeviceHistory &h) {
+            if (h.GetStats().config.mode != history::Mode::Off) return;
+            std::string error;
+            m_cpu_history_ours = h.Configure(history::Config{.mode = history::Mode::Ring}, error);
+        });
         m_main->m_debug = ecatshim::DEBUG_BRAKES;
     }
     void debug_detach() override
@@ -1000,6 +1089,7 @@ private:
     std::shared_ptr<ZxMapper> m_mapper;
     QSettings m_settings;
     std::vector<std::pair<std::string, uint64_t>> m_observers;
+    bool m_cpu_history_ours = false;  // the debugger turned `cpu` on: off again when it goes
     std::mutex m_listener_mutex;
     std::function<void()> m_listener;
     std::atomic<unsigned int> m_serial{0};

@@ -93,6 +93,7 @@ protected:
 
 private:
     CPU * m_cpu;
+    std::vector<unsigned int> m_shown;
 };
 
 //The machine's devices as the core's device catalog lists them: each entry's

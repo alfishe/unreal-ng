@@ -10,6 +10,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QScrollBar>
 #include <QStyledItemDelegate>
 
 #include <set>
@@ -264,19 +265,26 @@ HistoryView::HistoryView(QWidget *parent):
 
 void HistoryView::refresh(CPU * cpu, const CodeFormatter &fmt)
 {
+    //Read again while the machine runs: the same list stays as it is, a new one keeps the reader's place (at the
+    //newest it follows them)
+    const std::vector<unsigned int> h = cpu != nullptr ? cpu->get_history() : std::vector<unsigned int>();
+    if (cpu == m_cpu && h == m_shown && count() > 0) return;
+    const bool atNewest = verticalScrollBar()->value() == verticalScrollBar()->maximum();
+    const int place = verticalScrollBar()->value();
     clear();
     m_cpu = cpu;
+    m_shown = h;
     if (cpu == nullptr) return;
-    const std::vector<unsigned int> h = cpu->get_history();
     if (h.empty()) {
-        addItem(tr("The processor does not keep its history"));
+        addItem(tr("Nothing recorded yet: the history starts with the debugger"));
         return;
     }
     for (size_t i = 0; i < h.size(); i++) {
         QListWidgetItem * item = new QListWidgetItem(fmt(h[i]), this);
         item->setData(Qt::UserRole, h[i]);
     }
-    scrollToBottom();
+    if (atNewest) scrollToBottom();
+    else verticalScrollBar()->setValue(place);
 }
 
 void HistoryView::contextMenuEvent(QContextMenuEvent *event)

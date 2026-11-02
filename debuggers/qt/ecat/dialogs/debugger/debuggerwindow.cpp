@@ -515,7 +515,7 @@ void DebuggerWindow::refresh_side()
     auto fmt = [this](unsigned int a) { return code_text(a); };
     if (side == m_stack) m_stack->refresh();
     m_breakpoints->refresh(c, fmt);
-    if (side == m_history && m_paused) m_history->refresh(c, fmt);
+    if (side == m_history) m_history->refresh(c, fmt);
     if (side == m_devices) m_devices->refresh();
 }
 
@@ -574,7 +574,6 @@ void DebuggerWindow::on_debug_event()
     if (serial == m_serial) return;
     m_serial = serial;
     const bool paused = e->debug_paused() && !e->debug_stepping();
-    //Set before the views are read: the history is filled only while paused
     m_paused = paused;
     if (paused) {
         CPU * c = e->debug_stop_cpu();
@@ -601,10 +600,12 @@ void DebuggerWindow::on_timer()
     } else if (!paused && isVisible() && !isMinimized()) {
         //Following a running machine is for the eyes: not while minimized
         refresh_all(false);
-        //The devices cost a call into the emulation thread: once a second
-        if (m_side_tabs->currentWidget() == m_devices && ++m_device_tick >= 5) {
+        //The devices and the history cost a read of the machine each: once a second, the one in sight
+        QWidget * side = m_side_tabs->currentWidget();
+        if ((side == m_devices || side == m_history) && ++m_device_tick >= 5) {
             m_device_tick = 0;
-            m_devices->refresh();
+            if (side == m_devices) m_devices->refresh();
+            else m_history->refresh(current_cpu(), [this](unsigned int a) { return code_text(a); });
         }
     }
     show_state();

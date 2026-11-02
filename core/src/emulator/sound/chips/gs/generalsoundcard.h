@@ -399,6 +399,11 @@ public:
         _execHistory = history;
         _execContext = context;
     }
+    /// That history (nullptr: none attached); a debugger reads it as a snapshot and may switch it on
+    history::DeviceHistory<ExecRecord>* execHistory() const
+    {
+        return _execHistory;
+    }
     /// The instruction at `pc` into the execution history (the runner's record loop, the recorder)
     void recordExecStep(uint16_t pc);
     /// The idle loop at `head` slept through `iterations` times: one record (ExecRecord::idle) while recording
