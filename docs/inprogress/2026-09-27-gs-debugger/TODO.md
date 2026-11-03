@@ -45,7 +45,14 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
   `/stepout`, CLI `--cpu`, Lua / Python `cpu`, MCP `control_execution` steps `cpu`. Tests:
   `GSCardTarget_Test.AStepParksAtItsBoundary`, `ABreakpointEndsAStepOver`, `TheMachinesCardStepsThroughRunControl`,
   `McpDebugTools_Test.CardCpu_StepsGoToTheCardsRoutes`. No lock-step: the main CPU runs on to the card's catch-up.
-- [ ] The Qt remote adapter's card CPU (`debuggers/qt/adapter/remotemachine.cpp`) over `?cpu=gs`.
+- [x] The Qt debugger's card CPU over the WebAPI (2026-11-02, branch `gs-cpu-surfaces`): `RemoteCardZ80` in
+  `debuggers/qt/adapter/remotemachine.cpp` (registers, 64 KB, windows over `?cpu=`, once per snapshot; its own
+  breakpoints and run-to; the card's RAM / ROM / flash as paged memories; the `<slot>.cpu` history); a step of a
+  card's tab is the card's step in both adapters (embedded: `RunControl::CardStep`); a card's stop brings its tab
+  to the front. `unreal-debugger --self-check` (and `--connect ... --self-check`) checks the card step and step over.
+- [x] Scripts sent over `/lua/exec`, `/python/exec` (and `/file`) act in the sender's session
+  (`execution::script::BorrowedSessions`): an MCP agent's Lua card step is no longer refused by the agent's own
+  implicit session. Test: `ExecutionArbiterMachine_Test.AClientsScriptActsInTheClientsSession`.
 
 ### C. Read-value script callbacks (design §8A.7)
 

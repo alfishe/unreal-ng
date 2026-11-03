@@ -450,9 +450,9 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& /*req*/,
         uint8_t* pagePtr = memory.ROMPageHostAddress(pageNum);
         if (pagePtr && rom)
         {
-            std::string signature = rom->CalculateSignature(pagePtr, 0x4000);
-            pageInfo["signature"] = signature;
-            std::string title = rom->GetROMTitle(signature);
+            pageInfo["signature"] = rom->CalculateSignature(pagePtr, 0x4000);
+            // Blank pages and copies of a lower page say so (ROM::GetROMPageTitle, the same on every surface)
+            std::string title = rom->GetROMPageTitle(static_cast<uint8_t>(pageNum));
             pageInfo["title"] = title.empty() ? "Unknown ROM" : title;
         }
 
@@ -485,7 +485,7 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& /*req*/,
         if (activePagePtr && rom)
         {
             std::string sig = rom->CalculateSignature(activePagePtr, 0x4000);
-            std::string title = rom->GetROMTitle(sig);
+            std::string title = rom->GetROMPageTitle(memory.GetROMPage());
             mapping["bank0_rom_title"] = title.empty() ? "Unknown ROM" : title;
             mapping["bank0_rom_signature"] = sig;
         }
@@ -1719,9 +1719,9 @@ void EmulatorAPI::getStatePaging(const HttpRequestPtr& /*req*/, std::function<vo
                 if (pagePtr)
                 {
                     std::string signature = rom->CalculateSignature(pagePtr, 0x4000);
-                    // GetROMTitle already carries the "Unknown ROM, <digest>"
-                    // fallback - identical wording on every surface
-                    bank["name"] = rom->GetROMTitle(signature);
+                    // GetROMPageTitle: the "Unknown ROM, <digest>" fallback, blank
+                    // pages and copies named - identical wording on every surface
+                    bank["name"] = rom->GetROMPageTitle(romPage);
                     bank["signature"] = signature;
                 }
                 // Role: what the model layout says this slot is (core single

@@ -251,8 +251,8 @@ def test_the_card_cpu_steps(s):
     r = s.call('control_execution', {'action': 'step', 'cpu': 'ms'}, ok=False)
     expect(r.is_error, 'no MultiSound card', r.text)
 
-    # A script drives the machine in a session of its own (it takes over MCP's implicit one)
-    code = ('take_control("gs-step") local r = step("gs") release_control() '
+    # A script MCP sends acts in MCP's session: it steps the machine MCP holds, release_control leaves that session
+    code = ('local r = step("gs") release_control() '
             'if r.ok then print(r.ok, r.stop.reason, r.stop.cpu) else print("refused", r.error) end')
     r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/lua/exec', 'body': {'code': code}}, ok=False)
     output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
@@ -262,12 +262,13 @@ def test_the_card_cpu_steps(s):
             'emu = ue.emu_get_selected()\n'
             'emu.take_control("gs-step")\n'
             'r = emu.steps(2, cpu="gs")\n'
-            'emu.release_control()\n'
             'print("card-step", r["ok"], r["stop"]["reason"], r["cpu"])\n')
     r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/python/exec', 'body': {'code': code}}, ok=False)
     if 'Python automation is not available' not in r.text:
         output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
         expect('card-step True step gs' in output, 'Python steps the card', output)
+    r = s.call('control_execution', {'action': 'step', 'cpu': 'gs'})
+    expect((r.structured or {}).get('stop', {}).get('reason') == 'step', 'MCP still holds the machine', r.text)
     clear(s)
 
 

@@ -5644,6 +5644,11 @@ REST API endpoints for remote interpreter control via HTTP.
 | `POST` | `/api/v1/lua/stop` | - | Request Lua execution stop. |  
 | `GET` | `/api/v1/lua/globals` | - | List Lua global variables (JSON array). |
 
+Code sent through `exec` / `file` acts in the sender's automation session: on a machine the sender holds (its
+`X-Unreal-Session`, or its implicit session, an MCP agent's for example) the script's control calls pass as the
+sender's own, so the client and its script drive one machine together; `release_control()` in the script leaves the
+sender's session in place ([execution arbiter design §6a](../../../inprogress/2026-10-09-execution-arbiter/design.md#6a-automation-sessions-visible-remote-control-x7)).
+
 **Response Format**:
 
 Success response:
