@@ -2194,6 +2194,12 @@ void Z80::HandleINT(uint8_t vector)
     cpu.sp = sp;
     if (sink) [[unlikely]]
         *sink = static_cast<uint8_t>(AccessContext::Plain);
+    // A bus trace (the TTD cause chain) sees the acknowledge's pushes like any other write
+    if (busTraceHook) [[unlikely]]
+    {
+        busTraceHook('W', static_cast<uint16_t>(sp + 1), cpu.pch);
+        busTraceHook('W', sp, cpu.pcl);
+    }
 
     /// region <Determine interrupt handler address>
     uint16_t interruptHandlerAddress;
@@ -2210,9 +2216,15 @@ void Z80::HandleINT(uint8_t vector)
         // MAME, z80ex, redcode Z80).
         // Raw memory access without T-state accounting: the vector fetch time
         // is already included in interruptDuration above (rd() would add +3T per byte)
-        uint16_t vectorAddress = vector + cpu.i * 0x100;
-        interruptHandlerAddress = (_memory->*MemIf->MemoryRead)(vectorAddress, false) +
-                                  0x100 * (_memory->*MemIf->MemoryRead)(vectorAddress + 1, false);
+        const uint16_t vectorAddress = static_cast<uint16_t>(vector + cpu.i * 0x100);
+        const uint8_t vectorLow = (_memory->*MemIf->MemoryRead)(vectorAddress, false);
+        const uint8_t vectorHigh = (_memory->*MemIf->MemoryRead)(static_cast<uint16_t>(vectorAddress + 1), false);
+        interruptHandlerAddress = static_cast<uint16_t>(vectorLow + 0x100 * vectorHigh);
+        if (busTraceHook) [[unlikely]]
+        {
+            busTraceHook('R', vectorAddress, vectorLow);
+            busTraceHook('R', static_cast<uint16_t>(vectorAddress + 1), vectorHigh);
+        }
     }
     /// endregion </Determine interrupt handler address>
 

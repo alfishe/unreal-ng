@@ -32,7 +32,16 @@ public:
     }
 };
 
-/// Actuator levels 0..1 (haptics.md §2): the handle motors (low / high frequency) and the impulse triggers
+/// The waveform of a voice coil (haptics.md §6.1 `hd.waveform`)
+enum class HdWave : uint8_t
+{
+    Sine,
+    Square,
+    Noise,
+};
+
+/// Actuator levels 0..1 (haptics.md §2): the handle motors (low / high frequency), the impulse triggers and the voice
+/// coils of a pad that has them (the Steam Deck's trackpads: hdLeft, hdRight), which play a tone of hdFrequency in hdWave
 struct RumbleLevels
 {
     float low = 0;
@@ -43,11 +52,18 @@ struct RumbleLevels
     /// rumble, CoreHaptics sharpness), 0 its default; ERM motors ignore it
     uint16_t lowHz = 0;
     uint16_t highHz = 0;
+    /// The voice coils (the trackpads of a Steam Deck), left and right on their own
+    float hdLeft = 0;
+    float hdRight = 0;
+    uint16_t hdFrequency = 0;  ///< Hz of the coils' tone; 0 is the device's own
+    HdWave hdWave = HdWave::Sine;
 
     bool operator==(const RumbleLevels& other) const
     {
         return low == other.low && high == other.high && leftTrigger == other.leftTrigger &&
-               rightTrigger == other.rightTrigger && lowHz == other.lowHz && highHz == other.highHz;
+               rightTrigger == other.rightTrigger && lowHz == other.lowHz && highHz == other.highHz &&
+               hdLeft == other.hdLeft && hdRight == other.hdRight && hdFrequency == other.hdFrequency &&
+               hdWave == other.hdWave;
     }
     bool operator!=(const RumbleLevels& other) const
     {
@@ -65,6 +81,9 @@ enum RumbleActuator : uint8_t
     /// A clicker: discrete waveforms (a click, a buzz) and no levels - the Surface Dial's Simple Haptic Controller.
     /// It plays HapticClicks through IBackend::PlayClicks; the motor levels of the game's haptics do not reach it
     kHapticClicker = 16,
+    /// The voice coils of a pad, left and right (the Steam Deck's trackpads): RumbleLevels hdLeft / hdRight
+    kRumbleHdLeft = 32,
+    kRumbleHdRight = 64,
 };
 
 /// One effect of a clicker (kHapticClicker): a waveform played @p count times, @p periodMs apart

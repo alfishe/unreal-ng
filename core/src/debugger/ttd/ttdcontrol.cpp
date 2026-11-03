@@ -11,6 +11,7 @@
 #include <fstream>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <type_traits>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -346,6 +347,9 @@ private:
     TTDReply ReverseStep(const TTDRequest& request);
     TTDReply Markers();
     TTDReply Timeline(const TTDRequest& request);
+    TTDReply CauseChain(const TTDRequest& request);
+    TTDReply FindEvent(const TTDRequest& request);
+    TTDReply ExplainFrame(const TTDRequest& request);
     TTDReply Bookmarks();
     TTDReply BookmarkAdd(const TTDRequest& request);
     TTDReply BookmarkDelete(const TTDRequest& request);
@@ -437,7 +441,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-delete",
         "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
-        "timeline", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
+        "timeline", "cause-chain", "find-event", "explain-frame", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
     return verbs;
 }
 
@@ -471,6 +475,12 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"memory-diff", {"space", "from_frame", "to_frame", "limit"}},
         {"coverage-summary", {"from_frame", "to_frame", "kind", "bucket_size", "limit"}},
         {"timeline", {"from_frame", "to_frame", "bucket_size", "limit", "buckets", "ports", "min_phase_ms"}},
+        {"cause-chain", {"addr", "phys_page", "reg", "frame", "tinframe", "depth", "max_links", "max_frames", "flags",
+                         "text"}},
+        {"find-event", {"kind", "cond", "addr", "addr_to", "phys_page", "size", "value", "bit", "exact", "min_changed",
+                        "dir", "port", "port_mask", "value_mask", "key", "pressed", "order", "from_frame", "to_frame",
+                        "limit", "max_frames", "text"}},
+        {"explain-frame", {"frame", "sections", "limit", "text"}},
         {"file-info", {"path"}},
         {"dump", {"path"}},
         {"load", {"path"}},
@@ -568,6 +578,12 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return AsOperation(OpKind::TimelineSeek, verb, request, [&]() { return WithCheck(ReverseStep(request)); });
     if (verb == "timeline")
         return Timeline(request);
+    if (verb == "cause-chain")
+        return CauseChain(request);
+    if (verb == "find-event")
+        return FindEvent(request);
+    if (verb == "explain-frame")
+        return ExplainFrame(request);
     if (verb == "markers")
         return Markers();
     if (verb == "bookmarks")
@@ -2484,6 +2500,573 @@ TTDReply TTDControlBackend::Timeline(const TTDRequest& request)
     cost["port_records"] = res.portRecords;
     cost["ms"] = static_cast<double>(res.elapsedNs) / 1e6;
     reply.body["cost"] = cost;
+    return reply;
+}
+
+TTDReply TTDControlBackend::CauseChain(const TTDRequest& request)
+{
+    TTDCauseQuery q;
+    const std::string* addr = Option(request, "addr");
+    const std::string* reg = Option(request, "reg");
+    if (!addr == !reg)
+        return Fail(TTDControlError::BadRequest, "cause-chain needs addr (a Z80 address) or reg (A, HL, IX, SP, E'...)");
+    uint64_t n = 0;
+    if (addr)
+    {
+        if (!ParseUpTo(*addr, 0xFFFF, n))
+            return Fail(TTDControlError::BadRequest, "Invalid addr: '" + *addr + "' (expected 0..0xFFFF)");
+        q.memory = true;
+        q.address = static_cast<uint16_t>(n);
+        if (const std::string* page = Option(request, "phys_page"))
+        {
+            std::optional<PhysPage> parsed;
+            if (!ParsePhysPage(*page, parsed))
+                return Fail(TTDControlError::BadRequest, "Invalid phys_page (expected 0..255 or rom)");
+            q.hasPage = true;
+            q.page = *parsed;
+        }
+    }
+    else
+    {
+        std::vector<TTDCauseReg> regs;
+        if (!TTDCauseRegsByName(*reg, regs))
+            return Fail(TTDControlError::BadRequest, "Invalid reg: '" + *reg +
+                                                         "' (A F B C D E H L IXH IXL IYH IYL I R, AF BC DE HL IX IY SP, "
+                                                         "the primed A' ... L' and AF' ... HL')");
+        q.memory = false;
+        q.reg = *reg;
+    }
+    if (const std::string* t = Option(request, "frame"))
+    {
+        if (!ParseU64(*t, n))
+            return Fail(TTDControlError::BadRequest, "Invalid frame: '" + *t + "'");
+        q.hasTime = true;
+        q.at.frame = n;
+        if (const std::string* tin = Option(request, "tinframe"))
+        {
+            if (!ParseUpTo(*tin, UINT32_MAX, n))
+                return Fail(TTDControlError::BadRequest, "Invalid tinframe: '" + *tin + "'");
+            q.at.tInFrame = static_cast<uint32_t>(n);
+        }
+    }
+    else if (Option(request, "tinframe"))
+        return Fail(TTDControlError::BadRequest, "tinframe goes with frame");
+    auto bounded = [&](const char* name, uint32_t max, uint32_t& out) -> std::string {
+        const std::string* t = Option(request, name);
+        if (!t)
+            return "";
+        if (!ParseUpTo(*t, max, n) || n == 0)
+            return std::string("Invalid ") + name + ": '" + *t + "' (expected 1.." + std::to_string(max) + ")";
+        out = static_cast<uint32_t>(n);
+        return "";
+    };
+    for (const auto& [name, max, out] : {std::tuple<const char*, uint32_t, uint32_t*>{"depth", TTDCauseQuery::kMaxDepth, &q.depth},
+                                         {"max_links", TTDCauseQuery::kMaxLinks, &q.maxLinks},
+                                         {"max_frames", TTDCauseQuery::kMaxFrames, &q.maxFrames}})
+        if (std::string bad = bounded(name, max, *out); !bad.empty())
+            return Fail(TTDControlError::BadRequest, bad);
+    if (std::string flag = FlagOption(request, "flags", q.followFlags); !flag.empty())
+        return Fail(TTDControlError::BadRequest, flag);
+    bool text = false;
+    if (std::string flag = FlagOption(request, "text", text); !flag.empty())
+        return Fail(TTDControlError::BadRequest, flag);
+
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    const TTDCauseResult res = _manager->QueryCauseChain(q);
+    if (!res.error.empty())
+        return Fail(TTDControlError::NotAvailable, res.error);
+
+    TTDReply reply;
+    StateNode target = StateNode::Object();
+    target["kind"] = q.memory ? "memory" : "register";
+    if (!res.links.empty())
+        target["name"] = TTDCauseNameText(res.links.front().name);
+    if (q.memory)
+    {
+        target["addr"] = static_cast<unsigned>(q.address);
+        if (!res.links.empty())
+            target["phys_page"] = PhysPageNode(res.links.front().name.page);
+    }
+    else
+        target["reg"] = q.reg;
+    AddPosition(target, res.at);
+    reply.body["target"] = target;
+    StateNode links = StateNode::Array();
+    uint64_t stops = 0;
+    for (size_t i = 0; i < res.links.size(); ++i)
+    {
+        const TTDCauseLink& l = res.links[i];
+        StateNode node = StateNode::Object();
+        node["id"] = static_cast<uint64_t>(i);
+        node["parent"] = static_cast<int64_t>(l.parent);
+        node["depth"] = static_cast<unsigned>(l.depth);
+        node["kind"] = TTDCauseKindName(l.kind);
+        node["name"] = TTDCauseNameText(l.name);
+        node["value"] = static_cast<unsigned>(l.value);
+        if (l.hasProducer)
+        {
+            AddPosition(node, l.time);
+            node["pc"] = static_cast<unsigned>(l.pc);
+            node["code_page"] = PhysPageNode(l.codePage);
+            node["text"] = l.text;
+        }
+        if (!l.inputs.empty())
+        {
+            StateNode inputs = StateNode::Array();
+            for (const std::string& in : l.inputs)
+                inputs.push(StateNode(in));
+            node["inputs"] = inputs;
+        }
+        if (!l.detail.empty())
+            node["detail"] = l.detail;
+        if (!l.stop.empty())
+        {
+            node["stop"] = l.stop;
+            ++stops;
+        }
+        links.push(node);
+    }
+    reply.body["links"] = links;
+    reply.body["stops"] = stops;
+    reply.body["frames_traced"] = static_cast<uint64_t>(res.framesTraced);
+    reply.body["ms"] = res.ms;
+    if (text)
+        reply.body["text"] = TTDCauseChainText(res);
+    return reply;
+}
+
+TTDReply TTDControlBackend::FindEvent(const TTDRequest& request)
+{
+    TTDFindEventQuery q;
+    const std::string* kind = Option(request, "kind");
+    if (!kind || !TTDFindEventKindByName(*kind, q.kind))
+        return Fail(TTDControlError::BadRequest, "find-event needs kind: mem, screen, exec, port, border or key");
+    q.cond = q.kind == TTDFindEventKind::Screen ? TTDFindEventCond::Change : TTDFindEventCond::Changed;
+    if (const std::string* cond = Option(request, "cond"))
+        if (!TTDFindEventCondByName(*cond, q.cond))
+            return Fail(TTDControlError::BadRequest, "Invalid cond: '" + *cond +
+                                                         "' (mem: changed increased decreased equals becomes differs "
+                                                         "bit_set bit_clear; screen: change cleared)");
+    uint64_t n = 0;
+    auto number = [&](const char* name, uint64_t max, uint64_t& out) -> std::string {
+        const std::string* t = Option(request, name);
+        if (!t)
+            return "";
+        if (!ParseUpTo(*t, max, out))
+            return std::string("Invalid ") + name + ": '" + *t + "' (expected 0.." + std::to_string(max) + ")";
+        return "";
+    };
+    auto need = [&](const char* name) { return Fail(TTDControlError::BadRequest, std::string("find-event ") + *kind + " needs " + name); };
+#define FE_NUMBER(name, max, assign)                                         \
+    if (Option(request, name))                                               \
+    {                                                                        \
+        if (std::string bad = number(name, max, n); !bad.empty())            \
+            return Fail(TTDControlError::BadRequest, bad);                   \
+        assign;                                                              \
+    }
+    const bool mem = q.kind == TTDFindEventKind::Mem;
+    const bool exec = q.kind == TTDFindEventKind::Exec;
+    if (mem || exec)
+    {
+        if (!Option(request, "addr"))
+            return need("addr");
+        FE_NUMBER("addr", 0xFFFF, q.address = static_cast<uint16_t>(n));
+        q.addressTo = q.address;
+        FE_NUMBER("addr_to", 0xFFFF, q.addressTo = static_cast<uint16_t>(n));
+        if (const std::string* page = Option(request, "phys_page"))
+        {
+            std::optional<PhysPage> parsed;
+            if (!ParsePhysPage(*page, parsed))
+                return Fail(TTDControlError::BadRequest, "Invalid phys_page (expected 0..255 or rom)");
+            q.hasPage = true;
+            q.page = *parsed;
+        }
+    }
+    if (mem)
+    {
+        FE_NUMBER("size", 2, q.size = static_cast<uint8_t>(n));
+        if (q.size == 0)
+            return Fail(TTDControlError::BadRequest, "Invalid size: 1 or 2");
+        const bool valued = q.cond == TTDFindEventCond::Equals || q.cond == TTDFindEventCond::Becomes ||
+                            q.cond == TTDFindEventCond::Differs;
+        const bool bitted = q.cond == TTDFindEventCond::BitSet || q.cond == TTDFindEventCond::BitClear;
+        if (valued && !Option(request, "value"))
+            return need("value");
+        if (bitted && !Option(request, "bit"))
+            return need("bit");
+        FE_NUMBER("value", q.size == 2 ? 0xFFFF : 0xFF, q.value = static_cast<uint16_t>(n));
+        FE_NUMBER("bit", q.size == 2 ? 15 : 7, q.bit = static_cast<uint8_t>(n));
+        if (std::string flag = FlagOption(request, "exact", q.exact); !flag.empty())
+            return Fail(TTDControlError::BadRequest, flag);
+    }
+    if (q.kind == TTDFindEventKind::Screen)
+        FE_NUMBER("min_changed", 100, q.minChanged = static_cast<uint32_t>(n));
+    if (q.kind == TTDFindEventKind::Port)
+    {
+        if (const std::string* dir = Option(request, "dir"))
+        {
+            if (*dir != "in" && *dir != "out")
+                return Fail(TTDControlError::BadRequest, "Invalid dir: in or out");
+            q.portOut = *dir == "out";
+        }
+        if (!Option(request, "port"))
+            return need("port");
+        FE_NUMBER("port", 0xFFFF, q.port = static_cast<uint16_t>(n));
+        FE_NUMBER("port_mask", 0xFFFF, q.portMask = static_cast<uint16_t>(n));
+        FE_NUMBER("value_mask", 0xFF, q.valueMask = static_cast<uint8_t>(n));
+    }
+    if (q.kind == TTDFindEventKind::Port || q.kind == TTDFindEventKind::Border)
+        FE_NUMBER("value", q.kind == TTDFindEventKind::Border ? 7 : 0xFF, (q.value = static_cast<uint16_t>(n), q.hasValue = true));
+    if (q.kind == TTDFindEventKind::Key)
+    {
+        if (const std::string* key = Option(request, "key"))
+            q.key = *key;
+        // FlagOption reads an absent flag as false; pressed defaults to true
+        if (Option(request, "pressed"))
+            if (std::string flag = FlagOption(request, "pressed", q.pressed); !flag.empty())
+                return Fail(TTDControlError::BadRequest, flag);
+    }
+    if (const std::string* order = Option(request, "order"))
+    {
+        if (*order != "first" && *order != "last")
+            return Fail(TTDControlError::BadRequest, "Invalid order: first or last");
+        q.last = *order == "last";
+    }
+    FE_NUMBER("from_frame", UINT64_MAX, q.fromFrame = n);
+    FE_NUMBER("to_frame", UINT64_MAX, q.toFrame = n);
+    FE_NUMBER("limit", TTDFindEventQuery::kMaxLimit, q.limit = static_cast<uint32_t>(n));
+    FE_NUMBER("max_frames", TTDFindEventQuery::kMaxFramesReplayed, q.maxFrames = static_cast<uint32_t>(n));
+#undef FE_NUMBER
+    if (q.limit == 0)
+        return Fail(TTDControlError::BadRequest, "Invalid limit: 1.." + std::to_string(TTDFindEventQuery::kMaxLimit));
+    bool text = false;
+    if (std::string flag = FlagOption(request, "text", text); !flag.empty())
+        return Fail(TTDControlError::BadRequest, flag);
+
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    const TTDFindEventResult res = _manager->QueryFindEvent(q);
+    if (!res.error.empty())
+        return Fail(TTDControlError::BadRequest, res.error);
+
+    TTDReply reply;
+    StateNode event = StateNode::Object();
+    event["kind"] = TTDFindEventKindName(q.kind);
+    if (mem || q.kind == TTDFindEventKind::Screen)
+        event["cond"] = TTDFindEventCondName(q.cond);
+    event["order"] = q.last ? "last" : "first";
+    if (mem || exec)
+    {
+        event["addr"] = static_cast<unsigned>(q.address);
+        if (exec)
+            event["addr_to"] = static_cast<unsigned>(q.addressTo);
+        event["phys_page"] = PhysPageNode(res.page);
+    }
+    reply.body["event"] = event;
+    StateNode hits = StateNode::Array();
+    for (const TTDFindEventHit& h : res.hits)
+    {
+        StateNode node = StateNode::Object();
+        AddPosition(node, h.time);
+        if (h.hasPc)
+        {
+            node["pc"] = static_cast<unsigned>(h.pc);
+            node["code_page"] = PhysPageNode(h.codePage);
+            if (!h.text.empty())
+                node["text"] = h.text;
+        }
+        if (h.hasValues)
+        {
+            node["before"] = static_cast<unsigned>(h.before);
+            node["after"] = static_cast<unsigned>(h.after);
+        }
+        if (h.device)
+            node["device"] = true;
+        node["why"] = h.why;
+        hits.push(node);
+    }
+    reply.body["hits"] = hits;
+    StateNode window = StateNode::Object();
+    window["from_frame"] = res.fromFrame;
+    window["to_frame"] = res.toFrame;
+    reply.body["window"] = window;
+    reply.body["more"] = res.more;
+    if (res.more)
+        reply.body[q.last ? "next_to_frame" : "next_from_frame"] = q.last ? res.nextToFrame : res.nextFromFrame;
+    StateNode barriers = StateNode::Array();
+    for (const std::string& b : res.barriers)
+        barriers.push(StateNode(b));
+    reply.body["barriers"] = barriers;
+    if (!res.missing.empty())
+    {
+        StateNode missing = StateNode::Array();
+        for (const std::string& m : res.missing)
+            missing.push(StateNode(m));
+        reply.body["missing"] = missing;
+    }
+    reply.body["frames_scanned"] = res.framesScanned;
+    reply.body["frames_replayed"] = res.framesReplayed;
+    reply.body["ms"] = res.ms;
+    if (text)
+        reply.body["text"] = TTDFindEventText(q, res);
+    return reply;
+}
+
+TTDReply TTDControlBackend::ExplainFrame(const TTDRequest& request)
+{
+    TTDExplainFrameQuery q;
+    if (const std::string* t = Option(request, "frame"))
+    {
+        if (!ParseUpTo(*t, UINT64_MAX, q.frame))
+            return Fail(TTDControlError::BadRequest, "Invalid frame: '" + *t + "'");
+        q.hasFrame = true;
+    }
+    if (const std::string* t = Option(request, "sections"))
+    {
+        q.sections = 0;
+        size_t from = 0;
+        while (from <= t->size())
+        {
+            const size_t comma = std::min(t->find(',', from), t->size());
+            const std::string name = t->substr(from, comma - from);
+            uint32_t bit = 0;
+            if (!name.empty() && !TTDExplainSectionByName(name, bit))
+                return Fail(TTDControlError::BadRequest, "Invalid section: '" + name +
+                                                             "' (time routines interrupt paging ports memory screen "
+                                                             "input markers all)");
+            q.sections |= bit;
+            from = comma + 1;
+        }
+        if (q.sections == 0)
+            q.sections = kExplainAll;
+    }
+    if (const std::string* t = Option(request, "limit"))
+    {
+        uint64_t n = 0;
+        if (!ParseUpTo(*t, TTDExplainFrameQuery::kMaxLimit, n) || n == 0)
+            return Fail(TTDControlError::BadRequest, "Invalid limit: '" + *t + "' (expected 1.." +
+                                                         std::to_string(TTDExplainFrameQuery::kMaxLimit) + ")");
+        q.limit = static_cast<uint32_t>(n);
+    }
+    bool text = false;
+    if (std::string flag = FlagOption(request, "text", text); !flag.empty())
+        return Fail(TTDControlError::BadRequest, flag);
+
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    const TTDExplainFrameResult res = _manager->QueryExplainFrame(q);
+    if (!res.error.empty())
+        return Fail(TTDControlError::BadRequest, res.error);
+
+    TTDReply reply;
+    StateNode& b = reply.body;
+    b["frame"] = res.frame;
+    b["frame_t"] = static_cast<unsigned>(res.frameT);
+    b["end_t"] = static_cast<unsigned>(res.endT);
+    b["partial"] = res.partial;
+    if (!res.barrier.empty())
+        b["barrier"] = res.barrier;
+    b["instructions"] = res.instructions;
+    if (q.sections & kExplainTime)
+    {
+        StateNode time = StateNode::Object();
+        time["isr"] = res.isrT;
+        time["halt"] = res.haltT;
+        time["code"] = res.codeT;
+        b["time"] = time;
+    }
+    if (q.sections & kExplainRoutines)
+    {
+        StateNode list = StateNode::Array();
+        for (const TTDExplainRoutine& r : res.routines)
+        {
+            StateNode n = StateNode::Object();
+            n["pc"] = static_cast<unsigned>(r.pc);
+            n["code_page"] = PhysPageNode(r.codePage);
+            if (r.isr)
+                n["isr"] = true;
+            if (r.start)
+                n["start"] = true;
+            if (!r.label.empty())
+                n["label"] = r.label;
+            n["calls"] = r.calls;
+            n["t"] = r.t;
+            n["own_t"] = r.ownT;
+            n["insns"] = r.insns;
+            if (r.hasCaller)
+                n["caller"] = static_cast<unsigned>(r.caller);
+            list.push(n);
+        }
+        b["routines"] = list;
+        b["more_routines"] = res.moreRoutines;
+    }
+    if (q.sections & kExplainInterrupt)
+    {
+        b["interrupts_enabled"] = res.interruptsEnabled;
+        StateNode list = StateNode::Array();
+        for (const TTDExplainInterrupt& i : res.interrupts)
+        {
+            StateNode n = StateNode::Object();
+            n["tinframe"] = static_cast<unsigned>(i.tInFrame);
+            n["mode"] = static_cast<unsigned>(i.mode);
+            if (i.hasVector)
+                n["vector"] = static_cast<unsigned>(i.vectorAddress);
+            n["entry"] = static_cast<unsigned>(i.entry);
+            n["t"] = i.t;
+            if (i.beforeFrame)
+                n["before_frame"] = true;
+            n["returned"] = i.returned;
+            if (i.returned)
+                n["returned_to"] = static_cast<unsigned>(i.returnedTo);
+            list.push(n);
+        }
+        b["interrupts"] = list;
+    }
+    if (q.sections & kExplainPaging)
+    {
+        StateNode list = StateNode::Array();
+        for (const TTDExplainPaging& p : res.paging)
+        {
+            StateNode n = StateNode::Object();
+            n["tinframe"] = static_cast<unsigned>(p.tInFrame);
+            n["pc"] = static_cast<unsigned>(p.pc);
+            n["bank"] = static_cast<unsigned>(p.bank);
+            n["page"] = PhysPageNode(p.page);
+            n["was"] = PhysPageNode(p.was);
+            list.push(n);
+        }
+        b["paging"] = list;
+        b["more_paging"] = res.morePaging;
+    }
+    if (q.sections & kExplainPorts)
+    {
+        StateNode list = StateNode::Array();
+        for (const TTDExplainPort& p : res.ports)
+        {
+            StateNode n = StateNode::Object();
+            n["dir"] = p.out ? "out" : "in";
+            n["device"] = p.device;
+            n["port"] = static_cast<unsigned>(p.port);
+            if (p.manyPorts)
+                n["many_ports"] = true;
+            n["count"] = p.count;
+            n["tinframe"] = static_cast<unsigned>(p.tInFrame);
+            n["pc"] = static_cast<unsigned>(p.pc);
+            StateNode values = StateNode::Array();
+            for (uint8_t v : p.values)
+                values.push(StateNode(static_cast<unsigned>(v)));
+            n["values"] = values;
+            if (p.moreValues)
+                n["more_values"] = true;
+            if (p.rows)
+                n["rows"] = static_cast<unsigned>(p.rows);
+            if (!p.keys.empty())
+            {
+                StateNode keys = StateNode::Array();
+                for (const std::string& k : p.keys)
+                    keys.push(StateNode(k));
+                n["keys"] = keys;
+            }
+            list.push(n);
+        }
+        b["ports"] = list;
+        b["more_ports"] = res.morePorts;
+    }
+    if (q.sections & kExplainMemory)
+    {
+        StateNode list = StateNode::Array();
+        for (const TTDExplainRange& m : res.memory)
+        {
+            StateNode n = StateNode::Object();
+            n["region"] = TTDExplainRegionName(m.region);
+            n["phys_page"] = PhysPageNode(m.page);
+            n["offset"] = static_cast<unsigned>(m.offset);
+            if (m.hasAddress)
+                n["addr"] = static_cast<unsigned>(m.address);
+            n["length"] = m.length;
+            n["changed"] = m.changed;
+            n["written"] = m.written;
+            if (m.hasValues)
+            {
+                n["before"] = static_cast<unsigned>(m.before);
+                n["after"] = static_cast<unsigned>(m.after);
+            }
+            if (m.device)
+                n["device"] = true;
+            StateNode writers = StateNode::Array();
+            for (const TTDExplainWriter& w : m.writers)
+            {
+                StateNode wn = StateNode::Object();
+                wn["pc"] = static_cast<unsigned>(w.pc);
+                wn["code_page"] = PhysPageNode(w.codePage);
+                wn["text"] = w.text;
+                wn["count"] = w.count;
+                writers.push(wn);
+            }
+            n["writers"] = writers;
+            if (m.moreWriters)
+                n["more_writers"] = true;
+            list.push(n);
+        }
+        b["memory"] = list;
+        b["more_memory"] = res.moreMemory;
+    }
+    if (q.sections & kExplainScreen)
+    {
+        StateNode screen = StateNode::Object();
+        if (res.hasScreen)
+        {
+            screen["bytes"] = res.screenBytes;
+            screen["changed"] = res.screenChanged;
+            screen["pixels"] = res.pixelsChanged;
+            screen["attributes"] = res.attributesChanged;
+            screen["switched"] = res.screenSwitched;
+        }
+        StateNode border = StateNode::Array();
+        for (const TTDExplainBorder& c : res.border)
+        {
+            StateNode n = StateNode::Object();
+            n["colour"] = static_cast<unsigned>(c.colour);
+            n["count"] = c.count;
+            border.push(n);
+        }
+        screen["border"] = border;
+        b["screen"] = screen;
+    }
+    if (q.sections & kExplainInput)
+    {
+        StateNode input = StateNode::Object();
+        StateNode held = StateNode::Array();
+        for (const std::string& k : res.keysHeld)
+            held.push(StateNode(k));
+        input["held"] = held;
+        StateNode events = StateNode::Array();
+        for (const TTDExplainKey& k : res.keys)
+        {
+            StateNode n = StateNode::Object();
+            n["tinframe"] = static_cast<unsigned>(k.tInFrame);
+            n["key"] = k.key;
+            n["pressed"] = k.pressed;
+            events.push(n);
+        }
+        input["events"] = events;
+        b["input"] = input;
+    }
+    if (q.sections & kExplainMarkers)
+    {
+        StateNode markers = StateNode::Array();
+        for (const std::string& m : res.markers)
+            markers.push(StateNode(m));
+        b["markers"] = markers;
+    }
+    b["frames_replayed"] = res.framesReplayed;
+    b["ms"] = res.ms;
+    if (text)
+        b["text"] = TTDExplainFrameText(q, res);
     return reply;
 }
 

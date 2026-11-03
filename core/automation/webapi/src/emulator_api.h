@@ -750,6 +750,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageRare, "/api/v1/emulator/{id}/ttd/coverage/rare", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageSummary, "/api/v1/emulator/{id}/ttd/coverage/summary", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDTimeline, "/api/v1/emulator/{id}/ttd/timeline", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDCauseChain, "/api/v1/emulator/{id}/ttd/cause-chain", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDFindEvent, "/api/v1/emulator/{id}/ttd/find-event", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDExplainFrame, "/api/v1/emulator/{id}/ttd/explain-frame", drogon::Get);
     // endregion TTD
 
     // region Labels/Symbols (implementation: api/debug_api.cpp)
@@ -2346,6 +2349,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getTTDTimeline(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDCauseChain(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDFindEvent(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDExplainFrame(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion TTD Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)

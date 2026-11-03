@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <string>
 #include <vector>
@@ -12,6 +13,7 @@
 #include "_helpers/fixedmixerclock.h"
 #include "haptics/hapticprofile.h"
 #include "haptics/profilehaptics.h"
+#include "haptics/testeffects.h"
 #include "hid/drivers/dualsenseoutput.h"
 
 using namespace controllers;
@@ -164,7 +166,7 @@ TEST(HdHaptics_Test, FrequencyOfTheLoudestEffectPerBand)
     EXPECT_EQ(moved.lowHz, 320);
     EXPECT_EQ(moved.highHz, 0);
 
-    for (const char* bad : {R"({"frequency_hz": 0})", R"({"frequency_hz": 5000})", R"({"waveform": "sine"})", "7"})
+    for (const char* bad : {R"({"frequency_hz": 0})", R"({"frequency_hz": 5000})", R"({"waveform": "triangle"})", "7"})
     {
         JsonValue rule;
         ASSERT_TRUE(ParseJson(std::string(R"({"sources": {"s": {"probe": "exec", "address": 1}},
@@ -173,4 +175,127 @@ TEST(HdHaptics_Test, FrequencyOfTheLoudestEffectPerBand)
             << error;
         EXPECT_FALSE(ParseHapticProfile(rule, profile, error)) << bad;
     }
+}
+
+TEST(HdHaptics_Test, VoiceCoilTargetsAndTones)
+{
+    // haptics.md §6.1: `hd.left` / `hd.right` name the voice coils, `hd` gives their tone and wave
+    JsonValue section;
+    std::string error;
+    ASSERT_TRUE(ParseJson(R"({"sources": {"s": {"probe": "exec", "address": 1}},
+                              "rules": [{"on": "s", "play": "whip", "target": "hd.right|handle.high",
+                                         "hd": {"frequency_hz": 90, "waveform": "square"}},
+                                        {"on": "s", "play": "tick", "target": "hd.left"},
+                                        {"on": "s", "play": "tick", "target": "all"}]})",
+                          section, error))
+        << error;
+    HapticProfile profile;
+    ASSERT_TRUE(ParseHapticProfile(section, profile, error)) << error;
+    EXPECT_EQ(profile.rules[0].target, kHdRight);
+    ASSERT_EQ(profile.rules[0].fallbacks.size(), 1u);
+    EXPECT_EQ(profile.rules[0].hdFrequency, 90);
+    EXPECT_EQ(profile.rules[0].lowHz, 90) << "frequency_hz still sets the bands";
+    ASSERT_TRUE(profile.rules[0].hdWave.has_value());
+    EXPECT_EQ(*profile.rules[0].hdWave, HdWave::Square);
+    EXPECT_EQ(profile.rules[1].target, kHdLeft);
+    EXPECT_EQ(profile.rules[2].target, kTargetAll);
+    EXPECT_NE(kTargetAll & kHdLeft, 0);
+    EXPECT_NE(kTargetAll & kHdRight, 0);
+
+    // A pad without coils plays the fallback
+    constexpr uint8_t handlesOnly = kRumbleLow | kRumbleHigh;
+    constexpr uint8_t withCoils = handlesOnly | kRumbleHdLeft | kRumbleHdRight;
+    EXPECT_EQ(profile.rules[0].TargetFor(handlesOnly), kHandleHigh);
+    EXPECT_EQ(profile.rules[0].TargetFor(withCoils), kHdRight);
+
+    // Retargeting: one coil gets the loudest level, the other stays silent; a motor target takes no coil level
+    HapticEffect whip;
+    ASSERT_TRUE(BuiltinHapticEffect("whip", whip));
+    EXPECT_FLOAT_EQ(whip.levels.hdLeft, 0.0f) << "a whip lands on the side it flies to";
+    EXPECT_GT(whip.levels.hdRight, 0.0f);
+    const RumbleLevels coil = RetargetLevels(whip.levels, kHdLeft);
+    EXPECT_GT(coil.hdLeft, 0.0f);
+    EXPECT_FLOAT_EQ(coil.hdRight, 0.0f);
+    EXPECT_FLOAT_EQ(coil.low, 0.0f);
+    EXPECT_EQ(coil.hdFrequency, whip.levels.hdFrequency);
+    const RumbleLevels motor = RetargetLevels(whip.levels, kHandleHigh);
+    EXPECT_FLOAT_EQ(motor.hdLeft, 0.0f);
+    EXPECT_FLOAT_EQ(motor.hdRight, 0.0f);
+    EXPECT_FLOAT_EQ(motor.high, std::max(whip.levels.low, whip.levels.high)) << "the motor peak ignores the coils";
+    const RumbleLevels all = RetargetLevels(whip.levels, kTargetAll);
+    EXPECT_FLOAT_EQ(all.hdRight, whip.levels.hdRight) << "`all` keeps a coil's own level";
+    EXPECT_GT(all.hdLeft, 0.0f) << "and gives the loudest to a coil the effect has none for";
+
+    for (const char* bad : {R"({"waveform": "triangle"})", R"({"waveform": 3})"})
+    {
+        JsonValue rule;
+        ASSERT_TRUE(ParseJson(std::string(R"({"sources": {"s": {"probe": "exec", "address": 1}},
+                                              "rules": [{"on": "s", "play": "tick", "hd": )") + bad + "}]}",
+                              rule, error))
+            << error;
+        EXPECT_FALSE(ParseHapticProfile(rule, profile, error)) << bad;
+    }
+}
+
+TEST(HdHaptics_Test, VoiceCoilsInTheMixer)
+{
+    HapticMixer mixer([](const HostDeviceId&, const RumbleLevels&) { return true; }, false, FixedMixerClock());
+    RumbleLevels left;
+    left.hdLeft = 0.4f;
+    left.hdFrequency = 80;
+    left.hdWave = HdWave::Square;
+    RumbleLevels right;
+    right.hdRight = 0.9f;
+    right.hdFrequency = 200;
+    right.hdWave = HdWave::Noise;
+    mixer.Play("pad", HapticEffect(left, 60000));
+    EXPECT_FLOAT_EQ(mixer.Written("pad").hdLeft, 0.4f);
+    EXPECT_FLOAT_EQ(mixer.Written("pad").hdRight, 0.0f);
+    EXPECT_EQ(mixer.Written("pad").hdFrequency, 80);
+    mixer.Play("pad", HapticEffect(right, 60000));
+    const RumbleLevels mixed = mixer.Written("pad");
+    EXPECT_FLOAT_EQ(mixed.hdLeft, 0.4f) << "each coil keeps its own level";
+    EXPECT_FLOAT_EQ(mixed.hdRight, 0.9f);
+    EXPECT_EQ(mixed.hdFrequency, 200) << "the tone is the loudest effect's";
+    EXPECT_EQ(mixed.hdWave, HdWave::Noise);
+    mixer.StopAll();
+    EXPECT_FLOAT_EQ(mixer.Written("pad").hdRight, 0.0f);
+
+    // A rule's `hd` sets the coils' tone over the effect's
+    JsonValue section;
+    std::string error;
+    ASSERT_TRUE(ParseJson(R"({"sources": {"boom": {"probe": "exec", "address": "0x8000"}},
+                              "rules": [{"on": "boom", "play": "thump", "target": "hd.left",
+                                         "hd": {"frequency_hz": 45, "waveform": "noise"}}]})",
+                          section, error))
+        << error;
+    HapticProfile profile;
+    ASSERT_TRUE(ParseHapticProfile(section, profile, error)) << error;
+    ProfileHaptics feed(profile, "hd", mixer, [] { return std::vector<HostDeviceId>{"pad"}; });
+    HapticFrame frame;
+    frame.probeCount = 1;
+    frame.probeHits[0] = 1;
+    feed.OnHapticFrame(frame);
+    mixer.Tick(FixedMixerTime() + std::chrono::milliseconds(10));
+    const RumbleLevels written = mixer.Written("pad");
+    EXPECT_GT(written.hdLeft, 0.0f);
+    EXPECT_FLOAT_EQ(written.hdRight, 0.0f);
+    EXPECT_EQ(written.hdFrequency, 45);
+    EXPECT_EQ(written.hdWave, HdWave::Noise);
+}
+
+TEST(HdHaptics_Test, VoiceCoilTestEffects)
+{
+    constexpr uint8_t deck = kRumbleLow | kRumbleHigh | kRumbleHdLeft | kRumbleHdRight | kHapticClicker;
+    std::vector<std::string> ids;
+    for (const TestEffect& effect : TestEffects(deck))
+        ids.push_back(effect.id);
+    for (const char* id : {"hd-left", "hd-right", "hd-knocks", "click"})
+        EXPECT_NE(std::find(ids.begin(), ids.end(), id), ids.end()) << id;
+    const std::vector<std::string> names = ActuatorNames(deck);
+    EXPECT_NE(std::find(names.begin(), names.end(), "hd-left"), names.end());
+    EXPECT_NE(std::find(names.begin(), names.end(), "hd-right"), names.end());
+
+    for (const TestEffect& effect : TestEffects(kRumbleLow | kRumbleHigh))
+        EXPECT_NE(effect.id.rfind("hd-", 0), 0u) << "a pad without coils lists no coil effect: " << effect.id;
 }

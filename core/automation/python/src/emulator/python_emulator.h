@@ -6664,6 +6664,74 @@ namespace PythonBindings
                 py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("bucket_size") = 0,
                 py::arg("limit") = 20, py::arg("buckets") = false, py::arg("ports") = true, py::arg("min_phase_ms") = 200);
 
+        emulatorClass.def("ttd_cause_chain", [](Emulator& self, py::object target, py::object frameObj,
+                                                py::object tinObj, py::object pageObj, unsigned depth,
+                                                unsigned maxLinks, unsigned maxFrames, bool flags,
+                                                bool text) -> py::object {
+                std::map<std::string, std::string> options{{"depth", std::to_string(depth)},
+                                                           {"max_links", std::to_string(maxLinks)},
+                                                           {"max_frames", std::to_string(maxFrames)},
+                                                           {"flags", flags ? "true" : "false"},
+                                                           {"text", text ? "true" : "false"}};
+                std::vector<ttd::TTDCauseReg> regs;
+                const std::string name = TtdOptionTextPy(target);
+                if (py::isinstance<py::str>(target) && ttd::TTDCauseRegsByName(name, regs))
+                    options["reg"] = name;
+                else
+                    options["addr"] = name;
+                if (!frameObj.is_none())
+                    options["frame"] = TtdOptionTextPy(frameObj);
+                if (!tinObj.is_none())
+                    options["tinframe"] = TtdOptionTextPy(tinObj);
+                if (!pageObj.is_none())
+                    options["phys_page"] = TtdOptionTextPy(pageObj);
+                const ttd::TTDReply reply = TtdRunPy(self, "cause-chain", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "Where a memory byte (target: a Z80 address) or a register (target: 'A', 'HL', \"E'\") got its value: the "
+               "chain of links back to constants, port reads, interrupt pushes and the initial memory",
+                py::arg("target"), py::arg("frame") = py::none(), py::arg("tinframe") = py::none(),
+                py::arg("phys_page") = py::none(), py::arg("depth") = 4, py::arg("max_links") = 32,
+                py::arg("max_frames") = 50, py::arg("flags") = false, py::arg("text") = false);
+
+        emulatorClass.def("ttd_find_event", [](Emulator& self, const std::string& kind, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                options["kind"] = kind;
+                const ttd::TTDReply reply = TtdRunPy(self, "find-event", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The first (or last) moments an event happened. kind: mem (addr, cond changed / increased / decreased / "
+               "equals / becomes / differs / bit_set / bit_clear, value, bit, size, exact), screen (cond change / "
+               "cleared, min_changed), exec (addr, addr_to), port (dir, port, port_mask, value, value_mask), border "
+               "(value), key (key, pressed); order first / last, from_frame, to_frame, limit, text",
+                py::arg("kind"));
+
+        emulatorClass.def("ttd_explain_frame", [](Emulator& self, py::object frame, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                if (!frame.is_none())
+                    options["frame"] = std::to_string(frame.cast<uint64_t>());
+                const ttd::TTDReply reply = TtdRunPy(self, "explain-frame", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "What one frame did (default: the current one): time split (isr / halt / code), routines by time, "
+               "interrupts, paging, ports per device, memory changed with its writers, screen and border, keys, "
+               "markers. kwargs: sections ('routines,memory'), limit, text",
+                py::arg("frame") = py::none());
+
         // ================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI/Lua:
         // step out, skip until, memory find, screen digest, beam, frame cost,

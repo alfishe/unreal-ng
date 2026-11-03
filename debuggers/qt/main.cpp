@@ -13,6 +13,12 @@
 // debugger is ecat's DebuggerWindow as it is, over the adapter of adapter/unrealmachine.cpp (the core in this
 // process) or adapter/remotemachine.cpp (--connect; the emulator shows its own screen).
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX  // windows.h below must not turn std::min / std::max into macros
+#endif
+#endif
+
 #include <QAbstractButton>
 #include <QApplication>
 #include <QCheckBox>
@@ -41,7 +47,11 @@
 #include <QToolButton>
 #include <QWidget>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sys/resource.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -178,6 +188,30 @@ private:
     QWidget * m_screen;
 };
 
+#ifdef _WIN32
+static double fileTimeSeconds(const FILETIME &f)
+{
+    ULARGE_INTEGER v;
+    v.LowPart = f.dwLowDateTime;
+    v.HighPart = f.dwHighDateTime;
+    return static_cast<double>(v.QuadPart) / 1e7;  // 100 ns units
+}
+
+double process_cpu_seconds()
+{
+    FILETIME created, exited, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) return 0.0;
+    return fileTimeSeconds(kernel) + fileTimeSeconds(user);
+}
+
+// CPU time of the calling thread
+double thread_cpu_seconds()
+{
+    FILETIME created, exited, kernel, user;
+    if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user)) return 0.0;
+    return fileTimeSeconds(kernel) + fileTimeSeconds(user);
+}
+#else
 double process_cpu_seconds()
 {
     rusage u{};
@@ -192,6 +226,7 @@ double thread_cpu_seconds()
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
     return t.tv_sec + t.tv_nsec / 1e9;
 }
+#endif
 
 // Processes events until the condition holds or the time is out
 bool wait_for(const std::function<bool()> &done, int ms)

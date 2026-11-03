@@ -5,6 +5,7 @@
 /// frame probes of §5) and the rules that play an effect of the built-in library (§6.2) when a source fires.
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -121,7 +122,9 @@ enum HapticTarget : uint8_t
     kHandleHigh = kRumbleHigh,
     kTriggerLeft = kRumbleLeftTrigger,
     kTriggerRight = kRumbleRightTrigger,
-    kTargetAll = 15,
+    kHdLeft = kRumbleHdLeft,
+    kHdRight = kRumbleHdRight,
+    kTargetAll = kHandleLow | kHandleHigh | kTriggerLeft | kTriggerRight | kHdLeft | kHdRight,
 };
 
 struct HapticRule
@@ -138,10 +141,13 @@ struct HapticRule
     /// frame the event fires (the direction of a blow); empty: always
     std::string gate;
     uint8_t gateValue = 0;
-    /// `hd: {frequency_hz, low_hz, high_hz}`: the HD frequency of each band over the effect's own (0: the effect's);
-    /// `frequency_hz` sets both bands, `low_hz` / `high_hz` one each
+    /// `hd: {frequency_hz, low_hz, high_hz, waveform}`: the HD frequency of each band over the effect's own (0: the
+    /// effect's); `frequency_hz` sets both bands and the voice coils' tone, `low_hz` / `high_hz` one band each,
+    /// `waveform` (sine, square, noise) the coils' wave
     uint16_t lowHz = 0;
     uint16_t highHz = 0;
+    uint16_t hdFrequency = 0;      ///< the voice coils' tone
+    std::optional<HdWave> hdWave;  ///< the voice coils' wave
 
     /// The target for a device with @p actuators: the first alternative it has all of, else the last one
     uint8_t TargetFor(uint8_t actuators) const;
@@ -186,7 +192,8 @@ const char* HapticStreamName(HapticStream stream);
 bool AddHapticProbeSource(JsonValue& haptics, const HapticProbe& probe, const std::string& play, std::string& name,
                           std::string& error);
 
-/// Move @p levels to @p target: the loudest handle level goes to every target channel
+/// Move @p levels to @p target: the loudest level goes to every target channel; `all` keeps each channel's own and
+/// gives the voice coils the loudest where the effect has none for them
 RumbleLevels RetargetLevels(const RumbleLevels& levels, uint8_t target);
 
 }  // namespace controllers
