@@ -269,6 +269,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
 
     // A memory target: the page mapped at the moment (unless one was given) and the byte there
     PhysPage targetPage = query.page;
+    uint8_t targetFlip = 0;   // the half of the page (Memory::TtdKeyOf): known from the mapping, not from a given page
     uint8_t targetValue = 0;
     if (query.memory)
     {
@@ -290,7 +291,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
             return finish();
         }
         if (!query.hasPage)
-            targetPage = memory->TtdPageOf(query.address);
+            targetPage = memory->TtdKeyOf(query.address, targetFlip);
         targetValue = memory->DirectReadFromZ80Memory(query.address);
     }
 
@@ -422,6 +423,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
         q.access = TTDAccessType::Write;
         q.hasPhysPageFilter = name.page != kPhysPageNone;
         q.physPage = name.page;
+        q.flip = static_cast<int8_t>(name.flip);
         const uint64_t frameStart = GlobalT(_timeline[cpIndex].time);
         if (frameStart == 0)
             return p;
@@ -446,7 +448,8 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
             for (uint32_t e = in.firstEvent; e < in.firstEvent + in.eventCount; ++e)
             {
                 const TTDTraceEvent& ev = trace->events[e];
-                if (ev.type == 'W' && ev.address == name.address && ev.page == name.page && ev.tInFrame == hit.time.tInFrame)
+                if (ev.type == 'W' && ev.address == name.address && ev.page == name.page && ev.Flip() == name.flip &&
+                    ev.tInFrame == hit.time.tInFrame)
                     best = k;
             }
         }
@@ -464,7 +467,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
     };
 
     // The walk: depth first, each link's inputs after it
-    std::map<std::tuple<uint64_t, size_t, bool, uint16_t, PhysPage, uint8_t>, size_t> seen;
+    std::map<std::tuple<uint64_t, size_t, bool, uint16_t, PhysPage, uint8_t, uint8_t>, size_t> seen;
     std::function<void(const TTDCauseName&, uint8_t, Place, int32_t, uint32_t)> walk;
     walk = [&](const TTDCauseName& name, uint8_t value, Place from, int32_t parent, uint32_t depth) {
         const size_t index = result.links.size();
@@ -569,7 +572,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
                 link.inputs.push_back(TTDCauseNameText(i.name) + "=" + Hex2(i.value));
         }
 
-        const auto key = std::make_tuple(p.trace->frame, p.insn, name.memory, name.address, name.page,
+        const auto key = std::make_tuple(p.trace->frame, p.insn, name.memory, name.address, name.page, name.flip,
                                          static_cast<uint8_t>(name.reg));
         if (auto it = seen.find(key); it != seen.end())
         {
@@ -610,7 +613,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
     const uint8_t* atRegs = atInsn < atTrace->insns.size() ? atTrace->insns[atInsn].regs : atTrace->finalRegs;
 
     if (query.memory)
-        walk(TTDCauseName::Mem(query.address, targetPage), targetValue, atPlace, -1, 0);
+        walk(TTDCauseName::Mem(query.address, targetPage, targetFlip), targetValue, atPlace, -1, 0);
     else
     {
         for (TTDCauseReg r : regs)

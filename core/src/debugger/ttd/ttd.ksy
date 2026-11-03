@@ -624,7 +624,11 @@ types:
       the page-high bits in the same layout: bit 8 of the page, set for a
       virtual page of another memory space (0x110-0x11F the Sprinter's video
       RAM, 0x120-0x12F its fast RAM; the address holds the offset in that
-      page). A block without the column has RAM pages only (all older ones)
+      page). A block without the column has RAM pages only (all older ones).
+      After it, only in a block that has such a record, the flip bits in the
+      same layout (the page-high column is then written, zeros if none): the
+      byte sits at (address & 0x3FFF) ^ 0x2000 of its page - the Next's MMU
+      maps an odd 8K page into an even slot or the reverse (2026-11-03)
     seq:
       - id: size
         type: vlq
