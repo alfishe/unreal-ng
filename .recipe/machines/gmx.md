@@ -100,6 +100,9 @@ screen, the Scorpion GMX 128 menu, Edge Grinder's attract mode in 640x200.
 - **Hard disk.** An image on `ide0.master` (media slot), ProfROM sees it after a cold reset with Caps Shift + 5 held;
   the 6.44 Partition manager formats MFS. `zxdisk` and the unreal-disk `DiskFs` read and write MFS partitions
   (`docs/emulator/design/disk-file-systems.md`, "ProfROM MFS layout").
+  CP/M 2.2 (CPMZSGMX) wants an MFS subpartition `CPMZS0` of type MicroDOS (Hard disk utility: Magic, `H`, `P`;
+  type the name with `keyboard/combo ["CAPS", <letter>]`), then its `INSTALL` item 3 to fill it; steps in
+  [software-compatibility.md](../../docs/inprogress/2026-10-07-gmx/software-compatibility.md#media-used).
 
 ## Turbo, frame, Magic
 

@@ -14,6 +14,8 @@
 - 2026-11-02: the video players' sound checked against the files' tracks: VIDEO03 on the NeoGS and a GS 512 KB
   (silent on 128 KB like the hardware), VPlayer 0.1.7 on `#B3` (NeoGS, GS) and `#FB` (SounDrive); VPlayer 0.1.6 plays
   the native 0.1.5 sample `DD-ak` with sound on `#B3`.
+- 2026-11-02: CP/M 2.2 (CPMZSGMX) runs from its SMUC HDD subpartition `CPMZS0`, made in the 6.44 Hard disk utility and
+  filled by its `INSTALL`; Ladder plays on the 80x25 GMX screen.
 - Phase 8 (8649e564b and the follow-up): a disk autostart at power-on waits for the firmware boot (the first 48 BASIC
   KEY-SCAN) and starts TR-DOS on the floppy; the SMUC NVRAM file per firmware; ProfROM MFS hard disks in unreal-disk /
   zxdisk; fifteen programs from the collection run ([software-compatibility.md](software-compatibility.md)).
@@ -26,4 +28,3 @@
 
 ## Follow-ups
 - The Scorpion Covox at `#DD` (VPlayer's "DD" port) is not emulated: the `CovoxDD` ini keys and the `covox-dd` slot vocabulary entry have no device behind them.
-- CP/M (CPMZSGMX) on its SMUC HDD partition `CPMZS0` was not set up.
