@@ -26,10 +26,13 @@ tools/build/build.sh unreal-tui-debugger unreal-tui-debugger-tsconf tui-debugger
 |--------|---------|--------|
 | `UNREAL_DEBUGGER_QT` | `BUILD_QT_APPS` | `unreal-debugger` (needs Qt 6 Widgets and Network, links the core) |
 | `UNREAL_TUI_DEBUGGERS` | `ON` | `unreal-tui-debugger`, `unreal-tui-debugger-tsconf` and their tests |
-| `UNREAL_TUI_SDL` | `ON` | the terminal debuggers' pixel window through SDL3 when SDL3 is found (pkg-config or its CMake package); without it they run in the terminal. Packages build with `OFF` |
+| `UNREAL_TUI_SDL` | `ON` | the terminal debuggers' pixel window through SDL3: the submodule `lib/SDL` (pinned release, built static with video and the 2D renderer only), else an installed SDL3 (its CMake package or pkg-config); without SDL3 they run in the terminal only. On Linux SDL builds its X11 / Wayland drivers from the dev headers present (`libx11-dev`, `libwayland-dev`, `libxkbcommon-dev`, ...) |
+| `UNREAL_TUI_SDL_REQUIRED` | `OFF` | fail the configure when the terminal debuggers get no SDL3. The packages build with `ON`: they carry only the SDL3 builds |
 
 The terminal debuggers' third-party code is vendored in `tui/lib/`: FTXUI 7.1.0 and Z80Ex 1.1.21 (the mock machine of
-their tests). See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+their tests). SDL 3.4.18 (zlib license) is the submodule `lib/SDL` (`git submodule update --init lib/SDL`).
+`--help` names the pixel window: `pixel window: SDL 3.4.18, video: cocoa offscreen dummy` (the package checks read
+the drivers from it), or `none` for a terminal-only build. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 
 ## Run
 
