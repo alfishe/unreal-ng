@@ -503,6 +503,7 @@ private:
     void HandleTTDCauseChain(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDFindEvent(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDExplainFrame(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDDiffMoments(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDCoverage(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
     void HandleTTDMemoryAt(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);

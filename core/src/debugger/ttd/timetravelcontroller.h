@@ -87,6 +87,7 @@
 #include "ttdcausechain.h"
 #include "ttdfindevent.h"
 #include "ttdexplainframe.h"
+#include "ttddiffmoments.h"
 #include "ttdcoverageindex.h"
 #include "ttdtimeline.h"
 #include "ttdperipheralregistry.h"
@@ -1302,6 +1303,12 @@ public:
     /// the border, the keys and the markers - from one replay of the frame with the instruction and bus hooks. The
     /// machine is put back where it stood; a live recording pauses for browsing
     TTDExplainFrameResult QueryExplainFrame(const TTDExplainFrameQuery& query);
+
+    /// @brief What differs between two moments (docs/inprogress/2026-11-03-ttd-diff-moments/design.md): the
+    /// registers, the latches and the slot mapping, the RAM in ranges per region with the last write in between, the
+    /// screen and border, the devices, and the time, keys and markers in between. Replays to each moment and puts the
+    /// machine back where it stood.
+    TTDDiffMomentsResult QueryDiffMoments(const TTDDiffMomentsQuery& query);
     
     /// @brief Step back one instruction (TDD §10.2 + §16 row 2).
     ///

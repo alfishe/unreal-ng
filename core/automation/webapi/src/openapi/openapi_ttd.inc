@@ -1180,3 +1180,53 @@
             ++i;
         }
     }
+
+    // =====================================================================
+    // GET /ttd/diff — what differs between two moments (TTD diff of two moments)
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/diff"]["get"];
+        op["summary"] = "What differs between two moments: registers, paging, memory with the last writes, screen, devices";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "The machine is replayed to each moment (any T inside a frame) and its whole state taken there. The answer "
+            "lists what differs: the registers, the port latches and the 8K slot mapping, the RAM changed in ranges "
+            "(the screen's pixels and attributes one range each, the rest per page with gaps of 16 bytes or less; "
+            "ranges of 8 bytes or less with their bytes at both moments) with the last CPU write in between (the "
+            "write journal: time, PC, instruction), the screen and border, the devices whose state differs, and what "
+            "happened in between (frames, T, keys held and pressed, markers, a replay barrier). The machine goes back "
+            "where it stood; a live recording pauses for browsing. Reply: from {frame, tinframe}, to, backwards, "
+            "registers[] {name, before, after}, latches[], slots[] {address, before, after, before_other_half, "
+            "after_other_half}, memory {changed, pages, ranges[] {region, page, offset, address, length, changed, "
+            "before[], after[], last_write {frame, tinframe, pc, address, text}, no_cpu_write}, more}, screen {bytes, "
+            "pixels_changed, attributes_changed, switched, border_before, border_after}, devices {changed[] {name, "
+            "bytes, changed}, more, same}, between {frames, t, keys_held[], keys[] {frame, tinframe, key, pressed}, "
+            "more_keys, markers[], barrier}, writer_searches, ms, text (text=true).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"from_frame", "integer", "The first moment's frame (required)"},
+            {"from_tinframe", "integer", "T inside it (default 0)"},
+            {"to_frame", "integer", "The second moment's frame (default: the current position)"},
+            {"to_tinframe", "integer", "T inside it (default 0)"},
+            {"sections", "string", "Comma list: cpu, paging, memory, screen, devices, between (default all)"},
+            {"limit", "integer", "Entries per list (memory ranges, devices, keys), 1..200 (default 16)"},
+            {"writers", "boolean", "The last write in between per memory range (default true)"},
+            {"text", "boolean", "Also return the answer as text, one block per section (default false)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }

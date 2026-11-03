@@ -18,6 +18,7 @@
 ///   ttd cause <addr>|<reg>     — the cause chain: where a byte or a register got its value
 ///   ttd event <kind> ...       — find event: when a value, the screen, a run, a port, the border or a key changed
 ///   ttd explain [F]            — explain frame: what one frame did (time, routines, ports, memory, screen, keys)
+///   ttd diff F[+T] [G[+T]]     — diff of two moments: registers, paging, memory with the last writes, screen, devices
 ///
 /// All commands operate on the currently selected emulator instance. The TTD
 /// engine requires the emulator to be paused for seek/step/resume operations
@@ -334,6 +335,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDExplainFrame(session, context, args);
     }
+    else if (subcommand == "diff")
+    {
+        HandleTTDDiffMoments(session, context, args);
+    }
     else if (subcommand == "coverage" || subcommand == "cov")
     {
         HandleTTDCoverage(session, context, args);
@@ -447,6 +452,9 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "    key [KEY] [--released]            a key pressed (released), from the input journal" << NEWLINE;
     ss << "  ttd explain [F] [--sections a,b,...] [--limit N]   What frame F (default: the current) did: time split," << NEWLINE;
     ss << "      routines by time, interrupt, paging, ports, memory changed with its writers, screen, keys (one replay)" << NEWLINE;
+    ss << "  ttd diff F[+T] [G[+T]] [--sections a,b,...] [--limit N] [--no-writers]   What differs between moment F+T" << NEWLINE;
+    ss << "      and G+T (default: the current position): registers, latches, mapping, memory with the last write, screen," << NEWLINE;
+    ss << "      devices, the time, keys and markers in between" << NEWLINE;
     ss << "  Aliases: rs=reverse-step, rc=reverse-continue, pf=probe-frames, tl=timeline, cause-chain=cause, "
           "find-event=event, explain-frame=explain" << NEWLINE;
     ss << NEWLINE;
@@ -1823,6 +1831,60 @@ void CLIProcessor::HandleTTDExplainFrame(const ClientSession& session, EmulatorC
         }
     }
     const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"explain-frame", options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    std::string text = reply.body.find("text")->s;
+    std::string out;
+    for (char c : text)
+        out += c == '\n' ? std::string(NEWLINE) : std::string(1, c);
+    session.SendResponse(out);
+}
+
+/// `ttd diff F[+T] [G[+T]] [--sections a,b] [--limit N] [--no-writers]`: what differs between two moments, as text
+void CLIProcessor::HandleTTDDiffMoments(const ClientSession& session, EmulatorContext* context,
+                                        const std::vector<std::string>& args)
+{
+    const std::string usage =
+        std::string("Usage: ttd diff F[+T] [G[+T]] [--sections cpu,paging,memory,screen,devices,between] [--limit N] "
+                    "[--no-writers]") +
+        NEWLINE;
+    std::map<std::string, std::string> options = {{"text", "true"}};
+    int moments = 0;
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        if ((args[i] == "--sections" || args[i] == "--limit") && i + 1 < args.size())
+        {
+            options[args[i].substr(2)] = args[i + 1];
+            ++i;
+        }
+        else if (args[i] == "--no-writers")
+            options["writers"] = "false";
+        else if (moments < 2 && !args[i].empty() && std::isdigit(static_cast<unsigned char>(args[i][0])))
+        {
+            // F, F+T or F:T
+            const std::string& m = args[i];
+            const size_t sep = m.find_first_of("+:");
+            const std::string prefix = moments == 0 ? "from_" : "to_";
+            options[prefix + "frame"] = m.substr(0, sep);
+            if (sep != std::string::npos)
+                options[prefix + "tinframe"] = m.substr(sep + 1);
+            ++moments;
+        }
+        else
+        {
+            session.SendResponse(usage);
+            return;
+        }
+    }
+    if (moments == 0)
+    {
+        session.SendResponse(usage);
+        return;
+    }
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"diff", options});
     if (!reply.Ok())
     {
         session.SendResponse("Error: " + reply.message + NEWLINE);

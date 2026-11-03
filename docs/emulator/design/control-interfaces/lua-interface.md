@@ -1396,6 +1396,15 @@ local f = ttd_explain_frame(1204, {sections = "time,routines,memory", limit = 4}
 --   memory = { {region = "screen pixels", addr = 0x4800, changed = 1024, writers = { {pc = 0x9A12,
 --   text = "ld (hl),a", count = 1024} }}, ... }, more_memory = 2, frames_replayed = 1, ms = ... }
 
+-- What differs between two moments: from_frame (+ from_tinframe), to_frame (+ to_tinframe; default the current
+-- position), options sections ("cpu,paging,memory,screen,devices,between"), limit (16), writers (true), text
+local d = ttd_diff{from_frame = 1201, to_frame = 1204, sections = "cpu,memory"}
+-- { from = {frame = 1201, tinframe = 0}, to = {frame = 1204, tinframe = 0}, backwards = false,
+--   registers = { {name = "PC", before = 0x8008, after = 0x8009}, ... },
+--   memory = {changed = 2, pages = 1, ranges = { {region = "ram", page = 2, offset = 0x2000, address = 0xA000,
+--   length = 1, changed = 1, before = {3}, after = {6}, last_write = {frame = 1203, tinframe = 71, pc = 0x800C,
+--   address = 0xA000, text = "inc (hl)"}}, ... }, more = 0}, writer_searches = 2, ms = ... }
+
 local summary = ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50, limit = 100}
 -- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,
 --   bucket_size = 50, bucket_count = 10, index_available = true,

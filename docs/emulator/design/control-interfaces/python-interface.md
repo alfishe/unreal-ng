@@ -1849,6 +1849,15 @@ f = emu.ttd_explain_frame(1204, sections='time,routines,memory', limit=4)
 #  'routines': [{'pc': 35348, 'calls': 1, 't': 31220, 'own_t': 2110, 'insns': 4812, 'caller': 32771, ...}, ...],
 #  'memory': [{'region': 'screen pixels', 'addr': 18432, 'changed': 1024, 'writers': [...]}, ...], 'ms': ...}
 
+# What differs between two moments: from_frame, keyword from_tinframe, to_frame, to_tinframe (default: the current
+# position), sections='cpu,paging,memory,screen,devices,between' (default all), limit=16, writers=True, text=False
+d = emu.ttd_diff(1201, to_frame=1204, sections='cpu,memory')
+# {'from': {'frame': 1201, 'tinframe': 0}, 'to': {'frame': 1204, 'tinframe': 0}, 'backwards': False,
+#  'registers': [{'name': 'PC', 'before': 32776, 'after': 32777}, ...],
+#  'memory': {'changed': 2, 'pages': 1, 'ranges': [{'region': 'ram', 'page': 2, 'offset': 8192, 'address': 40960,
+#   'length': 1, 'before': [3], 'after': [6], 'last_write': {'frame': 1203, 'pc': 32780, 'text': 'inc (hl)', ...}}],
+#   'more': 0}, 'writer_searches': 2, 'ms': ...}
+
 summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50, limit=100)
 # {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,
 #  'bucket_size': 50, 'bucket_count': 10, 'index_available': True,

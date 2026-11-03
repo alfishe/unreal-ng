@@ -350,6 +350,7 @@ private:
     TTDReply CauseChain(const TTDRequest& request);
     TTDReply FindEvent(const TTDRequest& request);
     TTDReply ExplainFrame(const TTDRequest& request);
+    TTDReply DiffMoments(const TTDRequest& request);
     TTDReply Bookmarks();
     TTDReply BookmarkAdd(const TTDRequest& request);
     TTDReply BookmarkDelete(const TTDRequest& request);
@@ -441,7 +442,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-delete",
         "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
-        "timeline", "cause-chain", "find-event", "explain-frame", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
+        "timeline", "cause-chain", "find-event", "explain-frame", "diff", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
     return verbs;
 }
 
@@ -481,6 +482,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
                         "dir", "port", "port_mask", "value_mask", "key", "pressed", "order", "from_frame", "to_frame",
                         "limit", "max_frames", "text"}},
         {"explain-frame", {"frame", "sections", "limit", "text"}},
+        {"diff", {"from_frame", "from_tinframe", "to_frame", "to_tinframe", "sections", "limit", "writers", "text"}},
         {"file-info", {"path"}},
         {"dump", {"path"}},
         {"load", {"path"}},
@@ -584,6 +586,8 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return FindEvent(request);
     if (verb == "explain-frame")
         return ExplainFrame(request);
+    if (verb == "diff")
+        return DiffMoments(request);
     if (verb == "markers")
         return Markers();
     if (verb == "bookmarks")
@@ -3067,6 +3071,226 @@ TTDReply TTDControlBackend::ExplainFrame(const TTDRequest& request)
     b["ms"] = res.ms;
     if (text)
         b["text"] = TTDExplainFrameText(q, res);
+    return reply;
+}
+
+TTDReply TTDControlBackend::DiffMoments(const TTDRequest& request)
+{
+    TTDDiffMomentsQuery q;
+    uint64_t n = 0;
+    auto moment = [&](const char* frameName, const char* tinName, TTDTimePoint& out, bool& has) -> std::string {
+        const std::string* f = Option(request, frameName);
+        const std::string* t = Option(request, tinName);
+        if (!f)
+            return t ? std::string(tinName) + " goes with " + frameName : std::string();
+        if (!ParseU64(*f, n))
+            return "Invalid " + std::string(frameName) + ": '" + *f + "'";
+        out.frame = n;
+        out.tInFrame = 0;
+        if (t)
+        {
+            if (!ParseUpTo(*t, UINT32_MAX, n))
+                return "Invalid " + std::string(tinName) + ": '" + *t + "'";
+            out.tInFrame = static_cast<uint32_t>(n);
+        }
+        has = true;
+        return "";
+    };
+    bool hasFrom = false;
+    if (std::string e = moment("from_frame", "from_tinframe", q.from, hasFrom); !e.empty())
+        return Fail(TTDControlError::BadRequest, e);
+    if (!hasFrom)
+        return Fail(TTDControlError::BadRequest, "diff needs from_frame (from_tinframe, to_frame, to_tinframe optional: "
+                                                 "the second moment defaults to the current position)");
+    if (std::string e = moment("to_frame", "to_tinframe", q.to, q.hasTo); !e.empty())
+        return Fail(TTDControlError::BadRequest, e);
+    if (const std::string* t = Option(request, "sections"))
+    {
+        q.sections = 0;
+        size_t from = 0;
+        while (from <= t->size())
+        {
+            const size_t comma = std::min(t->find(',', from), t->size());
+            const std::string name = t->substr(from, comma - from);
+            uint32_t bit = 0;
+            if (!name.empty() && !TTDDiffSectionByName(name, bit))
+                return Fail(TTDControlError::BadRequest,
+                            "Invalid section: '" + name + "' (cpu paging memory screen devices between all)");
+            q.sections |= bit;
+            from = comma + 1;
+        }
+        if (q.sections == 0)
+            q.sections = kDiffAll;
+    }
+    if (const std::string* t = Option(request, "limit"))
+    {
+        if (!ParseUpTo(*t, TTDDiffMomentsQuery::kMaxLimit, n) || n == 0)
+            return Fail(TTDControlError::BadRequest, "Invalid limit: '" + *t + "' (expected 1.." +
+                                                         std::to_string(TTDDiffMomentsQuery::kMaxLimit) + ")");
+        q.limit = static_cast<uint32_t>(n);
+    }
+    // Default true: parsed only when given (FlagOption sets an absent flag to false)
+    if (Option(request, "writers"))
+        if (std::string flag = FlagOption(request, "writers", q.writers); !flag.empty())
+            return Fail(TTDControlError::BadRequest, flag);
+    bool text = false;
+    if (std::string flag = FlagOption(request, "text", text); !flag.empty())
+        return Fail(TTDControlError::BadRequest, flag);
+
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    const TTDDiffMomentsResult res = _manager->QueryDiffMoments(q);
+    if (!res.error.empty())
+        return Fail(TTDControlError::BadRequest, res.error);
+
+    TTDReply reply;
+    StateNode& b = reply.body;
+    auto timeNode = [](const TTDTimePoint& t) {
+        StateNode n = StateNode::Object();
+        n["frame"] = t.frame;
+        n["tinframe"] = static_cast<unsigned>(t.tInFrame);
+        return n;
+    };
+    auto values = [](const std::vector<TTDDiffValue>& list) {
+        StateNode a = StateNode::Array();
+        for (const TTDDiffValue& v : list)
+        {
+            StateNode n = StateNode::Object();
+            n["name"] = v.name;
+            n["before"] = v.before;
+            n["after"] = v.after;
+            a.push(n);
+        }
+        return a;
+    };
+    b["from"] = timeNode(res.from);
+    b["to"] = timeNode(res.to);
+    if (res.backwards)
+        b["backwards"] = true;
+    if (q.sections & kDiffCpu)
+        b["registers"] = values(res.registers);
+    if (q.sections & kDiffPaging)
+    {
+        b["latches"] = values(res.latches);
+        StateNode slots = StateNode::Array();
+        for (const TTDDiffSlot& s : res.slotMap)
+        {
+            StateNode n = StateNode::Object();
+            n["address"] = static_cast<unsigned>(s.slot * 0x2000u);
+            n["before"] = PhysPageNode(s.before);
+            n["after"] = PhysPageNode(s.after);
+            if (s.beforeHalf)
+                n["before_other_half"] = true;
+            if (s.afterHalf)
+                n["after_other_half"] = true;
+            slots.push(n);
+        }
+        b["slots"] = slots;
+    }
+    if (q.sections & kDiffMemory)
+    {
+        StateNode memory = StateNode::Object();
+        memory["changed"] = res.ramChanged;
+        memory["pages"] = res.pagesChanged;
+        StateNode list = StateNode::Array();
+        for (const TTDDiffRange& r : res.memory)
+        {
+            StateNode n = StateNode::Object();
+            n["region"] = TTDDiffRegionName(r.region);
+            n["page"] = static_cast<unsigned>(r.page);
+            n["offset"] = r.offset;
+            if (r.hasAddress)
+                n["address"] = static_cast<unsigned>(r.address);
+            n["length"] = r.length;
+            n["changed"] = r.changed;
+            if (!r.before.empty())
+            {
+                StateNode before = StateNode::Array();
+                StateNode after = StateNode::Array();
+                for (uint8_t v : r.before)
+                    before.push(StateNode(static_cast<unsigned>(v)));
+                for (uint8_t v : r.after)
+                    after.push(StateNode(static_cast<unsigned>(v)));
+                n["before"] = before;
+                n["after"] = after;
+            }
+            if (r.hasWriter)
+            {
+                StateNode w = timeNode(r.writerTime);
+                w["pc"] = static_cast<unsigned>(r.writerPc);
+                w["address"] = static_cast<unsigned>(r.writerAddress);
+                if (!r.writerText.empty())
+                    w["text"] = r.writerText;
+                n["last_write"] = w;
+            }
+            else if (r.writerUnknown)
+                n["no_cpu_write"] = true;
+            list.push(n);
+        }
+        memory["ranges"] = list;
+        memory["more"] = res.moreMemory;
+        b["memory"] = memory;
+    }
+    if ((q.sections & kDiffScreen) && res.hasScreen)
+    {
+        StateNode s = StateNode::Object();
+        s["bytes"] = res.screenBytes;
+        s["pixels_changed"] = res.pixelsChanged;
+        s["attributes_changed"] = res.attributesChanged;
+        s["switched"] = res.screenSwitched;
+        s["border_before"] = static_cast<unsigned>(res.borderBefore);
+        s["border_after"] = static_cast<unsigned>(res.borderAfter);
+        b["screen"] = s;
+    }
+    if (q.sections & kDiffDevices)
+    {
+        StateNode list = StateNode::Array();
+        for (const TTDDiffDevice& d : res.devices)
+        {
+            StateNode n = StateNode::Object();
+            n["name"] = d.name;
+            n["bytes"] = d.bytes;
+            n["changed"] = d.changed;
+            list.push(n);
+        }
+        StateNode devices = StateNode::Object();
+        devices["changed"] = list;
+        devices["more"] = res.moreDevices;
+        devices["same"] = res.devicesSame;
+        b["devices"] = devices;
+    }
+    if (q.sections & kDiffBetween)
+    {
+        StateNode between = StateNode::Object();
+        between["frames"] = res.frames;
+        between["t"] = res.t;
+        StateNode held = StateNode::Array();
+        for (const std::string& k : res.keysHeld)
+            held.push(StateNode(k));
+        between["keys_held"] = held;
+        StateNode keys = StateNode::Array();
+        for (const TTDDiffKey& k : res.keys)
+        {
+            StateNode n = timeNode(k.time);
+            n["key"] = k.key;
+            n["pressed"] = k.pressed;
+            keys.push(n);
+        }
+        between["keys"] = keys;
+        between["more_keys"] = res.moreKeys;
+        StateNode markers = StateNode::Array();
+        for (const std::string& m : res.markers)
+            markers.push(StateNode(m));
+        between["markers"] = markers;
+        if (!res.barrier.empty())
+            between["barrier"] = res.barrier;
+        b["between"] = between;
+    }
+    b["writer_searches"] = res.writerSearches;
+    b["ms"] = res.ms;
+    if (text)
+        b["text"] = TTDDiffMomentsText(q, res);
     return reply;
 }
 
