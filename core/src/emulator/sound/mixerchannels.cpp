@@ -99,6 +99,8 @@ void Describe(const SoundManager& sound, AudioSourceType type, std::vector<Mixer
                 out.push_back({"lb", "Left B", true, false});
                 out.push_back({"ra", "Right A", true, false});
                 out.push_back({"rb", "Right B", true, false});
+                if (sound.getCovox()->hasPrinterDac())
+                    out.push_back({"dd", "Printer #DD", true, false});
             }
             return;
         case AudioSourceType::GeneralSound:
@@ -162,7 +164,7 @@ void Apply(SoundManager& sound, AudioSourceType type, size_t index, bool muted, 
                 chip->fm.setChannelGain(static_cast<uint32_t>(index), MixerChannelGainQ15(muted, volume));
             return;
         case AudioSourceType::COVOX:
-            if (Covox* covox = index < 4 ? sound.getCovox() : nullptr)
+            if (Covox* covox = index < Covox::kChannels ? sound.getCovox() : nullptr)
             {
                 const auto ch = static_cast<Covox::Channel>(index);
                 covox->setChannelMute(ch, muted);
