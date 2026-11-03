@@ -39,6 +39,8 @@ public:
     static constexpr size_t kCommon = 8;       ///< the common vectors, zero included
     static constexpr size_t kPalette = 32;     ///< the colours of A the cover rule tells apart
     static constexpr int kNear = 8;            ///< nearTies: the main motion within 1/kNear of a block's best fit
+    static constexpr int kPeriodic = 20;       ///< nearStill: a block's pixels unlike itself half the main step on
+    static constexpr int kDominant = 3, kDominantOf = 4;  ///< nearStill: the main motion's share of the moving blocks
     static constexpr int kInkTile = 24;        ///< keepInk's tile: a few dots' worth of a dot cloud
     static constexpr int kInkOff = 4;          ///< keepInk: a tile off by more than 1/kInkOff of its ink falls back
 
@@ -95,8 +97,9 @@ public:
 
     /// The block decisions: per block the vector its pixels take (-1: none) and whether others tie with it.
     /// `fitCounts`, `usableCounts`: per vector c and block, the pixels c fits and may take, at c * blocks + block
-    static void Decide(const Layers& layers, const uint8_t* fitCounts, const uint8_t* usableCounts, Evidence& evidence,
-                       std::vector<int>& blockVector, std::vector<uint8_t>& tied);
+    /// `a`: the frame the field starts from (nearStill's periodic test)
+    static void Decide(const Layers& layers, const Picture& a, const uint8_t* fitCounts, const uint8_t* usableCounts,
+                       Evidence& evidence, std::vector<int>& blockVector, std::vector<uint8_t>& tied);
 
     /// carryFirst's test: `v` explains at least half of the block's changes from a to b
     static bool Explains(const Picture& a, const Picture& b, int bi, int bj, V v);

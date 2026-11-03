@@ -1299,7 +1299,7 @@ bool SmoothMotionGPU::composeLayers(const Picture& p, const Picture& a, const Pi
     // The decisions, the reference's own code; the questions go to the passes below
     std::vector<int> blockVector;
     std::vector<uint8_t> tied;
-    LayerFlow::Decide(_layerSet, _fitCounts.data(), _usableCounts.data(), *this, blockVector, tied);
+    LayerFlow::Decide(_layerSet, a, _fitCounts.data(), _usableCounts.data(), *this, blockVector, tied);
     if (!_answered)
         return false;
 

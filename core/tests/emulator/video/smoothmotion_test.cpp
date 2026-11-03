@@ -220,6 +220,44 @@ TEST(SmoothMotion_Test, LayersKeepAStillPictureAndUnrelatedChanges)
     EXPECT_EQ(Wrong(Layers(a, a, b, 200), b), 0);
 }
 
+TEST(SmoothMotion_Test, LayersMoveADotRowAScrollStepApart)
+{
+    // Letters of 6 x 6 dots 8 apart (a stem and three rows), scrolled 8 a frame, the dots spinning (a notch in a corner
+    // that changes every frame): in a row's middle zero fits all but the notches, as does the motion (Aleste's
+    // letters). The row moves with its letter: at w = 1/2 every dot 4 to the left of a's
+    const auto letters = [](int frame) {
+        Image img(192, 56);
+        const auto dot = [&](int x0, int y0) {
+            for (int y = 0; y < 6; y++)
+                for (int x = 0; x < 6; x++)
+                    img.At(x0 + x, y0 + y) = WHITE;
+            img.At(x0 + (frame % 2 ? 5 : 0), y0 + (frame % 2 ? 5 : 0)) = BLACK;
+        };
+        for (int letter = 0; letter < 3; letter++)
+        {
+            const int x0 = 40 - 8 * frame + 48 * letter;
+            for (int i = 0; i < 5; i++)
+            {
+                dot(x0, 8 + 8 * i);
+                for (int row : {0, 2, 4})
+                    dot(x0 + 8 * i, 8 + 8 * row);
+            }
+        }
+        return img;
+    };
+    const Image a = letters(1), out = Layers(letters(0), a, letters(2), 128);
+    for (int letter = 0; letter < 3; letter++)
+        for (int row : {0, 2, 4})
+            for (int i = 1; i < 4; i++)
+            {
+                const int x0 = 40 - 8 + 48 * letter + 8 * i, y = 8 + 8 * row + 3;
+                for (int x = x0 - 4; x < x0 + 2; x++)
+                    ASSERT_EQ(out.At(x, y), WHITE) << "letter " << letter << " row " << row << " dot " << i << " x " << x;
+                for (int x = x0 + 2; x < x0 + 4; x++)
+                    ASSERT_EQ(out.At(x, y), BLACK) << "letter " << letter << " row " << row << " dot " << i << " x " << x;
+            }
+}
+
 TEST(SmoothMotion_Test, KeepInkGivesATileThatLostItsDotsTheNearerFrame)
 {
     // Two 24-pixel tiles of paper with 8 dots in a and b each. The first tile's picture wiped 3 of them (over a

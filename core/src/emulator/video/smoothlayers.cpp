@@ -420,8 +420,8 @@ bool LayerFlow::Explains(const Picture& a, const Picture& b, int bi, int bj, V v
     return ExplainsIn(a, b, a.width, a.height, bi, bj, v);
 }
 
-void LayerFlow::Decide(const Layers& layers, const uint8_t* fitCounts, const uint8_t* usableCounts, Evidence& evidence,
-                       std::vector<int>& blockVector, std::vector<uint8_t>& tied)
+void LayerFlow::Decide(const Layers& layers, const Picture& a, const uint8_t* fitCounts, const uint8_t* usableCounts,
+                       Evidence& evidence, std::vector<int>& blockVector, std::vector<uint8_t>& tied)
 {
     const std::vector<V>& all = layers.all;
     const int n = static_cast<int>(all.size());
@@ -431,6 +431,27 @@ void LayerFlow::Decide(const Layers& layers, const uint8_t* fitCounts, const uin
     std::vector<std::vector<int>> tiedAt(blocks);  // the vectors equal to the block's best
     std::vector<int> fitCountOf(n);
     std::vector<std::pair<size_t, int>> asks;
+    std::vector<uint8_t> nearStill(blocks, 0);
+    const auto blockPixels = [&](size_t block) {
+        const int kb = MotionField::kBlock;
+        const int x0 = static_cast<int>(block % blocksWide) * kb, y0 = static_cast<int>(block / blocksWide) * kb;
+        return (std::min(x0 + kb, a.width) - x0) * (std::min(y0 + kb, a.height) - y0);
+    };
+    // periodic: the block's pixels unlike themselves half the main step on (read clamped): dots a step apart are,
+    // flat or finely dithered paint (an attribute plasma changing in place) is not, any shift fits it
+    const auto periodic = [&](size_t block) {
+        const V half{all[1].x / 2, all[1].y / 2};
+        const int kb = MotionField::kBlock;
+        const int x0 = static_cast<int>(block % blocksWide) * kb, y0 = static_cast<int>(block / blocksWide) * kb;
+        const auto at = [&](int x, int y) {
+            return a.pixels[static_cast<size_t>(std::clamp(y, 0, a.height - 1)) * a.width + std::clamp(x, 0, a.width - 1)];
+        };
+        int unlike = 0;
+        for (int y = y0; y < std::min(y0 + kb, a.height); y++)
+            for (int x = x0; x < std::min(x0 + kb, a.width); x++)
+                unlike += at(x, y) != at(x + half.x, y + half.y);
+        return unlike >= kPeriodic;
+    };
     for (size_t block = 0; block < blocks; block++)
     {
         // coherent: a block's pixels take the vector most of them fit when it fits them (no a/b mosaic);
@@ -482,12 +503,39 @@ void LayerFlow::Decide(const Layers& layers, const uint8_t* fitCounts, const uin
         if (layers.common > 1 && blockVector[block] != 1 && !(all[blockVector[block]] == V{}) && fitCountOf[1] > 0 &&
             fitCountOf[1] * kNear >= fitCountOf[blockVector[block]] * (kNear - 1))
             blockVector[block] = 1;
+        // nearStill: zero fitting best but not all of the block (something changes in it), the main motion within
+        // 1/kNear, the block periodic: a dot row whose spacing is its step looks still in its middle but for the
+        // dots' spin (Aleste's letters), and so does a still row of spinning dots. Neither is decided alone: the block
+        // joins a region tied {zero, main} and the row's ends tell (a moving row's ends fit only its motion, a still
+        // one's only zero)
+        if (layers.common > 1 && blockVector[block] == 0 && tiedAt[block].size() == 1 && fitCountOf[1] > 0 &&
+            fitCountOf[0] < blockPixels(block) && fitCountOf[1] * kNear >= fitCountOf[0] * (kNear - 1) &&
+            periodic(block))
+            nearStill[block] = 1;
         // a slower moving look-alike fitting some of the block, else the aliases rule keeps the vector
         bool lookAlike = false;
         for (int s = 1; s < n && blockVector[block] > 0; s++)
             lookAlike |= fitCountOf[s] > 0 && Slower(all[s], all[blockVector[block]]);
         if (lookAlike)
             asks.push_back({block, blockVector[block]});
+    }
+    // nearStill only where the frame has one motion: the blocks decided alone on a moving vector mostly (at least
+    // kDominant of kDominantOf) on the main one. A still picture of look-alike tiles fits moving vectors everywhere,
+    // each a different one; a scroll fits its own
+    {
+        int moving = 0, main = 0;
+        for (size_t block = 0; block < blocks; block++)
+            if (tiedAt[block].size() == 1 && blockVector[block] > 0 && !(all[blockVector[block]] == V{}))
+            {
+                moving++;
+                main += blockVector[block] == 1;
+            }
+        const bool dominant = moving > 0 && main * kDominantOf >= moving * kDominant;
+        for (size_t block = 0; block < blocks; block++)
+            if (nearStill[block] && dominant)
+                tiedAt[block] = {0, 1};
+            else
+                nearStill[block] = 0;
     }
     // spread, majority: a region of blocks tied alike takes what most decided blocks round it say. Regions of
     // 4-connected blocks with the same tie set; the decided blocks bordering a region where their layer continues
@@ -732,7 +780,7 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
     std::vector<int> blockVector;
     std::vector<uint8_t> tied;
     CpuEvidence evidence(a, blocksWide, n, fits.data(), support.data(), fitCounts.data());
-    Decide(_layers, fitCounts.data(), usableCounts.data(), evidence, blockVector, tied);
+    Decide(_layers, pictureA, fitCounts.data(), usableCounts.data(), evidence, blockVector, tied);
     // carryFirst: the block's vector explains at least half of the block's changes (the motion of what is there,
     // not a chance match of content appearing)
     std::vector<int8_t> explainsAt(blockVector.size(), -1);

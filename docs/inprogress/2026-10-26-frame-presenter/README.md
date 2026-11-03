@@ -717,9 +717,19 @@ Each phase lands on its own with tests and docs.
       `nearTies` (`LayerFlow::kNear`): a block takes the frame's main motion when it fits within 1/8 of the block's
       best vector. Aleste's spinning dots on a letter's diagonal stroke (spacing 8 x 8, moving -8, 0) fit (0, 8) by a
       few pixels of chance and tore; now whole. Suite 179 -> 177 %, Aleste ghost 1.70 -> 1.63 px, tear 5.5 -> 4.9 %,
-      the other clips the same; 1/4 helped Aleste more but cost `flux` and `dotmatrix`. Known limit: a dot row whose
-      spacing equals its step (Aleste's rows) is still or moving alike in its middle, and spinning dots give its ends
-      no exact fit either.
+      the other clips the same; 1/4 helped Aleste more but cost `flux` and `dotmatrix`.
+      `nearStill`: a dot row whose spacing equals its step (Aleste's rows) is still or moving alike in its middle, and
+      the dots' spin made zero win by a few pixels (62 of 64 against 60): the row's middle stood while its ends moved,
+      a lagging or torn piece of every letter's top, middle and bottom row. Now a block zero fits best but not wholly,
+      the main motion within 1/kNear, joins a region tied {zero, main} and the row's ends decide, as for exact ties;
+      its pixels take the region's vector where it fits. Two guards keep pictures that change in place: the frame's
+      moving blocks decided alone are mostly (3/4) on the main motion, and the block is periodic, at least
+      `kPeriodic` = 20 of its pixels unlike themselves half the main step on (dots a step apart are, flat or finely
+      dithered paint is not: an attribute plasma, s4b-2, fits cell-sized shifts by chance). Aleste jstep 0.69 -> 0.64,
+      ghost 1.63 -> 1.37 px, tear 4.9 -> 3.9 %, pic 10.2 -> 8.1 %; the suite, the other five clips and action the
+      same; of 10 demos s4b-2 changes in 4 refreshes (nearer the frame due), s4b-1 in 4 pixels, the rest not at all.
+      Known limit: rows cut by the screen's edge have no end to tell, and stay for a refresh where they leave or
+      enter.
    4. The GPU passes in `SmoothMotionGPU`: the per-pixel fits and windows as passes, the per-block votes as a pass
       per block. The tied regions (44 x 36 blocks) need a sequential flood: either iterated on the GPU or read back
       and done on the CPU, whichever is cheaper. The result is tested to the bit against the CPU. Done:
