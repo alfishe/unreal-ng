@@ -1295,6 +1295,7 @@ void HostControllers::onFileLoaded(const QString& emulatorId, const QString& pat
         qWarning("controllers: signatures of %s: %s", qUtf8Printable(path), error.c_str());
     _autoDone = false;
     _keyboardNoticed = false;
+    _cardNoticed = false;
     _autoConnector.clear();
     _decision = {};
     Reapply();
@@ -1312,6 +1313,7 @@ void HostControllers::onGuestProgram(const QString& emulatorId, const QString& p
         qWarning("controllers: signatures of %s (read by the guest): %s", qUtf8Printable(path), error.c_str());
     _autoDone = false;
     _keyboardNoticed = false;
+    _cardNoticed = false;
     _autoConnector.clear();
     _decision = {};
     Reapply();
@@ -1370,7 +1372,16 @@ void HostControllers::checkAuto()
         return;
     }
     if (!decision.decisive)
+    {
+        // Reads of a port nothing on the machine answers (#1F on a bare 48K): name the card once, fit nothing (a
+        // card restarts the machine) and keep watching
+        if (!decision.card.empty() && !_cardNoticed)
+        {
+            _cardNoticed = true;
+            emit notice(QString::fromStdString(decision.hint));
+        }
         return;
+    }
     applyAuto(decision);
 }
 

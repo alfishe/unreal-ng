@@ -30,6 +30,7 @@
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/card.h"
+#include "emulator/slots/cardcandidates.h"
 #include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/iturbosounddevice.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
@@ -179,6 +180,10 @@ ControllerManager::~ControllerManager() = default;
 
 void ControllerManager::Rebuild()
 {
+    {
+        std::lock_guard<std::mutex> lock(_candidateMutex);
+        _candidates.clear();  // the slot set may have changed
+    }
     PortDecoder* decoder = _context ? _context->pPortDecoder : nullptr;
     const MEM_MODEL model = _context ? _context->config.mem_model : MM_PENTAGON;
     const std::vector<RetroDeviceKind> overlays = {RetroDeviceKind::SinclairJoystick, RetroDeviceKind::CursorJoystick,
@@ -931,7 +936,35 @@ DeviceAccessEvidence ControllerManager::PortReads() const
 {
     if (_context == nullptr || _context->pPortDecoder == nullptr)
         return {};
-    return _context->pPortDecoder->GetAccessWatch().Evidence();
+    DeviceAccessEvidence evidence = _context->pPortDecoder->GetAccessWatch().Evidence();
+    const SlotManager* slotManager = _context->pSlotManager;
+    if (slotManager == nullptr || slotManager->Current().machine == nullptr)
+        return evidence;
+    // The candidates of each board access of the window (cached per port and direction), then ranked by how well each
+    // card explains all of them
+    std::vector<slots::BoardAccess> accesses;
+    std::vector<DeviceAccessChannel*> boards;
+    {
+        std::lock_guard<std::mutex> lock(_candidateMutex);
+        for (DeviceAccessChannel& channel : evidence.channels)
+        {
+            if (channel.device != "board" || channel.frames == 0)
+                continue;
+            const uint32_t key = (uint32_t(channel.out) << 16) | channel.port;
+            auto it = _candidates.find(key);
+            if (it == _candidates.end())
+                it = _candidates
+                         .emplace(key, slots::CardCandidates(slotManager->Current().model,
+                                                             slotManager->Current().Fitted(), channel.port, channel.out))
+                         .first;
+            accesses.push_back({channel.port, channel.out, it->second});
+            boards.push_back(&channel);
+        }
+    }
+    slots::RankCardCandidates(accesses);
+    for (size_t i = 0; i < boards.size(); ++i)
+        boards[i]->candidates = std::move(accesses[i].candidates);
+    return evidence;
 }
 
 void ControllerManager::OnFrame(uint64_t frame)

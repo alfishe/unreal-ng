@@ -69,6 +69,9 @@ struct DeviceAccessChannel
     uint8_t tested = 0;    ///< reads of an input claim: the bits the code tested (union over its sites)
     std::vector<DeviceAccessSite> sites;  ///< up to kSites, most used first
     uint32_t otherSites = 0;              ///< accesses from sites past the first kSites
+    /// A board access: the catalog cards that would answer it, as the machine is now (ControllerManager::PortReads
+    /// fills them; the watch's own Evidence leaves them empty)
+    std::vector<slots::CardCandidate> candidates;
 };
 
 struct DeviceAccessEvidence

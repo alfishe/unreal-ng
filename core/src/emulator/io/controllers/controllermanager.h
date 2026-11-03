@@ -25,6 +25,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "controllertypes.h"
@@ -171,7 +172,8 @@ public:
     /// (PortDecoder::GetAccessWatch), applied at the next frame boundary. A media load opens it; it counts from the end
     /// of a tape's playing and closes itself after kPortReadWatchFrames (the feature `deviceaccess` keeps the watch on)
     void WatchPortReads(bool on);
-    /// What the watch saw over its last window (active false when it does not run)
+    /// What the watch saw over its last window (active false when it does not run); a board access carries the
+    /// catalog cards that would answer it on the machine as it is (slots::CardCandidates, kept until Rebuild)
     DeviceAccessEvidence PortReads() const;
     static constexpr uint32_t kPortReadWatchFrames = 1500;  ///< 30 s of play at 50 Hz
     /// endregion </Device access evidence>
@@ -229,6 +231,9 @@ private:
     mutable std::mutex _mutex;
     std::vector<Connector> _connectors;
     uint64_t _revision = 0;
+    /// The card candidates of board accesses by (out << 16 | port), for the slot set of the last Rebuild
+    mutable std::mutex _candidateMutex;
+    mutable std::unordered_map<uint32_t, std::vector<slots::CardCandidate>> _candidates;
     struct PendingPlug
     {
         std::string connector;

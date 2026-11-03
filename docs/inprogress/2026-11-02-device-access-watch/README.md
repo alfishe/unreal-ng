@@ -248,6 +248,21 @@ Default: stays off; the load window and the feature turn it on.
   `next.left` on a Next, `#37` `next.right`, an AMX card's PIO that card's `amx` socket. A fixed connector carries
   the board's device (the Next's MD pad). No connector for the role: the auto plug of the device, whose refusal
   names what is missing. `HostInputMachine_Test.AutoConnectorByInputRole`.
+- **Card candidates (2026-11-03).** A board access carries the catalog cards that would answer it on the machine
+  as it is (`slots::CardCandidates`, `slots/cardcandidates.h`): a card whose claims with the default options take the
+  port in that direction (not a DOS-only claim), not fitted already, which the planner would plug (dry run, at the
+  slot `SuggestSlot` gives) without a hard refusal. Several cards may answer one port (`#1F` is a Kempston
+  interface's and an AMX mouse's PIO data A), so `RankCardCandidates` orders them by the whole window, the same rule
+  for every card: input claims first, then the most board accesses the card answers, then the largest share of its
+  own claims they touch (a program that only reads `#1F` gets the one-port Kempston first; one that also writes the
+  PIO's `#5F` / `#7F` gets the AMX mouse). `ControllerManager::PortReads` fills them (the per-port lookup cached
+  until `Rebuild`, the ranking per call); the watch's own evidence and `devices.access` stay without them.
+  `controllers auto` lists them per channel (`candidates` [{`card`, `name`, `slot`, `input`,
+  `needs_confirmation`}]). A board read in nearly every frame with an input candidate, when nothing else decides,
+  is a hint naming the card (`AutoDecision::card`, `cardSlot`; `card`, `card_slot` in the `auto` decision): `#1F`
+  on a bare 48K is "a Kempston joystick interface (kempston on edge.1) would". The Qt host says it once as a notice;
+  fitting a card restarts the machine, so nothing is fitted. `CardCandidates_Test`,
+  `AutoDecision_Test.Decide_BoardReadsNameTheCard`, `HostInputMachine_Test.BoardReadsCarryTheCardCandidate`.
 - **Tests.** `DeviceAccessWatch_Test` (the mouse by each board's decode, the chip select keeping the register, the
   seeded selection), `AutoDecision_Test`, `HostInputMachine_Test.AccessWatch*`: a TurboSound Pentagon whose program
   selected R14 before the watch started; and every machine of the refdata running `IN A,(C)` / `OUT (C),A` on
@@ -256,10 +271,8 @@ Default: stays off; the load window and the feature turn it on.
 ## Known gaps
 
 - **Undeclared ports.** A port the registry does not declare goes to `board` by its exact address: a bare 48K /
-  128K has no Kempston joystick, it is a card there, so a `#1F` read with no card fitted is `board.001f`.
-
-  Follow-up: resolve a board access against the card catalog of the machine's slots (`SlotPlanner`), giving
-  "candidate: kempston card". The auto connector can then propose the card.
+  128K has no Kempston joystick, it is a card there, so a `#1F` read with no card fitted is `board.001f`, with the
+  `kempston` card as its candidate (Built: card candidates). A card is proposed, never fitted on its own.
 - **Test time.** `HostInputMachine_Test.AccessWatchSeesTheKeyboardOnEveryMachine` creates every machine of the
   refdata: 1.3-1.5 s under a machine load of about 150, over the 1 s integration budget; shorten it or move the
   full sweep behind `TestTier::Long()` if it stays there under normal load.

@@ -233,3 +233,34 @@ TEST(AutoDecision_Test, RowBits_StopWhereTheValueIsGone)
     // IN A,(#FE); CP #FF; AND #01: a compare leaves A
     EXPECT_EQ((Code{{0xDB, 0xFE, 0xFE, 0xFF, 0xE6, 0x01}}.Tested()), 0x01);
 }
+
+// A port nothing on the machine answers, read every frame: the card that would, as a hint (a card restarts the
+// machine); a candidate without an input claim, a write or half a window says nothing
+TEST(AutoDecision_Test, Decide_BoardReadsNameTheCard)
+{
+    auto board = [](uint16_t frames, bool out, InputRole input) {
+        DeviceAccessEvidence evidence = Evidence({ { .frames = frames, .device = "board" } });
+        DeviceAccessChannel& channel = evidence.channels.front();
+        channel.port = 0x001F;
+        channel.out = out;
+        channel.candidates.push_back({ .card = "covox", .name = "Covox", .slot = "edge.1" });
+        channel.candidates.push_back(
+            { .card = "kempston", .name = "Kempston joystick interface", .slot = "edge.1", .input = input });
+        return evidence;
+    };
+    AutoDecision decision = DecideFromAccess(board(kWindow, false, InputRole::KempstonJoystick));
+    EXPECT_FALSE(decision.decisive);
+    EXPECT_EQ(decision.card, "kempston");
+    EXPECT_EQ(decision.cardSlot, "edge.1");
+    EXPECT_EQ(decision.input, InputRole::KempstonJoystick);
+    EXPECT_NE(decision.hint.find("#001F"), std::string::npos) << decision.hint;
+    EXPECT_NE(decision.hint.find("Kempston joystick interface"), std::string::npos) << decision.hint;
+
+    EXPECT_TRUE(DecideFromAccess(board(kWindow, false, InputRole::None)).card.empty()) << "no input claim";
+    EXPECT_TRUE(DecideFromAccess(board(kWindow, true, InputRole::KempstonJoystick)).card.empty()) << "a write";
+    EXPECT_TRUE(DecideFromAccess(board(20, false, InputRole::KempstonJoystick)).card.empty()) << "20 frames";
+    // The keyboard joystick the program reads as well plays as the machine is
+    DeviceAccessEvidence both = board(kWindow, false, InputRole::KempstonJoystick);
+    both.channels.push_back(Evidence({ Row(4) }).channels.front());
+    EXPECT_EQ(DecideFromAccess(both).device, "sinclair-joystick");
+}

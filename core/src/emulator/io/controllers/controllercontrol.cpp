@@ -404,6 +404,14 @@ ControllerReply ControllerControl::Auto(const ControllerRequest& request)
     value["reason"] = decision.reason;
     if (!decision.hint.empty())
         value["hint"] = decision.hint;
+    if (!decision.card.empty())
+    {
+        // Reads no device of the machine answers: the catalog card that would, where the planner fits it
+        // (`slots plug <card_slot> <card>` fits it, with a restart)
+        value["card"] = decision.card;
+        value["card_slot"] = decision.cardSlot;
+        value["input"] = InputRoleName(decision.input);
+    }
     reply.body["decision"] = value;
 #endif
     return reply;

@@ -49,6 +49,23 @@ StateNode DeviceAccessEvidenceNode(const DeviceAccessEvidence& evidence)
         }
         entry["sites"] = sites;
         entry["other_sites"] = static_cast<uint64_t>(channel.otherSites);
+        // A board access: the catalog cards that would answer it on this machine (where the planner fits each)
+        if (!channel.candidates.empty())
+        {
+            StateNode candidates = StateNode::Array();
+            for (const slots::CardCandidate& candidate : channel.candidates)
+            {
+                StateNode c = StateNode::Object();
+                c["card"] = candidate.card;
+                c["name"] = candidate.name;
+                c["slot"] = candidate.slot;
+                if (candidate.input != slots::InputRole::None)
+                    c["input"] = InputRoleName(candidate.input);
+                c["needs_confirmation"] = candidate.needsConfirmation;
+                candidates.push(std::move(c));
+            }
+            entry["candidates"] = candidates;
+        }
         channels.push(std::move(entry));
     }
     node["channels"] = channels;

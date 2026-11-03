@@ -254,8 +254,14 @@ Output (`DeviceAccessEvidence`, read by `controllers::DecideFromAccess`):
 ```
 DeviceAccessEvidence { active, framesObserved, window: 50,
                        channels: [ { device, channel, input, port, index, out, frames, perFrame, tested,
-                                     sites: [ { pc, count, tested } ], otherSites } ] }
+                                     sites: [ { pc, count, tested } ], otherSites,
+                                     candidates: [ { card, name, slot, input, needsConfirmation } ] } ] }
 ```
+
+A port no claim answers is a `board` channel by its exact address. `ControllerManager::PortReads` gives it the
+catalog cards that would answer it on the machine as it is (`slots::CardCandidates`): `#1F` read on a bare 48K has
+the `kempston` card on `edge.1`. Read in nearly every frame with nothing else decisive, that is a hint naming the
+card; the Qt host says it once and fits nothing (a card restarts the machine).
 
 - **Tested bits.** For every read of an input claim, the watch reads the code after the `IN` without executing it
   (`TestedBitsAfterIn`) and follows the value:

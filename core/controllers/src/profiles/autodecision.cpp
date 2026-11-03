@@ -1,5 +1,6 @@
 #include "autodecision.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <mutex>
 
@@ -178,6 +179,29 @@ AutoDecision DecideFromAccess(const DeviceAccessEvidence& evidence)
                "#FBFE, #FDFE, #DFFE and #7FFE read in nearly every frame");
         decision.option = "keys";
         decision.optionValue = "up:q,down:a,left:o,right:p,fire:space";
+        return decision;
+    }
+    // Reads every frame of a port nothing on the machine answers, which a catalog card's input claim would: the
+    // card to fit (a Kempston interface for #1F on a bare 48K). After the keyboard joysticks: a program that reads
+    // those rows too plays on them as the machine is
+    for (const DeviceAccessChannel& channel : evidence.channels)
+    {
+        if (channel.device != "board" || channel.out || channel.frames < kEveryFrame)
+            continue;
+        const auto candidate =
+            std::find_if(channel.candidates.begin(), channel.candidates.end(),
+                         [](const slots::CardCandidate& c) { return c.input != InputRole::None; });
+        if (candidate == channel.candidates.end())
+            continue;
+        char text[200];
+        std::snprintf(text, sizeof(text), "#%04X read in %u of %u frames (%.1f per frame) and nothing answers it",
+                      static_cast<unsigned>(channel.port), static_cast<unsigned>(channel.frames), evidence.window,
+                      static_cast<double>(channel.perFrame));
+        decision.hint = std::string(text) + ": a " + candidate->name + " (" + candidate->card + " on " +
+                        candidate->slot + ") would";
+        decision.input = candidate->input;
+        decision.card = candidate->card;
+        decision.cardSlot = candidate->slot;
         return decision;
     }
     // Port A of the AY: nothing to plug (no Timex machine, keypad or AY mouse yet), said so

@@ -8,7 +8,8 @@
 /// joystick. Decisive only over a full window, on reads in nearly every frame; a program that polls every half-row
 /// (the ROM's key scan, text input) wants the keyboard instead. NR #B2 makes a Next pad a 6-button one; the tested
 /// bits tell Cursor from two Sinclair ports; AY R14 reads are a hint only (a Timex stick, the 128 keypad, an AY mouse
-/// are not built).
+/// are not built). Reads every frame of a port no device claims, which a catalog card with an input claim would answer
+/// (the evidence's candidates), are a hint naming the card.
 
 #include <functional>
 #include <memory>
@@ -44,6 +45,10 @@ struct AutoDecision
     /// Evidence for a device the emulator has not got (AY R14: a Timex joystick, the 128 keypad, an AY mouse); never
     /// decisive
     std::string hint;
+    /// The hint's card: reads no device of the machine answers, which this catalog card would (a Kempston interface
+    /// for #1F on a bare 48K), with the slot the planner fits it in. Fitting it restarts the machine: said, not done
+    std::string card;
+    std::string cardSlot;
 };
 
 /// Frames of the window a class must be read in to count as "every frame"

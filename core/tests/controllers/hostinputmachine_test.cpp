@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -311,6 +312,30 @@ TEST(HostInputMachine_Test, AutoConnectorByInputRole)
     const Connector amx = emulator->GetContext()->pControllerManager->At(
         static_cast<size_t>(emulator->GetContext()->pControllerManager->Find("amx")));
     EXPECT_EQ(amx.source, "edge.1");
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// Boot-bound (~20 ms): a bare 48K, three frames. #1F reads nothing on the machine answers carry the catalog card that
+// would: a Kempston interface on the edge
+TEST(HostInputMachine_Test, BoardReadsCarryTheCardCandidate)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    // DI; loop: IN A,(#1F); JR loop
+    RunAt8000(context, {0xF3, 0xDB, 0x1F, 0x18, 0xFC});
+    ControllerManager* manager = context->pControllerManager;
+    manager->WatchPortReads(true);
+    emulator->RunNFrames(3);
+    const DeviceAccessEvidence evidence = manager->PortReads();
+    const auto board = std::find_if(evidence.channels.begin(), evidence.channels.end(), [](const DeviceAccessChannel& c) {
+        return c.device == "board" && !c.out && (c.port & 0xFF) == 0x1F;
+    });
+    ASSERT_NE(board, evidence.channels.end()) << "#1F is unclaimed on a bare 48K";
+    ASSERT_FALSE(board->candidates.empty());
+    EXPECT_EQ(board->candidates.front().card, "kempston");
+    EXPECT_EQ(board->candidates.front().slot, "edge.1");
+    EXPECT_EQ(board->candidates.front().input, slots::InputRole::KempstonJoystick);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 

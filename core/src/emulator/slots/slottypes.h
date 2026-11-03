@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
 
 #include "slotvocabulary.h"
 
@@ -177,6 +178,19 @@ struct PortClaim
     uint16_t channelMask = 0;
     InputRole input = InputRole::None;
     const char* channelName = "";     ///< the channel names' prefix ("row", "reg"); "" = the claim's port
+};
+
+/// A catalog card that would answer a port access no device of the machine claims (cardcandidates.h)
+struct CardCandidate
+{
+    std::string card;                 ///< catalog id ("kempston")
+    std::string name;                 ///< "Kempston joystick interface"
+    std::string slot;                 ///< where the planner would fit it ("edge.1")
+    InputRole input = InputRole::None;  ///< the input role of the card's claim on the port
+    bool needsConfirmation = false;   ///< the plan replaces or disables something: automation confirms it
+    uint16_t explained = 0;           ///< RankCardCandidates: the board accesses of the window the card answers
+    uint16_t claimsUsed = 0;          ///< RankCardCandidates: the card's claims those accesses touch, of `claims`
+    uint16_t claims = 0;
 };
 
 /// One value of a card option
