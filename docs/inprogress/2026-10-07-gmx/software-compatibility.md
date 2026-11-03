@@ -21,8 +21,8 @@ the `izzx-git` repositories) in the local collection. None of the images is stor
 | Phanes | v1.0 (2024), PLM | `$Z/System Software/P/Phanes (2024)(PLM)/v1.0(EN)(GMX, KM).trd` | works | refuses | 5.00: "at least v5.XX.40 with 2Mb memory" |
 | ZX Word 3 | v3.00gmx (2024), PLM | `$Z/Applications/Z/ZX Word 3 (2024)(-)/v3.00gmx(EN)(GMX, KM)[h 2024 PLM].trd` | works | refuses | 5.00: the same v5.XX.40 message |
 | FATALL | v0.25 (2009), Savelij; GMX hack 2020 | `$Z/System Software/F/FATALL (2009)(-)/v0.25(EN)(128K, GMX)[h 2020 Evgeniy Muchkin, Savelij13].trd` | works | works | Without a card "FAT not found"; with the SD folder in `sd` it lists `E: ZC SDC FAT32` |
-| Video player (VIDEO03, VPlayer 0.1.1) | izzx | `$G/Video-*.zip VIDEO03/DISK.TRD` | works | - | Plays its sample `VIDEO.GMV` (160x200, 10 fps) from the SD folder; device menu "Select 0-0: SD ZC" |
-| VPlayer | v0.1.7 (2026), izzx | `$G/Video-*.zip VPlayer/DISK.TRD` | works | - | Plays a GMV in the 0.1.5+ layout (512-byte header, 4096 sound + 16384 picture per frame) from the SD folder |
+| Video player (VIDEO03, VPlayer 0.1.1) | izzx | `$G/Video-*.zip VIDEO03/DISK.TRD` | works | - | Plays its sample `VIDEO.GMV` (160x200, 10 fps) from the SD folder; device menu "Select 0-0: SD ZC". Sound through the General Sound (its own code on the card, 11.25 kHz): plays on the NeoGS and on a GS 512 KB, silent on a GS 128 KB, which is the hardware: the card code streams into MPAG pages 2-15 (fixed in `GS_Code.C`, the host checks only for 3+ pages), and on 128 KB the pages 5, 9 and 13 are the first RAM pair holding the code |
+| VPlayer | v0.1.7 (2026), izzx | `$G/Video-*.zip VPlayer/DISK.TRD` | works | - | Plays a GMV in the 0.1.5+ layout (512-byte header, 4096 sound + 16384 picture per frame) from the SD folder. Sound on all three ports of its `S` choice (pressed on the panel before ENTER): `#B3` through the NeoGS and a GS of 128 or 512 KB (LPT Covox mode of the card), `#FB` through the SounDrive; `#DD` (the Scorpion Covox) is silent: the model has no device there |
 | VPlayer | v0.1.6 (2022/23), izzx | `$Z/System Software/V/VPlayer (2022)(-)/v0.1.6(EN)(GMX).trd` | partly | - | Menu, SD and file list work. No sample in its own frame layout is available: the VIDEO03 sample and its 0.1.7 conversion both load at the wrong offset (the attribute page receives a sound packet) |
 | CP/M 2.2 (CPMZSGMX) | izzx after FK0'99 | `$G/CPM-*.zip CPMZSGMX.trd` | boots | - | The shell starts `CPM`: "CP/M version 2.2 ... BIOS Ver 2.0 for Scorpion/Kay/Pentagon", then "Bdos Err On E: Bad Sector": drive E: is the SMUC HDD partition `CPMZS0` (MicroDOS type), which has to be created in the monitor first (its ReadMe) |
 | GMX Commander | v1.0 (2002), FION; fix 2020 Evgeniy Muchkin | `$Z/System Software/G/GMX Comander (2002)(-)/v1.0fix(EN)(GMX)[h 2020 Evgeniy Muchkin].scl` | hangs | works | Needs a hard disk: without one "REQUIRED HARDWARE NOT FOUND!" on both firmwares. With an MFS disk on `ide0.master` it works on 5.00; on 6.44 it reads the disk geometry from ProfROM v5 RAM variables (`#DFFC` heads, `#DFFD` sectors, RAM page 8), gets garbage, computes a bad LBA and waits for the disk forever. The program's limit, not the model's |
@@ -53,6 +53,13 @@ keys a program asks for. Hangs were looked at with the port trace and memory rea
 - Puzzle Bobble's sound: the GS port trace (`/state/audio/gs/porttrace`) counts the host's data bytes and the card's
   DAC fetches, a GS-only capture (`/audio/capture`, `source: gs`) during the game reads RMS 0.046 (NeoGS) and 0.066
   (GS 512 KB), 0 with GS 128 KB.
+- Video players' sound: a GS-only (or `covox`) capture while the video plays, matched against the file's sound track.
+  VIDEO03 plays at a steady clock: the normalized cross-correlation of a 0.25 s window over a scan of rates peaks at
+  r = 0.84 (NeoGS) and 0.91 (GS 512 KB) at 11.25 kHz. VPlayer 0.1.7 emits bytes while it reads the card and in its
+  wait loop, so the clock varies inside a frame; there the 10 ms RMS envelope of the capture is matched against the
+  track's envelope, scanning frame rate and start: r = 0.83-0.85 at 10.0 fps on all four devices, against 0.47-0.50 at
+  random rates for another video (the control). The sample is the native 0.1.5 file `DD-ak` from
+  `$G/Video-*.zip VIDEO04.02` (2248 sound bytes per frame) with a 0.1.7 header put in front for the test.
 - Puzzle Bobble's "Loading..." at 25 s: the trace showed TR-DOS reading the catalog for each sample (`#5CDD` = the
   file name), and at 60 s the code sits in its menu loop (`HALT`, key read, `CP #36` / `#37` / `#20`).
 - VPlayer 0.1.6: the pixel pages `#39` / `#3B` hold the `#0F` pattern the player writes, the attribute page `#79` holds
