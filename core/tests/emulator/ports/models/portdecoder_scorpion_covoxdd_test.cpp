@@ -107,7 +107,8 @@ namespace
 }
 
 // The ZXM-MoonSound in a slot (the Scorpion INIs fit one) decodes #C5 fully: the card wins the cycle over the
-// printer latch's partial decode, which also covers #C5 on the yellow board
+// printer latch's partial decode, which also covers #C5 on the yellow board. The card itself is served from the
+// Z80 I/O funnel tap; the model decode stands down
 TEST_F(PortDecoder_Scorpion_CovoxDd_Test, FullDecodeCardWinsOverThePartialDecode)
 {
     Make(MM_SCORP, true);
@@ -117,11 +118,9 @@ TEST_F(PortDecoder_Scorpion_CovoxDd_Test, FullDecodeCardWinsOverThePartialDecode
     ASSERT_TRUE(_portDecoder->RegisterFullDecodeLowBytePort(0xC5, &moonSound));
 
     _portDecoder->DecodePortOut(0x00C5, 0x33, 0x0000);
-    EXPECT_EQ(moonSound.writes.size(), 1u);
     EXPECT_EQ(covox.printerLatch(), 0x80) << "the card's port is not the printer latch's";
     _portDecoder->DecodePortOut(0x00DD, 0x44, 0x0000);
     EXPECT_EQ(covox.printerLatch(), 0x44);
-    EXPECT_EQ(moonSound.writes.size(), 1u);
 
     _portDecoder->UnregisterFullDecodeLowBytePort(0xC5, &moonSound);
     _portDecoder->UnregisterSelfDecodingDevice(&covox);
