@@ -561,6 +561,12 @@ public:
     /// Defined out-of-line (EmulatorContext is only forward-declared here).
     bool IsReplayActive() const override;
 
+    /// The bytes a tool edit changes in memory the CPU sees, as a replay applies the edit: a fast tape load or a
+    /// script's poke reaches memory past the bus, so the analysis replay (replaytracer.cpp) folds these as the
+    /// writes of the instruction that made the edit. Only bytes whose value changes are reported for a page image
+    using EditWriteObserver = std::function<void(uint16_t z80, uint8_t value)>;
+    void SetEditWriteObserver(EditWriteObserver observer) { _editWriteObserver = std::move(observer); }
+
     // -----------------------------------------------------------------------
     // Input journal (Phase 2 Item 3; parent TDD §5 row #1)
     // -----------------------------------------------------------------------
@@ -1139,6 +1145,10 @@ private:
     /// inside a 16 KB page. A range spanning a page boundary, or wider than a
     /// page, could match any offset, so it is left unpruned rather than
     /// approximated.
+    /// May frame `frame` hold an access q matches (CanPruneByCoverage first): the coverage keys name the byte's true
+    /// offset in its page (Memory::TtdKeyOf), so on 8K slots a query with no known half asks both halves
+    bool CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDSearchQuery& q) const;
+
     inline bool CanPruneByCoverage(const TTDSearchQuery& q) const
     {
         if (!_enableCoverageIndex)
@@ -1158,7 +1168,7 @@ private:
 public:
 
     void RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
-                           uint16_t m1pc, PhysPage physPage) override;
+                           uint16_t m1pc, PhysPage physPage, uint8_t flip = 0) override;
     
     /// @brief Hot-path capture: record a port OUT (used for IO probe).
     ///
@@ -1771,6 +1781,11 @@ private:
         std::vector<std::vector<uint8_t>> deviceStates;
         size_t inputCursor = 0;            ///< journal playback cursor (ServiceInput)
         bool   inputPlaybackArmed = false;
+        size_t engineEventCursor = 0;      ///< the engine's event log: a replay in between delivers its events
+        uint64_t cardEditFrame = UINT64_MAX;
+        uint64_t inputStartFrame = UINT64_MAX;
+        TTDMachineTime inputFrameStart = 0;
+        bool inputFrameKnown = false;
         /// The replay engine's journals as the machine plays them (a machine on the recorded history after a seek
         /// runs from them; a throwaway replay starts them elsewhere) and the hooks the CPU and the media read through
         TTDPortJournal::Mode busReadMode = TTDPortJournal::Mode::Off;
@@ -1963,8 +1978,11 @@ private:
     std::unordered_map<size_t, std::vector<uint8_t>> _toolEditPayloads;   ///< marker index -> edit bytes
     /// Apply a tool edit's bytes (a replay crossing it)
     void ApplyToolEdit(const std::vector<uint8_t>& payload);
-    /// The replay's card edits of frame @p frame to the card targets (those of an earlier frame leave)
-    void DeliverCardEdits(uint64_t frame);
+    EditWriteObserver _editWriteObserver;   ///< see SetEditWriteObserver
+    /// The replay's card edits of frame @p frame to the card targets (those of an earlier frame leave). The scan
+    /// starts at the event cursor; @p fromFrameStart scans from the frame's first event instead (a restore mid-frame,
+    /// where the cursor is already past some of the frame's edits)
+    void DeliverCardEdits(uint64_t frame, bool fromFrameStart = false);
     /// The live machine's memory regions as the engine sees them: machine RAM, then each region source's
     std::vector<TTDRegionDesc> LiveRegions() const;
     uint64_t _shadowLastStart = 0;         ///< the last captured frame's start in machine time

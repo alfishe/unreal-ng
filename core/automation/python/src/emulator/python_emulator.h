@@ -691,7 +691,8 @@ inline pybind11::object StreamDeckPy(const std::string& verb, const pybind11::kw
 }
 
 /// A monitoring verb (monitoring::Call: all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots,
-/// recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events) with its args as keywords
+/// recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events, devices.access) with its
+/// args as keywords
 /// (instance=
 /// an id or an index; default this emulator for an instance's name); the reply every plane returns
 inline pybind11::object MonitorPy(Emulator& self, const std::string& verb, const pybind11::kwargs& options)
@@ -2779,7 +2780,7 @@ namespace PythonBindings
                      return MonitorPy(self, verb, options);
                  }, py::arg("verb") = "all",
                  "Monitoring (all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots, "
-                 "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events): "
+                 "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events, devices.access): "
                  "monitor('emulator.stats') -> {ok, instance, fps, speed_percent, ...} as WebAPI /api/v1/monitor")
             .def("surfaces", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return SurfacesPy(verb, options);
@@ -3727,7 +3728,8 @@ namespace PythonBindings
                 }
                 return StateNodeToPy(value);
             }, "Analysis layers (analysiscontrol.h): action start (level='facts' | 'counters', mode='z80' | 'physical', "
-               "record=True for L1) | stop | status | build (frames=N, path='l1.json', wait=ms: replay the recording "
+               "record=True for L1) | stop | status | build (frames=N, from_frame=F, from_tinframe=T, to_frame=E, path='l1.json', "
+               "wait=ms: replay the recording, or the window F/T..E of it, "
                "into L1) | cancel | explain (address='$80BC' or a label, page='ram:3', what='auto' | 'routine' | "
                "'byte': a routine's fact sheet or a byte's facts) | query (kind='all' | 'conflicts' | 'records' | ..., "
                "range='8000-83FF', limit=200: L2 claims) | export (format='ctl' | 'skool' | 'fields' | 'geometry' | "

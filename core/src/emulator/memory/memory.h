@@ -158,6 +158,13 @@ protected:
     /// Value is ttd::kPhysPageNone when bank is not RAM (ROM/Cache mode) - a
     /// value outside 0..255, so RAM page 255 of a 4 MB machine stays a page.
     /// Avoids expensive GetRAMPageForBank() pointer arithmetic on every write.
+    /// TtdKeyOf per 8K slot: set by a memory that maps 8K slots (the Next), else none
+    struct TtdSlotKey
+    {
+        ttd::PhysPage page = ttd::kPhysPageNone;
+        uint8_t flip = 0;
+    };
+    const TtdSlotKey* _ttdSlots8k = nullptr;
     ttd::PhysPage _bank_ram_page_cache[4] = {ttd::kPhysPageNone, ttd::kPhysPageNone,
                                              ttd::kPhysPageNone, ttd::kPhysPageNone};
 
@@ -267,6 +274,23 @@ public:
     /// @brief Physical RAM page currently mapped behind a Z80 address.
     /// Returns ttd::kPhysPageNone when that bank holds ROM or cache.
     /// Cheap: reads the per-bank cache maintained by SetRAMPageToBank*.
+    /// @brief TTD's name of the byte at `addr`: its page and the flip bit (1: the byte is in the other 8K half of
+    /// the page than addr's bit 13 says - the Next's MMU may show an odd 8K page in an even slot). The byte's offset in
+    /// the page is (addr & #3FFF) ^ (flip << 13). 16K windows: the window's page, flip 0
+    inline ttd::PhysPage TtdKeyOf(uint16_t addr, uint8_t& flip) const
+    {
+        if (_ttdSlots8k) [[unlikely]]
+        {
+            const TtdSlotKey& k = _ttdSlots8k[addr >> 13];
+            flip = k.flip;
+            return k.page;
+        }
+        flip = 0;
+        return _bank_ram_page_cache[(addr >> 14) & 0b11];
+    }
+    /// A machine whose TTD keys come per 8K slot (TtdKeyOf)
+    bool HasTtdSlots8k() const { return _ttdSlots8k != nullptr; }
+
     inline ttd::PhysPage GetPhysPageForZ80Address(uint16_t addr) const
     {
         return _bank_ram_page_cache[(addr >> 14) & 0b11];
@@ -450,8 +474,9 @@ public:
 protected:
     /// The debug access bookkeeping that follows the byte (tracking, TTD, breakpoints): MemoryReadDebug /
     /// MemoryWriteDebug call these, and so does a derivative with its own mapping
-    void ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, ttd::PhysPage physPage);
-    void WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physPage);
+    /// `flip`: TtdKeyOf's bit for the byte (0 on 16K windows)
+    void ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, ttd::PhysPage physPage, uint8_t flip = 0);
+    void WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physPage, uint8_t flip = 0);
 
 public:
 
@@ -492,6 +517,12 @@ public:
     void SetROMMode(ROMModeEnum mode);
 
     void UpdateZ80Banks();
+
+    /// The mapping after a restore that put back every latch and device image (TTD checkpoints, live state, tool
+    /// edits): the base derives it from the port latches (UpdateZ80Banks). A model whose mapping registers live in
+    /// its own image overrides it - the Next's MMU (NR #50-#57) is not a function of #7FFD / #1FFD, deriving it from
+    /// them maps the wrong pages into slots 0, 1, 6 and 7
+    virtual void RestorePaging() { UpdateZ80Banks(); }
 
 protected:
     /// Model-specific latch-to-bank translation. A derivative that owns the

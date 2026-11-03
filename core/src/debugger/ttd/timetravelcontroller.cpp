@@ -1827,7 +1827,7 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
         MLOGWARNING("TimeTravelController::RestoreCheckpoint — engine restore of frame %llu: %s%s%s",
                     static_cast<unsigned long long>(cp.time.frame), memory.message.c_str(),
                     memory.message.empty() ? "" : "; ", devices.message.c_str());
-    _memory->UpdateZ80Banks();
+    _memory->RestorePaging();
     ApplyBankOverrides(cp.bankOverrides);
     _shadowRescan = true;   // live memory now differs from the engine's delta base
     const PerfClock::time_point devicesEnd = PerfClock::now();
@@ -2899,7 +2899,7 @@ void TimeTravelController::RecordCardEdits(const char* source, const std::vector
         _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
 }
 
-void TimeTravelController::DeliverCardEdits(uint64_t frame)
+void TimeTravelController::DeliverCardEdits(uint64_t frame, bool fromFrameStart)
 {
     _cardEditFrame = frame;
     DebugManager* debug = _context ? _context->pDebugManager : nullptr;
@@ -2916,7 +2916,8 @@ void TimeTravelController::DeliverCardEdits(uint64_t frame)
     {
         const TTDEventLog& log = _replayEngine->Events();
         const TTDMachineTime end = start + 2 * static_cast<TTDMachineTime>(FrameSpan());
-        for (size_t i = _engineEventCursor; i < log.Count() && log.At(i).machineTime < end; ++i)
+        const size_t from = fromFrameStart ? log.CursorAt(start) : _engineEventCursor;
+        for (size_t i = from; i < log.Count() && log.At(i).machineTime < end; ++i)
         {
             const TTDEvent& ev = log.At(i);
             if (ev.kind != TTDEventKind::DebuggerEdit || TTDEventLog::RoleOf(ev) != TTDEventRole::Input)
@@ -2962,6 +2963,15 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
     std::vector<TTDRegionDesc> regions = LiveRegions();
     TTDBankOverrides banks;
     bool haveBanks = false;
+    // The page images' changed bytes, reported once the edit's own paging is in place (its banks record follows
+    // the pages): the observer sees them where the CPU sees them after the edit
+    struct PageWrite
+    {
+        uint16_t page;
+        uint16_t offset;
+        uint8_t value;
+    };
+    std::vector<PageWrite> pageWrites;
     size_t at = 0;
     while (at + 11 <= payload.size())
     {
@@ -2976,7 +2986,14 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
         if (at > payload.size())
             break;
         if (kind == kEditRamPage && _memory && index < _modelRamPages && length == 0x4000)
-            std::memcpy(_memory->RAMPageAddress(static_cast<uint16_t>(index)), bytes, length);
+        {
+            uint8_t* page = _memory->RAMPageAddress(static_cast<uint16_t>(index));
+            if (_editWriteObserver)
+                for (uint32_t k = 0; k < length; ++k)
+                    if (page[k] != bytes[k])
+                        pageWrites.push_back({static_cast<uint16_t>(index), static_cast<uint16_t>(k), bytes[k]});
+            std::memcpy(page, bytes, length);
+        }
         else if (kind == kEditRegionPiece)
         {
             for (const TTDRegionDesc& r : regions)
@@ -3013,7 +3030,11 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
         else if (kind == kEditCpuBytes && _memory)
         {
             for (uint32_t k = 0; k < length; ++k)
+            {
+                if (_editWriteObserver)
+                    _editWriteObserver(static_cast<uint16_t>(index + k), bytes[k]);
                 _memory->ToolWriteToZ80Memory(static_cast<uint16_t>(index + k), bytes[k]);
+            }
         }
         else if (kind == kEditBanks && length == sizeof(TTDBankOverrides))
         {
@@ -3029,9 +3050,30 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
     }
     if (_memory)
     {
-        _memory->UpdateZ80Banks();
+        _memory->RestorePaging();
         if (haveBanks)
             ApplyBankOverrides(banks);
+    }
+    if (_editWriteObserver && _memory && !pageWrites.empty())
+    {
+        // Once per physical page: a page mapped in two banks is reported at the lowest one; an unmapped page is not
+        // seen by the CPU
+        uint16_t lastPage = UINT16_MAX;
+        int bankOfPage = -1;
+        for (const PageWrite& w : pageWrites)
+        {
+            if (w.page != lastPage)
+            {
+                lastPage = w.page;
+                bankOfPage = -1;
+                uint8_t* page = _memory->RAMPageAddress(w.page);
+                for (uint8_t bank = 0; bank < 4 && bankOfPage < 0; ++bank)
+                    if (_memory->GetPhysicalAddressForZ80Page(bank) == page)
+                        bankOfPage = bank;
+            }
+            if (bankOfPage >= 0)
+                _editWriteObserver(static_cast<uint16_t>((bankOfPage << 14) | w.offset), w.value);
+        }
     }
 }
 
@@ -5014,8 +5056,24 @@ void TimeTravelController::SyncCoverageSink()
         _context->ttdCoverage = nullptr;
 }
 
+bool TimeTravelController::CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDSearchQuery& q) const
+{
+    auto may = [&](uint16_t low, uint16_t high) {
+        return _coverageIndex.FrameMayContain(kind, frame, low, high, q.hasPhysPageFilter, q.physPage);
+    };
+    const uint16_t low = static_cast<uint16_t>(q.addrFrom & 0x3FFF);
+    const uint16_t high = static_cast<uint16_t>(q.addrTo & 0x3FFF);
+    if (!_memory || !_memory->HasTtdSlots8k())
+        return may(low, high);
+    if ((low ^ high) & 0x2000)
+        return may(0, 0x3FFF);   // both halves of the page
+    if (q.hasPhysPageFilter && q.flip >= 0)
+        return may(static_cast<uint16_t>(low ^ (q.flip << 13)), static_cast<uint16_t>(high ^ (q.flip << 13)));
+    return may(low, high) || may(static_cast<uint16_t>(low ^ 0x2000), static_cast<uint16_t>(high ^ 0x2000));
+}
+
 void TimeTravelController::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
-                                          uint16_t m1pc, PhysPage physPage)
+                                          uint16_t m1pc, PhysPage physPage, uint8_t flip)
 {
     // Per-frame decode-cache capture (during a build replay only): attach the
     // write to the instruction currently being captured. Cheap — a couple of
@@ -5039,7 +5097,7 @@ void TimeTravelController::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint
     // worth replaying at all", and a user may want the second without paying
     // for the first.
     if (_enableCoverageIndex)
-        _coverageIndex.Record(TTDCoverageKind::Written, MakeCoverageKey(physPage, addr));
+        _coverageIndex.Record(TTDCoverageKind::Written, MakeCoverageKey(physPage, static_cast<uint16_t>(addr ^ (flip << 13))));
 
     if (!_enableWriteJournal)
         return;
@@ -5048,6 +5106,7 @@ void TimeTravelController::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint
     rec.globalT  = GlobalT({_context->emulatorState.frame_counter, TInFrameNow()});
     rec.addr     = addr;
     rec.isIo     = 0;
+    rec.flip     = flip & 1u;
     rec.m1pc     = m1pc;
     rec.value    = newVal;
     // Journaled writes always have a RAM page (Memory gates on kPhysPageNone),
@@ -5193,6 +5252,7 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
             rec.globalT = t;
             rec.addr = h.addr;
             rec.isIo = 0;
+            rec.flip = h.flip & 1u;
             rec.m1pc = h.pc;
             rec.value = h.value;
             SetRecordPage(rec, h.physPage);   // as the live journal stores it
@@ -5426,6 +5486,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
         if (q.hasValueFilter && rec.value != q.value) return false;
         if (q.hasPcFilter && (rec.m1pc < q.pcFrom || rec.m1pc > q.pcTo)) return false;
         if (q.hasPhysPageFilter && RecordPage(rec) != q.physPage) return false;   // bank-aware (TDD §9.4)
+        if (q.hasPhysPageFilter && q.flip >= 0 && rec.flip != static_cast<unsigned>(q.flip)) return false;
         return true;
     };
 
@@ -5452,6 +5513,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
                     answer.physPage = RecordPage(*rec);
                     answer.access = TTDAccessType::Write;
                     answer.addr = rec->addr;
+                    answer.flip = static_cast<uint8_t>(rec->flip);
                     reportWindow(answer.time, std::min(TimePointAt(beforeGlobalT), SessionEndPosition()));
                     return answer;   // from the journal: the machine stays where it is
                 }
@@ -5503,15 +5565,11 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
         // uncertainty answers "maybe" and the frame gets replayed as before.
         if (CanPruneByCoverage(q))
         {
-            const uint16_t offsetLow  = static_cast<uint16_t>(q.addrFrom & 0x3FFF);
-            const uint16_t offsetHigh = static_cast<uint16_t>(q.addrTo & 0x3FFF);
             const TTDCoverageKind coverageKind = q.access == TTDAccessType::Execute ? TTDCoverageKind::Executed
                                                  : q.access == TTDAccessType::Write ? TTDCoverageKind::Written
                                                                                     : TTDCoverageKind::Read;
 
-            if (!_coverageIndex.FrameMayContain(coverageKind, cp.time.frame,
-                                                offsetLow, offsetHigh,
-                                                q.hasPhysPageFilter, q.physPage))
+            if (!CoverageMayContain(coverageKind, cp.time.frame, q))
             {
                 continue;  // Proven absent — no restore, no replay.
             }
@@ -5615,7 +5673,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
             kept += candidates[prefix++].keep ? 1 : 0;
         return kept >= want;
     };
-    auto keyOf = [](const TTDSearchResult& a) { return (uint32_t(a.physPage) << 14) | (a.addr & 0x3FFFu); };
+    auto keyOf = [](const TTDSearchResult& a) { return (uint32_t(a.physPage) << 14) | ((a.addr & 0x3FFFu) ^ (uint32_t(a.flip) << 13)); };
     auto resolve = [&](Candidate& c, uint8_t old) {
         c.hit.hasOldValue = true;
         c.hit.oldValue = old;
@@ -5684,7 +5742,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
             const TTDMemorySpace space = SpaceOfPage(page);
             uint8_t old = 0;
             const bool known = space == TTDMemorySpace::Ram
-                                   ? byteAt("ram", uint64_t(page) * 0x4000 + (c.hit.access.addr & 0x3FFF), old)
+                                   ? byteAt("ram", uint64_t(page) * 0x4000 + ((c.hit.access.addr & 0x3FFF) ^ (c.hit.access.flip << 13)), old)
                                : space == TTDMemorySpace::Vram  ? byteAt("sprinter.vram", SpaceOffset(page, c.hit.access.addr), old)
                                : space == TTDMemorySpace::Cache ? byteAt("sprinter.fastram", SpaceOffset(page, c.hit.access.addr), old)
                                                                 : false;
@@ -5754,8 +5812,9 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
                     return static_cast<int>(k);
             return -1;
         };
-        auto inRange = [&](uint16_t addr, PhysPage page) {
-            return addr >= q.addrFrom && addr <= q.addrTo && (!q.hasPhysPageFilter || page == q.physPage);
+        auto inRange = [&](uint16_t addr, PhysPage page, uint8_t flip) {
+            return addr >= q.addrFrom && addr <= q.addrTo &&
+                   (!q.hasPhysPageFilter || (page == q.physPage && (q.flip < 0 || flip == q.flip)));
         };
         // With changes_only the probe sees every write in the range: a write the value / pc filter drops still
         // tells the byte an older matching one left
@@ -5787,7 +5846,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
                         --first;
                     writes.ForEachBackward(startT(first), intervalEndT, [&](const TTDWriteRecord& rec) {
                         const PhysPage page = RecordPage(rec);
-                        if (rec.isIo || !inRange(rec.addr, page))
+                        if (rec.isIo || !inRange(rec.addr, page, static_cast<uint8_t>(rec.flip)))
                             return true;
                         if (rec.globalT < floorT && pending.empty())
                         {
@@ -5801,6 +5860,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
                         a.physPage = page;
                         a.access = TTDAccessType::Write;
                         a.addr = rec.addr;
+                        a.flip = static_cast<uint8_t>(rec.flip);
                         offer(a, rec.globalT, passes(a));
                         if (enough())
                         {
@@ -5837,8 +5897,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
                 const TTDCoverageKind coverageKind = q.access == TTDAccessType::Execute ? TTDCoverageKind::Executed
                                                      : q.access == TTDAccessType::Write ? TTDCoverageKind::Written
                                                                                         : TTDCoverageKind::Read;
-                if (!_coverageIndex.FrameMayContain(coverageKind, cp.time.frame, q.addrFrom & 0x3FFF,
-                                                    q.addrTo & 0x3FFF, q.hasPhysPageFilter, q.physPage))
+                if (!CoverageMayContain(coverageKind, cp.time.frame, q))
                     continue;
             }
 
@@ -5976,8 +6035,7 @@ TTDProbeFramesResult TimeTravelController::ProbeFrames(const std::vector<control
         if (!canPrune)
             return false;
         for (const auto& [kind, q] : prune)
-            if (_coverageIndex.FrameMayContain(kind, frame, q.addrFrom & 0x3FFF, q.addrTo & 0x3FFF,
-                                               q.hasPhysPageFilter, q.physPage))
+            if (CoverageMayContain(kind, frame, q))
                 return false;
         return true;
     };
@@ -6787,9 +6845,11 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
             {
                 if (hit[k])
                     continue;
-                const uint16_t bp = pcs[k];
-                const uint16_t offset = static_cast<uint16_t>(bp & 0x3FFF);
-                if (_coverageIndex.FrameMayContain(TTDCoverageKind::Executed, frame, offset, offset, hasPage, page))
+                TTDSearchQuery at;   // the PC's offset in its page, either half on the Next's 8K slots
+                at.addrFrom = at.addrTo = pcs[k];
+                at.hasPhysPageFilter = hasPage;
+                at.physPage = page;
+                if (CoverageMayContain(TTDCoverageKind::Executed, frame, at))
                 {
                     candidate = true;
                     break;
@@ -7009,6 +7069,11 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
     _peripherals.SaveLive(out.deviceStates);
     out.inputCursor = _inputCursor;
     out.inputPlaybackArmed = _inputPlaybackArmed;
+    out.engineEventCursor = _engineEventCursor;
+    out.cardEditFrame = _cardEditFrame;
+    out.inputStartFrame = _inputStartFrame;
+    out.inputFrameStart = _inputFrameStart;
+    out.inputFrameKnown = _inputFrameKnown;
     if (_replayEngine)
     {
         out.busReadMode = _replayEngine->BusReads().GetMode();
@@ -7096,7 +7161,7 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
     _peripherals.LoadLive(snap.deviceStates);
     if (_memory)
     {
-        _memory->UpdateZ80Banks();
+        _memory->RestorePaging();
         ApplyBankOverrides(snap.bankOverrides);
     }
 
@@ -7115,6 +7180,17 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
 
     _inputCursor = snap.inputCursor;
     _inputPlaybackArmed = snap.inputPlaybackArmed;
+    // The engine's events too: a replay in between (the picture of a seek) delivered the ones up to its end, which
+    // the caller's position has still ahead (a fast tape load's edit right after the first keyframe)
+    _engineEventCursor = snap.engineEventCursor;
+    // The card targets hold the edits of the frame a replay in between delivered last: give them back the caller's
+    // (none when the caller had none: UINT64_MAX clears them). Mid-frame the cursor is past some of the frame's
+    // edits, so the scan starts at the frame's first event
+    if (_cardEditFrame != snap.cardEditFrame)
+        DeliverCardEdits(snap.cardEditFrame, true);
+    _inputStartFrame = snap.inputStartFrame;
+    _inputFrameStart = snap.inputFrameStart;
+    _inputFrameKnown = snap.inputFrameKnown;
     UpdateInputWorkFlag();
     if (_replayEngine)
     {
@@ -7268,7 +7344,12 @@ TTDCoverageProbeResult TimeTravelController::QueryCoverageProbe(
     const bool hasPage = physPage.has_value();
     const PhysPage page = hasPage ? *physPage : PhysPage{0};
 
-    result.touched = _coverageIndex.FrameMayContain(kind, frame, offsetLow, offsetHigh, hasPage, page);
+    TTDSearchQuery q;
+    q.addrFrom = offsetLow;
+    q.addrTo = offsetHigh;
+    q.hasPhysPageFilter = hasPage;
+    q.physPage = page;
+    result.touched = CoverageMayContain(kind, frame, q);   // both halves of a page on the Next's 8K slots
     return result;
 }
 
@@ -7364,11 +7445,16 @@ TTDCoverageScanResult TimeTravelController::QueryCoverageScan(
             result.nextTo = newestFirst ? lastListed - 1 : endFrame;
         }
     };
+    TTDSearchQuery q;
+    q.addrFrom = offsetLow;
+    q.addrTo = offsetHigh;
+    q.hasPhysPageFilter = hasPage;
+    q.physPage = page;
     for (uint64_t i = 0; i <= endFrame - startFrame; ++i)
     {
         const uint64_t f = newestFirst ? endFrame - i : startFrame + i;
         result.scannedFrames++;
-        if (_coverageIndex.FrameMayContain(kind, f, offsetLow, offsetHigh, hasPage, page))
+        if (CoverageMayContain(kind, f, q))   // both halves of a page on the Next's 8K slots
             take(f);
     }
 
@@ -7411,6 +7497,12 @@ TTDCoverageRareResult TimeTravelController::QueryCoverageRare(
     }
     const std::optional<uint32_t> pageField =
         physPage ? std::optional<uint32_t>(CoveragePageField(*physPage)) : std::nullopt;
+    // The keys name the byte's offset in its page: on the Next's 8K slots an address range means either half
+    const bool bothHalves = _memory && _memory->HasTtdSlots8k() && !((offsetLow ^ offsetHigh) & 0x2000);
+    auto offsetIn = [&](uint16_t offset) {
+        return (offset >= offsetLow && offset <= offsetHigh) ||
+               (bothHalves && (offset ^ 0x2000) >= offsetLow && (offset ^ 0x2000) <= offsetHigh);
+    };
 
     // Per key: its frame count, and its frames while they are few enough to list
     struct Seen
@@ -7431,7 +7523,7 @@ TTDCoverageRareResult TimeTravelController::QueryCoverageRare(
         for (const TTDCoverageKey key : keys)
         {
             const uint16_t offset = static_cast<uint16_t>(key & 0x3FFF);
-            if (offset < offsetLow || offset > offsetHigh || (pageField && (key >> 14) != *pageField))
+            if (!offsetIn(offset) || (pageField && (key >> 14) != *pageField))
                 continue;
             Seen& entry = seen[key];
             if (++entry.count <= maxFrames)

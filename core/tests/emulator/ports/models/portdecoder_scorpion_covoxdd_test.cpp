@@ -6,9 +6,10 @@
 #include "emulator/ports/models/portdecoder_scorpion256.h"
 #include "emulator/sound/covox.h"
 
-/// The Scorpion printer Covox ([SOUND] CovoxDD=1, slot built-in covox-dd): an 8-bit DAC on the printer data latch
-/// #DD, decoded as the board does (yellow board and GMX: A0 = 1, A1 = 0, A2 = 1, A5 = 0; Turbo+: no A2), a fifth
-/// mono latch beside the SounDrive / #FB ones. VPlayer's "DD (Scorp.)" sound port writes it with OUT (C),A
+/// The Covox on the Scorpion printer port ([SOUND] CovoxDD=1, slot built-in covox-dd): the printer data latch #DD,
+/// decoded as the board does (yellow board and GMX: A0 = 1, A1 = 0, A2 = 1, A5 = 0; Turbo+: no A2), is one more port
+/// of the one Covox: it writes the mono #FB latch (RightB), one control. VPlayer's "DD (Scorp.)" sound port writes it
+/// with OUT (C),A
 class PortDecoder_Scorpion_CovoxDd_Test : public ::testing::Test
 {
 protected:
@@ -31,6 +32,13 @@ protected:
         _portDecoder = nullptr;
         delete _context;
         _context = nullptr;
+    }
+
+    static uint8_t MonoLatch(const Covox& covox)
+    {
+        uint8_t latches[4];
+        covox.getDacLatches(latches);
+        return latches[static_cast<int>(Covox::Channel::RightB)];
     }
 };
 
@@ -57,11 +65,11 @@ TEST_F(PortDecoder_Scorpion_CovoxDd_Test, PrinterDecodePerModel)
     }
 }
 
-TEST_F(PortDecoder_Scorpion_CovoxDd_Test, OutDdDrivesThePrinterDacAheadOfTheAyMasks)
+TEST_F(PortDecoder_Scorpion_CovoxDd_Test, OutDdWritesTheMonoLatchAheadOfTheAyMasks)
 {
     Make(MM_SCORP, true);
     Covox covox(_context);
-    ASSERT_TRUE(covox.hasPrinterDac());
+    ASSERT_TRUE(covox.answersPrinterPort());
     EXPECT_EQ(covox.fitment(), Covox::Fitment::None);
     ASSERT_TRUE(_portDecoder->RegisterSelfDecodingDevice(&covox));
     const uint8_t ayRegister = _context->emulatorState.pFFFD;
@@ -69,9 +77,9 @@ TEST_F(PortDecoder_Scorpion_CovoxDd_Test, OutDdDrivesThePrinterDacAheadOfTheAyMa
     // OUT (C),A with B = 0 (VPlayer), then OUT (#DD),A with a sample of #C3 on A15-A8: the AY #FFFD mask
     // (A15 = A14 = 1, A1 = 0) would take it, the printer latch is decoded first
     _portDecoder->DecodePortOut(0x00DD, 0x40, 0x0000);
-    EXPECT_EQ(covox.printerLatch(), 0x40);
+    EXPECT_EQ(MonoLatch(covox), 0x40);
     _portDecoder->DecodePortOut(0xC3DD, 0xC3, 0x0000);
-    EXPECT_EQ(covox.printerLatch(), 0xC3);
+    EXPECT_EQ(MonoLatch(covox), 0xC3);
     EXPECT_EQ(_context->emulatorState.pFFFD, ayRegister) << "the AY register select must not see #DD";
 
     // Mono, centred: the same level on both sides
@@ -80,15 +88,13 @@ TEST_F(PortDecoder_Scorpion_CovoxDd_Test, OutDdDrivesThePrinterDacAheadOfTheAyMa
 
     // A mirror of the partial decode (A2 = 1, A0 = 1, A1 = A5 = 0) reaches it; A2 = 0 does not on the yellow board
     _portDecoder->DecodePortOut(0x00C5, 0x11, 0x0000);
-    EXPECT_EQ(covox.printerLatch(), 0x11);
+    EXPECT_EQ(MonoLatch(covox), 0x11);
     _portDecoder->DecodePortOut(0x00D9, 0x22, 0x0000);
-    EXPECT_EQ(covox.printerLatch(), 0x11) << "#D9 (A2 = 0) is outside the yellow board's decode";
+    EXPECT_EQ(MonoLatch(covox), 0x11) << "#D9 (A2 = 0) is outside the yellow board's decode";
 
-    // No SounDrive / #FB card: #FB is not the DAC's, and the printer latch is write-only
+    // No SounDrive / #FB card: #FB is not decoded, and the printer port is write-only
     _portDecoder->DecodePortOut(0x00FB, 0x77, 0x0000);
-    uint8_t latches[4];
-    covox.getDacLatches(latches);
-    EXPECT_EQ(latches[static_cast<int>(Covox::Channel::RightB)], 0x80);
+    EXPECT_EQ(MonoLatch(covox), 0x11);
     uint8_t in = 0;
     EXPECT_FALSE(covox.tryClaimIn(0x00DD, in));
 
@@ -118,9 +124,9 @@ TEST_F(PortDecoder_Scorpion_CovoxDd_Test, FullDecodeCardWinsOverThePartialDecode
     ASSERT_TRUE(_portDecoder->RegisterFullDecodeLowBytePort(0xC5, &moonSound));
 
     _portDecoder->DecodePortOut(0x00C5, 0x33, 0x0000);
-    EXPECT_EQ(covox.printerLatch(), 0x80) << "the card's port is not the printer latch's";
+    EXPECT_EQ(MonoLatch(covox), 0x80) << "the card's port is not the printer port";
     _portDecoder->DecodePortOut(0x00DD, 0x44, 0x0000);
-    EXPECT_EQ(covox.printerLatch(), 0x44);
+    EXPECT_EQ(MonoLatch(covox), 0x44);
 
     _portDecoder->UnregisterFullDecodeLowBytePort(0xC5, &moonSound);
     _portDecoder->UnregisterSelfDecodingDevice(&covox);
@@ -132,7 +138,7 @@ TEST_F(PortDecoder_Scorpion_CovoxDd_Test, TurboPlusDecodeIgnoresA2)
     Covox covox(_context);
     ASSERT_TRUE(_portDecoder->RegisterSelfDecodingDevice(&covox));
     _portDecoder->DecodePortOut(0x00D9, 0x5A, 0x0000);
-    EXPECT_EQ(covox.printerLatch(), 0x5A);
+    EXPECT_EQ(MonoLatch(covox), 0x5A);
     _portDecoder->UnregisterSelfDecodingDevice(&covox);
 }
 
@@ -140,10 +146,10 @@ TEST_F(PortDecoder_Scorpion_CovoxDd_Test, OffByDefault)
 {
     Make(MM_SCORP, false, true);
     Covox covox(_context);
-    EXPECT_FALSE(covox.hasPrinterDac());
+    EXPECT_FALSE(covox.answersPrinterPort());
     ASSERT_TRUE(_portDecoder->RegisterSelfDecodingDevice(&covox));
     _portDecoder->DecodePortOut(0x00DD, 0x40, 0x0000);
-    EXPECT_EQ(covox.printerLatch(), 0x80);
+    EXPECT_EQ(MonoLatch(covox), 0x80);
     EXPECT_EQ(covox.lastLeftAmplitude(), 0);
     for (const PortMaskMatch& claim : covox.selfDecodingClaims())
         EXPECT_NE((0x00DD & claim.mask), claim.match) << "no claim covers #DD without CovoxDD";
@@ -152,45 +158,44 @@ TEST_F(PortDecoder_Scorpion_CovoxDd_Test, OffByDefault)
     TearDown();
     Make(MM_PENTAGON, true);
     Covox pentagon(_context);
-    EXPECT_FALSE(pentagon.hasPrinterDac()) << "CovoxDD fits nothing off the Scorpion family";
+    EXPECT_FALSE(pentagon.answersPrinterPort()) << "CovoxDD fits nothing off the Scorpion family";
 }
 
-TEST_F(PortDecoder_Scorpion_CovoxDd_Test, SumsWithTheSoundriveAndRoundTripsTtd)
+TEST_F(PortDecoder_Scorpion_CovoxDd_Test, OneLatchWithTheFbPortAndOneTtdState)
 {
     Make(MM_GMX, true, false, true);
     Covox covox(_context);
     EXPECT_EQ(covox.fitment(), Covox::Fitment::Mono);
     ASSERT_TRUE(_portDecoder->RegisterSelfDecodingDevice(&covox));
 
+    // #FB and #DD are two ports of the same latch: the last write wins, no sum
     _portDecoder->DecodePortOut(0x00FB, 0xC0, 0x0000);
+    EXPECT_EQ(MonoLatch(covox), 0xC0);
     _portDecoder->DecodePortOut(0x00DD, 0xA0, 0x0000);
-    uint8_t latches[4];
-    covox.getDacLatches(latches);
-    EXPECT_EQ(latches[static_cast<int>(Covox::Channel::RightB)], 0xC0) << "two separate DACs";
-    EXPECT_EQ(covox.printerLatch(), 0xA0);
-    EXPECT_EQ(covox.lastLeftAmplitude(), (0xC0 - 128) * 128 + (0xA0 - 128) * 128);
+    EXPECT_EQ(MonoLatch(covox), 0xA0);
+    EXPECT_EQ(covox.lastLeftAmplitude(), (0xA0 - 128) * 128);
     EXPECT_EQ(covox.lastRightAmplitude(), covox.lastLeftAmplitude());
 
-    // The printer channel mutes on its own
-    covox.setChannelMute(Covox::Channel::Printer, true);
+    // One control: muting the mono channel silences both ports
+    covox.setChannelMute(Covox::Channel::RightB, true);
     _portDecoder->DecodePortOut(0x00DD, 0xA1, 0x0000);
-    EXPECT_EQ(covox.lastLeftAmplitude(), (0xC0 - 128) * 128);
-    covox.setChannelMute(Covox::Channel::Printer, false);
+    EXPECT_EQ(covox.lastLeftAmplitude(), 0);
+    covox.setChannelMute(Covox::Channel::RightB, false);
 
-    // TTD: 11 bytes with the printer DAC (9 without), the printer latch restored
-    ASSERT_EQ(covox.TTDStateSize(), 11u);
+    // TTD: the same 9-byte state with or without the printer port
+    ASSERT_EQ(covox.TTDStateSize(), 9u);
     std::vector<uint8_t> blob(covox.TTDStateSize());
     covox.TTDSaveState(blob.data());
     Covox restored(_context);
     restored.TTDLoadState(blob.data());
-    EXPECT_EQ(restored.printerLatch(), 0xA1);
+    EXPECT_EQ(MonoLatch(restored), 0xA1);
     std::vector<uint8_t> again(restored.TTDStateSize());
     restored.TTDSaveState(again.data());
     EXPECT_EQ(again, blob);
 
     _context->config.sound.covoxDD = 0;
     Covox plain(_context);
-    EXPECT_EQ(plain.TTDStateSize(), 9u) << "the state of a Covox without the printer DAC is unchanged";
+    EXPECT_EQ(plain.TTDStateSize(), 9u);
 
     _portDecoder->UnregisterSelfDecodingDevice(&covox);
 }

@@ -182,7 +182,7 @@ std::string Plural(uint64_t n, const char* one, const char* many)
 /// The entry title from kind and geometry
 std::string TitleOf(const Region& r, uint32_t size)
 {
-    if (!r.title.empty() && r.title != "terminator")
+    if (!r.title.empty() && r.title != "terminator" && r.title != kRomWriteSink)
         return r.title;
     const Geometry& g = r.geometry;
     std::string users;
@@ -230,6 +230,8 @@ std::string TitleOf(const Region& r, uint32_t size)
                    (g.prefix != 0 ? ", " + Plural(g.prefix, "byte", "bytes") + " before each" : std::string()) +
                    users;
         case RegionKind::Screen:
+            if (g.layout == "drawn")
+                return "Back buffer, " + std::to_string(size) + " bytes" + users;
             return (g.layout == "attributes" ? "Attributes, " : "Screen pixels, ") + std::to_string(g.width) + "x" +
                    std::to_string(g.height) + users;
         case RegionKind::LevelMap:
@@ -251,6 +253,8 @@ std::string TitleOf(const Region& r, uint32_t size)
             return (role.empty() ? std::string("Variable") : role) + range + users;
         }
         case RegionKind::Data:
+            if (r.title == kRomWriteSink)
+                return "Written only, in ROM (the writes are lost), " + std::to_string(size) + " bytes" + users;
             return r.title == "terminator" ? "Terminator" + users : "Data, " + std::to_string(size) + " bytes" + users;
         case RegionKind::Untouched:
             return "Not accessed in the replay";
@@ -318,12 +322,28 @@ std::string ImageMacro(const Region& r, uint32_t start, uint32_t end)
         if (g.mask)
             spec += ":" + std::to_string(first - 1u) + "-" + std::to_string(last - 1u) + "-" + std::to_string(across) +
                     "-" + std::to_string(down);
+        std::string flip;
+        if (g.bottomUp)
+        {
+            // Stored bottom up: the rows of UDGs from the last in memory, each UDG flipped top to bottom
+            spec.clear();
+            for (uint32_t k = g.height / 8u; k-- > 0;)
+            {
+                const uint32_t row = first + k * down, end = row + (columns - 1u) * across;
+                const auto range = [&](uint32_t a, uint32_t b) {
+                    return columns == 1 ? std::to_string(a)
+                                        : std::to_string(a) + "-" + std::to_string(b) + "-" + std::to_string(across);
+                };
+                spec += (spec.empty() ? "" : ";") + range(row, end) + (g.mask ? ":" + range(row - 1u, end - 1u) : "");
+            }
+            flip = ",0,2";
+        }
         std::string attrs;
         if (g.prefix != 0)
             attrs = "[" + std::to_string(base) + "]";
         cells += std::string(shown == 0 ? "" : " | ") + "#UDGARRAY" + std::to_string(columns) + ",56," +
-                 std::to_string(scale) + "," + std::to_string(udgStep) + "(" + spec + ")" + attrs + "(" + name + "_" +
-                 std::to_string(shown) + ")";
+                 std::to_string(scale) + "," + std::to_string(udgStep) + flip + "(" + spec + ")" + attrs + "(" + name +
+                 "_" + std::to_string(shown) + ")";
         ++shown;
     }
     return cells.empty() ? std::string() : "#UDGTABLE { " + cells + " } TABLE#";
@@ -1458,6 +1478,17 @@ struct Exporter
                     length = c->length;
                     comment = "bytes as loaded";
                 }
+                // The entry ends inside the instruction (the next entry claims its tail): only this entry's bytes
+                if (a + length - 1 > e.end)
+                {
+                    const std::string whole = text;
+                    text.clear();
+                    for (uint32_t i = a; i <= e.end; ++i)
+                        text += (i == a ? "DEFB " : ",") + Hex2(image[static_cast<uint16_t>(i)]);
+                    comment = whole + ", its last " + Plural(a + length - 1 - e.end, "byte", "bytes") +
+                              " in the next entry";
+                    length = e.end - a + 1;
+                }
                 if (!c->executed)
                     comment = comment.empty() ? "not executed" : comment + "; not executed";
                 if (c->smc)
@@ -1621,7 +1652,8 @@ struct Exporter
                 << (r.z80 + r.Size() > 0xFFFFu ? std::string("$10000") : Hex4(r.z80 + r.Size()))
                 << "\", \"kind\": \"" << RegionKindName(r.kind) << "\", \"width\": " << g.width << ", \"height\": " << g.height << ", \"frames\": " << g.frames
                 << ", \"stride\": " << g.stride << ", \"mask\": " << (g.mask ? "true" : "false")
-                << ", \"prefix\": " << g.prefix << ", \"pitch\": " << g.pitch << ", \"layout\": \"" << g.layout << "\", \"detector\": \""
+                << ", \"prefix\": " << g.prefix << ", \"pitch\": " << g.pitch << ", \"layout\": \"" << g.layout
+                << "\", \"bottom_up\": " << (g.bottomUp ? "true" : "false") << ", \"detector\": \""
                 << DetectorName(r.detector) << "\", \"confidence\": " << r.confidence << "}";
             first = false;
         }

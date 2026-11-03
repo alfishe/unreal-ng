@@ -243,6 +243,13 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     });
 }
 
+int PortDecoder_Next::SelectedIndex(slots::InputRole role) const
+{
+    if (role == slots::InputRole::NextReg)
+        return _board ? _board->SelectedRegister() : -1;
+    return PortDecoder_Spectrum128::SelectedIndex(role);
+}
+
 PortDecoder_Next::~PortDecoder_Next()
 {
     _context->histories.Remove(&_board->Journal().History());

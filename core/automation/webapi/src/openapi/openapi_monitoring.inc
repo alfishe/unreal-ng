@@ -31,7 +31,8 @@
                               "summary; published state only, never a wait for an emulation thread",
                               "{ok, host: host.stats, clients: host.clients, instances: [{instance, index, model, "
                               "emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, "
-                              "ttd.status, debug.analyzers, controllers.state, game.events}]}");
+                              "ttd.status, debug.analyzers, controllers.state, game.events, devices.access "
+                              "(without channels: channel_count)}]}");
         param(all, "instance", "query", false, instanceText);
 
         Json::Value& name = op(
@@ -50,12 +51,16 @@
             "pchist, aylog, coverage: {used, capacity, slot_bytes, used_bytes, capacity_bytes, percent}, ttd: "
             "{history_bytes, limit_bytes, limit_frames, memory_bytes, checkpoints, write_journal_records, "
             "write_journal_bytes}}; controllers.state: {connectors, plugged}; game.events: {available, profile, frame, seq, "
-            "events {<name>: {kind, fires, last_frame, level, value}}, recent [{seq, frame, name}]}; breakpoint_groups: {groups "
+            "events {<name>: {kind, fires, last_frame, level, value}}, recent [{seq, frame, name}]}; "
+            "devices.access: {available, active, continuous, frames_observed, window, dropped_channels, channels "
+            "[{device, channel, dir, port, input, frames, reads_per_frame, tested_bits, sites [{pc, count, "
+            "tested_bits}], other_sites}]}; breakpoint_groups: {groups "
             "[{name, total, active, ids}]}",
             "{ok, instance? (an instance's name), ...the value's fields}");
         param(name, "name", "path", true,
               "host.stats | host.clients | emulator.stats | debug.breakpoints | media.slots | recording.state | "
               "debug.labels | ttd.status | debug.analyzers | debug.buffers | controllers.state | game.events | "
+              "devices.access | "
               "breakpoint_groups");
         param(name, "instance", "query", false, instanceText);
 

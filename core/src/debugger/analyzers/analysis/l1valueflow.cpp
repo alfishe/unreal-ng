@@ -24,6 +24,7 @@ struct Source
     PhysKey origin = kNoKey;  ///< the byte the value was first read from
     uint64_t seq = 0;         ///< when it was read
     bool masked = false;      ///< came in as an AND's operand: a mask, not the picture
+    PhysKey maskOrigin = kNoKey;  ///< the mask merged into the byte read when it was written (a back buffer's)
 };
 
 /// A value's sources, the latest first
@@ -491,6 +492,7 @@ struct ValueFlow::Impl
     Value regs[kSlots];
     Value alt[kSlots];  ///< A' and B' .. L'
     std::vector<std::unique_ptr<PhysKey[]>> shadow;
+    std::vector<std::unique_ptr<PhysKey[]>> maskShadow;  ///< the mask merged into each byte as it was written
     std::vector<std::unique_ptr<Fanout[]>> fanout;  ///< per byte: where its value was copied to
     std::vector<std::unique_ptr<DrawAcc[]>> draws;
     uint64_t seq = 0;
@@ -560,9 +562,26 @@ struct ValueFlow::Impl
         return page < shadow.size() && shadow[page] ? shadow[page][KeyOffset(key)] : kNoKey;
     }
 
-    void SetShadow(PhysKey key, PhysKey origin)
+    PhysKey MaskShadow(PhysKey key) const
     {
         const uint32_t page = KeyPage(key);
+        return page < maskShadow.size() && maskShadow[page] ? maskShadow[page][KeyOffset(key)] : kNoKey;
+    }
+
+    void SetShadow(PhysKey key, PhysKey origin, PhysKey mask)
+    {
+        const uint32_t page = KeyPage(key);
+        if (mask != kNoKey || (page < maskShadow.size() && maskShadow[page]))
+        {
+            if (page >= maskShadow.size())
+                maskShadow.resize(page + 1);
+            if (!maskShadow[page])
+            {
+                maskShadow[page].reset(new PhysKey[0x4000]);
+                std::fill_n(maskShadow[page].get(), 0x4000, kNoKey);
+            }
+            maskShadow[page][KeyOffset(key)] = mask;
+        }
         if (origin == kNoKey && (page >= shadow.size() || !shadow[page]))
             return;
         if (page >= shadow.size())
@@ -592,7 +611,7 @@ struct ValueFlow::Impl
         ++seq;
         const PhysKey s = Shadow(key);
         Value v;
-        v.s[0] = Source{key, s != kNoKey ? s : key, seq};
+        v.s[0] = Source{key, s != kNoKey ? s : key, seq, false, s != kNoKey ? MaskShadow(key) : kNoKey};
         return v;
     }
 
@@ -675,6 +694,7 @@ struct ValueFlow::Impl
         PhysKey origin = kNoKey;
         PhysKey mask = kNoKey;  // an AND's operand, else the next source that is no screen byte (ANDed in before)
         PhysKey before = kNoKey;
+        PhysKey carried = kNoKey;  // the mask the source byte carried (a back buffer's byte masked in as drawn)
         bool found = false;
         const bool anyPlain = std::any_of(std::begin(value.s), std::end(value.s), [&](const Source& s) {
             return s.read != kNoKey && s.read != key && !s.masked;
@@ -697,16 +717,27 @@ struct ValueFlow::Impl
             }
             found = true;
             origin = s.origin;
+            carried = s.maskOrigin;
             if (origin != s.read && !IsScreen(s.read))
             {
                 Fanout& f = FanoutOf(s.read);
                 if (f.Add(key) > kBufferPlaces)
+                {
                     origin = s.read;
+                    carried = kNoKey;
+                }
             }
         }
+        // The byte keeps the mask merged into it for the copy that puts it on the screen: an AND's operand, else the
+        // one its source carried, else the next source when the value merged the byte it overwrites (LD A,(mask) /
+        // AND (dest) / OR (graphic)); the next source alone (a plain sum of two bytes) is a guess for a draw only
+        const bool merged = std::any_of(std::begin(value.s), std::end(value.s),
+                                        [&](const Source& s) { return s.read == key; });
+        if (mask == kNoKey)
+            mask = carried != kNoKey ? carried : merged ? before : kNoKey;
+        SetShadow(key, origin, origin != kNoKey ? mask : kNoKey);
         if (mask == kNoKey)
             mask = before;
-        SetShadow(key, origin);
         if (origin != kNoKey && IsPixels(key) && !IsScreen(origin))
             Draw(origin, mask, key, writer, frame);
     }
@@ -914,6 +945,11 @@ void ValueFlow::Instruction(const OpInfo& op, const Access* accesses, int count,
     _impl->Instruction(op, accesses, count, writer, frame);
 }
 
+void ValueFlow::Forget(PhysKey key)
+{
+    _impl->SetShadow(key, kNoKey, kNoKey);
+}
+
 std::vector<DrawnByte> ValueFlow::Build() const
 {
     std::vector<DrawnByte> out;
@@ -977,6 +1013,8 @@ size_t ValueFlow::MemoryBytes() const
 {
     size_t bytes = 0;
     for (const auto& t : _impl->shadow)
+        bytes += t ? 0x4000 * sizeof(PhysKey) : 0;
+    for (const auto& t : _impl->maskShadow)
         bytes += t ? 0x4000 * sizeof(PhysKey) : 0;
     for (const auto& t : _impl->fanout)
         bytes += t ? 0x4000 * sizeof(Fanout) : 0;

@@ -2582,7 +2582,9 @@ void RegisterInspectState(ToolRegistry& registry)
         "clients per plane, and this instance's emulator.stats (measured fps, real-time speed %, frame time, CPU MHz, "
         "interrupts per frame), breakpoint counts by kind and groups, media slots with unsaved changes, recording, "
         "labels, TTD sizes, profiler states, controllers, the game's events (game.events: the play profile's events, "
-        "how often each fired, its last frame and watched value); the WebSocket topics of the same names push them. "
+        "how often each fired, its last frame and watched value), the device access watch's summary (devices.access: active, "
+        "frames, channel_count; the channels through the monitor name itself); the WebSocket topics of the same names "
+        "push them. "
         "Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {

@@ -878,24 +878,25 @@ StateNode Covox(EmulatorContext* context)
     ::Covox* covox = sm->getCovox();
     if (!covox)
         return Unavailable("Covox not fitted (configure [SOUND] CovoxFB=1 for #FB, SD=1 for the SoundDrive or, on a "
-                           "Scorpion, CovoxDD=1 for the printer Covox #DD)");
+                           "Scorpion, CovoxDD=1 for the Covox on the printer port #DD)");
 
     const ::Covox::Fitment fitment = covox->fitment();
     const bool mono = fitment == ::Covox::Fitment::Mono;
     StateNode ret = StateNode::Object();
     ret["available"] = true;
     const bool printerOnly = fitment == ::Covox::Fitment::None;
-    ret["device"] = printerOnly ? "Scorpion printer Covox (8-bit DAC on #DD)"
-                    : mono      ? "Covox (8-bit DAC on #FB)"
-                                : "SoundDrive (4 x 8-bit DAC)";
+    const bool dd = covox->answersPrinterPort();
+    ret["device"] = printerOnly ? "Covox (8-bit DAC on #DD)"
+                    : mono      ? (dd ? "Covox (8-bit DAC on #FB and #DD)" : "Covox (8-bit DAC on #FB)")
+                                : (dd ? "SoundDrive (4 x 8-bit DAC, #DD on the #FB latch)" : "SoundDrive (4 x 8-bit DAC)");
     ret["fitment"] = fitment == ::Covox::Fitment::Quad        ? "quad"
                      : fitment == ::Covox::Fitment::Mode1     ? "mode1"
                      : fitment == ::Covox::Fitment::Mode2     ? "mode2"
                      : fitment == ::Covox::Fitment::Mode1Mono ? "mode1+mono"
                      : printerOnly                            ? "none"
                                                               : "mono";
-    // The Scorpion printer Covox (CovoxDD=1): a separate mono DAC beside the fitment's latches
-    ret["printer_dac"] = covox->hasPrinterDac();
+    // The Scorpion printer port #DD (CovoxDD=1): one more port of the same Covox, it writes the right_b (#FB) latch
+    ret["printer_port"] = dd;
 
     // Ports: this model's decode, straight from its port map (the same rows
     // /ports and `ports` list), and the ones it shares with Beta-128
@@ -953,14 +954,6 @@ StateNode Covox(EmulatorContext* context)
         channel["name"] = kNames[i];
         channel["latch"] = int(latches[i]);
         channel["muted"] = covox->isChannelMuted(static_cast<::Covox::Channel>(i));
-        channels.push(channel);
-    }
-    if (covox->hasPrinterDac())
-    {
-        StateNode channel = StateNode::Object();
-        channel["name"] = "printer";
-        channel["latch"] = int(covox->printerLatch());
-        channel["muted"] = covox->isChannelMuted(::Covox::Channel::Printer);
         channels.push(channel);
     }
     ret["channels"] = channels;

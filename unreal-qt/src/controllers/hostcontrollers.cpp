@@ -1295,6 +1295,7 @@ void HostControllers::onFileLoaded(const QString& emulatorId, const QString& pat
         qWarning("controllers: signatures of %s: %s", qUtf8Printable(path), error.c_str());
     _autoDone = false;
     _keyboardNoticed = false;
+    _cardNoticed = false;
     _autoConnector.clear();
     _decision = {};
     Reapply();
@@ -1312,6 +1313,7 @@ void HostControllers::onGuestProgram(const QString& emulatorId, const QString& p
         qWarning("controllers: signatures of %s (read by the guest): %s", qUtf8Printable(path), error.c_str());
     _autoDone = false;
     _keyboardNoticed = false;
+    _cardNoticed = false;
     _autoConnector.clear();
     _decision = {};
     Reapply();
@@ -1355,10 +1357,10 @@ void HostControllers::checkAuto()
     EmulatorContext* context = _binding->context();
     if (context == nullptr || context->pControllerManager == nullptr)
         return;
-    const PortReadEvidence evidence = context->pControllerManager->PortReads();
+    const DeviceAccessEvidence evidence = context->pControllerManager->PortReads();
     if (!evidence.active)
         return;
-    const AutoDecision decision = DecideFromPortReads(evidence);
+    const AutoDecision decision = DecideAuto(evidence);
     if (decision.keyboard)
     {
         // A menu or a text prompt reads every key: say so once and keep watching, the joystick comes later
@@ -1370,7 +1372,16 @@ void HostControllers::checkAuto()
         return;
     }
     if (!decision.decisive)
+    {
+        // Reads of a port nothing on the machine answers (#1F on a bare 48K): name the card once, fit nothing (a
+        // card restarts the machine) and keep watching
+        if (!decision.card.empty() && !_cardNoticed)
+        {
+            _cardNoticed = true;
+            emit notice(QString::fromStdString(decision.hint));
+        }
         return;
+    }
     applyAuto(decision);
 }
 
@@ -1386,19 +1397,33 @@ void HostControllers::applyAuto(const AutoDecision& chosen)
         decision.optionValue = _resolved.joystickKeys;
     _autoDone = true;
     manager->WatchPortReads(false);
-    if (decision.device == "kempston-mouse")
+    if (decision.device == "kempston-mouse" || decision.device == "amx-mouse")
     {
-        emit notice(tr("This program reads the Kempston mouse (%1)").arg(QString::fromStdString(decision.reason)));
+        emit notice(tr("This program reads the %1 (%2)")
+                        .arg(QString::fromStdString(decision.label), QString::fromStdString(decision.reason)));
         return;
     }
     std::string connector = decision.connector;
-    if (!connector.empty())
+    if (connector.empty())
     {
-        if (manager->Find(connector) < 0)
-            return;  // the machine has no such connector: the default stays
+        // The machine's connector for the reads the decision rests on: `kempston` on a Pentagon, `next.left` on a
+        // Next; a fixed one carries the board's device (the Next's MD pad), which the profile then binds
+        if (const int found = manager->FindForInput(decision.input, decision.source); found >= 0)
+        {
+            const Connector fitted = manager->At(static_cast<size_t>(found));
+            connector = fitted.id;
+            if (fitted.fixed)
+                decision.device = RetroDeviceKindName(fitted.device);
+        }
     }
-    else
+    else if (manager->Find(connector) < 0)
     {
+        return;  // the machine has no such connector: the default stays
+    }
+    if (connector.empty())
+    {
+        // No connector of the machine answers those reads: plug the device where one takes it (the refusal names
+        // what is missing, such as a Kempston card on a bare 48K)
         ControllerRequest request{"plug", "auto", decision.device, {{"async", ""}}};
         if (!decision.option.empty())
             request.options[decision.option] = decision.optionValue;

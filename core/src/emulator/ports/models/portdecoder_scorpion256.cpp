@@ -603,7 +603,7 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
         disp.wasHandledInline = true;
     }
 
-    // The printer Covox (#DD, CovoxDD=1): the board's printer latch decode (A5 = 0) is apart from the AY's (A5 = 1),
+    // The Covox on the printer port (#DD, CovoxDD=1; the #FB latch): the board's printer latch decode (A5 = 0) is apart from the AY's (A5 = 1),
     // but the AY masks below ignore A5, and OUT (#DD),A puts a sample of #80 and up on A15 - so it goes first
     else if (IsPort_PrinterCovox(port) && DispatchSelfDecodingOut(port, value))
     {

@@ -78,7 +78,7 @@ void Covox::reset()
 {
     _frameHadSound = false;
     _hadSoundLastFrame = false;
-    for (int i = 0; i < kChannels; i++)
+    for (int i = 0; i < 4; i++)
     {
         _dacValue[i] = 0x80;  // Midpoint = silence
         _writtenThisFrame[i] = false;
@@ -112,7 +112,7 @@ void Covox::handleFrameStart()
     // Stale-channel decay: a channel that went a whole frame without any
     // write extends its idle streak; once it crosses the threshold, silence
     // it (see the member comment in covox.h for why this is needed)
-    for (int i = 0; i < kChannels; i++)
+    for (int i = 0; i < 4; i++)
     {
         if (_writtenThisFrame[i])
         {
@@ -165,7 +165,7 @@ void Covox::handleFrameEnd(size_t expectedSamples)
 
     if (_channelTap)
     {
-        for (int i = 0; i < kChannels; i++)
+        for (int i = 0; i < 4; i++)
         {
             FillChannelTap(i, static_cast<size_t>(samplesThisFrame));
             _channelTapFilled[static_cast<size_t>(i)] = 0;
@@ -266,9 +266,10 @@ PortMaskMatch Covox::PrinterDecodeOf(int memModel)
 
 bool Covox::tryClaimOut(uint16_t rawPort, uint8_t value)
 {
+    // The printer port #DD: the mono latch, the same one #FB writes
     if (MatchesPrinter(_printerDecode, rawPort))
     {
-        WriteLatch(Channel::Printer, value);
+        WriteLatch(Channel::RightB, value);
         return true;
     }
     if (!MatchesFitment(_fitment, rawPort))
@@ -301,14 +302,14 @@ std::vector<PortMaskMatch> Covox::selfDecodingClaims() const
         case Fitment::None:
             break;
     }
-    if (hasPrinterDac())
+    if (answersPrinterPort())
         claims.push_back(_printerDecode);
     return claims;
 }
 
 bool Covox::tryClaimIn(uint16_t rawPort, uint8_t& outValue)
 {
-    // The printer latch is write-only (no read decode on the board): a read there is not claimed
+    // The printer port is write-only (no read decode on the board): a read there is not claimed
     if (!MatchesFitment(_fitment, rawPort))
         return false;
 
@@ -346,7 +347,7 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
     if (!isMode2 && !isMode1)
     {
         if (MatchesPrinter(_printerDecode, port))
-            WriteLatch(Channel::Printer, value);
+            WriteLatch(Channel::RightB, value);
         return;
     }
     WriteLatch(portToChannel(port), value);
@@ -485,8 +486,6 @@ void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
     const int32_t lb = level(1);
     const int32_t ra = level(2);
     const int32_t rb = level(3);
-    // The printer DAC: a separate mono DAC, summed into both sides (0 while not fitted: its latch stays #80)
-    const int32_t printer = level(static_cast<int>(Channel::Printer));
 
     // Mono COVOX compatibility: classic single-DAC covox software only ever
     // drives one of the four channels (traditionally #FB/RightB, but the
@@ -514,8 +513,6 @@ void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
         outL = la + lb;
         outR = ra + rb;
     }
-    outL += printer;
-    outR += printer;
 }
 
 /// endregion </Helper methods>
@@ -527,22 +524,17 @@ void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
 //          (set via OUT to ports 0xF1/0xF3/0xF9/0xFB, or their #0F/#1F/#4F/#5F
 //          mode-1 aliases)
 //   [4..7] per-channel idle-frame countdown (_staleFrameCount, saturated at 255)
-//   [8]    per-channel "written this frame" bits (_writtenThisFrame, bit i;
-//          bit 4 the printer DAC)
-// With the Scorpion printer Covox fitted (CovoxDD) - fixed per instance:
-//   [9]    the printer DAC latch (#DD)
-//   [10]   its idle-frame countdown (saturated at 255)
+//   [8]    per-channel "written this frame" bits (_writtenThisFrame, bit i)
 // The countdown is not hardware, but it writes the DAC latch: a channel idle
 // for STALE_CHANNEL_FRAMES frames decays to 0x80. Left out of the state, a
 // restore kept the live countdown and the channel re-centered on a different
 // frame than recorded - the latch, and every checkpoint after it, diverged.
 
 static constexpr size_t kCovoxStateSize = 9;
-static constexpr size_t kCovoxPrinterStateSize = 11;
 
 size_t Covox::TTDStateSize() const
 {
-    return hasPrinterDac() ? kCovoxPrinterStateSize : kCovoxStateSize;
+    return kCovoxStateSize;
 }
 
 void Covox::TTDSaveState(uint8_t* dst) const
@@ -555,14 +547,6 @@ void Covox::TTDSaveState(uint8_t* dst) const
         if (_writtenThisFrame[i])
             written |= static_cast<uint8_t>(1u << i);
     }
-    if (hasPrinterDac())
-    {
-        constexpr int p = static_cast<int>(Channel::Printer);
-        if (_writtenThisFrame[p])
-            written |= static_cast<uint8_t>(1u << p);
-        dst[9] = _dacValue[p];
-        dst[10] = static_cast<uint8_t>(std::min(_staleFrameCount[p], 255));
-    }
     dst[8] = written;
 }
 
@@ -573,13 +557,6 @@ void Covox::TTDLoadState(const uint8_t* src)
     {
         _staleFrameCount[i] = src[4 + i];
         _writtenThisFrame[i] = (src[8] & (1u << i)) != 0;
-    }
-    if (hasPrinterDac())
-    {
-        constexpr int p = static_cast<int>(Channel::Printer);
-        _dacValue[p] = src[9];
-        _staleFrameCount[p] = src[10];
-        _writtenThisFrame[p] = (src[8] & (1u << p)) != 0;
     }
 }
 /// endregion </TTDSerializable>

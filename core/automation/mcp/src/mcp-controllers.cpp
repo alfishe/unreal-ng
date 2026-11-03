@@ -365,7 +365,7 @@ namespace
             const Json::Value& decision = reply["decision"];
             const Json::Value& evidence = reply["evidence"];
             if (decision["decisive"].asBool())
-                out << decision["label"].asString() << " (port-read evidence: " << decision["reason"].asString() << ")";
+                out << decision["label"].asString() << " (device access evidence: " << decision["reason"].asString() << ")";
             else if (decision["keyboard"].asBool())
                 out << "the program reads the whole keyboard (" << decision["reason"].asString() << ")";
             else

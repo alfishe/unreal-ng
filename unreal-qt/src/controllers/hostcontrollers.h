@@ -262,6 +262,7 @@ private:
     /// reads a joystick
     bool _autoDone = false;
     bool _keyboardNoticed = false;
+    bool _cardNoticed = false;  ///< the card a program's board reads want, said once
     std::string _autoConnector;  ///< the connector the decision chose: the first pad drives it
     controllers::AutoDecision _decision;
     std::unique_ptr<controllers::HostInputService> _service;

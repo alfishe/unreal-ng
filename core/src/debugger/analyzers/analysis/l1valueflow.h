@@ -17,7 +17,7 @@
 /// row by row, w bytes a row (+2, +2w with a mask byte between); below +1, right +h for one stored in columns h bytes
 /// high. A row step larger than the drawn width is a window of a wider picture (a scrolled landscape). A back buffer
 /// copied to the screen carries its sources with it, so a sprite drawn into the buffer is a draw of the sprite's own
-/// bytes. A copied byte whose value goes to more than two places before it is written again is a table (a font
+/// bytes; a buffer byte also keeps the mask ANDed into it as it was drawn, the mask of the draw its copy makes. A copied byte whose value goes to more than two places before it is written again is a table (a font
 /// unpacked from a pool of rows: each glyph printed all over the screen; the sprites a level unpacks), the source of
 /// what is drawn from it; each value written into a buffer goes to one place (two: both screens).
 ///
@@ -59,6 +59,8 @@ public:
 
     /// One instruction's data accesses (opcode fetches excluded), in bus order; @p writer: the instruction's key
     void Instruction(const OpInfo& op, const Access* accesses, int count, PhysKey writer, uint64_t frame);
+    /// A byte a tool edit wrote (past the bus): its own source from now on, not the byte a copy brought before
+    void Forget(PhysKey key);
 
     /// The source bytes drawn to the screen, sorted by key
     std::vector<DrawnByte> Build() const;

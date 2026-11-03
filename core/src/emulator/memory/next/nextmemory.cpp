@@ -21,6 +21,7 @@ NextMemory::NextMemory(EmulatorContext* context) : Memory(context)
     _debugContendedIf = std::make_unique<MemoryInterface>(static_cast<MemoryReadCallback>(&NextMemory::SlotReadContendedDebug),
                                                           static_cast<MemoryWriteCallback>(&NextMemory::SlotWriteContendedDebug));
     _toolReadRedirect = true;  // DirectReadFromZ80Memory asks the slot table
+    _ttdSlots8k = _ttdKeys;     // TTD names a byte per 8K slot (TtdKeyOf)
     _toolWriteRedirect = true;  // and DirectWriteToZ80Memory writes through it
     ResetMmu();
 }
@@ -97,7 +98,7 @@ uint8_t NextMemory::MemoryReadDebug(uint16_t addr, bool isExecution)
 {
     const unsigned slot = addr >> 13;
     const uint8_t result = _memory[_readOff[slot] + (addr & (kSlotSize - 1))];
-    ReadDebugEffects(addr, result, isExecution, _physPage[slot]);
+    ReadDebugEffects(addr, result, isExecution, _physPage[slot], _ttdKeys[slot].flip);
     return result;
 }
 
@@ -110,7 +111,7 @@ void NextMemory::SlotWriteDebug(uint16_t addr, uint8_t value)
 {
     const unsigned slot = addr >> 13;
     _memory[_writeOff[slot] + (addr & (kSlotSize - 1))] = value;
-    WriteDebugEffects(addr, value, _physPage[slot]);
+    WriteDebugEffects(addr, value, _physPage[slot], _ttdKeys[slot].flip);
 }
 
 uint8_t NextMemory::ToolReadRedirect(uint16_t addr, [[maybe_unused]] uint8_t normal) const
@@ -523,6 +524,17 @@ void NextMemory::ApplyLayer2(unsigned slot)
 
 void NextMemory::SyncWindows()
 {
+    // TTD's key per slot: the page and whether the slot's 8K is the page's other half than the slot's own parity
+    const uint32_t ram = static_cast<uint32_t>(_ramBase - _memory);
+    const uint32_t ramBytes = static_cast<uint32_t>(InstalledRamPages()) * PAGE_SIZE;
+    for (unsigned s = 0; s < kSlots; s++)
+    {
+        _ttdKeys[s].page = _physPage[s];
+        const uint32_t rel = _readOff[s] - ram;
+        _ttdKeys[s].flip = _physPage[s] != ttd::kPhysPageNone && _readOff[s] >= ram && rel < ramBytes
+                               ? static_cast<uint8_t>(((rel >> 13) ^ s) & 1u)
+                               : 0;
+    }
     for (unsigned w = 0; w < 4; w++)
     {
         const unsigned lo = w * 2;

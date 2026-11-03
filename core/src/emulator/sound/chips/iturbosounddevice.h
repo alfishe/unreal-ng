@@ -167,7 +167,7 @@ public:
     /// chip bit)
     virtual int getSelectedChip() const = 0;
     /// The SSG register a data read (IN #FFFD) returns now, 0..15; -1 when it returns something else (the TSFM
-    /// status byte, #FF with an FM address latched). The controllers' port-read watch asks it while it runs
+    /// status byte, #FF with an FM address latched). The device access watch asks it when it starts (its seed)
     virtual int getBusReadRegister() const = 0;
     /// Native-rate (pre-decimation) recording tap of the AY/SSG mix
     virtual std::shared_ptr<NativeAudioTap> getNativeTap() const = 0;

@@ -142,18 +142,28 @@ bool ReplayBuild(const TraceBundle& bundle, const ReplayOptions& options, L1Resu
         error = "the recording has no keyframe";
         return false;
     }
-    const uint64_t first = ttd->GetCheckpoint(0)->time.frame;
+    ttd::TTDTimePoint from = ttd->GetCheckpoint(0)->time;
     uint64_t end = ttd->SessionEndPosition().frame;
+    if (options.fromFrame > from.frame || (options.fromFrame == from.frame && options.fromTInFrame > from.tInFrame))
+        from = ttd::TTDTimePoint{options.fromFrame, options.fromTInFrame};
+    const uint64_t first = from.frame;
+    if (options.toFrame != 0 && options.toFrame < end)
+        end = options.toFrame;
     if (options.maxFrames != 0 && end > first + options.maxFrames)
         end = first + options.maxFrames;
     if (end <= first)
     {
-        error = "the recording is shorter than one frame";
+        const std::string frames = std::to_string(ttd->GetCheckpoint(0)->time.frame) + ".." +
+                                   std::to_string(ttd->SessionEndPosition().frame);
+        error = options.fromFrame != 0 || options.toFrame != 0
+                    ? "the window holds no frame of the recording (frames " + frames + ")"
+                    : "the recording is shorter than one frame";
         return false;
     }
-    if (!ttd->SeekTo(ttd->GetCheckpoint(0)->time, nullptr))
+    if (!ttd->SeekTo(from, nullptr))
     {
-        error = "the analysis instance could not seek to the first keyframe";
+        error = "the analysis instance could not seek to frame " + std::to_string(from.frame) + " t " +
+                std::to_string(from.tInFrame);
         return false;
     }
 
@@ -198,12 +208,18 @@ bool ReplayBuild(const TraceBundle& bundle, const ReplayOptions& options, L1Resu
                 returnAddress = static_cast<uint16_t>(tap.memory->DirectReadFromZ80Memory(cpu.sp) |
                                                       (tap.memory->DirectReadFromZ80Memory(static_cast<uint16_t>(cpu.sp + 1)) << 8));
             const uint16_t page = tap.memory->GetPageForBank(static_cast<uint8_t>(pc >> 14));
+            // The arrival's in-frame position in TTD units (a window's from_tinframe, memory_at's t), not CPU
+            // T-states: they differ on a machine whose TTD clock counts finer (a turbo, a fractional clock)
             tap.builder->OnStart(pc, page, RegsOf(cpu, pc), tap.state->t_states + cpu.t, tap.state->frame_counter,
-                                 cpu.halted != 0, interrupted, false, returnAddress);
+                                 cpu.halted != 0, interrupted, false, returnAddress,
+                                 tap.state->TtdTInFrame(static_cast<uint32_t>(cpu.t)));
         };
         z80->busTraceHook = [&builder](char type, uint16_t address, uint8_t value) {
             builder.OnBus(type, address, value);
         };
+        // A tool edit the recording holds (the fast tape load: a whole block at the ROM loader's entry) writes memory
+        // past the bus: its bytes are the writes of the instruction it replaced
+        ttd->SetEditWriteObserver([&builder](uint16_t address, uint8_t value) { builder.OnEditWrite(address, value); });
 
         const uint32_t frameT = context->emulatorState.BaseToCpuT(context->config.frame);
         const uint32_t chunk = options.chunkFrames != 0 ? options.chunkFrames : 25;
@@ -265,6 +281,7 @@ bool ReplayBuild(const TraceBundle& bundle, const ReplayOptions& options, L1Resu
         }
         z80->m1TraceHook = nullptr;
         z80->busTraceHook = nullptr;
+        ttd->SetEditWriteObserver(nullptr);
     }
     if (cancelled)
     {

@@ -2368,7 +2368,7 @@ public:
         });
         // monitor(name, {instance = }) -> the reply table of a monitoring verb (monitoring::Call: all, host.stats,
         // host.clients, emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status,
-        // debug.analyzers, controllers.state, game.events; an instance's name defaults to this emulator), as WebAPI
+        // debug.analyzers, controllers.state, game.events, devices.access; an instance's name defaults to this emulator), as WebAPI
         // /api/v1/monitor[/{name}], the CLI `monitor`, MCP inspect_state aspect `monitor` and Python monitor()
         lua.set_function("monitor", [this](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
             Emulator* emulator = effectiveEmulator();
@@ -7173,7 +7173,8 @@ public:
         });
         // The analysis layers through analysis::Execute (analysiscontrol.h): analysis(action, opts) with action start |
         // stop | status | build | cancel | explain | query | export | gallery | findings | review | experiment | cover; opts a table ({level=, mode=, record=} /
-        // {frames=, path=, wait=} / {address=, page=, what=} / {kind=, range=, limit=} / {format=, path=, ranges=,
+        // {frames=, from_frame=, from_tinframe=, to_frame=, path=, wait=} (from / to: a window, one stage) /
+        // {address=, page=, what=} / {kind=, range=, limit=} / {format=, path=, ranges=,
         // width=} / {address=, kind=, scale=, path=, limit=}) or, for explain and gallery, the address, for start the
         // level, for build the frames, for query the kind, for export the format. The answer: the reply's fields plus
         // text (gallery: the PNG base64 in png); a refusal: ok = false, error = why. L3: findings {op=, kind=, status=,

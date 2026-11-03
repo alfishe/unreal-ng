@@ -36,7 +36,7 @@ Side files of the analysis export (`draft.fields.json`, `draft.geometry.json`), 
 - `--fields`: `{"records": [{"name", "base", "layout"?, "fields": [{"offset", "size", "name"?}]}]}`. A record matches
   an expected layout by base address (the live copy or any instance) or by name; a field matches on offset and size.
 - `--geometry`: `{"regions": [{"start", "end", "kind", "width", "height", "frames", ...}]}` (the export adds
-  `stride`, `mask`, `prefix`, `layout`, `detector`, `confidence`). Of the draft regions starting inside a reference
+  `stride`, `mask`, `prefix`, `pitch`, `layout`, `bottom_up`, `detector`, `confidence`). Of the draft regions starting inside a reference
   section, the one covering most of it is compared: width, height and frames (a map: width and height in cells).
 
 The reference geometry of a section is the expected file's `graphics` entry; without one (or with
@@ -79,7 +79,7 @@ the exported draft then carries the coverage notes.
 
 The P3 gate: a fresh zx-reaper project from the tape (`zxinit.py`), the input scripts and their expected hashes
 copied in, zxinit's skool replaced by the draft, `re/layout.mk` taking the draft's `REGION_START` / `SHIFT_END`, then
-`make` (tape identical), `make test`, `make shift-test` at +$100 and +$101 and `score_draft.py` with the draft's
+`make` (tape identical), `make test`, `make shift-test` at +`$100` and +`$101` and `score_draft.py` with the draft's
 fields. Nothing is edited by hand. `gate.json`, `gate.log`, `score.txt`, `score.json` go into `--work`; exit 0 when
 every step passed. Result and commands: [score-p3.md](../../../docs/inprogress/2026-10-24-analysis-layers/baselines/score-p3.md).
 
@@ -104,6 +104,24 @@ The verdict (plan.md, P5): every gate step passes, quality at least run B's (byt
 matched, graphics covered, names the same; by entry is reported too; run B's final skool scored the same way with `--run-b-skool`, else the score-p0.md
 numbers), subagent tokens at most `--token-target` (200000). `ab.json` and `ab.md` go into `--work`; exit 0 pass,
 1 fail, 2 when the gate did not run through. The name pairs of the draft go into `<work>/names-pairs.tsv`. `--skip-gate` reuses `<work>/gate`.
+
+## re_session.py
+
+The mechanics of the reverse-engineering recipe: one live unreal-qt instance per game (offscreen, muted, a Kempston
+card, its own ports from `--port-base`), kept between calls; every file goes into the work folder `--work W` (keep
+it under `scratch/`). The workflow and the gates: [.recipe/analysis/reverse-engineering.md](../../../.recipe/analysis/reverse-engineering.md).
+
+| Command | What it does |
+| --- | --- |
+| `capture` | loads a tape, disk or snapshot, finds the keys to play (or plays `--inputs` scripts), records, builds L1 / L2; writes `start.szx`, `start.bin`, `l1.json`, `review.txt`, `findings.txt`, `screens.png`, `capture.json`, `session.ttd`, `session.json`; `--record-load` records from power-on, the load included (`power-on.szx`, no explorer) |
+| `open` | a new instance with a saved recording loaded (`--ttd`): one recording serves every later build |
+| `build` | builds again from the loaded recording, a window of it with `--stage N` or `--from-frame` / `--from-tinframe` / `--to-frame`; `--into` a stage's own folder; writes `l1.json`, `start.bin` (the memory at the window's start), `review.txt`, `findings.txt` |
+| `stages` | the code arrivals of the last build, one line each with the `build` window for that stage |
+| `interrupts` | the interrupt handlers of the last build: entries, entries a frame, T-states an entry, the CPU share, the callees |
+| `call` | one `analysis` call on the live instance (`ACTION` and its options as JSON); `--json` writes the structured answer |
+| `export` | every draft format into `W/draft`, and the findings register |
+| `check` | the gates into `W/check.json`: `rebuild-plain`, `assemble` (with `--sjasmplus`), the score (with `--reference`) |
+| `stop` | ends the instance |
 
 ## make_rom48_signatures.py
 

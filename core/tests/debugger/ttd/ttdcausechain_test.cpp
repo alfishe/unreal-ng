@@ -27,6 +27,7 @@ protected:
     std::shared_ptr<Emulator> _emulator;
     EmulatorContext* _context = nullptr;
     ttd::TimeTravelController* _ttd = nullptr;
+    std::string _model = "PENTAGON";
 
     void TearDown() override
     {
@@ -39,7 +40,7 @@ protected:
     void Record(const std::vector<uint8_t>& code, unsigned frames, const std::vector<uint8_t>& data = {0x03},
                 const std::vector<uint8_t>& isr = {0xFB, 0xED, 0x4D})
     {
-        _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("ttd-cause-chain", "PENTAGON",
+        _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("ttd-cause-chain", _model,
                                                                             LoggerLevel::LogNone);
         ASSERT_TRUE(_emulator);
         _context = _emulator->GetContext();
@@ -354,4 +355,27 @@ TEST_F(TTDCauseChain_Test, RegisterAtMomentAndMachineRestored)
     EXPECT_EQ(z80->bc, bc);
     EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(kDst), dst);
     EXPECT_FALSE(ttd::TTDCauseChainText(r).empty());
+}
+
+/// S12: the Next's MMU shows either 8K half of a 16K page at one address: #C005 with 8K page #0F (page 7's upper half)
+/// and with #0E (its lower half) are two bytes. The writer found is the one of the byte mapped now, not the later
+/// write through the same address to the other half
+TEST_F(TTDCauseChain_Test, S12_NextEightKHalves)
+{
+    _model = "NEXT";
+    // di; ld sp,#BF00; ld a,#FE; ld i,a; im 2; ld bc,#243B; ld a,#56; out (c),a; inc b
+    // ld a,#0F; out (c),a; ld a,#22; ld (#C005),a      (#8018: page 7 offset #2005)
+    // ld a,#0E; out (c),a; ld a,#33; ld (#C005),a      (#8021: page 7 offset #0005)
+    // ld a,#0F; out (c),a; ei; halt; halt; halt; di; jr $
+    Record({0xF3, 0x31, 0x00, 0xBF, 0x3E, 0xFE, 0xED, 0x47, 0xED, 0x5E, 0x01, 0x3B, 0x24, 0x3E, 0x56, 0xED, 0x79, 0x04,
+            0x3E, 0x0F, 0xED, 0x79, 0x3E, 0x22, 0x32, 0x05, 0xC0,
+            0x3E, 0x0E, 0xED, 0x79, 0x3E, 0x33, 0x32, 0x05, 0xC0,
+            0x3E, 0x0F, 0xED, 0x79, 0xFB, 0x76, 0x76, 0x76, 0xF3, 0x18, 0xFE},
+           6);
+    // The seek to the end restores the Next's image: MMU6 = #0F, not the #7FFD bank (slot 6 shows page 7's upper half)
+    ASSERT_EQ(_context->pMemory->DirectReadFromZ80Memory(0xC005), 0x22);
+    ASSERT_EQ(_context->pMemory->RAMPageAddress(7)[0x0005], 0x33);
+    const ttd::TTDCauseResult r = AskMemory(0xC005, 1);
+    ASSERT_TRUE(r.error.empty()) << r.error;
+    EXPECT_LINK(r, 0, "(#C005 RAM 7)", "store", 0x22, 0x8018);
 }

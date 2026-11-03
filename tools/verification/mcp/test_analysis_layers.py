@@ -7,6 +7,7 @@ file) and the gallery (the list, one region as a PNG image block or a file); L3 
 experiments, coverage; the queue by reason and offset, entry candidates, naming batches, a kind change, no implicit
 session); the readable answer in content[] text, the calls counted per action in host.clients.mcp.tools"""
 
+import json
 import os
 import re
 import sys
@@ -346,6 +347,53 @@ def test_review_entries_names_kind(s):
         r = s.call('analysis', {'action': 'export', 'format': 'ctl', 'ranges': '8000-80FF'})
         expect('\nt ' + var['start'] in (r.structured or {}).get('content', ''), 'export ctl: the range is text now',
                (r.structured or {}).get('content', '')[:900])
+    s.call('analysis', {'action': 'stop'})
+
+
+def test_build_window(s):
+    """A build with a window (from_frame / from_tinframe / to_frame) reaches the core: the replay covers the window's
+    frames only and l1.json's replay names them; a window that ends before it starts is refused at once (400), one
+    outside the recording fails with the reason in the text"""
+    s.call('analysis', {'action': 'start', 'record': True})
+    s.call('control_execution', {'action': 'run_frames', 'frames': 20})
+    r = s.call('analysis', {'action': 'build'})
+    expect((r.structured or {}).get('state') == 'done', 'build of the whole recording: done', r.text[:300])
+    bundle = (r.structured or {}).get('bundle') or {}
+    first, end = bundle.get('first_frame'), bundle.get('end_frame')
+    expect(isinstance(first, int) and isinstance(end, int) and end - first >= 10,
+           'build: the recording\'s frames in the bundle', bundle)
+    if not (isinstance(first, int) and isinstance(end, int) and end - first >= 10):
+        s.call('analysis', {'action': 'stop'})
+        return
+    lo, hi = first + 3, first + 9
+    scratch = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'scratch', 'mcp-verify')
+    os.makedirs(scratch, exist_ok=True)
+    path = os.path.abspath(os.path.join(scratch, 'analysis-window-l1.json'))
+    if os.path.exists(path):
+        os.remove(path)
+    r = s.call('analysis', {'action': 'build', 'from_frame': lo, 'from_tinframe': 100, 'to_frame': hi, 'path': path,
+                            'wait': 30000})
+    expect((r.structured or {}).get('state') == 'done', 'windowed build: done', r.text[:300])
+    ready = (r.structured or {}).get('ready') or {}
+    expect(ready.get('frames') == hi - lo, f'windowed build: {hi - lo} frames replayed (the window)', ready)
+    if os.path.exists(path):  # the emulator runs on this host
+        with open(path) as f:
+            replay = json.load(f).get('replay', {})
+        expect(replay.get('first_frame') == lo and replay.get('last_frame') == hi,
+               'l1.json: the replay names the window', replay)
+        os.remove(path)
+
+    r = s.call('analysis', {'action': 'build', 'from_frame': lo, 'to_frame': lo, 'wait': 30000}, ok=False)
+    expect(r.is_error and '400' in r.text and 'ends before it starts' in r.text,
+           'build: a window with no frame (to_frame = from_frame) is refused at once (400)', r.text[:400])
+    r = s.call('analysis', {'action': 'build', 'from_frame': hi, 'to_frame': lo, 'wait': 30000}, ok=False)
+    expect(r.is_error and '400' in r.text and 'ends before it starts' in r.text,
+           'build: an inverted window (to_frame < from_frame) is refused at once (400)', r.text[:400])
+    r = s.call('analysis', {'action': 'build', 'from_frame': end + 100, 'to_frame': end + 200, 'wait': 30000},
+               ok=False)
+    state = (r.structured or {}).get('state')
+    expect((r.is_error or state == 'failed') and 'window holds no frame' in r.text,
+           'build: a window outside the recording fails with the reason', r.text[:400])
     s.call('analysis', {'action': 'stop'})
 
 

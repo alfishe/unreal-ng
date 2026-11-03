@@ -58,9 +58,17 @@
             schema["properties"]["path"]["description"] = "Write the L1 JSON to this file when the build is done";
             schema["properties"]["wait"]["type"] = "integer";
             schema["properties"]["wait"]["description"] = "Milliseconds (<= 30000) to wait for the build before answering";
+            schema["properties"]["from_frame"]["type"] = "integer";
+            schema["properties"]["from_frame"]["description"] =
+                "Replay a window from this frame: one stage of the program (an L1 arrival's frame); the start image "
+                "is the memory there";
+            schema["properties"]["from_tinframe"]["type"] = "integer";
+            schema["properties"]["from_tinframe"]["description"] = "The point inside from_frame in TTD time units, as time_travel's tinframe (an arrival's tinframe)";
+            schema["properties"]["to_frame"]["type"] = "integer";
+            schema["properties"]["to_frame"]["description"] = "The window ends before this frame (default: the end)";
         }
         build["responses"]["200"]["description"] = "job, state, bundle, progress, ready, text";
-        build["responses"]["400"]["description"] = "A bad frames / wait value or an unknown option";
+        build["responses"]["400"]["description"] = "A bad frames / wait / window value or an unknown option";
         build["responses"]["409"]["description"] = "No recording, or a build is running";
 
         Json::Value& cancel = paths["/api/v1/emulator/{id}/analysis/cancel"]["post"];

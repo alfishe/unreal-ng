@@ -91,7 +91,7 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
 {
     static const std::vector<std::string> none;
     static const std::vector<std::string> start = {"level", "mode", "record"};
-    static const std::vector<std::string> build = {"frames", "path", "wait"};
+    static const std::vector<std::string> build = {"frames", "path", "wait", "from_frame", "from_tinframe", "to_frame"};
     static const std::vector<std::string> explain = {"address", "page", "what"};
     static const std::vector<std::string> query = {"kind", "range", "limit"};
     static const std::vector<std::string> exportOptions = {"format", "path", "ranges", "width"};
@@ -480,6 +480,18 @@ Reply Build(Emulator& emulator, const Options& options)
     ReplayOptions replay;
     if (const auto it = options.find("frames"); it != options.end() && !ParseCount(it->second, 100000000, replay.maxFrames))
         return Refuse(Error::BadRequest, "frames: the most frames to replay, an integer (0: the whole recording)");
+    if (const auto it = options.find("from_frame");
+        it != options.end() && !ParseCount(it->second, 4000000000ull, replay.fromFrame))
+        return Refuse(Error::BadRequest, "from_frame: the frame the window starts in, an integer (a stage's arrival)");
+    uint64_t tInFrame = 0;
+    if (const auto it = options.find("from_tinframe"); it != options.end() && !ParseCount(it->second, 1000000, tInFrame))
+        return Refuse(Error::BadRequest, "from_tinframe: the point inside from_frame in TTD time units, an integer");
+    replay.fromTInFrame = static_cast<uint32_t>(tInFrame);
+    if (const auto it = options.find("to_frame");
+        it != options.end() && !ParseCount(it->second, 4000000000ull, replay.toFrame))
+        return Refuse(Error::BadRequest, "to_frame: the frame the window ends before, an integer (0: the end)");
+    if (replay.toFrame != 0 && replay.toFrame <= replay.fromFrame)
+        return Refuse(Error::BadRequest, "to_frame: the window ends before it starts (to_frame <= from_frame)");
     uint64_t wait = 0;
     if (const auto it = options.find("wait"); it != options.end() && !ParseCount(it->second, 30000, wait))
         return Refuse(Error::BadRequest, "wait: milliseconds to wait for the build, 0 to 30000");
@@ -1003,6 +1015,8 @@ Reply Gallery(Emulator& emulator, const Options& options)
             text += " +" + std::to_string(g.prefix);
         if (g.pitch != 0)
             text += " pitch " + std::to_string(g.pitch);
+        if (g.bottomUp)
+            text += " bottom-up";
         return text;
     };
 
