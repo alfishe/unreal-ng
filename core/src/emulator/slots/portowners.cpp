@@ -30,8 +30,15 @@ PortOwners PortOwners::Of(const SlotManager::Result& result, const SlotPlanner& 
             {
                 continue;
             }
-            owners._claims.push_back({ slot.entry.slot, claim.mask, static_cast<uint16_t>(claim.match & claim.mask),
-                                       claim.dir, claim.gate });
+            owners.Add(slot.entry.slot, claim);
+        }
+    }
+    // The devices the emulator fits on its own: a card on the same port answers first, a board device after them
+    for (const BuiltInDef& def : result.machine->fitted)
+    {
+        for (const PortClaim& claim : def.claims)
+        {
+            owners.Add(def.id, claim);
         }
     }
     // A board in a built-in's socket (the TurboSound / TSFM in the AY socket) declares no ports of its own: the
@@ -58,12 +65,27 @@ PortOwners PortOwners::Of(const SlotManager::Result& result, const SlotPlanner& 
             const std::string owner = taken ? std::string(def.socket) : builtIn.id;
             for (const PortClaim& claim : def.claims)
             {
-                owners._claims.push_back({ owner, claim.mask, static_cast<uint16_t>(claim.match & claim.mask),
-                                           claim.dir, claim.gate });
+                owners.Add(owner, claim);
             }
         }
     }
     return owners;
+}
+
+void PortOwners::Add(const std::string& owner, const PortClaim& claim)
+{
+    Claim entry;
+    entry.owner = owner;
+    entry.mask = claim.mask;
+    entry.match = static_cast<uint16_t>(claim.match & claim.mask);
+    entry.dir = claim.dir;
+    entry.gate = claim.gate;
+    entry.port = claim.port != 0 ? claim.port : static_cast<uint16_t>(entry.match | ~claim.mask);
+    entry.channel = claim.channel;
+    entry.channelMask = claim.channelMask;
+    entry.input = claim.input;
+    entry.channelName = claim.channelName != nullptr ? claim.channelName : "";
+    _claims.push_back(std::move(entry));
 }
 
 PortOwners PortOwners::Of(const EmulatorContext* context)

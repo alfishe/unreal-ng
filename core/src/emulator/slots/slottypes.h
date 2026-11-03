@@ -131,6 +131,32 @@ struct When
     uint32_t anyOf = 0;
 };
 
+/// What an access to a claim means below its device, for the device access watch
+/// (docs/inprogress/2026-11-02-device-access-watch): declared beside the claim, never coded per chip
+enum class Channel : uint8_t
+{
+    None,           ///< the claim is one channel
+    AddressBits,    ///< the bus lines under `channelMask` that are low: one channel per line (the ULA's half-rows)
+    Select,         ///< an OUT writes the device's register index (NextREG #243B, ULA+ #BF3B)
+    Indexed,        ///< the register the device's last select chose (AY #BFFD, NextREG #253B)
+    SelectIndexed,  ///< OUT selects, IN reads the selected register (AY #FFFD, Fuller #3F)
+};
+
+/// The host input a claim brings to the guest. The watch samples the bits the code tests after each read of an
+/// input claim, and the auto connector reads its evidence by the role, never by the port
+enum class InputRole : uint8_t
+{
+    None,
+    KeyMatrix,          ///< the keyboard half-rows (and the joysticks wired to them)
+    KempstonJoystick,   ///< a Kempston joystick byte (the board's, a card's, the Next's left connector)
+    KempstonJoystick2,  ///< the second Kempston connector (the Next's #37)
+    FullerJoystick,     ///< the Fuller Box's stick
+    KempstonMouse,      ///< the Kempston mouse registers
+    AmxMouse,           ///< the AMX mouse's PIO and buttons
+    AyIo,               ///< an AY's registers: R14 / R15 are its I/O ports (keypad, Timex sticks, AY mouse)
+    NextReg,            ///< the Next's registers: NR #B2 holds the MD pads' extra buttons
+};
+
 /// One port range a device answers: port p is claimed when (p & mask) == match
 struct PortClaim
 {
@@ -144,6 +170,13 @@ struct PortClaim
     uint16_t port = 0;              ///< the documented port of the claim (#FFFD, #001F); 0 = the match with every
                                     ///< undecoded line high. Used to name the claim and to test shadowing (a built-in
                                     ///< is shadowed when a card's IORQGE claim covers this port, not merely a mirror)
+    Channel channel = Channel::None;  ///< what an access means below the device (device access watch)
+    /// Channel::AddressBits: the lines. Select / SelectIndexed: the bits a register index has; a written value with
+    /// other bits set selects no register and keeps the last one (an AY's #10-#FF: the TurboSound chip select, the
+    /// TSFM's FM addresses); 0 = any byte
+    uint16_t channelMask = 0;
+    InputRole input = InputRole::None;
+    const char* channelName = "";     ///< the channel names' prefix ("row", "reg"); "" = the claim's port
 };
 
 /// One value of a card option
@@ -218,6 +251,10 @@ struct MachineDef
     const char* variant = "";           ///< the real board the declaration follows ("Pentagon-1024SL v2.2 class")
     std::span<const BusDef> buses{};
     std::span<const BuiltInDef> builtIns{};
+    /// Devices the emulator fits on its own (the Kempston mouse of `[INPUT] Mouse=`): not on the board, so the slot
+    /// planner, the matrix and the board's claim table never see them; only the port attribution (PortOwners) names
+    /// them, after the cards and before the built-ins
+    std::span<const BuiltInDef> fitted{};
     std::span<const Src> sources{};
 };
 

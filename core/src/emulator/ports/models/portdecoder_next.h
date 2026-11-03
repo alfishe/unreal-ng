@@ -154,6 +154,8 @@ public:
     bool SpiByteInFlight() const { return _spiPendingValid; }
     uint8_t SpiLastReceived() const { return _spiRx; }
 
+    /// NextReg: the register #243B selected; the rest as every machine
+    int SelectedIndex(slots::InputRole role) const override;
     NextBoard& Board() { return *_board; }
     NextInterruptSource& Interrupts() { return *_interrupts; }
     NextCtc& Ctc() { return _ctc; }

@@ -170,11 +170,13 @@ constexpr When kDipSd{ Opt::Dip, Bit(3) };
 constexpr PortClaim kMultisoundClaims[] = {
     // YM register / control: A15-A14 = 11, A3-A0 = 1101; IORQGE only with A13 = 1 (#FFFD); #DFFD passive, co-written
     // with the machine's own #DFFD
-    { .mask = 0xE00F, .match = 0xE00D, .dir = Dir::InOut, .iorqge = Iorqge::Yes, .when = kDipYm, .port = 0xFFFD },
+    { .mask = 0xE00F, .match = 0xE00D, .dir = Dir::InOut, .iorqge = Iorqge::Yes, .when = kDipYm, .port = 0xFFFD,
+      .channel = Channel::SelectIndexed, .channelMask = 0x000F, .input = InputRole::AyIo, .channelName = "reg" },
     { .mask = 0xE00F, .match = 0xC00D, .dir = Dir::InOut, .when = kDipYm, .port = 0xDFFD },
     // YM data: the CPLD's IORQGE has no direction term, so an IN #BFFD asserts it too while the card leaves the data
     // bus alone (hardware reference §3.1, §3.4): the read is hidden from the board and floats
-    { .mask = 0xC00F, .match = 0x800D, .dir = Dir::InOut, .iorqge = Iorqge::Yes, .when = kDipYm, .port = 0xBFFD },
+    { .mask = 0xC00F, .match = 0x800D, .dir = Dir::InOut, .iorqge = Iorqge::Yes, .when = kDipYm, .port = 0xBFFD,
+      .channel = Channel::Indexed, .input = InputRole::AyIo, .channelName = "reg" },
     // SAA #FF data / #1FF address: passive since 2023-12, ROM-fetch lock
     { .mask = 0x00FF, .match = 0x00FF, .dir = Dir::Out, .romLock = true, .when = kDipSaa },
     { .mask = 0x00FF, .match = 0x00B3, .dir = Dir::InOut, .iorqge = Iorqge::Yes, .when = kDipGs },
@@ -261,12 +263,18 @@ constexpr When kFullerA7A6A5{ Opt::Decode, Bit(1) };
 
 constexpr PortClaim kFullerClaims[] = {
     // #3F: register select (write), register data (read: FUSE, zxsp, nocash; MAME reads #5F)
-    { .mask = 0x00FF, .match = 0x003F, .dir = Dir::InOut, .when = kFullerFullLow },
-    { .mask = 0x00FF, .match = 0x005F, .dir = Dir::Out, .when = kFullerFullLow },
-    { .mask = 0x00FF, .match = 0x007F, .dir = Dir::In, .when = kFullerFullLow },
-    { .mask = 0x00E0, .match = 0x0020, .dir = Dir::InOut, .when = kFullerA7A6A5, .port = 0x003F },
-    { .mask = 0x00E0, .match = 0x0040, .dir = Dir::Out, .when = kFullerA7A6A5, .port = 0x005F },
-    { .mask = 0x00E0, .match = 0x0060, .dir = Dir::In, .when = kFullerA7A6A5, .port = 0x007F },
+    { .mask = 0x00FF, .match = 0x003F, .dir = Dir::InOut, .when = kFullerFullLow,
+      .channel = Channel::SelectIndexed, .channelMask = 0x000F, .input = InputRole::AyIo, .channelName = "reg" },
+    { .mask = 0x00FF, .match = 0x005F, .dir = Dir::Out, .when = kFullerFullLow,
+      .channel = Channel::Indexed, .input = InputRole::AyIo, .channelName = "reg" },
+    { .mask = 0x00FF, .match = 0x007F, .dir = Dir::In, .when = kFullerFullLow,
+      .input = InputRole::FullerJoystick },
+    { .mask = 0x00E0, .match = 0x0020, .dir = Dir::InOut, .when = kFullerA7A6A5, .port = 0x003F,
+      .channel = Channel::SelectIndexed, .channelMask = 0x000F, .input = InputRole::AyIo, .channelName = "reg" },
+    { .mask = 0x00E0, .match = 0x0040, .dir = Dir::Out, .when = kFullerA7A6A5, .port = 0x005F,
+      .channel = Channel::Indexed, .input = InputRole::AyIo, .channelName = "reg" },
+    { .mask = 0x00E0, .match = 0x0060, .dir = Dir::In, .when = kFullerA7A6A5, .port = 0x007F,
+      .input = InputRole::FullerJoystick },
 };
 
 constexpr FunctionUse kFullerFunctions[] = {
@@ -293,17 +301,17 @@ constexpr When kAmxFullLow{ Opt::Decode, Bit(1) };
 
 constexpr PortClaim kAmxClaims[] = {
     // The PIO: /CE = A7, B/A = A5, C/D = A6 (data A #1F, data B #3F, control A #5F, control B #7F)
-    { .mask = 0x00E0, .match = 0x0000, .dir = Dir::InOut, .when = kAmxA7, .port = 0x001F },
-    { .mask = 0x00E0, .match = 0x0020, .dir = Dir::InOut, .when = kAmxA7, .port = 0x003F },
-    { .mask = 0x00E0, .match = 0x0040, .dir = Dir::Out, .when = kAmxA7, .port = 0x005F },
-    { .mask = 0x00E0, .match = 0x0060, .dir = Dir::Out, .when = kAmxA7, .port = 0x007F },
+    { .mask = 0x00E0, .match = 0x0000, .dir = Dir::InOut, .when = kAmxA7, .port = 0x001F, .input = InputRole::AmxMouse },
+    { .mask = 0x00E0, .match = 0x0020, .dir = Dir::InOut, .when = kAmxA7, .port = 0x003F, .input = InputRole::AmxMouse },
+    { .mask = 0x00E0, .match = 0x0040, .dir = Dir::Out, .when = kAmxA7, .port = 0x005F, .input = InputRole::AmxMouse },
+    { .mask = 0x00E0, .match = 0x0060, .dir = Dir::Out, .when = kAmxA7, .port = 0x007F, .input = InputRole::AmxMouse },
     // The buttons: A7 = 1, A6 = 1, A5 = 0 with /RD
-    { .mask = 0x00E0, .match = 0x00C0, .dir = Dir::In, .when = kAmxA7, .port = 0x00DF },
-    { .mask = 0x00FF, .match = 0x001F, .dir = Dir::InOut, .when = kAmxFullLow },
-    { .mask = 0x00FF, .match = 0x003F, .dir = Dir::InOut, .when = kAmxFullLow },
-    { .mask = 0x00FF, .match = 0x005F, .dir = Dir::Out, .when = kAmxFullLow },
-    { .mask = 0x00FF, .match = 0x007F, .dir = Dir::Out, .when = kAmxFullLow },
-    { .mask = 0x00FF, .match = 0x00DF, .dir = Dir::In, .when = kAmxFullLow },
+    { .mask = 0x00E0, .match = 0x00C0, .dir = Dir::In, .when = kAmxA7, .port = 0x00DF, .input = InputRole::AmxMouse },
+    { .mask = 0x00FF, .match = 0x001F, .dir = Dir::InOut, .when = kAmxFullLow, .input = InputRole::AmxMouse },
+    { .mask = 0x00FF, .match = 0x003F, .dir = Dir::InOut, .when = kAmxFullLow, .input = InputRole::AmxMouse },
+    { .mask = 0x00FF, .match = 0x005F, .dir = Dir::Out, .when = kAmxFullLow, .input = InputRole::AmxMouse },
+    { .mask = 0x00FF, .match = 0x007F, .dir = Dir::Out, .when = kAmxFullLow, .input = InputRole::AmxMouse },
+    { .mask = 0x00FF, .match = 0x00DF, .dir = Dir::In, .when = kAmxFullLow, .input = InputRole::AmxMouse },
 };
 
 constexpr FunctionUse kAmxFunctions[] = {
@@ -331,9 +339,9 @@ constexpr OptionValue kKempstonDecodeValues[] = {
 
 constexpr PortClaim kKempstonCardClaims[] = {
     { .mask = 0x00E0, .match = 0x0000, .dir = Dir::In, .gate = Gate::NonDos, .when = { Opt::Decode, Bit(0) },
-      .port = 0x001F },
+      .port = 0x001F, .input = InputRole::KempstonJoystick },
     { .mask = 0x0020, .match = 0x0000, .dir = Dir::In, .gate = Gate::NonDos, .when = { Opt::Decode, Bit(1) },
-      .port = 0x001F },
+      .port = 0x001F, .input = InputRole::KempstonJoystick },
 };
 
 constexpr FunctionUse kKempstonCardFunctions[] = {

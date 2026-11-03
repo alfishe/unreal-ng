@@ -41,8 +41,9 @@
         get["description"] =
             "GET /controllers/{connector}: the connector (field 'info'). GET /controllers/targets?device=<kind>: the "
             "connectors that take the device in order (field 'targets'), 'default' (the index plug auto uses) and "
-            "'refusal'. GET /controllers/auto: the port-read evidence since the last load (field 'evidence': active, "
-            "frames_observed, window, classes with frames and reads_per_frame) and the decision drawn from it (field "
+            "'refusal'. GET /controllers/auto: the device access evidence since the last load (field 'evidence': active, "
+            "frames_observed, window, channels: per registry device and channel its device, channel, dir, port, "
+            "input role, frames, reads_per_frame, tested_bits, sites) and the decision drawn from it (field "
             "'decision': decisive, keyboard, device, connector, label, reason)";
         get["tags"].append("Controllers");
         idParameter(get, 0);

@@ -12,7 +12,6 @@
 
 // Forward declaration
 class OpcodeProfiler;
-class PortReadWatch;
 
 /// region <Structures>
 
@@ -683,21 +682,12 @@ public:
         UpdateInResultHooks();
     }
 
-    /// The controllers' port-read evidence (ControllerManager, retro-devices.md §6): told the port of every IN while
-    /// the watch runs. Null otherwise; tested behind _inResultHooks. Set on the machine's thread only
-    PortReadWatch* portReadWatch = nullptr;
-    void SetPortReadWatch(PortReadWatch* watch)
-    {
-        portReadWatch = watch;
-        UpdateInResultHooks();
-    }
-
 private:
-    /// Something observes the result of an IN (the port interceptor, a read-cycle latch, the port-read watch)
+    /// Something observes the result of an IN (the port interceptor, a read-cycle latch)
     bool _inResultHooks = false;
     void UpdateInResultHooks()
     {
-        _inResultHooks = portInterceptor != nullptr || readCycleLatch != nullptr || portReadWatch != nullptr;
+        _inResultHooks = portInterceptor != nullptr || readCycleLatch != nullptr;
     }
 
 public:
