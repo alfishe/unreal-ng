@@ -266,11 +266,10 @@ DebugEventHub's events ([debugger protocol §5](../../../inprogress/2026-09-28-d
   next event says how many (`dropped`).
 - Served on the WebAPI's event loops with asynchronous I/O: no thread per connection, per topic or for the hub.
   Producers (the message centre, the actions workers, DebugEventHub) post a task to the WebAPI's main loop (a
-  debugger event is queued, at most 1024 waiting, and serialised once on the loop); one timer on it, armed
-  only while somebody subscribes and at the highest `max_hz` asked for, reads published state only (the TTD cursor's
-  seqlock, the run state, the context: never a read that holds the emulation thread), builds each value's JSON once
-  per tick, and sends each connection what changed when its own interval passed. A state topic's message of one
-  instance is the same bytes for every subscriber.
+  debugger event is queued, at most 1024 waiting, and serialised once on the loop). Values are read on events,
+  never on a beat (§4.2); the hub reads published state only (the TTD cursor's seqlock, the run state, the context:
+  never a read that holds the emulation thread), builds each value's JSON once per read, and sends each connection
+  what changed. A state topic's message of one instance is the same bytes for every subscriber.
 - `result`, `ctx`, `target` and `error` are sent as they happen, never behind a readout tick.
 
 ### 4.1 Backpressure
@@ -292,6 +291,24 @@ Per connection, on the bytes its socket has queued (the TCP connection's own buf
   fire the callback the queue is below the mark and the connection drains. The measure runs on the connection's
   I/O loop; the hub reads two atomics (`WsFlow`).
 - `max_hz` bounds the rate before that; the hub keeps one value per topic and instance, not a queue.
+
+### 4.2 Event-driven reads
+
+A paused or idle instance costs the hub nothing: no value is read, compared or serialised until something marks it
+stale. Every readout and state topic has a cadence (`ReadoutCadence`, `ws-hub.cpp`):
+
+| Cadence | Read when | Names |
+|---------|-----------|-------|
+| Events | the instance's state changed: a notification (`NC_EMULATOR_STATE_CHANGE`, `NC_SPEED_CHANGED`, `NC_BREAKPOINT_CHANGED`, the media, TTD and surface ones, ...), `NC_READOUTS_CHANGED` (state with no notification of its own: the mixer, TTD bookmarks, the tape transport, write protect, the profilers, the analysis jobs, the GUI's window settings, a setting set from the CLI, ...), or an action run on it (the activity feed) | `run.state`, `machine`, `audio.mute`, `debug.*` state, `media.recent`, `machine.*`, `input.connectors`, `video.*`, `surfaces.context`, `actions.unavailable`, `analysis.*`, `toggle.*` |
+| Frames | the events above, and every emulated frame or CPU step of that instance (`NC_VIDEO_FRAME_REFRESH`, `NC_EXECUTION_CPU_STEP`) | everything that moves with emulated time: `ttd.position`, `emulator.stats`, `audio.mixer`, `media.tape`, `game.events`, ... (the default) |
+| Meter | on time, at the subscriber's `max_hz` | `host.stats`, `host.clients`, `streamdeck.status` |
+
+- Frames of an instance are only taken while somebody subscribes to one of its Frames values: a deck that shows
+  toggles and names ignores the emulated frames entirely.
+- A burst of changes within one interval (`1 / max_hz`) is read once: a one-shot timer fires for the values held
+  back, and is not armed when nothing waits. `instances` refreshes once a second while subscribed.
+- A producer of new state with no notification calls `NotifyReadoutsChanged(context, area)`
+  (`emulator/readoutschanged.h`); a value cached by monitoring (`CachedValue`) is dropped on that mark.
 
 ## 5. The older sockets
 

@@ -1,4 +1,5 @@
 #include "memorywatch.h"
+#include "emulator/readoutschanged.h"
 
 #include <algorithm>
 #include <cctype>
@@ -109,6 +110,7 @@ Result Run(Emulator* emulator, const std::function<void(MemoryAccessTracker&, Re
     }
     result.ok = result.error.empty();
     result.moment = Emulator::CoherentMomentName(where);
+    NotifyReadoutsChanged(context, "debug.watches");  // republished: debug.watches follows, paused too
     return result;
 }
 

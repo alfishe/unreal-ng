@@ -96,6 +96,7 @@ constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                       
 constexpr char const* NC_ASM_SYNC = "ASM_SYNC";                                 // asm-synchronizer: the watched source changed, was built, or its assembler came / went (payload: AsmSyncPayload). Posted from the worker of AsmSyncService
 
 constexpr char const* NC_CPU_FREQ_CHANGED = "CPU_FREQ_CHANGED";                 // CPU frequency changed (3.5/7.0/14.0 MHz) - payload: CPUFreqPayload
+constexpr char const* NC_READOUTS_CHANGED = "READOUTS_CHANGED";                 // Published state a readout shows changed where no other notification says so: tape transport, write protect, the mixer, TTD session state, debug tools, analysis jobs, window settings, front-panel switches, recent files, settings (payload: ReadoutsChangedPayload; NotifyReadoutsChanged, readoutschanged.h). The control surfaces read their values on it instead of polling
 
 // endregion </PER-EMULATOR-INSTANCE MessageCenter Notifications>
 

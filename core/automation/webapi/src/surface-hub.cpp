@@ -369,7 +369,8 @@ std::vector<std::string> SurfaceHub::ReadoutNamesOf(const std::string& instance)
         if (std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->GetEmulator(instance))
             return actions::ReadoutNames(*emulator);
     std::vector<std::string> names = actions::BaseReadoutNames();
-    for (const actions::ActionRegistry::ToggleReadout& toggle : actions::ActionRegistry::Instance().ToggleReadouts())
+    const auto toggles = actions::ActionRegistry::Instance().ToggleReadouts();
+    for (const actions::ActionRegistry::ToggleReadout& toggle : *toggles)
         if (toggle.param.empty())
             names.push_back(toggle.stem);
     return names;
@@ -581,16 +582,11 @@ void SurfaceHub::Bind(SurfaceSession& session, const std::string& instance, WsCo
     Context(connection, session, instance, info.context, info.set ? info.by : actions::ContextState::kByDefault, out);
 }
 
-bool SurfaceHub::Due(const SurfaceSession& session, std::chrono::steady_clock::time_point now)
-{
-    if (session.readouts.empty())
-        return false;
-    return session.full || now - session.sentAt >= std::chrono::duration<double>(0.75 / session.hz);
-}
-
-void SurfaceHub::Deliver(WsConnection& connection, SurfaceSession& session, const WsReadings& readings,
+void SurfaceHub::Deliver(WsConnection& connection, SurfaceSession& session, const WsReadings& readings, uint8_t want,
                          std::chrono::steady_clock::time_point now, WsOutbox& out)
 {
+    session.stale = 0;
+    session.sentAt = now;
     if (session.instance.empty())
     {
         session.full = false;
@@ -602,8 +598,9 @@ void SurfaceHub::Deliver(WsConnection& connection, SurfaceSession& session, cons
     std::string text;
     for (const std::string& name : session.readouts)
     {
+        // Only what `want` read (the values of another cadence stay as last sent)
         auto value = values->second.find(name);
-        if (value == values->second.end())
+        if (value == values->second.end() || !WsHub::Reads(want, name))
             continue;
         std::string& last = session.sent[name];
         if (!session.full && last == value->second)
@@ -614,7 +611,6 @@ void SurfaceHub::Deliver(WsConnection& connection, SurfaceSession& session, cons
     session.full = false;
     if (text.empty())
         return;
-    session.sentAt = now;
     out.Message(connection, "{\"op\":\"readout\",\"t\":\"surface\",\"session\":\"" + session.session +
                                 "\",\"instance\":\"" + session.instance + "\",\"values\":{" + text + "}}");
 }

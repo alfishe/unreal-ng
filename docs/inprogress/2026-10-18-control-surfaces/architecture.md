@@ -346,8 +346,8 @@ virtual TTDCursor PublishedCursor() const = 0;
   pair (`GetFrameTStates()` grows with the turbo multiplier, `emulatorcontext.h`), so turbo does not change the time
   code (Pentagon 3.5 MHz / 71680 T = 48.83 Hz).
 - Readouts in v1: `ttd.position` = the cursor plus `fps`; `run.state` = `running` / `paused` and the speed.
-- The hub reads them at the highest `max_hz` any session asked for (≤ 50) and sends a session the values that
-  changed since its last message. No subscriber: no tick.
+- The hub reads them when they are marked stale (events, the instance's frames; websocket-interface §4.2), at
+  most at a session's `max_hz` (≤ 50), and sends a session the values that changed since its last message.
 
 ### 7.1 As built (S2, 2026-10-20)
 
@@ -387,8 +387,8 @@ The protocol is in [protocol.md](protocol.md).
 - Binding: `follow` is the WebAPI's rule (the selected instance, else the only one) until `TargetState` (SD4) gives
   the focused view; `{"instance": …}` pins. The hub re-evaluates on `NC_EMULATOR_INSTANCE_CREATED` / `DESTROYED` /
   `NC_EMULATOR_SELECTION_CHANGED`.
-- The hub tick of §11 is not a thread: one `runEvery` timer on the WebAPI's main loop, armed while somebody
-  subscribes (§7's rule: the highest `max_hz`, nothing without a subscriber).
+- The hub tick of §11 is not a thread: it runs on the WebAPI's main loop when a value is marked stale, plus a
+  one-shot timer for values held back by `max_hz` (2026-11-03: no more `runEvery` beat).
 - The default context flip (Q-7) posts `NC_SURFACE_CONTEXT` by `default` (`ContextState::HistoryChanged`, called by
   both TTD backends when the cursor's `history` flips), so the Qt follower of S3 gets it too.
 - Details and what is not built: [protocol.md §10](protocol.md#10-as-built-s4-2026-10-20).

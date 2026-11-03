@@ -1,5 +1,6 @@
 #include "screen.h"
 #include "ulacontention.h"
+#include "emulator/readoutschanged.h"
 
 #include <common/image/imagehelper.h>
 
@@ -1496,6 +1497,7 @@ bool Screen::SetTemporalAlgorithm(const std::string& name)
         }
         _temporalRestoreScreenHQ = _temporalRestoreZXDLSS = false;
     }
+    NotifyReadoutsChanged(_context, "video.temporal");
     return true;
 }
 
