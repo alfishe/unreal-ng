@@ -35,6 +35,12 @@ constexpr const char* kSysDir = "/sys/class/hidraw";
 /// The motors are written again at this period while on: the Deck stops a motor that hears nothing (hid-steam resends
 /// at 20 Hz)
 constexpr auto kRefresh = std::chrono::milliseconds(50);
+/// The tone of the voice coils when an effect names none
+constexpr unsigned kDefaultHz = 160;
+/// What the voice coils play per effect onset
+constexpr auto kCoilBurst = std::chrono::milliseconds(60);
+/// MsgTriggerHaptic noise_intensity of a noise effect (the value a Deck answered to, 2026-10-20)
+constexpr uint16_t kNoiseIntensity = 1000;
 
 std::string ReadLine(const std::string& path)
 {
@@ -96,6 +102,7 @@ struct Device
     RumbleLevels wanted;
     float motors[2] = {};
     Clock::time_point motorsAt;
+    bool coilsHeld = false;  ///< the voice coils have a level: their onset played
 };
 
 class HidrawBackend : public IBackend
@@ -175,7 +182,8 @@ public:
 
     uint8_t RumbleActuators(const HostDeviceId& device) const override
     {
-        return HasRumble(device) ? static_cast<uint8_t>(kRumbleLow | kRumbleHigh | kHapticClicker)
+        return HasRumble(device) ? static_cast<uint8_t>(kRumbleLow | kRumbleHigh | kRumbleHdLeft | kRumbleHdRight |
+                                                        kHapticClicker)
                                  : 0;
     }
 
@@ -188,7 +196,8 @@ public:
         return known->writable ? std::string() : "No write access to " + known->node + ": a udev rule (uaccess) gives it";
     }
 
-    /// The levels are kept and written by the backend's thread: motors on a change and every kRefresh while on
+    /// The levels are kept and written by the backend's thread: motors on a change and every kRefresh while on, the
+    /// voice coils as one firmware tone of kCoilBurst per onset
     bool SetRumble(const HostDeviceId& device, const RumbleLevels& levels) override
     {
         {
@@ -413,7 +422,8 @@ private:
     static bool Playing(const Device& device)
     {
         const RumbleLevels& w = device.wanted;
-        return w.low > 0 || w.high > 0 || device.motors[0] > 0 || device.motors[1] > 0;
+        return w.low > 0 || w.high > 0 || w.hdLeft > 0 || w.hdRight > 0 || device.motors[0] > 0 ||
+               device.motors[1] > 0;
     }
 
     void Read(const std::string& node)
@@ -469,6 +479,40 @@ private:
                 device.motors[1] = w.high;
                 device.motorsAt = now;
             }
+            // The voice coils play the onset of an effect, kCoilBurst: a held tone under the thumbs is unpleasant
+            // (owner 2026-10-20). The next rise from quiet plays again
+            const bool coils = w.hdLeft > 0 || w.hdRight > 0;
+            if (coils && !device.coilsHeld)
+                Coils(device);
+            device.coilsHeld = coils;
+        }
+    }
+
+    /// One onset on the voice coils: the firmware's tone (sine and square alike) or noise for kCoilBurst, one report
+    /// for both pads at the same level. Under _mutex
+    static void Coils(Device& device)
+    {
+        const RumbleLevels& w = device.wanted;
+        SteamDeck::PadEffect effect;
+        effect.command = w.hdWave == HdWave::Noise ? SteamDeck::PadCommand::Noise : SteamDeck::PadCommand::Tone;
+        effect.frequency = static_cast<uint16_t>(std::clamp<unsigned>(w.hdFrequency > 0 ? w.hdFrequency : kDefaultHz,
+                                                                      10u, 2000u));
+        effect.durationMs = static_cast<int16_t>(kCoilBurst.count());
+        if (effect.command == SteamDeck::PadCommand::Noise)
+            effect.noiseIntensity = kNoiseIntensity;
+        auto play = [&](SteamDeck::Pad pad, float level) {
+            if (level <= 0)
+                return;
+            effect.pad = pad;
+            effect.gainDb = SteamDeck::GainDb(level);
+            Feature(device, SteamDeck::PadEffectReport(effect));
+        };
+        if (w.hdLeft == w.hdRight)
+            play(SteamDeck::Pad::Both, w.hdLeft);
+        else
+        {
+            play(SteamDeck::Pad::Left, w.hdLeft);
+            play(SteamDeck::Pad::Right, w.hdRight);
         }
     }
 
