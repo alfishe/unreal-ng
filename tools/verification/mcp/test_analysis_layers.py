@@ -352,8 +352,8 @@ def test_review_entries_names_kind(s):
 
 def test_build_window(s):
     """A build with a window (from_frame / from_tinframe / to_frame) reaches the core: the replay covers the window's
-    frames only and l1.json's replay names them; a window with no frame (to_frame <= from_frame) fails with the
-    reason in the text"""
+    frames only and l1.json's replay names them; a window that ends before it starts is refused at once (400), one
+    outside the recording fails with the reason in the text"""
     s.call('analysis', {'action': 'start', 'record': True})
     s.call('control_execution', {'action': 'run_frames', 'frames': 20})
     r = s.call('analysis', {'action': 'build'})
@@ -384,13 +384,16 @@ def test_build_window(s):
         os.remove(path)
 
     r = s.call('analysis', {'action': 'build', 'from_frame': lo, 'to_frame': lo, 'wait': 30000}, ok=False)
-    state = (r.structured or {}).get('state')
-    expect((r.is_error or state == 'failed') and 'window holds no frame' in r.text,
-           'build: a window with no frame (to_frame = from_frame) is refused', r.text[:400])
+    expect(r.is_error and '400' in r.text and 'ends before it starts' in r.text,
+           'build: a window with no frame (to_frame = from_frame) is refused at once (400)', r.text[:400])
     r = s.call('analysis', {'action': 'build', 'from_frame': hi, 'to_frame': lo, 'wait': 30000}, ok=False)
+    expect(r.is_error and '400' in r.text and 'ends before it starts' in r.text,
+           'build: an inverted window (to_frame < from_frame) is refused at once (400)', r.text[:400])
+    r = s.call('analysis', {'action': 'build', 'from_frame': end + 100, 'to_frame': end + 200, 'wait': 30000},
+               ok=False)
     state = (r.structured or {}).get('state')
     expect((r.is_error or state == 'failed') and 'window holds no frame' in r.text,
-           'build: an inverted window (to_frame < from_frame) is refused', r.text[:400])
+           'build: a window outside the recording fails with the reason', r.text[:400])
     s.call('analysis', {'action': 'stop'})
 
 
