@@ -673,14 +673,23 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         }
         gs->add_breakpoint(gbp);
         m->debug_run(true);
-        const bool ghit = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 5000);
-        check(ghit && m->debug_stop_cpu() == gs && gs->get_pc() == gbp, "gs breakpoint stops the machine, gs in front");
-        if (!ghit || m->debug_stop_cpu() != gs || gs->get_pc() != gbp)
+        // The run resumes asynchronously: a bare "paused" may still be the earlier pause. Wait for the stop the card's
+        // breakpoint makes (its reason and its CPU), then read the state once
+        const bool ghit = wait_for(
+            [m, gs]() {
+                return m->debug_paused() && !m->debug_stepping() && m->debug_stop_reason() == ecatshim::Emulator::DSTOP_BREAKPOINT &&
+                       m->debug_stop_cpu() == gs;
+            },
+            5000);
+        const unsigned int gstopPc = gs->get_pc();
+        const int greason = m->debug_stop_reason();
+        const bool gpaused = m->debug_paused(), gstepping = m->debug_stepping(), gcardStop = m->debug_stop_cpu() == gs;
+        check(ghit && gstopPc == gbp, "gs breakpoint stops the machine, gs in front");
+        if (!ghit || gstopPc != gbp)
             printf("  (gs breakpoint #%04X, %u times in %zu of history: %s, gs PC #%04X, stop cpu %s, paused %d stepping %d,"
                    " reason %d, frames %llu)\n",
-                   gbp, (unsigned)gseen[gbp], ghistory.size(), ghit ? "stopped" : "not stopped in 5 s", gs->get_pc(),
-                   m->debug_stop_cpu() == gs ? "gs" : "other", m->debug_paused(), m->debug_stepping(),
-                   m->debug_stop_reason(), (unsigned long long)machine_frames(m));
+                   gbp, (unsigned)gseen[gbp], ghistory.size(), ghit ? "stopped" : "not stopped in 5 s", gstopPc,
+                   gcardStop ? "gs" : "other", gpaused, gstepping, greason, (unsigned long long)machine_frames(m));
         gs->remove_breakpoint(gbp);
         if (!ghit) {
             m->debug_pause();
