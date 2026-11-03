@@ -67,8 +67,9 @@ struct SurfaceSession
     std::vector<std::string> patterns;  ///< as subscribed (names, prefixes): expanded again on a rebind
     std::set<std::string> readouts;     ///< the names they match on the bound instance
     double hz = 10;
-    std::chrono::steady_clock::time_point sentAt{};
+    std::chrono::steady_clock::time_point sentAt{};  ///< the last read of its values (the rate's clock)
     bool full = false;                         ///< send every subscribed value at the next tick
+    uint8_t stale = 0;                         ///< WsHub::kStaleEvent / kStaleFrame: what to read again
     std::map<std::string, std::string> sent;   ///< readout -> its value as last sent (compact JSON)
     /// join.features
     bool activity = false;   ///< `activity`: the other surfaces' actions on the bound instance
@@ -112,10 +113,8 @@ public:
     /// gets `target`; a new instance, its `ctx` and a full readout at the next tick. True when `target` was sent
     bool Rebind(WsConnection& connection, SurfaceSession& session, WsOutbox& out, const Json::Value& rid = {});
     /// The tick: changed readouts of the bound instance when the session is due
-    void Deliver(WsConnection& connection, SurfaceSession& session, const WsReadings& readings,
+    void Deliver(WsConnection& connection, SurfaceSession& session, const WsReadings& readings, uint8_t want,
                  std::chrono::steady_clock::time_point now, WsOutbox& out);
-    /// Due at `now` (has readouts and its interval passed, or a full send is pending)
-    static bool Due(const SurfaceSession& session, std::chrono::steady_clock::time_point now);
     /// `activity` (an action another surface ran on the bound instance), at most kActivityPerSecond a second;
     /// `entry` is the feed's entry as the protocol sends it (ActivityEntryNode), `surfaceSession` who ran it
     void Activity(WsConnection& connection, SurfaceSession& session, const Json::Value& entry,

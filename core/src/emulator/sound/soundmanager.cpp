@@ -1,6 +1,7 @@
 #include "soundmanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/sound/chips/ayhistory.h"
+#include "emulator/readoutschanged.h"
 
 #include <algorithm>
 #include <cmath>
@@ -387,11 +388,15 @@ void SoundManager::enableWideMix(bool enable)
 
 void SoundManager::mute()
 {
+    if (!_mute)
+        NotifyReadoutsChanged(_context, "audio.mixer");  // the master mute a deck shows (audio.mute), paused too
     _mute = true;
 }
 
 void SoundManager::unmute()
 {
+    if (_mute)
+        NotifyReadoutsChanged(_context, "audio.mixer");
     _mute = false;
 }
 
@@ -889,14 +894,20 @@ void SoundManager::syncCdAudioDevices()
 
 void SoundManager::setDeviceMute(AudioSourceType type, bool mute)
 {
-    if (auto* d = device(type))
+    if (auto* d = device(type); d != nullptr && d->mute != mute)
+    {
         d->mute = mute;
+        NotifyReadoutsChanged(_context, "audio.mixer");
+    }
 }
 
 void SoundManager::setDeviceSolo(AudioSourceType type, bool solo)
 {
-    if (auto* d = device(type))
+    if (auto* d = device(type); d != nullptr && d->solo != solo)
+    {
         d->solo = solo;
+        NotifyReadoutsChanged(_context, "audio.mixer");
+    }
 }
 
 bool SoundManager::setFmTrimDb(double db)
@@ -928,7 +939,12 @@ bool SoundManager::fmTrimDb(double& db) const
 void SoundManager::setDeviceVolume(AudioSourceType type, float volume)
 {
     if (auto* d = device(type))
-        d->volume = std::clamp(volume, 0.0f, 1.0f);
+    {
+        const float next = std::clamp(volume, 0.0f, 1.0f);
+        if (d->volume != next)
+            NotifyReadoutsChanged(_context, "audio.mixer");
+        d->volume = next;
+    }
 }
 
 void SoundManager::resetCharacterChains()

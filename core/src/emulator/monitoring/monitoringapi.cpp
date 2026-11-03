@@ -126,6 +126,25 @@ StateNode CachedValue(const std::string& name, const std::string& instance, uint
     return value;
 }
 
+}  // namespace
+
+void ForgetCached(const std::string& instanceId)
+{
+    Cache& cache = TheCache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    for (auto it = cache.entries.begin(); it != cache.entries.end();)
+    {
+        const size_t bar = it->first.find('|');  // "name|instance"
+        const bool mine = bar != std::string::npos && it->first.compare(bar + 1, std::string::npos, instanceId) == 0;
+        if (instanceId.empty() || mine)
+            it = cache.entries.erase(it);
+        else
+            ++it;
+    }
+}
+
+namespace
+{
 /// endregion </Cache>
 
 /// region <The process>

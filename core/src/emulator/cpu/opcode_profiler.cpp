@@ -1,4 +1,5 @@
 #include "opcode_profiler.h"
+#include "emulator/readoutschanged.h"
 
 #include <algorithm>
 #include <chrono>
@@ -32,18 +33,21 @@ void OpcodeProfiler::Start()
     
     Clear();  // Clear previous data
     _sessionState = ProfilerSessionState::Capturing;
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 void OpcodeProfiler::Pause()
 {
     ProfilerSessionState expected = ProfilerSessionState::Capturing;
     _sessionState.compare_exchange_strong(expected, ProfilerSessionState::Paused);
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 void OpcodeProfiler::Resume()
 {
     ProfilerSessionState expected = ProfilerSessionState::Paused;
     _sessionState.compare_exchange_strong(expected, ProfilerSessionState::Capturing);
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 void OpcodeProfiler::Stop()
@@ -54,6 +58,7 @@ void OpcodeProfiler::Stop()
     {
         _sessionState = ProfilerSessionState::Stopped;
     }
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 void OpcodeProfiler::Clear()
@@ -405,7 +410,6 @@ std::string OpcodeProfiler::GetMnemonic(uint16_t prefix, uint8_t opcode) const
 {
     // Return hex representation of prefix + opcode
     // TODO: Integrate with Z80Disassembler for human-readable mnemonics
-    (void)_context;  // Suppress unused warning - will be used for disassembler integration
     std::stringstream ss;
     if (prefix != PREFIX_NONE)
     {

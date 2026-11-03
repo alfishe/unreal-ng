@@ -8,6 +8,7 @@
 /// dirty pieces, device states and CPU/chipset (field-copied via the helpers in
 /// ttdcheckpoint.cpp) go to the engine's capture (FeedShadow).
 
+#include "emulator/readoutschanged.h"
 #include "timetravelcontroller.h"
 
 #include <optional>
@@ -659,6 +660,7 @@ void TimeTravelController::SetState(TTDSessionState next)
     ttd::NoteSessionChange(_context);   // the coordinator publishes the mode and tells its listeners (M4)
     if (_context && _context->pControllerManager)
         _context->pControllerManager->UpdateHapticHold();   // into history or back to live: the haptics follow at once
+    NotifyReadoutsChanged(_context, "ttd");   // recording / idle / in history: the surfaces' TTD keys, while paused too
 }
 
 bool TimeTravelController::JournalLive() const
@@ -3397,7 +3399,10 @@ bool TimeTravelController::FindBookmark(const std::string& label, TTDBookmark& o
 bool TimeTravelController::RemoveBookmark(const std::string& label)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
-    return _bookmarks.Remove(label);
+    const bool removed = _bookmarks.Remove(label);
+    if (removed)
+        NotifyReadoutsChanged(_context, "ttd.bookmarks");
+    return removed;
 }
 
 bool TimeTravelController::SeekToBookmark(const std::string& label, TTDSeekResult* outResult,
@@ -4179,6 +4184,7 @@ void TimeTravelController::SetHistoryLimit(uint64_t maxFrames, uint64_t maxBytes
     ApplyHistoryPolicy();
     if (_state == TTDSessionState::Recording)
         EnforceHistoryLimit();
+    NotifyReadoutsChanged(_context, "ttd.limit");
 }
 
 uint64_t TimeTravelController::BlobBytes(const TTDCheckpoint& cp)

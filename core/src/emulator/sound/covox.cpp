@@ -266,7 +266,7 @@ PortMaskMatch Covox::PrinterDecodeOf(int memModel)
 
 bool Covox::tryClaimOut(uint16_t rawPort, uint8_t value)
 {
-    // The printer port #DD: the mono latch, the same one #FB writes
+    // The Scorpion's Covox port #DD: the mono latch
     if (MatchesPrinter(_printerDecode, rawPort))
     {
         WriteLatch(Channel::RightB, value);

@@ -67,8 +67,9 @@ The hub adds **no thread**: not per connection, not per topic, not per hub.
   The loop drains its queues when the socket is writable.
 - **Serialised once, on the loop.** A readout tick builds each instance's JSON once and every subscriber gets the
   same bytes. JSON is never built on the emulation thread, and never once per client.
-- **One timer for every readout.** A single `runEvery` on the loop, at most 50 Hz, armed only while some connection
-  subscribes, like `CompanionEventHub::Refresh` today. No ticker thread.
+- **Readouts on events.** Values are read when a notification marks them stale, per emulated frame for the ones
+  that move with time, on time only for host meters; a one-shot timer on the loop for values held back by `max_hz`.
+  No ticker thread, no beat (websocket-interface §4.2; replaced the 50 Hz `runEvery` on 2026-11-03).
 - **Calls go to the instance's actions worker.** `action` is handed to that worker (control surfaces §3) and never
   run on an I/O thread; its `result` comes back by `queueInLoop`.
 - **Backpressure per connection.** Use trantor's high-water mark on the bytes the connection has queued. Above

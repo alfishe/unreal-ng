@@ -9,6 +9,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/readoutschanged.h"
 #include "emulator/memory/memory.h"
 
 namespace ttd
@@ -60,14 +61,20 @@ bool TimeTravelController::AddAgentBookmark(TTDBookmark bookmark, bool captureCo
     }
     if (captureContext)
         CaptureBookmarkMoment(bookmark);
-    return _bookmarks.Add(bookmark, err);
+    const bool added = _bookmarks.Add(bookmark, err);
+    if (added)
+        NotifyReadoutsChanged(_context, "ttd.bookmarks");
+    return added;
 }
 
 bool TimeTravelController::EditBookmark(const std::string& label, const std::function<void(TTDBookmark&)>& edit,
                                         std::string* err)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
-    return _bookmarks.Edit(label, edit, err);
+    const bool edited = _bookmarks.Edit(label, edit, err);
+    if (edited)
+        NotifyReadoutsChanged(_context, "ttd.bookmarks");   // a rename changes the list the surfaces show
+    return edited;
 }
 
 bool TimeTravelController::CaptureBookmarkMoment(TTDBookmark& bookmark)
