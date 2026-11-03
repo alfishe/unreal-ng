@@ -14,8 +14,7 @@
 class EmulatorContext;
 struct blip_t;
 
-/// SOUNDRIVE 1.05 / COVOX - 4-channel 8-bit DAC with band-limited synthesis,
-/// plus the Scorpion's printer-port Covox (#DD) as a fifth, mono DAC.
+/// SOUNDRIVE 1.05 / COVOX - 4-channel 8-bit DAC with band-limited synthesis.
 ///
 /// Ports: #F1 (Left A), #F3 (Left B), #F9 (Right A), #FB (Right B)
 /// Decoding: bits[7:4]=1111, bit2=0, bit0=1
@@ -51,14 +50,15 @@ struct blip_t;
 /// `PortDecoder_Pentagon128`'s per-model SoundDrive fix (see
 /// docs/inprogress/2026-09-23-sounddrive-quad-wiring/DONE.md, session 3).
 ///
-/// Scorpion printer Covox ([SOUND] CovoxDD=1, slot built-in `covox-dd`): an
-/// 8-bit DAC on the Centronics data latch of the Scorpion ZS-256 (yellow
-/// board, GMX, Turbo+). A separate physical DAC from any SounDrive / #FB card,
-/// so it is a latch of its own (Channel::Printer), mixed mono to both sides
-/// and summed with the SounDrive pair. Port decode is the board's partial one
-/// (PrinterDecodeOf): Xpeccy hardware/scorpion.c `scrpOutDD` (yellow
-/// #0027/#00DD, Turbo+ #0023/#00DD), MAME scorpion.cpp Centronics mirror
-/// #FFDC; Unreal io.cpp `covDD_vol` (the full low byte #DD). Write-only.
+/// One instance, one set of controls (the mixer's COVOX row), whatever ports
+/// it answers: a fitment adds ports, never a second DAC or volume. On the
+/// Scorpion family ([SOUND] CovoxDD=1, slot built-in `covox-dd`) the printer
+/// data latch #DD is one more port of the mono Covox: it writes the #FB latch
+/// (RightB), centred on both sides when it is the only one driven - as
+/// Xpeccy's hardware/scorpion.c `scrpOutDD` (`sdrvWrite(..., 0xfb, val)`).
+/// Its decode is the board's partial one (PrinterDecodeOf): yellow board
+/// #0027/#00DD, Turbo+ #0023/#00DD (Xpeccy; MAME scorpion.cpp Centronics
+/// mirror #FFDC). Write-only.
 class Covox : public PortDevice, public ttd::TTDSerializable
 {
 public:
@@ -102,16 +102,14 @@ public:
     /// (CovoxFB=1, SD=0), Mode1 / Mode2 one SounDrive port set (mode=1 / 2:
     /// the real card's S1 switch), Mode1Mono the mode-1 set plus a Covox card's
     /// #FB (two cards, one DAC module)
-    /// None: no SounDrive / #FB card, the printer Covox alone (CovoxDD=1, CovoxFB=0, SD=0)
+    /// None: no SounDrive / #FB card, only the Scorpion printer port #DD (CovoxDD=1, CovoxFB=0, SD=0)
     enum class Fitment { Mono, Quad, Mode1, Mode2, Mode1Mono, None };
 
-    /// LeftA..RightB: the SounDrive / #FB latches; Printer: the Scorpion's #DD DAC (fitted with CovoxDD only)
-    enum class Channel { LeftA = 0, LeftB = 1, RightA = 2, RightB = 3, Printer = 4, Count = 5 };
-    static constexpr int kChannels = static_cast<int>(Channel::Count);
-
-    /// The Scorpion printer Covox's port decode on this model (yellow board and GMX: A0 = 1, A1 = 0, A2 = 1,
-    /// A5 = 0; Turbo+: A0 = 1, A1 = 0, A5 = 0), or mask 0 when the model has no such port
+    /// The Scorpion printer port's decode on this model (yellow board and GMX: A0 = 1, A1 = 0, A2 = 1, A5 = 0;
+    /// Turbo+: A0 = 1, A1 = 0, A5 = 0), or mask 0 when the model has no such port
     static PortMaskMatch PrinterDecodeOf(int memModel);
+
+    enum class Channel { LeftA = 0, LeftB = 1, RightA = 2, RightB = 3, Count = 4 };
 
     // Stale-channel decay: mode-1 and mode-2 addresses are two different bus
     // schemes for the SAME 4 physical DAC latches, so software that switches
@@ -133,6 +131,8 @@ protected:
 
     // Fitment baked in at construction (see Fitment doc, public section)
     Fitment _fitment;
+    // The Scorpion printer port #DD, one more port of the mono latch: its decode, mask 0 = not answered (CovoxDD)
+    PortMaskMatch _printerDecode{};
 
     // Audio buffer (one frame of stereo int16)
     AudioFrameDescriptor _audioDescriptor;
@@ -145,27 +145,24 @@ protected:
     bool _phaseAlignPending = false;  // the blip stream left the mixer's sample grid (followSamplePhase)
 
     // Per-channel DAC state
-    uint8_t _dacValue[kChannels] = {0x80, 0x80, 0x80, 0x80, 0x80};  // Start at midpoint (silence)
-
-    // The Scorpion printer Covox (#DD): its decode, mask 0 = not fitted (PrinterDecodeOf, CovoxDD)
-    PortMaskMatch _printerDecode{};
+    uint8_t _dacValue[4] = {0x80, 0x80, 0x80, 0x80};  // Start at midpoint (silence)
 
     // Last stereo amplitudes written to blip_buf (for computing deltas)
     int32_t _lastL = 0;
     int32_t _lastR = 0;
 
     // Per-channel mute (for UI)
-    bool _channelMute[kChannels] = {false, false, false, false, false};
+    bool _channelMute[4] = {false, false, false, false};
     // Per-channel host gain, Q15 (the mixer's channel volume; 32768 = unity: bit-exact). Not machine state
-    int32_t _channelGain[kChannels] = {32768, 32768, 32768, 32768, 32768};
+    int32_t _channelGain[4] = {32768, 32768, 32768, 32768};
     // A mute or a gain changed: the output level is rebuilt at the next frame start (T-state 0)
     bool _levelsDirty = false;
     /// Emit the step to the current amplitudes at T-state 0 of the frame (frame start only)
     void emitLevelsAtFrameStart();
 
     // Stale-channel decay state (see STALE_CHANNEL_FRAMES doc, public section)
-    bool _writtenThisFrame[kChannels] = {false, false, false, false, false};
-    int _staleFrameCount[kChannels] = {0, 0, 0, 0, 0};
+    bool _writtenThisFrame[4] = {false, false, false, false};
+    int _staleFrameCount[4] = {0, 0, 0, 0};
 
     /// Synthetically silence one abandoned channel through the normal
     /// delta/blip path (called from handleFrameStart, T-state 0 - before any
@@ -191,8 +188,8 @@ protected:
     // The haptic feed's channel taps (SetChannelTap): each channel's level per output sample, before its gain, filled
     // up to the sample of each write and to the frame's end in handleFrameEnd. Off: no work
     bool _channelTap = false;
-    std::array<std::array<int16_t, MAX_SAMPLES_PER_FRAME>, kChannels> _channelTapBuffer{};
-    std::array<size_t, kChannels> _channelTapFilled{};
+    std::array<std::array<int16_t, MAX_SAMPLES_PER_FRAME>, 4> _channelTapBuffer{};
+    std::array<size_t, 4> _channelTapFilled{};
     void FillChannelTap(int channel, size_t upTo);
     /// One latch write at the current T-state: the level step into blip_buf, the chip-register watch and history
     void WriteLatch(Channel ch, uint8_t value);
@@ -212,7 +209,7 @@ public:
     void SetChannelTap(bool on);
     const int16_t* ChannelTap(int channel) const
     {
-        return _channelTap && channel >= 0 && channel < kChannels ? _channelTapBuffer[static_cast<size_t>(channel)].data()
+        return _channelTap && channel >= 0 && channel < 4 ? _channelTapBuffer[static_cast<size_t>(channel)].data()
                                                           : nullptr;
     }
     int16_t* getBuffer() { return _buffer; }
@@ -244,11 +241,9 @@ public:
 
     /// Mono Covox on #FB, or the quad SoundDrive
     Fitment fitment() const { return _fitment; }
-    /// The Scorpion printer Covox (#DD) is fitted, and its decode
-    bool hasPrinterDac() const { return _printerDecode.mask != 0; }
+    /// The Scorpion printer port #DD is one of its ports (CovoxDD on the Scorpion family), and its decode
+    bool answersPrinterPort() const { return _printerDecode.mask != 0; }
     PortMaskMatch printerDecode() const { return _printerDecode; }
-    /// The printer DAC's latch (#80 = silence; stays #80 when not fitted)
-    uint8_t printerLatch() const { return _dacValue[static_cast<int>(Channel::Printer)]; }
     /// @param expectedSamples Exact per-frame sample count from SoundManager's
     ///        accumulator (0 = compute locally via rounding, legacy behavior).
     ///        Passing it keeps the covox stream in lockstep with the mixer.
@@ -323,7 +318,7 @@ public:
     /// audio pipeline (rebuilt by handleFrameStart) or user config (mute,
     /// DC-removal toggle).
     ///
-    /// Layout: see covox.cpp (9 bytes; 11 with the printer DAC fitted).
+    /// Layout: see covox.cpp (9 bytes).
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;

@@ -71,7 +71,7 @@ constexpr uint16_t SoundChipLastRegister(SoundChipKind kind)
         case SoundChipKind::Saa: return 0x1F;
         case SoundChipKind::Opl4: return 0x1FF;
         case SoundChipKind::Opl4Wave: return 0xFF;
-        case SoundChipKind::Dac: return 0x04;  // 0-3 the SounDrive channels, 4 the Scorpion printer Covox
+        case SoundChipKind::Dac: return 0x03;
         case SoundChipKind::Cbl: return 0x01;
         case SoundChipKind::Count: break;
     }

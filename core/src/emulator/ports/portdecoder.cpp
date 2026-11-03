@@ -761,7 +761,7 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
             if (_context->config.sound.covoxDD)
             {
                 const PortMaskMatch printer = Covox::PrinterDecodeOf(model);
-                entries.push_back({0x00DD, printer.mask, printer.match, "Scorpion printer Covox (8-bit DAC on the printer data latch, write only)",
+                entries.push_back({0x00DD, printer.mask, printer.match, "Covox on the Scorpion printer port (the #FB latch, write only)",
                                    nullptr, Tags(PortTag::SoundCovox)});
             }
             if (model == MM_PROFSCORP)
@@ -802,7 +802,7 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
             if (_context->config.sound.covoxDD)
             {
                 const PortMaskMatch printer = Covox::PrinterDecodeOf(model);
-                entries.push_back({0x00DD, printer.mask, printer.match, "Scorpion printer Covox (8-bit DAC on the printer data latch, write only)",
+                entries.push_back({0x00DD, printer.mask, printer.match, "Covox on the Scorpion printer port (the #FB latch, write only)",
                                    nullptr, Tags(PortTag::SoundCovox)});
             }
             break;
