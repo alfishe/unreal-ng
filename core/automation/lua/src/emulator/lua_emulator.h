@@ -6906,7 +6906,8 @@ public:
         });
         // The analysis layers through analysis::Execute (analysiscontrol.h): analysis(action, opts) with action start |
         // stop | status | build | cancel | explain | query | export | gallery | findings | review | experiment | cover; opts a table ({level=, mode=, record=} /
-        // {frames=, path=, wait=} / {address=, page=, what=} / {kind=, range=, limit=} / {format=, path=, ranges=,
+        // {frames=, from_frame=, from_tinframe=, to_frame=, path=, wait=} (from / to: a window, one stage) /
+        // {address=, page=, what=} / {kind=, range=, limit=} / {format=, path=, ranges=,
         // width=} / {address=, kind=, scale=, path=, limit=}) or, for explain and gallery, the address, for start the
         // level, for build the frames, for query the kind, for export the format. The answer: the reply's fields plus
         // text (gallery: the PNG base64 in png); a refusal: ok = false, error = why. L3: findings {op=, kind=, status=,

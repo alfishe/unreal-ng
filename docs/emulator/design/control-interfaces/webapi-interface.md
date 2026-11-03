@@ -748,7 +748,9 @@ POST /api/v1/emulator/{id}/analysis/start     {level?: "facts"|"counters", mode?
 POST /api/v1/emulator/{id}/analysis/stop      the facts stay readable (a recording start made stops): status
 GET  /api/v1/emulator/{id}/analysis/status    {state, level, mode, frame, recording, facts {allocated, bytes,
                                                z80_bytes_touched, pages}, l1 {progress, ready}, text}
-POST /api/v1/emulator/{id}/analysis/build     {frames?, path?, wait?: ms <= 30000}: the L1 build job
+POST /api/v1/emulator/{id}/analysis/build     {frames?, from_frame?, from_tinframe?, to_frame?, path?,
+                                               wait?: ms <= 30000}: the L1 build job (a window: one stage,
+                                               analysis-layers.md#stages-and-windows)
                                               {job, state, bundle, progress, ready, text}
 POST /api/v1/emulator/{id}/analysis/cancel    cancel the running build: {job, state, text}
 GET  /api/v1/emulator/{id}/analysis/explain?address=$80BC[&page=ram:3][&what=auto|routine|byte]

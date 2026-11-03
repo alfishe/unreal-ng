@@ -6,7 +6,8 @@
 ///
 ///   analysis start [facts|counters] [z80|physical] [record]   (also level=<l> mode=<m> record=true)
 ///   analysis stop | status | cancel
-///   analysis build [<frames>] [path=<file>] [wait=<ms>]
+///   analysis build [<frames>] [from_frame=<f>] [from_tinframe=<t>] [to_frame=<f>] [path=<file>] [wait=<ms>]
+///                                                             (a window: one stage of the recording)
 ///   analysis explain <address> [<page>] [routine|byte]          (also page=<p> what=<w>)
 ///   analysis query [<kind>] [<range>] [limit=<n>]               (L2 claims: kind all | conflicts | records | ...)
 ///   analysis export <format> [<path>] [ranges=<r,...>] [width=<n>]   (ctl, skool, fields, geometry, layout, ...)

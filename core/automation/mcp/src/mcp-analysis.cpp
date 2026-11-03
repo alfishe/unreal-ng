@@ -32,7 +32,8 @@
 //   start {level?, mode?, record?} → POST /analysis/start
 //   stop                  → POST /analysis/stop
 //   status                → GET  /analysis/status
-//   build {frames?, path?, wait?}  → POST /analysis/build (wait default 20000 ms: one call answers the result)
+//   build {frames?, from_frame?, from_tinframe?, to_frame?, path?, wait?} → POST /analysis/build (wait default
+//                         20000 ms: one call answers the result; the window: analysis-layers.md#stages-and-windows)
 //   cancel                → POST /analysis/cancel
 //   explain {address, page?, what?} → GET /analysis/explain?address=&page=&what=
 //   query {kind?, range?, limit?}   → GET /analysis/query?kind=&range=&limit=      (L2 claims, P3)
@@ -1348,6 +1349,14 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["width"]["description"] = "export: bytes per DEFB line (default 8)";
     schema["properties"]["wait"]["type"] = "integer";
     schema["properties"]["wait"]["description"] = "build: milliseconds to wait for the result (0..30000, default 20000)";
+    schema["properties"]["from_frame"]["type"] = "integer";
+    schema["properties"]["from_frame"]["description"] =
+        "build: replay a window of the recording from this frame (a stage: an arrival's frame; the draft decodes from "
+        "the memory at the window's start)";
+    schema["properties"]["from_tinframe"]["type"] = "integer";
+    schema["properties"]["from_tinframe"]["description"] = "build: the point inside from_frame in TTD time units, as time_travel's tinframe (an arrival's tinframe)";
+    schema["properties"]["to_frame"]["type"] = "integer";
+    schema["properties"]["to_frame"]["description"] = "build: the window ends before this frame (default: the end)";
     schema["properties"]["what"]["type"] = "string";
     schema["properties"]["what"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* what : {"auto", "routine", "byte"})
@@ -1451,7 +1460,7 @@ void RegisterAnalysis(ToolRegistry& registry)
             if (action == "build")
             {
                 Json::Value body(Json::objectValue);
-                for (const char* name : {"frames", "wait"})
+                for (const char* name : {"frames", "wait", "from_frame", "from_tinframe", "to_frame"})
                     if (args.isMember(name))
                         body[name] = args[name];  // a number or its text: the core checks it
                 if (!args.isMember("wait"))

@@ -10,6 +10,11 @@
 /// named one of them with a pointer (an immediate, a page byte, a word whose value addressed it) and named neither
 /// pair with one pointer, and at the edge of a buffer (the records detector's copy destinations). A record array
 /// with the same step around the frames gives the object its extent (frames the replay did not draw included).
+/// An object whose frames are each one value (a fully transparent strip) is no picture, unless a blit of a claimed
+/// neighbour of its shape drew it on that neighbour's lattice right next to it: then it is part of that one
+/// (BlankNeighbours). Frames stored in columns that the drawing showed in varying column groups are re-cut on the
+/// frames a pointer table names: its targets a constant stride apart, the drawn column objects tiling those blocks and
+/// a pass that drew a block's columns side by side make them one sprite of stride-wide frames (FrameLattice).
 ///
 /// Kinds: a tile when a loop around the blit walked a map one byte a pass; a font when 8 x 8 frames sit on the
 /// lattice of one character set: base + 8 * code (base + code for a set stored a pixel row a page on) for the
@@ -27,6 +32,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <numeric>
 #include <set>
 #include <string>
 #include <tuple>
@@ -52,10 +58,11 @@ struct Shape
     bool mask = false;
     bool columns = false;  ///< stored a column at a time (the bytes of one column top to bottom, then the next)
     uint16_t pitch = 0;    ///< bytes from one row's (column's) start to the next; 0: the row's (column's) own bytes
+    bool bottomUp = false; ///< the lines stored bottom up: the first in memory is the picture's bottom line
     bool operator<(const Shape& o) const
     {
-        return std::tie(rowBytes, height, mask, columns, pitch) <
-               std::tie(o.rowBytes, o.height, o.mask, o.columns, o.pitch);
+        return std::tie(rowBytes, height, mask, columns, pitch, bottomUp) <
+               std::tie(o.rowBytes, o.height, o.mask, o.columns, o.pitch, o.bottomUp);
     }
     /// The bytes one frame spans
     uint32_t Bytes() const
@@ -124,6 +131,11 @@ struct Object
     std::set<PhysKey> writers;
     std::vector<uint16_t> drawn;  ///< the frames drawn
     uint64_t draws = 0;
+    uint32_t blank = 0;     ///< frames of one value each joined from a blank neighbour (BlankNeighbours)
+    bool lattice = false;   ///< re-cut on the frames a pointer table names (FrameLattice)
+    uint16_t latticeAt = 0; ///< the table (or the lowest pointer word) that named them
+    bool latticeWords = false;  ///< named by pointer words no table claim holds
+    uint32_t latticeColumns = 0;  ///< the drawn column objects it took in
 };
 
 /// Source bytes drawn as one picture
@@ -136,6 +148,7 @@ struct Piece
     uint16_t width = 0;   ///< bytes a row
     uint16_t height = 0;
     bool columns = false;
+    bool bottomUp = false;  ///< lines stored bottom up (first the picture's bottom line)
     std::set<PhysKey> writers;
     uint64_t draws = 0;
 };
@@ -425,8 +438,9 @@ PhysKey KeyAt(const L1Result& l1, uint32_t linear)
 /// picture. Its layout: column step 1 (2 with the mask between) and the row step its pitch, stored in rows; row step 1
 /// (2) and the columns back to back, in columns; one column alone, one byte wide. Any other column step is the glyphs
 /// of one text printed the same way every time (each glyph has one neighbour, never a picture): one column each. A
-/// picture most of whose bytes are a buffer's is none; nor is one whose lines go up through memory (stored bottom up: a
-/// known limit), one line high, or one as wide as the screen. Addresses are the start's (Linear): a set stored a pixel
+/// picture most of whose bytes are a buffer's is none; nor is one line high, or one as wide as the screen. A frame whose
+/// lines go up through memory (stored bottom up: the line under a line comes from lower addresses) is taken from its
+/// lowest address with the step turned round, and its picture is marked bottom up. Addresses are the start's (Linear): a set stored a pixel
 /// row a page on runs past $C000 as the Z80 sees it
 std::vector<Piece> FramePieces(const L1Result& l1, const std::set<PhysKey>& starts)
 {
@@ -464,15 +478,31 @@ std::vector<Piece> FramePieces(const L1Result& l1, const std::set<PhysKey>& star
                 frames[kept++] = frames[i];
         frames.resize(kept);
     }
+    // Stored bottom up: from the lowest address, the step turned round
+    std::vector<bool> up(frames.size(), false);
+    for (size_t i = 0; i < frames.size(); ++i)
+    {
+        DrawnFrame& f = frames[i];
+        if (f.height < 2 || f.rowStep >= 0)
+            continue;
+        const int64_t base = Linear(l1, f.base);
+        const int64_t low = base + static_cast<int64_t>(f.height - 1) * f.rowStep;
+        if (low < 0 || (base < 0x10000) != (low < 0x10000) || (base >= 0x10000 && (base >> 14) != (low >> 14)))
+            continue;
+        f.base = KeyAt(l1, static_cast<uint32_t>(low));
+        f.rowStep = static_cast<int16_t>(-f.rowStep);
+        up[i] = true;
+    }
     struct Column
     {
         uint32_t base = 0;  ///< Linear
         int32_t row = 0;
         uint32_t lines = 0;
         int32_t maskDelta = 0;
+        bool up = false;  ///< stored bottom up
         bool operator<(const Column& o) const
         {
-            return std::tie(base, row, lines, maskDelta) < std::tie(o.base, o.row, o.lines, o.maskDelta);
+            return std::tie(base, row, lines, maskDelta, up) < std::tie(o.base, o.row, o.lines, o.maskDelta, o.up);
         }
     };
     struct Use
@@ -483,7 +513,7 @@ std::vector<Piece> FramePieces(const L1Result& l1, const std::set<PhysKey>& star
     // The frames' columns
     std::map<Column, Use> columns;
     // A column's bytes in the 64 K the start showed, or in the one page it did not show
-    const auto columnOf = [&l1](const DrawnFrame& f, uint32_t c, Column& out) {
+    const auto columnOf = [&l1](const DrawnFrame& f, bool bottomUp, uint32_t c, Column& out) {
         const int64_t base = Linear(l1, f.base);
         const int64_t lo = base < 0x10000 ? 0 : base - KeyOffset(f.base);
         const int64_t hi = base < 0x10000 ? 0x10000 : lo + 0x4000;
@@ -491,7 +521,8 @@ std::vector<Piece> FramePieces(const L1Result& l1, const std::set<PhysKey>& star
         const int64_t top = at + static_cast<int64_t>(f.height - 1) * f.rowStep;
         if (at < lo || at >= hi || top < lo || top >= hi)
             return false;
-        out = Column{static_cast<uint32_t>(at), f.height > 1 ? f.rowStep : 0, f.height, f.maskDelta};
+        out = Column{static_cast<uint32_t>(at), f.height > 1 ? f.rowStep : 0, f.height, f.maskDelta,
+                     f.height > 1 && bottomUp};
         return true;
     };
     // A column over the bytes of a column left of it in one frame is a shifted sprite's spill (the byte read past the
@@ -518,7 +549,7 @@ std::vector<Piece> FramePieces(const L1Result& l1, const std::set<PhysKey>& star
     }
     for (size_t i = 0; i < frames.size(); ++i)
         for (uint32_t c = 0; c < widths[i]; ++c)
-            if (Column col; columnOf(frames[i], c, col))
+            if (Column col; columnOf(frames[i], up[i], c, col))
             {
                 const DrawnFrame& f = frames[i];
                 Use& u = columns[col];
@@ -538,18 +569,20 @@ std::vector<Piece> FramePieces(const L1Result& l1, const std::set<PhysKey>& star
         uint32_t lines = 1;
         int32_t maskDelta = 0;
         Use use;
+        bool up = false;  ///< stored bottom up
     };
     std::vector<Segment> segments;
     std::map<Column, size_t> segmentOf;
     {
-        std::map<std::pair<uint32_t, uint32_t>, std::vector<std::pair<Column, const Use*>>> lattices;
+        std::map<std::tuple<uint32_t, uint32_t, bool>, std::vector<std::pair<Column, const Use*>>> lattices;
         for (const auto& [col, u] : columns)
             if (col.row > 0)
-                lattices[{static_cast<uint32_t>(col.row), col.base % static_cast<uint32_t>(col.row)}].emplace_back(col,
-                                                                                                                  &u);
+                lattices[{static_cast<uint32_t>(col.row), col.base % static_cast<uint32_t>(col.row), col.up}]
+                    .emplace_back(col, &u);
         for (auto& [lattice, items] : lattices)
         {
-            const uint32_t step = lattice.first;
+            const uint32_t step = std::get<0>(lattice);
+            const bool bottomUp = std::get<2>(lattice);
             std::sort(items.begin(), items.end(),
                       [](const auto& a, const auto& b) { return a.first.base < b.first.base; });
             // Clusters of columns sharing bytes
@@ -583,7 +616,8 @@ std::vector<Piece> FramePieces(const L1Result& l1, const std::set<PhysKey>& star
                 for (uint32_t b = 1; b <= lines; ++b)
                     if (b == lines || split[b] > cross[b] || starts.count(KeyAt(l1, lo + b * step)) != 0)
                     {
-                        segments.push_back(Segment{lo + from * step, step, b - from, cluster.front().first.maskDelta, {}});
+                        segments.push_back(
+                            Segment{lo + from * step, step, b - from, cluster.front().first.maskDelta, {}, bottomUp});
                         for (uint32_t l = from; l < b; ++l)
                             segmentAt[l] = segments.size() - 1;
                         from = b;
@@ -632,7 +666,7 @@ std::vector<Piece> FramePieces(const L1Result& l1, const std::set<PhysKey>& star
         for (uint32_t c = 0; c < widths[i]; ++c)
         {
             Column col;
-            const auto it = columnOf(f, c, col) ? segmentOf.find(col) : segmentOf.end();
+            const auto it = columnOf(f, up[i], c, col) ? segmentOf.find(col) : segmentOf.end();
             const size_t s = it != segmentOf.end() ? it->second : kNone;
             if (before != kNone && s != kNone && before != s)
             {
@@ -662,7 +696,8 @@ std::vector<Piece> FramePieces(const L1Result& l1, const std::set<PhysKey>& star
             const Segment& a = segments[chain[k - 1]];
             const Segment& b = segments[chain[k]];
             const int64_t d = static_cast<int64_t>(b.first) - static_cast<int64_t>(a.first);
-            even = even && b.step == s.step && b.lines == s.lines && (b.first < 0x10000u) == (a.first < 0x10000u) &&
+            even = even && b.step == s.step && b.lines == s.lines && b.up == s.up &&
+                   (b.first < 0x10000u) == (a.first < 0x10000u) &&
                    (k == 1 || d == colStep);
             colStep = d;
         }
@@ -671,6 +706,7 @@ std::vector<Piece> FramePieces(const L1Result& l1, const std::set<PhysKey>& star
         const bool masked = s.maskDelta == 1 || s.maskDelta == -1;
         Piece p;
         p.first = KeyAt(l1, s.first);
+        p.bottomUp = s.up;
         p.height = static_cast<uint16_t>(s.lines);
         p.width = static_cast<uint16_t>(cols);
         if (cols == 1)
@@ -741,6 +777,8 @@ std::vector<Piece> FramePieces(const L1Result& l1, const std::set<PhysKey>& star
         std::map<Whole, const DrawnFrame*> tallest;
         for (const DrawnFrame& f : frames)
         {
+            if (up[static_cast<size_t>(&f - frames.data())])
+                continue;  // stored bottom up: the segments' pieces
             const int32_t pair = f.maskDelta == 0 ? 1 : f.maskDelta == -1 ? 2 : 0;
             if (pair == 0 || f.height < 2 || f.width == 0 || f.width >= 32 || f.rowStep != f.width * pair ||
                 (f.width > 1 && f.colStep != pair) || Linear(l1, f.base) >= 0x10000)
@@ -832,6 +870,7 @@ public:
 
     void Run()
     {
+        CopiedTiles();
         std::map<Shape, std::map<uint16_t, Frame>> frames;
         if (_context.l1.drawn.empty())
         {
@@ -899,20 +938,28 @@ public:
         for (const auto& [shape, starts] : frames)
             Objects(shape, starts);
         // A font's glyphs drawn side by side form pieces of other shapes (a word printed as one strip): no sprite;
-        // frames of one value each are no picture
-        for (const Pending& p : _pending)
+        // frames of one value each are no picture on their own
+        const size_t n = _pending.size();
+        std::vector<char> blank(n, 0), inFont(n, 0);
+        for (size_t i = 0; i < n; ++i)
         {
+            const Pending& p = _pending[i];
             const uint32_t hi = static_cast<uint32_t>(p.o.last) + p.size - 1;
             const auto shape = frames.find(p.shape);
-            const bool blank =
-                shape != frames.end() && std::all_of(p.o.drawn.begin(), p.o.drawn.end(), [&](uint16_t start) {
-                    const auto f = shape->second.find(start);
-                    return f != shape->second.end() && f->second.blank;
-                });
-            if (!blank && std::none_of(_fonts.begin(), _fonts.end(),
-                                       [&](const auto& f) { return p.o.first >= f.first && hi <= f.second; }))
-                Claim(p.shape, p.o, p.size);
+            blank[i] = shape != frames.end() && std::all_of(p.o.drawn.begin(), p.o.drawn.end(), [&](uint16_t start) {
+                           const auto f = shape->second.find(start);
+                           return f != shape->second.end() && f->second.blank;
+                       });
+            inFont[i] = std::any_of(_fonts.begin(), _fonts.end(),
+                                    [&](const auto& f) { return p.o.first >= f.first && hi <= f.second; });
         }
+        BlankNeighbours(blank, inFont);
+        std::vector<char> recut(n, 0);
+        FrameLattice(blank, inFont, recut);  // appends the frames it re-cut to _pending
+        for (size_t i = 0; i < _pending.size(); ++i)
+            if (!blank[i] && !inFont[i] && !recut[i])
+                Claim(_pending[i].shape, _pending[i].o, _pending[i].size);
+        PointerBlocks();
     }
 
 private:
@@ -920,6 +967,7 @@ private:
     const std::vector<Blit>& _blits;
     std::vector<PointerRange> _pointers;
     std::vector<media::BufferCopy> _buffers;
+    std::vector<std::pair<PhysKey, PhysKey>> _copiedTiles;  ///< CopiedTiles' claims
     std::set<uint8_t> _text;
     std::vector<std::pair<uint16_t, uint16_t>> _textRanges;  ///< the text claims, [lo, hi] (Z80)
     std::set<std::tuple<PhysKey, PhysKey, uint8_t>> _claimed;
@@ -937,6 +985,13 @@ private:
     BankFormat _format;
     std::vector<uint8_t> _inBank;      ///< per Z80 address: 1 inside a bank record (its header included)
     std::vector<uint32_t> _codeBefore;  ///< executed bytes below each Z80 address (a record holds none)
+    /// The targets of one pointer table, or of the pointer words that point into drawn objects (FrameLattice)
+    struct Targets
+    {
+        uint16_t at = 0;     ///< the table, or the lowest pointer word
+        bool words = false;  ///< pointer words, no table claim
+        std::set<uint16_t> values;
+    };
 
     /// The record at @p at under the bank's format: false when its header gives no size (zero, over 32 bytes or
     /// 192 lines, a width the scale does not divide) or its bytes run past 64 K or over executed code
@@ -1376,7 +1431,7 @@ private:
             if (read * 2 < lines * length)
                 continue;
 
-            Shape shape{p.width, p.height, p.stride == 2, p.columns, static_cast<uint16_t>(p.pitch)};
+            Shape shape{p.width, p.height, p.stride == 2, p.columns, static_cast<uint16_t>(p.pitch), p.bottomUp};
             uint32_t start = z80;
             if (p.stride == 2)
             {
@@ -1593,7 +1648,7 @@ private:
                 Object part;
                 for (size_t i = 0; i < drawn.size(); ++i)
                 {
-                    if (i == 0 || drawn[i] - drawn[i - 1] != shape.GlyphStep())
+                    if (i == 0 || static_cast<uint32_t>(drawn[i] - drawn[i - 1]) != shape.GlyphStep())
                     {
                         if (i != 0)
                             _pending.push_back(Pending{shape, part, size});
@@ -1691,29 +1746,116 @@ private:
         if (setHi > 0xFFFF || (setLo >> 14) != (setHi >> 14) || o.first < setLo || o.last + shape.Tail() > setHi)
             return false;
         const bool rom = setHi < 0x4000;
-        const uint32_t lo = rom ? setLo : o.first;
-        const uint32_t hi = rom ? setHi : o.last + shape.Tail();
+        // The instructions that read the drawn glyphs: a slot only they read is a glyph printed too rarely to count as
+        // drawn (once, or never seen on the screen), not other data
+        std::set<PhysKey> glyphReaders;
+        for (const uint16_t d : o.drawn)
+            for (uint32_t at = d; at <= d + shape.Tail() && at <= 0xFFFF; ++at)
+                if (const ByteUse* u = UseAt(static_cast<uint16_t>(at)))
+                    if ((u->flags & use::kRead) != 0)
+                    {
+                        glyphReaders.insert(u->firstReader);
+                        glyphReaders.insert(u->lastReader);
+                    }
+        const auto otherRead = [&](const ByteUse& u) {
+            return (u.flags & (use::kBlockRead | use::kWordRead)) != 0 ||
+                   ((u.flags & use::kRead) != 0 &&
+                    (glyphReaders.count(u.firstReader) == 0 || glyphReaders.count(u.lastReader) == 0));
+        };
+        uint32_t lo = rom ? setLo : o.first;
+        uint32_t hi = rom ? setHi : o.last + shape.Tail();
+        // Glyphs next to the object's that it did not take in ("Y", drawn too seldom to join it, and "Z", never drawn):
+        // the font goes on over up to 8 slots on each side whose bytes nothing but the glyph readers read, no code
+        // wrote, the stack did not use and no other claim holds, within the set's codes 32..127 and its bank
+        if (!rom && g == static_cast<int64_t>(shape.Tail()) + 1)
+        {
+            const auto unused = [&](uint32_t from, uint32_t to) {
+                if (to > 0xFFFF || (from >> 14) != (lo >> 14) || (to >> 14) != (lo >> 14))
+                    return false;
+                for (uint32_t at = from; at <= to; ++at)
+                {
+                    // A byte code wrote (a variable, a buffer) or the stack used is no glyph either
+                    if (const ByteUse* u = UseAt(static_cast<uint16_t>(at)))
+                        if (otherRead(*u) ||
+                            (u->flags & (use::kWrite | use::kStackRead | use::kStackWrite)) != 0)
+                            return false;
+                }
+                for (const Region* r : _context.out.store.Overlapping(KeyAt(static_cast<uint16_t>(from)),
+                                                                       KeyAt(static_cast<uint16_t>(to))))
+                    if (r->kind != RegionKind::Untouched &&
+                        !(r->detector == DetectorId::CodeMap && r->kind != RegionKind::Code))
+                        return false;
+                return true;
+            };
+            for (int n = 0; n < 8 && hi + g <= setHi && unused(hi + 1, hi + static_cast<uint32_t>(g)); ++n)
+                hi += static_cast<uint32_t>(g);
+            for (int n = 0; n < 8 && lo >= setLo + g && unused(lo - static_cast<uint32_t>(g), lo - 1); ++n)
+                lo -= static_cast<uint32_t>(g);
+        }
         const auto firstCode = static_cast<uint32_t>((lo - bestBase) / g);
         const auto lastCode = static_cast<uint32_t>((static_cast<int64_t>(hi - shape.Tail()) - bestBase) / g);
-        Region r;
-        r.kind = RegionKind::Font;
-        r.detector = DetectorId::Graphics;
-        r.status = RegionStatus::Observed;
-        r.geometry.width = 8;
-        r.geometry.height = 8;
-        r.geometry.frames = static_cast<uint16_t>(lastCode - firstCode + 1);
-        r.geometry.stride = static_cast<uint16_t>(g);
-        r.geometry.pitch = shape.pitch;
-        r.geometry.layout = "rows";
-        r.confidence = confidence::FromCount(700, 950, drawnText, 8);
-        r.title = rom ? "Font, 96 characters of 8 x 8 (codes 32-127)"
-                      : "Font, " + std::to_string(r.geometry.frames) + " characters of 8 x 8 (codes " +
-                            std::to_string(firstCode) + "-" + std::to_string(lastCode) + " of a set at " +
-                            Hex(static_cast<uint16_t>(bestBase)) + " + " + std::to_string(g) + " x code)";
-        Evidence(r, o, shape);
-        r.evidence.push_back(analysis::Evidence{"characters", static_cast<uint16_t>(bestBase + 32 * g), drawnText,
-                                                "glyphs drawn at base + step x the code of a text character"});
-        Add(std::move(r), static_cast<uint16_t>(lo), static_cast<uint16_t>(hi));
+        // A slot whose bytes something read but no byte of which ever reached the screen (by any drawing code, not
+        // only this object's: digits drawn by a score routine are glyphs) is no glyph: other data kept in an unused
+        // code's place (a string in the slots of characters no text prints). The claim leaves it out; a slot neither
+        // drawn nor read stays a glyph nobody printed. Only for slots side by side (a glyph's rows in one run of bytes)
+        const auto slotOf = [&](uint32_t code) {
+            return static_cast<uint32_t>(bestBase + static_cast<int64_t>(code) * g);
+        };
+        const std::set<uint16_t> drawnSlots(o.drawn.begin(), o.drawn.end());
+        const auto foreign = [&](uint32_t code) {
+            if (rom || g <= static_cast<int64_t>(shape.Tail()) ||
+                drawnSlots.count(static_cast<uint16_t>(slotOf(code))) != 0)
+                return false;
+            bool read = false;
+            for (uint32_t at = slotOf(code); at <= slotOf(code) + shape.Tail(); ++at)
+            {
+                const PhysKey key = KeyAt(static_cast<uint16_t>(at));
+                const auto it = std::lower_bound(_context.l1.drawn.begin(), _context.l1.drawn.end(), key,
+                                                 [](const DrawnByte& d, PhysKey k) { return d.key < k; });
+                if (it != _context.l1.drawn.end() && it->key == key && it->draws != 0)
+                    return false;
+                if (const ByteUse* u = UseAt(static_cast<uint16_t>(at)))
+                    read |= otherRead(*u);
+            }
+            return read;
+        };
+        for (uint32_t from = firstCode; from <= lastCode;)
+        {
+            if (foreign(from))
+            {
+                ++from;
+                continue;
+            }
+            uint32_t to = from;
+            while (to + 1 <= lastCode && !foreign(to + 1))
+                ++to;
+            const bool whole = from == firstCode && to == lastCode;
+            Region r;
+            r.kind = RegionKind::Font;
+            r.detector = DetectorId::Graphics;
+            r.status = RegionStatus::Observed;
+            r.geometry.width = 8;
+            r.geometry.height = 8;
+            r.geometry.frames = static_cast<uint16_t>(to - from + 1);
+            r.geometry.stride = static_cast<uint16_t>(g);
+            r.geometry.pitch = shape.pitch;
+            r.geometry.layout = "rows";
+            r.confidence = confidence::FromCount(700, 950, drawnText, 8);
+            r.title = rom ? "Font, 96 characters of 8 x 8 (codes 32-127)"
+                          : "Font, " + std::to_string(r.geometry.frames) + " characters of 8 x 8 (codes " +
+                                std::to_string(from) + "-" + std::to_string(to) + " of a set at " +
+                                Hex(static_cast<uint16_t>(bestBase)) + " + " + std::to_string(g) + " x code" +
+                                (whole ? ")" : "; the set's codes " + std::to_string(firstCode) + "-" +
+                                                   std::to_string(lastCode) + " less slots never drawn that other "
+                                                   "code read and never drew)");
+            Evidence(r, o, shape);
+            r.evidence.push_back(analysis::Evidence{"characters", static_cast<uint16_t>(bestBase + 32 * g), drawnText,
+                                                    "glyphs drawn at base + step x the code of a text character"});
+            const uint32_t pieceLo = rom ? lo : slotOf(from);
+            const uint32_t pieceHi = rom ? hi : slotOf(to) + shape.Tail();
+            Add(std::move(r), static_cast<uint16_t>(pieceLo), static_cast<uint16_t>(pieceHi));
+            from = to + 1;
+        }
         range = {lo, hi};
         return true;
     }
@@ -1853,7 +1995,8 @@ private:
                     (ins != nullptr ? ", by " + Hex(ins->z80) : std::string()) +
                     (routine != nullptr ? " in routine " + Hex(routine->z80) : std::string()) + "; " +
                     std::to_string(shape.height) + (shape.columns ? " rows, stored in columns of " : " rows of ") +
-                    std::to_string(shape.rowBytes) + " bytes" + (shape.mask ? " (mask, graphic)" : "")});
+                    std::to_string(shape.rowBytes) + " bytes" + (shape.mask ? " (mask, graphic)" : "") +
+                    (shape.bottomUp ? ", the bottom line first" : "")});
         }
         for (const Blit* b : BlitsOf(o))
         {
@@ -1873,6 +2016,245 @@ private:
         char text[8];
         std::snprintf(text, sizeof(text), "$%04X", v);
         return text;
+    }
+
+    /// Blank objects (@p blank: every frame one value, such as a mask all $FF over graphic bytes all $00: a fully
+    /// transparent strip) are no picture on their own, but one drawn by a blit of a neighbouring object that will be
+    /// claimed (not blank, not inside a font: @p inFont), with its shape, on its lattice right before or after it, is
+    /// part of it: the empty strip of a sprite frame, split off by a pointer naming it alone. That object takes its
+    /// frames; a buffer's edge between the two keeps them apart, as does a 16 K page boundary (no claim spans one).
+    /// Without a blit loop (an unrolled draw) the instructions that wrote both to the screen stand for it
+    void BlankNeighbours(const std::vector<char>& blank, const std::vector<char>& inFont)
+    {
+        const auto shares = [](const auto& a, const auto& b) {
+            return std::any_of(a.begin(), a.end(), [&](const auto& v) { return b.count(v) != 0; });
+        };
+        const auto bufferEdge = [&](uint32_t a, uint32_t b) {
+            return std::any_of(_buffers.begin(), _buffers.end(), [&](const media::BufferCopy& r) {
+                return (r.lo <= a && a <= r.hi) != (r.lo <= b && b <= r.hi);
+            });
+        };
+        std::vector<char> joined(_pending.size(), 0);
+        for (bool more = true; more;)
+        {
+            more = false;
+            for (size_t i = 0; i < _pending.size(); ++i)
+            {
+                if (!blank[i] || inFont[i] || joined[i])
+                    continue;
+                const Object& e = _pending[i].o;
+                for (size_t j = 0; j < _pending.size(); ++j)
+                {
+                    Object& o = _pending[j].o;
+                    const Shape& shape = _pending[j].shape;
+                    if (blank[j] || inFont[j] || shape < _pending[i].shape || _pending[i].shape < shape ||
+                        o.sparse || e.sparse)
+                        continue;
+                    if (!(o.blits.empty() && e.blits.empty() ? shares(o.writers, e.writers) : shares(o.blits, e.blits)))
+                        continue;
+                    const uint32_t size = _pending[j].size;
+                    const uint32_t step = o.step != 0 ? o.step : size;
+                    if (e.step != 0 && e.step != step)
+                        continue;
+                    const bool after = e.first == static_cast<uint32_t>(o.last) + step;
+                    const bool before = static_cast<uint32_t>(e.last) + step == o.first;
+                    if (!after && !before)
+                        continue;
+                    const uint32_t lo = std::min(o.first, e.first);
+                    const uint32_t hi = static_cast<uint32_t>(std::max(o.last, e.last)) + size - 1;
+                    if (hi > 0xFFFF || (lo >> 14) != (hi >> 14) ||
+                        (after ? bufferEdge(o.last, e.first) : bufferEdge(e.last, o.first)))
+                        continue;
+                    o.first = static_cast<uint16_t>(lo);
+                    o.last = std::max(o.last, e.last);
+                    o.step = step;
+                    o.seen += e.seen;
+                    o.filled += e.filled;
+                    o.blank += e.seen;
+                    o.blits.insert(e.blits.begin(), e.blits.end());
+                    o.writers.insert(e.writers.begin(), e.writers.end());
+                    o.drawn.insert(o.drawn.end(), e.drawn.begin(), e.drawn.end());
+                    std::sort(o.drawn.begin(), o.drawn.end());
+                    o.draws += e.draws;
+                    joined[i] = 1;
+                    more = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Sprite frames stored a column at a time come out of the drawn pieces in whatever column groups the drawing
+    /// showed (strips clipped at a window's edges, a strip drawn beside another sprite's), so the objects run across
+    /// the frames' boundaries and a fully transparent strip of another shape stays alone. A pointer table names the
+    /// frames: three or more of its targets (else of the pointer words whose values lie in a drawn object) a constant
+    /// stride F apart are F-byte blocks, the last one F bytes long too. The blocks are the frames when every object
+    /// over them lies inside them (no font, no character set), the ones with a picture are stored in columns (layout
+    /// columns, or one byte wide) of one height, mask and line order, on the lattice of their column (C bytes: the
+    /// lines, times two with the mask) from the first target, F is two or more columns, the objects cover three
+    /// quarters of the blocks' bytes or more, and a drawing pass drew F / C columns or more side by side, C bytes
+    /// apart, in the blocks (frames are never drawn wider than they are: blocks of several frames each fail here). One
+    /// object then replaces them: F / C columns, as many frames as targets, F bytes apart (blank strips included), the
+    /// objects it took in claimed no more (@p recut). Not across a 16 K page boundary; only in the start's paging
+    void FrameLattice(std::vector<char>& blank, std::vector<char>& inFont, std::vector<char>& recut)
+    {
+        if (_view >= 0 || _context.l1.drawnFrames.empty())
+            return;
+        std::vector<Targets> sets;
+        for (const Region& t : _context.out.store.Regions())
+        {
+            if (t.kind != RegionKind::PointerTable)
+                continue;
+            Targets s{t.z80, false, {}};
+            for (uint32_t i = 0; i < t.geometry.count; ++i)
+            {
+                uint8_t a = 0, b = 0;
+                const auto at = static_cast<uint16_t>(t.z80 + 2 * i);
+                if (EndAt(at, a) && EndAt(static_cast<uint16_t>(at + 1), b))
+                    s.values.insert(static_cast<uint16_t>(a | (b << 8)));
+            }
+            sets.push_back(std::move(s));
+        }
+        Targets words{0xFFFF, true, {}};
+        for (const PointerUse& p : _context.l1.pointers)
+        {
+            if (p.code || p.form != PointerForm::Word || p.minValue != p.maxValue)
+                continue;
+            for (size_t i = 0; i < _pending.size(); ++i)
+                if (!inFont[i] && p.value >= _pending[i].o.first &&
+                    p.value <= static_cast<uint32_t>(_pending[i].o.last) + _pending[i].size - 1)
+                {
+                    words.values.insert(p.value);
+                    words.at = std::min(words.at, p.z80);
+                    break;
+                }
+        }
+        sets.push_back(std::move(words));
+        for (const Targets& s : sets)
+        {
+            // Runs of targets one stride apart (two runs may share a target: the last block of one table's group of
+            // blocks is the first of the next group)
+            const std::vector<uint16_t> t(s.values.begin(), s.values.end());
+            for (size_t i = 0; i + 2 < t.size();)
+            {
+                const uint32_t stride = static_cast<uint32_t>(t[i + 1] - t[i]);
+                size_t j = i + 1;
+                while (j + 1 < t.size() && static_cast<uint32_t>(t[j + 1] - t[j]) == stride)
+                    ++j;
+                if (j - i >= 2)
+                    LatticeFrames(std::vector<uint16_t>(t.begin() + static_cast<std::ptrdiff_t>(i),
+                                                        t.begin() + static_cast<std::ptrdiff_t>(j) + 1),
+                                  stride, s, blank, inFont, recut);
+                i = j;
+            }
+        }
+    }
+
+    /// FrameLattice on one run of @p targets @p stride bytes apart, named by @p source
+    void LatticeFrames(const std::vector<uint16_t>& targets, uint32_t stride, const Targets& source,
+                       std::vector<char>& blank, std::vector<char>& inFont, std::vector<char>& recut)
+    {
+        const uint32_t lo = targets.front();
+        const uint32_t hi = static_cast<uint32_t>(targets.back()) + stride - 1;
+        if (lo < 0x4000 || hi > 0xFFFF || (lo >> 14) != (hi >> 14))
+            return;
+        std::vector<size_t> members;
+        for (size_t i = 0; i < _pending.size(); ++i)
+        {
+            if (recut[i])
+                continue;
+            const Pending& p = _pending[i];
+            const uint32_t first = p.o.first;
+            const uint32_t end = static_cast<uint32_t>(p.o.last) + p.size - 1;
+            if (end < lo || first > hi)
+                continue;
+            if (inFont[i] || p.o.sparse || p.o.lattice || first < lo || end > hi)
+                return;  // across the blocks' edge, glyphs, or re-cut already: these blocks are no frames (again)
+            members.push_back(i);
+        }
+        // The objects with a picture: stored in columns, one height, mask and line order, on the columns' lattice
+        bool keyed = false;
+        uint16_t height = 0;
+        bool mask = false, bottomUp = false;
+        for (const size_t i : members)
+        {
+            if (blank[i])
+                continue;
+            const Shape& s = _pending[i].shape;
+            const Object& o = _pending[i].o;
+            if (s.pitch != 0 || s.height < 2 || !(s.columns || s.rowBytes == 1))
+                return;
+            if (keyed && (s.height != height || s.mask != mask || s.bottomUp != bottomUp))
+                return;
+            keyed = true;
+            height = s.height;
+            mask = s.mask;
+            bottomUp = s.bottomUp;
+            const uint32_t column = static_cast<uint32_t>(height) * (mask ? 2u : 1u);
+            if ((o.first - lo) % column != 0 || o.step % column != 0)
+                return;
+        }
+        if (!keyed)
+            return;
+        const uint32_t column = static_cast<uint32_t>(height) * (mask ? 2u : 1u);
+        if (stride % column != 0 || stride / column < 2 || stride / column >= 32)
+            return;
+        const uint32_t width = stride / column;
+        // The blocks' bytes the objects cover, the blocks drawn
+        std::vector<char> covered(hi - lo + 1, 0);
+        std::vector<char> shown(targets.size(), 0);
+        for (const size_t i : members)
+        {
+            const Pending& p = _pending[i];
+            for (uint32_t a = p.o.first; a <= static_cast<uint32_t>(p.o.last) + p.size - 1; ++a)
+                covered[a - lo] = 1;
+            for (const uint16_t d : p.o.drawn)
+                shown[(d - lo) / stride] = 1;
+        }
+        const auto bytes = static_cast<uint32_t>(std::count(covered.begin(), covered.end(), char{1}));
+        if (bytes * 4 < (hi - lo + 1) * 3)
+            return;
+        // A frame drawn whole: a pass drew width columns or more side by side, a column apart, in the blocks
+        if (std::none_of(_context.l1.drawnFrames.begin(), _context.l1.drawnFrames.end(), [&](const DrawnFrame& f) {
+                if (f.width < width || f.colStep != static_cast<int32_t>(column))
+                    return false;
+                const int64_t base = Linear(_context.l1, f.base);
+                return base >= lo && base <= hi;
+            }))
+            return;
+        Pending merged;
+        merged.shape = Shape{static_cast<uint16_t>(width), height, mask, true, 0, bottomUp};
+        merged.size = merged.shape.Bytes();
+        if (merged.size != stride)
+            return;
+        Object& o = merged.o;
+        o.first = static_cast<uint16_t>(lo);
+        o.last = targets.back();
+        o.step = stride;
+        o.seen = 0;
+        for (size_t k = 0; k < targets.size(); ++k)
+            if (shown[k])
+            {
+                ++o.seen;
+                o.drawn.push_back(targets[k]);
+            }
+        o.filled = static_cast<uint32_t>(targets.size()) - o.seen;
+        for (const size_t i : members)
+        {
+            const Object& m = _pending[i].o;
+            o.blits.insert(m.blits.begin(), m.blits.end());
+            o.writers.insert(m.writers.begin(), m.writers.end());
+            o.draws += m.draws;
+            recut[i] = 1;
+        }
+        o.lattice = true;
+        o.latticeAt = source.at;
+        o.latticeWords = source.words;
+        o.latticeColumns = static_cast<uint32_t>(members.size());
+        _pending.push_back(std::move(merged));
+        blank.push_back(0);
+        inFont.push_back(0);
+        recut.push_back(0);
     }
 
     void Claim(const Shape& shape, const Object& o, uint32_t size)
@@ -1899,6 +2281,15 @@ private:
             }
         if ((lo >> 14) != (hi >> 14))
             return;
+        // Bytes a print loop reads as character codes (the text detector's) are no pixels: a picture mostly over text
+        // is a copy of the string's bytes to the screen (a buffer filled from it), none
+        uint32_t text = 0;
+        for (const Region* t : _context.out.store.Overlapping(KeyAt(static_cast<uint16_t>(lo)),
+                                                              KeyAt(static_cast<uint16_t>(hi))))
+            if (t->kind == RegionKind::Text)
+                text += std::min<uint32_t>(hi, t->Z80End()) - std::max<uint32_t>(lo, t->z80) + 1;
+        if (2 * text > hi - lo + 1)
+            return;
         bool tile = false;
         for (const Blit* b : BlitsOf(o))
             tile = tile || b->mapLoop != nullptr;
@@ -1914,6 +2305,7 @@ private:
         r.geometry.mask = shape.mask;
         r.geometry.layout = shape.columns ? "columns" : "rows";
         r.geometry.pitch = shape.pitch;
+        r.geometry.bottomUp = shape.bottomUp;
         uint64_t dominant = 0, instances = 0;
         for (const Blit* b : BlitsOf(o))
         {
@@ -1929,6 +2321,18 @@ private:
                                                 "frames drawn" + std::string(o.filled ? ", " + std::to_string(o.filled) +
                                                                                             " between them not drawn"
                                                                                       : "")});
+        if (o.blank != 0)
+            r.evidence.push_back(analysis::Evidence{"blank", o.first, o.blank,
+                                                    "frames of one value each (fully transparent) the same blit drew "
+                                                    "next to the others, on their lattice"});
+        if (o.lattice)
+            r.evidence.push_back(analysis::Evidence{
+                "frame-lattice", o.latticeAt, o.latticeColumns,
+                (o.latticeWords ? "pointer words from " : "the pointer table at ") + Hex(o.latticeAt) + " name the " +
+                    std::to_string(frames) + " frames " + std::to_string(step) + " bytes apart; the " +
+                    std::to_string(o.latticeColumns) + " objects drawn over them, columns of " +
+                    std::to_string(shape.Line()) + " bytes, tile them, and a pass drew " +
+                    std::to_string(shape.rowBytes) + " columns side by side"});
         const uint16_t live = static_cast<uint16_t>(lo);
         const uint16_t liveEnd = static_cast<uint16_t>(hi);
         Region copy = r;
@@ -1999,17 +2403,278 @@ private:
         return -1;
     }
 
+    /// The blocks a pointer table names (its targets sorted, a block from one target to the next): a block the replay
+    /// never touched, as large as a block of the same table that this detector's sprites fill (from its first byte,
+    /// three quarters of it or more, none past its end), holds the same sprites at the same offsets (inferred: a
+    /// sprite set's frames the recording never showed, the next block of a table of graphics)
+    void PointerBlocks()
+    {
+        if (_view >= 0)
+            return;
+        struct Made
+        {
+            Region r;
+            uint16_t lo = 0;
+            uint16_t hi = 0;
+        };
+        std::vector<Made> made;
+        const auto untouched = [&](uint32_t lo, uint32_t hi) {
+            for (const Region* r : _context.out.store.Overlapping(KeyAt(static_cast<uint16_t>(lo)),
+                                                                  KeyAt(static_cast<uint16_t>(hi))))
+                if (r->kind != RegionKind::Untouched)
+                    return false;
+            for (uint32_t at = lo; at <= hi; ++at)
+                if (const ByteUse* u = UseAt(static_cast<uint16_t>(at)); u != nullptr && (u->reads | u->writes) != 0)
+                    return false;
+            return true;
+        };
+        for (const Region& t : _context.out.store.Regions())
+        {
+            if (t.kind != RegionKind::PointerTable || t.geometry.count < 4)
+                continue;
+            std::set<uint16_t> targets;
+            for (uint32_t i = 0; i < t.geometry.count; ++i)
+            {
+                uint8_t a = 0, b = 0;
+                const auto at = static_cast<uint16_t>(t.z80 + 2 * i);
+                if (EndAt(at, a) && EndAt(static_cast<uint16_t>(at + 1), b))
+                    targets.insert(static_cast<uint16_t>(a | (b << 8)));
+            }
+            const std::vector<uint16_t> starts(targets.begin(), targets.end());
+            for (size_t k = 0; k + 1 < starts.size(); ++k)
+            {
+                const uint32_t lo = starts[k], size = static_cast<uint32_t>(starts[k + 1] - starts[k]);
+                if (lo < 0x4000 || size < 8 || !untouched(lo, lo + size - 1))
+                    continue;
+                for (size_t j = 0; j + 1 < starts.size(); ++j)
+                {
+                    const uint32_t from = starts[j];
+                    if (j == k || static_cast<uint32_t>(starts[j + 1] - from) != size)
+                        continue;
+                    std::vector<const Region*> sprites;
+                    uint32_t covered = 0;
+                    bool fits = true, first = false;
+                    for (const Region* r : _context.out.store.Overlapping(
+                             KeyAt(static_cast<uint16_t>(from)), KeyAt(static_cast<uint16_t>(from + size - 1))))
+                    {
+                        if (r->kind != RegionKind::Sprite || r->detector != DetectorId::Graphics)
+                            continue;
+                        fits = fits && r->z80 >= from && r->Z80End() <= from + size - 1;
+                        first = first || r->z80 == from;
+                        covered += r->Size();
+                        sprites.push_back(r);
+                    }
+                    if (!fits || !first || covered * 4 < size * 3)
+                        continue;
+                    for (const Region* r : sprites)
+                    {
+                        Made m{*r, static_cast<uint16_t>(r->z80 - from + lo), static_cast<uint16_t>(r->Z80End() - from + lo)};
+                        m.r.status = RegionStatus::Inferred;
+                        m.r.confidence = confidence::Scale(r->confidence, 3, 4);
+                        m.r.users.clear();
+                        m.r.evidence = {analysis::Evidence{
+                            "pointer-block", static_cast<uint16_t>(lo), size,
+                            "a block of the pointer table at " + Hex(t.z80) + ", as large as the sprites at " +
+                                Hex(static_cast<uint16_t>(from)) + ", never drawn"}};
+                        made.push_back(std::move(m));
+                    }
+                    break;
+                }
+            }
+        }
+        for (Made& m : made)
+            Add(std::move(m.r), m.lo, m.hi);
+    }
+
+    /// Tiles a block copy puts into a drawn back buffer (media::FindDrawnBuffers), one copy (LDI chain, LDIR) a tile:
+    /// the copies one copier made into the buffer from outside it read L bytes (4..32), or runs of whole tiles, from
+    /// sources on one lattice (base + L x tile), 4 tiles or more, bytes the code never rewrote. The buffer shows the
+    /// copied bytes one under another (the screen byte below a buffer byte comes from the next or the previous
+    /// address): a tile is one byte wide, L lines, bottom up when the line below is the previous byte; a buffer shown
+    /// in rows would make them one line high, no tile. The tile size L is the common divisor of the copy lengths, and at
+    /// least kMinTiles copies of exactly L bytes from distinct sources say it is one (copies of 40 and 36 bytes alone
+    /// are no tiles of 4). The copied tiles group into sets: a run of at most kMaxTileGap tiles never copied, bytes no
+    /// code touched, joins two neighbours, and a set holds no more tiles never copied than copied ones. Each set of
+    /// kMinTiles copied tiles or more is a claim from its first tile copied to its last, the ones between inferred
+    void CopiedTiles()
+    {
+        constexpr uint32_t kMinTile = 4;
+        constexpr uint32_t kMaxTile = 32;
+        constexpr size_t kMinTiles = 4;
+        constexpr uint32_t kMaxTileGap = 8;  ///< never-copied tiles in a row inside a set
+        if (_view >= 0)
+            return;
+        const std::vector<media::DrawnBuffer> buffers = media::FindDrawnBuffers(_context);
+        if (buffers.empty())
+            return;
+        const auto inBuffer = [&](uint32_t at, uint32_t n) {
+            for (const media::DrawnBuffer& b : buffers)
+                if (at + n - 1 >= b.lo && at <= b.hi)
+                    return true;
+            return false;
+        };
+        struct Copier
+        {
+            uint32_t unit = 0;
+            uint16_t z80 = 0;
+            std::vector<std::pair<uint32_t, uint32_t>> reads;  // source, length
+            std::vector<std::pair<uint32_t, uint32_t>> writes; // destination, length
+        };
+        std::map<PhysKey, Copier> copiers;
+        for (const BlockCopy& c : _context.l1.copies)
+        {
+            const uint32_t src = c.dir > 0 ? c.src : static_cast<uint16_t>(c.src - (c.length - 1));
+            const uint32_t dst = c.dir > 0 ? c.dst : static_cast<uint16_t>(c.dst - (c.length - 1));
+            if (c.length < kMinTile || src + c.length > 0x10000 || dst + c.length > 0x10000 ||
+                !inBuffer(dst, c.length) || inBuffer(src, c.length) || src < 0x4000)
+                continue;
+            Copier& k = copiers[c.instruction];
+            k.z80 = c.z80;
+            k.unit = std::gcd(k.unit, c.length);
+            k.reads.emplace_back(src, c.length);
+            k.writes.emplace_back(dst, c.length);
+        }
+        for (const auto& [instruction, k] : copiers)
+        {
+            if (k.unit < kMinTile || k.unit > kMaxTile)
+                continue;
+            // The unit seen alone: copies of exactly one tile from kMinTiles distinct sources
+            std::set<uint32_t> single;
+            for (const auto& [src, n] : k.reads)
+                if (n == k.unit)
+                    single.insert(src);
+            if (single.size() < kMinTiles)
+                continue;
+            uint32_t base = 0xFFFF;
+            for (const auto& [src, n] : k.reads)
+                base = std::min(base, src);
+            std::set<uint32_t> tiles;
+            bool lattice = true;
+            for (const auto& [src, n] : k.reads)
+            {
+                lattice = lattice && (src - base) % k.unit == 0;
+                for (uint32_t t = src; t < src + n; t += k.unit)
+                    tiles.insert(t);
+            }
+            if (!lattice || tiles.size() < kMinTiles)
+                continue;
+            // The screen neighbours of the copied bytes: the byte shown below each, in the buffer (the value flow ends
+            // there: a stack blit) or in the tiles (it followed the copy through the buffer to the screen)
+            std::map<int16_t, uint64_t> below;
+            std::vector<std::pair<uint32_t, uint32_t>> ends = k.writes;
+            ends.insert(ends.end(), k.reads.begin(), k.reads.end());
+            for (const auto& [dst, n] : ends)
+                for (uint32_t at = dst; at < dst + n; ++at)
+                {
+                    const PhysKey key = _context.Key(static_cast<uint16_t>(at));
+                    const auto d = std::lower_bound(_context.l1.drawn.begin(), _context.l1.drawn.end(), key,
+                                                    [](const DrawnByte& x, PhysKey y) { return x.key < y; });
+                    if (d != _context.l1.drawn.end() && d->key == key && d->down.delta != 0)
+                        below[d->down.delta] += d->down.count;
+                }
+            int16_t step = 0;
+            uint64_t best = 0, all = 0;
+            for (const auto& [delta, count] : below)
+            {
+                all += count;
+                if (count > best)
+                {
+                    best = count;
+                    step = delta;
+                }
+            }
+            if ((step != 1 && step != -1) || best * 2 <= all)
+                continue;
+            // The sets: neighbours joined across short runs of never-copied tiles no code wrote, ran or used as the
+            // stack (a tile another routine draws byte by byte is read, a variable between two sets is written)
+            constexpr uint16_t kWritten =
+                use::kWrite | use::kBlockWrite | use::kWordWrite | use::kIncDec | use::kOtherWrite;
+            const auto untouched = [&](uint32_t from, uint32_t to) {
+                for (uint32_t at = from; at <= to; ++at)
+                    if (const ByteUse* u = UseAt(static_cast<uint16_t>(at));
+                        u != nullptr && (DetectorContext::Code(*u) ||
+                                         (u->flags & (kWritten | use::kStackRead | use::kStackWrite)) != 0))
+                        return false;
+                return true;
+            };
+            std::vector<std::vector<uint32_t>> sets;
+            for (const uint32_t t : tiles)
+            {
+                if (!sets.empty())
+                {
+                    const uint32_t previous = sets.back().back();
+                    const uint32_t gap = (t - previous) / k.unit - 1;
+                    if (gap <= kMaxTileGap && (gap == 0 || untouched(previous + k.unit, t - 1)))
+                    {
+                        sets.back().push_back(t);
+                        continue;
+                    }
+                }
+                sets.push_back({t});
+            }
+            for (const std::vector<uint32_t>& group : sets)
+                ClaimCopiedTiles(k.z80, k.unit, step, group, kMinTiles);
+        }
+    }
+
+    /// One set of tiles CopiedTiles found (@p group: the sources of the tiles copied, sorted)
+    void ClaimCopiedTiles(uint16_t copier, uint32_t unit, int16_t step, const std::vector<uint32_t>& group,
+                          size_t minTiles)
+    {
+        const uint32_t lo = group.front();
+        const uint32_t hi = group.back() + unit - 1;
+        const uint32_t frames = (hi - lo + 1) / unit;
+        if (group.size() < minTiles || frames - group.size() > group.size() || (lo >> 14) != (hi >> 14))
+            return;
+        bool free = true;
+        for (uint32_t at = lo; at <= hi && free; ++at)
+            if (const ByteUse* u = UseAt(static_cast<uint16_t>(at)); u != nullptr && u->writes > 1)
+                free = false;
+        for (const Region* r : _context.out.store.Overlapping(KeyAt(static_cast<uint16_t>(lo)),
+                                                              KeyAt(static_cast<uint16_t>(hi))))
+            if (free && r->kind != RegionKind::Untouched &&
+                !(r->detector == DetectorId::CodeMap && r->kind != RegionKind::Code))
+                free = false;
+        if (!free)
+            return;
+        const size_t copied = group.size();
+        Region r;
+        r.kind = RegionKind::Tile;
+        r.detector = DetectorId::Graphics;
+        r.status = copied == frames ? RegionStatus::Observed : RegionStatus::Inferred;
+        r.geometry.width = 8;
+        r.geometry.height = static_cast<uint16_t>(unit);
+        r.geometry.frames = static_cast<uint16_t>(frames);
+        r.geometry.stride = static_cast<uint16_t>(unit);
+        r.geometry.layout = "rows";
+        r.geometry.bottomUp = step < 0;
+        r.confidence = confidence::FromCount(600, 900, copied, minTiles);
+        r.evidence.push_back(analysis::Evidence{
+            "copy", copier, copied,
+            "tiles block-copied to the drawn buffer, " + std::to_string(unit) + " bytes each" +
+                (copied == frames ? std::string()
+                                  : ", " + std::to_string(frames - copied) + " between them never copied")});
+        if (Add(std::move(r), static_cast<uint16_t>(lo), static_cast<uint16_t>(hi)))
+            _copiedTiles.emplace_back(KeyAt(static_cast<uint16_t>(lo)), KeyAt(static_cast<uint16_t>(hi)));
+    }
+
     /// Claims @p r on @p lo..hi, in @p page when one is given (else the view's, else the start's paging)
-    void Add(Region r, uint16_t lo, uint16_t hi, int page = -1)
+    bool Add(Region r, uint16_t lo, uint16_t hi, int page = -1)
     {
         const auto key = [&](uint16_t z80) {
             return page >= 0 ? MakeKey(static_cast<uint16_t>(page), z80) : KeyAt(z80);
         };
+        // A frame of a tile set the copies already claimed whole (a tile the value flow followed through the copy and
+        // the buffer) is one of its tiles
+        if (r.kind == RegionKind::Sprite || r.kind == RegionKind::Tile)
+            for (const auto& [tlo, thi] : _copiedTiles)
+                if (tlo <= key(lo) && key(hi) <= thi)
+                    return false;
         if (!_claimed.insert({key(lo), key(hi), static_cast<uint8_t>(r.kind)}).second)
-            return;
+            return false;
         if (_view < 0)
             r.users = _context.UsersOf(lo, hi);
-        _context.Claim(std::move(r), key(lo), lo, hi);
+        return _context.Claim(std::move(r), key(lo), lo, hi);
     }
 };
 

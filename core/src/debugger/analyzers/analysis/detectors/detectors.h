@@ -84,6 +84,8 @@ L2Result RunDetectors(const L1Result& l1, const DetectorOptions& options = {});
 void DetectSignatures(DetectorContext& context);
 void DetectCodeMap(DetectorContext& context);
 void DetectText(DetectorContext& context);
+/// Save areas: bytes block copies save and put back (saveareas.cpp), claimed as buffers before the init tables
+void DetectSaveAreas(DetectorContext& context);
 void DetectInitTables(DetectorContext& context);
 void DetectRecords(DetectorContext& context);
 void DetectPointerTables(DetectorContext& context);
@@ -97,6 +99,10 @@ void DetectScreens(DetectorContext& context);
 void DetectRng(DetectorContext& context);
 void DetectUnpackers(DetectorContext& context);
 void DetectMusic(DetectorContext& context);
+/// After every detector (codemap.cpp): untouched bytes no claim explains, a fill of one value (32 bytes or more) or
+/// code that never ran (it decodes, and its calls and jumps land on its own instructions, in the ROM or in executed
+/// code), are Unused
+void FinishUnused(DetectorContext& context);
 
 /// Init-table generators the init table detector checks (exposed for the tests): the name of the generator the
 /// @p size bytes at @p data follow ("screen-rows", "screen-rows-lo", "screen-rows-hi", "x*N", "shift", "sine8",

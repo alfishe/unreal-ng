@@ -34,6 +34,54 @@ std::string Hex(uint16_t v)
 
 }  // namespace
 
+/// The drawn back buffers (media::FindDrawnBuffers) as screen claims, not where a screen claim already covers them
+static void DrawnBackBuffers(DetectorContext& context)
+{
+    for (const media::DrawnBuffer& b : media::FindDrawnBuffers(context))
+    {
+        const uint32_t lo = b.lo, hi = b.hi;
+        bool screen = false;
+        for (uint32_t from = lo; from <= hi; from = (from | 0x3FFFu) + 1)
+            for (const Region* r : context.out.store.Overlapping(context.Key(static_cast<uint16_t>(from)),
+                                                                 context.Key(static_cast<uint16_t>(
+                                                                     std::min(hi, from | 0x3FFFu)))))
+                screen = screen || r->kind == RegionKind::Screen;
+        if (screen)
+            continue;
+        Region r;
+        r.kind = RegionKind::Screen;
+        r.detector = DetectorId::Screens;
+        r.status = RegionStatus::Observed;
+        r.geometry.frames = 1;
+        r.geometry.layout = "drawn";
+        r.confidence = 880;
+        const uint16_t first = context.l1.routines[b.readers.begin()->first].z80;
+        r.title = "Back buffer, " + std::to_string(hi - lo + 1) + " bytes, read by " + Hex(first) +
+                  (b.readers.size() > 1 ? " and " + std::to_string(b.readers.size() - 1) + " more" : std::string()) +
+                  " that write the screen";
+        for (const auto& [i, n] : b.readers)
+        {
+            r.evidence.push_back(Evidence{"screen-reader", context.l1.routines[i].z80, n,
+                                          "routine " + Hex(context.l1.routines[i].z80) + " writes the screen's "
+                                          "pixels and read " + std::to_string(n) + " of these bytes"});
+            if (r.evidence.size() >= 4)
+                break;
+        }
+        r.evidence.push_back(Evidence{"written", static_cast<uint16_t>(lo), b.count,
+                                      "bytes the code rewrites " + std::to_string(media::kDrawnMinRewrites) +
+                                          " times or more, at least once for every " +
+                                          std::to_string(media::kDrawnMaxReadsPerWrite) + " reads"});
+        // One claim a 16 K page: a buffer across a page boundary lies in two pages
+        for (uint32_t from = lo; from <= hi; from = (from | 0x3FFFu) + 1)
+        {
+            const uint32_t to = std::min(hi, from | 0x3FFFu);
+            Region piece = r;
+            piece.users = context.UsersOf(static_cast<uint16_t>(from), static_cast<uint16_t>(to));
+            context.Claim(std::move(piece), static_cast<uint16_t>(from), static_cast<uint16_t>(to));
+        }
+    }
+}
+
 void DetectScreens(DetectorContext& context)
 {
     const media::DisplayInfo display = media::FindDisplay(context);
@@ -156,6 +204,7 @@ void DetectScreens(DetectorContext& context)
         r.users = context.UsersOf(src, static_cast<uint16_t>(end));
         context.Claim(std::move(r), src, static_cast<uint16_t>(end));
     }
+    DrawnBackBuffers(context);
 }
 
 }  // namespace analysis

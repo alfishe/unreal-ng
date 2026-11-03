@@ -2897,7 +2897,7 @@ void TimeTravelController::RecordCardEdits(const char* source, const std::vector
         _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
 }
 
-void TimeTravelController::DeliverCardEdits(uint64_t frame)
+void TimeTravelController::DeliverCardEdits(uint64_t frame, bool fromFrameStart)
 {
     _cardEditFrame = frame;
     DebugManager* debug = _context ? _context->pDebugManager : nullptr;
@@ -2914,7 +2914,8 @@ void TimeTravelController::DeliverCardEdits(uint64_t frame)
     {
         const TTDEventLog& log = _replayEngine->Events();
         const TTDMachineTime end = start + 2 * static_cast<TTDMachineTime>(FrameSpan());
-        for (size_t i = _engineEventCursor; i < log.Count() && log.At(i).machineTime < end; ++i)
+        const size_t from = fromFrameStart ? log.CursorAt(start) : _engineEventCursor;
+        for (size_t i = from; i < log.Count() && log.At(i).machineTime < end; ++i)
         {
             const TTDEvent& ev = log.At(i);
             if (ev.kind != TTDEventKind::DebuggerEdit || TTDEventLog::RoleOf(ev) != TTDEventRole::Input)
@@ -2960,6 +2961,15 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
     std::vector<TTDRegionDesc> regions = LiveRegions();
     TTDBankOverrides banks;
     bool haveBanks = false;
+    // The page images' changed bytes, reported once the edit's own paging is in place (its banks record follows
+    // the pages): the observer sees them where the CPU sees them after the edit
+    struct PageWrite
+    {
+        uint16_t page;
+        uint16_t offset;
+        uint8_t value;
+    };
+    std::vector<PageWrite> pageWrites;
     size_t at = 0;
     while (at + 11 <= payload.size())
     {
@@ -2974,7 +2984,14 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
         if (at > payload.size())
             break;
         if (kind == kEditRamPage && _memory && index < _modelRamPages && length == 0x4000)
-            std::memcpy(_memory->RAMPageAddress(static_cast<uint16_t>(index)), bytes, length);
+        {
+            uint8_t* page = _memory->RAMPageAddress(static_cast<uint16_t>(index));
+            if (_editWriteObserver)
+                for (uint32_t k = 0; k < length; ++k)
+                    if (page[k] != bytes[k])
+                        pageWrites.push_back({static_cast<uint16_t>(index), static_cast<uint16_t>(k), bytes[k]});
+            std::memcpy(page, bytes, length);
+        }
         else if (kind == kEditRegionPiece)
         {
             for (const TTDRegionDesc& r : regions)
@@ -3011,7 +3028,11 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
         else if (kind == kEditCpuBytes && _memory)
         {
             for (uint32_t k = 0; k < length; ++k)
+            {
+                if (_editWriteObserver)
+                    _editWriteObserver(static_cast<uint16_t>(index + k), bytes[k]);
                 _memory->ToolWriteToZ80Memory(static_cast<uint16_t>(index + k), bytes[k]);
+            }
         }
         else if (kind == kEditBanks && length == sizeof(TTDBankOverrides))
         {
@@ -3030,6 +3051,27 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
         _memory->UpdateZ80Banks();
         if (haveBanks)
             ApplyBankOverrides(banks);
+    }
+    if (_editWriteObserver && _memory && !pageWrites.empty())
+    {
+        // Once per physical page: a page mapped in two banks is reported at the lowest one; an unmapped page is not
+        // seen by the CPU
+        uint16_t lastPage = UINT16_MAX;
+        int bankOfPage = -1;
+        for (const PageWrite& w : pageWrites)
+        {
+            if (w.page != lastPage)
+            {
+                lastPage = w.page;
+                bankOfPage = -1;
+                uint8_t* page = _memory->RAMPageAddress(w.page);
+                for (uint8_t bank = 0; bank < 4 && bankOfPage < 0; ++bank)
+                    if (_memory->GetPhysicalAddressForZ80Page(bank) == page)
+                        bankOfPage = bank;
+            }
+            if (bankOfPage >= 0)
+                _editWriteObserver(static_cast<uint16_t>((bankOfPage << 14) | w.offset), w.value);
+        }
     }
 }
 
@@ -6802,6 +6844,11 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
     _peripherals.SaveLive(out.deviceStates);
     out.inputCursor = _inputCursor;
     out.inputPlaybackArmed = _inputPlaybackArmed;
+    out.engineEventCursor = _engineEventCursor;
+    out.cardEditFrame = _cardEditFrame;
+    out.inputStartFrame = _inputStartFrame;
+    out.inputFrameStart = _inputFrameStart;
+    out.inputFrameKnown = _inputFrameKnown;
     if (_replayEngine)
     {
         out.busReadMode = _replayEngine->BusReads().GetMode();
@@ -6908,6 +6955,17 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
 
     _inputCursor = snap.inputCursor;
     _inputPlaybackArmed = snap.inputPlaybackArmed;
+    // The engine's events too: a replay in between (the picture of a seek) delivered the ones up to its end, which
+    // the caller's position has still ahead (a fast tape load's edit right after the first keyframe)
+    _engineEventCursor = snap.engineEventCursor;
+    // The card targets hold the edits of the frame a replay in between delivered last: give them back the caller's
+    // (none when the caller had none: UINT64_MAX clears them). Mid-frame the cursor is past some of the frame's
+    // edits, so the scan starts at the frame's first event
+    if (_cardEditFrame != snap.cardEditFrame)
+        DeliverCardEdits(snap.cardEditFrame, true);
+    _inputStartFrame = snap.inputStartFrame;
+    _inputFrameStart = snap.inputFrameStart;
+    _inputFrameKnown = snap.inputFrameKnown;
     UpdateInputWorkFlag();
     if (_replayEngine)
     {

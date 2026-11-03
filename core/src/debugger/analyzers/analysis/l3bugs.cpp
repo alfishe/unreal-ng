@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <map>
 #include <set>
+#include <utility>
+#include <vector>
 
 namespace analysis
 {
@@ -159,15 +162,20 @@ void StackOverCode(const L1Result& l1, std::vector<Finding>& out)
 void CodeOverwritten(const L1Result& l1, std::vector<Finding>& out)
 {
     const auto hit = [](uint16_t, PhysKey, const ByteUse& u) {
-        return (u.flags & use::kSmc) != 0 && (u.flags & use::kOpcode) != 0 &&
-               (u.flags & (use::kBlockWrite | use::kStackWrite)) != 0;
+        // Overwritten by a block copy or the stack, or by anything at all and never run again (a buffer laid over
+        // code that ran once): an operand patch of code that runs again is not an overlay
+        return (u.flags & use::kSmc) != 0 && (u.flags & (use::kOpcode | use::kOperand)) != 0 &&
+               ((u.flags & (use::kBlockWrite | use::kStackWrite)) != 0 || u.overlaid);
     };
-    for (const auto& [lo, hi] : Runs(l1, hit))
+    // One overlay is one finding: the code it overwrote has data and code not run between its runs
+    constexpr uint32_t kOverlayGap = 32;
+    for (const auto& [lo, hi] : Runs(l1, hit, kOverlayGap))
     {
         const ByteUse* u = l1.UseAt(l1.StartKey(lo));
         Finding f = Bug("code-overwritten", lo, hi, 400,
-                        "Code at " + Hex4(lo) + "-" + Hex4(hi) + " ran, then a block copy or the stack wrote over " +
-                            "its opcodes: an overlay loaded on purpose, or a copy that runs too far");
+                        "Code at " + Hex4(lo) + "-" + Hex4(hi) + " ran, then was written over and did not run "
+                            "again (or a block copy or the stack wrote over its opcodes): an overlay loaded on purpose, a "
+                            "buffer laid over code that ran once, or a copy that runs too far");
         if (u != nullptr && u->lastWriter != kNoKey)
         {
             f.at = Z80Of(l1, u->lastWriter);
@@ -204,17 +212,73 @@ void StackImbalance(const L1Result& l1, std::vector<Finding>& out)
 
 void IndexPastTable(const L1Result& l1, const L2Result& l2, std::vector<Finding>& out)
 {
+    // Only accesses that read through an index (L1 indexes: a value turned into an offset) can run past a table; a
+    // walk one byte after another (a list, a mask blit, a block copy) through a larger structure reads around a
+    // table L2 found inside it, which says nothing about an index
+    std::set<PhysKey> indexed;
+    std::vector<const Routine*> indexRoutine;  // the routine of each index read's instruction, looked up once
+    indexRoutine.reserve(l1.indexes.size());
+    for (const IndexUse& x : l1.indexes)
+    {
+        indexed.insert(x.instruction);
+        indexRoutine.push_back(l1.RoutineOf(x.instruction));
+    }
     for (const Region& r : l2.store.Regions())
     {
         if (r.kind != RegionKind::PointerTable && r.kind != RegionKind::HandlerTable && r.kind != RegionKind::InitTable)
             continue;
+        // A reader whose index reads run on both sides of the table addresses a larger structure the table lies in (a
+        // mask laid over a list, a record's field L2 took for a table): it says nothing about an index running off the
+        // table's end. The structure is what the reader's routine read through its indexes in one connected stretch
+        // from the table: the other fields of a record (read by the routine's next instructions), the same
+        // instruction through other selectors. Reads of the same routine that do not touch that stretch (one
+        // selector byte, a level number, indexing other tables far away) say nothing about this one
+        std::map<PhysKey, std::pair<uint32_t, uint32_t>> span;
+        const auto structure = [&](PhysKey k) {
+            if (const auto it = span.find(k); it != span.end())
+                return it->second;
+            const Routine* routine = l1.RoutineOf(k);
+            std::vector<std::pair<uint32_t, uint32_t>> reads;  // the routine's index reads (the reader's alone: none)
+            uint32_t lo = 0x10000, hi = 0;
+            for (size_t i = 0; i < l1.indexes.size(); ++i)
+            {
+                const IndexUse& x = l1.indexes[i];
+                const bool own = x.instruction == k;
+                if (!own && (routine == nullptr || indexRoutine[i] != routine))
+                    continue;
+                reads.emplace_back(x.lo, x.hi);
+                if (own && x.hi >= r.z80 && x.lo <= r.Z80End())
+                {
+                    lo = std::min<uint32_t>(lo, x.lo);
+                    hi = std::max<uint32_t>(hi, x.hi);
+                }
+            }
+            for (bool grew = lo <= hi; grew;)
+            {
+                grew = false;
+                for (const auto& [a, b] : reads)
+                    if (a <= hi + 1 && b + 1 >= lo && (a < lo || b > hi))
+                    {
+                        lo = std::min(lo, a);
+                        hi = std::max(hi, b);
+                        grew = true;
+                    }
+            }
+            return span[k] = {lo, hi};
+        };
+        const auto counts = [&](PhysKey k) {
+            if (k == kNoKey || indexed.count(k) == 0)
+                return false;
+            const auto [lo, hi] = structure(k);
+            return lo > hi || !(lo < r.z80 && hi > r.Z80End());
+        };
         std::set<PhysKey> readers;
         for (PhysKey k = r.lo; k <= r.hi; ++k)
             if (const ByteUse* u = l1.UseAt(k))
             {
-                if (u->firstReader != kNoKey)
+                if (counts(u->firstReader))
                     readers.insert(u->firstReader);
-                if (u->lastReader != kNoKey)
+                if (counts(u->lastReader))
                     readers.insert(u->lastReader);
             }
         if (readers.empty())
