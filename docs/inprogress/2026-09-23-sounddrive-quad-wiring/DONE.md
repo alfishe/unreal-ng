@@ -138,8 +138,9 @@ against (see Remainders).
 
 ## Remainders
 
-- `CovoxDD` (`#DD` mono Covox) still parsed-but-inert — scope C, revisit
-  if Scorpion Covox software matters.
+- ~~`CovoxDD` (`#DD` mono Covox) still parsed-but-inert~~ — done 2026-11-02:
+  the Scorpion printer Covox is the fifth latch of `Covox` (slot built-in
+  `covox-dd`, on by default on the Scorpion family).
 - `PortDecoder_Spectrum128` (plain 128K models) does not decode any
   Covox/SoundDrive ports at all, even though clone configs (e.g.
   `spectrum128/unreal.ini`) ship `SD=1`. `PortDecoder_ATM710`/`ATM3`/the
