@@ -273,7 +273,14 @@ has at the refresh's time: the scroller moves 4 x w pixels, not two half-bright 
   pair that differs in nothing else is shown as the frame. Four frames (A B A B) were too little: the moving "M" of
   Aleste's title turns one segment on and off and then on again, A B A B by chance, and the hold left that segment
   standing while the letter moved (five frames: Aleste jstep 0.76 -> 0.72, ghost 2.11 -> 1.88; some `earshaver-1`
-  border holds lost, its off-ink 3 % up). A single pixel turning back is no evidence: a thin stroke
+  border holds lost, its off-ink 3 % up). A block a shift (within 8 px) also explains both ways is a look-alike of
+  motion and is flicker only if the 3 x 3 blocks round it alternate as well (3/4 of their changes): Aleste's scroller
+  moves 8 px a frame and the Y has a row of dots 8 px apart, so a block on that row saw B A B A B by chance and held
+  a dot while the letter moved on (a dot left behind: the owner saw the Y losing a piece and a jerk now and then);
+  the row's ends and the letter's other dots round it change otherwise. Gigascreen next to a scroller keeps its hold
+  (no shift explains a random picture).
+  Aleste jstep 0.72 -> 0.69, ghost 1.88 -> 1.63, tear 5.3 -> 4.9 %; the truth suite, the other five games and the
+  action dots unchanged; `vibrations` jstep 2.30 -> 1.92, ghost 5.38 -> 4.29. A single pixel turning back is no evidence: a thin stroke
   of a scroller does that now and then (a per-pixel rule held those and broke the scroll).
 - **Measured in [POC 038](../../../tools/poc/038-motion-interpolation/conclusions.md):** on scrollers and moving
   pictures 1/2 to 1/6 of the blend's error, 52-90 % of the changed pixels exact; full-screen effects fall back to the

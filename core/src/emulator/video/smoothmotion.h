@@ -197,7 +197,9 @@ class LayerFlow;
 /// that differs in nothing else as the frame; blended or moved, it would beat against the refresh even harder. Per
 /// block, over five frames: a thin stroke scrolling by turns a lone pixel back now and then, not a block for two
 /// frames; a dot-matrix letter scrolling by its dot pitch repeats itself two frames apart by chance (Aleste's M), not
-/// three times.
+/// three times. A block a shift explains as well (dots a scroll's step apart, passing it one a frame: Aleste's Y) is
+/// flicker only if the 3 x 3 blocks round it alternate too (at least 3/4 of their changes); the row's ends and the
+/// letter's other dots round it do not.
 class SmoothMotion
 {
 public:
@@ -302,6 +304,10 @@ private:
     bool ChangedInWindow(const uint32_t* a, const uint32_t* b) const;
     /// The flickering blocks of `a` on its way to `b` (the frames y, z, a before it, in order)
     void FindFlicker(const Stored& x, const Stored& y, const Stored& z, Stored& a, const uint32_t* b);
+    /// FindFlicker's motion look-alike: a shift within a block's size explains at least kFlickerNumerator /
+    /// kFlickerDenominator of the block's `changed` pixels both ways (b(p) = a(p - d) and a(p) = b(p + d))
+    bool MovesBy(const uint32_t* a, const uint32_t* b, int bx, int by, int x1, int y1, int changed) const;
+    std::vector<int> _flickerChanged, _flickerAlternating;  ///< FindFlicker's per-block counts, kept from call to call
     void BuildMask();
     int64_t FramePeriodNs() const;
 

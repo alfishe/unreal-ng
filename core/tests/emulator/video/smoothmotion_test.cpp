@@ -551,6 +551,37 @@ TEST(SmoothMotion_Test, FlickerIsHeldAsTheFrameDue)
               SmoothMotion::Kind::Interpolate);
 }
 
+TEST(SmoothMotion_Test, DotsAScrollStepApartAreNotFlicker)
+{
+    // A dot-matrix letter scrolling 8 px a frame (Aleste's Y): a row of dots 8 px apart whose shape spins with the
+    // frame's parity, so a block on the row sees B A B A B; above it an arm of dots climbing 2 rows a dot, whose
+    // blocks change otherwise. The row's blocks alternate alone, not the blocks round them: no flicker
+    const auto frame = [](int k) {
+        Image img(160, 32);
+        for (int i = 0; i < 16; i++)
+        {
+            const int x = 8 * i - 8 * k;
+            if (x < 0 || x + 8 > 160)
+                continue;
+            for (int dy = 0; dy < 2; dy++)
+                for (int dx = 0; dx < 2; dx++)
+                    img.At(x + 2 + (k % 2) + dx, 20 + dy) = WHITE;
+            const int y = 8 + (i % 4) * 2;
+            for (int dy = 0; dy < 2; dy++)
+                for (int dx = 0; dx < 2; dx++)
+                    img.At(x + 2 + dx, y + dy) = WHITE;
+        }
+        return img;
+    };
+    Feed feed;
+    feed.engine.SetMode(Mode::Interpolate);
+    for (int k = 0; k < 6; k++)
+        feed.Push(frame(k));
+    Image out(160, 32);
+    feed.engine.Render(feed.TargetOf(5) + PERIOD / 2, out.pixels.data());
+    EXPECT_EQ(feed.engine.GetStats().heldFlicker, 0u);
+}
+
 TEST(SmoothMotion_Test, CadenceStepsToTheNextPictureInTheLookahead)
 {
     // A game drawing every 4th frame, the band 8 px on per picture, the bottom rows a score that changes every frame

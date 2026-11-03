@@ -520,37 +520,83 @@ void SmoothMotion::Push(uint64_t serial, int64_t targetNs, const uint32_t* pixel
 
 void SmoothMotion::FindFlicker(const Stored& x, const Stored& y, const Stored& z, Stored& a, const uint32_t* b)
 {
-    // Per 8x8 block: the pixels that change from A to B, and those of them alternating y = A, z = B
+    // Per 8x8 block: the pixels that change from A to B, and those of them alternating (x = B, y = A, z = B)
     const int block = MotionField::kBlock;
-    for (int by = 0; by < _height; by += block)
-    {
-        for (int bx = 0; bx < _width; bx += block)
+    const int blocksWide = (_width + block - 1) / block, blocksHigh = (_height + block - 1) / block;
+    _flickerChanged.assign(static_cast<size_t>(blocksWide) * blocksHigh, 0);
+    _flickerAlternating.assign(_flickerChanged.size(), 0);
+    for (int py = 0; py < _height; py++)
+        for (int px = 0; px < _width; px++)
         {
-            const int x1 = std::min(bx + block, _width);
-            const int y1 = std::min(by + block, _height);
-            int changed = 0;
-            int alternating = 0;
-            for (int py = by; py < y1; py++)
-            {
-                for (int px = bx; px < x1; px++)
-                {
-                    const size_t p = static_cast<size_t>(py) * _width + px;
-                    if (a.pixels[p] == b[p])
-                        continue;
-                    changed++;
-                    if (x.pixels[p] == b[p] && z.pixels[p] == b[p] && y.pixels[p] == a.pixels[p])
-                        alternating++;
-                }
-            }
-            if (changed == 0 || alternating * kFlickerDenominator < changed * kFlickerNumerator)
+            const size_t p = static_cast<size_t>(py) * _width + px;
+            if (a.pixels[p] == b[p])
                 continue;
+            const size_t at = static_cast<size_t>(py / block) * blocksWide + px / block;
+            _flickerChanged[at]++;
+            if (x.pixels[p] == b[p] && z.pixels[p] == b[p] && y.pixels[p] == a.pixels[p])
+                _flickerAlternating[at]++;
+        }
+    const auto flickers = [](int changed, int alternating) {
+        return changed > 0 && alternating * kFlickerDenominator >= changed * kFlickerNumerator;
+    };
+    for (int bj = 0; bj < blocksHigh; bj++)
+        for (int bi = 0; bi < blocksWide; bi++)
+        {
+            const size_t at = static_cast<size_t>(bj) * blocksWide + bi;
+            if (!flickers(_flickerChanged[at], _flickerAlternating[at]))
+                continue;
+            const int bx = bi * block, by = bj * block;
+            const int x1 = std::min(bx + block, _width), y1 = std::min(by + block, _height);
+            // a shift that explains the block's changes both ways (b(p) = a(p - d), a(p) = b(p + d)) makes it a
+            // look-alike of motion: dots a scroll's step apart, passing the block one a frame (Aleste's Y). Then the
+            // 3 x 3 blocks round it alternate as well, else it is motion: the row's ends and the letter's other dots
+            // round it do not
+            if (MovesBy(a.pixels.data(), b, bx, by, x1, y1, _flickerChanged[at]))
+            {
+                int changed = 0, alternating = 0;
+                for (int j = std::max(bj - 1, 0); j <= std::min(bj + 1, blocksHigh - 1); j++)
+                    for (int i = std::max(bi - 1, 0); i <= std::min(bi + 1, blocksWide - 1); i++)
+                    {
+                        changed += _flickerChanged[static_cast<size_t>(j) * blocksWide + i];
+                        alternating += _flickerAlternating[static_cast<size_t>(j) * blocksWide + i];
+                    }
+                if (!flickers(changed, alternating))
+                    continue;
+            }
             if (a.smooth.empty())
                 a.smooth.assign(static_cast<size_t>(_width) * _height, 1);
             for (int py = by; py < y1; py++)
                 std::memset(&a.smooth[static_cast<size_t>(py) * _width + bx], 0, static_cast<size_t>(x1 - bx));
-            a.flicker += static_cast<size_t>(changed);
+            a.flicker += static_cast<size_t>(_flickerChanged[at]);
         }
-    }
+}
+
+bool SmoothMotion::MovesBy(const uint32_t* a, const uint32_t* b, int bx, int by, int x1, int y1, int changed) const
+{
+    const int reach = MotionField::kBlock;
+    for (int dy = -reach; dy <= reach; dy++)
+        for (int dx = -reach; dx <= reach; dx++)
+        {
+            if (dx == 0 && dy == 0)
+                continue;
+            int explained = 0;
+            for (int py = by; py < y1; py++)
+                for (int px = bx; px < x1; px++)
+                {
+                    const size_t p = static_cast<size_t>(py) * _width + px;
+                    if (a[p] == b[p])
+                        continue;
+                    const int fx = px - dx, fy = py - dy, tx = px + dx, ty = py + dy;
+                    if (fx < 0 || fy < 0 || fx >= _width || fy >= _height || tx < 0 || ty < 0 || tx >= _width ||
+                        ty >= _height)
+                        continue;
+                    explained += b[p] == a[static_cast<size_t>(fy) * _width + fx] &&
+                                 a[p] == b[static_cast<size_t>(ty) * _width + tx];
+                }
+            if (explained * kFlickerDenominator >= changed * kFlickerNumerator)
+                return true;
+        }
+    return false;
 }
 
 int64_t SmoothMotion::FramePeriodNs() const
