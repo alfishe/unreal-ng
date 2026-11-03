@@ -696,7 +696,10 @@ public:
     /// The register a device of this machine has selected now, by the input role of its select claims (the device
     /// access watch's seed when it starts): AyIo = the AY data read's register (ITurboSoundDevice::getBusReadRegister),
     /// the Next adds NextReg; -1 when not known or not a register (the TSFM status byte)
+#pragma push_macro("slots")
+#undef slots
     virtual int SelectedIndex(slots::InputRole role) const;
+#pragma pop_macro("slots")
     /// A slot-built card with the kempston-joystick function is fitted (SlotManager::BuildCards / ReleaseCards)
     void SetSlotKempstonJoystick(bool fitted) { _slotKempstonJoystick = fitted; }
 
