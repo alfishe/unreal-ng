@@ -81,6 +81,9 @@ struct TTDSearchQuery
     /// Ignored for Io accesses, where a port number has no page.
     bool     hasPhysPageFilter = false;
     PhysPage physPage = 0;             ///< Valid iff hasPhysPageFilter (0..255, or kPhysPageNone = ROM/no page)
+    /// With the page filter: which half of the page the address means (Memory::TtdKeyOf's flip, 0 / 1). -1: either -
+    /// on 16K windows always 0; the Next's 8K slots may show either half of a page at one address
+    int8_t   flip = -1;
 
     /// Only matches at-or-before this globalT (absolute t-state). Default
     /// "no upper bound" is UINT64_MAX — caller typically substitutes the
@@ -112,6 +115,7 @@ struct TTDSearchResult
     PhysPage     physPage = kPhysPageNone;  ///< kPhysPageNone for ROM/cache/I/O
     TTDAccessType access = TTDAccessType::Write;
     uint16_t     addr = 0;                  ///< the address (or port) accessed
+    uint8_t      flip = 0;                  ///< Memory::TtdKeyOf: the byte is at (addr & #3FFF) ^ (flip << 13) of the page
 };
 
 /// @brief A single M1 (instruction-start) cycle recorded during reverse
@@ -171,7 +175,7 @@ public:
     /// @param physPage Physical RAM page behind `addr`, or kPhysPageNone when
     ///                 the access has no page (I/O ports, ROM/cache banks).
     inline bool Matches(uint16_t addr, TTDAccessType kind, uint8_t value, uint16_t pc,
-                        PhysPage physPage = kPhysPageNone) const
+                        PhysPage physPage = kPhysPageNone, uint8_t flip = 0) const
     {
         if (!IsArmed())
             return false;
@@ -185,7 +189,8 @@ public:
             return false;
         // A page filter can never be satisfied by an access that has no page,
         // so those are rejected rather than waved through.
-        if (_query.hasPhysPageFilter && kind != TTDAccessType::Io && physPage != _query.physPage)
+        if (_query.hasPhysPageFilter && kind != TTDAccessType::Io &&
+            (physPage != _query.physPage || (_query.flip >= 0 && flip != _query.flip)))
             return false;
         return true;
     }
@@ -195,9 +200,9 @@ public:
     /// on the caller side (the probe doesn't reach into EmulatorContext —
     /// keeps it dependency-free).
     inline void RecordHit(const TTDTimePoint& t, uint16_t addr, uint16_t pc, uint8_t value,
-                          PhysPage physPage, TTDAccessType kind)
+                          PhysPage physPage, TTDAccessType kind, uint8_t flip = 0)
     {
-        _hits.push_back(TTDSearchResult{t, pc, value, physPage, kind, addr});
+        _hits.push_back(TTDSearchResult{t, pc, value, physPage, kind, addr, flip});
     }
 
     /// @brief Read-only view of recorded hits (control thread, post-replay).

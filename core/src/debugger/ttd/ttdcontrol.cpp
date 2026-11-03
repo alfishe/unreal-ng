@@ -3499,7 +3499,7 @@ TTDReply TTDControlBackend::MemoryAt(const TTDRequest& request)
         const PhysPage page = RecordPage(rec);
         if (page == kPhysPageNone || SpaceOfPage(page) != journaled)
             continue;
-        const uint64_t at = journaled == TTDMemorySpace::Ram ? uint64_t(page) * 0x4000 + (rec.addr & 0x3FFF)
+        const uint64_t at = journaled == TTDMemorySpace::Ram ? uint64_t(page) * 0x4000 + RecordOffset(rec)
                                                               : SpaceOffset(page, rec.addr);
         if (at < bytes.size())
             bytes[at] = rec.value;

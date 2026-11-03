@@ -243,7 +243,7 @@ TTDCauseInput RegInput(const TTDTraceInsn& in, TTDCauseReg r, bool followFlags)
 TTDCauseInput MemInput(const TTDTraceEvent& e)
 {
     TTDCauseInput i;
-    i.name = TTDCauseName::Mem(e.address, e.page);
+    i.name = TTDCauseName::Mem(e.address, e.page, e.Flip());
     i.value = e.value;
     return i;
 }
@@ -339,7 +339,7 @@ bool TTDCauseWrites(const TTDFrameTrace& trace, size_t index, const TTDCauseName
     {
         const Events ev = EventsOf(trace, in);
         for (const TTDTraceEvent* e = ev.begin; e != ev.end; ++e)
-            if (e->type == 'W' && e->address == name.address && e->page == name.page)
+            if (e->type == 'W' && e->address == name.address && e->page == name.page && e->Flip() == name.flip)
                 return true;
         return false;
     }
@@ -366,7 +366,7 @@ std::vector<TTDCauseOutput> TTDExplainInstruction(const TTDFrameTrace& trace, si
             if (e->type == 'W')
             {
                 TTDCauseOutput o;
-                o.name = TTDCauseName::Mem(e->address, e->page);
+                o.name = TTDCauseName::Mem(e->address, e->page, e->Flip());
                 o.value = e->value;
                 o.kind = TTDCauseKind::Interrupt;
                 o.leafValue = in.pc;
@@ -443,7 +443,7 @@ std::vector<TTDCauseOutput> TTDExplainInstruction(const TTDFrameTrace& trace, si
     for (const TTDTraceEvent* w : writes)
     {
         TTDCauseOutput o;
-        o.name = TTDCauseName::Mem(w->address, w->page);
+        o.name = TTDCauseName::Mem(w->address, w->page, w->Flip());
         o.value = w->value;
         R high, low;
         if (op.flow == analysis::Flow::Call || op.flow == analysis::Flow::Rst)

@@ -1502,8 +1502,10 @@ void Z80::NotifyInstructionStart()
     // it a reverse breakpoint has no choice but to replay every frame.
     if (_context->ttdCoverageActive && _context->ttdCoverage != nullptr)
     {
+        uint8_t flip = 0;
+        const ttd::PhysPage page = _memory->TtdKeyOf(m1_pc, flip);
         _context->ttdCoverage->Record(ttd::TTDCoverageKind::Executed,
-                                      ttd::MakeCoverageKey(_memory->GetPhysPageForZ80Address(m1_pc), m1_pc));
+                                      ttd::MakeCoverageKey(page, static_cast<uint16_t>(m1_pc ^ (flip << 13))));
     }
 
     // Phase 4 - access probe for Execute access type (TDD 9.2).
@@ -1514,13 +1516,14 @@ void Z80::NotifyInstructionStart()
         // breakpoint can distinguish "PC 0xC000 in page 3" from the same
         // address reached with a different page banked in. Code executing
         // from ROM reports kPhysPageNone.
-        const ttd::PhysPage execPhysPage = _memory->GetPhysPageForZ80Address(m1_pc);
-        if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
+        uint8_t flip = 0;
+        const ttd::PhysPage execPhysPage = _memory->TtdKeyOf(m1_pc, flip);
+        if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage, flip))
         {
             const auto& st = _context->emulatorState;
             const ttd::TTDTimePoint tp{st.frame_counter, st.TtdTInFrame(t)};
             _context->ttdProbe.RecordHit(tp, m1_pc, m1_pc, /*value=*/0, execPhysPage,
-                                          ttd::TTDAccessType::Execute);
+                                          ttd::TTDAccessType::Execute, flip);
         }
     }
 }

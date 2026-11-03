@@ -65,6 +65,8 @@ public:
     MemoryPageDescriptor MapZ80AddressToPhysicalPage(uint16_t address) override;
     uint8_t PhysicalSlotShift() const override { return 13; }
     ttd::PhysPage TtdLocate(uint16_t addr, bool write, uint16_t& offsetInPage) const override;
+    /// The TTD restore: the image (NextStateCodec) holds the MMU and every view, the slot table follows it
+    void RestorePaging() override { Remap(); }
     /// endregion
 
     /// region <Slot table>
@@ -202,6 +204,7 @@ private:
     uint32_t _readOff[kSlots] = {};
     uint32_t _writeOff[kSlots] = {};
     ttd::PhysPage _physPage[kSlots] = {};
+    TtdSlotKey _ttdKeys[kSlots] = {};   // Memory::TtdKeyOf (SyncWindows)
     std::unique_ptr<MemoryInterface> _fastIf;
     std::unique_ptr<MemoryInterface> _debugIf;
     std::unique_ptr<MemoryInterface> _fastContendedIf;

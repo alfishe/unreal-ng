@@ -246,7 +246,7 @@ uint64_t ReadVarint(const uint8_t* data, size_t size, size_t& pos, bool& ok)
 
 std::vector<uint8_t> EncodeWriteBlock(const TTDWriteRecord* recs, uint32_t count)
 {
-    std::vector<uint8_t> gt, addr, m1pc, value, page, io, high;
+    std::vector<uint8_t> gt, addr, m1pc, value, page, io, high, flip;
     gt.reserve(count * 2);
     addr.reserve(count * 2);
     m1pc.reserve(count * 2);
@@ -257,7 +257,9 @@ std::vector<uint8_t> EncodeWriteBlock(const TTDWriteRecord* recs, uint32_t count
     uint64_t prevT = count ? static_cast<uint64_t>(recs[0].globalT) : 0;
     uint8_t ioBits = 0;
     uint8_t highBits = 0;
+    uint8_t flipBits = 0;
     bool anyHigh = false;
+    bool anyFlip = false;
     for (uint32_t i = 0; i < count; ++i)
     {
         const TTDWriteRecord& r = recs[i];
@@ -278,12 +280,23 @@ std::vector<uint8_t> EncodeWriteBlock(const TTDWriteRecord* recs, uint32_t count
         ioBits |= static_cast<uint8_t>((r.isIo ? 1u : 0u) << (i & 7));
         highBits |= static_cast<uint8_t>((r.pageHigh ? 1u : 0u) << (i & 7));
         anyHigh = anyHigh || r.pageHigh;
-        if ((i & 7) == 7) { io.push_back(ioBits); ioBits = 0; high.push_back(highBits); highBits = 0; }
+        flipBits |= static_cast<uint8_t>((r.flip ? 1u : 0u) << (i & 7));
+        anyFlip = anyFlip || r.flip;
+        if ((i & 7) == 7)
+        {
+            io.push_back(ioBits);
+            ioBits = 0;
+            high.push_back(highBits);
+            highBits = 0;
+            flip.push_back(flipBits);
+            flipBits = 0;
+        }
     }
     if (count & 7)
     {
         io.push_back(ioBits);
         high.push_back(highBits);
+        flip.push_back(flipBits);
     }
 
     // Column sizes first so the decoder can split the blob without scanning.
@@ -299,8 +312,12 @@ std::vector<uint8_t> EncodeWriteBlock(const TTDWriteRecord* recs, uint32_t count
     raw.insert(raw.end(), io.begin(), io.end());
     // Bit 8 of the page (a virtual page of another memory space, 2026-10-08): a column of its own after the I/O
     // bits, only in a block that has such a record - older blocks end at the I/O bits and read as RAM pages
-    if (anyHigh)
+    if (anyHigh || anyFlip)
         raw.insert(raw.end(), high.begin(), high.end());
+    // The 8K-half bit (Memory::TtdKeyOf, the Next's MMU, 2026-11-03): after the page-high column (written as zeros
+    // when the block has none), only in a block that has such a record
+    if (anyFlip)
+        raw.insert(raw.end(), flip.begin(), flip.end());
     return raw;
 }
 
@@ -331,6 +348,8 @@ bool DecodeWriteBlock(const std::vector<uint8_t>& raw, uint32_t count,
         return false;
     const size_t highStart = ioStart + ioBytes;
     const bool hasHigh = highStart + ioBytes <= raw.size();
+    const size_t flipStart = highStart + ioBytes;
+    const bool hasFlip = flipStart + ioBytes <= raw.size();
 
     out.resize(count);
     size_t gtPos = gtStart;
@@ -350,6 +369,7 @@ bool DecodeWriteBlock(const std::vector<uint8_t>& raw, uint32_t count,
         r.isIo = (raw[ioStart + (i >> 3)] >> (i & 7)) & 1u;
         r.pad = 0;
         r.pageHigh = hasHigh ? (raw[highStart + (i >> 3)] >> (i & 7)) & 1u : 0u;
+        r.flip = hasFlip ? (raw[flipStart + (i >> 3)] >> (i & 7)) & 1u : 0u;
         r.m1pc = static_cast<uint16_t>(raw[m1pcStart + i * 2] |
                                        (raw[m1pcStart + i * 2 + 1] << 8));
         r.value = raw[valueStart + i];

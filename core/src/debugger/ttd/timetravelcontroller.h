@@ -1145,6 +1145,10 @@ private:
     /// inside a 16 KB page. A range spanning a page boundary, or wider than a
     /// page, could match any offset, so it is left unpruned rather than
     /// approximated.
+    /// May frame `frame` hold an access q matches (CanPruneByCoverage first): the coverage keys name the byte's true
+    /// offset in its page (Memory::TtdKeyOf), so on 8K slots a query with no known half asks both halves
+    bool CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDSearchQuery& q) const;
+
     inline bool CanPruneByCoverage(const TTDSearchQuery& q) const
     {
         if (!_enableCoverageIndex)
@@ -1164,7 +1168,7 @@ private:
 public:
 
     void RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
-                           uint16_t m1pc, PhysPage physPage) override;
+                           uint16_t m1pc, PhysPage physPage, uint8_t flip = 0) override;
     
     /// @brief Hot-path capture: record a port OUT (used for IO probe).
     ///

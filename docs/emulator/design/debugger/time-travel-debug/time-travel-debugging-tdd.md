@@ -1229,7 +1229,8 @@ struct TTDWriteRecord            // 12 bytes
     uint64_t addr    : 16;       // Z80 address
     uint64_t isIo    : 1;        // Port OUT vs memory write
     uint64_t pageHigh: 1;        // Bit 8 of the page: another memory space (2026-10-08)
-    uint64_t pad     : 6;
+    uint64_t flip    : 1;        // Byte at (addr & 0x3FFF) ^ 0x2000 of the page: Next 8K halves (2026-11-03)
+    uint64_t pad     : 5;
     uint16_t m1pc;               // PC of the writing instruction
     uint8_t  value;
     uint8_t  physPage;           // Physical page (disambiguates banked writes)
@@ -1259,6 +1260,8 @@ Two findings decide the representation:
 Keys must be `(physical page, offset)` rather than Z80 addresses, or banking produces false hits — the same reason the search predicate needs a `physPage` filter (9.4).
 
 **Memory spaces (2026-10-08).** Some memories are not RAM pages: the Sprinter's 256 KB video RAM (written and read through a graphics window, at `PORT_Y * 1024 + (addr & 0x3FF)`) and its 64 KB fast RAM. The journal, the probe and the coverage index name their bytes by a *virtual page* above every RAM page (`ttdphyspage.h`: video RAM 0x110-0x11F, fast RAM 0x120-0x12F) and the offset within that 16 KB page in the address field. A record stores bit 8 of the page in `pageHigh`; a write block adds a page-high column only when it holds such a record, so older blocks decode unchanged. `kPhysPageNone` stays 0xFF in a record. The accelerator's stores are recorded with the PC of the instruction that started them.
+
+**8K halves (2026-11-03).** The Next's MMU maps 8 KB pages into 8 KB slots, so an odd 8K page can sit in an even slot (or the reverse) and a byte's offset in its 16 KB page is not `addr & 0x3FFF`. `Memory::TtdKeyOf(addr, flip)` returns the page and a flip bit (0 on every 16K-window machine); the true offset is `(addr & 0x3FFF) ^ (flip << 13)` (`RecordOffset`). Records, probe hits and cause-chain names carry the bit, coverage keys use the true offset, and a query with an unknown half (`TTDSearchQuery::flip = -1`) checks both. A write block adds a flip column after the page-high column only when it holds such a record, so older blocks decode with flip 0. A restore ends with `Memory::RestorePaging()`: the base derives the banks from the port latches (`UpdateZ80Banks`), the Next re-maps its slots from the restored MMU (deriving it from #7FFD put the wrong pages into slots 0, 1, 6 and 7 after every seek).
 
 > **Container.** The coverage index, the write journal and the timeline are
 > separate streams with different natural chunk sizes, and the current file

@@ -100,3 +100,13 @@ It found two defects on the Next, both fixed:
   the Next, not only explain). Now 8 units: a frame is 567264 (`TimeTravelController_TurboClock_Test.NextCountsItsTopClock`).
 - The traces named a byte by its 16K window (`TtdPageOfBank`, address & `#3FFF`); the Next's 8K slots can show either
   half of a page. `Memory::TtdLocate` answers per slot (T12).
+
+Follow-up (branch `ttd-next-pages`), the rest of TTD on the Next:
+- The write journal, the coverage index, the access probe, the cause chain and find-event keyed a byte by page and
+  address & `#3FFF` too. A record now carries a flip bit (`Memory::TtdKeyOf`, `RecordOffset`), a write block adds a
+  flip column only when it holds such a record (`TTDWriteJournal_Compression_Test.EightKHalves...`), a query with an
+  unknown half checks both (`CoverageMayContain`). Cause chain S12: `#C005` written through 8K page `#0F`, then
+  through `#0E`, asks for the byte mapped now and gets the first store, not the later one to the other half.
+- Every seek on the Next re-derived slots 0, 1, 6 and 7 from `#7FFD` after the image had restored the MMU
+  (`UpdateZ80Banks` after the device restore): a program paging through NR `#50`-`#57` saw other pages after a seek.
+  The restore now ends with `Memory::RestorePaging()` (the Next: `Remap()`), checked by S12's seek to the end.
