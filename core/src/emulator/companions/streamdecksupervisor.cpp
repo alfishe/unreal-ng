@@ -23,6 +23,7 @@ public:
     explicit ChildProcess(std::unique_ptr<childprocess::Child> child) : _child(std::move(child)) {}
     int Pid() const override { return _child->Pid(); }
     bool Exited(int& code, bool& crashed) override { return _child->Exited(code, crashed); }
+    bool Ready() override { return _child->Ready(); }
     void Terminate() override { _child->Terminate(); }
     void Kill() override { _child->Kill(); }
 
@@ -39,6 +40,7 @@ public:
         s.path = spec.path;
         s.args = spec.args;
         s.logFile = spec.logFile;
+        s.readyFlag = spec.readyFlag;
         auto child = childprocess::Child::Start(s, error);
         if (!child)
             return nullptr;
@@ -536,6 +538,7 @@ void Supervisor::Launch(int64_t now)
     }
     spec.args = LaunchArgsLocked();
     spec.logFile = _host.logFile;
+    spec.readyFlag = "--ready-fd";
     std::string error;
     auto launcher = _launcher;
     auto child = launcher->Start(spec, error);
@@ -553,7 +556,8 @@ void Supervisor::Launch(int64_t now)
     _released = false;
     _state = State::Starting;
     _startedAt = now;
-    _nextHealth = now + 200;  // the first look soon: it listens within a few ms
+    _nextHealth = now + 200;  // the first look soon: it listens within a few ms (sooner when it says so: --ready-fd)
+    _readySeen = false;
     _healthFails = 0;
     _error.clear();
 }
@@ -732,7 +736,12 @@ void Supervisor::Step(int64_t now)
         }
     }
 
-    // health
+    // health: ours starting looks at once when it says it serves (--ready-fd; a daemon without it waits for the tick)
+    if (_state == State::Starting && _child && !_readySeen && _child->Ready())
+    {
+        _readySeen = true;
+        _nextHealth = now;
+    }
     const bool watched = (_child && !_released) || _state == State::Adopted || _state == State::Foreign;
     if (watched && now >= _nextHealth)
     {

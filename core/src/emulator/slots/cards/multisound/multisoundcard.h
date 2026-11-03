@@ -48,6 +48,8 @@
 #include "emulator/slots/cards/multisound/multisoundlogic.h"
 #include "emulator/slots/cards/multisound/multisoundmixer.h"
 #include "emulator/sound/chips/gs/gsbusobserver.h"
+#include "emulator/sound/chips/ayhistory.h"
+#include "emulator/sound/chips/chipwritehistory.h"
 #include "emulator/sound/chips/gs/gsprofile.h"
 #include "emulator/sound/chips/saa1099/saa1099.h"
 #include "emulator/sound/midi/midiline.h"
@@ -262,6 +264,8 @@ public:
     SoundChip_GeneralSound& Gs() { return *_gs; }
     const SoundChip_GeneralSound& Gs() const { return *_gs; }
     MultiSoundDacs& Dacs() { return _dacs; }
+    /// The SAA and SounDrive writes go to `chips` (the slot card's; null: none); the YM's to the machine's AY history
+    void SetChipHistory(ChipWriteHistory* chips) { _chipHistory = chips; }
     const MultiSoundDacs& Dacs() const { return _dacs; }
     MidiLine& MidiIn() { return _midiLine; }
     const MidiLine& MidiIn() const { return _midiLine; }
@@ -322,6 +326,9 @@ private:
     };
 
     EmulatorContext* _context = nullptr;  // the chip register breakpoints (ReportChipRegisterWrite)
+    ChipWriteHistory* _chipHistory = nullptr;
+    /// The machine's AY history (SoundManager): the YM takes the AY ports
+    AYHistory* AyHistory() const;
     MultiSoundCardConfig _config;
 
     MultiSoundLogic _logic;

@@ -17,6 +17,7 @@
 #include <emulator/cpu/core.h>
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include <emulator/sound/midi/midicontrol.h>
+#include <emulator/state/devicecatalog.h>
 #include <emulator/state/devicestate.h>
 #include <debugger/ports/nextregwrite.h>
 #include <emulator/io/z80n/nextregjournal.h>
@@ -285,6 +286,31 @@ void EmulatorAPI::getStateFdcActive(const HttpRequestPtr& req,
                              count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
     }
     getStateFdc(req, std::move(callback), emulator->GetId());
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/devices[?all=1] - the state reports this machine has (DeviceState::Catalog)
+void EmulatorAPI::getStateDevices(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    // ?all=1: the absent reports too, each with why
+    const bool all = req->getParameter("all") == "1" || req->getParameter("all") == "true";
+    ReplyState(DeviceState::Catalog(emulator->GetContext(), all), callback);
+}
+
+void EmulatorAPI::getStateDevicesActive(const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    auto emulator = getEmulatorWithGlobalSelection();
+    if (!emulator)
+    {
+        const size_t count = EmulatorManager::GetInstance()->GetEmulatorIds().size();
+        return ReplyNotFound(MultipleEmulatorsMessage(count, "/api/v1/emulator/{id}/state/devices"), callback,
+                             count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    getStateDevices(req, std::move(callback), emulator->GetId());
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/contention

@@ -9,6 +9,7 @@
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/sprinter/isa/sprinterisabus.h"
 #include "emulator/io/z84c15/z84c15engine.h"
+#include "emulator/sound/chips/chipwritehistory.h"
 #include "emulator/machineeventjournal.h"
 #include "emulator/memory/sprinter/sprinteraccelerator.h"
 #include "emulator/memory/sprinter/sprinterwaits.h"
@@ -410,6 +411,10 @@ private:
 
     /// The Covox / Covox-Blaster (codes #88 / #89, page #FD), its INT through _intSource
     CovoxBlaster _cbl{_context};
+    /// The Covox Blaster's data and control writes (chipwritehistory.h)
+    ChipWriteHistory _cblHistory{ ChipHistoryRegistry(_context),
+                                  [this]() { return ChipHistoryDevice(_context, 0x004E, "covox-blaster"); },
+                                  "Covox Blaster writes", kChipWriteRing };
     /// The ISA-8 slots and the #9FBD latch; the population comes from [ISA] at creation
     SprinterIsaBus _isaBus;
     int _zxBusSlot = -1;           ///< the slot of the ZX-bus adapter with the GS (-1: none)

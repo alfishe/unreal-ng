@@ -390,6 +390,7 @@ private:
     void HandleMedia(const ClientSession& session, const std::vector<std::string>& args);
     // ZX-bus slots: buses, slots, cards; plug / remove / set applied by a restart (cli-processor-slots.cpp, SlotControl)
     void HandleSlots(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleHistory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleControllers(const ClientSession& session, const std::vector<std::string>& args);
     /// action [list | run <id> [value] [param=val ..]]: the core ActionRegistry (cli-processor-action.cpp)
     void HandleAction(const ClientSession& session, const std::vector<std::string>& args);
@@ -489,6 +490,12 @@ private:
                               const std::vector<std::string>& args);
     void HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,
                                    const std::vector<std::string>& args);
+    void HandleTTDProbeFrames(const ClientSession& session, EmulatorContext* context,
+                              const std::vector<std::string>& args);
+    void HandleTTDTimeline(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDCauseChain(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDFindEvent(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDExplainFrame(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDCoverage(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
     void HandleTTDMemoryAt(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);

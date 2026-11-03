@@ -182,6 +182,8 @@ struct Harness
             f.value(e.channel);
             f.value(static_cast<uint8_t>(e.side));
             f.value(e.flags);
+            if (e.side == GSTraceSide::Idle)
+                f.value(e.iterations);
         }
         f.value(chip->getPortTraceTotalProduced());
         return f.h;
@@ -215,6 +217,8 @@ struct Digests
 // timeline, so the card's instruction overshoot is paid back by the next frame
 // instead of added to it. The card's time (event trace, DAC positions, TTD
 // state) moved by that overshoot; the firmware's behavior did not change.
+// Trace re-recorded 2026-11-01: the idle poll loop sleeps with the trace on, each sleep one `idle` event in place of
+// its FLAGS reads (audio, state and counters unchanged).
 // When the pinned values need re-recording (a deliberate behaviour change),
 // run with GS_GOLDEN_PRINT=1 and paste the printed values
 void check(const char* name, const Digests& got, const Digests& want)
@@ -262,7 +266,7 @@ TEST(SoundChip_GeneralSound_Golden, BootUploadPlayResetNmi)
 
     EXPECT_GT(h.nonSilentSamples, 10000u) << "the scenario must actually play";
     check("BootUploadPlayResetNmi", {h.audio.h, h.traceDigest(), h.stateDigest(), h.countersDigest()},
-          {0xa7dc0245f27e0bb3ull, 0x35d0e96ed5a5a3afull, 0x9044413a7c0b0b9eull, 0x8bc1d5adc309962full});
+          {0xa7dc0245f27e0bb3ull, 0xad2261f5e58f1f24ull, 0x9044413a7c0b0b9eull, 0x8bc1d5adc309962full});
 }
 
 TEST(SoundChip_GeneralSound_Golden, ModuleReplayOntoFreshCard)
@@ -276,5 +280,5 @@ TEST(SoundChip_GeneralSound_Golden, ModuleReplayOntoFreshCard)
 
     EXPECT_GT(h.nonSilentSamples, 1000u) << "the replayed module must play";
     check("ModuleReplayOntoFreshCard", {h.audio.h, h.traceDigest(), h.stateDigest(), h.countersDigest()},
-          {0xa3f89720af874f35ull, 0x0d4ba9ae77680ce7ull, 0x6d1cb0799e73d1fdull, 0x18326fcab465ea49ull});
+          {0xa3f89720af874f35ull, 0x6916fe244b57d0e3ull, 0x6d1cb0799e73d1fdull, 0x18326fcab465ea49ull});
 }

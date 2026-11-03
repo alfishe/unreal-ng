@@ -6,7 +6,7 @@
 | **Status** | Review complete. Four gaps found (**S7-1 … S7-4** below), each with a proposed fix; none implemented yet. Three spec subsystems documented as absent (§4). |
 | **Machine** | `MM_ATM710`, short name `ATM710` (ATM Turbo 2+ v7.10) — the sibling of this folder's `ATM3` work; the two share `PortDecoder_ATM710` (ATM3 derives from it) |
 | **Baseline** | `master` @ `e02d8f4d` |
-| **Spec** | `atm2_arch.pdf` — «Персональный компьютер Turbo 2+. Внутренняя архитектура и внешние устройства», 2nd corrected edition, Moscow 2005, 60 pp. (local copy: `emulators/github/zx-evo/pentevo/docs/ATM/atm2_arch.pdf`) |
+| **Spec** | `atm2_arch.pdf` — «Персональный компьютер Turbo 2+. Внутренняя архитектура и внешние устройства» ("Personal computer Turbo 2+: internal architecture and external devices"), 2nd corrected edition, Moscow 2005, 60 pp. (local copy: `emulators/github/zx-evo/pentevo/docs/ATM/atm2_arch.pdf`) |
 | **Cross-evidence** | Unreal Speccy 0.37.9 (`memory.cpp` `set_banks()`, `io.cpp`, `dxr_atm0/2/6.cpp`), Xpeccy (`src/libxpeccy/hardware/atm2.c`, `atm2PortMap` / `atm2OutFF` / `atm2InFF`) — consulted at the exact disputed points only |
 
 ## 0. Summary / verdict
@@ -32,7 +32,7 @@ but are deliberately not emulated (§4: i8031 keyboard/RS-232/RTC, ADC, external
 ## 1. How the verdicts were reached
 
 - **The book wins.** `atm2_arch.pdf` is the vendor architecture description for
-  exactly this board (v7.10 — the D4/D5 bit notes say "для 7.10").
+  exactly this board (v7.10 — the D4/D5 bit notes say "for 7.10").
 - Where the book is self-contradictory or describes unbuilt generalizations (the
   6-bit palette DAC inputs, the "technological" video modes, the 64-page ROM),
   the **reference emulators** decide, same policy as [gap-analysis.md](gap-analysis.md) §2.
@@ -44,7 +44,7 @@ but are deliberately not emulated (§4: i8031 keyboard/RS-232/RTC, ADC, external
 
 | Spec § | Requirement | Implementation (verified) |
 |---|---|---|
-| I-3.1 | System port `#FF77`: D0-D2 = RG0-2 video modes, D3 turbo, D5 Z_I int gate; address A8 = PEN, A9 = CPM, A14 = PEN2; recommended `#4177`/`#0177`/`#FF77` values | `Port_FF77_Out` (`core/src/emulator/ports/models/portdecoder_atm710.cpp:569`); modes 3/2/0/6 → ZX/HWMC/EGA/Text, others ("технологические") → `M_NUL` (`core/src/emulator/video/screen.cpp:357`); PEN/CPM/PEN2 latched in `aFF77` and consumed by mapping / shadow gate / palette gate |
+| I-3.1 | System port `#FF77`: D0-D2 = RG0-2 video modes, D3 turbo, D5 Z_I int gate; address A8 = PEN, A9 = CPM, A14 = PEN2; recommended `#4177`/`#0177`/`#FF77` values | `Port_FF77_Out` (`core/src/emulator/ports/models/portdecoder_atm710.cpp:569`); modes 3/2/0/6 → ZX/HWMC/EGA/Text, others ("technological") → `M_NUL` (`core/src/emulator/video/screen.cpp:357`); PEN/CPM/PEN2 latched in `aFF77` and consumed by mapping / shadow gate / palette gate |
 | I-3 | Two ways to open shadow ports: DOSEN (TR-DOS session via `#3Dxx`, ROM2) or clearing A9 (CPM signal = permanent DOSEN) | `IsDosPortsEnabled()` = `CF_DOSPORTS \|\| ~CPM` (`portdecoder_atm710.cpp:453`), gating `xx77`/`xFF7`/Beta128/IDE on read and write |
 | I-4 / 4.1 | 16 KiB pages, 64 RAM pages, 4 windows, dispatcher `#xxF7`: inverted D0-D5 page, D6 RAM/ROM, D7 mux with `#7FFD` (RAM: D0-D2 ← non-inverted 7FFD bits; ROM: D0 ← DOSEN), window by A14-A15, two register sets by 7FFD.4 | `Port_FFF7_Out` + `updateMemoryBanks` (`portdecoder_atm710.cpp:625`, `:723`), types `0x000/0x100/0x200/0x300`; covered by tests `FFF7_RegisterEncoding_*`, `FFF7_MemoryBanks_*` |
 | I-3.1 (A8) | PEN = 0: dispatcher off, every quarter shows the last ROM page (CP/M BIOS; the four system pages are always the four **highest**) — the power-on state | `portdecoder_atm710.cpp:750` (all four windows → `romMask`); identical to Unreal Speccy `set_banks()` `pen=0` branch |

@@ -67,7 +67,7 @@ web sources by URL. The full list is in section 7.
 | Quantity | Set by | What it affects |
 |---|---|---|
 | **Controller clock (CLK)** | The board's clock divider feeding VG93 pin 24 (1 MHz for 5.25"/3.5" "mini" drives, 2 MHz for 8" drives per the datasheet) | Step pulse spacing, head settle delay, write-data bit timing, write-precompensation timing, the RCLK period the chip *expects* |
-| **Read data rate (separator)** | The external data separator ("ФАПЧ" / digital PLL) that turns disk pulses into RAW READ + RCLK | Which bit rate the controller can decode when reading |
+| **Read data rate (separator)** | The external data separator ("ФАПЧ", phase-locked loop / digital PLL) that turns disk pulses into RAW READ + RCLK | Which bit rate the controller can decode when reading |
 | **Recorded bit rate on the disk** | Whoever wrote the track (the controller's write clock at the time) and what the medium can hold (DD vs HD coating) | What the separator must match |
 | **Rotation speed (rpm)** | The drive (3.5" DD/HD: 300 rpm; 5.25" HD: 360 rpm) | Bytes per track, index pulse period, the time limits counted in revolutions |
 
@@ -203,14 +203,14 @@ disk-killing failure of the first Pentagon turbo mod [Spectrofon #10 via TSLabs]
 | Machine | How turbo VG is switched | What is doubled | Used for | Software involvement | Sources |
 |---|---|---|---|---|---|
 | **Pentagon 128 (stock) / Beta 128** | none | nothing; CLK = 8 MHz / 8 = 1 MHz | - | - | MAME `beta_m.cpp:317`; KoE Pentagon 1024SL v2.2 CPLD `emulators/svn/KoE_projects/pentagon_2.2/CPLD/p1024sl2.tdf:47-59` (fixed 1 MHz CLK, RCLK = 250 kHz) |
-| **Pentagon + "turbo VG" mods** (Spectrofon #10/#12/#14, 1995; Black Crow #02, 1998) | Hardware multiplexer (КП11) choosing 1 MHz or 2 MHz onto pin 24. Controlled by a flip-flop driven by VG93 pins: WG/WSTB pin 30, WF/VFOE pin 33, later DRQ | CLK only; the separator is unchanged | Stepping and settle, plus reading at 2 MHz CLK. Drops to 1 MHz **before writing** | None ("Формат чтения и записи при этом остаётся прежним" — "the read and write format stays the same") | Spectrofon #12 (Larkov) zxpress.ru/article.php?id=4543; Black Crow #02 zxpress.ru/article.php?id=18101; TSLabs forum t=644 |
+| **Pentagon + "turbo VG" mods** (Spectrofon #10/#12/#14, 1995; Black Crow #02, 1998) | Hardware multiplexer (КП11 / KP11) choosing 1 MHz or 2 MHz onto pin 24. Controlled by a flip-flop driven by VG93 pins: WG/WSTB pin 30, WF/VFOE pin 33, later DRQ | CLK only; the separator is unchanged | Stepping and settle, plus reading at 2 MHz CLK. Drops to 1 MHz **before writing** | None ("Формат чтения и записи при этом остаётся прежним" — "the read and write format stays the same") | Spectrofon #12 (Larkov) zxpress.ru/article.php?id=4543; Black Crow #02 zxpress.ru/article.php?id=18101; TSLabs forum t=644 |
 | **Pentagon 1024SL 1.4** | Inherited the raw Spectrofon #10 scheme (switched by the write strobe) | CLK | Stepping, but **writes corrupted disks** | none | TSLabs forum t=644 |
-| **Pentagon + AXLR HD mod** (Deja Vu #07/#09, 1999) | Port #FF bit 7 (0 = normal, 1 = HD). Coexists with a turbo-VG mod ("При позиционировании на доработку TURBO-ВГ всегда идет 2МГц" — "with the TURBO-VG mod, 2 MHz is always used during positioning") | CLK **and** separator (adds a 16 MHz oscillator for the 556РТ4 PLL) | Real HD data, 1.44 MB (18×512) / 1.6 MB (10×1024) | Needs CPU turbo 7 MHz; old software keeps bit 7 = 0 | zxdn.narod.ru/hardware/dv07vghd.htm, dv09fdhd.htm |
+| **Pentagon + AXLR HD mod** (Deja Vu #07/#09, 1999) | Port #FF bit 7 (0 = normal, 1 = HD). Coexists with a turbo-VG mod ("При позиционировании на доработку TURBO-ВГ всегда идет 2МГц" — "with the TURBO-VG mod, 2 MHz is always used during positioning") | CLK **and** separator (adds a 16 MHz oscillator for the 556РТ4 (556RT4) PLL) | Real HD data, 1.44 MB (18×512) / 1.6 MB (10×1024) | Needs CPU turbo 7 MHz; old software keeps bit 7 = 0 | zxdn.narod.ru/hardware/dv07vghd.htm, dv09fdhd.htm |
 | **ZX-Evo BaseConf / TSConf** (real VG93, CLK/RCLK/RAWR from the FPGA) | Automatic: STEP rising edge sets `turbo_state`, first DRQ rising edge clears it. No port bit | CLK only (28 MHz/7/4 = 1 MHz, or /2 = 2 MHz). RCLK stays fixed at 250 kHz (56-count loop at 28 MHz) | Stepping and Type I verify/settle | none | `emulators/github/zxevo.pentevo/fpga/baseconf/trunk/vg93/vg93.v:118-167`, `fapch_zek.v`, `fapch_counter.v:48`; TSConf `emulators/github/zx-evo-tsconf/pentevo/fpga/current/vg93/vg93.v:78-84`; schematic note "STEP goes to FPGA (for turbo-VG)" (`emulators/github/zx-evo-docs/revC/zxevo_sch_revc.pdf`) |
 | **Karabas-Pro** (MB8877A) | Same automatic STEP/DRQ scheme in the CPLD. It can be **disabled** by software (port #028B bit 2 "TURBOFDC_OFF") or from the OSD (Menu+F5) | CLK only (8 MHz/4 = 2 MHz vs /8 = 1 MHz). RCLK stays 250 kHz | Stepping | on/off only | `emulators/github/karabas-pro/firmware/src/cpld/rtl/fdd_controller.vhd:65-92` (clock), `:94-130` (fixed RCLK); `firmware/src/fpga/profi/rtl/karabas_pro.vhd:987,1361`; dev manual (port #028B) |
 | **Sprinter Sp2000, 720 KB mode** | PLD: `TURBING` is set by STE (step) and held until WSTB/RSTB (FDC strobes, write and read) | CLK only while positioning. The separator runs from 7 MHz (250 kbit/s) | Stepping | none | `emulators/gitlab/sprinter-computer-hard/MAX/SP2_MAX.TDF:272-306` |
 | **Sprinter Sp2000, 1.44 MB mode** | `OUT (#BD),A` with A=#21. A lands on A13, so port #21BD vs #01BD, which presets or clears latch `10K_D0` = `FDD_1440` | CLK **permanently** 2 MHz (`TURBING` forced) **and** separator from 14 MHz (500 kbit/s) | Real HD data | BIOS density auto-probe; the 21 MHz CPU has 336 T per byte | `SP2_MAX.TDF:272, 285, 396-402`; doc.sprinter.ru/blocks/fdd.html:74-82; BIOS `emulators/zxgit/Sprinter-BIOS/bios/exp/EXTENDED/FDD_DRIVER.asm:597-653`; older `emulators/gitlab/sprinter-computer-bios/SETUP/FDRIVER2.ASM:155-195, 719-742` |
-| **Sprinter 97** | Same HD select, but through the Z84C15 SIO channel B, WR5 = #60 (HD) / #E0 (DD) | as Sp2000 | HD | BIOS | `FDRIVER2.ASM:719-731`; "14 МГц процессор + 2 МГц на ВГ93" (zx-news.narod.ru Sprinter-97 article, search snippet only) |
+| **Sprinter 97** | Same HD select, but through the Z84C15 SIO channel B, WR5 = #60 (HD) / #E0 (DD) | as Sp2000 | HD | BIOS | `FDRIVER2.ASM:719-731`; "14 МГц процессор + 2 МГц на ВГ93" ("14 MHz CPU + 2 MHz on the VG93", zx-news.narod.ru Sprinter-97 article, search snippet only) |
 | **Scorpion ZS256 (Turbo+)** | none found; "ВГ93 has its own 1 MHz clock" | - | - | - | `emulators/github/Scorpion256TPlus/doc/files/Scorpion_Turbo_Mode.md:148`, `Scorpion_FDC_Digital_PLL.md:243` |
 | **ATM Turbo 2+** | none found; 1 MHz from D90 pin 12 (the 8 MHz crystal chain) | - | - | CPU-turbo WAIT note only | `emulators/svn/atmturbo/doc/ver_7_10/TURBO 2+ Assembly and Configuration Manual.doc` |
 | **KAY-1024, Profi** | no evidence found in the corpus or on the web | ? | ? | ? | - |
@@ -408,7 +408,7 @@ Side note (out of scope, one line):
    value, confirmed against TTD fixture timing.
 4. **KAY-1024 and Profi:** no evidence either way on turbo VG.
 5. **MiSTer `wd1793.sv`, ZX-Next and u16:** not in the corpus, so not checked.
-6. **zx-pk.ru threads on "Турбирование ВГ93"** (t-9255 and others) now return 404; only
+6. **zx-pk.ru threads on "Турбирование ВГ93"** ("turbo-clocking the VG93", t-9255 and others) now return 404; only
    search-snippet text was available. One snippet reports "2 MHz for reading, 1 MHz for
    writing", which is consistent with the Black Crow scheme.
 7. **unreal-ng FDC time under CPU turbo.** `_time` comes from `emulatorState.t_states`
@@ -472,14 +472,14 @@ matches, except that its Table 1 columns are shifted.
 - `emulators/github/Scorpion256TPlus/doc/files/Scorpion_Turbo_Mode.md`, `Scorpion_FDC_Digital_PLL.md`
 
 **Web:**
-- AXLR, "HD на Пентагоне", Deja Vu #07 (1999): https://zxdn.narod.ru/hardware/dv07vghd.htm ; follow-up Deja Vu #09: https://zxdn.narod.ru/hardware/dv09fdhd.htm
+- AXLR, "HD на Пентагоне" ("HD on the Pentagon"), Deja Vu #07 (1999): https://zxdn.narod.ru/hardware/dv07vghd.htm ; follow-up Deja Vu #09: https://zxdn.narod.ru/hardware/dv09fdhd.htm
 - V. Larkov, turbo-VG93 scheme, Spectrofon #12: https://zxpress.ru/article.php?id=4543
 - Black Crow #02 (1998), turbo VG93 via WSTB (pin 30): http://zxpress.ru/article.php?id=18101
 - TSLabs forum, Pentagon 1024SL and the Spectrofon #10/#12/#14 turbo schemes: https://forum.tslabs.info/viewtopic.php?t=644
 - FD1791 datasheet text: https://archive.org/stream/WesternDigitalFD1791Datasheet/Western%20Digital%20FD1791%20datasheet_djvu.txt
 - Ivan Mak, Sprinter Sp2000 programming guide (2003), §10.1: http://winglion.ru/sprinter/sp2000.pdf
 - Sinclair Club FAQ, Sprinter: https://zxpress.ru/en/ezines/sinclair-club/05/sprinter-is-a-universal-z80-based-computer-with-pld-architecture-this-faq-covers-specifications
-- zx-pk.ru "Исходник турбо-диск-драйвера ВГ93" (software-only, not a clock mod): https://zx-pk.ru/threads/18727-iskhodnik-turbo-disk-drajvera-vg93.html
+- zx-pk.ru "Исходник турбо-диск-драйвера ВГ93" ("source of a VG93 turbo disk driver", software-only, not a clock mod): https://zx-pk.ru/threads/18727-iskhodnik-turbo-disk-drajvera-vg93.html
 
 ---
 

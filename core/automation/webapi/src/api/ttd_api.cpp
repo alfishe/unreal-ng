@@ -501,6 +501,52 @@ void EmulatorAPI::reverseStepTTD(const HttpRequestPtr& req,
         RespondTTD(id, "reverse-step", std::move(options), callback);
 }
 
+/// @brief POST /api/v1/emulator/{id}/ttd/probe-frames
+///
+/// Body: { "probes": [{ "probe": "exec"|"read"|"write"|"port-in"|"port-out", "address", "end"?, "page"?,
+///         "port_mask"?, "if"? }, ...] } (at most 16, a game profile's probe shape), or one probe's fields at the top
+///         level; "from_frame"?, "to_frame"?, "limit"? (frames listed per probe, default 1000).
+///
+/// Response: { "from_frame", "to_frame", "replayed_frames", "pruned_frames", "barrier_frames": [...],
+///             "blocked_by_marker"?, "probes": [{ ..., "error"?, "frame_count", "hit_count", "frames": [...],
+///             "hits": [...], "truncated" }], "truncated", "next_from_frame"? }. The machine stays where it stood.
+void EmulatorAPI::probeFramesTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    // probes: a JSON array of probe objects; the verb takes it as JSON text. The other members are scalars
+    std::map<std::string, std::string> options;
+    auto json = req->getJsonObject();
+    if (json && json->isObject())
+    {
+        for (const std::string& name : json->getMemberNames())
+        {
+            const Json::Value& v = (*json)[name];
+            if (v.isNull())
+                continue;
+            if (name == "probes" && v.isArray())
+            {
+                Json::StreamWriterBuilder writer;
+                writer["indentation"] = "";
+                options[name] = Json::writeString(writer, v);
+                continue;
+            }
+            if (v.isObject() || v.isArray())
+            {
+                Json::Value error;
+                error["error"]   = "Bad Request";
+                error["message"] = "'" + name + "' must be a number, a string or true / false (probes: an array)";
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+            options[name] = v.isBool() ? (v.asBool() ? "true" : "false") : v.asString();
+        }
+    }
+    RespondTTD(id, "probe-frames", std::move(options), callback);
+}
+
 /// @brief POST /api/v1/emulator/{id}/ttd/reverse-continue
 ///
 /// Body: { "pcs": [int, ...], "phys_page"?, "all"?, "limit"?, "before_frame"?, "before_tin"?, "before"?,
@@ -577,6 +623,30 @@ void EmulatorAPI::getTTDCoverageSummary(const HttpRequestPtr& req,
                                         const std::string& id) const
 {
     RespondTTD(id, "coverage-summary", OptionsFromQuery(req, "coverage-summary"), callback);
+}
+
+void EmulatorAPI::getTTDTimeline(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    RespondTTD(id, "timeline", OptionsFromQuery(req, "timeline"), callback);
+}
+
+void EmulatorAPI::getTTDCauseChain(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    RespondTTD(id, "cause-chain", OptionsFromQuery(req, "cause-chain"), callback);
+}
+
+void EmulatorAPI::getTTDFindEvent(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    RespondTTD(id, "find-event", OptionsFromQuery(req, "find-event"), callback);
+}
+
+void EmulatorAPI::getTTDExplainFrame(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    RespondTTD(id, "explain-frame", OptionsFromQuery(req, "explain-frame"), callback);
 }
 
 }  // namespace v1

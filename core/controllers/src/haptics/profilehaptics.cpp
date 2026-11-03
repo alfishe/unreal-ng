@@ -43,18 +43,22 @@ RumbleLevels Scaled(const RumbleLevels& levels, float scale)
     out.high = clamp(levels.high);
     out.leftTrigger = clamp(levels.leftTrigger);
     out.rightTrigger = clamp(levels.rightTrigger);
+    out.hdLeft = clamp(levels.hdLeft);
+    out.hdRight = clamp(levels.hdRight);
     return out;
 }
 }  // namespace
 
 ProfileHaptics::ProfileHaptics(HapticProfile profile, std::string name, HapticMixer& mixer,
                                std::function<std::vector<HostDeviceId>()> targets,
-                               std::function<uint8_t(const HostDeviceId&)> actuators)
+                               std::function<uint8_t(const HostDeviceId&)> actuators,
+                               std::function<int(const HostDeviceId&)> playerOf)
     : _profile(std::move(profile)),
       _name(std::move(name)),
       _mixer(mixer),
       _targets(std::move(targets)),
-      _actuators(std::move(actuators))
+      _actuators(std::move(actuators)),
+      _playerOf(std::move(playerOf))
 {
     _states.resize(_profile.sources.size());
     for (size_t index = 0; index < _profile.sources.size(); index++)
@@ -292,6 +296,10 @@ void ProfileHaptics::OnHapticFrame(const HapticFrame& frame)
             effect.levels.lowHz = rule.lowHz;
         if (rule.highHz != 0)
             effect.levels.highHz = rule.highHz;
+        if (rule.hdFrequency > 0)
+            effect.levels.hdFrequency = rule.hdFrequency;
+        if (rule.hdWave)
+            effect.levels.hdWave = *rule.hdWave;
         if (!source.IsEvent())
         {
             // A level holds the effect at its peak while it lasts: the envelope would restart every frame
@@ -305,8 +313,11 @@ void ProfileHaptics::OnHapticFrame(const HapticFrame& frame)
     for (const HostDeviceId& device : _targets())
     {
         const uint8_t actuators = _actuators ? _actuators(device) : static_cast<uint8_t>(kTargetAll);
+        const int player = _playerOf ? _playerOf(device) : 0;
         for (const auto& [rule, effect] : effects)
         {
+            if (rule->player != 0 && rule->player != player)
+                continue;
             HapticEffect played = effect;
             played.levels = RetargetLevels(effect.levels, rule->TargetFor(actuators));
             _mixer.Play(device, played);

@@ -68,6 +68,12 @@ namespace
             report.warnings.push_back("Scorpion ZS-256 snapshot loaded on a Scorpion with ProfROM (the configured ROM stays)");
             return ramKb >= machine.ramKb;
         }
+        if (machine.model == MM_SCORP && running == MM_GMX)
+        {
+            report.warnings.push_back("Scorpion ZS-256 snapshot loaded on a Scorpion with the GMX card (its Scorpion "
+                                      "scheme, ROM plane 4)");
+            return true;
+        }
         if (running != machine.model)
             return false;
         if (machine.model == MM_PENTAGON && ramKb != machine.ramKb)
@@ -480,6 +486,10 @@ void LoaderSZX::ApplyPaging(EmulatorContext* context, const snapshot::Image& ima
     // The TR-DOS session comes from the snapshot, not from what the machine
     // was doing before the load (the SNA loader's rule)
     state.flags &= ~CF_TRDOS;
+    // The GMX card's latches are not in the SZX: the machine leaves its loader plane for the Scorpion scheme first.
+    // Other models restore their own extensions from the snapshot's blocks (the Pentagon 1024's #EFF7 included)
+    if (context->config.mem_model == MM_GMX)
+        ports.EnterSpectrum128Paging(pc);
     memory.UpdateZ80Banks();
 
     if (image.memoryModel == snapshot::MemoryModel::Mem48k)   // HasAy(machine id): the 128K family

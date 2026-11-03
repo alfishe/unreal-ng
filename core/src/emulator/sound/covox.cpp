@@ -18,10 +18,13 @@
 
 Covox::Covox(EmulatorContext* context, size_t sampleRate)
     : _context(context)
-    , _fitment(!context->config.sound.sd           ? Fitment::Mono
+    , _history(ChipHistoryRegistry(context), [context]() { return ChipHistoryDevice(context, PORT_RIGHT_B, "covox"); },
+               "DAC writes", kChipWriteRing)
+    , _fitment(!context->config.sound.sd           ? (context->config.sound.covoxFB ? Fitment::Mono : Fitment::None)
                : context->config.sound.sdMode == 1 ? (context->config.sound.covoxFB ? Fitment::Mode1Mono : Fitment::Mode1)
                : context->config.sound.sdMode == 2 ? Fitment::Mode2
                                                    : Fitment::Quad)
+    , _printerDecode(context->config.sound.covoxDD ? PrinterDecodeOf(context->config.mem_model) : PortMaskMatch{})
     , _sampleRate(sampleRate)
 {
     // Allocate blip_buf accumulators for stereo output
@@ -75,7 +78,7 @@ void Covox::reset()
 {
     _frameHadSound = false;
     _hadSoundLastFrame = false;
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < kChannels; i++)
     {
         _dacValue[i] = 0x80;  // Midpoint = silence
         _writtenThisFrame[i] = false;
@@ -109,7 +112,7 @@ void Covox::handleFrameStart()
     // Stale-channel decay: a channel that went a whole frame without any
     // write extends its idle streak; once it crosses the threshold, silence
     // it (see the member comment in covox.h for why this is needed)
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < kChannels; i++)
     {
         if (_writtenThisFrame[i])
         {
@@ -162,7 +165,7 @@ void Covox::handleFrameEnd(size_t expectedSamples)
 
     if (_channelTap)
     {
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < kChannels; i++)
         {
             FillChannelTap(i, static_cast<size_t>(samplesThisFrame));
             _channelTapFilled[static_cast<size_t>(i)] = 0;
@@ -235,13 +238,39 @@ namespace
             case Covox::Fitment::Mode1Mono:
                 return (lowByte & Covox::PORT_MASK_MODE1) == Covox::PORT_MATCH_MODE1 ||
                        lowByte == (Covox::PORT_RIGHT_B & 0xFF);
+            case Covox::Fitment::None:
+                return false;
         }
         return false;
+    }
+
+    bool MatchesPrinter(PortMaskMatch decode, uint16_t rawPort)
+    {
+        return decode.mask != 0 && (rawPort & decode.mask) == decode.match;
+    }
+}
+
+PortMaskMatch Covox::PrinterDecodeOf(int memModel)
+{
+    switch (memModel)
+    {
+        case MM_SCORP:
+        case MM_GMX:
+            return PortMaskMatch{ 0x0027, 0x0005 };  // Xpeccy scorpion.c: {0x0027, 0x00dd} - A0 A1 A2 A5
+        case MM_PROFSCORP:
+            return PortMaskMatch{ 0x0023, 0x0001 };  // Xpeccy scorpion.c (Turbo+): {0x0023, 0x00dd}; MAME mirror #FFDC
+        default:
+            return PortMaskMatch{};
     }
 }
 
 bool Covox::tryClaimOut(uint16_t rawPort, uint8_t value)
 {
+    if (MatchesPrinter(_printerDecode, rawPort))
+    {
+        WriteLatch(Channel::Printer, value);
+        return true;
+    }
     if (!MatchesFitment(_fitment, rawPort))
         return false;
 
@@ -251,24 +280,35 @@ bool Covox::tryClaimOut(uint16_t rawPort, uint8_t value)
 
 std::vector<PortMaskMatch> Covox::selfDecodingClaims() const
 {
+    std::vector<PortMaskMatch> claims;
     switch (_fitment)
     {
         case Fitment::Quad:
-            return { PortMaskMatch{ PORT_MASK, PORT_MATCH }, PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+            claims = { PortMaskMatch{ PORT_MASK, PORT_MATCH }, PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+            break;
         case Fitment::Mono:
-            return { PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+            claims = { PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+            break;
         case Fitment::Mode1:
-            return { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+            claims = { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+            break;
         case Fitment::Mode2:
-            return { PortMaskMatch{ PORT_MASK, PORT_MATCH } };
+            claims = { PortMaskMatch{ PORT_MASK, PORT_MATCH } };
+            break;
         case Fitment::Mode1Mono:
-            return { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 }, PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+            claims = { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 }, PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+            break;
+        case Fitment::None:
+            break;
     }
-    return {};
+    if (hasPrinterDac())
+        claims.push_back(_printerDecode);
+    return claims;
 }
 
 bool Covox::tryClaimIn(uint16_t rawPort, uint8_t& outValue)
 {
+    // The printer latch is write-only (no read decode on the board): a read there is not claimed
     if (!MatchesFitment(_fitment, rawPort))
         return false;
 
@@ -304,20 +344,29 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
     bool isMode2 = (lowByte & PORT_MASK) == PORT_MATCH;
     bool isMode1 = (lowByte & PORT_MASK_MODE1) == PORT_MATCH_MODE1;
     if (!isMode2 && !isMode1)
+    {
+        if (MatchesPrinter(_printerDecode, port))
+            WriteLatch(Channel::Printer, value);
         return;
+    }
+    WriteLatch(portToChannel(port), value);
+}
 
+void Covox::WriteLatch(Channel ch, uint8_t value)
+{
     uint32_t currentTState = (_context && _context->pCore && _context->pCore->GetZ80())
                              ? _context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t)
                              : 0;
 
     // Update the DAC value for this channel
-    Channel ch = portToChannel(port);
     if (_channelTap)
         FillChannelTap(static_cast<int>(ch), static_cast<size_t>(static_cast<uint64_t>(currentTState) * _sampleRate /
                                                                   CPU_CLOCK_RATE));
     _dacValue[static_cast<int>(ch)] = value;
     if (_context && _context->chipRegisterWatch) [[unlikely]]
         ReportChipRegisterWrite(_context, SoundChipKind::Dac, 0, static_cast<uint16_t>(ch), value);
+    if (_history.On()) [[unlikely]]
+        RecordChipWrite(_context, _history, SoundChipKind::Dac, 0, static_cast<uint16_t>(ch), value);
     _writtenThisFrame[static_cast<int>(ch)] = true;
     _staleFrameCount[static_cast<int>(ch)] = 0;
 
@@ -436,6 +485,8 @@ void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
     const int32_t lb = level(1);
     const int32_t ra = level(2);
     const int32_t rb = level(3);
+    // The printer DAC: a separate mono DAC, summed into both sides (0 while not fitted: its latch stays #80)
+    const int32_t printer = level(static_cast<int>(Channel::Printer));
 
     // Mono COVOX compatibility: classic single-DAC covox software only ever
     // drives one of the four channels (traditionally #FB/RightB, but the
@@ -463,6 +514,8 @@ void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
         outL = la + lb;
         outR = ra + rb;
     }
+    outL += printer;
+    outR += printer;
 }
 
 /// endregion </Helper methods>
@@ -474,17 +527,22 @@ void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
 //          (set via OUT to ports 0xF1/0xF3/0xF9/0xFB, or their #0F/#1F/#4F/#5F
 //          mode-1 aliases)
 //   [4..7] per-channel idle-frame countdown (_staleFrameCount, saturated at 255)
-//   [8]    per-channel "written this frame" bits (_writtenThisFrame, bit i)
+//   [8]    per-channel "written this frame" bits (_writtenThisFrame, bit i;
+//          bit 4 the printer DAC)
+// With the Scorpion printer Covox fitted (CovoxDD) - fixed per instance:
+//   [9]    the printer DAC latch (#DD)
+//   [10]   its idle-frame countdown (saturated at 255)
 // The countdown is not hardware, but it writes the DAC latch: a channel idle
 // for STALE_CHANNEL_FRAMES frames decays to 0x80. Left out of the state, a
 // restore kept the live countdown and the channel re-centered on a different
 // frame than recorded - the latch, and every checkpoint after it, diverged.
 
 static constexpr size_t kCovoxStateSize = 9;
+static constexpr size_t kCovoxPrinterStateSize = 11;
 
 size_t Covox::TTDStateSize() const
 {
-    return kCovoxStateSize;
+    return hasPrinterDac() ? kCovoxPrinterStateSize : kCovoxStateSize;
 }
 
 void Covox::TTDSaveState(uint8_t* dst) const
@@ -497,6 +555,14 @@ void Covox::TTDSaveState(uint8_t* dst) const
         if (_writtenThisFrame[i])
             written |= static_cast<uint8_t>(1u << i);
     }
+    if (hasPrinterDac())
+    {
+        constexpr int p = static_cast<int>(Channel::Printer);
+        if (_writtenThisFrame[p])
+            written |= static_cast<uint8_t>(1u << p);
+        dst[9] = _dacValue[p];
+        dst[10] = static_cast<uint8_t>(std::min(_staleFrameCount[p], 255));
+    }
     dst[8] = written;
 }
 
@@ -507,6 +573,13 @@ void Covox::TTDLoadState(const uint8_t* src)
     {
         _staleFrameCount[i] = src[4 + i];
         _writtenThisFrame[i] = (src[8] & (1u << i)) != 0;
+    }
+    if (hasPrinterDac())
+    {
+        constexpr int p = static_cast<int>(Channel::Printer);
+        _dacValue[p] = src[9];
+        _staleFrameCount[p] = src[10];
+        _writtenThisFrame[p] = (src[8] & (1u << p)) != 0;
     }
 }
 /// endregion </TTDSerializable>

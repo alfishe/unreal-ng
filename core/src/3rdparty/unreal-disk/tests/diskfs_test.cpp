@@ -640,3 +640,83 @@ TEST(DiskFs_Test, WriteSetsTypeParam2AndAttributes)
     EXPECT_NE(error.find("no file attributes"), std::string::npos) << error;
     EXPECT_FALSE(trdos.Stat("", "A.C", entry, error));
 }
+
+/// ProfROM's MFS (MBR type #53): a TR-DOS collection of three disks, the first one holding EyeAche.trd, the others
+/// unformatted, as the 6.44 partition manager allocates them. The collection lists its disks as NAME.trd, gives a
+/// disk's TRD, takes an SCL onto the first unformatted disk under the new name; each formatted disk is a TR-DOS
+/// volume written back to its sectors
+TEST(DiskFs_Test, ProfromMfsCollection)
+{
+    constexpr uint64_t partition = 63, sub = partition + 2, disk = 0x501;
+    std::vector<uint8_t> bytes((sub + 2 + 3 * disk) * 512, 0);
+    auto put32 = [&](size_t at, uint32_t v) {
+        for (int i = 0; i < 4; i++)
+            bytes[at + i] = static_cast<uint8_t>(v >> (8 * i));
+    };
+    // MBR: one #53 partition at LBA 63
+    bytes[446 + 4] = 0x53;
+    put32(446 + 8, partition);
+    put32(446 + 12, static_cast<uint32_t>(bytes.size() / 512 - partition));
+    bytes[510] = 0x55;
+    bytes[511] = 0xAA;
+    // The subpartition catalogue: "games", TR-DOS
+    uint8_t* catalogue = bytes.data() + partition * 512;
+    catalogue[0] = 0x01;
+    put32(partition * 512 + 1, sub);
+    catalogue[6] = static_cast<uint8_t>((2 + 3 * disk) & 0xFF);
+    catalogue[7] = static_cast<uint8_t>((2 + 3 * disk) >> 8);
+    std::memcpy(catalogue + 10, "games ", 6);
+    catalogue[0x3FE] = 0x54;
+    catalogue[0x3FF] = 0xAA;
+    // The collection: three disks, "eye" formatted
+    uint8_t* disks = bytes.data() + sub * 512;
+    for (uint32_t n = 0; n < 3; n++)
+    {
+        disks[n * 16] = 0x01;
+        put32(sub * 512 + n * 16 + 1, static_cast<uint32_t>(sub + 2 + n * disk));
+        disks[n * 16 + 6] = 0x01;
+        disks[n * 16 + 7] = 0x05;
+        std::memcpy(disks + n * 16 + 10, n == 0 ? "eye   " : "      ", 6);
+    }
+    std::memcpy(disks + 0x3FC, "TRT\xAA", 4);
+    const std::vector<uint8_t> eye = Bytes("loaders/trd/EyeAche.trd");
+    ASSERT_EQ(eye.size(), 655360u);
+    std::memcpy(bytes.data() + (sub + 3) * 512, eye.data(), eye.size());
+
+    MemoryDevice device(bytes, true);
+    std::string error;
+    {
+        DiskFs fs(device);
+        const auto& volumes = fs.Volumes();
+        auto find = [&](const std::string& id) {
+            return std::find_if(volumes.begin(), volumes.end(), [&](const DiskFsVolume& v) { return v.id == id; });
+        };
+        ASSERT_NE(find("mfs-1"), volumes.end());
+        EXPECT_EQ(find("mfs-1")->fs, "mfs");
+        ASSERT_NE(find("mfs-1-1"), volumes.end());
+        EXPECT_EQ(find("mfs-1-1")->fs, "trdos");
+        EXPECT_EQ(find("mfs-1-2"), volumes.end()) << "an unformatted disk is no volume";
+
+        std::vector<DiskFsEntry> entries;
+        ASSERT_TRUE(fs.List("mfs-1", "", false, entries, error)) << error;
+        ASSERT_EQ(entries.size(), 3u);
+        EXPECT_EQ(entries[0].name, "eye.trd");
+        EXPECT_EQ(entries[0].Field("formatted"), 1);
+        EXPECT_EQ(entries[1].Field("formatted"), 0);
+        EXPECT_EQ(ReadFile(fs, "mfs-1", "eye.trd"), eye);
+
+        // An SCL onto the first unformatted disk, named in the catalogue
+        ASSERT_TRUE(fs.Write("mfs-1", "insult.trd", Bytes("loaders/scl/insult.scl"), {}, error)) << error;
+        // A file onto the formatted disk, written back to its sectors
+        ASSERT_TRUE(fs.Write("mfs-1-1", "NEW.C", {1, 2, 3}, {}, error)) << error;
+    }
+    DiskFs fs(device);
+    std::vector<DiskFsEntry> entries;
+    ASSERT_TRUE(fs.List("mfs-1", "", false, entries, error)) << error;
+    ASSERT_EQ(entries.size(), 3u);
+    EXPECT_EQ(entries[1].name, "insult.trd");
+    EXPECT_EQ(entries[1].Field("formatted"), 1);
+    const auto& volumes = fs.Volumes();
+    EXPECT_TRUE(std::any_of(volumes.begin(), volumes.end(), [](const DiskFsVolume& v) { return v.id == "mfs-1-2"; }));
+    EXPECT_EQ(ReadFile(fs, "mfs-1-1", "NEW.C"), (std::vector<uint8_t>{1, 2, 3}));
+}

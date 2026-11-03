@@ -14,7 +14,7 @@ FAT32 support and they were written for and run on the real board. What each one
 | `osz/sdcard/OSZ/` | 75 KB | per file below | the `Release/OSZ` folder of OSZ, to be presented as the SD card (FAT32) |
 | `osz/sdcard/OSZ/autorun.txt` | 7 | `398c55b2503f0afc` | **changed:** `nc.apg` only. Upstream starts `net.apg` first, which loops forever without the ZX Wi-Fi UART at `#EF` |
 | `osz/osz-sd.zip` | 123 863 | `1e593722eb8afe41` | the SD set of the web Unreal Speccy (zxby.org, 2026-10-29): `osz.vhd` (64 MB fixed VHD, FAT32 at LBA 63, `\OSZ\` = the Release folder, upstream `autorun.txt`), `OS.TRD` (same as above), `osz.json` `{"model":"gmx","a":"OS.TRD"}` |
-| `reference/edgegrinder-author-screenshot.png` | 13 350 | `a5326c23a91310ec` | the author's capture of gameplay (`Docs/Скрин.png`, 720x576 with border, from Unreal Speccy); by-eye reference, not a golden image |
+| `reference/edgegrinder-author-screenshot.png` | 13 350 | `a5326c23a91310ec` | the author's capture of gameplay (`Docs/Скрин.png`, "Скрин" = screenshot, 720x576 with border, from Unreal Speccy); by-eye reference, not a golden image |
 
 Files of `osz/sdcard/OSZ/` (unchanged from upstream except `autorun.txt`): `os.$c` 15 633 (`3b69420040d4d033`,
 "OS ver 2025.10.08"), `sys.osg` 1 047 (`b972bce7391b30f9`), `nc.apg` 9 638 (`84372368cdccda78`, None Commander),

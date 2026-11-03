@@ -134,8 +134,8 @@ The album page 7 silkscreen of front-panel header P106 has these pin pairs: `GND
   power-on and then low for good. DFFD is held at #00. CP/M, 80DS, NOROM, SCR, SCO and the extended pages all stay
   off. That is "a standard Spectrum 128".
 - The Profi 5.0 album sheet 4Б (`PROF5-07`) draws the same thing: SB6 "CP/M" sits between D1 pin 12 and D18 pin 1,
-  with R13 3K and C9 0.1. The v3.2 manual describes the earlier ON/OFF button the same way: "при нажатом
-  состоянии отключает все дополнительные режимы ... стандартный Spectrum-128" (3.2mn p.5).
+  with R13 3K and C9 0.1. The v3.2 manual describes the earlier ON/OFF button the same way: "when pressed
+  it turns off all the extra modes ... a standard Spectrum-128" (3.2mn p.5).
 
 ### Reset levels (the same netlist, plus album p.11 for jumper P107)
 
@@ -144,8 +144,8 @@ The album page 7 silkscreen of front-panel header P106 has these pin pairs: `GND
 | `/ONOFF` | the CP/M switch, power-on, `/HRESET` | DFFD, BLOCK flip-flop |
 | `/RESET` = DD18.6 = `/HRESET AND /SRESET` | the front-panel RST button (soft), the keyboard reset (hard) | 7FFD (DD35 /CLR), CPU |
 
-The album p.11 says the same about P107: "при HARD-RESET будут сбрасываться порты DFFD и 7FFD, a при SOFT-RESET
-... только 7FFD". So **the front-panel RST does not clear DFFD**.
+The album p.11 says the same about P107: "on HARD-RESET the ports DFFD and 7FFD are cleared, and on SOFT-RESET
+... only 7FFD". So **the front-panel RST does not clear DFFD**.
 
 ### What is not settled (O): the start page
 
@@ -180,7 +180,7 @@ To settle it, any one of these would do:
 
 ### Answer: the crystal and its selection are settled (H); "15 MHz" is not settled (O)
 
-The v5.06 board has ZQ3. The BOM on album p.10 lists "ZQ3 КВАРЦ 16-20MHZ". It runs in oscillator DD31
+The v5.06 board has ZQ3. The BOM on album p.10 lists "ZQ3 КВАРЦ 16-20MHZ" (КВАРЦ = crystal). It runs in oscillator DD31
 (R23, R24, C12) and gives the net `XMHZ` (DD31.8). **No jumper, port bit or switch selects it. 80DS selects it.**
 
 ### Clock chain (v5.06 netlist)
@@ -195,8 +195,8 @@ The v5.06 board has ZQ3. The BOM on album p.10 lists "ZQ3 КВАРЦ 16-20MHZ". 
 
 The 5.0 album sheet 1А (`PROF5-01`) draws the same D25 mux (`SE` = 80DS, `B0` = `XMHZ` → `TCPU`, `B1` → `TRAM`,
 `B3` → `V14`). It also has the ZQ3 table: 16/18/20/22/24 MHz with C12 and R23/R24 values, and the RAM grade for
-each. Manual p.6: "В минимальном варианте (при замене не установленной м/с DD25 перемычками) ... двумя тактовыми
-генераторами, как и в предыдущих версиях".
+each. Manual p.6: "In the minimal variant (with jumpers in place of the unfitted DD25 chip) ... with two clock
+generators, as in the earlier versions".
 
 ### Resulting CPU clock (no waits counted)
 
@@ -212,10 +212,10 @@ RAM speed ("15-17 mHz ... 23-25 mHz" against RAM grades, p.20).
 
 ### Open points (O)
 
-- **"до 15 МГц"** (5.0 p.2) does not follow from the drawn /2 and /4 divider with a 16-24 MHz crystal. The most it
+- **"up to 15 MHz"** (5.0 p.2) does not follow from the drawn /2 and /4 divider with a 16-24 MHz crystal. The most it
   gives is 12 MHz. It may be a marketing number, or it may refer to the crystal. No source here settles it.
-- **The minimal two-crystal build** (DD25 not fitted, jumpers instead, v5.01 change note I.1 "соединить DD25/12 с
-  DD25/13"). The 5.02 note "в режиме большого растра 512х240 (CP/M) не отключать турбо-режим" hints that the CPU
+- **The minimal two-crystal build** (DD25 not fitted, jumpers instead, v5.01 change note I.1 "connect DD25/12 to
+  DD25/13"). The 5.02 note "in the large 512x240 raster mode (CP/M) do not turn off the turbo mode" hints that the CPU
   then runs slower in hi-res. The jumper pattern for TCPU is not drawn in the sources read, so the clock in that
   build is not settled.
 - The scope here is the clock source and divider only. The waits (DD75.2 → VD21 → `/TURBO`, `/REDYT`) were

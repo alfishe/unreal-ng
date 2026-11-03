@@ -436,7 +436,7 @@ saved by `SAVE_CONTEXT`: the PG lists vertex format in the table and calls trans
   Internally positions are in 1/16 pixel [DS §4.3.1].
 - `VERTEX2F`: X, Y are 15-bit signed in units of 1/2^frac pixel; with frac = 4 the range is
   −1024…1023 px, with frac = 3 it is −2048…2047 (R-Type uses 3 to reach 1024×768)
-  [PG §4.49, SW R-Type `CLAUDE.md` "VERTEX2F даёт координате 15 бит"].
+  [PG §4.49, SW R-Type `CLAUDE.md` "VERTEX2F gives the coordinate 15 bits"].
 - `VERTEX2II`: unsigned 0…511 px. `VERTEX_TRANSLATE_X/Y` (1/16 px) is added to **both**
   vertex forms; VDAC2 software places sprites beyond x = 511 that way
   [SW R-Type `ft812_line_cost.py`, the `VERTEX2II` branch: translate applied].

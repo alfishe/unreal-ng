@@ -130,7 +130,7 @@
     },
     {
       "control": "lstick.click",
-      "label": "LS",
+      "label": "LS click",
       "shape": {
         "circle": [
           701,
@@ -347,7 +347,7 @@
     },
     {
       "control": "rstick.click",
-      "label": "RS",
+      "label": "RS click",
       "shape": {
         "circle": [
           1350,

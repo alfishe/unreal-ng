@@ -451,7 +451,7 @@ tape builders map their names like any other name.
 ### 6.2 Worked example
 
 Folder `~/zx/sd` holds `SD_BOOT.$C` (1 297 bytes), `games/EYEACHE.TRD` (655 360 bytes) and
-`Длинное имя.txt` (10 bytes). The card is created with `fs=fat32` (FAT16 is the default; the FAT32
+`Длинное имя.txt` ("long name", 10 bytes). The card is created with `fs=fat32` (FAT16 is the default; the FAT32
 layout shows more of the structure), with 4 KiB clusters (8 sectors):
 
 | LBA | Contents | Generated from |

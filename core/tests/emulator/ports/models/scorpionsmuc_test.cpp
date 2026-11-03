@@ -194,7 +194,7 @@ TEST(ScorpionSMUC_Test, SmucRegisterStubsAnswer)
 
     EXPECT_EQ(decoder->DecodePortIn(0x5FBA, 0x0000), 0x3F);  // version
     EXPECT_EQ(decoder->DecodePortIn(0x5FBE, 0x0000), 0x57);  // revision
-    EXPECT_EQ(decoder->DecodePortIn(0x7FBE, 0x0000), 0x57);  // 8259 PIC
+    EXPECT_EQ(decoder->DecodePortIn(0x7FBE, 0x0000), 0xFF);  // 8259 PIC: the IMR, every level masked until ICW1
 
     decoder->DecodePortOut(0x7FBA, 0xC0, 0x0000);            // virtual FDD latch
     EXPECT_EQ(decoder->DecodePortIn(0x7FBA, 0x0000), 0xFF);  // latch | 0x3F

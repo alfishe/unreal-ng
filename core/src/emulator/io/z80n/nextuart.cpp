@@ -317,6 +317,7 @@ void NextUart::Step(Channel& c, uint64_t now)
             else
                 c.lost++;
             c.sent++;
+            Note(c, true, c.txByte, false, c.txDone);
             c.txBusy = false;
             c.txFreeAt = c.txDone;
         }
@@ -343,11 +344,13 @@ void NextUart::Step(Channel& c, uint64_t now)
                 c.rx[(c.rxHead + c.rxCount) % kRxFifo] = entry;
                 c.rxCount++;
                 c.received++;
+                Note(c, false, c.rxByte, (entry & 0x100) != 0, c.rxDone);
             }
             else
             {
                 c.errOverflow = true;
                 c.lost++;
+                Note(c, false, c.rxByte, true, c.rxDone);
             }
             c.rxBusy = false;
             c.rxFreeAt = c.rxDone;

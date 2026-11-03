@@ -1,3 +1,4 @@
+#include <cmath>
 #include "haptics/hapticprofile.h"
 
 #include <algorithm>
@@ -84,6 +85,32 @@ const Library& TheLibrary()
         {
             l.effects[entry.id].levels.lowHz = entry.lowHz;
             l.effects[entry.id].levels.highHz = entry.highHz;
+        }
+        // The voice coils (hd.left, hd.right): a tone per effect, low and rough for impacts, high for small events.
+        // A whip lands on the side it flies to
+        const struct
+        {
+            const char* id;
+            float left;
+            float right;
+            uint16_t hz;
+            HdWave wave;
+        } coils[] = {{"tick", 0.5f, 0.5f, 250, HdWave::Sine},       {"knock", 0.6f, 0.6f, 120, HdWave::Sine},
+                     {"thump", 0.8f, 0.8f, 60, HdWave::Sine},       {"explosion", 1.0f, 1.0f, 50, HdWave::Noise},
+                     {"engine", 0.3f, 0.3f, 45, HdWave::Square},    {"heartbeat", 0.6f, 0.6f, 60, HdWave::Sine},
+                     {"hit", 0.8f, 0.8f, 90, HdWave::Noise},        {"impact", 1.0f, 1.0f, 90, HdWave::Noise},
+                     {"life-lost", 1.0f, 1.0f, 70, HdWave::Square}, {"whip", 0.0f, 0.7f, 140, HdWave::Noise},
+                     {"whip-left", 0.7f, 0.0f, 140, HdWave::Noise}, {"whip-drag", 0.0f, 0.4f, 80, HdWave::Square},
+                     {"whip-drag-left", 0.4f, 0.0f, 80, HdWave::Square},
+                     {"pickup", 0.5f, 0.5f, 320, HdWave::Sine},     {"shot", 0.7f, 0.7f, 180, HdWave::Noise},
+                     {"rumble-strip", 0.4f, 0.4f, 30, HdWave::Square}};
+        for (const auto& entry : coils)
+        {
+            RumbleLevels& levels = l.effects[entry.id].levels;
+            levels.hdLeft = entry.left;
+            levels.hdRight = entry.right;
+            levels.hdFrequency = entry.hz;
+            levels.hdWave = entry.wave;
         }
         return l;
     }();
@@ -462,6 +489,8 @@ bool ParseOneTarget(const std::string& first, uint8_t& out)
                                                                {"handle.high", kHandleHigh},
                                                                {"trigger.left", kTriggerLeft},
                                                                {"trigger.right", kTriggerRight},
+                                                               {"hd.left", kHdLeft},
+                                                               {"hd.right", kHdRight},
                                                                {"all", kTargetAll}};
     for (const auto& [name, bit] : kTargets)
     {
@@ -746,6 +775,15 @@ bool ParseHapticProfile(const JsonValue& section, HapticProfile& out, std::strin
                 return false;
             }
             rule.priority = static_cast<uint8_t>(priority);
+            double player = 0;
+            if (!Number(spec, "player", player, error, where))
+                return false;
+            if (player < 0 || player > 8 || player != std::floor(player))
+            {
+                error = where + ": 'player' is 1..8 (the N-th pad connected)";
+                return false;
+            }
+            rule.player = static_cast<uint8_t>(player);
             if (const JsonValue* gate = spec.Find("if"))
             {
                 double equals = 0;
@@ -769,16 +807,19 @@ bool ParseHapticProfile(const JsonValue& section, HapticProfile& out, std::strin
             {
                 if (!hd->IsObject())
                 {
-                    error = where + ": 'hd' is an object ({frequency_hz, low_hz, high_hz})";
+                    error = where + ": 'hd' is an object ({frequency_hz, low_hz, high_hz, waveform})";
                     return false;
                 }
                 for (const auto& [field, value] : hd->GetMembers())
                 {
-                    if (field != "frequency_hz" && field != "low_hz" && field != "high_hz")
+                    if (field != "frequency_hz" && field != "low_hz" && field != "high_hz" && field != "waveform")
                     {
-                        error = where + ".hd: unknown field '" + field + "' (frequency_hz, low_hz, high_hz)";
+                        error = where + ".hd: unknown field '" + field +
+                                "' (frequency_hz, low_hz, high_hz, waveform)";
                         return false;
                     }
+                    if (field == "waveform")
+                        continue;
                     if (!value.IsNumber() || value.AsNumber() < 1 || value.AsNumber() > 2000)
                     {
                         error = where + ".hd." + field + ": 1..2000 Hz";
@@ -793,6 +834,21 @@ bool ParseHapticProfile(const JsonValue& section, HapticProfile& out, std::strin
                 Number(*hd, "high_hz", highHz, error, where);
                 rule.lowHz = static_cast<uint16_t>(lowHz != 0 ? lowHz : frequency);
                 rule.highHz = static_cast<uint16_t>(highHz != 0 ? highHz : frequency);
+                rule.hdFrequency = static_cast<uint16_t>(frequency);
+                std::string wave;
+                if (!Text(*hd, "waveform", wave, error, where + ".hd"))
+                    return false;
+                if (wave == "sine")
+                    rule.hdWave = HdWave::Sine;
+                else if (wave == "square")
+                    rule.hdWave = HdWave::Square;
+                else if (wave == "noise")
+                    rule.hdWave = HdWave::Noise;
+                else if (!wave.empty())
+                {
+                    error = where + ".hd.waveform: sine, square or noise";
+                    return false;
+                }
             }
             if (profile.Find(rule.on) == nullptr)
             {
@@ -846,11 +902,18 @@ RumbleLevels RetargetLevels(const RumbleLevels& levels, uint8_t target)
     if (target == 0)
         return levels;
     const float peak = std::max(levels.low, levels.high);
+    const float coilPeak = std::max({peak, levels.hdLeft, levels.hdRight});
+    const bool all = target == kTargetAll;
     RumbleLevels out;
-    out.low = (target & kHandleLow) ? (target == kTargetAll ? levels.low : peak) : 0.0f;
-    out.high = (target & kHandleHigh) ? (target == kTargetAll ? levels.high : peak) : 0.0f;
+    out.low = (target & kHandleLow) ? (all ? levels.low : peak) : 0.0f;
+    out.high = (target & kHandleHigh) ? (all ? levels.high : peak) : 0.0f;
     out.leftTrigger = (target & kTriggerLeft) ? peak : 0.0f;
     out.rightTrigger = (target & kTriggerRight) ? peak : 0.0f;
+    // `all` keeps a coil's own level and gives the loudest to a coil the effect has none for
+    out.hdLeft = (target & kHdLeft) ? (all && levels.hdLeft > 0 ? levels.hdLeft : coilPeak) : 0.0f;
+    out.hdRight = (target & kHdRight) ? (all && levels.hdRight > 0 ? levels.hdRight : coilPeak) : 0.0f;
+    out.hdFrequency = levels.hdFrequency;
+    out.hdWave = levels.hdWave;
     // A band that takes over the other's level takes its frequency too when it has none of its own
     out.lowHz = out.low > 0 ? (levels.lowHz != 0 ? levels.lowHz : levels.highHz) : 0;
     out.highHz = out.high > 0 ? (levels.highHz != 0 ? levels.highHz : levels.lowHz) : 0;

@@ -17,7 +17,9 @@
 #include "cli-processor.h"
 #include "cli-next-format.h"
 #include "cli-sprinter-format.h"
+#include <emulator/state/devicecatalog.h>
 #include <emulator/state/devicestate.h>
+#include <emulator/state/statenodejson.h>
 
 
 /// region <State Inspection Commands>
@@ -47,6 +49,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "Usage: state <subsystem> [subcommand] [args]" << NEWLINE;
         ss << NEWLINE;
         ss << "Available subsystems:" << NEWLINE;
+        ss << "  devices [all]  - The state reports this machine has: id, title, summary, the command; all: the absent ones and why (--json)" << NEWLINE;
         ss << "  memory         - Memory configuration (ROM + RAM + paging)" << NEWLINE;
         ss << "  memory ram     - RAM bank mapping (alias: ram)" << NEWLINE;
         ss << "  memory rom     - ROM configuration (alias: rom)" << NEWLINE;
@@ -95,6 +98,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  audio channels - Audio mixer state for all sound sources" << NEWLINE;
         ss << NEWLINE;
         ss << "Examples:" << NEWLINE;
+        ss << "  state devices        - List the machine's devices and the command that shows each" << NEWLINE;
         ss << "  state memory         - Show complete memory configuration" << NEWLINE;
         ss << "  state memory ram     - Show RAM banking only" << NEWLINE;
         ss << "  state ram            - Same as above (alias)" << NEWLINE;
@@ -222,6 +226,19 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         return;
     }
     // Handle 'audio' subsystem
+    else if (subsystem == "devices")
+    {
+        // The device catalog (DeviceState::Catalog): what a front end lists, the same on every plane
+        const bool all = std::find(args.begin(), args.end(), "all") != args.end();
+        const StateNode catalog = DeviceState::Catalog(context, all);
+        if (std::find(args.begin(), args.end(), "--json") != args.end())
+        {
+            session.SendResponse(StateNodeToJsonText(catalog) + NEWLINE);
+            return;
+        }
+        session.SendResponse(std::string("Devices") + NEWLINE + "=======" + NEWLINE + DeviceState::CatalogText(catalog, NEWLINE));
+        return;
+    }
     else if (subsystem == "fdc" || subsystem == "disk" || subsystem == "wd1793")
     {
         HandleStateFdc(session, context);
@@ -397,7 +414,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
     else
     {
         session.SendResponse(std::string("Error: Unknown subsystem '") + subsystem + "'" + NEWLINE +
-                             "Available subsystems: memory, ram, rom, screen, audio" + NEWLINE);
+                             "Type 'state' for every subsystem; 'state devices' lists this machine's devices" + NEWLINE);
         return;
     }
 }
@@ -502,6 +519,10 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
     ss << "  Bank 3 (0xC000-0xFFFF): " << memory.GetCurrentBankName(3) << NEWLINE;
     ss << NEWLINE;
 
+    // GMX: the card's register file (DeviceState::GmxPaging)
+    if (config.mem_model == MM_GMX)
+        ss << "GMX card:" << NEWLINE << DeviceState::ToText(DeviceState::GmxPaging(context), 1) << NEWLINE;
+
     // Paging State
     if (config.mem_model == MM_SPRINTER)
     {
@@ -592,6 +613,9 @@ void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorCo
     // Bank 3 (always RAM, pageable on 128K)
     ss << "Bank 3 (0xC000-0xFFFF): RAM Page " << (int)memory.GetRAMPageForBank3() << " (" << access(3) << contended(3) << ")"
        << NEWLINE;
+
+    if (config.mem_model == MM_GMX)
+        ss << NEWLINE << "GMX card:" << NEWLINE << DeviceState::ToText(DeviceState::GmxPaging(context), 1);
 
     if (config.mem_model == MM_SPRINTER)
     {

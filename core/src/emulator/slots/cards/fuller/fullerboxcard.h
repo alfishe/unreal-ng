@@ -28,6 +28,7 @@
 
 #include "emulator/slots/card.h"
 #include "emulator/sound/audio.h"
+#include "emulator/sound/chips/chipwritehistory.h"
 
 class EmulatorContext;
 class SoundChip_AY8910;
@@ -107,6 +108,7 @@ private:
     void AdvanceTo(uint64_t t);
 
     EmulatorContext* _context;
+    ChipWriteHistory _history;  ///< the AY register writes, named by the slot (chipwritehistory.h)
     std::unique_ptr<SoundChip_AY8910> _chip;
     std::unique_ptr<FullerBoxTtd> _ttd;
     uint64_t _origin = 0;

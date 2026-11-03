@@ -16,6 +16,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/memory/memory.h"
+#include "emulator/state/statenodejson.h"
 
 class PcHistory_Test : public ::testing::Test
 {
@@ -125,4 +126,36 @@ TEST_F(PcHistory_Test, ReportArmsAndTheSnapshotCarriesIt)
 
     options.pchist = 5000;
     EXPECT_NE(DebugSnapshot::Validate(options).find("pchist"), std::string::npos);
+}
+
+/// The execution history `cpu` (exechistory.h): its own step-work bit, the same instructions as the PC history, any
+/// mode of the pattern; off, the bit is down again
+TEST_F(PcHistory_Test, ExecutionHistoryOnThePattern)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("48K"));
+    Loop(0x8000);
+    EXPECT_EQ(_context->stepWork.load() & EmulatorContext::kStepWorkExecHistory, 0u) << "costs nothing while off";
+    auto configure = [this](history::Mode mode) {
+        return _context->histories.With("cpu", [mode](history::IDeviceHistory& h) {
+            std::string error;
+            EXPECT_TRUE(h.Configure({ .mode = mode, .limit = 16 }, error)) << error;
+        });
+    };
+    ASSERT_TRUE(configure(history::Mode::Ring));
+    EXPECT_NE(_context->stepWork.load() & EmulatorContext::kStepWorkExecHistory, 0u);
+    EXPECT_FALSE(_history->IsArmed()) << "the debugger's PC history stays off";
+    Steps(8);
+    std::string json;
+    uint64_t written = 0;
+    _context->histories.With("cpu", [&](history::IDeviceHistory& h) {
+        written = h.GetStats().written;
+        json = StateNodeToJsonText(h.Records(0));
+    });
+    EXPECT_EQ(written, 8u);
+    EXPECT_NE(json.find("\"pc\":32771"), std::string::npos) << "the JP at #8003: " << json;
+    EXPECT_NE(json.find("\"kind\":\"ram\""), std::string::npos) << json;
+    EXPECT_EQ(_history->Total(), 0u) << "the PC history's ring is not fed while it is off";
+
+    ASSERT_TRUE(configure(history::Mode::Off));
+    EXPECT_EQ(_context->stepWork.load() & EmulatorContext::kStepWorkExecHistory, 0u);
 }

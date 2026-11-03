@@ -146,7 +146,7 @@ local ok, why = tape_load("/path/to/game.tap")  -- A tape (.tap/.tzx/.spc/.sta/.
 local ok = tape_eject()                     -- The tape leaves the tape slot (while TTD records: at the next frame boundary)
 
 -- Transport (same semantics as `tape play|pause|stop|rewind|seek`)
-tape_play()      -- start at consumption cursor; resumes in place when paused
+tape_play()      -- start at consumption cursor; resumes in place when paused; queued for a tape still landing
 tape_pause()     -- freeze mid-block (idempotent); false when not playing
 tape_stop()      -- terminal stop: invalidates the loaded image
 tape_rewind()    -- rewind to block 0, image kept
@@ -545,7 +545,14 @@ ok, msg = midi_panic()     -- every voice stops (a TTD live input)
 ms  = audio_moonsound_state()       -- MoonSound OPL4: NEW/NEW2, latches, mix, wave_memory, keyed channels/slots
 msf = audio_moonsound_state("fm")   -- its 18 FM channels, timers, register banks
 msp = audio_moonsound_state("pcm")  -- its 24 wavetable slots, envelopes, register file
-fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
+dev = devices_state()       -- the reports this machine has: reports[i] = {id, title, available, summary, route, cli, script, mcp}; devices_state(true): the absent ones too, with description
+fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4], history
+-- Device histories by registry id (../debugger/device-history.md): off / ring / capture, a JSON Lines stream
+history_list()
+history("beta128", 8)       -- stats + the newest 8 records
+history_config("beta128", {mode = "capture", limit = 0, stream = "scratch/fdc.jsonl"})
+history_clear("beta128")
+history_pause("zxbus.1")    -- hold the GS history (nothing recorded, the records kept); history_pause("zxbus.1", false) goes on
 ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (task_file, command, atapi)
 cd = cdaudio_state()        -- CD drives' audio: drives[] (slot, disc + tracks, audio status / head / track / index, drive_volume, mixer)
 r = cdaudio("play", "", {track=2})   -- verbs: status, play (track/to, lba/frames, msf/end), pause, resume, stop, volume, mixer
@@ -1332,6 +1339,14 @@ local rare = ttd_coverage_rare{max_frames = 2, addr_from = 0x8000, addr_to = 0xF
 --   blocks = { {addr_from = "0x9A10", addr_to = "0x9A2C", phys_page = 2, page_offset_from = "0x1A10", ...,
 --               keys = 11, frame_count = 1, frames = {1834}}, ... } }
 
+-- In which frames did a game profile's probes fire: a replay of the window, the machine put back
+local probes = ttd_probe_frames({{probe = "exec", address = 0x8A14},
+                                 {probe = "write", address = 0x5F20, ["if"] = "VAL < MDT"}}, {from_frame = 100})
+-- { from_frame = 100, to_frame = 2400, replayed_frames = 2301, pruned_frames = 0, truncated = false,
+--   probes = { {probe = "exec", address = "0x8A14", frame_count = 14, hit_count = 14, frames = {120, 388, ...},
+--               hits = {1, 1, ...}}, ... } }
+-- One probe: ttd_probe_frames{probe = "port-out", address = 0xFE, port_mask = 0x01}; limit = N frames per probe
+
 -- A memory at a past checkpoint, and what changed between two - from the store, no seek
 local at = ttd_memory_at{space = "ram5", frame = 150, offset = 0x1C78, length = 2}   -- tinframe = T: inside the frame (ram, vram, cache)
 -- { space = "ram", offset = 89208, length = 2, frame = 150, at_frame = 150, exact = true, hex = "6500" }
@@ -1342,6 +1357,36 @@ local cpu = ttd_memory_at{space = "cpu", frame = 150, tinframe = 20000, offset =
 local now = ttd_memory_at{space = "cpu", offset = 0x5C00, length = 64}
 local diff = ttd_memory_diff{space = "neogs.ram", from_frame = 150, to_frame = 600}
 -- { space = "neogs.ram", changed_bytes = ..., ranges = { {offset = 4096, length = 64}, ... }, truncated = false }
+
+local timeline = ttd_timeline{min_phase_ms = 500}   -- also from_frame, to_frame, buckets, limit, bucket_size, ports
+-- { from_frame = ..., to_frame = ..., phases = { {frame_start = ..., frame_end = ...,
+--   tags = {"halt", "input"}, executed = ..., keys = {"A"}, busiest_frame = ..., ...}, ... },
+--   events = {...}, missing = { {fact = "writes", reason = "the write journal is off"} }, ... }
+
+-- Where a value came from: a Z80 address (a number) or a register name; options frame, tinframe, phys_page,
+-- depth (default 4), max_links (32), max_frames (50), flags (follow F), text (the indented lines too)
+local chain = ttd_cause_chain(0x5C78, {depth = 6})
+-- { target = {kind = "memory", name = "(#5C78 RAM 5)", ...}, links = { {id = 0, parent = -1, depth = 0,
+--   kind = "store", name = "(#5C78 RAM 5)", value = 3, frame = ..., pc = 0x8A14, text = "LD (HL),A",
+--   inputs = {"A=#03"}}, ... }, stops = 0, frames_traced = 2, ms = ... }
+local why = ttd_cause_chain("HL", {frame = 150, tinframe = 20000})
+
+-- When did it happen: kind mem / screen / exec / port / border / key, options as the WebAPI query
+-- (cond, addr, phys_page, size, value, bit, exact, min_changed, addr_to, dir, port, port_mask, value_mask, key,
+-- pressed, order = "first" | "last", from_frame, to_frame, limit, max_frames, text)
+local down = ttd_find_event("mem", {addr = 0xA130, cond = "decreased", limit = 3})
+-- { event = {kind = "mem", cond = "decreased", order = "first", addr = 41264, phys_page = 2},
+--   hits = { {frame = 1834, tinframe = 21980, pc = 0x8A14, text = "ld (hl),a", before = 3, after = 2,
+--   why = "(#A130 RAM 2) #03 -> #02  decreased"}, ... }, more = true, next_from_frame = ..., ms = ... }
+local scene = ttd_find_event("screen", {min_changed = 60})
+local fire = ttd_find_event("key", {key = "SPACE"})
+
+-- What one frame did: frame (default the current one), options sections ("time,routines,..."), limit (8), text
+local f = ttd_explain_frame(1204, {sections = "time,routines,memory", limit = 4})
+-- { frame = 1204, frame_t = 69888, end_t = 69888, instructions = 18312, time = {isr = 6210, halt = 21700, code = ...},
+--   routines = { {pc = 0x8A14, calls = 1, t = 31220, own_t = 2110, insns = 4812, caller = 0x8003}, ... },
+--   memory = { {region = "screen pixels", addr = 0x4800, changed = 1024, writers = { {pc = 0x9A12,
+--   text = "ld (hl),a", count = 1024} }}, ... }, more_memory = 2, frames_replayed = 1, ms = ... }
 
 local summary = ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50, limit = 100}
 -- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,

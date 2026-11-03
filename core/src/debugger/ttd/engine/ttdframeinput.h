@@ -25,6 +25,16 @@ struct TTDChangedPiece
     const uint8_t* bytes = nullptr;  ///< kTTDPieceSize bytes of new content, valid during the call
 };
 
+/// Bytes of memory the picture is read from (TTDFrameInput::screen)
+struct TTDScreenRange
+{
+    uint32_t region = 0;  ///< index into the session's region list
+    uint32_t begin = 0;   ///< the first byte, in the region
+    uint32_t end = 0;     ///< one past the last
+
+    bool operator==(const TTDScreenRange& o) const { return region == o.region && begin == o.begin && end == o.end; }
+};
+
 /// One device's raw state for a frame (what TTDSaveState wrote, or its state
 /// without region memory)
 struct TTDDeviceStateInput
@@ -50,6 +60,13 @@ struct TTDFrameInput
     /// Raw device-state bytes the capture serialized for the blobs above
     /// (counted work only; the engine does not read them)
     uint64_t deviceStateBytes = 0;
+    /// Maskable interrupts the CPU accepted while halted, since it was made (Z80::interruptsAcceptedHalted); with
+    /// haltKnown false the capture did not say (a file feeder)
+    uint64_t haltedInterrupts = 0;
+    bool haltKnown = false;
+    /// The bytes the picture is read from at this boundary (Screen::DescribeDisplayedMemory), sorted by region and
+    /// begin, merged; null: the capture did not say (a file feeder, a machine without a screen)
+    const std::vector<TTDScreenRange>* screen = nullptr;
 };
 
 }  // namespace ttd

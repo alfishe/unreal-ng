@@ -16,7 +16,8 @@ namespace controllers
 /// "space" -> {SPACE}, "edit" -> {CAPS, 1}, "sym+p" -> {SYM, P}: `+` joins keys held together (the plus key
 /// is "+" alone, "plus" in a join). Appends to @p keys without repeats; false for an unknown name
 bool ZxKeysFromName(const std::string& name, std::vector<uint8_t>& keys);
-/// Every single name (not the `+` joins)
+/// Every single name (not the `+` joins; `pc.delete`, `pc.insert`, `pc.end`, `pc.home`, `pc.pageup`, `pc.pagedown` are also
+/// accepted: codes 0xE0.. that only a PS/2 keyboard holds)
 std::vector<std::string> KnownZxKeyNames();
 
 }  // namespace controllers

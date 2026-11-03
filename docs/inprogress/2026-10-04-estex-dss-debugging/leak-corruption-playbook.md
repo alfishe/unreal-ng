@@ -1,131 +1,131 @@
-# Playbook: как ловить лики и порчу системных ресурсов DSS в дебаггере
+# Playbook: catching leaks and corruption of DSS system resources in the debugger
 
-Часть исследования [#99](../PLAN.md). Ответ на «вопрос из зала»: логировать происходящее,
-кричать в консоль, когда память ОС не вернули, и ловить любые виды утечек/порчи.
-Предполагается чтение [dss-system-state.md](dss-system-state.md); факты структур — оттуда
-(механика по 1.70b, якоря работающей 1.71.66 — из `system.exp`).
+Part of research [#99](../PLAN.md). The answer to a "question from the audience": log what happens,
+shout to the console when OS memory was not returned, and catch every kind of leak or corruption.
+It assumes you have read [dss-system-state.md](dss-system-state.md); the structure facts come from there
+(mechanics per 1.70b, anchors of the running 1.71.66 from `system.exp`).
 
-Общий принцип (тот же, что у NedoOS-слоя [#78](../2026-09-30-nedoos-integration/README.md) и
+General principle (the same as the NedoOS layer [#78](../2026-09-30-nedoos-integration/README.md) and
 Phase 6 [#51](../2026-09-21-devtools-roadmap/unreal-ng-developer-toolchain-design.md) §14):
-эмулятор ничего не знает про DSS «в коде» — есть **дескриптор ОС** (черновик `dss.yaml` в §8)
-и **движок проверок**. Каждый трап/нарушение = событие с `pc` вызывающего, аргументами,
-результатом и позицией TTD; нарушения поднимаются как findings в консоль (CLI/Qt log),
-на TTD-таймлайн и на все поверхности автоматизации (WebAPI/MCP/Lua/Python) — модель
-«checks → findings» из [bus analyzer](../2026-10-11-bus-analyzer/README.md).
+the emulator knows nothing about DSS "in code": there is an **OS descriptor** (the `dss.yaml` draft in §8)
+and a **check engine**. Every trap or violation is an event with the caller's `pc`, the arguments, the
+result and the TTD position; violations are raised as findings to the console (CLI/Qt log),
+on the TTD timeline and on every automation surface (WebAPI/MCP/Lua/Python): the
+"checks → findings" model from the [bus analyzer](../2026-10-11-bus-analyzer/README.md).
 
-Три базовых механизма, из которых собирается всё остальное:
+Three basic mechanisms that everything else is built from:
 
-1. **Сисколл-трапы**: BP на `0x0010` (DSS, номер функции в `C`) и `0x0008` (BIOS, команда в `C`/`BC`)
-   с декодированием аргументов. Условные брейки (#6) и поток событий (#23) уже на master.
-2. **Книга учёта (ledger)**: на каждый alloc/free/open/close — запись «кто (TASK/PC), что, когда (TTD)».
-3. **Точки жизни процесса**: EXEC (`#40`), LEAVE (`0x0000`/`#41`), GSWITCH (`#43`) — в них
-   сверяются балансы и снимаются дельты. Аналог известной идеи «QUIT (0x0000) — предполагается
-   как точка останова в отладчике» из документации NedoOS (`src/nedoos.txt`, cp866).
+1. **Syscall traps**: a BP on `0x0010` (DSS, function number in `C`) and `0x0008` (BIOS, command in `C`/`BC`)
+   with argument decoding. Conditional breakpoints (#6) and the event stream (#23) are already on master.
+2. **The ledger**: for every alloc/free/open/close, a record of "who (TASK/PC), what, when (TTD)".
+3. **Process life points**: EXEC (`#40`), LEAVE (`0x0000`/`#41`), GSWITCH (`#43`): balances are checked
+   and deltas taken there. An analogue of the known idea "QUIT (0x0000) is meant to be used
+   as a breakpoint in the debugger" from the NedoOS documentation (`src/nedoos.txt`, cp866).
 
 ---
 
-## A. DSS-блок не вернула живая задача (накопительный лик)
+## A. A DSS block not returned by a live task (accumulating leak)
 
-Симптом: FM/резидент работает, INFOMEM (#3C) показывает всё меньше свободных страниц,
-после закрытия панелей память не вернулась.
+Symptom: the FM / a resident runs, INFOMEM (#3C) shows fewer and fewer free pages,
+and after the panels are closed the memory has not come back.
 
-Рецепт:
+Recipe:
 
-- трап `0x0010` при `C=#3D` (GETMEM): записать `TASK`, `B` (размер), результат `A` (ID блока), `PC`;
-- трап `0x0010` при `C=#3E` (FREEMEM): списать ID;
-- трап `0x0010` при `C=#3F` (SETMEM): обновить размер;
-- **крик в консоль**: на каждом LEAVE (или по требованию) — список блоков текущей задачи,
-  которые она не вернула сама (их подчистит LEAVMEM, но это уже сигнал); для живой задачи —
-  порог: суммарные страницы и время жизни блока.
-- карта блоков → страниц: перебор BIOS `#C4` (как `SIZEBLK`, `EXECUTE.ASM:456-469`) или
-  собственное знание эмулятора об аллокаторе.
+- trap `0x0010` with `C=#3D` (GETMEM): record `TASK`, `B` (size), the result `A` (block ID), `PC`;
+- trap `0x0010` with `C=#3E` (FREEMEM): write off the ID;
+- trap `0x0010` with `C=#3F` (SETMEM): update the size;
+- **shout to the console**: on every LEAVE (or on demand), the list of the current task's blocks
+  that it did not return itself (LEAVMEM will clean them up, but that is already a signal); for a live task,
+  a threshold: total pages and block lifetime.
+- block → page map: walk BIOS `#C4` (like `SIZEBLK`, `EXECUTE.ASM:456-469`) or
+  use the emulator's own knowledge of the allocator.
 
-Формат события: `DSS LEAK? task=3 leaves block id=7 (2x16K, taken @pc=0x8123, ttd=123456)`.
+Event format: `DSS LEAK? task=3 leaves block id=7 (2x16K, taken @pc=0x8123, ttd=123456)`.
 
-## B. Безвозвратный лик на уровне BIOS (то самое «памяти ОС не дала»)
+## B. A permanent leak at the BIOS level (the very "OS memory was not given back")
 
-DSS-таблица владельцев тут не поможет: страницы заняты в BIOS, MEMTAB чист, INFOMEM
-уменьшился навсегда. Источники: прямой `RST #08` с `C=#C2` (мимо GETMEM), `BC=#04C2`
-(«GET DSS PAGES HANDLE» — так DSS сам берёт свои страницы, `DOS-MAIN.ASM:351-368`),
-BIOS-хэндлы резидентов, забытый `#04C2`-хэндл.
+The DSS owner table does not help here: the pages are taken in the BIOS, MEMTAB is clean, INFOMEM
+has shrunk for good. Sources: a direct `RST #08` with `C=#C2` (bypassing GETMEM), `BC=#04C2`
+("GET DSS PAGES HANDLE": this is how DSS takes its own pages, `DOS-MAIN.ASM:351-368`),
+BIOS handles of residents, a forgotten `#04C2` handle.
 
-Рецепт:
+Recipe:
 
-- трап `0x0008` на команды `#C2/#C3/#C4/#9D/#9E` и `BC=#04C2` — ledger BIOS-уровня
-  (плюс TODO: полный список команд памяти из `Shared_Includes/Docs/BIOS functions.asm`);
-- **инвариант на выходе**: снять `BC` (свободно) INFOMEM при входе в `0x0000` (LEAVE) и после
-  возврата в родителя; `free_after < free_before` → finding «task N leaked N×16K of OS memory»;
-- дельту сверять и на GSWITCH (переключение задач) — резидент обязан держать баланс;
-- poison-режим эмулятора: свежевыделяемые BIOS-страницы заполнять паттерном (0xA5) — первая
-  задача, прочитавшая 0xA5-паттерн, читает чужую/неинициализированную память.
+- trap `0x0008` on commands `#C2/#C3/#C4/#9D/#9E` and `BC=#04C2`: a BIOS-level ledger
+  (plus TODO: the full list of memory commands from `Shared_Includes/Docs/BIOS functions.asm`);
+- **exit invariant**: take `BC` (free) from INFOMEM on entry to `0x0000` (LEAVE) and after
+  returning to the parent; `free_after < free_before` → finding "task N leaked N×16K of OS memory";
+- check the delta on GSWITCH (task switch) as well: a resident must keep its balance;
+- emulator poison mode: fill freshly allocated BIOS pages with a pattern (0xA5); the first
+  task that reads the 0xA5 pattern reads someone else's or uninitialized memory.
 
-## C. Утечка файловых хэндлов
+## C. File handle leaks
 
-LEAVE не закрывает файлы задачи (см. dss-system-state §4): хэндлы с `FTASK` мёртвой задачи
-остаются в FM навсегда, а CLOSE их уже не возьмёт (ошибка 19 «не владелец»).
+LEAVE does not close the task's files (see dss-system-state §4): handles with the `FTASK` of a dead task
+stay in the FM forever, and CLOSE will no longer take them (error 19 "not the owner").
 
-Рецепт:
+Recipe:
 
-- трап `#11/#12` (OPEN/CLOSE) — баланс по `TASK`;
-- **на LEAVE**: скан FM-таблицы на `FTASK==текущая задача` → finding с именем файла,
-  позицией FP и PC последнего OPEN (из ledger): `task 3 exits leaving handle 'LOG.TXT' open`;
-- скан «висячих» записей: `FTASK != 0` и не соответствует живой задаче → мусор в FM
-  (заодно ловит порчу самой FM-записи);
-- для нового FM это главный регрессионный тест: цикл «запуск → копирование → выход ×N»
-  без деградации свободных хэндлов.
+- trap `#11/#12` (OPEN/CLOSE): balance per `TASK`;
+- **on LEAVE**: scan the FM table for `FTASK==current task` → finding with the file name,
+  the FP position and the PC of the last OPEN (from the ledger): `task 3 exits leaving handle 'LOG.TXT' open`;
+- scan for "dangling" entries: `FTASK != 0` and not matching a live task → garbage in the FM
+  (this also catches corruption of the FM entry itself);
+- for the new FM this is the main regression test: a "launch → copy → exit ×N" loop
+  with no loss of free handles.
 
-## D. Порча системных зон 0000-3FFF (векторы, MEMTAB, ADRST10, FM)
+## D. Corruption of the system zones 0000-3FFF (vectors, MEMTAB, ADRST10, FM)
 
-Рецепт:
+Recipe:
 
-- **watchpoints** с фильтром по контексту: запись в 0000-00FF, 0100-01FF, 0200-03FF,
-  FM-область, EXSTACK из кода, у которого `PC` не принадлежит системным страницам →
-  мгновенный finding с PC и значением (дешёвый вариант: page-ownership триггер из §E,
-  т.к. 0000-3FFF — системное окно PAGE0);
-- **checksum-анализатор**: эталон векторов/ADRST10/кода системной страницы снимается после
-  загрузки DSS и проверяется в паузах/на точках жизни; расхождение → diff-подсветка
-  (как анализаторы на master);
-- MEMTAB-инвариант: запись != 0 должна соответствовать живому блоку BIOS-уровня, иначе
-  либо порча таблицы, либо потерянный BIOS-хэндл (класс B);
-- отдельный watch на `LAST_PSP_PTR`/`TASK` — подмена «текущей задачи» из приложения.
+- **watchpoints** with a context filter: writes to 0000-00FF, 0100-01FF, 0200-03FF,
+  the FM area, EXSTACK from code whose `PC` does not belong to the system pages →
+  an immediate finding with the PC and the value (the cheap variant: the page-ownership trigger from §E,
+  since 0000-3FFF is the PAGE0 system window);
+- **checksum analyzer**: a reference of the vectors / ADRST10 / system page code is taken after
+  DSS has loaded and checked in pauses / at life points; a mismatch → diff highlighting
+  (like the analyzers on master);
+- MEMTAB invariant: a non-zero entry must match a live BIOS-level block, otherwise
+  either the table is corrupted or a BIOS handle was lost (class B);
+- a separate watch on `LAST_PSP_PTR`/`TASK`: an application replacing the "current task".
 
-## E. Запись в чужие страницы (page-ownership violation)
+## E. Writes to someone else's pages (page-ownership violation)
 
-Прямой аналог Phase 6 §14.2 («доминирующий класс багов многозадачной ОС на Z80 без защиты
-памяти»). Карта владельцев: системные страницы + MEMTAB-блоки (границы блоков — через `#C4`)
-+ PSP текущего процесса (`PSP[-2]`=блок образа). Триггер: `M1`-запись (TTD уже пишет все
-memory-события) в страницу, чей владелец не текущая задача → finding. То же на оборот:
-чтение из неинициализированной (poison) страницы.
+A direct analogue of Phase 6 §14.2 ("the dominant bug class of a multitasking OS on a Z80 without memory
+protection"). Owner map: system pages + MEMTAB blocks (block boundaries via `#C4`)
++ the PSP of the current process (`PSP[-2]` = the image block). Trigger: an `M1` write (TTD already records all
+memory events) to a page whose owner is not the current task → finding. The same the other way round:
+a read from an uninitialized (poison) page.
 
-## F. Окна и стеки: рассинхрон после EXEC/LEAVE
+## F. Windows and stacks: out of sync after EXEC/LEAVE
 
-Рецепт: на EXEC — снапшот портов PAGE1-3 и SP; на возврате из LEAVE — сверка с эталоном
-родителя (`LEAVE` восстанавливает окна из PROCESS STACK BUFFER, `EXECUTE.ASM:1081-1092`).
-Расхождение → «task N corrupted window state». Отдельно — переполнение стека задачи в
-выделенный PROCESS STACK BUFFER (2EAF-2FAE, 256 байт).
+Recipe: on EXEC, a snapshot of the PAGE1-3 ports and SP; on return from LEAVE, a check against the
+parent's reference (`LEAVE` restores the windows from the PROCESS STACK BUFFER, `EXECUTE.ASM:1081-1092`).
+A mismatch → "task N corrupted window state". Separately: a task stack overflow into the
+dedicated PROCESS STACK BUFFER (2EAF-2FAE, 256 bytes).
 
-## G. «Менее прожорливый FM»: как доказать, что он менее прожорливый
+## G. "A less greedy FM": how to prove it is less greedy
 
-Метрики одной сессии (собираются бесплатно из ledger'а):
+Metrics of one session (collected for free from the ledger):
 
-- пиковое и итоговое число занятых страниц (по времени жизни, на TTD-таймлайне);
-- таблица: блок → владелец → PC взятия → PC возврата → страницы;
-- дельта INFOMEM: до запуска / на пике / после выхода (после LEAVE должна быть равна «до»);
-- число занятых FM-хэндлов на пике и «осталось после выхода» (должно быть 0);
-- время жизни резидентных блоков (GSWITCH-сессии).
+- peak and final number of pages in use (by lifetime, on the TTD timeline);
+- a table: block → owner → PC of allocation → PC of return → pages;
+- INFOMEM delta: before launch / at the peak / after exit (after LEAVE it must equal "before");
+- number of FM handles in use at the peak and "left after exit" (must be 0);
+- lifetime of resident blocks (GSWITCH sessions).
 
-Приём из bus-analyzer: **мутационные тесты** — в FM осознанно подкладываются мутанты
-(убран FREEMEM; убран CLOSE; SETWIN чужого блока; запись в 0x0100), и детекторы обязаны
-каждый поймать. Детектор, не ловящий мутанта, не ловит ничего.
+A technique from the bus analyzer: **mutation tests**: mutants are planted in the FM on purpose
+(FREEMEM removed; CLOSE removed; SETWIN of someone else's block; a write to 0x0100), and each detector must
+catch one. A detector that does not catch its mutant catches nothing.
 
-## H. Крик в консоль: как это выглядит
+## H. Shouting to the console: what it looks like
 
-- **CLI/Qt-лог**: `warn DSS: task 3 (FM.EXE) exited leaving 1 block (16K) @pc=0x8123` —
-  события уже идут через event stream (#23) и diagnostic-observability;
-- **TTD**: каждое событие тегирует позицию; «утёк блок id=7» → правый клик → reverse к
-  последнему `#C2/#3D`, создавшему этот блок (reverse-search index, 2026-08-20) → PC виновника;
-- **MCP/Lua**: скрипт прогоняет сценарий, забирает findings и дельты — регрессия ловится
-  в CI, а не на глаз:
+- **CLI/Qt log**: `warn DSS: task 3 (FM.EXE) exited leaving 1 block (16K) @pc=0x8123`;
+  the events already go through the event stream (#23) and diagnostic observability;
+- **TTD**: every event tags its position; "block id=7 leaked" → right click → reverse to
+  the last `#C2/#3D` that created this block (reverse-search index, 2026-08-20) → the culprit's PC;
+- **MCP/Lua**: a script runs the scenario and collects findings and deltas, so a regression is caught
+  in CI, not by eye:
   ```lua
   local before = dss.infomem()            -- { total=..., free=... }
   run("fm.exe"); wait_exit()
@@ -133,7 +133,7 @@ memory-события) в страницу, чей владелец не тек�
   assert(#findings.leaks == 0 and dss.infomem().free == before.free)
   ```
 
-## 8. Черновик дескриптора `dss.yaml` (Phase 6-стиль)
+## 8. Draft of the `dss.yaml` descriptor (Phase 6 style)
 
 ```yaml
 os: EstexDSS
@@ -160,16 +160,16 @@ process:
   exit: { dss: 0x41, vector: 0x0000 }
   gswitch: 0x43
   psp: { last_ptr: LAST_PSP_PTR, task_off: -1, mem_block_off: -2, exe_handle_off: -3 }
-checks:                            # каждое → finding с pc + ttd
-  - exit_balance_memory           # free до/после LEAVE (класс B)
-  - exit_closes_files             # FTASK-скан на LEAVE (класс C)
-  - owner_table_consistency       # MEMTAB ↔ BIOS-блоки (B, D)
-  - system_zone_checksum          # 0000-3FFF эталонные зоны (D)
-  - page_ownership_write          # запись в чужую/системную страницу (E)
-  - window_restore                # окна после LEAVE == до EXEC (F)
+checks:                            # each → a finding with pc + ttd
+  - exit_balance_memory           # free before/after LEAVE (class B)
+  - exit_closes_files             # FTASK scan on LEAVE (class C)
+  - owner_table_consistency       # MEMTAB ↔ BIOS blocks (B, D)
+  - system_zone_checksum          # 0000-3FFF reference zones (D)
+  - page_ownership_write          # write to someone else's / a system page (E)
+  - window_restore                # windows after LEAVE == before EXEC (F)
 ```
 
-Что дескриптор сознательно не описывает (пока): 16-битные BIOS-коды вида `#04C2`,
-FS-специфику FAT32 и адресные различия версий — они закрываются полем `version` +
-`symbols` (экспорт каждой сборки: 1.70b — карта `DSS_MAP.TXT`, 1.71.66 — `system.exp`),
-см. TODO.
+What the descriptor deliberately does not describe (yet): 16-bit BIOS codes like `#04C2`,
+FAT32 file system specifics and address differences between versions; these are covered by the `version` +
+`symbols` fields (the export of each build: 1.70b, the `DSS_MAP.TXT` map; 1.71.66, `system.exp`),
+see TODO.

@@ -1087,6 +1087,9 @@ TEST_F(McpTools_Test, InspectState_SlotsAspect_SummarizesTheReport)
     Json::Value ay;
     ay["id"] = "ay";
     ay["state"] = "shadowed by zxbus.1";
+    Json::Value port;
+    port["range"] = "#E002/#E000";
+    ay["ports"].append(port);
     report["builtIns"].append(ay);
     _caller->routes["GET /api/v1/emulator/emu-1/slots"] = {200, report};
 
@@ -1097,7 +1100,7 @@ TEST_F(McpTools_Test, InspectState_SlotsAspect_SummarizesTheReport)
     EXPECT_NE(result.text.find("zxbus.1 = multisound [dip=ym,saa,gs,sd gsRam=1m ctrlMask=pro] fit real, active"),
               std::string::npos)
         << result.text;
-    EXPECT_NE(result.text.find("built-in ay: shadowed by zxbus.1"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("built-in ay: shadowed by zxbus.1, ports #E002/#E000"), std::string::npos) << result.text;
 }
 
 // The ZX Next report aspects (design-automation-coverage.md): each reads its WebAPI route with the nr_ parameters as the query, and a
@@ -1763,6 +1766,48 @@ TEST_F(McpTools_Test, InspectState_DeviceAspects_FetchOverviewAndChips)
     EXPECT_NE(result.text.find("A: /tmp/disk.trd track 3 motor on"), std::string::npos) << result.text;
 }
 
+// device_history: read goes to /history/{device}?last=N and answers with the stats line and one line per record;
+// config posts only the fields given
+TEST_F(McpTools_Test, DeviceHistory_ReadAndConfig)
+{
+    Json::Value reply;
+    reply["device"] = "beta128";
+    reply["what"] = "FDC commands";
+    reply["mode"] = "ring";
+    reply["limit"] = 64;
+    reply["written"] = 3;
+    reply["kept"] = 3;
+    reply["dropped"] = 0;
+    Json::Value record;
+    record["name"] = "Seek";
+    record["track"] = 20;
+    reply["records"].append(record);
+    _caller->routes["GET /api/v1/emulator/emu-1/history/beta128?last=5"] = {200, reply};
+    _caller->routes["POST /api/v1/emulator/emu-1/history/beta128/config"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "read";
+    args["device"] = "beta128";
+    args["last"] = 5;
+    mcp::ToolResult result = RunTool(*_registry, "device_history", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("beta128 (FDC commands): ring limit 64, written 3, kept 3, dropped 0"), std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("name=Seek track=20"), std::string::npos) << result.text;
+
+    Json::Value config;
+    config["action"] = "config";
+    config["device"] = "beta128";
+    config["mode"] = "capture";
+    result = RunTool(*_registry, "device_history", config, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/history/beta128/config"));
+
+    Json::Value missing;
+    missing["action"] = "read";
+    EXPECT_TRUE(RunTool(*_registry, "device_history", missing, *_caller).isError);
+}
+
 TEST_F(McpTools_Test, InspectState_ContentionAspect)
 {
     Json::Value contention;
@@ -1816,6 +1861,40 @@ TEST_F(McpTools_Test, InspectState_DeviceAspect_UnavailableIsReportedNotFatal)
     ASSERT_FALSE(result.isError);
     EXPECT_FALSE(result.structured["audio_fm"]["available"].asBool());
     EXPECT_NE(result.text.find("[audio_fm] TurboSound slot device is not TSFM"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_DevicesAspect_ListsTheReportsWithTheirAspects)
+{
+    // The device catalog: the text names each report, its summary and the aspect that shows it
+    Json::Value catalog;
+    catalog["available"] = true;
+    Json::Value ay;
+    ay["id"] = "ay";
+    ay["title"] = "AY sound chips";
+    ay["summary"] = "TurboSound FM (2 x YM2203, SSG halves)";
+    ay["mcp"] = "audio_ay";
+    catalog["reports"].append(ay);
+    Json::Value fdc;
+    fdc["id"] = "fdc";
+    fdc["title"] = "Disk controller";
+    fdc["summary"] = "";
+    fdc["mcp"] = "fdc";
+    catalog["reports"].append(fdc);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/devices"] = {200, catalog};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("devices");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/devices"));
+    EXPECT_EQ(result.structured["devices"]["reports"].size(), 2u);
+    EXPECT_NE(result.text.find("[devices] 2 reports"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ay: AY sound chips (TurboSound FM (2 x YM2203, SSG halves)), aspect audio_ay"), std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("fdc: Disk controller, aspect fdc"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, InspectState_MouseAspect_FetchesMouseStatus)
@@ -3120,6 +3199,79 @@ TEST_F(McpTools_Test, TimeTravel_Start_PostsJournalAndReportsIt)
     EXPECT_TRUE(call->body["journal"].asBool());
     EXPECT_NE(result.text.find("recording started"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("write journal on"), std::string::npos) << result.text;
+}
+
+/// probe_frames posts the probes as given and lists every probe's frames in the text (a condition error too); no
+/// probes is refused before any call
+TEST_F(McpTools_Test, TimeTravel_ProbeFrames_PostsTheProbesAndListsTheFrames)
+{
+    Json::Value reply;
+    reply["from_frame"] = 2;
+    reply["to_frame"] = 40;
+    reply["replayed_frames"] = 30;
+    reply["pruned_frames"] = 9;
+    reply["truncated"] = true;
+    reply["next_from_frame"] = 41;
+    reply["barrier_frames"].append(12);
+    reply["blocked_by_marker"]["kind"] = "tape_control";
+    reply["blocked_by_marker"]["reason"] = "tape play";
+    reply["blocked_by_marker"]["frame"] = 12;
+    reply["blocked_by_marker"]["tinframe"] = 100;
+    Json::Value shot;
+    shot["probe"] = "exec";
+    shot["address"] = "0x8A14";
+    shot["page"] = 3;
+    shot["frame_count"] = 4;
+    shot["hit_count"] = 5;
+    shot["truncated"] = false;
+    for (int f : {3, 4, 5, 20})
+        shot["frames"].append(f);
+    for (int h : {1, 2, 1, 1})
+        shot["hits"].append(h);
+    reply["probes"].append(shot);
+    Json::Value died;
+    died["probe"] = "write";
+    died["address"] = "0x5F20";
+    died["if"] = "VAL ==";
+    died["error"] = "expected an operand";
+    died["frame_count"] = 0;
+    died["hit_count"] = 0;
+    died["frames"] = Json::Value(Json::arrayValue);
+    died["hits"] = Json::Value(Json::arrayValue);
+    died["truncated"] = false;
+    reply["probes"].append(died);
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/probe-frames"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "probe_frames";
+    Json::Value probe;
+    probe["probe"] = "exec";
+    probe["address"] = "0x8A14";
+    probe["page"] = 3;
+    args["probes"].append(probe);
+    args["from_frame"] = 2;
+    args["limit"] = 4;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/probe-frames");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["probes"][0]["address"].asString(), "0x8A14");
+    EXPECT_EQ(call->body["probes"][0]["page"].asUInt(), 3u);
+    EXPECT_EQ(call->body["from_frame"].asUInt64(), 2u);
+    EXPECT_EQ(call->body["limit"].asUInt(), 4u);
+    EXPECT_NE(result.text.find("Frames 2..40: 30 replayed, 9 ruled out"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("exec 0x8A14 page 3: 4 frame(s), 5 hit(s); frames 3-5, 20"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("write 0x5F20 if VAL ==: not armed - expected an operand"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("Not searched: 1 frame(s)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("from_frame=41"), std::string::npos) << result.text;
+
+    const size_t before = _caller->calls.size();
+    args = Json::Value();
+    args["action"] = "probe_frames";
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("requires 'probes'"), std::string::npos) << result.text;
+    EXPECT_EQ(_caller->calls.size(), before);
 }
 
 TEST_F(McpTools_Test, TimeTravel_JournalOnAndBuild_PostAndSummarizeTheSpans)

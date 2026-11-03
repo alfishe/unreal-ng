@@ -81,16 +81,15 @@ The solid starts from an icosahedron. Its 12 vertices are the cyclic permutation
 ratio:
 
 ```
-icosz=23*2                      ;на 24 редко зашкаливает
+icosz=23*2                      ;at 24 it rarely goes off the scale
 icod=(icosz*158&#FFFF)/(256&#FFFF)
 V0X=-icod
 V0Y=-icosz
 V0Z=0
 ```
 
-`icosz` = 46, `icod` = 46*158/256 = 28, and 256/158 = 1.62. The author's comments on the size: "на 24 редко
-зашкаливает" (at 24 it rarely goes off the scale) and "23 реальный GS за фрейм чуть-чуть не тянет" (at 23 a real GS
-falls just short of keeping up within a frame). Bigger means more pixels to texture.
+`icosz` = 46, `icod` = 46*158/256 = 28, and 256/158 = 1.62. The author's comments on the size: "at 24 it rarely goes off
+the scale" and "at 23 a real GS falls just short of keeping up within a frame". Bigger means more pixels to texture.
 
 Twenty more points are made by the macro `DOTV0_1` (expanded at each call by the converter):
 
@@ -166,7 +165,7 @@ A face record is 20 bytes (`KPOLY`, word-aligned by `DS $&1`):
 |---|---|
 | 0-2 | addresses of vertices A, B, C in the Y table (`#FF-n+VTX3DY`; X is `#100` below, Z `#100` above) |
 | 3-5 | texture coordinates of A, B, C: `#0004`, `#0000`, `#0400` for every face |
-| 6 | `#F200` (the author: `#C300`, or `#F200` "для переворота текстуры", to flip the texture) |
+| 6 | `#F200` (the author: `#C300`, or `#F200` "to flip the texture") |
 | 7 | texture number in the page plus the border: `(#00+texborder)*257` |
 | 8 | `TRIDRAW`, the routine `TRI` jumps to |
 | 9 | the "vnormal" vertex (section 5); it replaced the texture page word, still visible as `;DW gspgtex+3` |
@@ -249,13 +248,13 @@ GSTIMERACTION
         LD A,201
         ADD A,0
         LD ($-1),A
-        JR NC,$+3               ;некратные угловые скорости
+        JR NC,$+3               ;non-multiple angular speeds
         DEC (HL)
 ```
 
 The difference of the timer bytes is capped at 2 steps. `LD ($-1),A` stores the sum back into the `ADD A,0` operand,
-which becomes a fraction accumulator. Per frame, alpha moves +1, beta −(1 + 201/256), gamma +125/256: "некратные
-угловые скорости" (non-multiple angular speeds), so the motion does not repeat soon. Alpha starts at `#40`, 90 degrees.
+which becomes a fraction accumulator. Per frame, alpha moves +1, beta −(1 + 201/256), gamma +125/256: "non-multiple
+angular speeds", so the motion does not repeat soon. Alpha starts at `#40`, 90 degrees.
 
 ## 4. Perspective and the chunk map
 
@@ -289,8 +288,8 @@ The projected point addresses the chunk map at card `#0000` directly. Y selects 
 the row (L). One chunk is one byte. Its value is a colour index 0..255: 32 × brightness level + texel. `GENDIV` builds
 the other table `TRI` uses, `(L/2)/-H` per row and column in page `#04`, for the edge slopes.
 
-The author left a note in `PERSPCORR` about a wider Z range: "можно расширить диапазон Z за счет X,Y - если Z=L, X,Y=H"
-(the Z range could be widened at the expense of X,Y, if Z=L and X,Y=H).
+The author left a note in `PERSPCORR` about a wider Z range: "the Z range could be widened at the
+expense of X,Y, if Z=L and X,Y=H".
 
 ## 5. Sorting and lighting
 
@@ -301,13 +300,12 @@ sort that swaps the Z sum together with the two bytes of the record address. The
 
 ```
 SORTZ
-;HL=список Z (беззнаковых), в конце 0; #FF
-;через INC H лежат адреса полигонов (ld e,(hl):inc h:ld d,(hl))
-;в результате они будут по убыванию Z
+;HL=list of Z (unsigned), 0 at the end; #FF
+;the polygon addresses lie INC H further (ld e,(hl):inc h:ld d,(hl))
+;as a result they come in descending Z
 ```
 
-"HL = list of Z (unsigned), 0 at the end; the polygon addresses lie INC H further; as a result they come in descending
-Z." The scan does this:
+The scan does this:
 
 ```
 SORTZFINDMAX1
@@ -439,7 +437,7 @@ writes its screen (page 2 or 3, at `#8000`) in exactly the order the ZX will con
 - byte E within the line = the position in that row's 256 reads: 2 pages × 8 segments × 16 bytes.
 
 `MKTRANSCH` generates `transch` (at `#E000` of page `#85`) from this template. The code is 16 blocks, about 2,000
-bytes, run 16 times; the author's note says "#114E/2 байт" (#114E/2 bytes), perhaps from an earlier layout:
+bytes, run 16 times; the author's note says "`#114E`/2 bytes", perhaps from an earlier layout:
 
 ```
 TRANSCHCODE
@@ -463,9 +461,8 @@ TRANSCHCODE
 ```
 
 `POP HL` takes two neighbouring chunks of a map row. Each becomes two bytes (B = `#FE`, then `#FF`, and back for the
-second chunk, so the dither alternates), and the four bytes go to four successive D lines. The author: "транспонируем,
-двигаясь по источнику горизонтально, по приемнику вертикально" (we transpose, moving horizontally over the source and
-vertically over the destination). A map row becomes a screen column. This is why the sources say that the 3D engine's
+second chunk, so the dither alternates), and the four bytes go to four successive D lines. The author: "we transpose,
+moving horizontally over the source and vertically over the destination". A map row becomes a screen column. This is why the sources say that the 3D engine's
 X grows upward on the screen and Y grows to the right.
 
 The generated code is built from:
@@ -532,8 +529,8 @@ BIGLOOP
         XOR A
         OUT (GSCOM),A
         LD A,#17^#1D
-        XOR #1D                 ;видим scr1, рисуем scr0
-        LD ($-1),A              ;теперь видим scr0, рисуем scr1
+        XOR #1D                 ;we see scr1, draw scr0
+        LD ($-1),A              ;now we see scr0, draw scr1
         LD (VIEWPG1),A
         DEC A
         LD (VIEWPG0),A
@@ -541,12 +538,12 @@ BIGLOOP
 ```
 
 The screen flip is another self-modified operand: A alternates between `#17` (RAM 7 paged, screen 0 shown) and `#1D`
-(RAM 5 paged, screen 1 shown). The comments read "видим scr1, рисуем scr0" (we see scr1, draw scr0) and "теперь видим
-scr0, рисуем scr1" (now we see scr0, draw scr1). `VIEWPG1` and `VIEWPG0` (A and A−1) are patched into `LD HL,#1617`.
+(RAM 5 paged, screen 1 shown). The comments read "we see scr1, draw scr0" and "now we see scr0,
+draw scr1". `VIEWPG1` and `VIEWPG0` (A and A−1) are patched into `LD HL,#1617`.
 HL = the two pages of the hidden screen. Its value is also the DMA read address: any address in `#0000`-`#3FFF` returns
 the next byte of the stream.
 
-The loop then checks the end frame and SPACE ("можно жать RESET", one may press RESET), sends command 1, waits, and
+The loop then checks the end frame and SPACE ("one may press RESET"), sends command 1, waits, and
 jumps into `OUT16C` with `IX` = the return address.
 
 ### 7.3 The generated blit
@@ -574,19 +571,17 @@ body:   LD (curpg),A
 (This is a sketch of the generated bytes, not source text.) Each row runs its body twice, first for page H and then for
 page L. `CP H` is true only on the first pass. The 8 segments are the 4 quarters (28 lines apart) in the `#C000` half
 and the same in the `#E000` half. With `mirrorchunks` set, lines 2,3 and 6,7 of each character cell swap places (the
-generator flips bit 0 of D when bit 1 is set: "строки 0,1,3,2,4,5,7,6..."), which matches the order the card wrote
+generator flips bit 0 of D when bit 1 is set: "lines 0,1,3,2,4,5,7,6..."), which matches the order the card wrote
 them.
 
 `LD (curpg),A` keeps the interrupt handler honest: after the music it restores `curpg`, so it must be the page the
 blit is using. The handler also copes with SP pointing into the screen. The return address the CPU pushes lands
 exactly where the next `PUSH DE` goes, and the handler puts DE there instead (`EX DE,HL : EX (SP),HL`). The original
-note: "обработчик прерывания должен класть в стек DE вместо адреса возврата" (the interrupt handler must put DE on the
-stack instead of the return address). [Chapter 3](03-the-frame.md) has the full handler.
+note: "the interrupt handler must put DE on the stack instead of the return address". [Chapter 3](03-the-frame.md) has the full handler.
 
 The trailing `LD (base),DE` stores the same pair the last `PUSH` already stored. The author's comments say it was needed
-"для 8 линий в #C080..#C780, 7 линий #C900..#CF00, 7 линий #D100..#D700" (for 8 lines in `#C080..#C780`, 7 lines
-`#C900..#CF00`, 7 lines `#D100..#D700`), and that he put it on all lines anyway: "будет 32 таких линии вместо 22, а то
-запарно проверять" (there will be 32 such lines instead of 22, otherwise it is a pain to check). The earlier version in
+"for 8 lines in `#C080..#C780`, 7 lines `#C900..#CF00`, 7 lines `#D100..#D700`", and that he put it on all lines
+anyway: "there will be 32 such lines instead of 22, otherwise it is a pain to check". The earlier version in
 `hedgepre.asm` emits it only for those lines.
 
 Numbers (my count from the generator):
@@ -607,14 +602,14 @@ picture rate.
 ```
 QUIT
         LD A,2
-        OUT (GSCOM),A           ;конец эффекта
+        OUT (GSCOM),A           ;end of the effect
         HALT
         LD A,#10
         setpga
         LD HL,#5800
 ```
 
-The ZX sends command 2 ("конец эффекта", end of the effect). It then clears the normal attributes at `#5800` to black,
+The ZX sends command 2 ("end of the effect"). It then clears the normal attributes at `#5800` to black,
 turns the 16-colour mode off and returns to the resident. The card sees a command other than 1 in `GSLOOP` and returns
 to its own resident (`DEC A : RET NZ`).
 
@@ -627,8 +622,8 @@ to its own resident (`DEC A : RET NZ`).
 3. the model: `KUB` → `VTX3DI`, the face list → `TPOLYZ` / `TPOLYS`, a 0 after the last entry;
 4. `GSLOOP`.
 
-The installers and the palette (`#72E7`-`#7A5F`, 1,912 bytes) run once. The author: "NGS инсталлеры - можно
-затирать" (NGS installers - may be overwritten).
+The installers and the palette (`#72E7`-`#7A5F`, 1,912 bytes) run once. The author: "NGS installers - may be
+overwritten".
 
 ## Things to notice
 
@@ -641,18 +636,17 @@ The installers and the palette (`#72E7`-`#7A5F`, 1,912 bytes) run once. The auth
   `VIEWPG0/1`, `zxendtime`.
 - **Loops that end on a wrap.** The vertex tables are filled from `#FF` down so that `INC L : JR NZ` ends the loops. The
   texture-copy loop ends when `C` wraps after 8 × 32.
-- **The comment and the code disagree in SORTZ.** "по убыванию Z" (descending Z) versus a pass that picks the minimum.
+- **The comment and the code disagree in SORTZ.** "descending Z" versus a pass that picks the minimum.
   Both are right for negative Z, and the label `SORTZFINDMAX` keeps the author's first view.
 - **Lighting from a neighbour's screen Y.** No normals, no dot products. A face's brightness is its neighbouring spike's
   projected Y, by choosing one of 8 pre-shaded texture copies. With Y in 0..63 only levels 0..5 occur, so 32 KB of
   texture copies are never read.
 - **Dead code.** `LD C,128` before `COUNTZ0` is never used. The `GO` block at `#7800` and the `thelinkm` include are
-  only the test harness. Two variants of fan 10 with vnormal 100 are commented out and marked "баг" (bug).
-- **Leftover settings.** `incW=0` ("1=исключает выскакивание за текстуру, но дергается": 1 = never runs out of the
-  texture, but jerks) and `texborder=1` (a one-texel margin against running out of the texture) show the trade-offs the
+  only the test harness. Two variants of fan 10 with vnormal 100 are commented out and marked "bug".
+- **Leftover settings.** `incW=0` ("1 = never runs out of the texture, but jerks") and `texborder=1` (a one-texel margin against running out of the texture) show the trade-offs the
   author tried in the mapper.
-- **Unexplained start-up commands.** The harness sends the card `#38` and `#D2` and pokes `#4092` "зачем-то" (for some
-  reason), and notes that resetting the card "не помогает" (does not help). They are not part of the release objects.
+- **Unexplained start-up commands.** The harness sends the card `#38` and `#D2` and pokes `#4092` "for some
+  reason", and notes that resetting the card "does not help". They are not part of the release objects.
 - **The earlier take.** `hedgepre.asm` shows the previous stage: a stand-alone program with a Hrust-packed background
   (`demon16.p`, not on the disk), the whole card program sent in one piece, no timer (one angle step per picture), and a
   blit under `DI` instead of the interrupt-safe stack.

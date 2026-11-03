@@ -6,6 +6,10 @@
 **Target Interfaces:** WebAPI, MCP, CLI, Lua, Python  
 **Engine Overhead:** 0% new capture cost (operates purely on pre-existing checkpoint & journal metadata)
 
+> **Superseded 2026-10-31** by [2026-10-31-ttd-timeline-summary](../../2026-10-31-ttd-timeline-summary/README.md):
+> the TTD v2 engine keeps the facts this design lacked (bus journal cursors per checkpoint, changed pieces per
+> checkpoint, the engine event log). Kept for history.
+>
 > **Correction 2026-09-28 - two data sources below do not exist; revise before implementing.**
 > `TTDCheckpoint::writeJournalOffset` was never populated (and could not work: the 64 MB journal
 > ring wraps and the field is not in a `.ttd`); it has been removed. `ramPages.size()` is one entry

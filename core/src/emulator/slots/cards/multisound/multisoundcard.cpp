@@ -8,8 +8,10 @@
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
+#include "emulator/sound/chips/ayhistory.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/tsfm/ym2203pair.h"
+#include "emulator/sound/soundmanager.h"
 #include "sam2695/sam2695.h"
 #include "sam2695/soundbank.h"
 
@@ -148,6 +150,11 @@ MultiSoundCard::MultiSoundCard(EmulatorContext* context, const MultiSoundCardCon
     BusReset(0);
 }
 
+AYHistory* MultiSoundCard::AyHistory() const
+{
+    return _context != nullptr && _context->pSoundManager != nullptr ? _context->pSoundManager->ayHistory() : nullptr;
+}
+
 MultiSoundCard::~MultiSoundCard()
 {
     // The pair's SSG must not call the line after it is gone (members are destroyed in reverse order: the line
@@ -266,6 +273,8 @@ void MultiSoundCard::Out(uint16_t port, uint8_t value, uint64_t t)
                 // A control byte arrives here too: the newly selected chip latches it as an address (L5)
                 _ym->syncTo(t);
                 _ym->writeAddress(action.chip, action.value);
+                if (AYHistory* ay = AyHistory(); ay && ay->On()) [[unlikely]]
+                    RecordAYWrite(_context, *ay, 0xFFFD, action.value, action.chip, action.value);
                 break;
             case MultiSoundBusAction::Kind::YmData:
                 _ym->syncTo(t);
@@ -276,6 +285,8 @@ void MultiSoundCard::Out(uint16_t port, uint8_t value, uint64_t t)
                     ReportChipRegisterWrite(_context, reg < 0x10 ? SoundChipKind::Ay : SoundChipKind::Fm, action.chip,
                                             reg, action.value);
                 }
+                if (AYHistory* ay = AyHistory(); ay && ay->On()) [[unlikely]]
+                    RecordAYWrite(_context, *ay, 0xBFFD, action.value, action.chip, _ym->chip(action.chip)->address);
                 break;
             case MultiSoundBusAction::Kind::SaaAddress:
                 _saa.WriteAddress(t, action.value);
@@ -284,6 +295,8 @@ void MultiSoundCard::Out(uint16_t port, uint8_t value, uint64_t t)
                 _saa.WriteData(t, action.value);
                 if (_context && _context->chipRegisterWatch) [[unlikely]]
                     ReportChipRegisterWrite(_context, SoundChipKind::Saa, 0, _saa.Address(), action.value);
+                if (_chipHistory && _chipHistory->On()) [[unlikely]]
+                    RecordChipWrite(_context, *_chipHistory, SoundChipKind::Saa, 0, _saa.Address(), action.value);
                 break;
             case MultiSoundBusAction::Kind::GsData:
                 _gs->portDeviceOutMethod(GeneralSoundCard::PORT_DATA, action.value);
@@ -298,6 +311,8 @@ void MultiSoundCard::Out(uint16_t port, uint8_t value, uint64_t t)
                 _dacs.SoundriveWrite(t + kHostStrobeEndOffset, action.chip, action.value);
                 if (_context && _context->chipRegisterWatch) [[unlikely]]
                     ReportChipRegisterWrite(_context, SoundChipKind::Dac, 0, action.chip, action.value);
+                if (_chipHistory && _chipHistory->On()) [[unlikely]]
+                    RecordChipWrite(_context, *_chipHistory, SoundChipKind::Dac, 0, action.chip, action.value);
                 break;
         }
     }

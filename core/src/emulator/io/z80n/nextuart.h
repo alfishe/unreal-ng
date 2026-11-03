@@ -36,6 +36,7 @@
 #include <functional>
 
 #include "common/network/nettypes.h"
+#include "emulator/io/z80n/nexthistory.h"
 
 class ISerialPeer;
 
@@ -88,6 +89,13 @@ public:
     ISerialPeer* Peer(unsigned channel) const { return _ch[channel].peer; }
     /// The device plugged into the joystick connector (nullptr: nothing)
     void SetJoystickPeer(ISerialPeer* peer);
+    /// The bytes' history (`uart`) and its stamp: the frame, false when nothing is to be recorded (a silent replay);
+    /// nullptr detaches
+    void SetHistory(history::DeviceHistory<NextUartRecord>* history, std::function<bool(uint64_t& frame)> stamp)
+    {
+        _history = history;
+        _historyStamp = std::move(stamp);
+    }
     ISerialPeer* JoystickPeer() const { return _joyPeer; }
     /// NR #0B: the connector carries a UART (`on`) and which one (`channel`). The channel's own module is cut off: it sees no data
     /// and its ready-to-receive pin not ready
@@ -214,6 +222,15 @@ private:
     /// The receiver's view of a low line: the frame error and the break condition as time passes, a short pulse as a byte
     void StepLine(Channel& c, ISerialPeer* peer, uint64_t now);
     void TellBreak(Channel& c);
+    void Note(const Channel& c, bool tx, uint8_t value, bool error, uint64_t at)
+    {
+        uint64_t frame = 0;
+        if (_history && _history->On() && (!_historyStamp || _historyStamp(frame))) [[unlikely]]
+            _history->Push(NextUartRecord{ frame, at, static_cast<uint8_t>(IndexOf(c)), tx, value, error });
+    }
+
+    history::DeviceHistory<NextUartRecord>* _history = nullptr;
+    std::function<bool(uint64_t&)> _historyStamp;
 
     std::array<Channel, kChannels> _ch;
     unsigned _selected = 0;

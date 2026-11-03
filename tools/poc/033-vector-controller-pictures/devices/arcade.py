@@ -153,7 +153,7 @@ def arcade_stick():
                          f'stroke-width="0.3"/>', "dpad.up")
     for control, x, y, w, h in (("dpad.up", lx - 9, ly - 29, 18, 12), ("dpad.down", lx - 9, ly + 17, 18, 12),
                                 ("dpad.left", lx - 29, ly - 9, 12, 18), ("dpad.right", lx + 17, ly - 9, 12, 18)):
-        view.spot(control, "Lever", ("rect", x, y, w, h), "left", group="dpad")
+        view.spot(control, f"Lever {common.ARROW[control[5:]]}", ("rect", x, y, w, h), "left", group="dpad")
 
     # the eight buttons: Vewlix rows (the top row Square Triangle R1 L1, the bottom row Cross Circle R2 L2)
     for control, label, px, py in (("west", "Square", 797, 351), ("north", "Triangle", 886, 320),

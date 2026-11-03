@@ -68,7 +68,7 @@
     },
     {
       "control": "lstick.click",
-      "label": "Stick",
+      "label": "Stick click",
       "shape": {
         "circle": [
           675,
@@ -86,7 +86,7 @@
     },
     {
       "control": "dpad.up",
-      "label": "D-pad",
+      "label": "D-pad \u2191",
       "shape": {
         "rect": [
           834,
@@ -105,7 +105,7 @@
     },
     {
       "control": "dpad.down",
-      "label": "D-pad",
+      "label": "D-pad \u2193",
       "shape": {
         "rect": [
           834,
@@ -124,7 +124,7 @@
     },
     {
       "control": "dpad.left",
-      "label": "D-pad",
+      "label": "D-pad \u2190",
       "shape": {
         "rect": [
           760,
@@ -143,7 +143,7 @@
     },
     {
       "control": "dpad.right",
-      "label": "D-pad",
+      "label": "D-pad \u2192",
       "shape": {
         "rect": [
           907,

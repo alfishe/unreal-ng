@@ -513,7 +513,7 @@ MediaResult MediaManager::OpenForSlot(const std::string& slotId, const MediaSour
     // actually reads (MBR-partitioned vs. raw FAT)? Never refuses the insert
     if ((medium->Kind() == MediaKind::Block) && medium->Block())
     {
-        std::string mismatch = DescribeBlockLayoutMismatch(*medium->Block(), descriptor.tags);
+        std::string mismatch = DescribeBlockLayoutMismatch(*medium->Block(), descriptor.tags, descriptor.folderMbr);
         if (!mismatch.empty())
             medium->Report().push_back(std::move(mismatch));
     }
@@ -1553,6 +1553,13 @@ Medium* MediaManager::GetMedium(const std::string& slotId)
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     auto it = _slots.find(slotId);
     return it == _slots.end() ? nullptr : it->second.attached.get();
+}
+
+bool MediaManager::HasIncoming(const std::string& slotId) const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _slots.find(slotId);
+    return it != _slots.end() && it->second.incoming != nullptr;
 }
 
 /// region <Helpers>

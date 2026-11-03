@@ -32,6 +32,8 @@ public:
     };
 
     void SetBus(Bus bus) { _bus = std::move(bus); }
+    /// Told at the end of every block, before an auto restart reloads the addresses (the block's history)
+    void SetBlockListener(std::function<void(const NextDma&)> listener) { _onBlock = std::move(listener); }
     /// Reset (hard or soft; dma.vhd reset block): the sequencer, timing bytes, prescaler, mode, CE/WAIT, auto-restart, read mask,
     /// status and the counter go back; the programmed addresses, block length, direction and port types stay
     void Reset();
@@ -122,6 +124,7 @@ private:
     void AdvanceReadSequence(int after);
 
     Bus _bus;
+    std::function<void(const NextDma&)> _onBlock;
     // WR0-WR2, WR4
     bool _aToB = true;
     uint16_t _portAAddress = 0, _portBAddress = 0, _blockLength = 0;

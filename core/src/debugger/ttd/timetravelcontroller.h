@@ -61,12 +61,14 @@
 #include "emulator/execution/executionarbiter.h"
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard::InputState (display sandbox)
+#include "emulator/io/controllers/ihapticfeed.h"  // controllers::HapticProbe (probe-frames)
 #include "common/modulelogger.h"    // ModuleLogger
 #include "debugger/ttd/timetravelhooks.h"  // ITimeTravelHooks, TTDSessionState, TTDGuardedAction
 #include "debugger/ttd/ttdcursorcell.h"   // the published cursor
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/ttdsessiontypes.h"  // the session's status, results and options, shared with the controller
 #include "emulator/sound/soundmanager.h"  // SoundManager::HostOutputHold (replay hold)
+#include "emulator/video/screenmemoryspan.h"  // the picture's memory at a boundary (timeline `screen`)
 #include "ttdcheckpoint.h"
 #include "ttdexternalevents.h"
 #include "ttdfileinfo.h"
@@ -82,7 +84,11 @@
 #include "emulator/media/mediareadjournal.h"
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
+#include "ttdcausechain.h"
+#include "ttdfindevent.h"
+#include "ttdexplainframe.h"
 #include "ttdcoverageindex.h"
+#include "ttdtimeline.h"
 #include "ttdperipheralregistry.h"
 #include "ttdportjournal.h"
 #include "ttdportsearch.h"
@@ -1269,6 +1275,29 @@ public:
         std::optional<TTDCoverageKind> kind = std::nullopt,
         uint64_t bucketSize = 0,
         size_t limit = 100) const;
+
+    /// @brief The timeline summary (TD-5, docs/inprogress/2026-10-31-ttd-timeline-summary): per bucket of frames
+    /// the facts the session holds, and the phases they make. Reads only what the recording stores (no replay);
+    /// a fact it cannot give is named in `missing`
+    TTDTimelineResult QueryTimeline(const TTDTimelineOptions& options) const;
+
+    /// @brief The cause chain (docs/inprogress/2026-11-02-ttd-cause-chain): where the value of a memory byte or a
+    /// register at a moment came from, as a tree of links back to constants, port reads and the session's initial
+    /// memory. Replays the frames it needs with the instruction and bus hooks and puts the machine back exactly
+    /// where it stood; a live recording pauses for browsing
+    TTDCauseResult QueryCauseChain(const TTDCauseQuery& query);
+
+    /// @brief Find event (docs/inprogress/2026-11-02-ttd-find-event): the first (or last) moments in a frame window
+    /// where a described event happened - a memory value meets a condition, the screen changed as a whole, an address
+    /// ran, a port access, a border change, a key. Frames are filtered from what the session stores; only the hit
+    /// frames are replayed. The machine is put back where it stood; a live recording pauses for browsing
+    TTDFindEventResult QueryFindEvent(const TTDFindEventQuery& query);
+
+    /// @brief Explain frame (docs/inprogress/2026-11-02-ttd-explain-frame): what one frame did - its time split, the
+    /// routines by time, the interrupts, paging, ports per device, the memory changed with its writers, the screen,
+    /// the border, the keys and the markers - from one replay of the frame with the instruction and bus hooks. The
+    /// machine is put back where it stood; a live recording pauses for browsing
+    TTDExplainFrameResult QueryExplainFrame(const TTDExplainFrameQuery& query);
     
     /// @brief Step back one instruction (TDD §10.2 + §16 row 2).
     ///
@@ -1387,6 +1416,19 @@ public:
 
     /// Most hits an all-mode reverse search or find-last returns
     static constexpr size_t kReverseHitLimitMax = 10000;
+
+    /// @brief In which frames of [fromFrame, toFrame] each of @p probes fired (feedback item 7 of
+    /// docs/inprogress/2026-10-28-ttd-analysis-feedback): the probes of a game profile (exec, read, write, port in /
+    /// out, a page, a port mask, an `if:` condition), armed as taps of the replay's own sink, so they match as they
+    /// do in real time. Each complete recorded frame of the window is replayed from its checkpoint, unless the
+    /// coverage index proves it holds no hit of a memory probe; a frame a barrier cuts is skipped and named. The
+    /// live haptics, the user's breakpoints and the deck hear nothing; the machine is put back exactly where it
+    /// stood. At most HapticFrame::kMaxProbes probes; the list keeps each probe's first @p limit frames.
+    TTDProbeFramesResult ProbeFrames(const std::vector<controllers::HapticProbe>& probes, uint64_t fromFrame,
+                                     uint64_t toFrame, size_t limit = 1000);
+
+    /// Most frames a probe-frames list returns per probe
+    static constexpr size_t kProbeFramesLimitMax = 10000;
 
     /// @brief Read-only accessor for the write journal (for serialization
     /// and tests).
@@ -1583,6 +1625,10 @@ private:
     /// @param targetTInFrame Position within the frame to stop at, in TTD
     ///        time units (FrameSpan() = the whole frame).
     void ReplayWithinFrame(uint64_t targetFrame, uint32_t targetTInFrame);
+
+    /// The cause chain's frame trace: the frame of checkpoint @p cpIndex replayed up to @p endT with the instruction
+    /// and bus hooks (ttdcontrollercausechain.cpp). The caller saved the live machine
+    std::shared_ptr<TTDFrameTrace> TraceCauseFrame(size_t cpIndex, uint32_t endT);
 
     /// @brief Run the CPU until the current frame reaches `targetTInFrame`
     /// (TTD time units) or ends. A hardware turbo may switch on the way, so
@@ -1936,6 +1982,8 @@ private:
     /// The live machine's memory regions as the engine sees them: machine RAM, then each region source's
     std::vector<TTDRegionDesc> LiveRegions() const;
     uint64_t _shadowLastStart = 0;         ///< the last captured frame's start in machine time
+    std::vector<ScreenMemorySpan> _shadowScreenSpans;   ///< the picture's memory at the boundary (reused)
+    std::vector<TTDScreenRange> _shadowScreenRanges;
     uint64_t _shadowLastBase = 0;          ///< emulatorState.t_states at that capture
     uint64_t _shadowLastLength = 0;        ///< the length of the frame before it (0: none yet)
     uint64_t _shadowRomSignature = 0;      ///< the ROM set's, hashed once per shadow session
@@ -2200,6 +2248,8 @@ private:
 
     /// True while inside EnterReplayMode / ExitReplayMode, so nested calls are safe
     bool _inReplayMode = false;
+    /// A probe-frames query runs: the replay steps with the instruction-start check, so its exec taps are told
+    bool _replayTaps = false;
 
     /// The host audio hold of the replay (reason TtdReplay): taken by EnterReplayMode after the replay flag is
     /// set, released by ExitReplayMode before it clears it (and with the manager). Replay runs as fast as the

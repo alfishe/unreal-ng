@@ -52,7 +52,7 @@ rather than of the original board; **low** = forum statements or secondary sourc
 | +2A / +3 (gate array 40077) | yes: pages 4-7 in any slot, 1,0,7,6,5,4,3,2 (129 T window per line) | **no** | none; no contention of internal cycles (MREQ only) | shared DRAM, the gate array pulls WAIT | high | sinclair.wiki; Next `zxula.vhd` via jnext `src/memory/contention.cpp:318-362`; this folder's Rak Timing Test results |
 | Timex TC2048 / TS2068 (SCLD) | yes, assumed ULA-like on the screen 16K (#4000-#7FFF), different onset | presumably as 48K | none known | as 48K (SCLD replaces the ULA) | medium-low: no circuit-level description found | sinclair.wiki "Timex 2000 series"; zxsp `Source/Uni/ZxInfo/z/info_tc2048.h:45-47` ("TODO: verify!") |
 | Harlequin (open 48K replica) | yes: reproduces the 48K ULA | yes | none | copies the ULA's DRAM interface | medium-high | zxdesign.info/harlequin.shtml |
-| Leningrad-1 | disputed: ru.wikipedia says "the same CPU slowdown at #4000-#8000"; ZXMAK2 models Even M1 on all fetches instead | unknown | possibly Even M1 (emulator only) | discrete logic, details not found | low | ru.wikipedia "Клоны ZX Spectrum"; ZXMAK2 `Clone/UlaLeningrad.cs:19-29` |
+| Leningrad-1 | disputed: ru.wikipedia says "the same CPU slowdown at #4000-#8000"; ZXMAK2 models Even M1 on all fetches instead | unknown | possibly Even M1 (emulator only) | discrete logic, details not found | low | ru.wikipedia "Клоны ZX Spectrum" (ZX Spectrum clones); ZXMAK2 `Clone/UlaLeningrad.cs:19-29` |
 | Pentagon 128 / 512 / 1024SL | **no** | **no** | none at 3.5 MHz; 1024SL 7 MHz turbo: no wait documented | fixed interleaved slots (14 MHz master clock, CPU at 14/4) | high for "no contention", low for the slot details | Pentagon FAQ (zxspectrum.hal.varese.it/static/documenti/pentagon.txt): "128k of NOT-CONTENDED memory (no slow areas)" |
 | **Scorpion ZS-256** (yellow, green, ProfROM) | **no** | **no** | **Even M1 on opcode fetches from RAM** (0 or 1 T), not ROM, not data, not I/O | fixed slots on the H0/H1 phase counter (7 MHz); the CPU gets RAM in the RAS phase | medium-high (see §6) | EPLD equations SC15.1 (zx-pk.ru thread 940, post #40); zx-pk.ru thread 13345 post #86 |
 | Scorpion Turbo+ (7 MHz) | **yes, of a different kind:** in turbo every RAM access (any page, reads and writes alike) waits for the next CPU slot: every 4 T in the paper, every 2 T in the border; an opcode fetch waits 1 more | no, but every I/O cycle takes +2 T | turbo on by `IN` from #7FFD, off by `IN` from #1FFD or reset; the CPU drops to 3.5 MHz while /INT is active | as above; in turbo the CPU slots are halved during the paper | medium-high (SC15.1 fuse map decoded, simulated) | same EPLD equations; [research-scorpion-turbo.md](../2026-09-29-machine-waits/research-scorpion-turbo.md); MAME `scorpion.cpp:635-640` |
@@ -134,7 +134,7 @@ It behaves as a 48K.
 
 ### 5.6 Leningrad-1
 
-Conflicting secondary sources. ru.wikipedia ("Клоны ZX Spectrum"): "Такое же торможение процессора в
+Conflicting secondary sources. ru.wikipedia ("Клоны ZX Spectrum", ZX Spectrum clones): "Такое же торможение процессора в
 адресах с #4000 по #8000" ("the same CPU slowdown at addresses #4000 to #8000"). ZXMAK2 instead models
 **Even M1 on every fetch** and no contention (`ZXMAK2/src/ZXMAK2.Hardware/Clone/UlaLeningrad.cs:19-29`,
 `CPU.Tact += CPU.Tact & 1`). No schematic-level description found. Open question; not creatable in
@@ -196,7 +196,7 @@ generated"). He hedges it with "чтоле?" ("or so?").
 | 2007 re-creation GAL "TURBO 15.3" (`Scorpion256TPlus/GAL/turbo.jed`) | **no**: M1 (pin 10) appears in no product term of the decoded fuse map, and WAIT is always released in normal mode | decoded with MAME jedutil's 22V10 map in this research; `RAS_ := H0` and the CPU clock match the ABEL, which checks the map. The two write-ups in that repo (`doc/turbo.md`, `doc/files/Scorpion_Turbo_Mode.md` §2.2) use different column maps and contradict each other |
 | Early boards | unknown | deathsoft, post #35: "Первые скорпы были сделаны по какойто упрощенной схеме, где многие задержки выставлялись RC цепочками" ("the first Scorpions used a simplified circuit where many delays were set by RC chains") |
 
-Software authors confirm the effect on real machines. introspec, "Тайминги Pentagon 128" thread
+Software authors confirm the effect on real machines. introspec, "Тайминги Pentagon 128" (Pentagon 128 timings) thread
 (https://zx-pk.ru/threads/21212-tajmingi-pentagon-128/page3.html, #25): "Не работает на Scorpion c Even M1 …
 На скорпионе … всегда получается чётный такт на выходе из halt" ("does not work on a Scorpion with Even M1 …
 on a Scorpion the T-state is always even on exit from HALT").

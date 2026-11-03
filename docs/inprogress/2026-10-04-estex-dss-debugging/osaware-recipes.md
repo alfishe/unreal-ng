@@ -1,60 +1,60 @@
-# OS-aware analyzers: рецепты MCP / WebAPI / CLI / Lua / Python
+# OS-aware analyzers: MCP / WebAPI / CLI / Lua / Python recipes
 
-Применимо к обоим OS-aware анализаторам: `nedoos` (PLAN #78) и `dss` (PLAN #99).
-Ниже везде `{os}` = `nedoos` | `dss`, `{id}` = UUID эмулятора. Требуется сборка
-после `cd4b9857b` (merge обоих анализаторов): до неё MCP-инструмент
-`analyze_performance` не знает op `analyzers`, а WebAPI отвечает
-«Events not implemented».
+Applies to both OS-aware analyzers: `nedoos` (PLAN #78) and `dss` (PLAN #99).
+Throughout, `{os}` = `nedoos` | `dss`, `{id}` = the emulator UUID. Requires a build
+after `cd4b9857b` (the merge of both analyzers): before it the MCP tool
+`analyze_performance` does not know the `analyzers` op, and the WebAPI answers
+"Events not implemented".
 
-## 1. MCP (порт 8092, streamable HTTP `POST /mcp`)
+## 1. MCP (port 8092, streamable HTTP `POST /mcp`)
 
-Инструмент `analyze_performance`, `action: "analyzers"`:
+Tool `analyze_performance`, `action: "analyzers"`:
 
 ```jsonc
-// список и статус
+// list and status
 {"name": "analyze_performance", "arguments": {"action": "analyzers", "op": "list"}}
-// включить/выключить (ловушки ставятся после детекта ядра - на первом кадре)
+// enable/disable (the traps are set after the kernel is detected - on the first frame)
 {"name": "analyze_performance", "arguments": {"action": "analyzers", "op": "enable", "name": "dss"}}
-// поток событий (то же у nosedos)
+// event stream (the same for nedoos)
 {"name": "analyze_performance", "arguments": {"action": "analyzers", "op": "events", "name": "dss"}}
-// очистить кольцо
+// clear the ring
 {"name": "analyze_performance", "arguments": {"action": "analyzers", "op": "clear", "name": "dss"}}
 ```
 
-Снимок ОС (задачи/блоки/хэндлы) — у MCP-операции `analyzers` нет отдельного op
-`state`, берётся generic-инструментом (всё, что есть в WebAPI, доступно так):
+OS snapshot (tasks/blocks/handles): the MCP `analyzers` operation has no separate `state` op,
+it is taken with the generic tool (everything the WebAPI has is reachable this way):
 
 ```jsonc
 {"name": "invoke_api", "arguments": {"method": "GET",
   "path": "/analyzer/dss/events?include=snapshot&limit=5"}}
 ```
 
-## 2. WebAPI (порт 8090)
+## 2. WebAPI (port 8090)
 
 ```bash
-# список анализаторов
+# list of analyzers
 curl -s http://localhost:8090/api/v1/emulator/$ID/analyzers
-# включить
+# enable
 curl -s -X PUT http://localhost:8090/api/v1/emulator/$ID/analyzer/dss \
      -H 'Content-Type: application/json' -d '{"enabled":true}'
-# события (последние N) + профиль/детект
+# events (last N) + profile/detection
 curl -s "http://localhost:8090/api/v1/emulator/$ID/analyzer/dss/events?limit=50"
-# то же со снимком: tasks[], blocks[] (страницы/блоки по владельцам), handles[]
+# the same with a snapshot: tasks[], blocks[] (pages/blocks by owner), handles[]
 curl -s "http://localhost:8090/api/v1/emulator/$ID/analyzer/dss/events?include=snapshot&limit=1"
-# очистить
+# clear
 curl -s -X DELETE http://localhost:8090/api/v1/emulator/$ID/analyzer/dss/events
 ```
 
-Схема события: `kind` (`OS_DETECTED|PROFILE_UNKNOWN|SYSCALL|TASK_START|TASK_EXIT|
+Event schema: `kind` (`OS_DETECTED|PROFILE_UNKNOWN|SYSCALL|TASK_START|TASK_EXIT|
 PAGE_ALLOC|PAGE_FREE|FILE_OPEN|FILE_CLOSE|FINDING`), `severity`, `pc`, `caller`,
 `task_id`, `syscall`, `message`, `detail`, `frame_number`, `formatted`.
 
-Снимок NedoOS (с 2026-10-24) богаче: у задач `name` (первое слово командной строки
-из страницы задачи), `stdin/stdout/stderr` (пайпы 0x80+) и `last_time` (кванты
-ядра; относительная доля = CPU% - CLI `analyzer nedoos state` печатает его),
-плюс `pipes[]` (стороны/читатель/строки/байты) и `handles[]` из `ffilearray`
-(открытые FAT-файлы с владельцем, позицией и размером). Пример живого снимка
-(idle → term.com → cmd.com, пайпы скрещены): task 2 'term.com' io=#80/#81,
+The NedoOS snapshot (since 2026-10-24) is richer: tasks have `name` (the first word of the command line
+from the task page), `stdin/stdout/stderr` (pipes 0x80+) and `last_time` (kernel quanta;
+the relative share = CPU%, which CLI `analyzer nedoos state` prints),
+plus `pipes[]` (ends/reader/lines/bytes) and `handles[]` from `ffilearray`
+(open FAT files with owner, position and size). Example of a live snapshot
+(idle → term.com → cmd.com, pipes crossed): task 2 'term.com' io=#80/#81,
 task 3 'cmd.com' io=#81/#80, pipe #80 reader=2, pipe #81 reader=3.
 
 ## 3. CLI (telnet :8765)
@@ -62,7 +62,7 @@ task 3 'cmd.com' io=#81/#80, pipe #80 reader=2, pipe #81 reader=3.
 ```
 analyzer dss enable
 analyzer dss events --limit=100
-analyzer dss state        # задачи, владельцы блоков, файловые хэндлы
+analyzer dss state        # tasks, block owners, file handles
 ```
 
 ## 4. Lua / Python
@@ -79,13 +79,13 @@ em.analyzer_state("dss")
 em.analyzer_clear("dss")
 ```
 
-## 5. Готовые сценарии
+## 5. Ready-made scenarios
 
-### 5.1 Поднять Sprinter с DSS и посмотреть задачи/память (полный флоу)
+### 5.1 Bring up a Sprinter with DSS and look at tasks/memory (full flow)
 
 ```bash
-# создать машину и вставить диск (образ строит scratch/osaware-live/build_dss_hdd.py по спеке
-# BuildDssHdd из core/tests/emulator/machines/sprinter/sprinterdssmedia.h)
+# create a machine and insert a disk (the image is built by scratch/osaware-live/build_dss_hdd.py from the spec
+# BuildDssHdd in core/tests/emulator/machines/sprinter/sprinterdssmedia.h)
 ID=$(curl -s -X POST http://localhost:8090/api/v1/emulator/create \
      -H 'Content-Type: application/json' -d '{"model":"SPRINTER","ram":4096}' \
      | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
@@ -93,45 +93,45 @@ curl -s -X POST http://localhost:8090/api/v1/emulator/$ID/media/ide0.master/inse
      -H 'Content-Type: application/json' \
      -d '{"path":"scratch/osaware-live/dss171-session.img","access":"session"}'
 curl -s -X POST http://localhost:8090/api/v1/emulator/$ID/reset -d '{}' >/dev/null
-curl -s -X POST http://localhost:8090/api/v1/emulator/$ID/start >/dev/null   # НЕ /emulator/start с id в теле - он создаёт новый инстанс
-sleep 15                                                                    # загрузка DSS в реальном времени
-# дальше - MCP-вызовы из §1 (enable -> events -> snapshot)
+curl -s -X POST http://localhost:8090/api/v1/emulator/$ID/start >/dev/null   # NOT /emulator/start with the id in the body - it creates a new instance
+sleep 15                                                                    # DSS boots in real time
+# then - the MCP calls from §1 (enable -> events -> snapshot)
 ```
 
-NedoOS: то же с `{"model":"ATM3"}` и слотом `sd.zc` (host-папка с sdcard-фикстурой,
-`InsertOptions.freeBytes >= 16 МБ`), после загрузки — `analyzer nedoos …`.
+NedoOS: the same with `{"model":"ATM3"}` and the `sd.zc` slot (a host folder with the sdcard fixture,
+`InsertOptions.freeBytes >= 16 MB`); after boot, `analyzer nedoos …`.
 
-### 5.2 «Крикнуть в консоль, если память ОС не отдали»
+### 5.2 "Shout to the console if OS memory was not returned"
 
-1. `analyzer {os} enable` до запуска тестируемой программы.
-2. Снять базу: `GET .../events?include=snapshot` (запомнить `blocks`/`handles`).
-3. Запустить программу в гостевой ОС, дать ей завершиться.
-4. `GET .../events?limit=200` и отфильтровать `kind=FINDING`:
-   - NedoOS: `task N exits owning K page(s)` — задача вышла, владея страницами
-     (ядро почистит, приложение забыло `CMD_DELPAGE`);
-   - DSS: `task N exits owning block(s)` (забыт `FREEMEM`) и
-     `task N exits leaving file handle(s) open` (класс C: LEAVE файлы не закрывает).
-   Каждый finding несёт `pc`/`caller` — адрес виновника.
+1. `analyzer {os} enable` before starting the program under test.
+2. Take a baseline: `GET .../events?include=snapshot` (remember `blocks`/`handles`).
+3. Run the program in the guest OS and let it finish.
+4. `GET .../events?limit=200` and filter `kind=FINDING`:
+   - NedoOS: `task N exits owning K page(s)`: the task exited while owning pages
+     (the kernel cleans up, the application forgot `CMD_DELPAGE`);
+   - DSS: `task N exits owning block(s)` (a forgotten `FREEMEM`) and
+     `task N exits leaving file handle(s) open` (class C: LEAVE does not close files).
+   Every finding carries `pc`/`caller`: the address of the culprit.
 
-### 5.3 Профиль «прожорливости» программы
+### 5.3 A program's "greediness" profile
 
-- поток: `PAGE_ALLOC`/`PAGE_FREE` по `task_id` → сколько страниц держала задача
-  в каждый момент (пик = max одновременно живущих);
-- `blocks` из snapshot после выхода из программы ≠ база → безвозвратный лик
-  (BIOS-уровень, класс B: alloc прошёл мимо MEMTAB);
-- DSS `handles[]` из snapshot → незакрытые файлы по именам.
+- stream: `PAGE_ALLOC`/`PAGE_FREE` by `task_id` → how many pages the task held
+  at each moment (peak = max simultaneously live);
+- `blocks` from the snapshot after the program exits ≠ the baseline → a permanent leak
+  (BIOS level, class B: the alloc bypassed MEMTAB);
+- DSS `handles[]` from the snapshot → unclosed files by name.
 
-## 6. Подводные камни
+## 6. Pitfalls
 
-- Анализаторы **не активны по умолчанию** и не мешают машинам без своей ОС:
-  на «чужой» машине детект молчит (событий нет, ошибки нет).
-- Детект стреляет на первом кадре после enable: события идут только после
-  `OS_DETECTED`; на неизвестном билде — `PROFILE_UNKNOWN` (векторный режим:
-  поток вызовов без структур/аудита).
-- Горячие вызовы (NedoOS YIELD/PRCHAR, DSS WAITKEY/PUTCHAR/SETWIN-маппер #C4)
-  не попадают в кольцо — считаются счётчиком, чтобы не вытеснять полезное.
-- Тесты/автоматизация, гоняющая кадры напрямую, должна использовать
-  `RunFrame(false)` (без skip-breakpoints), иначе ловушки не сработают.
-- Автоматизация, меняющая эмулятор без `take_control`, получает implicit-сессию —
-  для длительных прогонов возьмите контроль (`POST /control/session`, MCP
-  `take_control`) и отпустите после.
+- The analyzers are **not active by default** and do not disturb machines without their OS:
+  on a "foreign" machine detection stays silent (no events, no error).
+- Detection fires on the first frame after enable: events come only after
+  `OS_DETECTED`; on an unknown build, `PROFILE_UNKNOWN` (vector mode:
+  a call stream without structures/audit).
+- Hot calls (NedoOS YIELD/PRCHAR, DSS WAITKEY/PUTCHAR/SETWIN mapper #C4)
+  do not go into the ring: they are counted, so they do not push out useful events.
+- Tests/automation that run frames directly must use
+  `RunFrame(false)` (without skip-breakpoints), otherwise the traps do not fire.
+- Automation that changes the emulator without `take_control` gets an implicit session;
+  for long runs take control (`POST /control/session`, MCP
+  `take_control`) and release it afterwards.

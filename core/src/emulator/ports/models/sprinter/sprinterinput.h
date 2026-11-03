@@ -121,6 +121,8 @@ public:
     /// region <IPs2KeySink: the host's physical keys (journaled input)>
     void OnPcKey(PcKey key, bool pressed) override;
     void ReleaseAllPcKeys() override;
+    /// Native Sprinter programs poll the PS/2 keyboard, so the pads' key bindings must reach it
+    bool WantsHostOverlayKeys() const override { return true; }
     /// endregion
 
     /// ALL_MODE (bits 0 and 3: the keyboard INT) is about to change: bytes that

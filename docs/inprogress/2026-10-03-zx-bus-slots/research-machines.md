@@ -75,7 +75,7 @@
 | **/IODOS** | NemoBus v1.1 only: enables "shadow" ports in an I/O cycle (inverted `#EFF7` bit 7). |
 | **/ROMCS, CSR/, RDR/** | ROM override. Sinclair `/ROMCS`: a card pulls it high to disable the board ROM. ZX-bus splits it into CSR/ (the board's ROM select, output) and RDR/ (the ROM chip's real enable, which a card can override). |
 | **/ROM1OE, /ROM2OE** | The +2A / +3 replacement of `/ROMCS`: one output-enable line per ROM chip. |
-| **74LS245 / 555АП6** | An 8-bit bus buffer. When one sits between the CPU and a device, its direction and enable decide who drives the bus. |
+| **74LS245 / 555АП6 (Soviet 74LS245)** | An 8-bit bus buffer. When one sits between the CPU and a device, its direction and enable decide who drives the bus. |
 | **Wired-AND** | Two open-collector or NMOS drivers on one line: a 0 from either wins. Used in the design as the default read-conflict rule. |
 | **Floating bus** | What a read returns when nothing answers: on Sinclair machines the byte the ULA is fetching. |
 | **porthit** | The ZX-Evo FPGA signal "this port is decoded on the board". |
@@ -127,7 +127,7 @@ Sources: the per-machine sections below.
 **Origin.**
 - Nemo (Vyacheslav Skutin, St. Petersburg) defined the bus for the Kay clones. It first appeared on Composite-128K AY / KAY-128 ([Black_Cat, "BC Info Guide #7. Standardization of ZXBus interfaces and buses", R2020-05-27](https://zx.clan.su/forum/7-82-1), file [BC_IG_7_R202005.rar](https://zx.clan.su/_fr/0/BC_IG_7_R202005.rar), §1, §3).
 - This guide is the most complete specification found. It is a community document, not Nemo's own.
-- Nemo's 1994 article "Системная шина в Spectrum-совместимых компьютерах" (*Radiolyubitel* 1/94) gives the philosophy (local collection: hardware/hdd-ide/NEMO_END.RAR, `статья.TXT`):
+- Nemo's 1994 article "Системная шина в Spectrum-совместимых компьютерах" ("The system bus in Spectrum-compatible computers", *Radiolyubitel* 1/94) gives the philosophy (local collection: hardware/hdd-ide/NEMO_END.RAR, `статья.TXT` ("article")):
   - The bus carries the unbuffered Z80 pins.
   - Cards load it with ALS inputs.
   - The Sinclair connector is the prototype.
@@ -302,7 +302,7 @@ None of these can be switched off.
 
 ## 8. Pentagon 128 (1991)
 
-**Connector.** No CPU bus connector exists. XP1 "СИСТЕМНЫЙ РАЗЪЕМ" (2 x 32) carries:
+**Connector.** No CPU bus connector exists. XP1 "СИСТЕМНЫЙ РАЗЪЕМ" ("system connector", 2 x 32) carries:
 - Video: sync, R, G, B.
 - SOUND, RESET, tape in and out.
 - Keyboard: KA0-7, KD1-5.
@@ -317,15 +317,15 @@ XP2 is the printer and XP3 the floppy (local collection: pentagon/PENT_SHM.ZIP, 
 - This only gates add-ons off during TR-DOS. It does not stop the board's decoder.
 
 **Built-in devices.**
-- Beta-128 (КР1818ВГ93): `#1F`, `#3F`, `#5F`, `#7F`, `#FF` while in DOS.
+- Beta-128 (КР1818ВГ93, the Soviet WD1793): `#1F`, `#3F`, `#5F`, `#7F`, `#FF` while in DOS.
 - Printer.
 - Kempston `#1F` (A7 = 0).
 - `#FE` (A0 = 0): "the keyboard takes half of all addresses".
 - `#7FFD` (A15 = 0, A1 = 0).
-- **No AY on the 1991 board.** The AY was an add-on (bill of materials; [ru.wikipedia "Пентагон (компьютер)"](https://ru.wikipedia.org/wiki/%D0%9F%D0%B5%D0%BD%D1%82%D0%B0%D0%B3%D0%BE%D0%BD_(%D0%BA%D0%BE%D0%BC%D0%BF%D1%8C%D1%8E%D1%82%D0%B5%D1%80))).
+- **No AY on the 1991 board.** The AY was an add-on (bill of materials; [ru.wikipedia "Pentagon (computer)"](https://ru.wikipedia.org/wiki/%D0%9F%D0%B5%D0%BD%D1%82%D0%B0%D0%B3%D0%BE%D0%BD_(%D0%BA%D0%BE%D0%BC%D0%BF%D1%8C%D1%8E%D1%82%D0%B5%D1%80))).
 - None can be switched off.
 
-**Read conflict.** No buffer and no rule. UA3PRQ advises an add-on buffer (К555АП6), a sub-decoder (К555ИД7) enabled by OIRQ, and a switch to disable all add-ons (ZX_EXTEN.TXT).
+**Read conflict.** No buffer and no rule. UA3PRQ advises an add-on buffer (К555АП6), a sub-decoder (К555ИД7, Soviet 74LS138) enabled by OIRQ, and a switch to disable all add-ons (ZX_EXTEN.TXT).
 
 ## 9. Pentagon 512 / 1024SL
 
@@ -341,7 +341,7 @@ XP2 is the printer and XP3 the floppy (local collection: pentagon/PENT_SHM.ZIP, 
 **Pentagon-1024SL v2.2 (2006).** Sources: [ver22.pdf](https://github.com/koe1234/pentagon_2.2/blob/main/ver22.pdf), [CPLD/p1024sl.tdf](https://github.com/koe1234/pentagon_2.2/blob/main/CPLD/p1024sl.tdf), [CPLD/p1024sl2.tdf](https://github.com/koe1234/pentagon_2.2/blob/main/CPLD/p1024sl2.tdf).
 
 - **Slots:** 3 x SL-62 (XS1-XS3), labelled "ZX-BUS". The pinout is the NemoBus table (§4.2). 20B (`/IODOS`), 22B and 23B are empty. There is no -5 / -12 V and no audio.
-- **Arbiter:** serial, on DD31 (К555ЛЛ1, 2-input OR gates):
+- **Arbiter:** serial, on DD31 (К555ЛЛ1, 2-input OR gates, Soviet 74LS32):
   - IORQ2 = IORQ OR IOR1.
   - IORQ3 = IORQ2 OR IOR2.
   - **IORQG = IORQ3 OR IOR3.**
@@ -350,7 +350,7 @@ XP2 is the printer and XP3 the floppy (local collection: pentagon/PENT_SHM.ZIP, 
 - **The whole board decoder runs on IORQG ("card wins", complete):**
   - DD6 (EPM3032): `#7FFD`, `#EFF7`, `#FE` write, and AY BDIR / BC1 (`#FFFD` / `#BFFD` with A15 = 1, A13 = 1, A1 = 0).
   - DD3 (EPM7128): the latches and the turbo I/O wait.
-  - Discrete logic: `#FE` keyboard and Kempston read through 555КП11, the printer, and Beta-128 (КР531ИД14; A7 selects VG93 or `#FF`).
+  - Discrete logic: `#FE` keyboard and Kempston read through 555КП11 (Soviet 74LS257), the printer, and Beta-128 (КР531ИД14, Soviet 74S139; A7 selects VG93 or `#FF`).
   - Nothing internal is decoded from the raw `/IORQ`.
   - Inferred: a cycle claimed by a card gets no board turbo wait.
 - **ROM override:** RDROM is wired to the ROM /OE; CSROM reaches it through 680 Ω. RS shares the node of ROM A14 (also through 680 Ω).
@@ -388,7 +388,7 @@ The local collection kay-1024/ holds only ROMs. The board pinout and decoder are
 
 | Item | Yellow board | Turbo+ (1996) |
 |---|---|---|
-| Expansion ("SYSTEM PORT") | 2 x 30 gold-finger edge on the main board. Spectrum Expert #02: СНП-15-96 socket at **2.5 mm** pitch | **2** SL-62 slots (XP4, XP5) in parallel |
+| Expansion ("SYSTEM PORT") | 2 x 30 gold-finger edge on the main board. Spectrum Expert #02: СНП-15-96 (Soviet connector type) socket at **2.5 mm** pitch | **2** SL-62 slots (XP4, XP5) in parallel |
 | Slot count | 1, plus an optional "Scorpion bus expander" (count **unconfirmed**) | 2 |
 | Control port | 2 x 32 edge: keyboard, joystick, Centronics, RS-232, video, audio, **+12 V, -5 V**, MAGIC | DIN-41612, same signals |
 
@@ -457,7 +457,7 @@ Not traced: the WD1793 chip select. The turbo wait GAL uses the raw `/IORQ`, so 
 | `#1F` family | Kempston cards, Z-Controller `#57` |
 
   Cards that drive IORQGE avoid these collisions.
-- Documented: a NeoGS + SMUC v1.3 conflict on a green Scorpion. It is unresolved; a "ЛЛ1 + 4 x 680 Ω port arbiter" fix is mentioned, but no circuit was found ([zx-pk 11803](https://zx-pk.ru/threads/11803-konflikt-neo-gs-amp-smuc.html)).
+- Documented: a NeoGS + SMUC v1.3 conflict on a green Scorpion. It is unresolved; an "LL1 (74LS32) + 4 x 680 Ω port arbiter" fix is mentioned, but no circuit was found ([zx-pk 11803](https://zx-pk.ru/threads/11803-konflikt-neo-gs-amp-smuc.html)).
 
 ### 11.4 Built-in devices
 
@@ -483,7 +483,7 @@ Not traced: the WD1793 chip select. The turbo wait GAL uses the raw `/IORQ`, so 
 
 **Naming.** The local collection README (atm-turbo/README.md) calls 4.xx boards "ATM-turbo 1"; the repository says "ATM Turbo 2 v4.50". **Unconfirmed** which is right.
 
-**Connectors** ([MicroArt manual, chapter "Периферия, ее подключение и разъемы"](https://zxpress.ru/ru/books/chapter/2353); schematic [sheet 6](https://zxpress.ru/chapters_images/atmturbo-6.jpg), [sheet 7](https://zxpress.ru/chapters_images/atmturbo-7.jpg)):
+**Connectors** ([MicroArt manual, chapter "Periphery, its connection and connectors"](https://zxpress.ru/ru/books/chapter/2353); schematic [sheet 6](https://zxpress.ru/chapters_images/atmturbo-6.jpg), [sheet 7](https://zxpress.ru/chapters_images/atmturbo-7.jpg)):
 
 | Connector | Type | Signals |
 |---|---|---|
@@ -502,7 +502,7 @@ The X3 pin pairing comes from a poor scan and is **unconfirmed**.
 
 ### 12.2 v7.10
 
-Sources: atmturbo SVN (the NedoPC ATM Turbo repository): `pcad/ver_7_10/cp7_1.pdf`, `doc/ver_7_10/Сборка и Наладка Турбо2+.doc`, `doc/ver_7_10/Описание архитектуры и портов ATM2+.doc`.
+Sources: atmturbo SVN (the NedoPC ATM Turbo repository): `pcad/ver_7_10/cp7_1.pdf`, `doc/ver_7_10/Сборка и Наладка Турбо2+.doc` ("Turbo 2+ assembly and setup"), `doc/ver_7_10/Описание архитектуры и портов ATM2+.doc` ("ATM2+ architecture and ports description").
 
 **Connectors.** I1 "INTERNAL I/O" and X3 "EXTERNAL I/O / CENTRONICS", each 2 x 12. Per the manual they carry only "buffered data bus ID0-ID7, address CTS0-CTS7, IORD / IOWR, reset RS, +5V, +12V, -12V".
 
@@ -538,7 +538,7 @@ Sources: atmturbo SVN (the NedoPC ATM Turbo repository): `pcad/ver_7_10/cp7_1.pd
 | I/O bus | `#FA` |
 | attribute port | `#FF` |
 
-- **No Kempston joystick** (assembly manual: "22. Кемпстон Джойстик — Нет").
+- **No Kempston joystick** (assembly manual: "22. Kempston joystick — No").
 - Only the keyboard controller can be switched off (`#FF77`).
 
 ## 13. ZX-Evolution: Baseconf and TS-Conf
@@ -646,7 +646,7 @@ Sources:
 - MDESK re-trace ([alemorf/retro_computers Profi_3_2](https://github.com/alemorf/retro_computers/tree/master/Profi_3_2)).
 - v5 text schematic (local collection: profi/materials/v5-open-items/PROF5-0C.utf8.txt).
 - v5.0 album (local collection: profi/materials/research/ocr/profi50-p07.txt, p11.txt).
-- [Insanity #08, "Подключение к Profi различной периферии" (2001)](https://zxpress.ru/ru/ezines/insanity/08/podklyuchenie-periferii-k-kompyuteru-profi-general-sound-ustroystva-na-zx-bus-sovmestimost-s-tr-dos).
+- [Insanity #08, "Connecting various peripherals to the Profi" (2001)](https://zxpress.ru/ru/ezines/insanity/08/podklyuchenie-periferii-k-kompyuteru-profi-general-sound-ustroystva-na-zx-bus-sovmestimost-s-tr-dos).
 - [ZX Review #3-4 (1997), P. Fedin's modification](https://zxpress.ru/ru/ezines/zx-review/3-4/dorabotka-kompyutera-profi-dlya-beskonfliktnogo-podklyucheniya-periferii-modema-myshi-i-drugih).
 
 ### 14.1 Connector: Profi's own 64-pin bus, not ZX-bus
@@ -696,7 +696,7 @@ Pins not listed are not connected.
 
 **v3.2:** the same structure (U15 OR U10), but U10's inputs were **not traced**.
 
-**Insanity #08:** "ничего не надо мудрить с сигналом IORGE, вместо него подается сигнал OUTIORQ, — и все будет работать" (no need to bother with IORGE; feed OUTIORQ instead and everything works).
+**Insanity #08:** "no need to bother with the IORGE signal; feed the OUTIORQ signal instead, and everything will work".
 
 **Masked (proven) — the PROM group:**
 
@@ -715,7 +715,7 @@ Pins not listed are not connected.
 
 ### 14.3 Read conflict
 
-- The slot D lines are the **unbuffered CPU data bus**, with pull-ups ("на Profi хоть и отсутствуют буфера" — although Profi has no buffers, Insanity #08).
+- The slot D lines are the **unbuffered CPU data bus**, with pull-ups ("although the Profi has no buffers", Insanity #08).
 - A 555АП6 (v3.2 U31; v5 D8) separates the CPU bus from the local peripheral bus. It is enabled only for the internal selects (v3.2: `/OE = NOT NAND(FON, /BLOK, F1, F2, F4, F5)`; the v5 equations are partly ambiguous).
 - A card on `/OUTIORQ` never overlaps the board.
 - A card on the raw `/IORQ` fights the buffer, and there is no defined winner.
@@ -739,7 +739,7 @@ Pins not listed are not connected.
 
 | Device | Ports | Switch off? |
 |---|---|---|
-| AY-3-8912 / 8910 | `#FFFD` / `#BFFD` (short `#xxFD` in Sinclair mode) | Optional socket (v3.2 manual: "место для установки"). No jumper |
+| AY-3-8912 / 8910 | `#FFFD` / `#BFFD` (short `#xxFD` in Sinclair mode) | Optional socket (v3.2 manual: "place for fitting"). No jumper |
 | VG93 FDC | as in §14.2 | v5: CP/M bit 5 of `#DFFD` moves it |
 | 8255 (Centronics, Kempston) | `#1F`-`#7F`, extended `#87`-`#E7` | software only |
 | IDE (v5) | extended `#8B`-`#EB` | extended map only |

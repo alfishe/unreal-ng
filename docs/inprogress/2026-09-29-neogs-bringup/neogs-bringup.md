@@ -930,8 +930,8 @@ live surfaces:
 ### 9.3 What automation could not do, or where it cost time
 
 From the transcripts only:
-- **No headless mode, no command-line options.** "Опций командной строки нет"
-  ("there are no command-line options"): a model and RAM size cannot be
+- **No headless mode, no command-line options.** "There are no command-line
+  options": a model and RAM size cannot be
   passed on start-up. Every live session needed the GUI app first, then an
   HTTP or MCP call to create the machine.
 - **One GUI per port.** A second instance needed `UNREAL_WEBAPI_PORT=8191`

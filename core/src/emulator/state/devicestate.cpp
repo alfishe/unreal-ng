@@ -877,18 +877,25 @@ StateNode Covox(EmulatorContext* context)
     }
     ::Covox* covox = sm->getCovox();
     if (!covox)
-        return Unavailable("Covox not fitted (configure [SOUND] CovoxFB=1 for #FB or SD=1 for the SoundDrive)");
+        return Unavailable("Covox not fitted (configure [SOUND] CovoxFB=1 for #FB, SD=1 for the SoundDrive or, on a "
+                           "Scorpion, CovoxDD=1 for the printer Covox #DD)");
 
     const ::Covox::Fitment fitment = covox->fitment();
     const bool mono = fitment == ::Covox::Fitment::Mono;
     StateNode ret = StateNode::Object();
     ret["available"] = true;
-    ret["device"] = mono ? "Covox (8-bit DAC on #FB)" : "SoundDrive (4 x 8-bit DAC)";
-    ret["fitment"] = fitment == ::Covox::Fitment::Quad    ? "quad"
-                     : fitment == ::Covox::Fitment::Mode1 ? "mode1"
-                     : fitment == ::Covox::Fitment::Mode2 ? "mode2"
+    const bool printerOnly = fitment == ::Covox::Fitment::None;
+    ret["device"] = printerOnly ? "Scorpion printer Covox (8-bit DAC on #DD)"
+                    : mono      ? "Covox (8-bit DAC on #FB)"
+                                : "SoundDrive (4 x 8-bit DAC)";
+    ret["fitment"] = fitment == ::Covox::Fitment::Quad        ? "quad"
+                     : fitment == ::Covox::Fitment::Mode1     ? "mode1"
+                     : fitment == ::Covox::Fitment::Mode2     ? "mode2"
                      : fitment == ::Covox::Fitment::Mode1Mono ? "mode1+mono"
+                     : printerOnly                            ? "none"
                                                               : "mono";
+    // The Scorpion printer Covox (CovoxDD=1): a separate mono DAC beside the fitment's latches
+    ret["printer_dac"] = covox->hasPrinterDac();
 
     // Ports: this model's decode, straight from its port map (the same rows
     // /ports and `ports` list), and the ones it shares with Beta-128
@@ -946,6 +953,14 @@ StateNode Covox(EmulatorContext* context)
         channel["name"] = kNames[i];
         channel["latch"] = int(latches[i]);
         channel["muted"] = covox->isChannelMuted(static_cast<::Covox::Channel>(i));
+        channels.push(channel);
+    }
+    if (covox->hasPrinterDac())
+    {
+        StateNode channel = StateNode::Object();
+        channel["name"] = "printer";
+        channel["latch"] = int(covox->printerLatch());
+        channel["muted"] = covox->isChannelMuted(::Covox::Channel::Printer);
         channels.push(channel);
     }
     ret["channels"] = channels;
@@ -1369,6 +1384,10 @@ StateNode Fdc(EmulatorContext* context)
     ret["side"] = fdc->getSideUp() ? 1 : 0;
 
     ret["drives"] = DrivesNode(context, 4);
+
+    // The chip's state machine history (debugger/history/devicehistory.h): its mode and counts, the records kept
+    ret["history_state"] = history::StatsNode(fdc->CommandHistory());
+    ret["history"] = fdc->CommandHistory().Records(0);
     return ret;
 }
 
@@ -1554,6 +1573,11 @@ StateNode ScreenMode(EmulatorContext* context)
         case M_PMC: ret["eff7_hwmc"] = true; break;
         case M_PHR: ret["eff7_512"] = true; break;
         case M_P384: ret["overscan"] = true; break;
+        case M_GMX:
+            ret["gmx_640x200"] = true;
+            ret["framebuffer"] = "736x288";
+            ret["raster"] = "312 lines x 224 T (69888 T frame), 5 pixels per T in the paper window";
+            break;
         case M_PROFIHR:
             ret["profi_hires"] = true;
             ret["framebuffer"] = "608x288";
@@ -1702,7 +1726,7 @@ StateNode Contention(EmulatorContext* context)
     ret["io_rule"] = z80->ioContention ? ContentionRuleName(rule) : "none";
     // The Scorpion's waits outside the contention rule: Even M1 at 3.5 MHz, and the Turbo+ logic firmware
     ret["even_m1"] = context->config.even_M1 != 0;
-    if (context->config.mem_model == MM_SCORP || context->config.mem_model == MM_PROFSCORP)
+    if (context->config.mem_model == MM_SCORP || context->config.mem_model == MM_PROFSCORP)  // the GMX has no Turbo+ logic
         ret["scorpion_turbo_logic"] =
             context->config.scorpionTurboLogic == ScorpionTurboLogic::SC153 ? "SC15.3" : "SC15.1";
     // The ATM Turbo 2+ v7.10's RAM waits at 7 MHz (Atm710TurboOverlay): active, off (3.5 MHz) or contention_off

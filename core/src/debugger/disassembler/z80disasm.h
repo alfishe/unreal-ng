@@ -339,6 +339,32 @@ public:
         bool _previous;
     };
     static bool LabelsOffOnThisThread() { return t_noLabels; }
+
+    /// How a listing reads. The default is the listing of every surface: "ld hl,#4000", and a label shown for a
+    /// 16-bit immediate equal to a labelled address ("ld hl,START (#0000)")
+    struct ListingStyle
+    {
+        bool upperCase = false;       ///< "LD HL,#4000": mnemonics and registers upper case; labels keep their case
+        bool immediateLabels = true;  ///< false: labels only for operands used as addresses (JP / CALL nn, (nn), JR)
+    };
+
+private:
+    static ListingStyle& Style();  // this thread's, set by ListingStyleScope
+
+public:
+    /// A listing style on this thread while it lives (a debugger window with its own conventions, POC 041's ecat
+    /// window). Thread-local like NoLabelsScope, so the other surfaces keep the default
+    class ListingStyleScope
+    {
+    public:
+        explicit ListingStyleScope(const ListingStyle& style) : _previous(Style()) { Style() = style; }
+        ~ListingStyleScope() { Style() = _previous; }
+        ListingStyleScope(const ListingStyleScope&) = delete;
+        ListingStyleScope& operator=(const ListingStyleScope&) = delete;
+
+    private:
+        ListingStyle _previous;
+    };
     
     std::string disassembleSingleCommand(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
     std::string disassembleSingleCommandWithRuntime(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);

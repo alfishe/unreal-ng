@@ -150,38 +150,39 @@ with identical columns are merged.
 | PLUS2A | Amstrad +2A | `ay-socket`, `edge` (sinclair-edge, 1) | None | yes | `ay`, `ula` | - | `edge`: no /ROMCS (/ROM1OE + /ROM2OE), no IORQGE |
 | PLUS3 | Amstrad +3 | `ay-socket`, `edge` (sinclair-edge, 1) | None | yes | `ay`, `ula`, `fdc` | - | `edge`: no /ROMCS (/ROM1OE + /ROM2OE), no IORQGE |
 | PENTAGON | Pentagon 128 (1991): no expansion connector, ZX-bus retrofitted | `ay-socket`, `zxbus` (retrofit, no physical slots) | CardWins | yes | `ay`, `beta128`, `kempston-joystick` | - | `zxbus`: no expansion connector on the Pentagon 128 board: the ZX-bus is retrofitted (NemoBus rules) |
-| SCORPION | Scorpion ZS-256 yellow board | `ay-socket`, `zxbus` (1) | CardWins | no | `ay`, `beta128`, `kempston-joystick` | - | `zxbus`: +12 V only on the control port |
-| PROFSCORP | Scorpion ZS-256 Turbo+ with ProfROM | `ay-socket`, `zxbus` (2) | CardWins | yes | `ay`, `beta128`, `kempston-joystick` | - | `zxbus`: Turbo+ board: +12 V on B22 (B29 through J6) |
+| SCORPION | Scorpion ZS-256 yellow board | `ay-socket`, `zxbus` (1) | CardWins | no | `ay`, `beta128`, `kempston-joystick`, `covox-dd` (switchable) | - | `zxbus`: +12 V only on the control port |
+| PROFSCORP | Scorpion ZS-256 Turbo+ with ProfROM | `ay-socket`, `zxbus` (2) | CardWins | yes | `ay`, `beta128`, `kempston-joystick`, `covox-dd` (switchable) | - | `zxbus`: Turbo+ board: +12 V on B22 (B29 through J6) |
+| GMX | Scorpion ZS-256 with the GMX card | `ay-socket`, `zxbus` (1) | CardWins | no | `ay`, `beta128`, `kempston-joystick`, `sd-zc`, `covox-dd` (switchable) | - | `zxbus`: +12 V only on the control port |
 | ATM450 | ATM Turbo 2 v4.50 | `ay-socket`, `iobus` (atm-iobus, 1), `cpu-socket` (1) | `iobus`: None; `cpu-socket`: None (adapter `atm-cpu-socket-zxbus`: CardWins) | `iobus`: yes; `cpu-socket`: no | `ay`, `beta128`, `covox` (switchable), `adc` | - | - |
 | ATM710 | ATM Turbo 2+ v7.10 | `ay-socket`, `iobus` (atm-iobus, 2), `cpu-socket` (1) | `iobus`: None; `cpu-socket`: None (adapter `atm-cpu-socket-zxbus`: CardWins) | `iobus`: yes; `cpu-socket`: no | `ay` (socketed AY-3-8912), `beta128`, `ide`, `covox` (switchable), `adc` | - | - |
 | ATM3 | ZX-Evolution rev C, Baseconf | `ay-socket`, `zxbus` (2) | BoardWins | yes | `ay` (socketed YM2149), `beta128`, `kempston-joystick`, `kempston-mouse`, `sd-zc`, `ide-nemo` (switchable), `rtc`, `covox` (switchable), `com` | `#FE` `#F6` `#FC` `#FD` `#DF` `#1F` `#F7` `#77` `#57` `#BF` `#BE` `#BD` `#EF` `#1F/#10` `#11` `#C8` `#FF` (DOS) | `zxbus`: +12 V only with jumper J4 |
 | TSL | ZX-Evolution rev C, TS-Conf (FREE_IORQ off) | `ay-socket`, `zxbus` (2) | BoardWins | yes | `ay` (socketed YM2149), `beta128`, `kempston-joystick`, `kempston-mouse`, `sd-zc`, `ide-nemo` (switchable), `ts-registers`, `covox` (switchable), `zifi` | `#FE` `#AF` `#FD` `#FB` `#F7` (non-DOS) `#1F/#10` `#11` `#C8` `#1F` `#3F` (DOS) `#5F` (DOS) `#7F` (DOS) `#FF` (DOS) `#DF` `#77` `#57` `#EF` | `zxbus`: +12 V only with jumper J4; the slots never see INTA |
 | PROFI | Profi v5 | `ay-socket`, `profi-bus` (1) | BoardWins | yes | `ay` (socketed AY-3-8912), `beta128`, `ppi8255`, `palette`, `rtc`, `ide`, `covox` (switchable) | `#9F/#1F` `#FF` (DOS) | `profi-bus`: /OUTIORQ masks the PROM-decoded ports; `#FE`, `#7FFD`, `#DFFD`, AY, palette not shown masked |
 | PROFI3 | Profi v3.2 | `ay-socket`, `profi-bus` (1) | BoardWins | yes | `ay` (socketed AY-3-8912), `beta128`, `ppi8255`, `covox` (switchable) | `#9F/#1F` `#FF` (DOS) | `profi-bus`: /OUTIORQ masks the PROM-decoded ports; `#FE`, `#7FFD`, `#DFFD`, AY, palette not shown masked |
-| NEXT | ZX Spectrum Next (bare personality: 128K board) | `ay-socket`, `edge` (sinclair-edge, 1) | None | yes | `ay`, `ula`, `kempston-joystick` | - | - |
+| NEXT | ZX Spectrum Next (bare personality: 128K board) | `ay-socket`, `edge` (sinclair-edge, 1) | None | yes | `ay`, `ula`, `kempston-joystick`, `nextreg`, `kempston-mouse`, `dma`, `uart`, `ctc`, `i2c`, `layer2`, `sprites`, `ula-plus`, `divmmc`, `spi`, `dac` | - | - |
 | SPRINTER | Peters Plus Sprinter Sp2000 | `ay-socket`, `isa` (isa8, 2) | None (adapter `sprinter-isa-zxbus`: None) | yes | `ay` (switchable), `covox-blaster` (switchable), `beta128` (switchable), `kempston-mouse` (switchable), `kempston-joystick` (switchable) | - | `ay-socket`: the AY is in the FPGA; the socket is the emulator's TurboSound place; `isa`: reached through a memory window; ISA cards never compete with a Z80 port |
 <!-- slots:generated:machines:end -->
 
 <!-- slots:generated:card-x-machine:begin -->
-| Card \ machine | 48K / 128K / PLUS2 / PLUS2A / PLUS3 | PENTAGON | SCORPION | PROFSCORP | ATM450 / ATM710 | ATM3 | TSL | PROFI | PROFI3 | NEXT | SPRINTER |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| **ts** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **tsfm** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **gs** | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
-| **gs-lw** | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
-| **neogs** | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
-| **moonsound** | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | **X** (`#7E` palette, board wins) | A | A | A |
-| **covox-fb** | A | ✓ | ✓ | ✓ | A | ✓ | **X** (`#FB` is the board's `covox`) | A | A | A | A |
-| **soundrive** mode 1 | A | ✓ | ✓ | ✓ | A | partly dead (`#1F` is a board port) | partly dead (`#1F` is a board port) | A | A | A | A |
-| **soundrive** mode 2 | A | ✓ | ✓ | ✓ | A | ✓ | partly dead (`#FB` is a board port) | A | A | A | A |
-| **soundrive** modes 1 + 2 (emulator decode) | A | ✓ | ✓ | ✓ | A | partly dead (`#1F` is a board port) | partly dead (`#1F`, `#FB` are board ports) | A | A | A | A |
-| **fuller-box** | ✓ | A | A | A | A | A | A | **X** (`#3F`, `#5F`, `#7F` is the board's `beta128`, `covox`) | **X** (`#3F`, `#5F`, `#7F` is the board's `beta128`, `covox`) | ✓ | A |
-| **amx-mouse** | ✓ | A | A | A | A | A | A | A | A | bus fight `#1F` with `kempston-joystick`, bus fight `#37` with `kempston-joystick` | A |
-| **kempston** | ✓ | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | A | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | A |
-| **multisound** | A | **S** (`ay`) | A (needs +12V) | **S** (`ay`) | A | **R** (`ay` YM2149 out of its socket) | **R** (`ay` YM2149 out of its socket) | A | A | A | A |
-| **zxnetusb** | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
-| **zx-wifi** `#EF` build | A | ✓ | ✓ | ✓ | A | **X** (`#EF` is the board's `com`) | **X** (`#EF` is the board's `zifi`) | A | A | A | A |
-| **zx-wifi** `#EE` build | A | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
+| Card \ machine | 48K / 128K / PLUS2 / PLUS2A / PLUS3 | PENTAGON | SCORPION | PROFSCORP | GMX | ATM450 / ATM710 | ATM3 | TSL | PROFI | PROFI3 | NEXT | SPRINTER |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **ts** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **tsfm** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **gs** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
+| **gs-lw** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
+| **neogs** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
+| **moonsound** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | **X** (`#7E` palette, board wins) | A | A | A |
+| **covox-fb** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | **X** (`#FB` is the board's `covox`) | A | A | A | A |
+| **soundrive** mode 1 | A | ✓ | ✓ | ✓ | ✓ | A | partly dead (`#1F` is a board port) | partly dead (`#1F` is a board port) | A | A | A | A |
+| **soundrive** mode 2 | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | partly dead (`#FB` is a board port) | A | A | A | A |
+| **soundrive** modes 1 + 2 (emulator decode) | A | ✓ | ✓ | ✓ | ✓ | A | partly dead (`#1F` is a board port) | partly dead (`#1F`, `#FB` are board ports) | A | A | A | A |
+| **fuller-box** | ✓ | A | A | A | A | A | A | A | **X** (`#3F`, `#5F`, `#7F` is the board's `beta128`, `covox`) | **X** (`#3F`, `#5F`, `#7F` is the board's `beta128`, `covox`) | ✓ | A |
+| **amx-mouse** | ✓ | A | A | A | A | A | A | A | A | A | bus fight `#1F` with `kempston-joystick`, bus fight `#37` with `kempston-joystick`, bus fight `#243B` with `nextreg`, bus fight `#253B` with `nextreg`, bus fight `#FADF` with `kempston-mouse`, bus fight `#FBDF` with `kempston-mouse`, bus fight `#FFDF` with `kempston-mouse`, bus fight `#0B` with `dma`, bus fight `#133B` with `uart`, bus fight `#143B` with `uart`, bus fight `#153B` with `uart`, bus fight `#163B` with `uart`, bus fight `#183B` with `ctc`, bus fight `#103B` with `i2c`, bus fight `#113B` with `i2c`, bus fight `#123B` with `layer2`, bus fight `#303B` with `sprites`, bus fight `#FF3B` with `ula-plus` | A |
+| **kempston** | ✓ | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | A | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | **X** (`kempston-joystick` built in) | A |
+| **multisound** | A | **S** (`ay`) | A (needs +12V) | **S** (`ay`) | A (needs +12V) | A | **R** (`ay` YM2149 out of its socket) | **R** (`ay` YM2149 out of its socket) | A | A | A | A |
+| **zxnetusb** | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
+| **zx-wifi** `#EF` build | A | ✓ | ✓ | ✓ | ✓ | A | **X** (`#EF` is the board's `com`) | **X** (`#EF` is the board's `zifi`) | A | A | A | A |
+| **zx-wifi** `#EE` build | A | ✓ | ✓ | ✓ | ✓ | A | ✓ | ✓ | A | A | A | A |
 <!-- slots:generated:card-x-machine:end -->
 
 Notes the cells do not carry: the Pentagon has no Covox of its own (a Covox there is a card); a SounDrive mode-1 card

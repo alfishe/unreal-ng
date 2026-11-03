@@ -7,6 +7,7 @@
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
 #include "emulator/slots/slotconfig.h"
 #include "emulator/platforms/atm/atmstate.h"
+#include "emulator/platforms/gmx/gmxstate.h"
 #include "emulator/platforms/profi/profistate.h"
 #include "emulator/platforms/scorpion/scorpionstate.h"
 #include "emulator/platforms/zxevo/evostate.h"
@@ -363,6 +364,14 @@ inline constexpr bool IsProfiModel(MEM_MODEL model)
 	return model == MM_PROFI || model == MM_PROFI3;
 }
 
+/// The machines built on the Scorpion ZS-256 host board: the base board, the ProfROM board and the GMX card in its
+/// CPU socket. What they share - the #7FFD / #1FFD paging, the DD50 Magic trigger, the Beta128, the SMUC - keys on
+/// this. Design: docs/inprogress/2026-10-07-gmx/design.md section 3
+inline constexpr bool IsScorpionModel(MEM_MODEL model)
+{
+	return model == MM_SCORP || model == MM_PROFSCORP || model == MM_GMX;
+}
+
 const int RAM_48 = 48, RAM_128 = 128, RAM_256 = 256, RAM_512 = 512, RAM_1024 = 1024, RAM_2048 = 2048, RAM_4096 = 4096;
 
 /// A setting another thread switches while the machine runs (WebAPI, CLI, GUI) and the loop reads once a frame.
@@ -556,6 +565,12 @@ struct NeoGSConfig
 
 struct zxkeymap;
 
+/// CONFIG::even_M1 bits: the clock an opcode fetch from RAM that starts on an odd T-state waits one T at. The
+/// Scorpion SC15.1 logic: at 3.5 MHz only (its turbo bypasses the wait). The GMX card's own logic: at 7 MHz only
+/// (GMX design 2.6, Q21: the host WAIT is cut, the card's DRAM slot holds turbo fetches from RAM)
+constexpr uint8_t EVEN_M1_NORMAL = 0x01;
+constexpr uint8_t EVEN_M1_TURBO = 0x02;
+
 struct CONFIG
 {
 	unsigned t_line;	// t-states per line
@@ -597,7 +612,7 @@ struct CONFIG
 	unsigned framexsize;
 	unsigned framey;
 	unsigned frameysize;
-	uint8_t even_M1, border_4T;
+	uint8_t even_M1, border_4T;  // even_M1: EVEN_M1_* bits, the clocks the Even M1 wait acts at (z80.cpp)
 
 	uint8_t floatbus, floatdos;
 	
@@ -645,6 +660,9 @@ struct CONFIG
 	uint32_t romsize;
 	RamPowerOn ramPowerOn = RamPowerOn::Random;	// [MISC] RAMPowerOn: RAM contents at creation
 	ScorpionTurboLogic scorpionTurboLogic = ScorpionTurboLogic::SC151;	// [MISC] ScorpionTurboLogic (Scorpion models)
+	/// [SMUC] Isa / IsaBase / IsaIrq / IsaPeer: the card in the SMUC's ISA-8 slot (a Scorpion with [HDD] Scheme=SMUC):
+	/// NONE (default) | MODEM | DUAL16552 (sprinterisa::CardKind; the same card models as the Sprinter's slots)
+	sprinterisa::SlotConfig smucIsa{};
 
 	IDE_SCHEME ide_scheme;			// [HDD] Scheme: the machine's IDE board (implementation-plan.md D8)
 	uint8_t ide_stall = 1;			// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (1 = on, the default, as the RTL; 0 = bypass)
@@ -886,6 +904,11 @@ struct CONFIG
 	// Profi RTC battery-backed cells image ([PROFI] NvramFile=); empty = kept
 	// for the session only
 	char profi_nvram_path[FILENAME_MAX];
+	// SMUC clock cells + serial EEPROM image ([SMUC] NvramFile=); empty = kept for the session only
+	char smuc_nvram_path[FILENAME_MAX];
+	// [SMUC] NvramInitial=: the image a board without a saved one starts from (read only; relative to the config
+	// file); empty = blank cells and EEPROM
+	char smuc_nvram_initial_path[FILENAME_MAX];
 
 	// Sprinter Sp2000 ([SPRINTER] section, Sprinter tdd-integration §1.1)
 	struct
@@ -1348,6 +1371,7 @@ struct EmulatorState
 	AtmState atm;             // ATM Turbo 1 / 2+ / 3, ZX-Evo BaseConf (shared by the three ATM decoders)
 	EvoState evo;             // ATM3 / ZX-Evo BaseConf decoder only
 	ScorpionState scorpion;   // Scorpion ZS-256 (Turbo+, ProfROM, SMUC)
+	GmxState gmx;             // Scorpion GMX card register file (#00, #78FD, scroller, Magic latch)
 	ProfiState profi;         // Profi (front-panel switches, hi-res palette)
 	/// endregion </Hardware-family state>
 };

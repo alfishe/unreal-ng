@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -369,6 +370,60 @@ json JsonOf(const fkyaml::node& n)
 
 namespace
 {
+// An absolute, normalised folder (symlinks resolved as far as it exists), for lexically_relative
+std::filesystem::path Folder(const std::filesystem::path& p)
+{
+    std::error_code ec;
+    const std::filesystem::path abs = p.empty() ? std::filesystem::current_path(ec) : std::filesystem::absolute(p, ec);
+    const std::filesystem::path canon = std::filesystem::weakly_canonical(abs, ec);
+    return (ec || canon.empty() ? abs : canon).lexically_normal();
+}
+// A path relative to `from` as one relative to `to` (both Folder()s); the target itself when no relative path
+// gets there (another drive)
+std::string Rebased(const std::string& rel, const std::filesystem::path& from, const std::filesystem::path& to)
+{
+    const std::filesystem::path target = (from / std::filesystem::path(rel)).lexically_normal();
+    const std::filesystem::path r = target.lexically_relative(to);
+    return (r.empty() ? target : r).generic_string();
+}
+// RebasePaths' walk: `picture` = a value of an `image` / `svg` key
+void Rebase(json& j, const std::filesystem::path& from, const std::filesystem::path& to, bool picture = false)
+{
+    if (j.is_object())
+    {
+        for (auto& [k, v] : j.items())
+            Rebase(v, from, to, k == "image" || k == "svg");
+        return;
+    }
+    if (j.is_array())
+    {
+        for (auto& v : j)
+            Rebase(v, from, to);
+        return;
+    }
+    if (!j.is_string())
+        return;
+    std::string path = j.get<std::string>();
+    std::string fragment;
+    if (const size_t hash = path.find('#'); hash != std::string::npos)
+    {
+        fragment = path.substr(hash);
+        path.erase(hash);
+    }
+    if (path == "$scenario" || path.rfind("$scenario/", 0) == 0)
+    {
+        const std::string rest = path.size() > 10 ? path.substr(10) : std::string(".");
+        j = "$scenario/" + Rebased(rest, from, to) + fragment;
+        return;
+    }
+    if (!picture || path.empty() || path[0] == '$')
+        return;
+    const std::filesystem::path p(path);
+    if (p.is_absolute() || p.has_root_directory() || p.has_root_name())
+        return;
+    j = Rebased(path, from, to) + fragment;
+}
+
 struct Resolver
 {
     std::vector<std::string>* files;
@@ -474,6 +529,10 @@ struct Resolver
             PrefixIds(out, id, renames, true);
             out["id"] = id;
             Retarget(out, renames);
+            // the included file's pictures and $scenario paths, from its folder to the including one's (nested
+            // includes were rebased onto this file's folder above); the include's overrides below are the including
+            // file's own
+            RebasePaths(out, f.parent_path(), dir);
             if (n.contains("at"))
                 out["at"] = n["at"];
             else
@@ -522,6 +581,12 @@ std::optional<json> ResolveIncludes(const json& doc, const std::filesystem::path
         return std::nullopt;
     }
     return out;
+}
+
+void RebasePaths(json& node, const std::filesystem::path& from, const std::filesystem::path& to)
+{
+    if (const auto a = Folder(from), b = Folder(to); a != b)
+        Rebase(node, a, b);
 }
 
 void StripIncludeMarks(json& node)

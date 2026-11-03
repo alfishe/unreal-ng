@@ -4,6 +4,7 @@
 #include "common/modulelogger.h"
 #include "emulator/video/alco/screenalco.h"
 #include "emulator/video/atm/screenatm.h"
+#include "emulator/video/gmx/screengmx.h"
 #include "emulator/video/profi/screenprofi.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/zx/tstatecoordlut.h"
@@ -91,6 +92,7 @@ protected:
     // for machines that never reach those modes
     std::unique_ptr<ScreenAtm> _atmScreen;      // M_ATM16/HR/TX/TL
     std::unique_ptr<ScreenProfi> _profiScreen;  // M_PROFIHR
+    std::unique_ptr<ScreenGmx> _gmxScreen;      // M_GMX
     std::unique_ptr<ScreenAlco> _alcoScreen;    // M_P16 / M_PMC
 
     // Range renderer for the current mode, chosen in SetVideoMode so the
@@ -131,6 +133,7 @@ protected:
     void DrawRangeAlco(uint32_t fromTstate, uint32_t toTstate);
     void DrawRangeAtm(uint32_t fromTstate, uint32_t toTstate);
     void DrawRangeProfi(uint32_t fromTstate, uint32_t toTstate);
+    void DrawRangeGmx(uint32_t fromTstate, uint32_t toTstate);
 
 public:
     uint16_t CalculateXYScreenAddress(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);

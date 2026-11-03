@@ -109,6 +109,13 @@ struct TTDEngineCheckpoint
     uint64_t busWriteCursor = 0;
     uint64_t mediaReadCursor = 0;   ///< ... and the media read journal
     uint64_t busVectorCursor = 0;   ///< ... and the interrupt-vector journal
+    /// Interrupts accepted while halted, up to this boundary (TTDFrameInput::haltedInterrupts): the frame before
+    /// was HALT-paced when it grew. Live captures only, not in the session file: haltKnown false after a load
+    uint64_t haltedInterrupts = 0;
+    bool haltKnown = false;
+    /// The bytes the picture is read from (TTDFrameInput::screen), as an index into the session's screen layouts
+    /// plus one (ScreenLayoutOf); 0: not known. Live captures only, not in the session file
+    uint32_t screenLayout = 0;
     /// Only for the regions that changed at this checkpoint (and, on every
     /// S-th checkpoint, for every region): its range of the engine's change
     /// records and, on those checkpoints, a full reference table (shared
@@ -323,6 +330,13 @@ public:
     void NoteMediaVersion(const std::string& slot, const std::string& format, bool hasVersions,
                           const TTDMediaVersion& version);
     const std::vector<TTDMediaSlot>& MediaSlots() const { return _mediaSlots; }
+
+    /// The bytes checkpoint @p cp's picture is read from (sorted); null: not known (a session loaded from a file)
+    const std::vector<TTDScreenRange>* ScreenLayoutOf(const TTDEngineCheckpoint& cp) const
+    {
+        return cp.screenLayout == 0 || cp.screenLayout > _screenLayouts.size() ? nullptr
+                                                                                : &_screenLayouts[cp.screenLayout - 1];
+    }
     /// Slot @p slot's version at checkpoint @p index; false before its first
     /// recorded version
     bool MediaVersionAt(size_t index, size_t slot, TTDMediaVersion& out) const;
@@ -661,6 +675,8 @@ private:
     /// records never move
     std::vector<uint32_t> _offeredByRegion;   ///< the last capture's pieces, by region
     std::deque<TTDEngineCheckpoint> _checkpoints;
+    /// Every distinct screen layout of the session, once (a mode switch adds one; most sessions have one or two)
+    std::vector<std::vector<TTDScreenRange>> _screenLayouts;
     std::vector<TTDConfigEntry> _configs;
     std::vector<TTDMediaSlot> _mediaSlots;
     std::vector<std::pair<uint32_t, TTDMediaVersion>> _pendingMedia;   ///< slot, version: for the next checkpoint

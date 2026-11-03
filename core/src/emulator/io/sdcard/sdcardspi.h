@@ -49,10 +49,13 @@
 #include <mutex>
 #include <string>
 
+#include "debugger/history/devicehistory.h"
 #include "emulator/io/spi/spidevice.h"
 #include "emulator/io/storage/iblockdevice.h"
 
 class BusTap;
+class EmulatorContext;
+struct StateNode;
 class SessionWriteMap;
 
 /// What a card did, for a trace (docs/inprogress/2026-10-07-zx-next/automation-gaps-2026-10-11.md, P1)
@@ -73,6 +76,19 @@ struct SdTraceEvent
     uint64_t block = 0;
     bool ok = true;
 };
+
+/// One SD card event in its history (debugger/history/devicehistory.h): the trace event, the frame and the host's
+/// emulated microsecond
+struct SdHistoryRecord
+{
+    uint64_t frame = 0;
+    uint64_t us = 0;
+    SdTraceEvent event;
+
+    void ToState(StateNode& node) const;
+};
+
+using SdHistory = history::Registered<SdHistoryRecord>;
 
 class SdCardSpi : public SpiDevice
 {
@@ -165,6 +181,11 @@ public:
     /// Called for every complete command (also the ignored ones: before SPI mode, while streaming), every block queued for the host and
     /// every block received. Costs one empty-function test when not set
     void setTraceListener(std::function<void(const SdTraceEvent&)> listener) { _onTrace = std::move(listener); }
+    /// The card's history (commands, blocks read and written), listed in the machine's histories under `device()`
+    /// (the registry id of the card's host, resolved when asked); off until configured. Once, by the host
+    void AttachHistory(EmulatorContext* context, std::function<std::string()> device);
+    /// The history (tests), or nullptr before AttachHistory
+    history::DeviceHistory<SdHistoryRecord>* History() { return _history ? &**_history : nullptr; }
     /// The state name for a report: power_on, idle, ready
     const char* stateName() const;
 
@@ -284,6 +305,11 @@ private:
     std::function<void(uint64_t)> _onWrite;
     std::function<void(uint8_t)> _onCommand;
     std::function<void(const SdTraceEvent&)> _onTrace;
+    std::unique_ptr<SdHistory> _history;
+    const EmulatorContext* _historyContext = nullptr;
+    /// Whether an event has a reader: the trace listener or the history
+    bool Observed() const { return _onTrace || (_history && _history->On()); }
+    void Emit(const SdTraceEvent& event);
     std::function<uint64_t()> _clockUs;
     BusTap* _tap = nullptr;
     uint8_t _tapSlot = 0;

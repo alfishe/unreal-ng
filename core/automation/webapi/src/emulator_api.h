@@ -145,6 +145,13 @@ public:
 
     // ZX-bus slots: the machine's buses, slots and cards (implementation: api/slots_api.cpp over SlotControl,
     // core/src/emulator/slots/slotcontrol.h; ZX-bus slots architecture.md §9). A change restarts the machine
+    // Device histories: off / ring / capture / stream per registry device (api/history_api.cpp over HistoryControl)
+    ADD_METHOD_TO(EmulatorAPI::getHistories, "/api/v1/emulator/{id}/history", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getHistory, "/api/v1/emulator/{id}/history/{device}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postHistoryConfig, "/api/v1/emulator/{id}/history/{device}/config", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::postHistoryClear, "/api/v1/emulator/{id}/history/{device}/clear", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::postHistoryPause, "/api/v1/emulator/{id}/history/{device}/pause", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::postHistoryResume, "/api/v1/emulator/{id}/history/{device}/resume", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getSlots, "/api/v1/emulator/{id}/slots", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getSlotsCatalog, "/api/v1/emulator/{id}/slots/catalog", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getSlotsMatrix, "/api/v1/emulator/{id}/slots/matrix", drogon::Get);
@@ -405,6 +412,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundActive, "/api/v1/emulator/state/audio/moonsound", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundPartActive, "/api/v1/emulator/state/audio/moonsound/{part}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateFdcActive, "/api/v1/emulator/state/fdc", drogon::Get);
+    // The device catalog: the state reports this machine has (api/state_device_api.cpp, DeviceState::Catalog)
+    ADD_METHOD_TO(EmulatorAPI::getStateDevices, "/api/v1/emulator/{id}/state/devices", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateDevicesActive, "/api/v1/emulator/state/devices", drogon::Get);
     // ZX-MultiSound and its MIDI synthesizer (api/state_device_api.cpp, DeviceState::MultiSound / Midi, MidiControl)
     ADD_METHOD_TO(EmulatorAPI::getStateAudioMultiSound, "/api/v1/emulator/{id}/state/audio/multisound", drogon::Get);
     // The Sprinter's ISA Wild Sound (api/state_device_api.cpp, DeviceState::WildSound)
@@ -727,6 +737,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::stepInstructionTTD, "/api/v1/emulator/{id}/ttd/step-instruction", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseStepTTD, "/api/v1/emulator/{id}/ttd/reverse-step", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseContinueTTD, "/api/v1/emulator/{id}/ttd/reverse-continue", drogon::Post);
+    // Feedback item 7: the frames a game profile's probes fired in (a replay of the window)
+    ADD_METHOD_TO(EmulatorAPI::probeFramesTTD, "/api/v1/emulator/{id}/ttd/probe-frames", drogon::Post);
     // TD-4 — agent bookmarks: advisory annotations beside the timeline,
     // explicitly NOT replay barriers (unlike external-event markers).
     ADD_METHOD_TO(EmulatorAPI::getTTDBookmarks, "/api/v1/emulator/{id}/ttd/bookmarks", drogon::Get);
@@ -737,6 +749,10 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageScan, "/api/v1/emulator/{id}/ttd/coverage/scan", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageRare, "/api/v1/emulator/{id}/ttd/coverage/rare", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageSummary, "/api/v1/emulator/{id}/ttd/coverage/summary", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDTimeline, "/api/v1/emulator/{id}/ttd/timeline", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDCauseChain, "/api/v1/emulator/{id}/ttd/cause-chain", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDFindEvent, "/api/v1/emulator/{id}/ttd/find-event", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDExplainFrame, "/api/v1/emulator/{id}/ttd/explain-frame", drogon::Get);
     // endregion TTD
 
     // region Labels/Symbols (implementation: api/debug_api.cpp)
@@ -1509,6 +1525,23 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void postControlAudioMidi(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
+    // Device histories (api/history_api.cpp)
+    void getHistories(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void getHistory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id, const std::string& device) const;
+    void postHistoryConfig(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                           const std::string& device) const;
+    void postHistoryClear(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                          const std::string& device) const;
+    void postHistoryPause(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                          const std::string& device) const;
+    void postHistoryResume(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                           const std::string& device) const;
     // ZX-bus slots (api/slots_api.cpp)
     void getSlots(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                   const std::string& id) const;
@@ -1548,6 +1581,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                     const std::string& chip) const;
     void getStateFdcActive(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getStateDevices(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateDevicesActive(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getStateIde(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateIdeActive(const drogon::HttpRequestPtr& req,
@@ -2291,6 +2328,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void reverseContinueTTD(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void probeFramesTTD(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // TD-4 — agent bookmarks (advisory annotations, never replay barriers).
     void getTTDBookmarks(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
@@ -2308,6 +2347,14 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getTTDCoverageSummary(const drogon::HttpRequestPtr& req,
                                std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDTimeline(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDCauseChain(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDFindEvent(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDExplainFrame(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion TTD Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)

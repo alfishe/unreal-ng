@@ -16,6 +16,7 @@
 #include "emulator/io/serial/uart16550.h"
 #include "emulator/io/fdc/fdc.h"
 #include "emulator/io/ide/ideadapter.h"
+#include "emulator/ports/porthistory.h"
 #include "emulator/ports/portdiagrecorder.h"
 #include "emulator/slots/portclaimtable.h"   // guards the Qt `slots` macro itself
 #include "debugger/ttd/ttdserializable.h"  // ttd::PeripheralId / TTDSerializable (leaf header)
@@ -228,7 +229,8 @@ enum class PagingLatch : uint8_t
     AFE, AFB,                       // ATM 4.50 system ports (atm branch)
     PFFF7Window0, PFFF7Window1,     // ATM 7.10/ATM3 per-window latches
     PFFF7Window2, PFFF7Window3,     // (reserved until the decoders land)
-    PFE                             // the ULA port #FE as last written: border, MIC, EAR
+    PFE,                            // the ULA port #FE as last written: border, MIC, EAR
+    PGmx00, P78FD, P7AFD, P7CFD     // Scorpion GMX: #xx00 configuration, #8000 page, scroll start low / high
     // TSConf's latches live in its own state (TsConfState, PLAN #41 phase 1):
     // its decoder reports them itself, they are not EmulatorState fields
 };
@@ -427,6 +429,7 @@ public:
     /// region <Fields>
 protected:
     EmulatorContext* _context = nullptr;
+    PortHistories _portHistories;
 
     EmulatorState* _state = nullptr;
     snapshot::ISnapshotCommitPolicy* _snapshotPolicy = nullptr;   ///< not owned (SetSnapshotPolicy)
@@ -634,6 +637,15 @@ public:
     /// memory-manager defaults when the requested mode is RM_DOS). Base: none.
     virtual void ApplyBootROMDefaults(ROMModeEnum mode) { (void)mode; }
 
+    /// The ROM mode a reset asked for @p mode really starts in (Core::Reset, before reset()). Base: @p mode. A model
+    /// whose CPU always starts in its own firmware answers that (GMX: the loader), or defers a disk autostart's
+    /// RM_DOS until the firmware has booted (IsAutostartDeferred)
+    virtual ROMModeEnum ResolveResetROMMode(ROMModeEnum mode) { return mode; }
+
+    /// A disk autostart waits for the model's firmware boot: the TR-DOS start comes later, so the autostart's
+    /// command loop hook leaves earlier TR-DOS runs alone. Base: never
+    virtual bool IsAutostartDeferred() const { return false; }
+
     /// Re-run the model-specific set_banks() RAM mapping from the model's latches.
     /// Called by Memory::UpdateZ80Banks() for every model: ATM710/ATM3/+2A/+3 own
     /// the whole memory manager; Profi, Spectrum 128 and the Pentagons derive the
@@ -740,6 +752,12 @@ public:
 
     /// Recorder access for transports/tests. nullptr while the feature is off.
     /// Once returned the pointer stays valid for the decoder's lifetime
+    /// The port accesses of each registry device (porthistory.h)
+    PortHistories& GetPortHistories()
+    {
+        return _portHistories;
+    }
+
     PortDiagnosticRecorder* getPortTraceRecorder()
     {
         return _portTraceFeatureCache.load(std::memory_order_acquire) ? _portTrace.get() : nullptr;

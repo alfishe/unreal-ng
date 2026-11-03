@@ -771,7 +771,7 @@ public:
         if (!t.is_object() || !t.value("history", false))
         {
             HttpResponse r;
-            r.error = "no time-travel history: record first";
+            r.error = "no time travel history: press TTD REC to record";
             return r;
         }
         const long long first = t.value("first", 0LL), last = t.value("last", 0LL);

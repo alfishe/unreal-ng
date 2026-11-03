@@ -450,20 +450,17 @@ public:
     void handleFrameEnd() override;
     /// endregion </Emulation events>
 
-    /// region <Automation tap (MCP M7j)>
+    /// region <AY history>
 public:
-    /// Install/remove the AY port-write log tap. Inert while sink == nullptr.
-    /// Called with the emulation thread parked (analyzer activation path).
-    void setLogSink(AYLogSink sink, void* context) override
+    /// Set with the emulation thread parked (SoundManager at creation)
+    void setHistory(AYHistory* history) override
     {
-        _logSink = sink;
-        _logSinkContext = context;
+        _history = history;
     }
 
 protected:
-    AYLogSink _logSink = nullptr;
-    void* _logSinkContext = nullptr;
-    /// endregion </Automation tap>
+    AYHistory* _history = nullptr;
+    /// endregion </AY history>
 
     /// region <PortDevice interface methods>
 public:

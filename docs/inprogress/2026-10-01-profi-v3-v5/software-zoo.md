@@ -28,7 +28,7 @@ The ROM layout is the same for all: four 16K pages, SYS (the BIOS), TR-DOS, 128,
 Both families read sector R = 9 of cylinder 0 / side 0 and start the code through the word at offset `#102` of
 that sector ([testdata/machines/profi/cpm/README.md](../../../testdata/machines/profi/cpm/README.md)):
 
-- **BIOS 1.0 / 2.0 (v5, "Загрузка системы CP/M")** read the whole 1024-byte sector to `#5D25`, then
+- **BIOS 1.0 / 2.0 (v5, "Загрузка системы CP/M", Loading the CP/M system)** read the whole 1024-byte sector to `#5D25`, then
   `LD SP,#5E27 : RET`.
 - **Kramis V0.2 / V0.3 (v3, "Profi-DOS")** read it to `#9000` and copy only the first **288 bytes** to `#5D25`,
   then `LD HL,(#5E27) : JP (HL)`.

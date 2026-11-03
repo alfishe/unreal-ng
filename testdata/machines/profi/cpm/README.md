@@ -24,7 +24,7 @@ cylinders for its system (directory at cylinder 2 / side 0).
 Both BIOS families read sector R=9 of cylinder 0 / side 0 and start the code through the 16-bit
 word at offset `#102` of that sector:
 
-- **BIOS 1.0 / 2.0 (v5, "Загрузка системы CP/M")**: reads the whole 1024-byte sector to `#5D25`,
+- **BIOS 1.0 / 2.0 (v5, "Загрузка системы CP/M", "Load the CP/M system")**: reads the whole 1024-byte sector to `#5D25`,
   then `LD SP,#5E27 : RET` (BIOS 2.0 `PB20-36F5F7BD` at `#0872` / `#1723`; BIOS 1.0 `PB10-10DA289A` at
   `#061B` / `#17A7`).
 - **Kramis V0.2 / V0.3 (v3)**: reads the sector to `#9000`, copies only the first **288 bytes** to

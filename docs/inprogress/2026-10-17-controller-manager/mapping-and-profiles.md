@@ -515,5 +515,14 @@ picture shows those callouts as "not wired on this board".
   left + right. The keyboard is a third device and can be a player too.
 - Two identical pads are told apart by `HostDeviceId` ([architecture.md §5](architecture.md#5-device-identity-and-merging)).
   The dialog's **Identify** button rumbles the pad (or flashes its LED) and highlights it in the list.
+- **Keys of the second player (2026-10-31).** A play profile's layer `play@N` (`play@2`) is the play layer of the N-th pad
+  connected (keyboards and mice do not count; the number of `auto:N` and of the player LEDs): that pad gets its own scope
+  holding the whole set, the `play@N` bindings over `play` field by field. The other pads never see the layer. A haptic
+  rule with `player: N` ([haptics.md §6](haptics.md#6-effects)) plays on that pad only. A game that tells its players by
+  keys (a fighting game: one key set each) binds the first pad in `play` and the second in `play@2`
+  (`games/sprinter/tmnt-fighters.yaml`: pad 1 the Kempston joystick and V G B H J, pad 2 the cursor keys and `pc.*`).
+- **PC-only keys.** `pc.delete`, `pc.insert`, `pc.end`, `pc.home`, `pc.pageup`, `pc.pagedown` name keys the ZX matrix has no
+  place for. They travel as HostKeys rows 8 and 9, are held outside the TTD blob (its format and hash stay as they were)
+  and reach a machine whose input is a PS/2 keyboard (Sprinter) only; elsewhere they do nothing.
 - With several emulator instances, each device follows its instance assignment
   ([architecture.md §9](architecture.md#9-several-emulator-instances)); two players on two machines is two pins.

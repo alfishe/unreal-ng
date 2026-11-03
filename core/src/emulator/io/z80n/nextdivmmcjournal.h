@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "emulator/io/z80n/nextjournal.h"
+
 enum class NextDivMmcKind : uint8_t
 {
     MapIn = 0,         ///< the automap latch set by a fetch at `address`
@@ -47,6 +49,9 @@ struct NextDivMmcEvent
     bool basicRom = false;  ///< the 48K BASIC ROM is paged: RST 8 is an error report there, the byte is an error code
     uint16_t returnAddress = 0;
     uint16_t af = 0, bc = 0, de = 0, hl = 0;
+
+    /// The record of the history and the journal reports (portdecoder_next_state.cpp)
+    void ToState(StateNode& node) const;
 };
 
 struct NextDivMmcJournalQuery
@@ -61,30 +66,16 @@ struct NextDivMmcJournalQuery
 bool NextDivMmcJournalQueryFromStrings(const std::string& kinds, const std::string& since, const std::string& from, const std::string& to,
                                        const std::string& limit, NextDivMmcJournalQuery& query, std::string& error);
 
-class NextDivMmcJournal
+class NextDivMmcJournal : public NextJournal<NextDivMmcEvent>
 {
 public:
     static constexpr size_t kDefaultCapacity = 16384;
 
-    explicit NextDivMmcJournal(size_t capacity = kDefaultCapacity) { SetCapacity(capacity); }
+    explicit NextDivMmcJournal(size_t capacity = kDefaultCapacity)
+        : NextJournal("divmmc", "DivMMC map-ins, map-outs, port writes and esxDOS calls", capacity)
+    {
+    }
 
-    bool Enabled() const { return _enabled; }
-    void SetEnabled(bool on) { _enabled = on; }
-    void SetCapacity(size_t capacity);
-    size_t Capacity() const { return _ring.size(); }
-    size_t Size() const { return _count; }
-    uint64_t Evicted() const { return _evicted; }
-    uint64_t LastSeq() const { return _seq; }
-    void Clear();
-
-    void Record(NextDivMmcEvent event);
+    /// The matches, oldest first, the newest `limit` of them
     std::vector<NextDivMmcEvent> Query(const NextDivMmcJournalQuery& query) const;
-
-private:
-    std::vector<NextDivMmcEvent> _ring;
-    size_t _head = 0;
-    size_t _count = 0;
-    uint64_t _seq = 0;
-    uint64_t _evicted = 0;
-    bool _enabled = false;
 };

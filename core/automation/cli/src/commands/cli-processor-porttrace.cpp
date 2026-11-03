@@ -25,6 +25,7 @@
 
 #include "base/featuremanager.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/slots/portowners.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/ports/portdiagrecorder.h"
 
@@ -190,14 +191,16 @@ const char* sessionStateName(PortTraceSessionState state)
     }
 }
 
-std::string formatEventTable(const std::vector<PortTraceEvent>& events, const std::vector<PortTraceCodeName>& codes)
+std::string formatEventTable(const std::vector<PortTraceEvent>& events, const std::vector<PortTraceCodeName>& codes,
+                             const slots::PortOwners& owners)
 {
     std::ostringstream out;
     // The internal-code column only for decoders that have codes (PLAN #60(g))
     const bool withCodes = !codes.empty();
-    out << "  #    Frame  T-State        Dir  Raw    Decoded  Value  PC     Device          Flags"
+    // Owner: the registry device whose claim covers the access (a card's slot, a built-in's id; - = the board's own)
+    out << "  #    Frame  T-State        Dir  Raw    Decoded  Value  PC     Device          Owner              Flags"
         << (withCodes ? "   Code" : "") << NEWLINE;
-    out << "----  ------  -------------  ---  -----  -------  -----  -----  --------------  ------"
+    out << "----  ------  -------------  ---  -----  -------  -----  -----  --------------  -----------------  ------"
         << (withCodes ? "  ----------------" : "") << NEWLINE;
 
     char line[160];
@@ -213,10 +216,11 @@ std::string formatEventTable(const std::vector<PortTraceEvent>& events, const st
         if (e.flags & PortTraceFlags::kViaLegacyBasePath) flags += 'L';
         if (e.wasFullDecodeClaimed()) flags += 'C';
 
-        snprintf(line, sizeof(line), "%4zu  %6u  %13llu  %-3s  %04X   %04X     %02X     %04X   %-14s  %-6s",
+        const std::string& owner = owners.Find(e.rawPort, e.isOut(), e.cfTrdosActive());
+        snprintf(line, sizeof(line), "%4zu  %6u  %13llu  %-3s  %04X   %04X     %02X     %04X   %-14s  %-17s  %-6s",
                  i, e.frameNumber, (unsigned long long)e.timestamp, e.isOut() ? "OUT" : "IN", e.rawPort,
                  e.decodedPort, e.value, e.pc, PortDiagnosticRecorder::DeviceIdToString(e.deviceId),
-                 flags.c_str());
+                 owner.empty() ? "-" : owner.c_str(), flags.c_str());
         out << line;
         if (withCodes && e.hasInternalCode())
         {
@@ -373,7 +377,7 @@ void CLIProcessor::HandlePortTrace(const ClientSession& session, const std::vect
         std::ostringstream out;
         out << "Port trace: " << recorder->eventCount() << " events buffered, showing last " << events.size()
             << NEWLINE;
-        out << formatEventTable(events, decoder->GetPortTraceCodeTable());
+        out << formatEventTable(events, decoder->GetPortTraceCodeTable(), slots::PortOwners::Of(context));
         session.SendResponse(out.str());
     }
     else if (action == "codes")

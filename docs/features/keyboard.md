@@ -105,8 +105,10 @@ press the shift combination, as before.
 ## The Orel BK-08's extra columns
 
 The Orel BK-08 (LSY256) has 67 keys. Its matrix has the five ZX columns and two more, KD5 and KD7, read on port #FE
-bits 5 and 7 (keyboard schematic БУ5.103.474; the ROM's KEY-SCAN reads `AND #BF`). АЛТ is CAPS SHIFT and УПР is
-SYMBOL SHIFT. Sixteen keys sit on the extra columns, two per half-row:
+bits 5 and 7 (keyboard schematic БУ5.103.474; the ROM's KEY-SCAN reads `AND #BF`). АЛТ (Alt) is CAPS SHIFT and УПР
+(Control) is SYMBOL SHIFT. Sixteen keys sit on the extra columns, two per half-row (the key legends are printed in
+Russian: РУС = Russian layout, РЕГ = shift / case, ТАБ = Tab, Р/А = Russian / Latin, ЗГЛ = capitals; the single
+letters are the Cyrillic legends on those keys):
 
 | Half-row | Bit 5 | Bit 7 |
 |---|---|---|
@@ -121,7 +123,7 @@ SYMBOL SHIFT. Sixteen keys sit on the extra columns, two per half-row:
 
 They are plain matrix keys (`ZXKEY_BK08_*`); automation and the on-screen keyboard's Orel picture press them by
 these names. Only a machine with this keyboard takes them; on the others they press nothing. The editing keys and
-the arrows (ВШ, ГРАФ, РЕД, НОРМ, ИНВ, ← ↓ ↑ →) are wired as CAPS SHIFT + a digit. On the picture, РЕГ and Р/А latch
+the arrows (ВШ, ГРАФ (graphics), РЕД (edit), НОРМ (normal video), ИНВ (inverse video), ← ↓ ↑ →) are wired as CAPS SHIFT + a digit. On the picture, РЕГ and Р/А latch
 like the shifts: the ROM treats them as shifts. The LSY256 machine has no port decoder in the emulator yet, so the
 model does not run.
 

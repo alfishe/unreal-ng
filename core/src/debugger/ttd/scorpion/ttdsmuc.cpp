@@ -21,9 +21,10 @@ struct SmucBlob
     uint8_t p7FBA;
     uint8_t ideRegs[8];
     SMUCNvram::LinkState link;
+    Pic8259::State pic;
 };
 static_assert(sizeof(SMUCNvram::LinkState) == 25, "SMUC link state layout drift");
-static_assert(sizeof(SmucBlob) == 36, "SMUC TTD blob layout drift");
+static_assert(sizeof(SmucBlob) == 48, "SMUC TTD blob layout drift");
 static_assert(std::is_trivially_copyable_v<SmucBlob>, "SMUC TTD blob must be POD");
 
 SmucBlob Snapshot(PortDecoder_Scorpion256& decoder, const EmulatorContext& context)
@@ -35,6 +36,7 @@ SmucBlob Snapshot(PortDecoder_Scorpion256& decoder, const EmulatorContext& conte
     blob.p7FBA = state.scorpion.p7FBA;
     std::memcpy(blob.ideRegs, decoder.GetSmucIdeRegs(), sizeof(blob.ideRegs));
     blob.link = decoder.GetSMUCNvram().GetLinkState();
+    blob.pic = decoder.GetSmucInterrupts().Pic().GetState();
     return blob;
 }
 }  // namespace
@@ -63,6 +65,8 @@ void TTDSmuc::TTDLoadState(const uint8_t* src)
     state.scorpion.p7FBA = blob.p7FBA;
     std::memcpy(_decoder.GetSmucIdeRegs(), blob.ideRegs, sizeof(blob.ideRegs));
     _decoder.GetSMUCNvram().SetLinkState(blob.link);
+    _decoder.GetSmucInterrupts().Pic().SetState(blob.pic);
+    _decoder.GetSmucInterrupts().Update();
 }
 
 uint64_t TTDSmuc::TTDHashState() const

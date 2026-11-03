@@ -40,6 +40,9 @@ public:
     void WriteSelect(uint8_t value);  ///< #FFFD
     void WriteData(uint8_t value);    ///< #BFFD
     uint8_t ReadData();               ///< #FFFD read
+    /// The AY history the port writes go to (ayhistory.h): a record per #FFFD / #BFFD write the chips take (none while
+    /// held in reset), `chip` 0-2
+    void SetHistory(AYHistory* history) { _history = history; }
     /// #BFF5 read (psg_d_o_reg_i, ym2149.vhd 220-221): the selected chip's identity and register address, `AY_ID & '0' & addr`
     /// (the chips answer "11", "10" and "01" for chip 0, 1 and 2)
     uint8_t ReadIdentity() const;
@@ -105,6 +108,7 @@ public:
     uint64_t QuietTicks() const { return _quietTicks; }
 
 private:
+    void RecordWrite(uint16_t port, uint8_t value);  ///< into the AY history, after the write
     friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     /// Run the generators up to absolute base T `t` (a tick every 16 T), recording the level of each tick
     void AdvanceTo(double t);
@@ -119,6 +123,7 @@ private:
     std::array<std::unique_ptr<SoundChip_AY8910>, kChips> _chips;
     std::array<uint8_t, kChips> _pan{{3, 3, 3}};
     unsigned _selected = 0;
+    AYHistory* _history = nullptr;
     bool _turboSound = true;
     bool _dacEnabled = true;
     bool _ym = true;

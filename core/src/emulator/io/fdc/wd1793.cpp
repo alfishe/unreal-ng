@@ -1,5 +1,6 @@
 #include "wd1793.h"
 
+#include <algorithm>
 #include <sstream>
 
 #include "common/dumphelper.h"
@@ -10,7 +11,6 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulator.h"
 #include "emulator/notifications.h"
-#include "wd1793_collector.h"
 #include "iwd1793observer.h"
 #include "base/featuremanager.h"
 #include "diskfastload.h"
@@ -82,9 +82,6 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
     _stateHandlers[S_WAIT_INDEX] = &WD1793::processWaitIndex;
     _stateHandlers[S_END_COMMAND] = &WD1793::processEndCommand;
 
-    // TODO: remove collector once WD1793 logic is fully implemented and tested
-    _collector = new WD1793Collector();
-
     /// region <Create FDD instances
 
     for (size_t i = 0; i < 4; i++)
@@ -99,13 +96,16 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
     _selectedDrive = _context->coreState.diskDrives[0];
 
     reset();
+
+    // The command history runs as the standby ring from the start; the planes reach it as `beta128`
+    std::string error;
+    _commandHistory.Configure({ .mode = history::Mode::Ring, .limit = kCommandHistorySize }, error);
+    _context->histories.Add(&_commandHistory);
 }
 
 WD1793::~WD1793()
 {
-    // Collector handles its own file cleanup in destructor
-    delete _collector;
-    _collector = nullptr;
+    _context->histories.Remove(&_commandHistory);
 
     // Note: Disk drives and disk images are owned by Emulator/CoreState
     // They are managed and deleted by the Emulator, not by WD1793
@@ -961,6 +961,27 @@ void WD1793::addObserver(IWD1793Observer* observer)
     }
 }
 
+void WD1793::CommandRecord::ToState(StateNode& node) const
+{
+    node["start"] = static_cast<int64_t>(start);
+    node["frame"] = static_cast<int64_t>(frame);
+    node["pc"] = int(pc);
+    node["command"] = int(command);
+    node["name"] = getWD_COMMANDName(decodeWD93Command(command));
+    node["track"] = int(track);
+    node["sector"] = int(sector);
+    node["data"] = int(data);
+    node["drive"] = int(drive);
+    node["side"] = int(side);
+    node["done"] = done;
+    if (done)
+    {
+        node["end"] = static_cast<int64_t>(end);
+        node["duration"] = static_cast<int64_t>(end - start);
+        node["status"] = int(status);
+    }
+}
+
 void WD1793::removeObserver(IWD1793Observer* observer)
 {
     _observers.erase(std::remove(_observers.begin(), _observers.end(), observer), _observers.end());
@@ -1180,8 +1201,22 @@ void WD1793::processWD93Command(uint8_t value)
         _lastDecodedCmd = command;
         _lastCmdValue = commandValue;
 
-        // Register call in a collection
-        _collector->recordCommandStart(*this, value);
+        // The command history: one flag check while it is off
+        if (_commandHistory.On() && !_context->ttdReplayActive) [[unlikely]]
+        {
+            CommandRecord record;
+            record.start = _time;
+            record.frame = _context->emulatorState.frame_counter;
+            const Z80* cpu = _context->pCore != nullptr ? _context->pCore->GetZ80() : nullptr;
+            record.pc = cpu != nullptr ? cpu->pc : 0;
+            record.command = value;
+            record.track = _trackRegister;
+            record.sector = _sectorRegister;
+            record.data = _dataRegister;
+            record.drive = _drive;
+            record.side = _sideUp ? 1 : 0;
+            _commandHistory.Push(record);
+        }
 
         if (_context->machineEventWatch) [[unlikely]]
             GSReportHostEvent(_context, GSCardEvent::FdcCommand, value, _trackRegister << 8 | _sectorRegister);
@@ -1196,6 +1231,16 @@ void WD1793::processWD93Command(uint8_t value)
         {
             // Call the corresponding command method
             (this->*handler)(commandValue);
+
+            // It takes effect at once: its history entry ends here (the command it cut short stays not done)
+            if (_commandHistory.On() && !_context->ttdReplayActive) [[unlikely]]
+            {
+                _commandHistory.UpdateLast([this](CommandRecord& record) {
+                    record.done = true;
+                    record.end = _time;
+                    record.status = _statusRegister;
+                });
+            }
         }
         else
         {
@@ -2051,8 +2096,18 @@ void WD1793::endCommand()
     _statusRegister &= ~WDS_BUSY;  // Reset BUSY flag
     raiseIntrq();                  // INTRQ must be set at a completion of any command
 
-    // Notify collector about command completion
-    _collector->recordCommandEnd(*this);
+    // The running command of the history ends here
+    if (_commandHistory.On() && !_context->ttdReplayActive) [[unlikely]]
+    {
+        _commandHistory.UpdateLast([this](CommandRecord& record) {
+            if (!record.done)
+            {
+                record.done = true;
+                record.end = _time;
+                record.status = _statusRegister;
+            }
+        });
+    }
 
     if (_context->machineEventWatch) [[unlikely]]
         GSReportHostEvent(_context, GSCardEvent::FdcDone, _statusRegister, _commandRegister);

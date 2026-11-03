@@ -43,7 +43,7 @@ WMF plugins, `tools/esp_info.sna`),
 
 | Program | Firmware | Result | What came from the internet / what failed |
 |:--|:--|:--|:--|
-| HackerVBI `zifi.spg` 0.733 | `AT` (NonOS 1.7.4) | works | update check `zifi.vtrd.in/zifi_ver.php` 200; Press > Hype: `zifi.vtrd.in/get.php?src=hype` (11.7 KB) - the article list ("Video-spectrumizer финал by nodeus, 12.06.2026", ...); Graphics > zxart.ee Most popular: the list ("0.Baking Soda by Grongy, 2021", ...) and the picture shown and saved to `zifi/downloads/2026_10_04/359852.SCR` (6912 bytes) |
+| HackerVBI `zifi.spg` 0.733 | `AT` (NonOS 1.7.4) | works | update check `zifi.vtrd.in/zifi_ver.php` 200; Press > Hype: `zifi.vtrd.in/get.php?src=hype` (11.7 KB) - the article list ("Video-spectrumizer финал by nodeus, 12.06.2026" (финал = final), ...); Graphics > zxart.ee Most popular: the list ("0.Baking Soda by Grongy, 2021", ...) and the picture shown and saved to `zifi/downloads/2026_10_04/359852.SCR` (6912 bytes) |
 | HackerVBI `zifi.spg` 0.733 | `AT,ESP8266-AT222` | fails (program) | stops at "Try connect to Access point": `AT+CWMODE_DEF` / `AT+CWJAP_CUR` answer `ERROR` as on ESP-AT 2.2.2; the program needs NonOS AT |
 | HackerVBI `zifi_rs.spg` | - | not run | the cable build: needs PSB's PC socket server (`ic.exe`) on the COM port |
 | S3 `zifi.spg` (new) | `ZIFI-NATIVE,S3` | works | startup: Wi-Fi up, IP 10.0.2.15, HTTP test `zifi.vtrd.in` 200, clock from NTP; Hype list; zxart picture "Baking Soda"; Games: vtrd.in list and "Shadows of Belial" downloaded through `zifi.vtrd.in/unzipremote.php` to `zifi/downloads/2026-10-04/Shad_Bel.scl` (122921 bytes, SCL checksum valid, byte-identical to a host fetch) |

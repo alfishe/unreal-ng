@@ -30,6 +30,7 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -153,6 +154,10 @@ private:
     };
 
     void writeRegister(uint8_t index, uint16_t value);
+public:
+    /// Every SCI register write from the host (its history: SoundChip_NeoGS); empty: nothing
+    std::function<void(uint8_t reg, uint16_t value)> onSciWrite;
+private:
     uint16_t readRegister(uint8_t index);
     void softReset();
     void clearStream();

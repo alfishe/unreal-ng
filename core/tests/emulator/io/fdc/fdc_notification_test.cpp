@@ -220,7 +220,7 @@ protected:
 
         // Full context wiring: portDeviceOutMethod dereferences pCore->GetZ80()
         // and pMemory in its debug-print preamble, and the command path's
-        // WD1793Collector uses pCore->GetMemory() — both must be present.
+        // history reads the Z80's PC through pCore — both must be present.
         // WD1793CUT stubs updateTimeFromEmulatorState (no live T-state counters).
         _context = new EmulatorContext(LoggerLevel::LogError);
         _context->pModuleLogger->TurnOffLoggingForAll();
@@ -326,6 +326,41 @@ TEST_F(FDCNotificationTest, CommandStartSetsBusyAndCommandByte)
     EXPECT_TRUE(captured.busy);
     EXPECT_EQ(captured.command, 0x10);
     EXPECT_EQ(captured.trackRegister, 0);
+}
+
+/// The command history (history::DeviceHistory) runs as the standby ring: the commands with the registers they were
+/// written with; a force interrupt ends at once, the command it cut short stays not done; the ring keeps the newest
+TEST_F(FDCNotificationTest, CommandHistoryRecordsCommandsInARing)
+{
+    _fdc->portDeviceOutMethod(0x003F, 5);     // track register
+    _fdc->portDeviceOutMethod(0x007F, 20);    // data register: the SEEK target
+    _fdc->portDeviceOutMethod(0x001F, 0x10);  // SEEK
+    _fdc->portDeviceOutMethod(0x001F, 0xD0);  // FORCE INTERRUPT
+
+    std::vector<WD1793::CommandRecord> records = _fdc->CommandHistory().Snapshot();
+    ASSERT_EQ(records.size(), 2u);
+    EXPECT_EQ(records[0].command, 0x10);
+    EXPECT_EQ(records[0].track, 5);
+    EXPECT_EQ(records[0].data, 20);
+    EXPECT_FALSE(records[0].done) << "the SEEK was cut short";
+    EXPECT_EQ(records[1].command, 0xD0);
+    EXPECT_TRUE(records[1].done);
+
+    for (int i = 0; i < 70; i++)
+        _fdc->portDeviceOutMethod(0x001F, 0xD0);
+    records = _fdc->CommandHistory().Snapshot();
+    EXPECT_EQ(records.size(), WD1793::kCommandHistorySize);
+    const history::Stats stats = _fdc->CommandHistory().GetStats();
+    EXPECT_EQ(stats.written, 72u);
+    EXPECT_EQ(stats.dropped, 72u - WD1793::kCommandHistorySize);
+    EXPECT_TRUE(_context->histories.With("beta128", [](history::IDeviceHistory&) {}));
+
+    // Off: nothing kept, nothing counted
+    std::string error;
+    ASSERT_TRUE(_fdc->CommandHistory().Configure({ .mode = history::Mode::Off }, error));
+    _fdc->portDeviceOutMethod(0x001F, 0xD0);
+    EXPECT_TRUE(_fdc->CommandHistory().Snapshot().empty());
+    EXPECT_EQ(_fdc->CommandHistory().GetStats().written, 0u);
 }
 
 TEST_F(FDCNotificationTest, PayloadCarriesEmulatorId)

@@ -25,7 +25,7 @@ them are marked **(Qn)**.
    (EG `Compiled_Main3.asm:586-608`, `:428-439`; `LoaderGMX.asm:45-54`). The author says it ran on real hardware
    (Docs/Hystory.txt 2021.07.06, 2021.08.25), which would flicker if screen 1 were not `#3B` / `#7B`. OSZ reserves
    `#3A` / `#7A` as "video pages" (`os_main.asm:1545-1556`, `_Doc/ReadMe (Win).txt`) but its own driver labels the
-   `#7FFD` bit 3 screen "экран 3b" (`Drv/zsgmx.asm:448`) and hands page `#3B` to applications (`Drv/zsgmx.asm:471`).
+   `#7FFD` bit 3 screen "screen 3b" (`Drv/zsgmx.asm:448`) and hands page `#3B` to applications (`Drv/zsgmx.asm:471`).
    OSZ copied the article's numbering; the working code agrees with the three emulators.
 2. **`#7EFD` is written as `#C8` (extended on) and `#C0` (extended off)** by both programs
    (EG `LoaderGMX.asm:978-985`; OSZ `Drv/zsgmx.asm:294-316`). So bit 7 turbo = 1, bits 6-4 = `100` (ROM
@@ -74,7 +74,7 @@ them are marked **(Qn)**.
 | `#DFFD` | W | Page bits 4-6 (`(page >> 4) & 7`) | `LoaderGMX.asm:1033-1039`, `:1076-1082` |
 | `#78FD` | W | Slot 2 (`#8000`) page, written as `page xor 2` | `LoaderGMX.asm:972-976`; `Compiled_Main3.asm:995-1001`; `EG_Interrupts2.asm:24-27`, `:460-463`, `:903-907` |
 | `#7EFD` | W | `#C8`: "enable screen 640*200" (turbo + plane 4 + extended) | `LoaderGMX.asm:978-981` |
-| `#FFFD` / `#BFFD` | W | AY register / data: `C=#FD`, `B=#FF` ("порт регистра"), `B=#BF` ("порт данных"), `OUTI` | `ArkosTrackerPlayer_CPC_MSX.asm:1121`, `:1138-1141` (x14) |
+| `#FFFD` / `#BFFD` | W | AY register / data: `C=#FD`, `B=#FF` ("register port"), `B=#BF` ("data port"), `OUTI` | `ArkosTrackerPlayer_CPC_MSX.asm:1121`, `:1138-1141` (x14) |
 | `#xxFE` | R | Keyboard half-rows (`#BFFE` H, `#FBFE` R, `#FDFE` F, table `DKEY` for Q/A/O/P/N/M/Space/Enter, Sinclair 1 = `#EFFE`) | `EG_Move3.asm:313-336`, `:378-392` |
 | `#1F` | R | Kempston ("KBDJOY ... (c) DragonsLord") | `EG_Move3.asm:353` |
 | `#FE` | W | border writes all commented out (debug colours) | `EG_Interrupts2.asm:23`, `Compiled_Main3.asm:409` |
@@ -89,7 +89,7 @@ monitor" (`LoaderGMX.asm:12-13`). Not used: `#7AFD`, `#7CFD`, `#00`, SMUC, Z-Con
 | Port | Access | Meaning per code / comments | Where |
 |---|---|---|---|
 | `#7FFD` | W | Same slot-3 driver as EG; bit 3 screen select (`#10` screen 0/5, `#18` screen 1/7, self-modified `PageSlot3Scr`) | `Drv/zsgmx.asm:377-421`, `:424-454`; monitor exit `os_main.asm:895-897` |
-| `#1FFD` | W | `#01` RAM page 0 at `#0000` ("ОЗУ вместо ПЗУ"); bit 4 page bit 3; `#12` on monitor entry (service ROM + bit 4) | `Drv/zsgmx.asm:396-399`; `os_main.asm:928-933`, `:866-868`, `:886-888`, `:895` |
+| `#1FFD` | W | `#01` RAM page 0 at `#0000` ("RAM instead of ROM"); bit 4 page bit 3; `#12` on monitor entry (service ROM + bit 4) | `Drv/zsgmx.asm:396-399`; `os_main.asm:928-933`, `:866-868`, `:886-888`, `:895` |
 | `#DFFD` | W | Page bits 4-6 | `Drv/zsgmx.asm:410-414` |
 | `#78FD` | W/R | W: slot-2 page `xor 2`; R: current slot-2 page (`xor 2` again) | `Drv/zsgmx.asm:492-496`; `os_main.asm:2303-2306` |
 | `#7AFD` | W/R | W: hardware scroll low byte; R: current slot-3 page (`and #7F`); also read on monitor entry | `Drv/zsgmx.asm:362-364`; `os_main.asm:2299-2302`, `:864-865`, `:884-885` |
@@ -132,7 +132,7 @@ preempts it). Tests should use an `autorun.txt` without `net.apg`.
 - **EdgeGrinder's trick** (from the Evo port): the loader fills both pixel pages with `#0F` (left 4 pixels paper,
   right 4 pixels ink) and never touches pixels again; all drawing writes attribute bytes, so one byte = two "fat
   pixels" (paper = left, ink = right), an effective 160x200 in 8 colours, as the Amstrad 160x200 mode
-  (`LoaderGMX.asm:45-54`; Docs/Этапы). The loading picture is the Amstrad image converted into page `#79`
+  (`LoaderGMX.asm:45-54`; Docs/Этапы, "stages"). The loading picture is the Amstrad image converted into page `#79`
   (`LoaderGMX.asm:56-76`). OSZ `tetris.apg` uses the same "pseudo 160x200" (ReadMe).
 - **Palette**: none. 8 colours from the standard attribute (EG: "graphics converted to 8 colours"; the
   `ConvertGFX/*Palette.asm` files only map CPC colours to the 8 Spectrum colours at build time).
@@ -151,7 +151,7 @@ preempts it). Tests should use an `autorun.txt` without `net.apg`.
 ### 2.2 Turbo
 
 Only `#7EFD` bit 7, always written as 1 together with the mode (`#C8` / `#C0`). EG assumes 7 MHz in a beam-wait
-delay loop (`EG_Panel.asm:407-418`); the doc: "Работает в режиме 7Мгц". No `IN` from `#1FFD`/`#7FFD` (Turbo+
+delay loop (`EG_Panel.asm:407-418`); the doc: "Runs in 7 MHz mode". No `IN` from `#1FFD`/`#7FFD` (Turbo+
 strobe, Q5) anywhere.
 
 ### 2.3 Interrupts
@@ -231,7 +231,7 @@ Sinclair 1, Q/S up, A/X down, O left, P right, N/M/Space/Enter fire, H pause/bre
 `PAUSE 0`, then `RANDOMIZE USR 15619: REM : LOAD "DISC" CODE 25088: RANDOMIZE USR 25088`. `boot.B` does
 `RANDOMIZE USR 15619: REM : RUN "EG"`. No turbo poke in BASIC.
 
-### 3.4 OSZ `_Doc/Идея.txt` (idea, 2024-09-04)
+### 3.4 OSZ `_Doc/Идея.txt` ("idea", 2024-09-04)
 
 An own multitasking OS for the Scorpion GMX, compatible with nothing. Borrow NedoOS's page juggling: the GMX selects
 the upper two windows, all applications live at `#8000-#FFFF` in turn; the OS sits in banks 0 and 5 at
@@ -321,7 +321,7 @@ testdata/machines/scorpion-gmx/
   README.md
   rom/gmx644.rom                 # or data/rom/gmx644.rom next to gmx.rom, if it becomes a selectable ROM
   edgegrinder/EGGMX.TRD
-  edgegrinder/reference-gameplay.png   # optional: the author's screenshot (Docs/Скрин.png), by-eye reference only
+  edgegrinder/reference-gameplay.png   # optional: the author's screenshot (Docs/Скрин.png, "screenshot"), by-eye reference only
   osz/OS.TRD
   osz/sdcard/OSZ/os.$c
   osz/sdcard/OSZ/sys.osg
@@ -351,7 +351,7 @@ to reach NC and Tetris. Do not commit the 64 MB VHD or the 1 GB `wc.img` unpacke
 Precondition to verify: the kernel finds the first FAT partition as drive `E:` through the monitor's R8FAT and opens
 `\OSZ` (`Drv/zsfat.asm:197-212`, `:1063`); the README says FAT32. If the monitor rejects FAT16, the host folder must be
 presented as FAT32 (the synth volume supports it) or the test uses `osz-sd.zip`. **Settled (Q20):** the monitor
-supports FAT32 only (LW/PLM changelog "поддержана только FAT32"); the folder is presented as FAT32.
+supports FAT32 only (LW/PLM changelog "only FAT32 is supported"); the folder is presented as FAT32.
 
 ### 5.1 What each fixture can test
 

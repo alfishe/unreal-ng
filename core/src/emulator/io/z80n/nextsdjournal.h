@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "emulator/io/z80n/nextjournal.h"
+
 enum class NextSdKind : uint8_t
 {
     Command = 0,
@@ -37,6 +39,9 @@ struct NextSdEvent
     uint8_t r1 = 0xFF;  ///< Command: the response byte queued (0xFF: none)
     uint64_t block = 0; ///< ReadBlock / WriteBlock
     bool ok = true;     ///< WriteBlock: stored
+
+    /// The record of the history and the journal reports (portdecoder_next_state.cpp)
+    void ToState(StateNode& node) const;
 };
 
 /// "command,read": kinds; "0" / "1": card. Empty = no filter
@@ -53,34 +58,16 @@ struct NextSdJournalQuery
 bool NextSdJournalQueryFromStrings(const std::string& kinds, const std::string& card, const std::string& since, const std::string& from,
                                    const std::string& to, const std::string& limit, NextSdJournalQuery& query, std::string& error);
 
-class NextSdJournal
+class NextSdJournal : public NextJournal<NextSdEvent>
 {
 public:
     static constexpr size_t kDefaultCapacity = 16384;
 
-    explicit NextSdJournal(size_t capacity = kDefaultCapacity) { SetCapacity(capacity); }
-
-    bool Enabled() const { return _enabled; }
-    void SetEnabled(bool on) { _enabled = on; }
-    /// Resizes the ring (the content is dropped)
-    void SetCapacity(size_t capacity);
-    size_t Capacity() const { return _ring.size(); }
-    size_t Size() const { return _count; }
-    uint64_t Evicted() const { return _evicted; }
-    uint64_t LastSeq() const { return _seq; }
-    void Clear();
-
-    /// `event.seq` is assigned here
-    void Record(NextSdEvent event);
+    explicit NextSdJournal(size_t capacity = kDefaultCapacity)
+        : NextJournal("next-sd", "SD commands and blocks of both lines", capacity)
+    {
+    }
 
     /// The matches, oldest first, the newest `limit` of them
     std::vector<NextSdEvent> Query(const NextSdJournalQuery& query) const;
-
-private:
-    std::vector<NextSdEvent> _ring;
-    size_t _head = 0;
-    size_t _count = 0;
-    uint64_t _seq = 0;
-    uint64_t _evicted = 0;
-    bool _enabled = false;
 };

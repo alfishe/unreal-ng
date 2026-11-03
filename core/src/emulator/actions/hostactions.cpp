@@ -22,6 +22,7 @@
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/actions/actionparams.h"
 #include "emulator/actions/actionregistry.h"
+#include "emulator/actions/builtinactions.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -100,7 +101,7 @@ std::string NoHistory(Emulator& emulator, const ActionValue& value)
     if (std::string why = NoTtd(emulator, value); !why.empty())
         return why;
     return emulator.GetContext()->pTimeTravelHooks->PublishedCursor().history ? std::string()
-                                                                                : std::string("record first");
+                                                                                : std::string(kNoHistory);
 }
 
 ActionResult FromRun(RunReply reply)
@@ -1321,13 +1322,12 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
                 }
                 else if (op == "play" || op == "toggle")
                 {
-                    if (!tape.EnsureImageLoaded())
+                    const TapePlayResult played = tape.Play();
+                    if (played == TapePlayResult::NoBlocks)
                         return Conflict("Tape image has no loadable blocks");
-                    if (state == TapePlaybackState::Paused)
-                        tape.ResumePlaybackFromPause();
-                    else
-                        tape.StartPlaybackAtCursor();
-                    message = state == TapePlaybackState::Paused ? "Tape playback resumed" : "Tape playback started";
+                    message = played == TapePlayResult::Resumed  ? "Tape playback resumed"
+                              : played == TapePlayResult::Queued ? "Tape playback starts when the tape is in"
+                                                                 : "Tape playback started";
                 }
                 else if (op == "pause")
                 {

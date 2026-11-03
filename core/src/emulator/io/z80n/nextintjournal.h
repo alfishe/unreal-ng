@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+#include "emulator/io/z80n/nextjournal.h"
+
 enum class NextIntKind : uint8_t
 {
     IntAck = 0,      ///< a maskable interrupt accepted: `source` and, in hardware IM2 mode, the `vector`
@@ -36,6 +38,9 @@ struct NextIntEvent
     bool accepted = false;    ///< NmiRequest
     const char* reason = "";  ///< NmiRequest refused: why
     uint8_t value = 0;        ///< Reset: NR #02 bits 1:0 after
+
+    /// The record of the history and the journal reports (portdecoder_next_state.cpp)
+    void ToState(StateNode& node) const;
 };
 
 struct NextIntJournalQuery
@@ -50,30 +55,16 @@ struct NextIntJournalQuery
 bool NextIntJournalQueryFromStrings(const std::string& kinds, const std::string& since, const std::string& from, const std::string& to,
                                     const std::string& limit, NextIntJournalQuery& query, std::string& error);
 
-class NextIntJournal
+class NextIntJournal : public NextJournal<NextIntEvent>
 {
 public:
     static constexpr size_t kDefaultCapacity = 16384;
 
-    explicit NextIntJournal(size_t capacity = kDefaultCapacity) { SetCapacity(capacity); }
+    explicit NextIntJournal(size_t capacity = kDefaultCapacity)
+        : NextJournal("next-int", "interrupts, NMIs, RETNs and resets", capacity)
+    {
+    }
 
-    bool Enabled() const { return _enabled; }
-    void SetEnabled(bool on) { _enabled = on; }
-    void SetCapacity(size_t capacity);
-    size_t Capacity() const { return _ring.size(); }
-    size_t Size() const { return _count; }
-    uint64_t Evicted() const { return _evicted; }
-    uint64_t LastSeq() const { return _seq; }
-    void Clear();
-
-    void Record(NextIntEvent event);
+    /// The matches, oldest first, the newest `limit` of them
     std::vector<NextIntEvent> Query(const NextIntJournalQuery& query) const;
-
-private:
-    std::vector<NextIntEvent> _ring;
-    size_t _head = 0;
-    size_t _count = 0;
-    uint64_t _seq = 0;
-    uint64_t _evicted = 0;
-    bool _enabled = false;
 };

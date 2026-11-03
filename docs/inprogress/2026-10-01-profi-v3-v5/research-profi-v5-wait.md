@@ -174,7 +174,7 @@ phase that never waits. A `[PROFI] WaitPhase=` value (0..3, default 0) should se
 
 **ROM one-shot.** At 3.5 MHz the pulse ends roughly 350-400 ns after T1 starts, and the Z80 samples WAIT when T2
 falls at 429 ns. That puts the end of the pulse inside the Z80A's 70 ns setup window, so the result is **marginal:
-0 or 1 wait per ROM read**. The forum's "формирует wait даже не в турбе" (it makes a wait even outside turbo)
+0 or 1 wait per ROM read**. The forum's "it makes a wait even outside turbo"
 points to 1 on at least some boards. Suggested default: 0, with a setting for 1. **Not settled.**
 
 ### Worked examples
@@ -244,7 +244,7 @@ an M-cycle with an odd length moves the following access onto the other parity.
   and removing VD22 in the model gives **more** waits (`examples-novd22-output.txt`). So the 5.03 mod is probably a
   different change. Unknown;
 - the 80DS mode;
-- why the Profi was designed this way. Gromov's "идеальная синхронизация" (perfect synchronization) shows only that
+- why the Profi was designed this way. Gromov's "perfect synchronization" shows only that
   his test programs ran.
 
 **What would confirm it:**

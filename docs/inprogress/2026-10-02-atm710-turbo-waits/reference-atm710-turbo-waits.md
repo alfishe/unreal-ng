@@ -12,8 +12,8 @@ part timings, which no document states outright, are marked **[inferred]**.
 |:--|:--|:--|
 | cp7_1 | v7.10 schematic, the main sheet (D68, D69, D73, D76, D79, D98, Z80, clock) | [svn atmturbo `pcad/ver_7_10/cp7_1.pdf`](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/pcad/ver_7_10/) |
 | cp7 | v7.10 board placement (part types: D68, D69 = 555TM2; D98 = 555LL1; D76 = 555LN1; D73 = 555LA3) | same folder, `cp7.pdf` |
-| errata-green | NedoPC green-board rework sheet (RC on D68 pin 4, CMX to D65.13) | same folder, `errataGreenRus.pdf` / `Visio-Доработки(зеленая).pdf` |
-| manual-ru | Assembly manual (Russian) with **timing diagrams 1a, 1b, 2** as embedded pictures | [svn atmturbo `doc/ver_7_10/Сборка и Наладка Турбо2+.doc`](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/doc/ver_7_10/) |
+| errata-green | NedoPC green-board rework sheet (RC on D68 pin 4, CMX to D65.13) | same folder, `errataGreenRus.pdf` / `Visio-Доработки(зеленая).pdf` ("reworks, green") |
+| manual-ru | Assembly manual (Russian) with **timing diagrams 1a, 1b, 2** as embedded pictures | [svn atmturbo `doc/ver_7_10/Сборка и Наладка Турбо2+.doc`](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/doc/ver_7_10/) ("Turbo 2+ assembly and setup") |
 | cp7_2 | v7.10 schematic, second sheet: the **component value list** (R1 = 1k, C9 = 220pF, R6 = 2.2k, C2 = 10nF), D38 (INTZ') | same folder as cp7_1, `cp7_2.pdf` |
 | UM0080 | Zilog Z80 CPU User Manual: WAIT sampled on the falling clock edge of T2/Tw, INT on the rising edge of the final clock | [zilog.com um0080.pdf](https://www.zilog.com/docs/z80/um0080.pdf) |
 | manual-en | Its English translation, "TURBO 2+ Assembly and Configuration Manual" (text only; the diagrams are the same) | same folder, `TURBO 2+ Assembly and Configuration Manual.doc` |
@@ -345,7 +345,7 @@ every timing margin below is **[inferred]**.
      has D = +5V, so it re-syncs only the end of the pulse. D25.Q is **INT_D'**.
   5. D38 (AND) combines INT_D' and INT_T', giving **INTZ'** at Z80 pin 16 (cp7_2).
 
-  Manual-ru: "Сигнал INT' делается из сигнала VS с помощью RC-цепочки". The values come from the component
+  Manual-ru: "the INT' signal is made from the VS signal by an RC network". The values come from the component
   list on cp7_2: R6 = 2.2k, C2 = 10nF. That gives τ = 22 µs, which fits the manual's 8-15 µs INT width.
 - **C2 is slot-locked.** The C2 net is built as PE (the D5 divider carry) AND (RG0 OR D109.Q5). Diagram 2
   draws C2 as a pulse that rises at about 0.75 of a slot and falls at the slot boundary. That is the same
@@ -381,7 +381,7 @@ every timing margin below is **[inferred]**.
   the rework. With the rework (R' at about 251 ns at D68.11) it just fits. A miss would make the cycle
   **4 waits** instead of 2.
   - This fits the English manual's reason for the R' rework, "especially with Soviet CPUs": a slow MREQ'
-    on КР1858ВМ1 / Т34ВМ1 clones.
+    on КР1858ВМ1 / Т34ВМ1 (Soviet Z80) clones.
 - **No measurement** was found on any board. The rule stays as diagram 1b draws it: 2 / 3.
 
 ### Q3: an earlier WAIT' release (1/2 waits)
@@ -424,7 +424,7 @@ every timing margin below is **[inferred]**.
   the next sample, about 357 ns.
   - Result: **one extra wait state** on accesses to ports #1F/#3F/#5F/#7F at 7 MHz (5 T + 1 instead of
     4 T at the bus). There are none at 3.5 MHz.
-  - Manual-ru agrees: "процессору выставляется такт ожидания". Only the slowest parts could stretch it
+  - Manual-ru agrees: "the processor is given a wait state". Only the slowest parts could stretch it
     to 2.
 
 ### Speed measurements on real hardware
@@ -435,7 +435,7 @@ turned up in any of these:
 - the NedoPC/ATM sites;
 - the zx-pk.ru ATM section (all 95 threads linked from the
   [ATM topic index](https://zx-pk.ru/threads/26679-kompyuter-atm-turbo-podborka-ssylok-na-temy-foruma.html),
-  313 pages, searched for WAIT/вейт/ожидан/%/раза);
+  313 pages, searched for WAIT/вейт/ожидан/%/раза, the Russian search terms for "wait", "waiting" and "times");
 - the [performance-test thread](https://zx-pk.ru/threads/3122-sravnitelnyj-test-proizvoditelnosti.html);
 - Kulicheg's [ATM_Turbo repository](https://github.com/Kulicheg/ATM_Turbo).
 
@@ -444,7 +444,7 @@ The only figures are qualitative:
 - The manuals (section 5): 140-160 %, 70-80 %, "up to 80 %", about 1.5x.
 - A 2014 forum post in the
   [v7.10 technical thread](https://zx-pk.ru/threads/15848-tekh-razdel-atm-turbo-7-10/page7.html) (#65),
-  quoted by the moderator: RAM-bound turbo speed "увеличивается всего в 1, 5 раза". This is a claim, not a
+  quoted by the moderator: RAM-bound turbo speed "increases only 1.5 times". This is a claim, not a
   measurement, but it fits section 5's 1.1-1.6x for RAM code.
 
 The rule 2 + (t mod 2) therefore still has no numeric hardware check. A frame-loop counter run on a real

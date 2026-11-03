@@ -81,12 +81,12 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
 - [x] H4: create-time `zq3_mhz` / `ay_clock` (WebAPI + OpenAPI, CLI `--profi-zq3` / `--profi-ay-clock`, MCP),
   `profi_hires_cpu_hz` / `profi_zq3_mhz` / `profi_ay_clock` in the paging state (WebAPI, CLI, Lua, Python), the
   machine list's `speed_multiplier` as a fraction (1.43 in hi-res); recipe verified live
-- [x] The forum's hi-res speed-test figures: BIOS 2.0's "Тест быстродействия" reads 1.50 and 2.45 (TURBO) on the
+- [x] The forum's hi-res speed-test figures: BIOS 2.0's "Тест быстродействия" (speed test) reads 1.50 and 2.45 (TURBO) on the
   emulated v5, as termik's real 5.06 with a 20 MHz ZQ3 did (zx-pk 21644 p.11); without the waits it reads 1.65 / 3.35
   (`ProfiBoot_Test.BiosSpeedTestReadsWhatARealBoardReads`)
 - [x] A/B of H1-H4 and the AY clock: no measurable cost on 48K / Pentagon / Scorpion / TurboSound ([design-hires.md](design-hires.md) 5)
 - [x] CP/M on v5: images per board in `testdata/machines/profi/cpm/` (README there); the Kondor, HC and DN disks boot
-  from "Загрузка системы CP/M" (`CpmBootsFromTheKondorSystemDisk`). The old `CPM.UDI` stops at its loader's trap:
+  from "Загрузка системы CP/M" (Loading the CP/M system) (`CpmBootsFromTheKondorSystemDisk`). The old `CPM.UDI` stops at its loader's trap:
   its LSTP driver loads `KOI8.FNT`, which the disk lacks (an inconsistent user disk, not an emulation bug)
 - [x] CP/M on v3: Klug CP/M 2.3 boots from the Kramis V0.3 "Profi-DOS" entry (checked 2026-10-03; the disk is kept
   outside the repository, testdata has one disk per check: SP-DOS for the v3, `SpDosBootsToItsShell`). It

@@ -350,9 +350,13 @@ public:
                                         [](const PlanReason& reason) { return reason.hard; });
         if (_request.op != SlotRequest::Op::Remove)
         {
+            // A soft documented refusal (D9, hard = false) plugs only when forced
+            const bool softRefusal = std::any_of(_plan.reasons.begin(), _plan.reasons.end(), [](const PlanReason& reason) {
+                return reason.rule == Rule::D9 && !reason.hard;
+            });
             _plan.needsConfirmation = !_plan.removed.empty() || !_plan.builtInSwitchedOff.empty() ||
                                       !_plan.removedFromSocket.empty() || _plan.fit == Fit::Unrealistic ||
-                                      !_plan.busFights.empty();
+                                      !_plan.busFights.empty() || softRefusal;
         }
         _plan.allowed = !_plan.hardRefusal && (!_plan.needsConfirmation || _request.replaceIfIncompatible);
     }

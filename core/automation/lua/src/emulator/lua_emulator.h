@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/base64.h"
+#include "emulator/state/statenodejson.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runpacer.h"
@@ -111,6 +112,8 @@
 #include <emulator/io/sprinter/isa/isaaccess.h>
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
+#include <emulator/state/devicecatalog.h>
+#include <debugger/history/historycontrol.h>
 #include <emulator/state/devicestate.h>
 #include <common/stringhelper.h>
 #include <debugger/ports/nextregwrite.h>
@@ -2926,13 +2929,8 @@ public:
             // Parse-once (idempotent); paused -> resume the frozen position
             // in place, otherwise start at the consumption cursor — the same
             // semantics as `tape play` / POST /tape/play
-            if (!ctx->pTape->EnsureImageLoaded())
-                return false;
-            if (ctx->pTape->GetPlaybackState() == TapePlaybackState::Paused)
-                ctx->pTape->ResumePlaybackFromPause();
-            else
-                ctx->pTape->StartPlaybackAtCursor();
-            return true;
+            // A tape still on its way (a load while a TTD recording runs) plays once it lands
+            return ctx->pTape->Play() != TapePlayResult::NoBlocks;
         });
 
         lua.set_function("tape_stop", [this]() -> bool {
@@ -5362,9 +5360,60 @@ public:
             return isaCycle(s, "latch", 0, sol::make_object(s, 0), value);
         });
 
+        // The device catalog: the state reports this machine has, each with its function here (DeviceState::Catalog)
+        lua.set_function("devices_state", [this](sol::this_state s, sol::optional<bool> all) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Catalog(ctx, all.value_or(false)));
+        });
         lua.set_function("fdc_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Fdc(ctx));
+        });
+        // Device histories (core/src/debugger/history/historycontrol.h): each returns the reply, {error = ...} when
+        // refused
+        auto historyRun = [this](sol::this_state s, const HistoryRequest& request) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, HistoryControl::Execute(ctx, request).body);
+        };
+        lua.set_function("history_list", [historyRun](sol::this_state s) {
+            HistoryRequest request;
+            request.verb = "list";
+            return historyRun(s, request);
+        });
+        lua.set_function("history", [historyRun](sol::this_state s, const std::string& device, sol::optional<size_t> last) {
+            HistoryRequest request;
+            request.verb = "read";
+            request.device = device;
+            request.last = last.value_or(0);
+            return historyRun(s, request);
+        });
+        // history_config(device, {mode = "ring", limit = 256, stream = "fdc.jsonl", stream_limit = 0})
+        lua.set_function("history_config", [historyRun](sol::this_state s, const std::string& device, sol::table options) {
+            HistoryRequest request;
+            request.verb = "config";
+            request.device = device;
+            if (sol::optional<std::string> mode = options["mode"])
+                request.mode = *mode;
+            if (sol::optional<uint64_t> limit = options["limit"])
+                request.limit = *limit;
+            if (sol::optional<std::string> stream = options["stream"])
+                request.stream = *stream;
+            if (sol::optional<uint64_t> streamLimit = options["stream_limit"])
+                request.streamLimit = *streamLimit;
+            return historyRun(s, request);
+        });
+        lua.set_function("history_clear", [historyRun](sol::this_state s, const std::string& device) {
+            HistoryRequest request;
+            request.verb = "clear";
+            request.device = device;
+            return historyRun(s, request);
+        });
+        // history_pause(device[, paused = true]): hold the history (nothing recorded, the records kept); false goes on
+        lua.set_function("history_pause", [historyRun](sol::this_state s, const std::string& device, sol::optional<bool> paused) {
+            HistoryRequest request;
+            request.verb = paused.value_or(true) ? "pause" : "resume";
+            request.device = device;
+            return historyRun(s, request);
         });
         lua.set_function("contention_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
@@ -5683,6 +5732,7 @@ public:
                     case GSTraceSide::DacFetch: ev["side"] = "dac"; break;
                     case GSTraceSide::Interrupt: ev["side"] = "interrupt"; break;
                     case GSTraceSide::ZxDma: ev["side"] = "zxdma"; break;
+                    case GSTraceSide::Idle: ev["side"] = "idle"; break;
                 }
                 ev["direction"] = e.isOut() ? "out" : "in";
                 ev["port"] = e.port;
@@ -5691,6 +5741,7 @@ public:
                 if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
                 if (e.side == GSTraceSide::ZxDma) ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
                 if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
+                if (e.side == GSTraceSide::Idle) ev["iterations"] = e.iterations;
                 result[idx++] = ev;
             }
             return result;
@@ -6116,6 +6167,31 @@ public:
             return StateNodeToLua(ts, value);
         });
 
+        // ttd_probe_frames(probe or {probe, ...}, {from_frame=, to_frame=, limit=}): a game profile's probes over the
+        // history ({probe="exec", address=0x8000, page=, end=, port_mask=, ["if"]=}), replayed, the machine put back
+        lua.set_function("ttd_probe_frames", [this](sol::this_state ts, sol::table probesTable,
+                                                    sol::optional<sol::table> optionsTable) -> sol::object {
+            StateNode probes = StateNode::Array();
+            auto add = [&](const sol::table& probe) {
+                StateNode node = StateNode::Object();
+                for (const auto& [key, value] : probe)
+                    node[key.as<std::string>()] = TtdOptionText(value);
+                probes.push(node);
+            };
+            if (probesTable["probe"].valid())
+                add(probesTable);
+            else
+                for (const auto& [index, probe] : probesTable)
+                    if (probe.is<sol::table>())
+                        add(probe.as<sol::table>());
+            std::map<std::string, std::string> options;
+            if (optionsTable)
+                for (const auto& [key, value] : *optionsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            options["probes"] = StateNodeToJsonText(probes);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("probe-frames", options)));
+        });
+
         lua.set_function("ttd_coverage_probe", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
             std::map<std::string, std::string> options;
             for (const auto& [key, value] : argsTable)
@@ -6142,6 +6218,62 @@ public:
             for (const auto& [key, value] : argsTable)
                 options[key.as<std::string>()] = TtdOptionText(value);
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-summary", options)));
+        });
+
+        // ttd_timeline{from_frame=, to_frame=, bucket_size=, limit=, buckets=, ports=, min_phase_ms=}: the recording cut
+        // into phases of the same activity, from what the session holds (no replay)
+        lua.set_function("ttd_timeline", [this](sol::this_state ts, sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("timeline", options)));
+        });
+
+        // ttd_cause_chain(target, {frame=, tinframe=, phys_page=, depth=, max_links=, max_frames=, flags=, text=}):
+        // where a value came from. target: a Z80 address (a number, or "#A000") or a register name ("A", "HL", "E'")
+        lua.set_function("ttd_cause_chain", [this](sol::this_state ts, sol::object target,
+                                                   sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            std::vector<ttd::TTDCauseReg> regs;
+            const std::string name = TtdOptionText(target);
+            if (target.get_type() == sol::type::string && ttd::TTDCauseRegsByName(name, regs))
+                options["reg"] = name;
+            else
+                options["addr"] = name;
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("cause-chain", options)));
+        });
+
+        // ttd_find_event(kind, {cond=, addr=, addr_to=, phys_page=, size=, value=, bit=, exact=, min_changed=, dir=,
+        // port=, port_mask=, value_mask=, key=, pressed=, order=, from_frame=, to_frame=, limit=, max_frames=, text=}):
+        // the first (or last) moments an event happened. kind: mem, screen, exec, port, border, key
+        lua.set_function("ttd_find_event", [this](sol::this_state ts, const std::string& kind,
+                                                  sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            options["kind"] = kind;
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("find-event", options)));
+        });
+
+        // ttd_explain_frame([frame], {sections = "routines,memory", limit = N, text = true}): what one frame did -
+        // time split, routines by time, interrupts, paging, ports, memory changed with its writers, screen, keys
+        lua.set_function("ttd_explain_frame", [this](sol::this_state ts, sol::optional<sol::object> frame,
+                                                     sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            sol::optional<sol::table> table = argsTable;
+            if (frame && frame->get_type() == sol::type::table)
+                table = frame->as<sol::table>();
+            else if (frame && frame->get_type() != sol::type::lua_nil)
+                options["frame"] = TtdOptionText(*frame);
+            if (table)
+                for (const auto& [key, value] : *table)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("explain-frame", options)));
         });
 
         // A memory at a past checkpoint and what changed between two, from the store (no seek):
@@ -6447,7 +6579,7 @@ public:
             live["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
             live["mouse_ports_decoded"] = mouseDecoded;
             live["mouse_routing_note"] = mouseNote;
-            const bool scorpion = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP);
+            const bool scorpion = IsScorpionModel(config.mem_model);
             if (scorpion)
                 live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
             // else: key absent = the #1FFD latch does not exist on this model
@@ -6611,6 +6743,9 @@ public:
                 }
                 result["sprinter"] = StateNodeToLua(s, sprinter);
             }
+            // GMX: the card's register file (the /state/paging `gmx` view)
+            if (config.mem_model == MM_GMX)
+                result["gmx"] = StateNodeToLua(s, DeviceState::GmxPaging(context));
             result["banks"] = banks;
 
             results.push_back(sol::make_object(s, result));

@@ -34,6 +34,7 @@ NextSdEvent Event(uint8_t card, NextSdKind kind, uint8_t index, uint32_t frame)
 TEST(NextSdJournal_Test, RingKeepsTheNewestAndCountsTheEvicted)
 {
     NextSdJournal journal(3);
+    journal.SetEnabled(true);
     for (uint8_t i = 1; i <= 5; i++)
         journal.Record(Event(0, NextSdKind::Command, i, 10));
     EXPECT_EQ(journal.Size(), 3u);
@@ -50,6 +51,7 @@ TEST(NextSdJournal_Test, RingKeepsTheNewestAndCountsTheEvicted)
 TEST(NextSdJournal_Test, QueryFiltersKindCardSeqFramesAndLimit)
 {
     NextSdJournal journal;
+    journal.SetEnabled(true);
     journal.Record(Event(0, NextSdKind::Command, 0, 1));
     journal.Record(Event(1, NextSdKind::Command, 17, 2));
     journal.Record(Event(1, NextSdKind::ReadBlock, 0, 3));

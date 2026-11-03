@@ -114,7 +114,7 @@ bool Core::Init()
     // and ProfROM bus-cycle silicon, TS-Conf the one that maps its windows
     // from TsConfState and models its CPU cache; everything else stays on the
     // generic one
-    if (_config->mem_model == MM_SCORP || _config->mem_model == MM_PROFSCORP)
+    if (IsScorpionModel(_config->mem_model))
         _memory = new ScorpionMemory(_context);
     else if (_config->mem_model == MM_TSL)
         _memory = new TsConfMemory(_context);
@@ -524,6 +524,8 @@ bool Core::Init()
     {
         // A fitted card that cannot be built refuses the machine with the reason (SlotManager::BuildError)
         result = _slotManager->BuildCards();
+        if (_portDecoder)
+            _portDecoder->GetPortHistories().Build(_context);  // a history for every device the slots have now
         if (!result)
             _initError = _slotManager->BuildError();
     }
@@ -905,8 +907,10 @@ void Core::ResetKeepingClock(ROMModeEnum mode)
 
 void Core::Reset(ROMModeEnum mode)
 {
-    // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
-    _mode = mode;
+    // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM).
+    // The model may start elsewhere: the GMX card always starts in its loader, a disk autostart's RM_DOS included
+    // until the firmware has booted (PortDecoder_ScorpionGMX::ResolveResetROMMode)
+    _mode = _portDecoder ? _portDecoder->ResolveResetROMMode(mode) : mode;
 
     // The battery clock keeps its time over the reset, which restarts the emulated time it runs on
     if (Ds12887* rtc = _portDecoder ? _portDecoder->RtcChip() : nullptr)

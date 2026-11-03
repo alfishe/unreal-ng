@@ -20,20 +20,25 @@ def face_diamond(view, cx, cy, offset, r, labels, sides="right"):
         view.spot(control, spec["name"], ("circle", x, y, r + 0.4), sides)
 
 
+ARROW = {"up": "↑", "down": "↓", "left": "←", "right": "→"}  # a direction's callout mark ("D-pad ↑")
+
+
 def dpad_spots(view, cx, cy, span, arm, side="left", prefix="dpad", label="D-pad", group=None):
-    """The four directions as the arms of a cross (the widget lights a rectangle per direction)"""
+    """The four directions as the arms of a cross (the widget lights a rectangle per direction); each callout names its
+    direction ("D-pad ↑"), four alike would not say which is which"""
     s, a = span / 2, arm / 2
-    for control, x, y, w, h in ((f"{prefix}up", cx - a, cy - s, arm, s - a),
-                                (f"{prefix}down", cx - a, cy + a, arm, s - a),
-                                (f"{prefix}left", cx - s, cy - a, s - a, arm),
-                                (f"{prefix}right", cx + a, cy - a, s - a, arm)):
-        view.spot(control, label, ("rect", x, y, w, h), side, group=group or prefix.rstrip(".") or "directions")
+    for control, arrow, x, y, w, h in ((f"{prefix}up", "↑", cx - a, cy - s, arm, s - a),
+                                       (f"{prefix}down", "↓", cx - a, cy + a, arm, s - a),
+                                       (f"{prefix}left", "←", cx - s, cy - a, s - a, arm),
+                                       (f"{prefix}right", "→", cx + a, cy - a, s - a, arm)):
+        view.spot(control, f"{label} {arrow}", ("rect", x, y, w, h), side,
+                  group=group or prefix.rstrip(".") or "directions")
 
 
 def stick_spots(view, name, label, cx, cy, r, travel, side):
     view.spot(f"{name}.x", label, ("circle", cx, cy, r), side,
               analog={"kind": "stick", "pair": f"{name}.y", "radius": travel}, group=name)
-    view.spot(f"{name}.click", label, ("circle", cx, cy, r * 0.6), side, group=name)
+    view.spot(f"{name}.click", f"{label} click", ("circle", cx, cy, r * 0.6), side, group=name)
 
 
 def view_glyph(view, cx, cy, size, color, control):

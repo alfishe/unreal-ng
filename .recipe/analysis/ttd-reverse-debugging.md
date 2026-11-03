@@ -9,8 +9,22 @@ recording and answer. The coverage queries answer at any time. Session rules
 These are the "answer the question backwards" primitives:
 
 - *Who wrote this memory?* → `find-last`
+- *Why does this byte / register hold this value?* → `cause-chain` (MCP `cause_chain`: the writer, its source, that
+  source's writer... back to a constant, a port read or the initial memory, in one call; no `find_last` +
+  `disassemble` + `reverse_step` loop)
+- *When did it happen?* (a counter went down, the scene changed, a routine first ran, fire was pressed, the border
+  turned red) → `find-event` (MCP `find_event`: the first or last hits in a window, each with frame+t, PC, the
+  instruction and before -> after, in one call; no `memory_at` / screen diff / `coverage_scan` + step loop)
+- *What did this frame do?* (where its time went, what it wrote, which ports it used) → `explain-frame` (MCP
+  `explain_frame`: the time split, the routines by time, the interrupt, paging, ports per device, memory changed with
+  its writers, screen, border, input and markers from one replay; no `seek` + `memory_diff` + `find_last` per range +
+  `port_events` + stepping loop)
 - *What ran just before the crash?* → `reverse-step` / `reverse-continue`
+- *What happened in this recording, and where?* → `timeline` first (MCP `timeline`: the phases with their tags and
+  busiest frames, one call, no replay), then the queries below on a phase
 - *Which frames touched this address range?* → coverage probe/scan/summary
+- *In which frames did a game profile's probe fire?* → `probe-frames` (MCP `probe_frames`: the probes as the profile
+  writes them, `if:` included; a replay of the window, the machine stays)
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred — the
 > `time_travel` tool covers find-last, reverse-step/continue and the coverage
@@ -27,6 +41,15 @@ time_travel {"action":"coverage_probe","frame":11782,"kind":"executed",
 time_travel {"action":"coverage_scan","from_frame":11000,"to_frame":12000,"kind":"written",
              "addr_from":"0x8000","addr_to":"0xBFFF","phys_page":5,"limit":200}
 time_travel {"action":"coverage_summary","kind":"executed"}
+# the recording cut into phases (start here on an unknown session):
+time_travel {"action":"timeline"}   # min_phase_ms (default 200); buckets=true adds an overview
+#   each phase: tags (screen = bytes the renderer shows were written, on every video family; tape only with a tape in;
+#   disk, sound, burst, paging, halt), the devices it used ({device,in,out} ports, {slot,sectors} host-read media,
+#   {region,frames} card / video memory), its busiest frame: seek there next; `missing` says what the session lacks
+# a profile's probes over the history ("shot" and "died" of a haptic profile):
+time_travel {"action":"probe_frames","from_frame":11000,"to_frame":12000,
+             "probes":[{"probe":"exec","address":"0x8A14"},
+                       {"probe":"write","address":"0x5F20","if":"VAL < MDT"}]}
 
 # reverse travel (pauses a running recording):
 time_travel {"action":"find_last","addr":16384,"access":"write"}
@@ -34,6 +57,28 @@ time_travel {"action":"find_last","addr_from":"0x4000","addr_to":"0x57FF","acces
              "pc_from":"0x8000","pc_to":"0x8FFF","phys_page":5,"before_frame":11800}
 time_travel {"action":"reverse_step","count":50}               # or {"tstates":2000} — exactly one
 time_travel {"action":"reverse_continue","pcs":[33156,"0x82F0"]}
+
+# why a value: the chain back from it (store <- A <- load <- (IX+3) <- block copy <- ... <- initial / port / constant)
+time_travel {"action":"cause_chain","addr":"0x5C78"}            # the byte at the current position
+time_travel {"action":"cause_chain","reg":"HL","frame":11800,"tinframe":20000,"depth":6}
+#   one line per link: name = value, kind, f<frame>+<t>, PC, instruction, <- inputs; [stop: depth] = ask deeper there
+
+# when did it happen (frames filtered from the stored history, only hit frames replayed):
+time_travel {"action":"find_event","find":"mem","addr":"0xA130","cond":"decreased"}      # lives went down
+time_travel {"action":"find_event","find":"mem","addr":"0xA130","cond":"becomes","value":"0"}
+time_travel {"action":"find_event","find":"screen","min_changed":60,"limit":10}            # scene changes
+time_travel {"action":"find_event","find":"exec","addr":"0x8A14","order":"last"}            # its last run
+time_travel {"action":"find_event","find":"key","key":"SPACE"}                              # fire pressed
+time_travel {"action":"find_event","find":"border","value":2}                               # border turned red
+#   one line per hit: f<frame>+<t> PC instruction  why (before -> after); "more from frame N": from_frame=N goes on
+#   a value changed and back within one frame: "exact":true; a mem hit marked device: no CPU write explains it
+
+# what one frame did (one replay; the machine stays):
+time_travel {"action":"explain_frame"}                                   # the current position's frame
+time_travel {"action":"explain_frame","frame":1204,"sections":"routines,memory","limit":4}
+#   frame N (T, instructions): ISR x %, HALT y %, code z %; routines by time (isr / start marked), the interrupt,
+#   paging, ports per device (keys down on ULA reads), memory ranges with writers, screen %, border, input, markers
+#   a typical chain: find_event names the frame -> explain_frame says what ran in it -> cause_chain on one byte
 
 # follow-ups once find-last names a writer PC:
 debug_code  {"action":"disassemble","address":"0x8174","count":12}   # pc-16 window (= /disasm)

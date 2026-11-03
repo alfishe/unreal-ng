@@ -452,7 +452,7 @@ the upper half of **MPAG 2**.
 
 **Evidence** for the upper half of **MPAG 1**:
 - Original schematic (GeneralSound v1.0 `GS_GENER.TXT`): the window decoder
-  (ИД7 on A14/A15) sends its `0x4000` output, and the page decoder (ИД7 on page
+  (ИД7, a Soviet 74138-type decoder, on A14/A15) sends its `0x4000` output, and the page decoder (ИД7 on page
   bits 0-2) sends page 1, through diodes to the same chip select RAM1. Each
   62256 (32 KB) takes CPU A0-A14, so A14=1 picks the chip's upper half.
 - Firmware RAM probe (`INIT_L.a80:50-81`): writes each page's number to

@@ -30,7 +30,8 @@ Spec (JSON):
   make_deck_scenario.py SPEC --out FILE --check         exit 1 when FILE differs from what the generator writes
   make_deck_scenario.py --fetch-catalogue http://127.0.0.1:8090
                                                         refresh data/streamdeck/catalogue.json from a running unreal-qt
-                                                        (GET /api/v1/controllers/actions; availability dropped)
+                                                        (GET /api/v1/controllers/actions; availability dropped). The
+                                                        build writes it from the registry too (action-catalogue)
 """
 import argparse
 import json

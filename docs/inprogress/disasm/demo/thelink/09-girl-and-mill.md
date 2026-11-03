@@ -43,7 +43,7 @@ frames that have passed, at most 5 per picture.
 | `mill.C` + `mill.0` | 16,384 + 13,696 | `#94`, `#95` -> card 16K pages `#43`, `#44` | the mill: 235 lines |
 
 The zero tail of `baba.0` comes from ALASM's `DS -$` (converted to `DS (-$&#FFFF)`). It fills the page to its end,
-and the author's comment says why: `;для маски` ("for the mask"). Colour 0 is transparent, so these 64 lines draw
+and the author's comment says why: `;for the mask`. Colour 0 is transparent, so these 64 lines draw
 nothing. Section 6 shows how the code depends on them.
 
 `baba4.asm` builds more than the two objects. The rest of the file is a stand-alone test harness: a cut-down copy of
@@ -80,10 +80,10 @@ the ZX reads the other through DMA.
 ```
 GSLOOP
 gsdrawscr=$+1
-        LD A,1                  ;рисуем в SCR2   (drawing into SCR2)
+        LD A,1                  ;drawing into SCR2
         XOR 1
-        LD (gsdrawscr),A        ;теперь рисуем в SCR1   (now drawing into SCR1)
-;потом дадим его ZX'у   (later we give it to the ZX)
+        LD (gsdrawscr),A        ;now drawing into SCR1
+;later we give it to the ZX
 ```
 
 ## 3. The buffer the ZX reads
@@ -93,7 +93,7 @@ four bytes of each 8-pixel group lie in four places: RAM page 6 and RAM page 7, 
 at `+#2000` ([1. The machine](01-the-machine.md)). The author draws only on screen 1:
 
 ```
-;рисовать будем только на scr1 (pg6,7)   (we draw only on scr1, pages 6 and 7)
+;we will draw only on scr1 (pg6,7)
         LD A,#17
         setpga
 ```
@@ -123,8 +123,8 @@ loop:   LD (curpg),A            ; for the interrupt handler
 `HL` is `#1E1F` during the copy, and it does two jobs. As an address, it is in the ROM area (`#0000`-`#3FFF`), so
 every `LD D,(HL)` / `LD E,(HL)` is answered by ZX-DMA with the next byte of the card's buffer. As data, `H` and `L`
 are the two pages to select. `CP H : LD A,L : JP Z` runs the same four segments a second time for page 7, and
-then falls through. The author left a template of the code in a comment, with `низ` / `верх` (bottom / top), under
-`;19K кода для 256X192` ("19K of code for 256x192"). The real size, counted from the generator, is 20,786 bytes:
+then falls through. The author left a template of the code in a comment, with `bottom` / `top`, under
+`;19K of code for 256X192`. The real size, counted from the generator, is 20,786 bytes:
 
 - 96 line pairs x (6 + 4 x 51 + 5) bytes;
 - 3 extra bytes for every segment that starts on a 256-byte boundary (see section 7);
@@ -172,7 +172,7 @@ fastest read the Z80 has. Because `SP` is in use, the routines cannot `CALL` or 
 address into `IX`, and they end with `JP (IX)`:
 
 ```
-        LD H,#80                ;куда пишем   (where we write)
+        LD H,#80                ;where we write
         LD B,64
         LD IX,GSLOOPDBOTQ
         JP DRAWLINEBOTTOM
@@ -237,7 +237,7 @@ only one page. When a `POP` runs past `#FFFF`, `SP` wraps to `#0000`. The card p
 every picture:
 
 ```
-        LD A,%10000000          ;не бывает в картинке   (never occurs in a picture)
+        LD A,%10000000          ;never occurs in a picture
         LD (0),A
 ```
 
@@ -264,11 +264,11 @@ The sprite pass is the same macro with a blend in place of the plain store. `B` 
 The table is built once, at `GSBABAGO`, with the author's comments:
 
 ```
-;генератор таблицы маски для спрайтов   (mask table generator for the sprites)
+;mask table generator for the sprites
 ;%RLRRRLLL
-;маска=0                                (mask = 0)
-;если L=0, то маска|=%01000111          (if L = 0, mask |= %01000111)
-;если R=0, то маска|=%10111000          (if R = 0, mask |= %10111000)
+;mask=0
+;if L=0, then mask|=%01000111
+;if R=0, then mask|=%10111000
         LD HL,gstmask
 MKMASK0 LD A,L
         LD C,%01000111
@@ -368,7 +368,7 @@ jump.
 3. clears the attributes of both screens and the bitmaps in pages 6 and 7, calls `MKOUT16C`, then turns on 16
    colours (`#EFF7` = 1);
 4. loops in `BIGLOOP`: handshake, then `JP OUT16C` with `IX = BIGLOOPVIEWQ`, `BC = #7FFD`, `HL = #1E1F`;
-5. at `QUIT` (the end frame, or Space: `;можно жать RESET`, "one may press RESET"), sends command 2, turns 16
+5. at `QUIT` (the end frame, or Space: `;one may press RESET`), sends command 2, turns 16
    colours off, selects page `#10` and clears the attributes of screen 0.
 
 One instruction before the copy reads and discards a byte:
@@ -377,7 +377,7 @@ One instruction before the copy reads and discards a byte:
 VIEWPG1=$+1
 VIEWPG0=$+2
         LD HL,#1E1F
-        LD A,(HL)               ;первый байт неверен   (the first byte is wrong)
+        LD A,(HL)               ;the first byte is wrong
         JP OUT16C
 ```
 
@@ -393,21 +393,21 @@ The Z80 pushes the return address at `SP-2`, the next two bytes the copy would w
 `MKOUT16C` gives the rule:
 
 ```
-;копируем из NGS линейный буфер 16C на экран   (copy the linear 16-colour buffer from the NGS to the screen)
-;снизу вверх                                   (bottom-up)
-;обработчик прерывания должен класть в стек DE вместо адреса   (the interrupt handler must put DE on the stack
-;возврата                                                       instead of the return address)
+;copy the linear 16C buffer from the NGS to the screen
+;bottom-up
+;the interrupt handler must put DE on the stack instead of the return
+;address
 ```
 
 The IM 2 handler, copied to `#BFBF`, follows it:
 
 ```
         EX DE,HL
-        EX (SP),HL              ;пишем DE вместо адреса возврата   (we write DE in place of the return address)
+        EX (SP),HL              ;we write DE in place of the return address
         LD (outimjp),HL         ; the return address, for the JP at the end
         LD (outimsp),SP
         LD SP,outimstack        ; its own stack at #5F00
-        PUSH DE                 ;hl до прерывания   (HL before the interrupt)
+        PUSH DE                 ;HL before the interrupt
         ...                     ; timer, music in page #54, back to curpg
 outimsp=$+1
         LD SP,0
@@ -424,8 +424,7 @@ restores the page from `curpg`, which is why every page switch in `OUT16C` first
 The last two bytes of a line need one more fix. The author again:
 
 ```
-;у посл. линий третей надо LD (..),DE вместо последнего PUSH
-   (the last lines of the thirds need LD (..),DE instead of the last PUSH)
+;the last lines of the thirds need LD (..),DE instead of the last PUSH
 ```
 
 When a segment starts on a 256-byte boundary (`E = 0`), the generator overwrites its last `PUSH DE` (`#D5`) with
@@ -498,8 +497,8 @@ Why the demo kept `baba4`, the sources do not say. The list above is what can be
 - **The `DS -$` tail "for the mask"** makes the empty part of the sprite transparent. The `#D800` test skips it.
 - **The interrupt handler writes DE in place of the return address** and uses its own stack. `LD (nn),DE`
   replaces the last `PUSH` where a line starts on a 256-byte boundary.
-- **The author's doubts**, left in the harness: `;не помогает` ("does not help") after a write to `GSCOM`, and
-  three `;зачем-то` ("for some reason") before GS commands copied from elsewhere (`POKE #4092,0`, `#38`, `#D2`).
+- **The author's doubts**, left in the harness: `;does not help` after a write to `GSCOM`, and
+  three `;for some reason` before GS commands copied from elsewhere (`POKE #4092,0`, `#38`, `#D2`).
 - **Dead code**: `MOVEPAGE` / `RESMOVEPAGE` and `GSSETPGA` are never used, and `gsscr16` is never referenced. The
   first card wait has its timeout commented out (`;JP C,GSRESET`); the second one has it (65,536 polls, then
   `GSRESET`).

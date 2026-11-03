@@ -174,7 +174,7 @@ commits of §7.2): S3 [src/vfs_client.cpp](https://github.com/andrewinsidelazare
 [src/fat_time.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/src/fat_time.cpp),
 [src/main.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/src/main.cpp) (FTP_START / STOP,
 events, the RSSI bar, `configTime`), [docs/PROTOCOL.md](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero/blob/main/docs/PROTOCOL.md)
-"VFS: команды ESP -> Z80"; E01 [src/vfs_client.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP-01S-Native-C-Project/blob/main/src/vfs_client.cpp),
+"VFS: команды ESP -> Z80" ("VFS: ESP -> Z80 commands"); E01 [src/vfs_client.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP-01S-Native-C-Project/blob/main/src/vfs_client.cpp),
 [src/ftp_server.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP-01S-Native-C-Project/blob/main/src/ftp_server.cpp),
 [src/main.cpp](https://github.com/andrewinsidelazarev/ZiFi-ESP-01S-Native-C-Project/blob/main/src/main.cpp); the plugin side
 `FTP Server/src/vfs.asm` and `shared/z80/zifi_uart.asm` of the S3 repository.

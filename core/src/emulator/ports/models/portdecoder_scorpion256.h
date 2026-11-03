@@ -3,6 +3,7 @@
 
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/pic/smucinterrupts.h"
 #include "emulator/io/rtc/smucnvram.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/scorpion/scorpionturbooverlay.h"
@@ -24,6 +25,13 @@ protected:
     // plus an IDE window register file
     SMUCNvram _smucNvram;
     uint8_t _smucIdeRegs[8] = {};
+    // The SMUC's 8259 and its interrupt path (RTC /IRQ on IR0, INT through #FFBA D3); on the CPU's daisy chain
+    // while the board is fitted
+    std::unique_ptr<SmucInterrupts> _smucInterrupts;
+    // The card in the SMUC's ISA-8 slot ([SMUC] Isa; NetworkManager builds it and plugs it through DescribeNetwork)
+    IIoBusDevice* _smucIsaCard = nullptr;
+    bool _nvramLoaded = false;   // [SMUC] NvramFile read once, on the first reset with the board fitted
+    static bool s_nvramPersistence;
 
     // SMUC board presence. Absent by default: with no board physically on the
     // bus the whole #xxBA/#xxBE family floats (reads open-bus #FF, writes hit
@@ -40,6 +48,10 @@ protected:
     // host bus while turbo is on (SyncTurboWaits)
     std::unique_ptr<ScorpionTurboOverlay> _turboOverlay;
     bool _turboWaitsInstalled = false;
+
+    // The host Turbo+ logic drives the CPU: its IN strobes switch turbo, its waits and /INT stretch apply. False on
+    // the GMX, whose fitting cuts the host WAIT and CLOCK lines (PortDecoder_ScorpionGMX)
+    bool _turboPlusHost = true;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -58,12 +70,12 @@ public:
     /// #FF1F answers Joystick::Read()
     bool BoardHasKempstonJoystick() const override { return true; }
 
-    void SetRAMPage(uint8_t oage) override;
+    void SetRAMPage(uint8_t page) override;
     void SetROMPage(uint8_t page) override;
 
     /// Install the turbo wait-state overlay while turbo is on, remove it otherwise (the turbo switch, reset, a
     /// TTD restore, whose chipset copy sets the clock without the decoder)
-    void SyncTurboWaits();
+    virtual void SyncTurboWaits();
 
     /// Turbo+: while /INT is active the logic chip runs the CPU at 3.5 MHz (its TRB register only follows the
     /// turbo latch while INT1 is high), so the interrupt acknowledge and the start of the handler run at normal
@@ -83,8 +95,14 @@ public:
     bool IsPort_7EFD(uint16_t port);  // ProfROM window latch (#7FFD pattern with A8 low)
     bool IsPort_SMUC(uint16_t port);  // SMUC board (#xxBA/#xxBE family)
     bool IsPort_KempstonJoystick(uint16_t port);  // Kempston Joystick (#FF1F)
+    bool IsPort_PrinterCovox(uint16_t port) const;  // Scorpion printer Covox (#DD, CovoxDD=1; Covox::PrinterDecodeOf)
     bool IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const override;     // Kempston Mouse (standard decode, A5-A0=#1F A9=1)
     bool ScorpionTrDosSelected() const;                                 // TR-DOS session or armed DOS trigger
+    /// The SMUC's ISA window (#18E6-#7FFE, SMUC hardware reference §5.1): the ISA address a port reaches when the
+    /// board is fitted, a card is in the slot, the DOS ports are on and the card decodes it; false otherwise
+    bool SmucIsaAddress(uint16_t port, uint16_t& offset) const;
+    /// The machine's expansion slots: the SMUC's ISA slot while the board is fitted
+    NetworkCapabilities DescribeNetwork() override;
 
     /// region <TTD model-specific state>
     /// #1FFD, the DD50.1 trigger and (PROFSCORP) the ProfROM plane / #7EFD latch:
@@ -99,6 +117,18 @@ public:
     void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override { out.push_back(&_smucNvram); }
     /// endregion </TTD model-specific state>
 
+    /// [SMUC] NvramFile as a path, one per firmware: the ROM file's name joins the stem ("gmx-smuc-nvram-gmx644.bin").
+    /// A bare name is in the settings folder (FileHelper::GetWritablePath); empty = none or persistence off
+    std::string SmucNvramPath() const;
+    /// [SMUC] NvramFile as written, without the ROM name (the image all firmwares shared before)
+    std::string SmucNvramBasePath() const;
+    /// The model's ROM file name without folder and extension
+    std::string SmucNvramRomName() const;
+    /// [SMUC] NvramFile into the board, once, while it is fitted (the first reset or the first SMUC access)
+    void LoadSmucNvram();
+    /// Tests: a GMX boot must not depend on what an earlier test's machine saved (core-tests main turns it off)
+    static void SetNvramPersistenceAllowed(bool allowed) { s_nvramPersistence = allowed; }
+
     /// SMUC EEPROM backing store (verification tests / debug UI)
     SMUCNvram& GetSMUCNvram() { return _smucNvram; }
     /// The SMUC IDE window register file (8 registers; TTD: TTDSmuc)
@@ -112,6 +142,8 @@ public:
     bool IsSmucEnabled() const { return _smucEnabled; }
     /// The board is on the bus: enabled by hand (tests), or the machine's IDE scheme is SMUC
     bool IsSmucFitted() const { return _smucEnabled || _ide.Scheme() == IDE_SMUC; }
+    SmucInterrupts& GetSmucInterrupts() { return *_smucInterrupts; }
+    const SmucInterrupts& GetSmucInterrupts() const { return *_smucInterrupts; }
     /// endregion </Helper methods>
 
 protected:

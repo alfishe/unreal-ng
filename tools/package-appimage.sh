@@ -27,9 +27,11 @@ fi
 cp "$repo_dir/LICENSE" "$repo_dir/THIRD_PARTY_NOTICES.md" "$appdir/usr/share/doc/unreal-ng/"
 
 executables=()
-# the Stream Deck daemon and studio when the build has them; the studio is deployed with the same Qt
+# the Stream Deck daemon and studio and the debuggers when the build has them; the studio and the Qt debugger are
+# deployed with the same Qt
 for app in unreal-qt unreal-screen-viewer unreal-videowall unreal-mcp-bridge \
-        unreal-streamdeck unreal-streamdeck-studio; do
+        unreal-streamdeck unreal-streamdeck-studio \
+        unreal-debugger unreal-tui-debugger unreal-tui-debugger-tsconf; do
     if [[ -x "$appdir/usr/bin/$app" ]]; then
         executables+=(--executable "$appdir/usr/bin/$app")
     fi

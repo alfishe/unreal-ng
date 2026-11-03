@@ -51,6 +51,7 @@
 ///   bool     sleepAllowed() const;     // no NMI, no INT the CPU could take, no DMA, reset, clock change, trace
 ///   int64_t  sleepHardStop() const;    // the earliest event that is not quiet
 ///   void     onStepsSkipped(uint64_t); // the steps the sleep stood for (counters)
+///   void     onSlept(uint16_t head, int64_t start, uint64_t iterations); // one sleep (the histories' one record)
 /// and optionally (`kRunnerBatchQuietEvents = true`), so a long sleep does not walk its quiet events one by one:
 ///   bool     sleepQuietEventsBefore(int64_t end); // run every quiet event due before `end` at once and leave
 ///                                                 // nextEvent >= end; false: not now (the runner steps one)
@@ -116,6 +117,14 @@ public:
         runLoop<Policy, false>(target, nullptr);
     }
 
+    /// The execution history's loop: the fast loop's rounds with each instruction's PC told to the card first
+    /// (`card->recordExecStep(pc)`), no hooks; an idle sleep is one record (onSlept)
+    template <class Policy = void>
+    void runToRecord(int64_t target)
+    {
+        runLoop<Policy, false, true>(target, nullptr);
+    }
+
     /// The debug loop (gs-debugger design §4.1): the same rounds, with the hooks asked before every instruction
     /// and told every accepted INT / NMI, and no idle sleep (a breakpoint inside the poll loop must fire). The fast
     /// loop is a separate instantiation: runTo compiles to the code it was before the hooks
@@ -137,7 +146,7 @@ public:
     uint64_t stepsSlept() const { return _stepsSlept; }
 
 private:
-    template <class Policy, bool kDebug>
+    template <class Policy, bool kDebug, bool kRecord = false>
     void runLoop(int64_t target, [[maybe_unused]] IGSDebugHooks* hooks)
     {
         // Locals, not members, across the opaque CPU calls: the compiler must
@@ -218,6 +227,8 @@ private:
             }
             else if constexpr (kCanSleep)
             {
+                if constexpr (kRecord)
+                    card->recordExecStep(_regs->pc);
                 const uint16_t pcBefore = _regs->pc;
                 const int64_t stepStart = _now;
                 const int t = Z80CpuStep(cpu);
@@ -233,6 +244,8 @@ private:
                     onLoopHead(target);
                 continue;
             }
+            if constexpr (kRecord)
+                card->recordExecStep(Z80CpuRegisterFilePtr(cpu)->pc);
             const int t = Z80CpuStep(cpu);
             if (t <= 0)
                 break; // defensive: a stuck core must not hang the emulator
@@ -340,6 +353,7 @@ private:
         Z80CpuSetTstates(_cpu, static_cast<uint32_t>(Z80CpuTstates(_cpu) + iterations * cycles));
         const uint64_t slept = static_cast<uint64_t>(iterations) * steps;
         card->onStepsSkipped(slept);
+        card->onSlept(_regs->pc, start, static_cast<uint64_t>(iterations));
         _stepsSlept += slept;
     }
 

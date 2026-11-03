@@ -147,6 +147,7 @@ void Z80::Reset()
     int_gate = true;       // Allow external interrupts
     nmi_in_progress = false;  // Clear NMI flag
     _nmi_pending_count = 0;   // No NMI requested
+    interruptsAcceptedHalted = 0;   // HALT waits count from the reset
 
     tt = 0;  // Scaled to CPU frequency multiplier cycle count
     t = 0;   // Reset cycle counter for deterministic state
@@ -452,7 +453,10 @@ bool Z80::RunHaltedIdle(bool skipBreakpoints)
     const uint16_t fetch = static_cast<uint16_t>(pc + 1);  // the byte after the HALT (HaltedM1)
     const uint32_t evenM1Period = _context->config.even_M1 ? 2u : 1u;
     uint32_t busPeriod = 1;
-    uint32_t handledWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep;
+    // The execution history `cpu` has the HALT already (the step that ran it): the repeated fetches are no new
+    // instructions
+    uint32_t handledWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep |
+                           EmulatorContext::kStepWorkExecHistory;
     // A TTD replay's input playback: the fetches that start before its next event (ServiceInput takes it at the
     // first boundary at or past its time, as per step)
     uint32_t inputDue = UINT32_MAX;
@@ -608,7 +612,7 @@ bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
 UNREAL_NOINLINE void Z80::RunHaltedIdleAfterWork(bool skipBreakpoints)
 {
     constexpr uint32_t kIdleWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep |
-                                   EmulatorContext::kStepWorkTtdInput;
+                                   EmulatorContext::kStepWorkTtdInput | EmulatorContext::kStepWorkExecHistory;
     if (_context->stepWork.load(std::memory_order_relaxed) & ~kIdleWork)
     {
         NoteHaltedIdleRefused();
@@ -768,12 +772,14 @@ void Z80::Z80Step(bool skipBreakpoints)
             // and an opcode fetch - which samples the bus half a T-state earlier than a data read - only fits it
             // on an even T-state. The board's WAIT logic stretches an opcode fetch from RAM that would start on
             // an odd T-state by one T-state (SC15.1 EPLD equations: M1 & RAM select & phase, normal mode only).
-            // Fetches from ROM, data accesses, I/O and the interrupt acknowledge never wait. RAM select, not the
+            // Fetches from ROM, data accesses, I/O and the interrupt acknowledge never wait. The GMX card has the
+            // same wait on its own 7 MHz grid in turbo only (EVEN_M1_TURBO, GMX design 2.6). RAM select, not the
             // address: RAM paged in at #0000 counts. Only the instruction's first M1 is checked: every prefix M1
             // is 4 T, so a later M1 inherits the parity. docs/inprogress/2026-09-28-m1-contention/
             // contention-by-machine.md section 6
             // CPU-LIBRARY-MIGRATION(even-m1): a contention-hook rule on the engine's M1 access kind
-            if (config.even_M1 && (cpu.tt & cpu.rate) && state.hw_turbo_ratio <= 1 &&
+            if (config.even_M1 && (cpu.tt & cpu.rate) &&
+                (config.even_M1 & (state.hw_turbo_ratio <= 1 ? EVEN_M1_NORMAL : EVEN_M1_TURBO)) &&
                 (cpu.pch >= 0x40 || !memory.IsBank0ROM())) [[unlikely]]
                 cpu.tt += cpu.rate;
 
@@ -1177,8 +1183,10 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
         }
         else
         {
-            // A debugger's PC history (PcHistory::Arm): the instruction about to run and its window's page
-            if ((work & EmulatorContext::kStepWorkPcHistory) && _context->pDebugManager) [[unlikely]]
+            // A debugger's PC history (PcHistory::Arm) or the execution history `cpu`: the instruction about to run
+            // and its window's page
+            if ((work & (EmulatorContext::kStepWorkPcHistory | EmulatorContext::kStepWorkExecHistory)) &&
+                _context->pDebugManager) [[unlikely]]
                 _context->pDebugManager->GetPcHistory()->Record(pc);
             if ((work & EmulatorContext::kStepWorkEngine) && _engine)
             {
@@ -1437,8 +1445,9 @@ void Z80::HaltedM1()
     const EmulatorState& state = _context->emulatorState;
     const uint16_t fetch = static_cast<uint16_t>(cpu.pc + 1);
 
-    // Scorpion Even M1: the board looks at the fetch, so at the RAM select of the byte after the HALT
-    if (config.even_M1 && (cpu.tt & cpu.rate) && state.hw_turbo_ratio <= 1 &&
+    // Scorpion / GMX Even M1: the board looks at the fetch, so at the RAM select of the byte after the HALT
+    if (config.even_M1 && (cpu.tt & cpu.rate) &&
+        (config.even_M1 & (state.hw_turbo_ratio <= 1 ? EVEN_M1_NORMAL : EVEN_M1_TURBO)) &&
         (fetch >= 0x4000 || !_context->pMemory->IsBank0ROM()))
         cpu.tt += cpu.rate;
 
@@ -2106,6 +2115,7 @@ void Z80::HandleINT(uint8_t vector)
 {
     Z80& cpu = *this;
     interruptsAccepted++;
+    interruptsAcceptedHalted += cpu.halted ? 1 : 0;
 
     // A machine on its own engine: the acknowledge cycle, the pushes and the vector read are the engine's
     // (ICpuEngine); one test per accepted INT, not per instruction
@@ -2187,6 +2197,12 @@ void Z80::HandleINT(uint8_t vector)
     cpu.sp = sp;
     if (sink) [[unlikely]]
         *sink = static_cast<uint8_t>(AccessContext::Plain);
+    // A bus trace (the TTD cause chain) sees the acknowledge's pushes like any other write
+    if (busTraceHook) [[unlikely]]
+    {
+        busTraceHook('W', static_cast<uint16_t>(sp + 1), cpu.pch);
+        busTraceHook('W', sp, cpu.pcl);
+    }
 
     /// region <Determine interrupt handler address>
     uint16_t interruptHandlerAddress;
@@ -2203,9 +2219,15 @@ void Z80::HandleINT(uint8_t vector)
         // MAME, z80ex, redcode Z80).
         // Raw memory access without T-state accounting: the vector fetch time
         // is already included in interruptDuration above (rd() would add +3T per byte)
-        uint16_t vectorAddress = vector + cpu.i * 0x100;
-        interruptHandlerAddress = (_memory->*MemIf->MemoryRead)(vectorAddress, false) +
-                                  0x100 * (_memory->*MemIf->MemoryRead)(vectorAddress + 1, false);
+        const uint16_t vectorAddress = static_cast<uint16_t>(vector + cpu.i * 0x100);
+        const uint8_t vectorLow = (_memory->*MemIf->MemoryRead)(vectorAddress, false);
+        const uint8_t vectorHigh = (_memory->*MemIf->MemoryRead)(static_cast<uint16_t>(vectorAddress + 1), false);
+        interruptHandlerAddress = static_cast<uint16_t>(vectorLow + 0x100 * vectorHigh);
+        if (busTraceHook) [[unlikely]]
+        {
+            busTraceHook('R', vectorAddress, vectorLow);
+            busTraceHook('R', static_cast<uint16_t>(vectorAddress + 1), vectorHigh);
+        }
     }
     /// endregion </Determine interrupt handler address>
 

@@ -499,9 +499,24 @@ def companion_revoke(id: str) -> int:
         timers, register banks) or the wavetable half (part='pcm': 24 slots with envelopes).
         available=False without the card; ValueError for another part"""
 
+    def devices_state(self, all: bool = False) -> dict:
+        """The device catalog: {available, reports[{id, title, available, summary, route, cli, script, mcp}]},
+        the state reports this machine has; `script` names the method here that returns each.
+        all=True: the absent ones too, available False with description (why)"""
+
     def fdc_state(self) -> dict:
         """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
-        signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""
+        signals (intrq/drq), beta128_register, density, selected_drive, drives[4],
+        history (the command history) and history_state"""
+
+    # Device histories by registry id (../debugger/device-history.md): off / ring / capture, a JSON Lines stream.
+    # An unknown device raises KeyError, a bad mode or stream file ValueError
+    def history_list(self) -> dict: ...
+    def history(self, device: str, last: int = 0) -> dict: ...
+    def history_config(self, device: str, mode: str = None, limit: int = None, stream: str = None,
+                       stream_limit: int = None) -> dict: ...
+    def history_clear(self, device: str) -> dict: ...
+    def history_pause(self, device: str, paused: bool = True) -> dict: ...  # hold / go on
 
     def contention_state(self) -> dict:
         """Memory contention report: rule (none/ula48/ula128/gatearray), applicable, switch,
@@ -595,7 +610,7 @@ emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.spc/.sta/.ltp/.zxt, or a folde
 emu.tape_eject()                      # the tape leaves the tape slot (while TTD records: at the next frame boundary)
 
 # Transport (same semantics as `tape play|pause|stop|rewind|seek`)
-emu.tape_play()    # start at consumption cursor; resumes in place when paused
+emu.tape_play()    # start at consumption cursor; resumes in place when paused; queued for a tape still landing
 emu.tape_pause()   # freeze mid-block (idempotent); False when not playing
 emu.tape_stop()    # terminal stop: invalidates the loaded image
 emu.tape_rewind()  # rewind to block 0, image kept
@@ -1776,6 +1791,14 @@ rare = emu.ttd_coverage_rare(max_frames=2, addr_from=0x8000, addr_to=0xFFFF, lim
 #  'blocks': [{'addr_from': '0x9A10', 'addr_to': '0x9A2C', 'phys_page': 2, 'page_offset_from': '0x1A10', ...,
 #              'keys': 11, 'frame_count': 1, 'frames': [1834]}, ...]}
 
+# In which frames did a game profile's probes fire: a replay of the window, the machine put back
+probes = emu.ttd_probe_frames([{'probe': 'exec', 'address': 0x8A14},
+                               {'probe': 'write', 'address': 0x5F20, 'if': 'VAL < MDT'}], from_frame=100)
+# {'from_frame': 100, 'to_frame': 2400, 'replayed_frames': 2301, 'pruned_frames': 0, 'truncated': False,
+#  'probes': [{'probe': 'exec', 'address': '0x8A14', 'frame_count': 14, 'hit_count': 14,
+#              'frames': [120, 388, ...], 'hits': [1, 1, ...]}, ...]}
+# One probe: a dict instead of the list; limit=N frames per probe; no history: a dict with error
+
 # A memory at a past checkpoint, and what changed between two - from the store, no seek
 at = emu.ttd_memory_at('ram5', frame=150, offset=0x1C78, length=2)   # tinframe=T: a point inside the frame (ram, vram, cache)
 # {'space': 'ram', 'offset': 89208, 'length': 2, 'frame': 150, 'at_frame': 150, 'exact': True, 'hex': '6500'}
@@ -1786,6 +1809,32 @@ now = emu.ttd_memory_at('cpu', offset=0x5C00, length=64)
 # {'space': 'cpu', 'banks': [{'window': 3, 'addr': '0xC000', 'kind': 'ram', 'page': 0, 'name': 'RAM 0'}, ...], 'hex': ...}
 diff = emu.ttd_memory_diff('neogs.ram', from_frame=150, to_frame=600)
 # {'space': 'neogs.ram', 'changed_bytes': 812, 'ranges': [{'offset': 4096, 'length': 64}, ...], 'truncated': False, ...}
+
+timeline = emu.ttd_timeline(min_phase_ms=500)   # also from_frame, to_frame, buckets, limit, bucket_size, ports
+# {'from_frame': ..., 'phases': [{'frame_start': ..., 'frame_end': ..., 'tags': ['halt', 'input'],
+#   'keys': ['A'], 'busiest_frame': ..., ...}, ...], 'events': [...], 'missing': [{'fact': 'writes', ...}], ...}
+
+# Where a value came from: target a Z80 address (int) or a register name ('A', 'HL', "E'");
+# also frame, tinframe, phys_page, depth=4, max_links=32, max_frames=50, flags=False, text=False
+chain = emu.ttd_cause_chain(0x5C78, depth=6, text=True)
+# {'target': {'kind': 'memory', 'name': '(#5C78 RAM 5)', ...}, 'links': [{'id': 0, 'parent': -1, 'kind': 'store',
+#   'value': 3, 'pc': 35348, 'text': 'LD (HL),A', 'inputs': ['A=#03'], ...}, ...], 'text': '(#5C78 RAM 5) = #03 ...'}
+
+# When did it happen: kind 'mem' / 'screen' / 'exec' / 'port' / 'border' / 'key', keyword options as the WebAPI
+# query (cond, addr, phys_page, size, value, bit, exact, min_changed, addr_to, dir, port, port_mask, value_mask,
+# key, pressed, order='first'|'last', from_frame, to_frame, limit, max_frames, text)
+down = emu.ttd_find_event('mem', addr=0xA130, cond='decreased', limit=3)
+# {'event': {'kind': 'mem', 'cond': 'decreased', ...}, 'hits': [{'frame': 1834, 'tinframe': 21980, 'pc': 35348,
+#   'text': 'ld (hl),a', 'before': 3, 'after': 2, 'why': '(#A130 RAM 2) #03 -> #02  decreased'}, ...],
+#  'more': True, 'next_from_frame': ..., 'frames_scanned': ..., 'frames_replayed': 3, 'ms': ...}
+first_run = emu.ttd_find_event('exec', addr=0x8A14, text=True)
+
+# What one frame did: frame=None (the current one), sections='time,routines,interrupt,paging,ports,memory,screen,
+# input,markers' (default all), limit=8, text=False
+f = emu.ttd_explain_frame(1204, sections='time,routines,memory', limit=4)
+# {'frame': 1204, 'frame_t': 69888, 'instructions': 18312, 'time': {'isr': 6210, 'halt': 21700, 'code': ...},
+#  'routines': [{'pc': 35348, 'calls': 1, 't': 31220, 'own_t': 2110, 'insns': 4812, 'caller': 32771, ...}, ...],
+#  'memory': [{'region': 'screen pixels', 'addr': 18432, 'changed': 1024, 'writers': [...]}, ...], 'ms': ...}
 
 summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50, limit=100)
 # {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,
