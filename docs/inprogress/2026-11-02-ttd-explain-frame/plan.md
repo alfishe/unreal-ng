@@ -31,6 +31,7 @@ T-programs on a Pentagon (IM 2, the find event fixture), recorded a few frames i
 | T9 | a key pressed inside the frame, another held from before | input: held and pressed with time |
 | T10 | the last frame of the session (partial) and a frame with a snapshot load inside (barrier) | `partial`, the barrier listed and the comparison ended there |
 | T11 | `limit` and `sections` | lists cut at `limit` with `more`, only the asked sections; an out-of-window frame is an error |
+| T12 | a Next: 8K page `#0F` (page 7's upper half) in slot 6, a write to `#C005` | the range is page 7 offset `#2005`, written and changed 1, no device range |
 
 The machine must be where it was after every query: position, registers, memory hash. Each test about 10 ms.
 
@@ -78,3 +79,24 @@ The live run found one defect the unit tests missed: on a Pentagon the INT is at
 frame starts inside the 128K ROM's IM 1 handler (a ROM paging trampoline through `PUSH` + `RET`), shown as code at
 the frame start. Fixed generically: IFF1 off at the frame start replays the frame before and carries its open routines
 (T3, T3b, the live MCP test on the frame after).
+
+### Every configuration
+
+2026-11-03, `scratch/ttd-explain-frame/models_explain.py`: every creatable model of `GET /api/v1/emulator/models` at
+each RAM size and every variant (a game or program where one fits: 7th Reality on the 48K, Green Beret on the 128K,
+`.spg` on TS-Conf and TS-Conf + VDAC2), 300 frames warm, 12 recorded, 6 explained. Each answer checked against
+independent facts: the time split adds up to `end_t`, the changed bytes equal `memory_diff ram F -> F+1`, the
+position does not move.
+
+- Pass: Pentagon 128 / 512 / 1024, 48K, 128K, +2, +2A, +3, TS-Conf, TS-Conf + VDAC2, ATM 3, ATM 7.10 128-1024,
+  ATM 4.50 512 / 1024, Profi 512 / 1024, Profi 3 512 / 1024, Profi+, Scorpion 256 / 1024, Prof Scorpion 256 / 1024,
+  GMX, Sprinter, Next 1024 / 2048, Next KS1, Next KS3.
+- Not creatable (no ROM set): Kay, Quorum, LSY256, Phoenix. ZX-Poly 48K / 128K / Pentagon: time travel refused by
+  design.
+
+It found two defects on the Next, both fixed:
+- The Next's port decoder never said its TTD clock units (3.5 / 7 / 14 / 28 MHz: 8), so a frame was 70908 units
+  while the firmware ran it at 28 MHz: every replay to a frame's end stopped after its first eighth (all of TTD on
+  the Next, not only explain). Now 8 units: a frame is 567264 (`TimeTravelController_TurboClock_Test.NextCountsItsTopClock`).
+- The traces named a byte by its 16K window (`TtdPageOfBank`, address & `#3FFF`); the Next's 8K slots can show either
+  half of a page. `Memory::TtdLocate` answers per slot (T12).

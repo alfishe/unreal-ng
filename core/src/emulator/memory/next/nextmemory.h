@@ -64,6 +64,7 @@ public:
     /// The page and offset the slot shows (an 8K bank is half of a 16K page): physical breakpoints follow the MMU
     MemoryPageDescriptor MapZ80AddressToPhysicalPage(uint16_t address) override;
     uint8_t PhysicalSlotShift() const override { return 13; }
+    ttd::PhysPage TtdLocate(uint16_t addr, bool write, uint16_t& offsetInPage) const override;
     /// endregion
 
     /// region <Slot table>

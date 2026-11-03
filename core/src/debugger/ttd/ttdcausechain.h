@@ -81,6 +81,7 @@ struct TTDTraceEvent
     uint8_t value = 0;
     uint16_t address = 0;
     PhysPage page = kPhysPageNone;   ///< memory: the physical page behind the address at the access
+    uint16_t offset = 0;             ///< memory: the byte's offset in `page` (Memory::TtdLocate)
     uint32_t tInFrame = 0;           ///< TTD time units, as the access probe records them
 };
 

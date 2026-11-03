@@ -281,6 +281,21 @@ public:
     }
     /// The fast RAM's virtual page behind window `bank`, or kPhysPageNone (out of line: ROM and cache windows only)
     ttd::PhysPage TtdSpacePageOfBank(uint8_t bank) const;
+    /// @brief The page time travel names the byte at CPU address `addr` by now and the byte's offset in that page, as a
+    /// read (`write` false) or a write reaches it: TtdPageOfBank and addr & #3FFF on 16K windows. The Next's 8K slots
+    /// may show either half of a page, or a Layer 2 write mapping, so it answers per slot. Not on the hot path (the
+    /// traces of explain frame, cause chain and find event)
+    virtual ttd::PhysPage TtdLocate(uint16_t addr, [[maybe_unused]] bool write, uint16_t& offsetInPage) const
+    {
+        offsetInPage = static_cast<uint16_t>(addr & 0x3FFF);
+        return TtdPageOfBank(static_cast<uint8_t>(addr >> 14));
+    }
+    /// The page alone (TtdLocate)
+    ttd::PhysPage TtdPageOf(uint16_t addr, bool write = false) const
+    {
+        uint16_t offsetInPage = 0;
+        return TtdLocate(addr, write, offsetInPage);
+    }
 
     /// @brief A write or a data read of a byte the RAM-page hooks do not see - another memory space's virtual page
     /// and the offset in it, or a RAM page an engine writes outside the CPU's bus (the Sprinter's accelerator) and

@@ -34,6 +34,8 @@ protected:
     EmulatorContext* _context = nullptr;
     ttd::TimeTravelController* _ttd = nullptr;
     std::vector<uint64_t> _frames;   // the frame each recorded step ran
+    std::string _model = "PENTAGON";
+    std::function<void()> _beforeRecording;   // after the program is loaded
 
     void TearDown() override
     {
@@ -55,7 +57,7 @@ protected:
                 const std::function<void(unsigned)>& perFrame = nullptr,
                 const std::vector<uint8_t>& isr = {0xFB, 0xED, 0x4D}, uint16_t startInIsr = 0)
     {
-        _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("ttd-explain-frame", "PENTAGON",
+        _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("ttd-explain-frame", _model,
                                                                             LoggerLevel::LogNone);
         ASSERT_TRUE(_emulator);
         _context = _emulator->GetContext();
@@ -96,6 +98,8 @@ protected:
             z80->pc = kIsr;
         }
 
+        if (_beforeRecording)
+            _beforeRecording();
         ASSERT_TRUE(_ttd->StartRecording());
         _frames.clear();
         for (unsigned n = 0; n < frames; ++n)
@@ -485,4 +489,32 @@ TEST_F(TTDExplainFrame_Test, T11_LimitSectionsAndTheVerb)
     EXPECT_NE(text->s.find("#9000"), std::string::npos) << text->s;
     EXPECT_EQ(text->s.find("memory:"), std::string::npos) << text->s;
     EXPECT_FALSE(ttd::TTDControl(_context).Execute({"explain-frame", {{"sections", "nosuch"}}}).Ok());
+}
+
+TEST_F(TTDExplainFrame_Test, T12_NextOddPageInAnEvenSlot)
+{
+    // The Next's MMU maps 8K pages: 8K page #0F (the upper half of 16K page 7) into slot 6 (#C000), then a write to
+    // #C005 lands at page 7 offset #2005, not #0005 (a 16K window's address & #3FFF)
+    _model = "NEXT";
+    _beforeRecording = [this]() { _context->pMemory->RAMPageAddress(7)[0x2005] = 0x00; };
+    Record(Im2({0x01, 0x3B, 0x24,   // ld bc,#243B
+                0x3E, 0x56,         // ld a,#56 (MMU6)
+                0xED, 0x79,         // out (c),a
+                0x04,               // inc b: #253B
+                0x3E, 0x0F,         // ld a,#0F
+                0xED, 0x79,         // out (c),a
+                0x3E, 0xAA,         // ld a,#AA
+                0x32, 0x05, 0xC0,   // ld (#C005),a
+                0x18, 0xFE}),       // jr $
+           2);
+    EXPECT_EQ(_context->pMemory->RAMPageAddress(7)[0x2005], 0xAA);
+    const ttd::TTDExplainFrameResult r = Explain(0, ttd::kExplainMemory);
+    const ttd::TTDExplainRange* m = Range(r, ttd::TTDExplainRegion::Ram, 0xC005);
+    ASSERT_NE(m, nullptr) << Text(r);
+    EXPECT_EQ(m->page, 7u) << Text(r);
+    EXPECT_EQ(m->offset, 0x2005u) << Text(r);
+    EXPECT_EQ(m->written, 1u);
+    EXPECT_EQ(m->changed, 1u);
+    for (const ttd::TTDExplainRange& x : r.memory)
+        EXPECT_FALSE(x.device) << Text(r);
 }
