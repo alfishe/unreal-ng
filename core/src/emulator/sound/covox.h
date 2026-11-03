@@ -51,14 +51,17 @@ struct blip_t;
 /// docs/inprogress/2026-09-23-sounddrive-quad-wiring/DONE.md, session 3).
 ///
 /// One instance, one set of controls (the mixer's COVOX row), whatever ports
-/// it answers: a fitment adds ports, never a second DAC or volume. On the
-/// Scorpion family ([SOUND] CovoxDD=1, slot built-in `covox-dd`) the printer
-/// data latch #DD is one more port of the mono Covox: it writes the #FB latch
-/// (RightB), centred on both sides when it is the only one driven - as
+/// it answers: a fitment adds ports, never a second DAC or volume. The mono
+/// Covox's port depends on the board: #FB on the Pentagon-style card
+/// (CovoxFB), #DD on the Scorpion family - its printer data latch, the
+/// Scorpion's one and only Covox port ([SOUND] CovoxDD=1, slot built-in
+/// `covox-dd`; no #FB on the board). Both drive the mono latch (RightB in
+/// the code), centred on both sides when it is the only one driven - as
 /// Xpeccy's hardware/scorpion.c `scrpOutDD` (`sdrvWrite(..., 0xfb, val)`).
-/// Its decode is the board's partial one (PrinterDecodeOf): yellow board
-/// #0027/#00DD, Turbo+ #0023/#00DD (Xpeccy; MAME scorpion.cpp Centronics
-/// mirror #FFDC). Write-only.
+/// A SounDrive / #FB card in a Scorpion slot adds its ports to this
+/// instance. The #DD decode is the board's partial one (PrinterDecodeOf):
+/// yellow board #0027/#00DD, Turbo+ #0023/#00DD (Xpeccy; MAME scorpion.cpp
+/// Centronics mirror #FFDC). Write-only.
 class Covox : public PortDevice, public ttd::TTDSerializable
 {
 public:
@@ -102,7 +105,7 @@ public:
     /// (CovoxFB=1, SD=0), Mode1 / Mode2 one SounDrive port set (mode=1 / 2:
     /// the real card's S1 switch), Mode1Mono the mode-1 set plus a Covox card's
     /// #FB (two cards, one DAC module)
-    /// None: no SounDrive / #FB card, only the Scorpion printer port #DD (CovoxDD=1, CovoxFB=0, SD=0)
+    /// None: no SounDrive / #FB card - the Scorpion's own Covox on #DD alone (CovoxDD=1, CovoxFB=0, SD=0)
     enum class Fitment { Mono, Quad, Mode1, Mode2, Mode1Mono, None };
 
     /// The Scorpion printer port's decode on this model (yellow board and GMX: A0 = 1, A1 = 0, A2 = 1, A5 = 0;
@@ -131,7 +134,7 @@ protected:
 
     // Fitment baked in at construction (see Fitment doc, public section)
     Fitment _fitment;
-    // The Scorpion printer port #DD, one more port of the mono latch: its decode, mask 0 = not answered (CovoxDD)
+    // The Scorpion's Covox port #DD (the printer data latch, on the mono latch): its decode, mask 0 = not answered (CovoxDD)
     PortMaskMatch _printerDecode{};
 
     // Audio buffer (one frame of stereo int16)
@@ -241,7 +244,7 @@ public:
 
     /// Mono Covox on #FB, or the quad SoundDrive
     Fitment fitment() const { return _fitment; }
-    /// The Scorpion printer port #DD is one of its ports (CovoxDD on the Scorpion family), and its decode
+    /// It answers the Scorpion's Covox port #DD (CovoxDD on the Scorpion family), and that port's decode
     bool answersPrinterPort() const { return _printerDecode.mask != 0; }
     PortMaskMatch printerDecode() const { return _printerDecode; }
     /// @param expectedSamples Exact per-frame sample count from SoundManager's
