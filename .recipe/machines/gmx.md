@@ -100,6 +100,9 @@ screen, the Scorpion GMX 128 menu, Edge Grinder's attract mode in 640x200.
 - **Hard disk.** An image on `ide0.master` (media slot), ProfROM sees it after a cold reset with Caps Shift + 5 held;
   the 6.44 Partition manager formats MFS. `zxdisk` and the unreal-disk `DiskFs` read and write MFS partitions
   (`docs/emulator/design/disk-file-systems.md`, "ProfROM MFS layout").
+  CP/M 2.2 (CPMZSGMX) wants an MFS subpartition `CPMZS0` of type MicroDOS (Hard disk utility: Magic, `H`, `P`;
+  type the name with `keyboard/combo ["CAPS", <letter>]`), then its `INSTALL` item 3 to fill it; steps in
+  [software-compatibility.md](../../docs/inprogress/2026-10-07-gmx/software-compatibility.md#media-used).
 
 ## Turbo, frame, Magic
 
@@ -163,8 +166,10 @@ LBA 63). Verified 2026-10-30 (wt-gmx-impl): OSZ boots from the card into the Non
 (`GmxBoot_Test.OszBootsFromTheSdCard`, long tier).
 
 Slots (`/slots`, MCP `slots`): the built-ins are the Scorpion's AY, Beta 128, Kempston joystick and `sd-zc`.
-The General Sound (`gs`, `gs-lw`) is refused unless forced (`replace_if_incompatible`): Ermolaev's 1999 article
-(City #18, ZX-Pilot #31) says GS does not work with GMX.
+The config fits a NeoGS on `zxbus.1`; a classic General Sound replaces it as on any Scorpion
+(`slots plug zxbus.1 gs ram=512k`, forced: same ports). History only:
+Apollonov's 1999 article (City #18, ZX-Pilot #31) said the classic GS did not work with the card; the official site
+then named the firmware of 20.04.99 as the fix, and Puzzle Bobble (2024) plays its samples through a GS on a GMX.
 
 ## The card at a glance
 

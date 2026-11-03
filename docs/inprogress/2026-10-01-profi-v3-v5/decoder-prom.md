@@ -34,8 +34,8 @@ How these were settled:
   - v3.2 (MDESK list 1): U5 pin 7 runs to BAS, the U30:B output, and U30:B pin 12 is on the CP/M net.
   - So with CP/M on, A2 is 1 whatever the TR-DOS latch says, and the table rows with CP/M on and A2 = 0 are never
     addressed. With CP/M off, A2 = 0 selects the VG93 and A2 = 1 the 8255, which agrees with this reading. The v5.0
-    manual says the same in words: CP/M "блокирует работу контроллера из ПЗУ TRDOS и включает порты контроллера на
-    доступ из ОЗУ".
+    manual says the same in words: CP/M "blocks the controller's operation from the TRDOS ROM and enables the controller
+    ports for access from RAM".
 - **A7 on v3.2:** taken from the MDESK drawing, where the junction dot sits on the CP/M line, not on /RESET.
 
 ## 3. Outputs
@@ -48,7 +48,7 @@ All outputs are active low. Which output drives which device was traced to its c
 | F2 | 0 | 3 | the FDC system register (write latch and INTRQ / DRQ read buffer) |
 | F5 | 3 | 0 | 8255 /CS |
 | F4 | 2 | - | v3.2 only. It enables nothing but the controller's data bus buffer (U8 to U31), and it decodes `#7FFD` |
-| F6 | - | 1 | v5 only. It enables the ИД4 D11, which splits by ADR4..ADR2 into P0 VG93 (with F1), P1 8255 (with F5), P2 IDE, P3 COM (8251), P4 timer / control register (split by ADR6 ADR5), P7 RTC (ADR5 = AS / DS) |
+| F6 | - | 1 | v5 only. It enables the ИД4 (Soviet 74155-type decoder) D11, which splits by ADR4..ADR2 into P0 VG93 (with F1), P1 8255 (with F5), P2 IDE, P3 COM (8251), P4 timer / control register (split by ADR6 ADR5), P7 RTC (ADR5 = AS / DS) |
 
 **The bit order differs between the two files.**
 - **v4 / v5:** the printed legend is "Q1(12) -- D3 ... Q4(9) -- D0".

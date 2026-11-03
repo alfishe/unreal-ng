@@ -9,7 +9,8 @@ Sources: Fuse `machines/scorpion.c` + `peripherals/disk/beta.c` + `z80/z80_ops.c
 `scorpion-zs256-design.md` (dimitriuz branch); original UnrealSpeccy source
 (`memory.cpp` `set_banks()`, `set_scorp_profrom()`, `io.cpp` — the direct ancestor of this
 codebase, mirror: github.com/mkoloberdin/unrealspeccy); **Scorpion ZS-256 programmer's
-guide** ("Скорпион ZS 256: краткое руководство для программистов", MSD #03,
+guide** ("Скорпион ZS 256: краткое руководство для программистов", "Scorpion ZS 256: a short
+guide for programmers", MSD #03,
 zxpress.ru article 6048 — the primary source for the `#1FFD` bit table); speccy4ever ROM
 archive; ProfROM Uni (rev.B) manual; World of Spectrum Scorpion FAQ; Wikipedia.
 

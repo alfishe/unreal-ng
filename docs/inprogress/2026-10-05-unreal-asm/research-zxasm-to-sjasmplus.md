@@ -20,7 +20,7 @@ ZX-ASM                              sjasmplus
 FILL    macro:ld hl,=1:ld bc,=2:endm   (expanded at each call)
         FILL #4000,6912             LD HL,#4000 / LD BC,6912
         FILL ,768                   LD HL,#4000 / LD BC,768   ; a parameter left out keeps the last call's value
-Print      Вход: A - код символа    Print  ; Вход: ...        ; Russian text is a comment without ";"
+Print      Вход: A - код символа    Print  ; Вход: ...        ; Russian text ("Input: A - character code") is a comment without ";"
         saveobj "a:out.C",#8000,100 SAVEBIN "out.C",#8000,100
 ```
 
@@ -29,7 +29,7 @@ Print      Вход: A - код символа    Print  ; Вход: ...        
 | Fact | Conversion |
 |---|---|
 | Statements separated by `:`, a label in column 0, `Label:` is `Label` (marked for MAKELAB); a label starts with a letter, `_` or `$` | as such; column 0 holding anything else is documentation typed in the editor: kept as text |
-| A comment after `;`, or from the first character outside ASCII (help: Russian comments and pseudographics need no `;`; checked: `nop  Комментарий`) | comment |
+| A comment after `;`, or from the first character outside ASCII (help: Russian comments and pseudographics need no `;`; checked: `nop  Комментарий` ("Comment")) | comment |
 | Left to right without priorities, parentheses first (`10+20*2` = 60, checked); `+ - * / \` (remainder), `!` XOR, `\|` OR, `&` AND; 16-bit unsigned words (`(0-1)/2` = #7FFF, checked) | parentheses by tree; `expressionBits = 16`, unsigned |
 | Numbers `123`, `#FF`, `%101`, `12h`, `0ffh`, `101b`; `"A"` / `'A'` a character; `$` the address of the statement (checked: `ld a,1:ld b,$-Print` uses the second statement's address) | numbers keep their spelling |
 | Postfix functions on the operand right before them (checked: `#1200+#34.b` = #1234, `10+20.h` = 10): `.b` low byte, `.h` high byte, `.e` bytes swapped, `.l` / `.r` 8-bit rotation, `.L` / `.R` 16-bit rotation, `.c` CPL, `.n` NEG, `.s` bit 7 set, `.m` the word at that address while assembling | `&#FF`, `high`, swap, rotations spelled out, `^#FFFF`, `-x&#FFFF`, `\|#80`, `{x}` (with `DEVICE`) |

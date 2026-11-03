@@ -372,7 +372,7 @@ directories"). Per file system:
   Names are upper-cased, the kernel compares all 11 bytes.
 
   `continuous` makes a continuous catalogue as TASiS `mkdir.com /c` does (its help: "/с - создается непрерывный
-  подкаталог", disassembled from `SHELL/mkdir.com` of `tasis540.fdi`): the template's status gets bit 6 (#61) and
+  подкаталог", "/c - a continuous subdirectory is created", disassembled from `SHELL/mkdir.com` of `tasis540.fdi`): the template's status gets bit 6 (#61) and
   `$crfil` gives it one run with no segment table, +17 and +19 both its first block. `blocks` sets the size as
   `/s<n>` does (+14 = n * 256; `mkdir.com` keeps `((n - 1) & 15) + 1`, here 1-16 or a refusal), for a segmented
   catalogue too. Entry 0 is the same as for a segmented one. The `MY_DOCS` catalogues of `tasis540.fdi` were made

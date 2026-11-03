@@ -18,7 +18,7 @@ Footprints are the POC 031 data in mm (W × D); heights are published figures or
 | `scorpion` | SCORPION, PROFSCORP, GMX | 58 | `soviet` | 327 × 155 | UNVERIFIED | drawn, shown |
 | `quorum` | QUORUM | 88 | `soviet` | 438 × 281 | UNVERIFIED | approved (2026-10-20) |
 | `orel` | LSY256 | 67 | `soviet` | 386 × 176 (the keyboard unit) | UNVERIFIED | approved (2026-10-20) |
-| `profi` | PROFI, PROFI3 | 58 | `soviet` | 379 × 202 (the БК-0010 case) | UNVERIFIED | approved (2026-10-20) |
+| `profi` | PROFI, PROFI3 | 58 | `soviet` | 379 × 202 (the БК-0010, BK-0010, case) | UNVERIFIED | approved (2026-10-20) |
 | `profiplus` | PROFI, PROFI3 | 46 | `soviet` | 325 × 138 | UNVERIFIED (no photo) | approved (2026-10-20) |
 | `pcxt` | ATM710 (XT firmware), KAY | 83 | `soviet` (PC sculpt) | 485 × 180 | UNVERIFIED (IBM XT ≈ 60 mm at the back) | approved (2026-10-20) |
 | `pcat` | ATM710 (AT firmware), SPRINTER | 101 | `soviet` (PC sculpt) | 470 × 190 | UNVERIFIED (Model M ≈ 50 mm at the back) | approved (2026-10-20) |
@@ -65,7 +65,7 @@ The 3D project starts on the keyboards of section 1 and takes these as POC 031 d
 
 ### `pentagon`
 - **Case**: none: the 40 switches on a bare textolite plate with foam pads, the stickers on black mech caps.
-- **Caps**: low black caps of Soviet mechanical switches (МП / ПКН family), a square sticker on each top.
+- **Caps**: low black caps of Soviet mechanical switches (the МП / ПКН, MP / PKN, family), a square sticker on each top.
 - **Unknown**: switch and cap heights, the plate thickness; whether to show the switch bodies under the caps.
 
 ### `pentagon2plus`, `scorpion` (one cap generator)
@@ -79,7 +79,7 @@ The 3D project starts on the keyboards of section 1 and takes these as POC 031 d
 
 ### `quorum`
 - **Case**: the ivory desktop case: the rear half a field of vent slots (19 columns × 33 slots), three ledges stepping
-  down to the keyboard deck, the "КВОРУМ" badge (red, green, blue cells, white letters on black), the maker's emblem;
+  down to the keyboard deck, the "КВОРУМ" ("Quorum") badge (red, green, blue cells, white letters on black), the maker's emblem;
   five key wells (the F row, the G / NMI / INV block, the speaker / RES pair, the main block, the keypad); the rear
   panel connectors (photo 2).
 - **Caps**: the same Soviet sculpted family as the Pentagon 2+; two-row keys (the L ENTER, the tall ← and →).

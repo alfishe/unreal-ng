@@ -890,7 +890,7 @@ Soundrive was another sound device, often simpler than General Sound, providing 
     *   **First AY (Standard):** Ports `#FFFD` (address) and `#BFFD` (data).
     *   **Second AY:** Would require a different set of ports. Common choices were:
         *   `#BFFD` (address 2nd AY) and `#A##D` (data 2nd AY) - not in this table.
-        *   `#FFFС` (address 2nd AY) and `#BFFС` (data 2nd AY) - not in this table.
+        *   `#FFFC` (address 2nd AY) and `#BFFC` (data 2nd AY) - not in this table.
         *   Or by using A13 or A12 to differentiate if the main AY ports are only partially decoded. E.g. if `#FFFD` is decoded as `11xxxxxx xxxx1101` and `#BFFD` as `10xxxxxx xxxx1101`, then other combinations of A13/A12 could select the second chip.
     *   The provided table doesn't explicitly list separate "TurboSound" AY ports beyond the standard ones shared by many clones. If a clone has TurboSound, its documentation would specify the second AY's ports.
 
@@ -1162,7 +1162,7 @@ Soundrive was another sound device, often simpler than General Sound, providing 
     *   **First AY (Standard):** Ports `#FFFD` (address) and `#BFFD` (data).
     *   **Second AY:** Would require a different set of ports. Common choices were:
         *   `#BFFD` (address 2nd AY) and `#A##D` (data 2nd AY) - not in this table.
-        *   `#FFFС` (address 2nd AY) and `#BFFС` (data 2nd AY) - not in this table.
+        *   `#FFFC` (address 2nd AY) and `#BFFC` (data 2nd AY) - not in this table.
         *   Or by using A13 or A12 to differentiate if the main AY ports are only partially decoded. E.g. if `#FFFD` is decoded as `11xxxxxx xxxx1101` and `#BFFD` as `10xxxxxx xxxx1101`, then other combinations of A13/A12 could select the second chip.
     *   The provided table doesn't explicitly list separate "TurboSound" AY ports beyond the standard ones shared by many clones. If a clone has TurboSound, its documentation would specify the second AY's ports.
 

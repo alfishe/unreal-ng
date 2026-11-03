@@ -100,14 +100,14 @@ The ZX half turns the mode on after clearing all four pages:
 ```
 
 At the end (`QUIT`) it writes 0 to `#EFF7`, after copying the 6912-byte `gameover` into screen 0
-(`;то же, что видим, но 6912` - "the same as what we see, but 6912").
+(`;the same as what we see, but 6912`).
 
 Screen flipping uses an odd piece of self-modifying code (`BIGLOOP`):
 
 ```
         LD A,#17^#1D
-        XOR #1D                 ;видим scr1, рисуем scr0
-        LD ($-1),A              ;теперь видим scr0, рисуем scr1
+        XOR #1D                 ;showing scr1, drawing scr0
+        LD ($-1),A              ;now showing scr0, drawing scr1
 ```
 
 `LD ($-1),A` writes A into the operand of the `XOR` just before it. The `XOR` operand is always
@@ -241,19 +241,15 @@ BARLIE
 
 The author's notes for "nearly lying" (`BARLIE`):
 
-> `;рисуем косо от статичного угла: h/cos a проходов (строк`
-> `;текстуры) по l*cos a пикселей (слева направо по текстуре)`
->
-> "draw obliquely from the static corner: h/cos a passes (texture rows) of l*cos a pixels each
-> (left to right along the texture)"
+> `;draw obliquely from the static corner: h/cos a passes (texture`
+> `;rows) of l*cos a pixels each (left to right along the texture)`
 
 and, for the start of each pass:
 
-> `;чтобы не было дыр, надо начинать строки в правильных фазах`
->
-> "to avoid holes the rows must start in the right phases". If X did not move in its integer
-> part from one row to the next, the old Y phase is kept, `Y=Yold-1`. Otherwise one step is
-> subtracted: `Y=Yold-1-dY`.
+> `;to avoid holes the rows must start in the right phases`
+
+If X did not move in its integer part from one row to the next, the old Y phase is kept,
+`Y=Yold-1`. Otherwise one step is subtracted: `Y=Yold-1-dY`.
 
 That rule is why the bar has no gaps between its texture rows at any angle. It is the scan-line
 equivalent of drawing a rotated rectangle by its rows without holes.
@@ -269,7 +265,7 @@ GSLOOP
         CALL GSLOOPPP
         LD HL,BARa
         LD A,(HL)
-        SUB 2                   ;3 не успеет стереть
+        SUB 2                   ;3 would not manage to erase
         LD (HL),A
         JR NC,GSLOOP
 ```
@@ -285,7 +281,7 @@ About half of the lines of `GSRBARP3.asm` (about 1,500 of 2,970 before annotatio
 comment `;254` at the start value suggests the bars once started almost upright and fell through
 all four cases. Whether that version was ever shown is not known.
 
-The other comment, `;3 не успеет стереть` ("3 would not manage to erase"), connects to the erase
+The other comment, `;3 would not manage to erase`, connects to the erase
 lists in 6.7: with a step of 3 the erasing falls behind and leaves traces.
 
 ### Coordinates and registers
@@ -306,8 +302,7 @@ The rasteriser is a tight loop over both register sets. Its register map (`BARLI
 
 Y is kept inverted with `#C0` set. One `ADD IX,BC` steps Y, and the carry out of IX means "crossed
 into the next third up". The handler for that case is `LD IXH,#C0 : IYH - 8`. The author on it:
-`;сдвиг по Y - запарно обрабатывать переход через 64` ("shift in Y - crossing 64 is a pain to
-handle").
+`;shift in Y - crossing 64 is a pain to handle`.
 
 `(IXH, X)` is a direct address into the screen address table at `#C000`.
 
@@ -358,16 +353,16 @@ pixels.
 
 The list room fits the worst case exactly. A flat bar is 16 lines x 128 bytes = 2048 records,
 1024 per list. 1024 x 4 bytes = `#1000`, the room the author gave `out0` and `out1`
-(`;растет вниз (#1000+)`, "grows down").
+(`;grows down (#1000+)`).
 
 The author warns in `BAR`, where it picks the list set:
 
 ```
         LD HL,BARout0
-        LD SP,BARout1           ;неполную альтернативу нельзя - NMI!
+        LD SP,BARout1           ;a partial alternative is not allowed - NMI!
 ```
 
-"a partial alternative is not allowed - NMI!". Both branches set HL and SP fully. Setting a default
+Both branches set HL and SP fully. Setting a default
 first and overriding it would leave SP briefly pointing into the other list set. The card's NMI
 handler pushes onto SP, and NMIs arrive at any time while the ZX reads the other set. That
 explanation is our reading of the comment.
@@ -382,16 +377,15 @@ Only half of the old records are used:
 
 ```
         SRL D
-        RR E                    ;DE=N=число записей (!=0) сгенерировать
+        RR E                    ;DE=N=number of records (!=0) to generate
 ```
 
-`;(берем из источника последние сгенерированные - начало стека)` - "(take from the source the most
-recently generated ones - the start of the stack)". The code makes this plain, but not why half is
+`;(take from the source the most recently generated ones - the start of the stack)`. The code makes this plain, but not why half is
 enough. The step of 2 per frame and the "3 would not manage to erase" comment suggest the author
 tuned the two together.
 
 At the end of each bar, the effect draws two frames with the `clr` counts set to 0
-(`;печатаем непропечатавшееся`, "print what did not get printed"). This fills in both screens with
+(`;print what did not get printed`). This fills in both screens with
 the bar in its final place.
 
 ## 6.7 The ZX side: VIEWBAR
@@ -430,7 +424,7 @@ GSNMI
         LD A,(HL)
         OUT (DMA_LAD),A
         LD (GSNMIVAR),HL
-        OUT (ZXDATWR),A         ;признак для ZX "DMA ON"
+        OUT (ZXDATWR),A         ;flag for the ZX "DMA ON"
         POP HL
         POP AF
         RET
@@ -462,8 +456,7 @@ BARVIEW10S
 | out1 | `BARVIEW1`: `LD A,(HL)` x2, `LD E,(HL)`, `LD D,(HL)`, `LD (DE),A` | 4 bytes | 35 |
 
 A ZX read from `#0000-#3FFF` returns the next DMA byte whatever the address. So SP or HL only has
-to stay in the ROM area. In the author's words: `;данные <12K, поэтому точное HL=0 не надо` ("the
-data is < 12K, so an exact HL = 0 is not needed").
+to stay in the ROM area. In the author's words: `;data <12K, so an exact HL=0 is not needed`.
 
 The worst case is a flat bar with 1024 records per out list: 1024 x 27 + 1024 x 35 = 63,488
 T-states. A Pentagon frame is 71,680 T-states, and the clr lists, the handshake and the music
@@ -494,7 +487,7 @@ VIEWBARIM
         LD SP,(VIEWBARSP)
         LD HL,IMER
         LD (IMVEC+#FF),HL
-        JP (HL)                 ;делает EI
+        JP (HL)                 ;does EI
 ```
 
 - `BARVIEW1` ends with `JP (IX)`, which is `VIEWBARQ`, an endless loop.
@@ -511,7 +504,7 @@ and it needs no `HALT`.
 
 The resident `IMER` (`#BFBF`) is built for this kind of code. It runs on its own stack at `#5F00`,
 returns with `JP`, and writes the interrupted DE over the return address it was pushed with
-(`;пишем DE вместо адреса возврата`, "write DE in place of the return address"). Even code that
+(`;write DE in place of the return address`). Even code that
 fills memory with `PUSH DE` survives an interrupt. [Chapter 3](03-the-frame.md) covers the handler.
 
 ## 6.8 The card's frame loop
@@ -543,21 +536,20 @@ Each bar takes 36 + 2 + 2 = 40 card frames, so 12 bars take 480 frames. The demo
   `GSQUIT: POP AF : RET`. This drops `GSLOOPPP`'s return address and returns to the card's page
   loop. That is right from the final loop. Inside the bar loop, `GSGOBEG`'s `PUSH DE : PUSH HL`
   are still on the stack, so an early command 2 would `RET` into the bar data. On the ZX, command 2
-  comes early only if Space is pressed: `;можно жать RESET` ("one may press RESET"). In the demo
+  comes early only if Space is pressed: `;one may press RESET`. In the demo
   the end frame comes after the bars are done.
-- **The black row.** `BARLIEBMP` needs a black row before it (`;а перед ним строка черного`, "and a
-  black row before it"). The precalc clears it at `#AF00` in the `#8000` window. That window is
+- **The black row.** `BARLIEBMP` needs a black row before it (`;and a black row
+  before it`). The precalc clears it at `#AF00` in the `#8000` window. That window is
   page `#2A` every time, not the bar's own page at `#EF00`. Only the unused `BARDIAG` reads that
   row (`DEC D`).
 - **The command wait says the opposite of what it does.** The comment over the wait for command 1
-  is `;GS ожидает обнуления (ZX запросит данные)` ("the GS waits for the zeroing"), but the loop
+  is `;GS waits for the zeroing (ZX will request data)`, but the loop
   waits for a non-zero command.
 - **The ritual at start.** The test start sends the card `POKE #4092,0`, `#38` (Load FX), `#D2`
-  (Close Stream) and `#F5` (Busy on). Each comes with the comment `;зачем-то` ("for some reason"),
-  and the reset command with `;не помогает` ("does not help"). These are the author's notes from
+  (Close Stream) and `#F5` (Busy on). Each comes with the comment `;for some reason`,
+  and the reset command with `;does not help`. These are the author's notes from
   getting the card to start reliably.
-- **An open question.** `;+1 почему-то оставляет след между 129/127` ("+1 for some reason leaves
-  a trace between 129/127"), in `BARDIAGLINE`: a fix found by trying.
+- **An open question.** `;+1 for some reason leaves a trace between 129/127`, in `BARDIAGLINE`: a fix found by trying.
 - **Measurements.** At the top of `GSRBARP3.asm`: `BARSTAY (a=#8E): 394808`, `BARLIE (a=#1A):
   503004`, `BARLIE (a=#12): 507682`. The unit is not stated. If they are card clock cycles, one
   `BAR` call is about one ZX frame of the 24 MHz card (480,000 cycles).

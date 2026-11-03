@@ -194,7 +194,7 @@
     },
     {
       "control": "lstick.click",
-      "label": "RS",
+      "label": "RS click",
       "shape": {
         "circle": [
           1028,

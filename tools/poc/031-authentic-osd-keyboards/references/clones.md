@@ -80,7 +80,7 @@ On the 8 key the colour slot is empty: the 48K prints no colour name there. The 
 
 ### 1.1 What "the Pentagon keyboard" was
 
-The Pentagon 128 was sold as a bare board ("Пентагон 128 это плата"). It came with no standard case or
+The Pentagon 128 was sold as a bare board ("Pentagon 128 is a board"). It came with no standard case or
 keyboard, so each builder fitted their own. Three kinds turn up in photos:
 
 - **A. The Soviet 40-key mechanical keyboard with stickers.** This is the owner's choice and the early-1990s
@@ -94,7 +94,7 @@ Late Pentagons often ran an AT/XT keyboard through a Scorpion-style controller. 
 the proboterror Pentagon interface board has PS/2 support. Even so, a native ZX keyboard was the norm for the
 early-1990s Pentagon.
 
-Sources: forum ruecm / alemorf, "Пентагон 128 это плата". https://habr.com/ru/articles/446366/ (the
+Sources: forum ruecm / alemorf, "Pentagon 128 is a board". https://habr.com/ru/articles/446366/ (the
 sticker keyboard). http://www.interface1.net/ (the pentfront and pentside photos). https://zxbyte.org/ (Prusak's
 Pentagon with the 58-key keyboard and the AT controller).
 
@@ -110,7 +110,7 @@ Pentagon with the 58-key keyboard and the AT controller).
 - Four rows of 10 keys on a square grid with **no row stagger**.
 - Every key, including CAPS SHIFT, SYMBOL SHIFT, ENTER and SPACE, is 1u x 1u.
 - Key x positions are 0..9 u in every row.
-- Pitch: 19 mm is assumed for МП / ПКН switches. **UNVERIFIED**; no measurement was found.
+- Pitch: 19 mm is assumed for МП / ПКН (Soviet switch types) switches. **UNVERIFIED**; no measurement was found.
 
 **Keycaps**
 - Black square low caps `#1a1a1a`, apparently with a clear protective cover over the sticker. The cover is
@@ -144,7 +144,7 @@ Sources: `photos/clones/pentagon-habr446366-kbd.jpg` (https://habr.com/ru/articl
 section 0.
 
 **Soviet mechanical switches (МП / ПКН / reed).** There is no photographic proof of switch brands on a Pentagon
-specifically: **UNVERIFIED**. The zx-pk thread 15581 shows a homemade reed (герконовая) keyboard with ЕС-1840 caps
+specifically: **UNVERIFIED**. The zx-pk thread 15581 shows a homemade reed keyboard with ЕС-1840 (ES-1840, a Soviet PC) caps
 (`profi-v32-homemade-reed-kbd-es1840-caps-zxpk26525.jpg`). It is good reference material for the "homemade
 reed + salvaged caps" look:
 - cream caps `#e6dcc0` and olive/khaki caps `#7d7a5a`;
@@ -173,7 +173,7 @@ Sources: `photos/clones/pentagon-interface1-pentfront.jpg`, `pentagon-interface1
 - A small square blank sits at the top right, beside BREAK.
 - Size: about 18.3u x 8.1u overall. At a 19 mm pitch that is about 348 x 155 mm. **UNVERIFIED**: estimated
   from the photo (key 1 to key 0 = 9 pitches = 920 px).
-- The factory ("Копир") is a single-source claim: **UNVERIFIED**.
+- The factory ("Копир", Kopir) is a single-source claim: **UNVERIFIED**.
 
 **Keycaps**
 - Cylindrical-profile mechanical-feel caps over a film (membrane) contact sheet.
@@ -242,21 +242,21 @@ Each combination key closes two contacts of the film at once (CS or SS plus the 
 ## 2. ZS Scorpion ZS-256 (ZS-256, PROF ROM, GMX)
 
 - Like the Pentagon, the Scorpion was sold mostly as a board. The firm also built units into IBM PC MiniTower
-  cases; ru.wikipedia says the machines "не имеют собственного внешнего вида".
-- Native keyboard: "стандартной 58-кнопочной клавиатуры", i.e. the Soviet 58-key film keyboard of section 1.4.
+  cases; ru.wikipedia says the machines "have no appearance of their own".
+- Native keyboard: "a standard 58-key keyboard", i.e. the Soviet 58-key film keyboard of section 1.4.
   The СБРОС (reset) and MAGIC (NMI) buttons are separate, on the board or case, not on the keyboard.
   - Use section 1.4 for the SVG.
   - Which case shell Scorpion owners used for that keyboard: **UNVERIFIED**. No Scorpion-branded keyboard photo
     was found.
 - Port #FE: D0-D4 keyboard, D5 RS-232 input, D6 tape, D7 Centronics BUSY (`scorpion.doc`). The Centronics port
-  #FFDD is documented as usable "для нестандартного расширения клавиатуры". No standard extended-key port exists.
-- **PC keyboard: very common.** The "AT/XT keyboard + mouse controller" (Scorpion & Д.К., 1995-97) is a ZX-Bus
+  #FFDD is documented as usable "for a non-standard keyboard extension". No standard extended-key port exists.
+- **PC keyboard: very common.** The "AT/XT keyboard + mouse controller" (Scorpion & Д.К. (D.K.), 1995-97) is a ZX-Bus
   card of 120 x 68 mm.
   - It emulates the 8x5 matrix from an XT/AT keyboard with QWERTY/ЙЦУКЕН layouts. Ctrl+Alt+Del gives a hardware
     reset.
   - Turbo+ configurations are listed with a "PC 101-key keyboard" (interface1.net).
-  - ProfROM 3.0b (05.11.94): "Полностью изменена п/п обслуживания клавиатуры, добавлена поддержка
-    мыши/джойстика".
+  - ProfROM 3.0b (05.11.94): "The keyboard handling subroutine is completely rewritten, mouse/joystick
+    support added".
 - **PROF ROM and GMX: the same keyboard.** PROF ROM is a firmware variant of the same ZS-256 board. GMX is a
   memory/graphics expansion of the same board family, and it keeps the same #FE keyboard path. This is an
   inference from the board docs; no separate GMX keyboard exists in any source found. Treat it as **UNVERIFIED but
@@ -270,7 +270,7 @@ https://ru.wikipedia.org/wiki/ZS_Scorpion, http://www.interface1.net/.
 - Made by Nemo, St Petersburg, 1998. It was supplied as a board and installed in various cases, notably cases of
   the Корвет (Korvet) computer (speccy.info).
 - **PC keyboard: the norm.** The board family uses an IBM PC keyboard and mouse controller. Radiolyubitel 5/95
-  published "Контроллер PC XT клавиатуры для KAY-256". The XT keyboard is translated into the ZX matrix, so the
+  published "A PC XT keyboard controller for KAY-256". The XT keyboard is translated into the ZX matrix, so the
   matrix mapping is section 0, plus combinations for the PC keys. That is essentially the same translation as the
   Profi XT map in section 6.4: **UNVERIFIED** for KAY specifically.
 - Native 40/58-key connector on the KAY-1024: **UNVERIFIED** (not found in the sources checked).
@@ -287,11 +287,12 @@ Sources: https://speccy.info/KAY-1024 (via the browser, Cloudflare blocks curl).
 **Housing (Quorum 128+)**
 - A one-piece cream/ivory plastic desktop case `#e4dcc8` with the keyboard built in. The top surface behind the
   keys is ribbed.
-- Logo "КВОРУМ" at the top right: white letters on a black plate `#111111`, next to small red `#d02828`, green
+- Logo "КВОРУМ" ("QUORUM") at the top right: white letters on a black plate `#111111`, next to small red `#d02828`, green
   `#2a9a3a` and blue `#2848b0` squares.
 - A small emblem at the top left (its content is **UNVERIFIED**, too small in the photo).
-- Rear panel labels, from left to right (photo 2): "RGB", "МАГ ВЫХОД", "МАГ ВХОД", "SINCLAIR", "KEMPSTON",
-  "MIDI", "ГРОМКОСТЬ", "TV", "ДИСКОВОД", "ПРИНТЕР", "РАСШИРЕНИЕ", "9В 1.5А, 17В 0.3А". The exact left-to-right
+- Rear panel labels, from left to right (photo 2): "RGB", "МАГ ВЫХОД" (tape out), "МАГ ВХОД" (tape in),
+  "SINCLAIR", "KEMPSTON", "MIDI", "ГРОМКОСТЬ" (volume), "TV", "ДИСКОВОД" (disk drive), "ПРИНТЕР" (printer),
+  "РАСШИРЕНИЕ" (expansion), "9В 1.5А, 17В 0.3А" (9 V 1.5 A, 17 V 0.3 A). The exact left-to-right
   order is **UNVERIFIED**.
 - Case dimensions: **UNVERIFIED**.
 
@@ -337,7 +338,7 @@ bits give the address line: x7 = A8 ... x0 = A15 (rows A8..A15 top to bottom map
   in parallel with 0 (S5/S6). The arrows therefore map to the matrix keys 5 (←), 6 (↓), 7 (↑), 8 (→) without CS.
   FIRE is 0 (A12/D0).
 - Connector X1.2 carries NMI, INV, the speaker key (S87) and RES as separate lines. These are not matrix keys.
-- zx-pk 13416 calls this keyboard a special version of the МС7007 keyboard that needs the extra 6-bit port.
+- zx-pk 13416 calls this keyboard a special version of the МС7007 (MS 7007, a Soviet PC keyboard) that needs the extra 6-bit port.
 - **PC keyboard**: uncommon. The Quorum had its own built-in 88-key keyboard. **UNVERIFIED** whether a PC
   keyboard adapter existed.
 
@@ -349,16 +350,16 @@ https://github.com/UncleRus/quorum-reborn (resources/Doc/ports.md, the retropc.o
 ## 5. Orel BK-08 (LSY256)
 
 **Housing**
-- Made by Днепровский машиностроительный завод, Dnepropetrovsk; developed before 1990.
+- Made by the Dnepr Machine-Building Plant (Днепровский машиностроительный завод), Dnepropetrovsk; developed before 1990.
 - Two pieces in a light warm grey plastic `#cfc9bc`:
-  - The main unit sits behind, with a label at the left carrying the logo "ОРЕЛЬ БК-08". The exact label artwork
+  - The main unit sits behind, with a label at the left carrying the logo "ОРЕЛЬ БК-08" (OREL BK-08). The exact label artwork
     is in `orel-bk08-chm-3.jpg`. It also has red NMI and RESET buttons `#c83a2e`, an LED and vent slots.
   - The keyboard unit sits in front, with ribbed sides.
 - Dimensions: **UNVERIFIED**.
 
 **Keyboard**
-- Reed switches (герконовая), 67 keys.
-- The alphanumeric zone is laid out like an AT keyboard: QWERTY with ЙЦУКЕН, switched by РУС / Р/А.
+- Reed switches, 67 keys.
+- The alphanumeric zone is laid out like an AT keyboard: QWERTY with ЙЦУКЕН (the Russian layout), switched by РУС / Р/А (Russian / Latin).
 - 58 matrix keys (S1-S18, S21-S28, S31-S38, S41-S48, S50-S57, S60-S67) on 56 positions (РЕГ and Р/А are two
   keys each, wired in parallel), 8 rows x 7 columns: the ZX columns KD0-KD4 and two more, KD5 and KD7, read on port #FE bits 5
   and 7. The other 9 keys (S19, S20, S29, S30, S39, S40, S49, S58, S59) are off the matrix and press CS + a digit
@@ -370,7 +371,10 @@ https://github.com/UncleRus/quorum-reborn (resources/Doc/ports.md, the retropc.o
   - an L-shaped ENTER;
   - an arrow cluster at the bottom right.
 
-**Layout and legends (manual Рис. 5, "НАЗНАЧЕНИЕ КЛАВИШ КЛАВИАТУРЫ БК")**
+**Layout and legends (manual Fig. 5, "НАЗНАЧЕНИЕ КЛАВИШ КЛАВИАТУРЫ БК", "purpose of the BK keyboard keys")**
+- The Russian key legends: ВШ = delete, ГРАФ = graphics, ТАБ = tab, НОРМ = normal (true) video, УПР = control,
+  ЗГЛ = capitals, ИНВ = inverse video, РЕГ = shift, РЕД = edit, АЛТ = alt, РУС = Russian, Р/А = Russian / Latin,
+  ПРОБЕЛ = space. The single letters are the Cyrillic letter legends.
 - File: `photos/clones/orel-bk08-manual-fig5-key-legends.png`.
 - Each key has zones:
   - COMMAND: the keyword, top left;
@@ -396,7 +400,7 @@ CAPS 1.0u; left SHIFT 1.25u; ALT 1.25u, LAT 1.25u, Р/А 1.25u. All of these are
 them from the figure.
 
 **Wiring (keyboard schematic, verified)**
-- Source: `Orel_BK08_Schematic.djvu` page 4, "УЗЕЛ КЛАВИАТУРЫ. СХЕМА ЭЛЕКТРИЧЕСКАЯ ПРИНЦИПИАЛЬНАЯ БУ5.103.474"
+- Source: `Orel_BK08_Schematic.djvu` page 4, "Keyboard unit. Circuit diagram БУ5.103.474"
   (reed switches МК-10-3, pull-ups R1-R7 2.2k on the columns). Rows are the buffered address lines AB8-AB15
   (main board sheet 1, БУ5.103.476-03: buffers DD2.5-DD2.6, DD3.1-DD3.6 from A8-A15). The matrix labels the
   letter keys by their Cyrillic legend; the Latin letter is the same cap.
@@ -418,7 +422,8 @@ them from the figure.
   keys are on KD5 / KD7.
 - Off the matrix: «←» S19, «ИНВ» S29, «НОРМ» S39, «РЕД» S58 join columns KD4, KD3, KD2, KD0 to one line;
   «↓» S20, «↑» S30, «→» S40, «ГРАФ» S49, «ВШ» S59 join KD4, KD3, KD2, KD1, KD0 to a second line. Diodes VD1-VD2
-  (КД522Б) detect either line; a К561КТ3 (DD1: four analog switches), К555ЛЕ1 (DD2) and К555ТМ2 (DD3, two
+  (КД522Б) detect either line; a К561КТ3 (DD1: four analog switches, a CD4066 type), К555ЛЕ1 (DD2, a 74LS02 type) and
+  К555ТМ2 (DD3, a 74LS74 type, two
   flip-flops clocked from /CSPO) then switch KD0 onto AB8 (CAPS SHIFT, DD1.2), the first line onto AB11 (DD1.3)
   and the second onto AB12 (DD1.4). The result: ← = CS + 5, ИНВ = CS + 4, НОРМ = CS + 3, РЕД = CS + 1;
   ↓ = CS + 6, ↑ = CS + 7, → = CS + 8, ГРАФ = CS + 9, ВШ = CS + 0. There is no dedicated CS + 2 key: CAPS LOCK is
@@ -438,8 +443,8 @@ them from the figure.
 - АЛТ+1 = РЕД (EDIT, CS+1), +2 = CAPS LOCK (CS+2), +3 = НОРМ (TRUE VIDEO, CS+3), +4 = ИНВ (INV VIDEO, CS+4),
   +5 = ←, +6 = ↓, +7 = ↑, +8 = → (CS+5..8), +9 = ГРАФ (CS+9), +0 = ВШ (DELETE, CS+0).
 - Section 6.3 (PDF pages 17-19): cursor modes K, L, C, P, З (Latin lower / upper, Russian lower / upper) and E;
-  "Курсор E включается одновременным нажатием клавиш УПР и АЛТ" (E = SS + CS); "Переход от одного типа курсора к
-  другому производится клавишами РУС и ЗГЛ"; the CTRL zone is typed with УПР held, the ALT zone with АЛТ held, the
+  "Cursor E is switched on by pressing the УПР and АЛТ keys together" (E = SS + CS); "Switching from one cursor type
+  to another is done with the РУС and ЗГЛ keys"; the CTRL zone is typed with УПР held, the ALT zone with АЛТ held, the
   S zone with РЕГ held in a letter mode; deletion is ВШ or АЛТ + 0.
 - Table 2 (PDF pages 21-23, columns: key; K, L, C, P, З; УПР +; РЕГ +; АЛТ +), read in full:
   - УПР + key gives the function words: ` ` ` USR, 1 ABS, 2 EXP, 3 LN, 4 SGN, 5 SQR, 6 MOVE, 7 ERASE, 8 POINT,
@@ -463,7 +468,7 @@ them from the figure.
 **PC keyboard**: no. The Orel had its own 67-key keyboard.
 
 Sources: https://speccy.info/Орель_БК-08 (text; Orel_BK08_Manual.pdf and Orel_BK08_Schematic.djvu linked there);
-the manual at https://speccy.info/w/images/0/07/Orel_BK08_Manual.pdf, Рис. 5 (PDF page 20), section 6.3 and Table 2;
+the manual at https://speccy.info/w/images/0/07/Orel_BK08_Manual.pdf, Fig. 5 (PDF page 20), section 6.3 and Table 2;
 the schematic at https://speccy.info/w/images/c/c5/Orel_BK08_Schematic.djvu (6 pages: CPU board, power supply, BP1,
 keyboard БУ5.103.474, two assembly drawings; both files fetched through the Wayback Machine, speccy.info sits behind
 a browser check);
@@ -527,7 +532,7 @@ schematic position for position (the earlier `orel.py` guess, РЕГ = SS and З
   A RESET button is on the keyboard. KD5 (bit 5 of #FE) and /KBW WAIT are used by the XT controller.
 
 **Housing and key colours of the native Profi keyboard: UNVERIFIED.** The only real-hardware photo found is a
-Profi v3.x in a БК-0010 case (`profi-v3-in-bk0010-case-speccyinfo-screenshot.jpg`):
+Profi v3.x in a БК-0010 (BK-0010, a Soviet home computer) case (`profi-v3-in-bk0010-case-speccyinfo-screenshot.jpg`):
 - a black case `#1e1e1e` with a "Profi///" badge at the top left (white "Profi" plus red, green and white
   stripes);
 - inside, the Soviet 58-key film keyboard of section 1.4: cream alphanumerics, grey modifiers, red BREAK.
@@ -609,9 +614,10 @@ Sources:
 ## 8. Forum BK-09 Turbo (Форум БК-09 Турбо)
 
 **Machine** (written sources):
-- A Soviet 48K clone, Russified, ЙЦУКЕН layout, on the Т34ВГ1 gate array, 30 chips. Not an Orel, not an LSY256.
-- "Турбо" names the modified Sinclair BASIC with fast tape loading.
-- Made by the production cooperative "Форум", Berdsk; designer Михаил Дмитриевич Поцуков; ТУ 9633-001-01150408-93.
+- A Soviet 48K clone, Russified, ЙЦУКЕН layout, on the Т34ВГ1 (Soviet ULA) gate array, 30 chips. Not an Orel, not an LSY256.
+- "Турбо" ("Turbo") names the modified Sinclair BASIC with fast tape loading.
+- Made by the production cooperative "Форум" (Forum), Berdsk; designer Mikhail Dmitrievich Potsukov; ТУ (technical specification)
+  9633-001-01150408-93.
 - Later models: БК-10 Турбо (music coprocessor), БК-11 Турбо (plus a disk controller), БК-128 Турбо (128 KB). They
   had a menu called up by the function keys. All had a SECAM coder.
 - No schematic and no manual found.
@@ -634,7 +640,7 @@ Sources:
 other key (EDIT, DEL, the arrows, the keypad, the function keys, RUS/LAT, FIRE, ESC) is unknown: in
 `keyboards/forum.py` they press nothing and say nothing on a click (the owner, 2026-10-21).
 
-Sources: ru.wikipedia "Клоны ZX Spectrum" (section "Форум", citing
+Sources: ru.wikipedia "ZX Spectrum clones" (section "Forum", citing
 http://www.leninburg.com/museum/show_calc.php?n=226&lang=1 and the ТУ at standards.ru);
-ru.wikipedia "Т34ВМ1 и Т34ВГ1"; speccy.info "Форум БК-09 Турбо"; Frolov's museum page at r86.com/frolov; zx-pk
+ru.wikipedia "Т34ВМ1 and Т34ВГ1"; speccy.info "Форум БК-09 Турбо"; Frolov's museum page at r86.com/frolov; zx-pk
 thread 24100.

@@ -1827,6 +1827,28 @@ timeline = emu.ttd_timeline(min_phase_ms=500)   # also from_frame, to_frame, buc
 # {'from_frame': ..., 'phases': [{'frame_start': ..., 'frame_end': ..., 'tags': ['halt', 'input'],
 #   'keys': ['A'], 'busiest_frame': ..., ...}, ...], 'events': [...], 'missing': [{'fact': 'writes', ...}], ...}
 
+# Where a value came from: target a Z80 address (int) or a register name ('A', 'HL', "E'");
+# also frame, tinframe, phys_page, depth=4, max_links=32, max_frames=50, flags=False, text=False
+chain = emu.ttd_cause_chain(0x5C78, depth=6, text=True)
+# {'target': {'kind': 'memory', 'name': '(#5C78 RAM 5)', ...}, 'links': [{'id': 0, 'parent': -1, 'kind': 'store',
+#   'value': 3, 'pc': 35348, 'text': 'LD (HL),A', 'inputs': ['A=#03'], ...}, ...], 'text': '(#5C78 RAM 5) = #03 ...'}
+
+# When did it happen: kind 'mem' / 'screen' / 'exec' / 'port' / 'border' / 'key', keyword options as the WebAPI
+# query (cond, addr, phys_page, size, value, bit, exact, min_changed, addr_to, dir, port, port_mask, value_mask,
+# key, pressed, order='first'|'last', from_frame, to_frame, limit, max_frames, text)
+down = emu.ttd_find_event('mem', addr=0xA130, cond='decreased', limit=3)
+# {'event': {'kind': 'mem', 'cond': 'decreased', ...}, 'hits': [{'frame': 1834, 'tinframe': 21980, 'pc': 35348,
+#   'text': 'ld (hl),a', 'before': 3, 'after': 2, 'why': '(#A130 RAM 2) #03 -> #02  decreased'}, ...],
+#  'more': True, 'next_from_frame': ..., 'frames_scanned': ..., 'frames_replayed': 3, 'ms': ...}
+first_run = emu.ttd_find_event('exec', addr=0x8A14, text=True)
+
+# What one frame did: frame=None (the current one), sections='time,routines,interrupt,paging,ports,memory,screen,
+# input,markers' (default all), limit=8, text=False
+f = emu.ttd_explain_frame(1204, sections='time,routines,memory', limit=4)
+# {'frame': 1204, 'frame_t': 69888, 'instructions': 18312, 'time': {'isr': 6210, 'halt': 21700, 'code': ...},
+#  'routines': [{'pc': 35348, 'calls': 1, 't': 31220, 'own_t': 2110, 'insns': 4812, 'caller': 32771, ...}, ...],
+#  'memory': [{'region': 'screen pixels', 'addr': 18432, 'changed': 1024, 'writers': [...]}, ...], 'ms': ...}
+
 summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50, limit=100)
 # {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,
 #  'bucket_size': 50, 'bucket_count': 10, 'index_available': True,

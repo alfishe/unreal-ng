@@ -350,7 +350,7 @@ public:
                                         [](const PlanReason& reason) { return reason.hard; });
         if (_request.op != SlotRequest::Op::Remove)
         {
-            // A soft documented refusal (D9, hard = false: GS on the GMX) plugs only when forced
+            // A soft documented refusal (D9, hard = false) plugs only when forced
             const bool softRefusal = std::any_of(_plan.reasons.begin(), _plan.reasons.end(), [](const PlanReason& reason) {
                 return reason.rule == Rule::D9 && !reason.hard;
             });

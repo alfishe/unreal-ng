@@ -65,7 +65,8 @@ def dpad_key(cx, cy, direction, colors, view):
     tip = ((rot[0][0] + rot[1][0]) / 2 * 0.55 + rot[3][0] * 0.45, (rot[0][1] + rot[1][1]) / 2 * 0.55 + rot[3][1] * 0.45)
     style.glyph(view, style.arrow_d(*tip, 2.2, direction), colors["ink"], control, fill=True, opacity=0.8)
     xs, ys = [p[0] for p in rot], [p[1] for p in rot]
-    view.spot(control, "D-pad", ("rect", min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)), "left",
+    view.spot(control, f"D-pad {common.ARROW[direction]}",
+              ("rect", min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)), "left",
               group="dpad")
 
 

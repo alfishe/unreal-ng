@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 #ifdef ENABLE_CONTROLLERS
 #include "hostcontrols.h"
@@ -42,17 +43,27 @@ bool Has(const std::vector<std::string>& controls, const std::string& control)
     return false;
 }
 
-/// A short lamp label: "south" -> "S", "dpad.up" -> "↑", "paddle.p1" -> "P1"
+/// A short lamp label: "south" -> "S", "dpad.up" -> "↑", "paddle.p1" -> "P1", "button.12" -> "12"; a control the
+/// table does not name shows its words ("ltouchpad.click" -> "ltouchpad click")
 QString LampLabel(const std::string& control)
 {
     static const std::map<std::string, QString> labels = {
-        {"south", "S"},      {"east", "E"},        {"west", "W"},        {"north", "N"},
-        {"dpad.up", "↑"},    {"dpad.down", "↓"},   {"dpad.left", "←"},   {"dpad.right", "→"},
-        {"lb", "LB"},        {"rb", "RB"},         {"view", "View"},     {"menu", "Menu"},
-        {"guide", "Guide"},  {"lstick.click", "LS"}, {"rstick.click", "RS"}, {"paddle.p1", "P1"},
-        {"paddle.p2", "P2"}, {"paddle.p3", "P3"},  {"paddle.p4", "P4"}};
+        {"south", "S"},          {"east", "E"},           {"west", "W"},          {"north", "N"},
+        {"dpad.up", "↑"},        {"dpad.down", "↓"},      {"dpad.left", "←"},     {"dpad.right", "→"},
+        {"lb", "LB"},            {"rb", "RB"},            {"view", "View"},       {"menu", "Menu"},
+        {"guide", "Guide"},      {"share", "Share"},      {"lstick.click", "LS"}, {"rstick.click", "RS"},
+        {"lstick.touch", "LS touch"}, {"rstick.touch", "RS touch"}, {"touchpad.click", "Pad"},
+        {"paddle.p1", "P1"},     {"paddle.p2", "P2"},     {"paddle.p3", "P3"},    {"paddle.p4", "P4"}};
     const auto it = labels.find(control);
-    return it != labels.end() ? it->second : QString::fromStdString(control);
+    if (it != labels.end())
+        return it->second;
+    for (const char* prefix : {"button.", "misc."})
+        if (control.rfind(prefix, 0) == 0)
+            return (prefix[0] == 'm' ? QStringLiteral("M") : QString()) +
+                   QString::fromStdString(control.substr(std::char_traits<char>::length(prefix)));
+    QString words = QString::fromStdString(control);
+    words.replace('.', ' ').replace('_', ' ');
+    return words;
 }
 #endif
 }  // namespace
@@ -370,9 +381,15 @@ void DeviceTestPanel::paintEvent(QPaintEvent*)
         paintTrigger(painter, QRectF(x + 14, top, kTrigger, kStick), trigger, trigger == "lt" ? "LT" : "RT");
         x += kTrigger + 52;
     }
-    // The lamps: a grid to the right, in the vocabulary's order
+    // The lamps: a grid to the right, in the vocabulary's order; a column as wide as the widest label (up to a
+    // limit, past it a label is elided), so no label runs into its neighbour
     const QFontMetrics metrics(font());
-    const double cell = std::max(34.0, static_cast<double>(metrics.horizontalAdvance("Guide")) + 8.0);
+    double widest = metrics.horizontalAdvance("Guide");
+#ifdef ENABLE_CONTROLLERS
+    for (const std::string& button : _buttons)
+        widest = std::max<double>(widest, metrics.horizontalAdvance(LampLabel(button)));
+#endif
+    const double cell = std::clamp(widest + 8.0, 34.0, 84.0);
     const int columns = std::max(1, static_cast<int>((width() - x - 8) / cell));
     int index = 0;
     const QColor accent = palette().color(QPalette::Highlight);
@@ -385,7 +402,8 @@ void DeviceTestPanel::paintEvent(QPaintEvent*)
         painter.drawEllipse(QPointF(cx, cy), kLamp / 2, kLamp / 2);
         painter.setPen(text);
 #ifdef ENABLE_CONTROLLERS
-        painter.drawText(QRectF(cx - cell / 2, cy + 6, cell, 14), Qt::AlignHCenter | Qt::AlignTop, LampLabel(button));
+        painter.drawText(QRectF(cx - cell / 2, cy + 6, cell, 14), Qt::AlignHCenter | Qt::AlignTop,
+                         metrics.elidedText(LampLabel(button), Qt::ElideRight, static_cast<int>(cell) - 2));
 #endif
         ++index;
     }

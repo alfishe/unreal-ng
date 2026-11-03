@@ -126,7 +126,7 @@
     },
     {
       "control": "lstick.click",
-      "label": "LS",
+      "label": "LS click",
       "shape": {
         "circle": [
           1024,

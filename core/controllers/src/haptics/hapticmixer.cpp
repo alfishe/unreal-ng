@@ -173,6 +173,7 @@ void HapticMixer::TickLocked(Clock::time_point now, std::vector<std::pair<HostDe
         effects.erase(std::remove_if(effects.begin(), effects.end(), [now](const Active& a) { return a.end <= now; }),
                       effects.end());
         RumbleLevels& mix = wanted[it->first];
+        float loudestCoil = 0;  // the voice coils play the tone of the loudest effect on them
         uint8_t top = 0;
         for (const Active& active : effects)
             top = std::max(top, active.effect.priority);
@@ -196,6 +197,15 @@ void HapticMixer::TickLocked(Clock::time_point now, std::vector<std::pair<HostDe
             }
             mix.leftTrigger = std::max(mix.leftTrigger, peak.leftTrigger * scale);
             mix.rightTrigger = std::max(mix.rightTrigger, peak.rightTrigger * scale);
+            const float coil = std::max(peak.hdLeft, peak.hdRight) * scale;
+            mix.hdLeft = std::max(mix.hdLeft, peak.hdLeft * scale);
+            mix.hdRight = std::max(mix.hdRight, peak.hdRight * scale);
+            if (coil > loudestCoil)
+            {
+                loudestCoil = coil;
+                mix.hdFrequency = peak.hdFrequency;
+                mix.hdWave = peak.hdWave;
+            }
         }
         it = effects.empty() ? _active.erase(it) : std::next(it);
     }

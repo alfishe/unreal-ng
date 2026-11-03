@@ -63,9 +63,10 @@ QString LabelOf(const std::string& control)
 {
     static const std::map<std::string, QString> labels = {
         {"south", "A"},       {"east", "B"},        {"west", "X"},       {"north", "Y"},     {"lb", "LB"},
-        {"rb", "RB"},         {"lt", "LT"},         {"rt", "RT"},        {"lstick.x", "LS"}, {"lstick.click", "LS"},
-        {"rstick.x", "RS"},   {"rstick.click", "RS"}, {"view", "View"},  {"menu", "Menu"},   {"guide", "Guide"},
-        {"dpad.up", "D-pad"}, {"dpad.down", "D-pad"}, {"dpad.left", "D-pad"}, {"dpad.right", "D-pad"},
+        {"rb", "RB"},           {"lt", "LT"},             {"rt", "RT"},             {"lstick.x", "LS"},
+        {"lstick.click", "LS click"}, {"rstick.x", "RS"}, {"rstick.click", "RS click"}, {"view", "View"},
+        {"menu", "Menu"},       {"guide", "Guide"},       {"dpad.up", "D-pad ↑"},   {"dpad.down", "D-pad ↓"},
+        {"dpad.left", "D-pad ←"}, {"dpad.right", "D-pad →"},
         {"paddle.p1", "P1"},  {"paddle.p2", "P2"},  {"paddle.p3", "P3"}, {"paddle.p4", "P4"}};
     const auto it = labels.find(control);
     return it != labels.end() ? it->second : QString::fromStdString(control);

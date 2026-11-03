@@ -12,15 +12,15 @@ Okay, let's break down this "Turbo Floppy" modification for the Pentagon 128K. T
     *   **FDC Signals:**
         *   `/WR` (Write to FDC, derived from Z80 /WR and port address decode).
         *   Data Bus (D0-D7): Used to write command bytes to the FDC.
-        *   `BUSY` (D60 pin 36 "ГОТОВН."): High when FDC is executing a command.
+        *   `BUSY` (D60 pin 36 "ГОТОВН.", "READY"): High when FDC is executing a command.
         *   `/DRQ` (D60 pin 30): Data Request, active low during data transfers.
         *   `/INTRQ` (D60 pin 29): Interrupt Request, active low on command completion or error.
 
-2.  **Turbo Modification Schematic (Page 2 - "ТУРБИРОВАНИЕ ПЕНТАГОН 128"):**
+2.  **Turbo Modification Schematic (Page 2 - "ТУРБИРОВАНИЕ ПЕНТАГОН 128", "Turbo mod for the Pentagon 128"):**
     *   This schematic details the logic that generates the select signal for the clock MUX (D1 pin 1 on the main board).
-    *   The output of this turbo logic is labeled "ТУРБО" in the simplified block diagram. This "ТУРБО" signal then goes through an inverter (transistor T10) before connecting to D1 pin 1 (main board).
-    *   **Therefore, if the "ТУРБО" signal (output of the 3-input AND-like structure T6-T5-T9) is LOW, T10's output is HIGH, selecting 2MHz.**
-    *   **If "ТУРБО" is HIGH, T10's output is LOW, selecting 1MHz.**
+    *   The output of this turbo logic is labeled "ТУРБО" ("TURBO"; written TURBO below) in the simplified block diagram. This TURBO signal then goes through an inverter (transistor T10) before connecting to D1 pin 1 (main board).
+    *   **Therefore, if the TURBO signal (output of the 3-input AND-like structure T6-T5-T9) is LOW, T10's output is HIGH, selecting 2MHz.**
+    *   **If TURBO is HIGH, T10's output is LOW, selecting 1MHz.**
 
 **Core Logic of the Turbo Modification (based on the simplified block diagram on page 2 and its annotations):**
 
@@ -28,7 +28,7 @@ The modification uses a combination of command byte decoding and FDC status sign
 
 *   **D1 (555ТМ2 / 74LS74 D-FlipFlop):**
     *   Input D (T1 on diagram): Connected to `/D5` (inverted data bit 5 from the CPU data bus).
-    *   Input CLK (T2 on diagram): "ЗАП.КОМАНДЫ" (Write Command strobe for FDC). This pulse occurs when the CPU writes a command to the FDC.
+    *   Input CLK (T2 on diagram): "ЗАП.КОМАНДЫ" ("command write", the Write Command strobe for FDC). This pulse occurs when the CPU writes a command to the FDC.
     *   Output Q (T3 on diagram): Latches the state of `/D5` at the time of command write. So, `T3 = /D5_latched`.
 
 *   **D2 (555КП11 / 74LS157 Multiplexer):**
@@ -46,21 +46,21 @@ The modification uses a combination of command byte decoding and FDC status sign
 
 *   **3-Input AND-like Gate (Transistor logic involving T9_NAND_out, T5, T6):**
     *   Input 1: `T9_NAND_out`.
-    *   Input 2 (T5 on diagram): FDC `BUSY` signal ("ГОТОВН.").
-    *   Input 3 (T6 on diagram): This is crucial. Connected to "ВЫВ.11 D5". D5 is a 74LS86 (XOR gate). Pin 11 of D5 is the output of an XOR gate whose inputs are FDC `/DRQ` and FDC `/INTRQ`.
+    *   Input 2 (T5 on diagram): FDC `BUSY` signal ("ГОТОВН.", see above).
+    *   Input 3 (T6 on diagram): This is crucial. Connected to "ВЫВ.11 D5" ("pin 11 of D5"). D5 is a 74LS86 (XOR gate). Pin 11 of D5 is the output of an XOR gate whose inputs are FDC `/DRQ` and FDC `/INTRQ`.
         So, `T6_input = /DRQ XOR /INTRQ`.
-    *   Output ("ТУРБО" signal):
-        `"ТУРБО" = T9_NAND_out AND FDC_BUSY AND (/DRQ XOR /INTRQ)`
+    *   Output (TURBO signal):
+        `TURBO = T9_NAND_out AND FDC_BUSY AND (/DRQ XOR /INTRQ)`
 
 *   **Final Inverter (T10):**
-    *   Input: "ТУРБО" signal.
+    *   Input: TURBO signal.
     *   Output: Drives Pin 1 of the main clock MUX (D1 on main board).
-        `Clock_MUX_Select = NOT("ТУРБО")`. (HIGH for 2MHz, LOW for 1MHz).
+        `Clock_MUX_Select = NOT(TURBO)`. (HIGH for 2MHz, LOW for 1MHz).
 
 **How it Distinguishes Commands and Selects Clock Speed:**
 
-The 2MHz clock is selected when `Clock_MUX_Select` is HIGH, which means the "ТУРБО" signal must be LOW.
-"ТУРБО" is LOW if any of its three ANDed inputs are LOW:
+The 2MHz clock is selected when `Clock_MUX_Select` is HIGH, which means the TURBO signal must be LOW.
+TURBO is LOW if any of its three ANDed inputs are LOW:
 1.  `T9_NAND_out` is LOW.
     *OR*
 2.  `FDC_BUSY` is LOW.
@@ -74,7 +74,7 @@ Let's analyze states:
     *   `/DRQ` = HIGH (no data transfer).
     *   `/INTRQ` = HIGH (interrupt not yet active).
     *   Therefore, `(/DRQ XOR /INTRQ)` = (1 XOR 1) = **LOW**.
-    *   This makes the entire "ТУРБО" signal LOW, regardless of `T9_NAND_out`.
+    *   This makes the entire TURBO signal LOW, regardless of `T9_NAND_out`.
     *   So, `Clock_MUX_Select = NOT(LOW) = HIGH`.
     *   **Result: 2MHz clock during the stepping phase of Seek, Restore, and Step commands.** This is the desired turbo behavior. The command byte decoding (`T9_NAND_out`) becomes secondary here, as the `/DRQ XOR /INTRQ` condition dominates.
 
@@ -82,7 +82,7 @@ Let's analyze states:
     *   `FDC_BUSY` = HIGH.
     *   Either `/DRQ` is LOW (data being transferred) or `/INTRQ` is LOW (command just completed, waiting for CPU to read status/data).
     *   So, `(/DRQ XOR /INTRQ)` will be (0 XOR 1) or (1 XOR 0), which results in **HIGH**.
-    *   Now, "ТУРБО" = `T9_NAND_out AND HIGH AND HIGH` = `T9_NAND_out`.
+    *   Now, TURBO = `T9_NAND_out AND HIGH AND HIGH` = `T9_NAND_out`.
     *   We need to analyze `T9_NAND_out` for these commands:
         *   For Read Sector (e.g., `100m...`): D7=1, D6=0, D5_latched=0.
             *   `Y0_mux = (0 * /0) + (1 * /1) = (0*1) + (1*0) = 0`.
@@ -90,30 +90,30 @@ Let's analyze states:
         *   For Write Sector (e.g., `101m...`): D7=1, D6=0, D5_latched=1.
             *   `Y0_mux = (1 * /0) + (0 * /1) = (1*1) + (0*0) = 1`.
             *   `T9_NAND_out = NAND(/D4, 1)`. If D4=0, NAND(1,1)=0. If D4=1, NAND(0,1)=1.
-    *   If `T9_NAND_out` is 1 (as for Read Sector): "ТУРБО" = HIGH. `Clock_MUX_Select = NOT(HIGH) = LOW`.
+    *   If `T9_NAND_out` is 1 (as for Read Sector): TURBO = HIGH. `Clock_MUX_Select = NOT(HIGH) = LOW`.
     *   **Result: 1MHz clock for Read/Write operations.** This is correct.
-    *   If `T9_NAND_out` happens to be 0 for a Write command variant (e.g. Write Sector with D4=0, `1010...`), then "ТУРБО" = LOW, leading to 2MHz. This would be an issue. However, the dominant factor is usually the `(/DRQ XOR /INTRQ)` state which ensures 1MHz when data transfer or interrupt is active. The scenario where `T9_NAND_out` makes a difference is when `(/DRQ XOR /INTRQ)` is high.
+    *   If `T9_NAND_out` happens to be 0 for a Write command variant (e.g. Write Sector with D4=0, `1010...`), then TURBO = LOW, leading to 2MHz. This would be an issue. However, the dominant factor is usually the `(/DRQ XOR /INTRQ)` state which ensures 1MHz when data transfer or interrupt is active. The scenario where `T9_NAND_out` makes a difference is when `(/DRQ XOR /INTRQ)` is high.
 
 3.  **Command Completion (Interrupt Pending):**
     *   `FDC_BUSY` = HIGH (often stays high until status is read).
     *   `/DRQ` = HIGH.
     *   `/INTRQ` = LOW.
     *   `(/DRQ XOR /INTRQ)` = (1 XOR 0) = **HIGH**.
-    *   "ТУРБО" = `T9_NAND_out AND FDC_BUSY AND HIGH`.
+    *   TURBO = `T9_NAND_out AND FDC_BUSY AND HIGH`.
     *   This means the clock speed depends on `T9_NAND_out`. If it's 1 (typical for Read/Write completion), clock is 1MHz. If it's 0 (could be for Restore D4=0 completion), clock would be 2MHz. This is generally fine as no sensitive timing operations are happening.
 
 4.  **FDC Idle:**
     *   `FDC_BUSY` = LOW.
-    *   This makes the "ТУРБО" signal LOW.
+    *   This makes the TURBO signal LOW.
     *   `Clock_MUX_Select = NOT(LOW) = HIGH`.
     *   **Result: 2MHz clock when FDC is idle.** This is harmless.
 
 **Summary of How Commands are Distinguished:**
 
 *   The primary distinction for turbo mode (2MHz) is when the FDC is `BUSY` AND both `/DRQ` and `/INTRQ` are inactive (HIGH). This condition is characteristic of the stepping phase of seek-type operations.
-*   During any data transfer (`/DRQ` LOW) or when an interrupt is pending (`/INTRQ` LOW while `/DRQ` is HIGH), the `(/DRQ XOR /INTRQ)` term becomes HIGH. This makes the "ТУРБО" signal's state depend on the command byte decoding (`T9_NAND_out`).
-*   The command byte decoding logic (`T9_NAND_out` derived from D4, D5, D6, D7) ensures that for commands like Read Sector, `T9_NAND_out` is HIGH, thus forcing "ТУРБО" HIGH and selecting 1MHz.
-*   For some Type I commands (like Restore `0000hVrr` with `h=D4=0`), `T9_NAND_out` = `NAND(/0, 1)` = `NAND(1,1)` = 0. If this command completes and `BUSY` is still high, with `/INTRQ` low (so `(/DRQ XOR /INTRQ)` is 1), then "ТУРБО" = `0 AND 1 AND 1 = 0`. This results in 2MHz. This is usually fine after the core mechanical parts are done.
+*   During any data transfer (`/DRQ` LOW) or when an interrupt is pending (`/INTRQ` LOW while `/DRQ` is HIGH), the `(/DRQ XOR /INTRQ)` term becomes HIGH. This makes the TURBO signal's state depend on the command byte decoding (`T9_NAND_out`).
+*   The command byte decoding logic (`T9_NAND_out` derived from D4, D5, D6, D7) ensures that for commands like Read Sector, `T9_NAND_out` is HIGH, thus forcing TURBO HIGH and selecting 1MHz.
+*   For some Type I commands (like Restore `0000hVrr` with `h=D4=0`), `T9_NAND_out` = `NAND(/0, 1)` = `NAND(1,1)` = 0. If this command completes and `BUSY` is still high, with `/INTRQ` low (so `(/DRQ XOR /INTRQ)` is 1), then TURBO = `0 AND 1 AND 1 = 0`. This results in 2MHz. This is usually fine after the core mechanical parts are done.
 
 **Conclusion:**
 

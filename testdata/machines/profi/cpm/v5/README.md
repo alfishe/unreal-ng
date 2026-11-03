@@ -5,8 +5,8 @@ Collected 2026-10-03. Format, boot mechanism and the board split are explained i
 (MicroDOS-compatible, `BOOTK.COM` + `BDOS.BIN` + `BIOS.BIN` + loadable drivers listed in
 `CONFIG.SYS`); its boot word is `#5FC4`, so it needs a v5 BIOS (1.x / 2.x).
 
-**How to boot:** insert as drive A, reset into the BIOS main menu ("Основное Меню") and
-choose **"Загрузка системы CP/M"**. The BIOS reads sector R=9 of cylinder 0 / side 0, the boot code
+**How to boot:** insert as drive A, reset into the BIOS main menu ("Основное Меню", "Main Menu") and
+choose **"Загрузка системы CP/M"** ("Load the CP/M system"). The BIOS reads sector R=9 of cylinder 0 / side 0, the boot code
 reads the directory, loads `BDOS.BIN`, `BIOS.BIN` and the drivers named in `CONFIG.SYS` (user 15),
 then runs `AUTOEXEC.BAT`. On the emulated v5 (2026-10-03) it boots to `A>` with its AUTOEXEC output (KEYHELP,
 PRSCR, PAUSE), kept by `ProfiBoot_Test.CpmBootsFromTheKondorSystemDisk`.
@@ -15,7 +15,7 @@ PRSCR, PAUSE), kept by `ProfiBoot_Test.CpmBootsFromTheKondorSystemDisk`.
 
 - **Source:** zx-pk.ru attachment 55227, <https://zx-pk.ru/attachment.php?attachmentid=55227>
   (`COPYK.zip`, 314 518 bytes, holds `COPYK.fdi` dated 2009-11-03), posted 2015-12-17 by tank-uk in
-  the thread "Подскажите по Профи", page 27:
+  the thread "Подскажите по Профи" ("Help with the Profi"), page 27:
   <https://zx-pk.ru/threads/25719-podskazhite-po-profi/page27.html>, as an answer to a Profi v3.2 owner
   asking for a CP/M boot disk. The forum also says the original "Copy K" system disks were copy
   protected; this image shows no protection (plain IDs, valid CRCs). Fetched 2026-10-03. Original name

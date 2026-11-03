@@ -5442,7 +5442,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
-                               "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
+                               "cause_chain", "find_event", "explain_frame", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
                                "memory_at", "memory_diff"})
     {
@@ -5504,6 +5504,28 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "what the session stores, no replay; facts it cannot give are listed as missing; from_frame, to_frame, "
         "buckets=true adds an overview of limit buckets (default 20; bucket_size sets their size), ports=false skips the "
         "per-device port counts, min_phase_ms the shortest phase, default 200). "
+        "'find_event' (when did it happen: one call instead of memory_at / coverage_scan / seek loops; find = mem "
+        "(addr, cond changed | increased | decreased | equals | becomes | differs | bit_set | bit_clear with value / "
+        "bit, size 1 or 2, exact=true follows every CPU write), screen (cond change with min_changed % of the picture, "
+        "default 50, or cleared), exec (addr [addr_to]), port (dir in | out, port, port_mask, value), border (value: a "
+        "colour) or key (key name, pressed=false for releases); order first (default) or last, from_frame / to_frame, "
+        "limit 1..100; the answer is one line per hit: frame+tinframe, PC, the instruction, before -> after and why; "
+        "'more' gives the frame to continue from; frames are filtered from the stored history, only hit frames are "
+        "replayed, the machine stays where it was). "
+        "'explain_frame' (what one frame did: one call instead of memory_diff + find_last per range + port_events + "
+        "stepping; frame (default: the current one); the answer: the time split (ISR / HALT / code), the routines by "
+        "time from the call structure (calls, inclusive and own T, instructions, caller), the interrupt (IM, vector, "
+        "entry, T, where it returned), paging changes, ports per device (count, values, keys seen down), the memory "
+        "changed per range (screen pixels / attributes, stack, RAM) with its writers, the screen % changed and the "
+        "border colours, keys held / pressed, markers; sections picks some ('routines,memory'), limit entries per "
+        "list (default 8); one replay of the frame, the machine stays where it was). "
+        "'cause_chain' (why does a byte or a register hold its value: one call instead of find_last + disassemble + "
+        "reverse_step loops; addr (with phys_page) or reg (A, HL, IX, SP, E'...), at frame / tinframe (default: the "
+        "current position); the answer is the chain back from the value, one line per link: the instruction that "
+        "wrote it (time, PC, text) and its inputs, followed as deep as depth (default 4) and max_links (default 32) "
+        "allow, down to constants, port reads, interrupt pushes and the session's initial memory; a register's "
+        "producer is searched back up to max_frames frames (default 50); flags=true follows F too; the machine "
+        "stays where it was). "
         "Write journal (who wrote an address last, answered at once; off by default): 'journal_on' / 'journal_off' "
         "switch it at any moment, also while recording (each on-off span is a segment); 'journal_build' builds it by "
         "replaying frames from_frame..to_frame (default: the whole session; about 2-4 ms per frame; not while "
@@ -5540,7 +5562,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["frame"]["type"] = "integer";
     schema["properties"]["frame"]["description"] =
         "Frame number: target for seek (required), optional start point for resume (default: the current point), optional position for bookmark_add "
-        "(default: current position), frame to test for coverage_probe";
+        "(default: current position), frame to test for coverage_probe, the moment for cause_chain (default: the "
+        "current position), the frame for explain_frame (default: the current one)";
     schema["properties"]["tinframe"]["type"] = "integer";
     schema["properties"]["tinframe"]["description"] =
         "T-states within 'frame' for seek / resume / bookmark_add (default 0). A seek without it lands at the frame's end "
@@ -5577,8 +5600,46 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["order"]["enum"] = Json::Value(Json::arrayValue);
     schema["properties"]["order"]["enum"].append("oldest");
     schema["properties"]["order"]["enum"].append("newest");
+    schema["properties"]["order"]["enum"].append("first");
+    schema["properties"]["order"]["enum"].append("last");
     schema["properties"]["order"]["description"] =
-        "coverage_scan: the list keeps the first 'limit' matches oldest first (default) or newest first";
+        "coverage_scan: the list keeps the first 'limit' matches oldest first (default) or newest first; find_event: "
+        "first (default, = oldest) or last (= newest)";
+    schema["properties"]["sections"]["type"] = "string";
+    schema["properties"]["sections"]["description"] =
+        "explain_frame: comma list of time, routines, interrupt, paging, ports, memory, screen, input, markers "
+        "(default all)";
+    schema["properties"]["find"]["type"] = "string";
+    schema["properties"]["find"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* e : {"mem", "screen", "exec", "port", "border", "key"})
+        schema["properties"]["find"]["enum"].append(e);
+    schema["properties"]["find"]["description"] = "find_event: the kind of event (see 'action')";
+    schema["properties"]["cond"]["type"] = "string";
+    schema["properties"]["cond"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* e : {"changed", "increased", "decreased", "equals", "becomes", "differs", "bit_set", "bit_clear",
+                          "change", "cleared"})
+        schema["properties"]["cond"]["enum"].append(e);
+    schema["properties"]["cond"]["description"] =
+        "find_event: mem - changed (default), increased, decreased, equals / becomes / differs (value), bit_set / "
+        "bit_clear (bit); screen - change (default), cleared";
+    schema["properties"]["size"]["type"] = "integer";
+    schema["properties"]["size"]["description"] = "find_event mem: 1 or 2 bytes, little endian (default 1)";
+    schema["properties"]["bit"]["type"] = "integer";
+    schema["properties"]["bit"]["description"] = "find_event mem: the bit of bit_set / bit_clear";
+    schema["properties"]["exact"]["type"] = "boolean";
+    schema["properties"]["exact"]["description"] =
+        "find_event mem: every CPU write instead of frame boundaries (also a change undone within one frame)";
+    schema["properties"]["min_changed"]["type"] = "integer";
+    schema["properties"]["min_changed"]["description"] = "find_event screen: percent of the picture's bytes, 0..100 (default 50)";
+    schema["properties"]["dir"]["type"] = "string";
+    schema["properties"]["dir"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["dir"]["enum"].append("in");
+    schema["properties"]["dir"]["enum"].append("out");
+    schema["properties"]["dir"]["description"] = "find_event port: in or out (default out)";
+    schema["properties"]["key"]["type"] = "string";
+    schema["properties"]["key"]["description"] = "find_event key: a ZX key name (SPACE, Q, CAPS, ENTER, ...; default any key)";
+    schema["properties"]["pressed"]["type"] = "boolean";
+    schema["properties"]["pressed"]["description"] = "find_event key: presses (default true) or releases";
     schema["properties"]["ranges"]["type"] = "boolean";
     schema["properties"]["ranges"]["description"] =
         "coverage_scan: runs of consecutive matching frames [from, to] instead of single frames (limit counts runs)";
@@ -5590,7 +5651,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["addr"]["type"] = "string";
     schema["properties"]["addr"]["description"] =
         "find_last: single Z80 address (integer, '0x5800', '#5800' or '$5800'); with space vram / cache an offset in "
-        "that memory";
+        "that memory. cause_chain: the memory byte to explain";
     schema["properties"]["space"]["type"] = "string";
     schema["properties"]["space"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* space : {"ram", "vram", "cache", "cpu"})
@@ -5689,10 +5750,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["limit"]["description"] =
         "Max results for coverage_scan and blocks for coverage_rare (default 200, at most 10000), port_events (default 100), find_last / "
         "reverse_continue with all (default 100, at most 10000), frames per probe for probe_frames (default 1000, at most "
-        "10000), or max buckets for coverage_summary (default 100)";
+        "10000), or max buckets for coverage_summary (default 100), entries per list for explain_frame (default 8, at "
+        "most 100)";
     schema["properties"]["max_frames"]["type"] = "integer";
     schema["properties"]["max_frames"]["description"] =
-        "coverage_rare: an address is rare when at most this many frames touched it (default 1, at most 1000)";
+        "coverage_rare: an address is rare when at most this many frames touched it (default 1, at most 1000); "
+        "cause_chain: frames searched back for a register's producer (default 50, at most 1000)";
     schema["properties"]["bucket_size"]["type"] = "integer";
     schema["properties"]["bucket_size"]["description"] = "Frames per bucket for coverage_summary / timeline (default: auto)";
     schema["properties"]["buckets"]["type"] = "boolean";
@@ -5702,6 +5765,16 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["min_phase_ms"]["type"] = "integer";
     schema["properties"]["min_phase_ms"]["description"] =
         "timeline: the shortest phase in ms of machine time, also the window frames are tagged over (default 200)";
+    schema["properties"]["reg"]["type"] = "string";
+    schema["properties"]["reg"]["description"] =
+        "cause_chain: the register to explain - A F B C D E H L IXH IXL IYH IYL I R, a pair AF BC DE HL IX IY SP, or "
+        "primed A' ... L' / AF' ... HL'";
+    schema["properties"]["depth"]["type"] = "integer";
+    schema["properties"]["depth"]["description"] = "cause_chain: links from the target to a leaf, 1..16 (default 4)";
+    schema["properties"]["max_links"]["type"] = "integer";
+    schema["properties"]["max_links"]["description"] = "cause_chain: links in the whole tree, 1..256 (default 32)";
+    schema["properties"]["flags"]["type"] = "boolean";
+    schema["properties"]["flags"]["description"] = "cause_chain: follow F as an input too (default false: listed only)";
     schema["properties"]["probes"]["type"] = "array";
     schema["properties"]["probes"]["items"]["type"] = "object";
     schema["properties"]["probes"]["description"] =
@@ -6615,6 +6688,102 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             out << "\n[TRUNCATED] the list holds the rarest " << body["blocks"].size()
                                 << "; narrow the range or raise limit";
                         done(ToolResult::Ok(out.str(), std::move(body)));
+                    });
+                }
+                else if (action == "cause_chain")
+                {
+                    if (args.isMember("addr") == args.isMember("reg"))
+                    {
+                        done(ToolResult::Error("Action 'cause_chain' needs 'addr' (a memory byte) or 'reg' (a register)"));
+                        return;
+                    }
+                    auto text = [](const Json::Value& v) {
+                        return v.isString() ? v.asString() : std::to_string(v.asUInt64());
+                    };
+                    std::string query = "/ttd/cause-chain?text=true";
+                    for (const char* field : {"addr", "phys_page", "reg"})
+                        if (args.isMember(field))
+                            query += std::string("&") + field + "=" + UrlEncodeSegment(text(args[field]));
+                    for (const char* field : {"frame", "tinframe", "depth", "max_links", "max_frames"})
+                        if (args.isMember(field))
+                            query += std::string("&") + field + "=" + std::to_string(args[field].asUInt64());
+                    if (args.isMember("flags"))
+                        query += std::string("&flags=") + (args["flags"].asBool() ? "true" : "false");
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        // The chain as indented lines: an agent may read only this
+                        std::string out = body["text"].asString();
+                        bool cut = false;
+                        for (const Json::Value& l : body["links"])
+                            cut = cut || l["stop"].asString() == "depth" || l["stop"].asString() == "max_links";
+                        if (cut)
+                            out += "Links marked [stop: depth] / [stop: max_links] go further: ask again with a larger "
+                                   "depth / max_links, or at that link's name and frame.\n";
+                        body.removeMember("text");
+                        done(ToolResult::Ok(out, std::move(body)));
+                    });
+                }
+                else if (action == "find_event")
+                {
+                    if (!args.isMember("find"))
+                    {
+                        done(ToolResult::Error("Action 'find_event' needs 'find': mem, screen, exec, port, border or key"));
+                        return;
+                    }
+                    auto text = [](const Json::Value& v) {
+                        if (v.isBool())
+                            return std::string(v.asBool() ? "true" : "false");
+                        return v.isString() ? v.asString() : std::to_string(v.asInt64());
+                    };
+                    std::string query = "/ttd/find-event?text=true&kind=" + UrlEncodeSegment(text(args["find"]));
+                    for (const char* field : {"cond", "addr", "addr_to", "phys_page", "size", "value", "bit", "exact",
+                                              "min_changed", "dir", "port", "port_mask", "value_mask", "key", "pressed",
+                                              "from_frame", "to_frame", "limit", "max_frames"})
+                        if (args.isMember(field))
+                            query += std::string("&") + field + "=" + UrlEncodeSegment(text(args[field]));
+                    if (args.isMember("order"))
+                    {
+                        const std::string order = args["order"].asString();
+                        query += std::string("&order=") + (order == "last" || order == "newest" ? "last" : "first");
+                    }
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        // One line per hit and the summary: an agent may read only this
+                        std::string out = body["text"].asString();
+                        if (body["hits"].empty())
+                            out += "No hit: widen the window (from_frame / to_frame), loosen the condition, or check "
+                                   "the address and phys_page.\n";
+                        body.removeMember("text");
+                        done(ToolResult::Ok(out, std::move(body)));
+                    });
+                }
+                else if (action == "explain_frame")
+                {
+                    std::string query = "/ttd/explain-frame?text=true";
+                    if (args.isMember("frame"))
+                        query += "&frame=" + std::to_string(args["frame"].asUInt64());
+                    if (args.isMember("limit"))
+                        query += "&limit=" + std::to_string(args["limit"].asUInt64());
+                    if (args.isMember("sections"))
+                        query += "&sections=" + UrlEncodeSegment(args["sections"].asString());
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        // One block per section: an agent may read only this
+                        std::string out = body["text"].asString();
+                        body.removeMember("text");
+                        done(ToolResult::Ok(out, std::move(body)));
                     });
                 }
                 else if (action == "timeline")

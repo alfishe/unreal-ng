@@ -47,11 +47,11 @@ So with 80DS = 1 the CPU runs at 12 / 4 = **3 MHz**, and at 12 / 2 = **6 MHz** i
 (`/RAS` = not(Q0 xor Q1)) also runs from the same master, so one DRAM cycle per CPU T stays true.
 
 Supporting statements:
-- MAN32 p.2: hi-res "за счет изменения частоты тактового генератора увеличивается площадь видимого изображения".
-- ZXPK 21644 p.12 (termik, 2014): on a v3.2 the BIOS speed test in the hi-res menu "скорость 1 к 1 показывает"; the
-  test is calibrated against the 12 MHz crystal (solegstar: "расчет в данном тесте идет относительно кварца 12МГц").
+- MAN32 p.2: hi-res "the visible picture area is enlarged by changing the clock generator frequency".
+- ZXPK 21644 p.12 (termik, 2014): on a v3.2 the BIOS speed test in the hi-res menu "shows speed 1 to 1"; the
+  test is calibrated against the 12 MHz crystal (solegstar: "this test calculates relative to the 12 MHz crystal").
   So a v3.2 reads 1.00 = 3 MHz.
-- ZXPK 25719 p.28 (juka1868, 2016): a v3.x with turbo shows "1.65 во встроенном тесте" = 6 MHz less the v3 turbo
+- ZXPK 25719 p.28 (juka1868, 2016): a v3.x with turbo shows "1.65 in the built-in test" = 6 MHz less the v3 turbo
   waits, which fits the same 2/3-wait rule as in Spectrum mode (6.2 of design.md: RAM-heavy 1.17-1.5x, ROM 2x).
 
 ### 1.2 v5.03-5.06: ZQ3 / 4 (ZQ3 / 2 in turbo); 12 MHz is never the CPU clock — H
@@ -60,7 +60,7 @@ Evidence chain (NET506):
 
 | Part | Pins | Function |
 |:--|:--|:--|
-| DD31 (ЛН1) | 8 = `XMHZ` | oscillator of ZQ3 (R23, R24, C12) |
+| DD31 (ЛН1, Soviet 7404 inverter) | 8 = `XMHZ` | oscillator of ZQ3 (R23, R24, C12) |
 | DD27 (ЛН1) | 4 = `12MHZ` (ZQ1), 5/8 = `ZX14MHZ`, 6 = `NET00004` (ZQ2 14 MHz) | the two video crystals |
 | DD25 (74257), 1 = S = `/80DS` | 2 1A = `XMHZ`, 3 1B = `ZX14MHZ`, 4 1Y = `TCPU`; 5 2A = `XMHZ`, 6 2B = `NET00004`, 7 2Y = `TRAM`; 14/13 4A/4B = `NET00004`, 12 4Y = `V14` | 80DS = 1 -> S = 0 -> A inputs: **TCPU = TRAM = XMHZ** |
 | DD34 (74257), 1 = S = `80DS` | 2 1A = `V14`, 3 1B = `12MHZ`, 4 1Y = `F0`; 5 2A = `NET00016` (DD7 QA = F0/2), 6 2B = `F0`, 7 2Y = `T_IR10` | 80DS = 1: **F0 = 12 MHz**, shifter clock `T_IR10` = 12 MHz (7 MHz = F0/2 in Spectrum mode) |
@@ -77,27 +77,27 @@ Evidence chain (NET506):
 | 24 MHz | 6 MHz | 12 MHz |
 
 Which ZQ3 frequency:
-- ALB506 BOM: "ZQ3 КВАРЦ 16-20MHZ", **C12 = 27 pF**, R23 = 680, R24 = 510. The ALB50 table (PROF5-01) gives
+- ALB506 BOM: "ZQ3 КВАРЦ 16-20MHZ" (КВАРЦ = crystal), **C12 = 27 pF**, R23 = 680, R24 = 510. The ALB50 table (PROF5-01) gives
   C12 27 pF / R 510 for **20 MHz** (16 MHz: 47 pF / 750; 18: 33 pF / 680; 24: 18 pF / 470). So the 5.06 kit is
   built for 20 MHz — M (the crystal is the builder's choice within 16-20).
 - ALB506 BOM: DD24 = **Z84C020** (20 MHz CMOS Z80), all logic 1533 (ALS). The CPU is not the limit.
-- ZXPK 21644 p.11-12: solegstar "в расширенном экране подключается третий кварц, на 20МГц"; "кварц ZQ3 надеюсь
-  20MHz?"; Vadim ran 24 MHz and hit a too-short /IORQ for the keyboard controller (fixed by a one-shot on the
-  peripheral board); ZXPK 14599: "Сейчас 3-й кварц стоит на 20 мгц, работает стабильно".
+- ZXPK 21644 p.11-12: solegstar "in the extended screen the third crystal is switched in, at 20 MHz"; "crystal ZQ3 is 20MHz,
+  I hope?"; Vadim ran 24 MHz and hit a too-short /IORQ for the keyboard controller (fixed by a one-shot on the
+  peripheral board); ZXPK 14599: "The 3rd crystal is now 20 MHz, it works stably".
 - Measurement (ZXPK 21644 p.12, termik, a real 5.06 at 20 MHz, BIOS test in the hi-res menu, scale = 3 MHz):
-  **1.50 normal, 2.45 turbo**. Vadim: "1.5 это примерно соотв 4,5Мгц если вейтов нет и 5 если они есть". So the
+  **1.50 normal, 2.45 turbo**. Vadim: "1.5 corresponds roughly to 4.5 MHz if there are no waits and to 5 if there are". So the
   nominal 5 / 10 MHz lose about 10 % (normal) and 26 % (turbo) to waits on that test (section 3).
 
 ### 1.3 Which boards select ZQ3 by 80DS — H for 5.03+, M for older
 
 - ALB50 sheet 1А as drawn in our text copy: D25 `SE` = `80DS`. But MDESK compared a 5.04 board with the paper
-  album (ZXPK 14599 p.39, item 6): "5.04 - DD25-1 - /80DS, альбом - DD25-1 - /ONOFF", with the KP11 halves swapped.
-- The album text (profi50-p05) still describes the /ONOFF version: "Мультиплексор DD25 позволяет ЦП работать в двух
-  подрежимах ... 3.5 Mhz (ONOFF = 0) ... максимальной для данной конфигурации (ONOFF = 1)".
-- Kondor's V5.02 notes (ZXPK 14599 p.43, item 4): "В 3-х кварцевом режиме ... рекомендуется отсоединить DD25/1 и
-  соединить его с DD30/12" (DD30.12 is the `80DS` net in NET506).
-- ZXPK 11582 (Lexx!/Vadim): "В версии 5.02 при отжатой кнопке проц работает от 3-го кварца ... В 5.03 с третьего
-  кварца частота идёт только если включен расширенный экран, если включен экран спектрума то на проце 7 или 3.5Мгц".
+  album (ZXPK 14599 p.39, item 6): "5.04 - DD25-1 - /80DS, album - DD25-1 - /ONOFF", with the KP11 halves swapped.
+- The album text (profi50-p05) still describes the /ONOFF version: "The DD25 multiplexer lets the CPU run in two
+  sub-modes ... 3.5 Mhz (ONOFF = 0) ... the maximum for this configuration (ONOFF = 1)".
+- Kondor's V5.02 notes (ZXPK 14599 p.43, item 4): "In the 3-crystal mode ... it is recommended to disconnect DD25/1 and
+  connect it to DD30/12" (DD30.12 is the `80DS` net in NET506).
+- ZXPK 11582 (Lexx!/Vadim): "In version 5.02, with the button released, the CPU runs from the 3rd crystal ... In 5.03 the frequency from the third
+  crystal goes only when the extended screen is on; when the Spectrum screen is on, the CPU gets 7 or 3.5 MHz".
 
 So: **5.03, 5.04, 5.05, 5.06**: ZQ3 only in DS80 (H). **5.0-5.02 unmodified** (album wiring): ZQ3 whenever the CP/M
 (ONOFF) button is released, in both rasters, and 3.5 / 7 MHz with it pressed (M). The emulator's v5 is a 5.06,
@@ -105,12 +105,12 @@ so the 5.03+ rule applies.
 
 ### 1.4 v5.0 / 5.01 minimal (two-crystal) build — M
 
-ALB50 p.6: without DD25 (jumpers instead) and without DD31 the board works "двумя тактовыми генераторами, как и в
-предыдущих версиях"; CH50 5.01 I.1: "не устанавливая DD25, соединить DD25/12 с DD25/13" (V14 = 14 MHz). The other
-jumpers are "указанные на схеме" and not in our copies. DD25's inputs carry only `XMHZ`, `ZX14MHZ` and the 14 MHz
+ALB50 p.6: without DD25 (jumpers instead) and without DD31 the board works "with two clock generators, as in the
+previous versions"; CH50 5.01 I.1: "without fitting DD25, connect DD25/12 to DD25/13" (V14 = 14 MHz). The other
+jumpers are "shown on the schematic" and not in our copies. DD25's inputs carry only `XMHZ`, `ZX14MHZ` and the 14 MHz
 net, never `12MHZ`, so without DD31 the CPU can only get 14 MHz: **3.5 MHz, 7 MHz turbo, in DS80 too** (M; the jumper
-pattern itself is not drawn). The V5.02 note "При компоновке компьютера с двумя кварцами в режиме большого растра
-512х240 (СР/М) не отключать турбо-режим" fits a CPU that does not speed up in hi-res on such boards. Settle with a
+pattern itself is not drawn). The V5.02 note "When the computer is built with two crystals, do not switch the turbo mode off in the large
+512x240 raster mode (CP/M)" fits a CPU that does not speed up in hi-res on such boards. Settle with a
 photo of a two-crystal board's DD25 jumpers.
 
 ---
@@ -175,7 +175,7 @@ frame too (79872, 99840); INT -> paper needs a fractional T (round, or keep the 
 - v5.06 (NET506): /INT = R15 (680) from NET00043 = DD33:1 OR(`BL_INT`, NET00051); NET00051 = PROM D3 (DD37.15, C15
   3300 pF); DD29:2 D = NET00051, CLK = DA3, **/CLR (pin 13) = NET00028 = DD33:3 OR(`/IORQGE`, `/M1`)**, /Q (pin 8)
   = `BL_INT`. So on v5 **INT also ends at the interrupt acknowledge** (IORQ and M1 low), or at the next DA3 edge,
-  whichever is first. That is CH50 5.01 I.3 ("Схема прерывания"). Karabas-Pro RTL models the same (`bl_int <= '1'
+  whichever is first. That is CH50 5.01 I.3 ("Interrupt circuit"). Karabas-Pro RTL models the same (`bl_int <= '1'
   when INTA = '0'`).
 - The DA3-edge length is a model (DEC 4.3: two parts not fully traced on v3); it is an upper bound on v5.
 
@@ -291,17 +291,17 @@ video latches DD66/DD68 (pixels) and DD65 (attributes) feed only the shifter / p
 
 ### 5.2 v5.0-5.05: F0 / 8 — 1.75 / **1.5 MHz** — H
 
-- ALB50 p.5: "С выхода м/с DD5.1 снимается сигнал CLCAY"; PROF5-01: D5 pin 1 <- D7 Q2, pin 2 = CLCAY.
+- ALB50 p.5: "The CLCAY signal is taken from the output of chip DD5.1"; PROF5-01: D5 pin 1 <- D7 Q2, pin 2 = CLCAY.
 - NET506: DD5.1 = `NET00024` = DD7.12 (QC of the F0 counter), DD5.2 = `NET00046` -> SB7.3. F0 = 14 / 12 MHz by 80DS.
-- SG506 item 16: "Раньше в спектрум-режиме частота AY была равна 1,75 МГц, а в расширенном экране 1,5 МГц, из-за чего
-  мелодии в расширенном экране играли более низким тоном."
+- SG506 item 16: "Previously the AY frequency was 1.75 MHz in Spectrum mode and 1.5 MHz in the extended screen, so tunes
+  in the extended screen played at a lower pitch."
 
 ### 5.3 v5.06: jumper SB7, default 1.75 / **1.5 MHz** — H
 
 - NET506: SB7.2 = `CLCAY` (X1.10 / X1A.10, to the peripheral board); SB7.3 = `NET00046` (F0 / 8, "CLCAY OLD");
-  SB7.1 = `NET00039` = DD70.12, DD70 (ИЕ10) counts `ZX14MHZ` -> 14 / 8 = 1.75 MHz always ("CLCAY NEW").
-- ALB506 p.11: "SB7 – “AY CLOCK” ... CLCAY NEW – ... неизменной 1,75МГц, ... CLCAY OLD - ... 1,75МГц ... или расширенного
-  экрана Profi 512х240 (1,5МГц) — старый режим работы. **По умолчанию должна быть в положении “CLCAY OLD”**."
+  SB7.1 = `NET00039` = DD70.12, DD70 (ИЕ10, Soviet 74161 counter) counts `ZX14MHZ` -> 14 / 8 = 1.75 MHz always ("CLCAY NEW").
+- ALB506 p.11: "SB7 – “AY CLOCK” ... CLCAY NEW – ... a constant 1.75 MHz, ... CLCAY OLD - ... 1.75 MHz ... or of the extended
+  Profi 512x240 screen (1.5 MHz) — the old operating mode. **By default it must be in the “CLCAY OLD” position**."
 - Turbo does not touch CLCAY on either board (it is a video-counter output).
 
 ---
