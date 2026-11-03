@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-11-02 |
-| **Status** | in progress (design approved 2026-11-02) |
+| **Status** | landed 2026-11-03 (`2c34ef033`); follow-ups in Known gaps |
 | **Replaces** | `PortReadWatch` (`core/src/emulator/io/controllers/portreadwatch.h`) and its register probe |
 | **Feeds** | C6 auto connector ([../2026-10-17-controller-manager/TODO.md](../2026-10-17-controller-manager/TODO.md)), the signature hook (D16), the debugger's device views ([../2026-10-31-debugger-device-io](../2026-10-31-debugger-device-io/README.md)) |
 
@@ -249,3 +249,9 @@ Default: stays off; the load window and the feature turn it on.
   "candidate: kempston card". The auto connector can then propose the card.
 - **Whole-evidence plane.** The evidence reaches the planes only through `controller auto`. A dedicated
   `devices/access` route and a WebSocket topic (§6) are not built yet.
+- **Next connectors.** The Next's board ports are `next.left` / `next.right`: a `#1F` decision (`kempston`) names a
+  connector the Next lacks and the Qt client ignores it (`applyAuto`). Map `kempston` / `kempston-2` to
+  `next.left` / `next.right` there.
+- **Test time.** `HostInputMachine_Test.AccessWatchSeesTheKeyboardOnEveryMachine` creates every machine of the
+  refdata: 1.3-1.5 s under a machine load of about 150, over the 1 s integration budget; shorten it or move the
+  full sweep behind `TestTier::Long()` if it stays there under normal load.
