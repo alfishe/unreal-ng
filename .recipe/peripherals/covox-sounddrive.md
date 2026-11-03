@@ -2,13 +2,14 @@
 
 The cheap sample-playback cards: 8-bit resistor DACs hanging off a port.
 Three config toggles in `[SOUND]` (per model config), all served by one
-4-channel class ([covox.h](../../core/src/emulator/sound/covox.h)):
+class ([covox.h](../../core/src/emulator/sound/covox.h)): four SounDrive
+latches and, on a Scorpion, a fifth one for the printer-port Covox:
 
 | Key | Default | Effect |
 |:--|:--|:--|
 | `SD=1` | on | SoundDrive quad DAC on **both** port schemes for the same 4 channels: mode 2 mirror set `#F1` Left A, `#F3` Left B, `#F9` Right A, `#FB` Right B, and mode 1 primary set `#0F` Left A, `#1F` Left B, `#4F` Right A, `#5F` Right B (`#FB` doubles as mono Covox) |
 | `CovoxFB=1` | on | with `SD=0`: mono Covox at `#FB` only; with `SD=1` the quad already owns `#FB` |
-| `CovoxDD=0` | off | parsed but currently **inert** — no `#DD` device is wired on `master` |
+| `CovoxDD=1` | on | Scorpion family only (`SCORPION`, `PROFSCORP`, `GMX`): the Covox on the printer data latch `#DD`, a separate mono DAC summed into both sides. Slot built-in `covox-dd` (`builtin.covox-dd = off` in `[SLOTS]` removes it). Decode: yellow board and GMX `(port & #27) == #05`, Turbo+ `(port & #23) == #01`; write only |
 
 Mode 1 (`#0F/#1F/#4F/#5F`) physically aliases into the Beta128 FDC's wide
 mirror decode, so a Pentagon/Scorpion machine can only have one peripheral
@@ -112,10 +113,15 @@ fitted"; use the port-trace/audio-capture checks below instead.
 
 ## Pitfalls
 
-- **`CovoxDD` does nothing yet** — it is parsed but no `#DD` device exists
-  on `master`; Scorpion Covox software using `#DD` stays silent on every
-  build. Clone configs ship `SD=1` + `CovoxFB=1`, so `#FB` (mono Covox
-  path) works everywhere — prefer `#FB` variants of the software.
+- **`CovoxDD` is on by default on the Scorpion family** — `#DD` software
+  (VPlayer's "DD" port) plays out of the box; `CovoxDD=0` /
+  `builtin.covox-dd = off` takes the DAC away. With `[SLOTS]` in the INI
+  the built-in switch decides and `CovoxDD` is ignored. `CovoxDDVol` is not used: the printer DAC plays at the `#FB`
+  Covox level, the mixer's `dd` channel ("Printer #DD") of the COVOX
+  source sets its volume and mute.
+- **The printer Covox decodes before the AY** — `OUT (#DD),A` puts the
+  sample on A15-A8, and the emulator's AY masks ignore A5; the printer arm
+  (A5 = 0) comes first, so samples of `#80` and up never reach the AY.
 - **`SD=1` wins `#FB`** — with `SD=1` all eight addresses (mode 1 + mode 2)
   are wired to the same 4-channel quad DAC; `CovoxFB=1` alone (with `SD=0`)
   wires only the mono `#FB` Covox. The class auto-centers the output

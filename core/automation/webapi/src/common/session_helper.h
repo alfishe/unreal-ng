@@ -8,14 +8,19 @@
 /// answered 409 `revoked_by_user` with `retry: false` - the client stops, it does not retry and does not take
 /// control again without asking the user.
 
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <drogon/HttpRequest.h>
 #include <json/json.h>
 
 #include "common/uuid.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/execution/automationgate.h"
 #include "emulator/execution/executionarbiter.h"
 
@@ -101,6 +106,31 @@ inline GateClient GateClientOf(const drogon::HttpRequestPtr& req)
                                               : req->getPeerAddr().toIpPort();
     c.identity = c.surface + "|" + c.host + "|" + c.client;
     return c;
+}
+
+/// The session the request's client holds on each machine: the one its X-Unreal-Session names, else the implicit
+/// one the gate holds for it (GateClientOf). A script it sends (/lua/exec, /python/exec) acts in them
+/// (execution::script::BorrowedSessions)
+inline std::vector<std::pair<const Emulator*, unreal::UUID>> SessionsOfClient(const drogon::HttpRequestPtr& req)
+{
+    std::vector<std::pair<const Emulator*, unreal::UUID>> sessions;
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    if (!req || !manager)
+        return sessions;
+    const std::optional<unreal::UUID> id = SessionOf(req);
+    const std::string identity = GateClientOf(req).identity;
+    for (const std::string& emulatorId : manager->GetEmulatorIds())
+    {
+        std::shared_ptr<Emulator> emulator = manager->GetEmulator(emulatorId);
+        EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+        if (!context)
+            continue;
+        if (id && context->HasRunControl(*id))
+            sessions.emplace_back(emulator.get(), *id);
+        else if (const unreal::UUID owner = context->ImplicitRunControlOwner(identity); !owner.isNil())
+            sessions.emplace_back(emulator.get(), owner);
+    }
+    return sessions;
 }
 
 /// Who holds run control, for a refusal or the session view: surface, client, peer, kind (implicit: the gate opened it

@@ -35,6 +35,24 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
 - [x] Tests: the machine's NeoGS (`TheMachinesCardStopsWhereItLoops`), live MCP
   `tools/verification/mcp/test_gs_debugger.py`.
 - [x] `GET /breakpoints/groups` per CPU (`?cpu=gs`, Lua / Python `bp_groups(cpu)`, MCP `bp_groups` `cpu`), 2026-10-27.
+- [x] The card CPU's registers, memory, disassembly and windows on every plane (2026-11-02, branch `gs-cpu-surfaces`):
+  core `CpuView` (`core/src/debugger/targets/cpuview.h`), `MemoryRead` spaces `gs` / `ms`, REST `?cpu=` on
+  `/registers`, `/memory`, `/disasm`, `/memory/map`, `/memory/info`, CLI `--cpu`, Lua / Python `cpu`, MCP
+  `inspect_state` `cpu`, `memory_access` spaces `gs` / `ms`. Tests: `CpuView_Test.*`.
+- [x] Card CPU step in / over / out on every plane (2026-11-02, branch `gs-cpu-surfaces`): `GSCardTarget::ArmStep`
+  (a one-shot park at a card boundary), `RunControl::CardStep` (resume, wait, timeout), the pause reason `step` with
+  the CPU (`PauseCause::Step`, `Emulator::OnTargetStep`); REST `?cpu=` on `/step`, `/steps`, `/stepover`,
+  `/stepout`, CLI `--cpu`, Lua / Python `cpu`, MCP `control_execution` steps `cpu`. Tests:
+  `GSCardTarget_Test.AStepParksAtItsBoundary`, `ABreakpointEndsAStepOver`, `TheMachinesCardStepsThroughRunControl`,
+  `McpDebugTools_Test.CardCpu_StepsGoToTheCardsRoutes`. No lock-step: the main CPU runs on to the card's catch-up.
+- [x] The Qt debugger's card CPU over the WebAPI (2026-11-02, branch `gs-cpu-surfaces`): `RemoteCardZ80` in
+  `debuggers/qt/adapter/remotemachine.cpp` (registers, 64 KB, windows over `?cpu=`, once per snapshot; its own
+  breakpoints and run-to; the card's RAM / ROM / flash as paged memories; the `<slot>.cpu` history); a step of a
+  card's tab is the card's step in both adapters (embedded: `RunControl::CardStep`); a card's stop brings its tab
+  to the front. `unreal-debugger --self-check` (and `--connect ... --self-check`) checks the card step and step over.
+- [x] Scripts sent over `/lua/exec`, `/python/exec` (and `/file`) act in the sender's session
+  (`execution::script::BorrowedSessions`): an MCP agent's Lua card step is no longer refused by the agent's own
+  implicit session. Test: `ExecutionArbiterMachine_Test.AClientsScriptActsInTheClientsSession`.
 
 ### C. Read-value script callbacks (design §8A.7)
 

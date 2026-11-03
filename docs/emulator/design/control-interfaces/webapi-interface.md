@@ -440,6 +440,20 @@ GET /api/v1/emulator/{id}/memory/page/{type}/{page}   Read a physical page windo
 PUT /api/v1/emulator/{id}/memory/{addr}       Write memory (body: {"data":[...]} or {"hex":"..."})
 GET /api/v1/emulator/{id}/memory/{type}/{page}/{offset}   Read from physical page (?len=N; ?format=binary for raw bytes)
 
+`?cpu=gs` (`ms`: the MultiSound card's General Sound) on `/registers`, `/registers/{name}`, `/memory/{addr}` (GET and
+PUT), `/memory/read/{addr}`, `/disasm`, `/memory/map` and `/memory/info`, the body's `cpu` on `/memory/write`: the
+sound card CPU's registers, memory, code (from its PC, no labels) and four windows instead of the machine's, in the
+same shapes plus `cpu` (`special.card_time` instead of `t`; the windows `{cpu, windows: [{start, size, kind, page,
+offset}]}`). A card write lands as the card CPU's would (a ROM / flash window or a NeoGS RAMRO page keeps its bytes):
+`bytes_written` / `written` count what landed. 400 for another name, 404 when no card with a CPU is in the slot, 409 for an edit in the recorded past
+([the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)).
+
+`?cpu=gs` on `POST /step`, `/steps` (body `count` 1-10000), `/stepover` and `/stepout` steps the card CPU: the
+machine resumes until the card's step ends and pauses again. The reply: `stop` (`cpu`, `reason` `step` /
+`breakpoint` / `pause` / `timeout`, `cpu_pc`, `breakpoint_id`, `address`, `access`), the card CPU's `pc` and `sp`,
+`main_pc`, `main_sp`, `state`; 409 when not paused or a step of that CPU is under way. The main CPU moves on to where
+the card catches up (a host port access or the frame end); none within 2 s (over / out 5 s) is a `timeout`.
+
 Every `format=binary` answer is the bytes alone (`application/octet-stream`) with the headers `X-Unreal-Space`
 (`cpu`, `ram5`, a region name), `X-Unreal-Address` and `X-Unreal-Length`, exposed to browser clients
 (`Access-Control-Expose-Headers`). Errors stay JSON with a 4xx status. The JSON formats are unchanged.

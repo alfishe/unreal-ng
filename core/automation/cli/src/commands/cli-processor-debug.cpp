@@ -60,6 +60,10 @@ void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+    // --cpu gs / ms: the sound card CPU's step (cli-processor-cardcpu.cpp)
+    if (HandleCardCpuCommand(session, *emulator, "step", args,
+                             [&](const std::vector<std::string>& rest) { HandleStepIn(session, rest); }))
+        return;
 
     // Check if the emulator is paused
     if (!emulator->IsPaused())
@@ -228,7 +232,7 @@ void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<
 }
 
 // HandleStepOver - lines 1035-1200
-void CLIProcessor::HandleStepOver(const ClientSession& session, const std::vector<std::string>& /*args*/)
+void CLIProcessor::HandleStepOver(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
 
@@ -237,6 +241,10 @@ void CLIProcessor::HandleStepOver(const ClientSession& session, const std::vecto
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+    // --cpu gs / ms: the sound card CPU's step (cli-processor-cardcpu.cpp)
+    if (HandleCardCpuCommand(session, *emulator, "stepover", args,
+                             [&](const std::vector<std::string>& rest) { HandleStepOver(session, rest); }))
+        return;
 
     // Check if the emulator is paused
     if (!emulator->IsPaused())
@@ -473,6 +481,10 @@ void CLIProcessor::HandleSteps(const ClientSession& session, const std::vector<s
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+    // --cpu gs / ms: the sound card CPU's step (cli-processor-cardcpu.cpp)
+    if (HandleCardCpuCommand(session, *emulator, "steps", args,
+                             [&](const std::vector<std::string>& rest) { HandleSteps(session, rest); }))
+        return;
 
     // Check if the emulator is paused
     if (!emulator->IsPaused())
@@ -1027,6 +1039,10 @@ void CLIProcessor::HandleDisasm(const ClientSession& session, const std::vector<
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+    // --cpu gs / ms: the sound card CPU's code from its PC (cli-processor-cardcpu.cpp)
+    if (HandleCardCpuCommand(session, *emulator, "disasm", args,
+                             [&](const std::vector<std::string>& rest) { HandleDisasm(session, rest); }))
+        return;
 
     Memory* memory = emulator->GetMemory();
     std::unique_ptr<Z80Disassembler>& disassembler = emulator->GetDebugManager()->GetDisassembler();
@@ -1689,14 +1705,16 @@ void CLIProcessor::HandleSymbolVerb(const ClientSession& session, EmulatorContex
 // stepout endpoint). Breakpoints are skipped for the walk; emulation ends paused.
 void CLIProcessor::HandleStepOut(const ClientSession& session, const std::vector<std::string>& args)
 {
-    (void)args;  // No parameters
-
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
     {
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+    // --cpu gs / ms: the sound card CPU's step (cli-processor-cardcpu.cpp)
+    if (HandleCardCpuCommand(session, *emulator, "stepout", args,
+                             [&](const std::vector<std::string>& rest) { HandleStepOut(session, rest); }))
+        return;
 
     if (RunControlHeld(session, emulator))
         return;

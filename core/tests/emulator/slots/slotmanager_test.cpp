@@ -739,6 +739,44 @@ std::string PlannedCovox(MEM_MODEL model, std::initializer_list<std::pair<std::s
     return CovoxOf(*config);
 }
 
+/// The Scorpion printer Covox (#DD): a switchable built-in of the Scorpion family, on by default, switched by
+/// builtin.covox-dd or the legacy [SOUND] CovoxDD
+TEST(SlotManager_Test, ScorpionPrinterCovoxIsASwitchableBuiltIn)
+{
+    auto planned = [](MEM_MODEL model, std::initializer_list<std::pair<std::string, std::string>> lines) {
+        auto config = MakeConfig(model);
+        config->sound.covoxDD = 0;  // the [SLOTS] switch decides, not this field
+        SetSlots(*config, lines);
+        const SlotManager::Result result = SlotManager::Plan(*config, kAllGroups);
+        SlotManager::Apply(result, *config, kAllGroups);
+        return config->sound.covoxDD;
+    };
+    EXPECT_EQ(planned(MM_SCORP, { { "zxbus.1", "neogs" } }), 1) << "on by default with [SLOTS]";
+    EXPECT_EQ(planned(MM_SCORP, { { "builtin.covox-dd", "off" } }), 0);
+    EXPECT_EQ(planned(MM_PROFSCORP, { { "builtin.covox-dd", "on" } }), 1);
+    EXPECT_EQ(planned(MM_GMX, { { "builtin.covox-dd", "on" } }), 1);
+    EXPECT_EQ(planned(MM_PENTAGON, { { "builtin.covox-dd", "on" } }), 0) << "no printer Covox on the Pentagon";
+
+    auto scorpion = MakeConfig(MM_SCORP);
+    scorpion->sound.covoxDD = 0;
+    SlotManager::Result result = SlotManager::Plan(*scorpion, kAllGroups);
+    ASSERT_NE(result.FindBuiltIn("covox-dd"), nullptr);
+    EXPECT_FALSE(result.FindBuiltIn("covox-dd")->on);
+    EXPECT_EQ(result.FindBuiltIn("covox-dd")->state, "switched off");
+
+    // Legacy CovoxDD=1 switches it on, and the configuration written back names it
+    scorpion->sound.covoxDD = 1;
+    result = SlotManager::Plan(*scorpion, kAllGroups);
+    ASSERT_NE(result.FindBuiltIn("covox-dd"), nullptr);
+    EXPECT_TRUE(result.FindBuiltIn("covox-dd")->on);
+    EXPECT_EQ(result.FindBuiltIn("covox-dd")->source, "[SOUND] CovoxDD=1");
+    SlotManager::Apply(result, *scorpion, kAllGroups);
+    EXPECT_EQ(scorpion->sound.covoxDD, 1);
+    const SlotConfig written = SlotManager::ConfigOf(result);
+    EXPECT_TRUE(std::any_of(written.builtIns.begin(), written.builtIns.end(),
+                            [](const SlotBuiltInSwitch& s) { return s.id == "covox-dd" && s.on; }));
+}
+
 /// Step 5: covox-fb and soundrive cards (the SounDrive mode switch an option) and the board Covox of the machines
 /// that have one, switched by builtin.covox
 TEST(SlotManager_Test, CovoxCardsAndTheBoardCovoxComeFromTheSlots)

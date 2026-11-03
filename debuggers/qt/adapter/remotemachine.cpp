@@ -3,7 +3,8 @@
 // The views read a lot and often: every row of the listing, every byte of a dump, every register, five times a
 // second while the machine runs. One request per read would be thousands per tick, so the machine is read as one
 // coherent snapshot per tick (GET /debug/snapshot: registers, the CPU's 64 KB, its page map, the stop) and the views
-// read that copy. Dumps of RAM, ROM and device memories read whole 16 KB pages / 4 KB chunks, once per snapshot.
+// read that copy. Dumps of RAM, ROM and device memories read whole 16 KB pages / 4 KB chunks, once per snapshot. A
+// sound card's Z80 (?cpu=gs / ms) reads its registers, windows and 64 KB once per snapshot too, when looked at.
 // A snapshot is taken again when the copy is older than a tick while the machine runs, after any change this
 // debugger makes, and when the emulator says something happened (a stop, a run start, an edit by another client).
 //
@@ -188,6 +189,7 @@ struct Snapshot {
     uint64_t frame = 0;
     QString state;          // running | paused | stopped
     QString reason;         // none | pause | breakpoint | step
+    QString stop_cpu;       // the CPU of the stop: main, gs, ms
     QJsonObject regs;
     QByteArray memory;      // the CPU's 64 KB
     struct Bank { QString kind; unsigned int page = 0; bool writable = false; } banks[4];
@@ -255,6 +257,14 @@ private:
     unsigned int m_size;
     bool m_writable;
     std::map<unsigned int, std::pair<uint64_t, QByteArray>> m_cache;
+};
+
+// A sound card's RAM or ROM (flash on the NeoGS): its Z80's pages ("gs.ram", "neogs.flash", "multisound.gs.rom")
+class RemoteCardPages : public RemoteRegion<ecatshim::Memory>
+{
+public:
+    using RemoteRegion<ecatshim::Memory>::RemoteRegion;
+    unsigned int page_size() override { return kPage; }
 };
 
 // The CPU's 64 KB as its page map, from the snapshot
@@ -477,6 +487,67 @@ private:
     ZxPaging m_paging;
 };
 
+// A sound card's Z80: the General Sound's ("gs") or the GS of a MultiSound card ("ms"). Its registers, windows and
+// 64 KB come with ?cpu= (once per snapshot of the machine, each when first looked at), its breakpoints are its own,
+// a step of its tab is the card's step (POST /step?cpu=: the machine runs until the card's step ends)
+class RemoteCardZ80 : public ecatshim::CPU
+{
+public:
+    RemoteCardZ80(RemoteMachine * m, const QString &cpu) : m_m(m), m_cpu(cpu)
+    {
+        name = cpu.toStdString();
+        type = (cpu == "gs") ? "Z80 (General Sound)" : "Z80 (MultiSound GS)";
+    }
+    const QString &cpu() const { return m_cpu; }
+    unsigned int get_pc() override;
+    unsigned int peek_mem(unsigned int address) override;
+    bool poke_mem(unsigned int address, unsigned int value) override;
+    ecatshim::DisAsm * create_disasm(const std::string &, emulator::Result &) override { return CreatePlainZ80DisAsm(); }
+    std::vector<CpuRegister> get_register_values() override;
+    std::vector<std::pair<std::string, std::string>> get_flags() override;
+    void set_context_value(const std::string &name, unsigned int value) override;
+    bool set_flag(const std::string &name, bool value) override;
+    bool stack_address(int i, unsigned int &address) override;
+    std::vector<unsigned int> get_history() override;
+    bool has_breakpoint(unsigned int address) override;
+    void add_breakpoint(unsigned int address) override;
+    void remove_breakpoint(unsigned int address) override;
+    void clear_breakpoints() override
+    {
+        for (unsigned int a : get_breakpoints()) remove_breakpoint(a);
+    }
+    std::vector<unsigned int> get_breakpoints() override;
+    std::vector<ecatshim::AddressWindow> get_windows() override;
+
+    // The card's RAM and ROM (flash on the NeoGS) as paged memories, when the machine lists them
+    void set_ram(ecatshim::AddressableDevice * ram) { m_ram = ram; }
+    void set_rom(ecatshim::AddressableDevice * rom, bool flash)
+    {
+        m_rom = rom;
+        m_flash = flash;
+    }
+    // The card's execution history (`<slot>.cpu`), when it has one
+    void set_history_device(const QString &device) { m_history = device; }
+
+private:
+    RemoteMachine * m_m;
+    QString m_cpu;
+    QString m_history;
+    ecatshim::AddressableDevice * m_ram = nullptr;
+    ecatshim::AddressableDevice * m_rom = nullptr;
+    bool m_flash = false;
+    // What was read for a snapshot of the machine: each part once per generation
+    uint64_t m_regs_gen = ~0ull;
+    QJsonObject m_regs;
+    uint64_t m_memory_gen = ~0ull;
+    QByteArray m_memory;
+    uint64_t m_windows_gen = ~0ull;
+    QJsonArray m_windows;
+
+    QString route(const QString &path) const;
+    const QJsonObject &regs();
+};
+
 //------------------------------------------------------------------- the machine
 
 class RemoteMachine : public ecatshim::Emulator
@@ -521,6 +592,14 @@ public:
         }
         m_cpu = std::make_shared<RemoteZ80>(this);
         m_dm.add(m_cpu);
+        // A processor tab for each sound card's Z80 the machine has (404 without that card)
+        for (const char * cpu : {"gs", "ms"}) {
+            int status = 0;
+            m_http.json("GET", m_base + "/registers?cpu=" + cpu, QJsonObject(), &status);
+            if (status != 200) continue;
+            m_cards.push_back(std::make_shared<RemoteCardZ80>(this, cpu));
+            m_dm.add(m_cards.back());
+        }
 
         const QJsonObject info = m_http.json("GET", m_base + "/memory/info");
         const QJsonObject pages = info.value("pages").toObject();
@@ -553,6 +632,16 @@ public:
             std::string desc = r.value("description").toString().toStdString();
             desc = desc.rfind("Device memory recorded by time travel", 0) == 0 ? "device memory"
                                                                                 : desc.substr(0, desc.find_first_of(":,;("));
+            // A sound card's RAM and ROM: its Z80's pages
+            const QString owner = n.left(n.lastIndexOf('.'));
+            RemoteCardZ80 * card = this->card(owner == "multisound.gs" ? "ms" : (owner == "gs" || owner == "neogs") ? "gs" : "");
+            if (card != nullptr && (kind == "ram" || kind == "rom" || kind == "flash")) {
+                auto pages = std::make_shared<RemoteCardPages>(this, n, size, writable, desc);
+                if (kind == "ram") card->set_ram(pages.get());
+                else card->set_rom(pages.get(), kind == "flash");
+                m_dm.add(pages);
+                continue;
+            }
             if (kind == "ram" || kind == "vram" || kind == "fastram")
                 m_dm.add(std::make_shared<RemoteRegion<ecatshim::Memory>>(this, n, size, writable, desc));
             else
@@ -571,6 +660,8 @@ public:
         for (const QJsonValue &v : histories().value("histories").toArray()) {
             const QJsonObject h = v.toObject();
             const QString device = h.value("device").toString();
+            // The General Sound's (`<slot>.cpu`) through the card's CPU; the MultiSound's GS keeps none
+            if (device != "cpu" && device.endsWith(".cpu") && card("gs") != nullptr) card("gs")->set_history_device(device);
             if (device == "cpu" || device.endsWith(".cpu")) continue;
             m_dm.add(std::make_shared<RemoteHistory>(this, h.value("device").toString().toStdString(),
                                                      h.value("what").toString().toStdString()));
@@ -644,6 +735,7 @@ public:
         m_snap.frame = (uint64_t)s.value("time").toObject().value("frame").toDouble();
         m_snap.state = s.value("state").toString();
         m_snap.reason = s.value("pause").toObject().value("reason").toString();
+        m_snap.stop_cpu = s.value("pause").toObject().value("cpu").toString();
         m_snap.regs = s.value("regs").toObject();
         const QJsonArray mem = s.value("memory").toArray();
         m_snap.memory = mem.isEmpty() ? QByteArray(0x10000, '\xFF')
@@ -685,7 +777,7 @@ public:
         m_id = id;
         m_http.set_session(session);
         m_run_to_armed = false;
-        m_bp_dirty = true;
+        breakpoints_changed();
         {
             std::lock_guard<std::mutex> lock(m_catalog_mutex);
             m_catalog_age.invalidate();
@@ -722,25 +814,36 @@ public:
         m_histories_age.invalidate();
     }
 
-    std::vector<Breakpoint> breakpoints()
+    // The execution breakpoints of a CPU: main, gs, ms (each card CPU has breakpoints of its own, ?cpu=)
+    std::vector<Breakpoint> breakpoints(const QString &cpu = "main")
     {
         fresh();
-        if (m_bp_generation != m_snap.generation || m_bp_dirty) {
-            m_bp_generation = m_snap.generation;
-            m_bp_dirty = false;
-            m_bps.clear();
-            const QJsonArray list = m_http.json("GET", m_base + "/breakpoints").value("breakpoints").toArray();
+        BreakpointList &l = m_bps[cpu];
+        if (l.generation != m_snap.generation || l.dirty) {
+            l.generation = m_snap.generation;
+            l.dirty = false;
+            l.list.clear();
+            const QJsonArray list = m_http.json("GET", m_base + "/breakpoints?cpu=" + cpu).value("breakpoints").toArray();
             for (const QJsonValue &v : list) {
                 const QJsonObject b = v.toObject();
                 if (b.value("type").toString() != "memory" || !b.value("execute").toBool() || b.contains("address_end"))
                     continue;
-                m_bps.push_back(Breakpoint{b.value("id").toInt(), (unsigned int)b.value("address").toInt(),
-                                           b.value("group").toString() == kRunToGroup});
+                l.list.push_back(Breakpoint{b.value("id").toInt(), (unsigned int)b.value("address").toInt(),
+                                            b.value("group").toString() == kRunToGroup});
             }
         }
-        return m_bps;
+        return l.list;
     }
-    void breakpoints_changed() { m_bp_dirty = true; }
+    void breakpoints_changed()
+    {
+        for (auto &l : m_bps) l.second.dirty = true;
+    }
+    RemoteCardZ80 * card(const QString &cpu) const
+    {
+        for (const auto &c : m_cards)
+            if (c->cpu() == cpu) return c.get();
+        return nullptr;
+    }
 
     void debug_attach(bool on) override
     {
@@ -779,32 +882,37 @@ public:
         if (debug_paused()) m_http.json("POST", m_base + "/resume");
         changed();
     }
-    void debug_step(ecatshim::CPU *, unsigned int count) override
+    // A step of a card's tab is the card's step (?cpu=): the machine runs until it ends (up to 2 s, over / out 5 s)
+    void debug_step(ecatshim::CPU * c, unsigned int count) override
     {
         drop_run_to();
-        if (count <= 1) m_http.json("POST", m_base + "/step");
-        else m_http.json("POST", m_base + "/steps", QJsonObject{{"count", (int)count}});
+        const QString q = step_query(c);
+        if (count <= 1) m_http.json("POST", m_base + "/step" + q, QJsonObject(), nullptr, 15000);
+        else m_http.json("POST", m_base + "/steps" + q, QJsonObject{{"count", (int)count}}, nullptr, 15000);
         changed();
     }
     // Step over / out answer when the machine has stopped (a pool of the WebAPI runs them)
-    void debug_step_over(ecatshim::CPU *) override
+    void debug_step_over(ecatshim::CPU * c) override
     {
         drop_run_to();
-        m_http.json("POST", m_base + "/stepover", QJsonObject(), nullptr, 15000);
+        m_http.json("POST", m_base + "/stepover" + step_query(c), QJsonObject(), nullptr, 15000);
         changed();
     }
-    void debug_step_out(ecatshim::CPU *) override
+    void debug_step_out(ecatshim::CPU * c) override
     {
         drop_run_to();
-        m_http.json("POST", m_base + "/stepout", QJsonObject(), nullptr, 15000);
+        m_http.json("POST", m_base + "/stepout" + step_query(c), QJsonObject(), nullptr, 15000);
         changed();
     }
-    void debug_run_to(ecatshim::CPU *, unsigned int address) override
+    void debug_run_to(ecatshim::CPU * c, unsigned int address) override
     {
-        // A breakpoint of its own group that goes away at the next stop. The WebAPI keeps one per address: on a
-        // user's breakpoint a run-to would move it into its group, and the user's stops there all the same
+        // A breakpoint of its own group (of the CPU of the tab) that goes away at the next stop. The WebAPI keeps one
+        // per address: on a user's breakpoint a run-to would move it into its group, and the user's stops there all
+        // the same
+        auto * card = dynamic_cast<RemoteCardZ80 *>(c);
+        const QString cpu = card ? card->cpu() : QString("main");
         bool user = false;
-        for (const Breakpoint &b : breakpoints()) user = user || (!b.run_to && b.address == (address & 0xFFFF));
+        for (const Breakpoint &b : breakpoints(cpu)) user = user || (!b.run_to && b.address == (address & 0xFFFF));
         // Gone at a stop after this run starts (the run start and the stop each move the seq), not at the stop it
         // was set at, whose answer may come only now
         drop_run_to();
@@ -812,7 +920,7 @@ public:
         if (!user) {
             m_http.json("POST", m_base + "/breakpoints",
                         QJsonObject{{"type", "execution"}, {"address", (int)(address & 0xFFFF)}, {"group", kRunToGroup},
-                                    {"note", "run to the cursor"}});
+                                    {"note", "run to the cursor"}, {"cpu", cpu}});
             m_run_to_armed = true;
         }
         breakpoints_changed();
@@ -821,7 +929,12 @@ public:
         m_arming_run_to = false;
     }
     unsigned int debug_serial() const override { return (unsigned int)m_seq.load(); }
-    ecatshim::CPU * debug_stop_cpu() const override { return m_cpu.get(); }
+    ecatshim::CPU * debug_stop_cpu() const override
+    {
+        // A card's breakpoint or step: its tab
+        RemoteCardZ80 * c = card(const_cast<RemoteMachine *>(this)->snap().stop_cpu);
+        return c ? static_cast<ecatshim::CPU *>(c) : m_cpu.get();
+    }
     int debug_stop_reason() const override
     {
         const QString r = const_cast<RemoteMachine *>(this)->snap().reason;
@@ -891,9 +1004,13 @@ private:
     std::atomic<uint64_t> m_run_to_seq{0};
     std::atomic<bool> m_run_to_armed{false};
     bool m_arming_run_to = false;
-    std::vector<Breakpoint> m_bps;
-    uint64_t m_bp_generation = 0;
-    bool m_bp_dirty = true;
+    std::vector<std::shared_ptr<RemoteCardZ80>> m_cards;
+    struct BreakpointList {
+        std::vector<Breakpoint> list;
+        uint64_t generation = 0;
+        bool dirty = true;
+    };
+    std::map<QString, BreakpointList> m_bps;
     bool m_attached = false;
     std::set<QString> m_histories_ours;  // the histories the debugger turned on: off again when it goes
     bool m_debug_before = false;
@@ -919,8 +1036,21 @@ private:
     }
     void clear_run_to()
     {
-        m_http.json("POST", m_base + "/breakpoints/remove", QJsonObject{{"select", QString("group:") + kRunToGroup}});
+        remove_run_to(m_http, m_base);
         breakpoints_changed();
+    }
+    // The run-to breakpoints of every CPU (the cards are fixed after build: the waiter reads them too)
+    void remove_run_to(Http &http, const QString &base)
+    {
+        http.json("POST", base + "/breakpoints/remove", QJsonObject{{"select", QString("group:") + kRunToGroup}});
+        for (const auto &c : m_cards)
+            http.json("POST", base + "/breakpoints/remove",
+                      QJsonObject{{"select", QString("group:") + kRunToGroup}, {"cpu", c->cpu()}});
+    }
+    QString step_query(ecatshim::CPU * c) const
+    {
+        auto * card = dynamic_cast<RemoteCardZ80 *>(c);
+        return card ? "?cpu=" + card->cpu() : QString();
     }
 
     // The long poll: each answer with a new seq (a stop, a run start, an edit) is an event for the window. At a stop
@@ -961,7 +1091,7 @@ private:
             m_dirty = true;
             if (a.value("state").toString() == "paused" && m_seq.load() >= m_run_to_seq.load() + 2 &&
                 m_run_to_armed.exchange(false))
-                wait.json("POST", base + "/breakpoints/remove", QJsonObject{{"select", QString("group:") + kRunToGroup}});
+                remove_run_to(wait, base);
             notify();
         }
     }
@@ -1048,7 +1178,7 @@ void RemotePages::rom_titles()
         if (page >= m_pages) continue;
         std::string title = p.value("title").toString().toStdString();
         std::string role = p.value("description").toString().toStdString();
-        if (title.rfind("Unknown ROM", 0) == 0) title = "unknown ROM";
+        title = ZxRomPageNote(title);
         if (role.rfind("ROM Page", 0) == 0) role.clear();
         m_titles[page] = {title, role};
     }
@@ -1234,9 +1364,9 @@ std::vector<ecatshim::AddressWindow> RemoteZ80::get_windows()
     return r;
 }
 
-std::vector<CpuRegister> RemoteZ80::get_register_values()
+// The register list of a Z80 for the window, from a /registers answer (the main CPU's or a card's)
+std::vector<CpuRegister> z80_register_list(const QJsonObject &r)
 {
-    const QJsonObject &r = m_m->snap().regs;
     auto reg = [&r](const char * n, const char * group, const char * key, unsigned int bits) {
         return CpuRegister{n, num(r, group, key), bits};
     };
@@ -1252,12 +1382,29 @@ std::vector<CpuRegister> RemoteZ80::get_register_values()
     };
 }
 
-std::vector<std::pair<std::string, std::string>> RemoteZ80::get_flags()
+std::vector<std::pair<std::string, std::string>> z80_flag_list(unsigned int f)
 {
-    const unsigned int f = num(m_m->snap().regs, "main", "af") & 0xFF;
     std::vector<std::pair<std::string, std::string>> r;
     for (int i = 0; i < 8; i++) r.emplace_back(kFlagNames[i], ((f >> (7 - i)) & 1) ? "1" : "0");
     return r;
+}
+
+// The F bit of a flag name, -1 for another name
+int z80_flag_bit(const std::string &n)
+{
+    for (int i = 0; i < 8; i++)
+        if (n == kFlagNames[i]) return 7 - i;
+    return -1;
+}
+
+std::vector<CpuRegister> RemoteZ80::get_register_values()
+{
+    return z80_register_list(m_m->snap().regs);
+}
+
+std::vector<std::pair<std::string, std::string>> RemoteZ80::get_flags()
+{
+    return z80_flag_list(num(m_m->snap().regs, "main", "af") & 0xFF);
 }
 
 void RemoteZ80::set_context_value(const std::string &n, unsigned int v)
@@ -1269,9 +1416,7 @@ void RemoteZ80::set_context_value(const std::string &n, unsigned int v)
 
 bool RemoteZ80::set_flag(const std::string &n, bool value)
 {
-    int bit = -1;
-    for (int i = 0; i < 8; i++)
-        if (n == kFlagNames[i]) bit = 7 - i;
+    const int bit = z80_flag_bit(n);
     if (bit < 0) return false;
     unsigned int f = num(m_m->snap().regs, "main", "af") & 0xFF;
     f = value ? (f | (1u << bit)) : (f & ~(1u << bit));
@@ -1326,6 +1471,167 @@ std::vector<unsigned int> RemoteZ80::get_breakpoints()
     for (const Breakpoint &b : m_m->breakpoints())
         if (!b.run_to && std::find(r.begin(), r.end(), b.address) == r.end()) r.push_back(b.address);
     std::sort(r.begin(), r.end());
+    return r;
+}
+
+QString RemoteCardZ80::route(const QString &path) const
+{
+    return m_m->base() + path + (path.contains('?') ? "&cpu=" : "?cpu=") + m_cpu;
+}
+
+const QJsonObject &RemoteCardZ80::regs()
+{
+    // Not given (the card gone, an error): the last ones read stay
+    const uint64_t gen = m_m->snap().generation;
+    if (m_regs_gen != gen) {
+        m_regs_gen = gen;
+        int status = 0;
+        const QJsonObject r = m_m->http().json("GET", route("/registers"), QJsonObject(), &status);
+        if (status == 200) m_regs = r;
+    }
+    return m_regs;
+}
+
+unsigned int RemoteCardZ80::get_pc()
+{
+    return num(regs(), "special", "pc");
+}
+
+unsigned int RemoteCardZ80::peek_mem(unsigned int a)
+{
+    const uint64_t gen = m_m->snap().generation;
+    if (m_memory_gen != gen || m_memory.size() != 0x10000) {
+        m_memory_gen = gen;
+        QByteArray out;
+        if (m_m->http().request("GET", route("/memory/read/0?length=65536&format=binary"), QByteArray(), out) == 200)
+            m_memory = out;
+        if (m_memory.size() != 0x10000) m_memory = QByteArray(0x10000, '\xFF');
+    }
+    return (uint8_t)m_memory[a & 0xFFFF];
+}
+
+bool RemoteCardZ80::poke_mem(unsigned int a, unsigned int v)
+{
+    int status = 0;
+    m_m->http().json("PUT", route("/memory/" + QString::number(a & 0xFFFF)), QJsonObject{{"data", QJsonArray{(int)(v & 0xFF)}}},
+                     &status);
+    m_m->changed();
+    return status == 200;
+}
+
+std::vector<CpuRegister> RemoteCardZ80::get_register_values()
+{
+    return z80_register_list(regs());
+}
+
+std::vector<std::pair<std::string, std::string>> RemoteCardZ80::get_flags()
+{
+    return z80_flag_list(num(regs(), "main", "af") & 0xFF);
+}
+
+void RemoteCardZ80::set_context_value(const std::string &n, unsigned int v)
+{
+    m_m->http().json("PUT", route("/registers/" + QUrl::toPercentEncoding(QString::fromStdString(n))), QJsonObject{{"value", (int)v}});
+    m_m->changed();
+}
+
+bool RemoteCardZ80::set_flag(const std::string &n, bool value)
+{
+    const int bit = z80_flag_bit(n);
+    if (bit < 0) return false;
+    unsigned int f = num(regs(), "main", "af") & 0xFF;
+    f = value ? (f | (1u << bit)) : (f & ~(1u << bit));
+    int status = 0;
+    m_m->http().json("PUT", route("/registers/F"), QJsonObject{{"value", (int)f}}, &status);
+    m_m->changed();
+    return status == 200;
+}
+
+bool RemoteCardZ80::stack_address(int i, unsigned int &address)
+{
+    address = (num(regs(), "special", "sp") + 2 * i) & 0xFFFF;
+    return true;
+}
+
+std::vector<unsigned int> RemoteCardZ80::get_history()
+{
+    // Oldest first: the card's execution history, a snapshot (the card runs on). Off it comes on the first time it
+    // is looked at (it costs the card's idle sleep its records), off again when the debugger goes
+    std::vector<unsigned int> r;
+    if (m_history.isEmpty()) return r;
+    for (const QJsonValue &v : m_m->histories().value("histories").toArray()) {
+        const QJsonObject h = v.toObject();
+        if (h.value("device").toString() == m_history && h.value("mode").toString() == "off") m_m->set_history(m_history, true);
+    }
+    const QJsonArray records = m_m->http().json("GET", m_m->base() + "/history/" + m_history + "?last=256").value("records").toArray();
+    for (const QJsonValue &e : records) r.push_back((unsigned int)e.toObject().value("pc").toInt());
+    return r;
+}
+
+bool RemoteCardZ80::has_breakpoint(unsigned int address)
+{
+    for (const Breakpoint &b : m_m->breakpoints(m_cpu))
+        if (!b.run_to && b.address == (address & 0xFFFF)) return true;
+    return false;
+}
+
+void RemoteCardZ80::add_breakpoint(unsigned int address)
+{
+    if (has_breakpoint(address)) return;
+    for (const Breakpoint &b : m_m->breakpoints(m_cpu))
+        if (b.run_to && b.address == (address & 0xFFFF)) m_m->http().json("DELETE", route("/breakpoints/" + QString::number(b.id)));
+    m_m->http().json("POST", m_m->base() + "/breakpoints",
+                     QJsonObject{{"type", "execution"}, {"address", (int)(address & 0xFFFF)}, {"cpu", m_cpu}});
+    m_m->breakpoints_changed();
+}
+
+void RemoteCardZ80::remove_breakpoint(unsigned int address)
+{
+    for (const Breakpoint &b : m_m->breakpoints(m_cpu))
+        if (!b.run_to && b.address == (address & 0xFFFF)) m_m->http().json("DELETE", route("/breakpoints/" + QString::number(b.id)));
+    m_m->breakpoints_changed();
+}
+
+std::vector<unsigned int> RemoteCardZ80::get_breakpoints()
+{
+    std::vector<unsigned int> r;
+    for (const Breakpoint &b : m_m->breakpoints(m_cpu))
+        if (!b.run_to && std::find(r.begin(), r.end(), b.address) == r.end()) r.push_back(b.address);
+    std::sort(r.begin(), r.end());
+    return r;
+}
+
+// The classic card maps ROM at #0000 and RAM page 0 at #4000 for good, its #00 port pages #8000-#FFFF; the NeoGS also
+// puts RAM at #0000 (GSCFG0.NOROM) and pages #C000 on its own (MPAGEX)
+std::vector<ecatshim::AddressWindow> RemoteCardZ80::get_windows()
+{
+    const uint64_t gen = m_m->snap().generation;
+    if (m_windows_gen != gen) {
+        m_windows_gen = gen;
+        int status = 0;
+        const QJsonObject o = m_m->http().json("GET", route("/memory/map"), QJsonObject(), &status);
+        if (status == 200) m_windows = o.value("windows").toArray();
+    }
+    std::vector<ecatshim::AddressWindow> r;
+    for (unsigned int w = 0; w < 4 && w < (unsigned int)m_windows.size(); w++) {
+        const QJsonObject o = m_windows[(int)w].toObject();
+        ecatshim::AddressWindow x;
+        x.start = w * kPage;
+        x.size = kPage;
+        x.switchable = (w >= 2) || (w == 0 && m_flash);
+        x.page = (unsigned int)o.value("page").toInt();
+        x.offset = (unsigned int)o.value("offset").toInt();
+        const QString kind = o.value("kind").toString();
+        if (kind == "rom") {
+            x.kind = m_flash ? "flash" : "ROM";
+            x.device = m_rom;
+            x.writable = false;
+        } else if (kind == "ram") {
+            x.kind = "RAM";
+            x.device = m_ram;
+        }
+        r.push_back(x);
+    }
     return r;
 }
 
