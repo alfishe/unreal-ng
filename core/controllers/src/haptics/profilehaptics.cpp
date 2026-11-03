@@ -43,6 +43,8 @@ RumbleLevels Scaled(const RumbleLevels& levels, float scale)
     out.high = clamp(levels.high);
     out.leftTrigger = clamp(levels.leftTrigger);
     out.rightTrigger = clamp(levels.rightTrigger);
+    out.hdLeft = clamp(levels.hdLeft);
+    out.hdRight = clamp(levels.hdRight);
     return out;
 }
 }  // namespace
@@ -294,6 +296,10 @@ void ProfileHaptics::OnHapticFrame(const HapticFrame& frame)
             effect.levels.lowHz = rule.lowHz;
         if (rule.highHz != 0)
             effect.levels.highHz = rule.highHz;
+        if (rule.hdFrequency > 0)
+            effect.levels.hdFrequency = rule.hdFrequency;
+        if (rule.hdWave)
+            effect.levels.hdWave = *rule.hdWave;
         if (!source.IsEvent())
         {
             // A level holds the effect at its peak while it lasts: the envelope would restart every frame

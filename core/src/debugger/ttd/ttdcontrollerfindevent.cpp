@@ -386,14 +386,14 @@ TTDFindEventResult TimeTravelController::QueryFindEvent(const TTDFindEventQuery&
             {
                 const uint16_t a = static_cast<uint16_t>(query.address + k);
                 const bool sameBank = (a >> 14) == (query.address >> 14);
-                const PhysPage page = query.hasPage && sameBank ? query.page
-                                                                : memory->TtdPageOfBank(static_cast<uint8_t>(a >> 14));
+                uint16_t inPage = static_cast<uint16_t>(a & 0x3FFF);
+                const PhysPage page = query.hasPage && sameBank ? query.page : memory->TtdLocate(a, false, inPage);
                 if (page == kPhysPageNone)
                 {
                     result.error = "address " + Hex(a, 4) + " is ROM at the current position: give phys_page";
                     return finish();
                 }
-                bytes[k] = {a, page, static_cast<uint32_t>(page) * 0x4000u + (a & 0x3FFFu)};
+                bytes[k] = {a, page, static_cast<uint32_t>(page) * 0x4000u + inPage};
                 if (bytes[k].offset >= static_cast<uint64_t>(regions[ramRegion].pieces) * kTTDPieceSize)
                 {
                     result.error = "page " + std::to_string(page) + " is not in the session's RAM";
@@ -577,7 +577,7 @@ TTDFindEventResult TimeTravelController::QueryFindEvent(const TTDFindEventQuery&
                     [&](uint16_t pc) {
                         judge();
                         cur.pc = pc;
-                        cur.page = memory->TtdPageOfBank(static_cast<uint8_t>(pc >> 14));
+                        cur.page = memory->TtdPageOf(pc);
                         for (uint8_t k = 0; k < 4; ++k)
                             cur.code[k] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(pc + k));
                         cur.tIn = st.TtdTInFrame(static_cast<uint32_t>(z80->t));
@@ -590,7 +590,7 @@ TTDFindEventResult TimeTravelController::QueryFindEvent(const TTDFindEventQuery&
                                        return;
                                    for (uint8_t k = 0; k < size; ++k)
                                        if (address == bytes[k].address &&
-                                           memory->TtdPageOfBank(static_cast<uint8_t>(address >> 14)) == bytes[k].page)
+                                           memory->TtdPageOf(address, true) == bytes[k].page)
                                        {
                                            v[k] = value;
                                            dirty = true;
@@ -836,7 +836,7 @@ TTDFindEventResult TimeTravelController::QueryFindEvent(const TTDFindEventQuery&
                     [&](uint16_t pc) {
                         if (pc < from || pc > to || (found && !query.last))
                             return;
-                        const PhysPage codePage = memory->TtdPageOfBank(static_cast<uint8_t>(pc >> 14));
+                        const PhysPage codePage = memory->TtdPageOf(pc);
                         if (query.hasPage && codePage != query.page)
                             return;
                         uint8_t code[4];

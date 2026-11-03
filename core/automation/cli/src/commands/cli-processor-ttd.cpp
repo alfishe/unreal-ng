@@ -17,6 +17,7 @@
 ///   ttd seek --bookmark <label> — seek to a bookmarked position
 ///   ttd cause <addr>|<reg>     — the cause chain: where a byte or a register got its value
 ///   ttd event <kind> ...       — find event: when a value, the screen, a run, a port, the border or a key changed
+///   ttd explain [F]            — explain frame: what one frame did (time, routines, ports, memory, screen, keys)
 ///
 /// All commands operate on the currently selected emulator instance. The TTD
 /// engine requires the emulator to be paused for seek/step/resume operations
@@ -329,6 +330,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDFindEvent(session, context, args);
     }
+    else if (subcommand == "explain" || subcommand == "explain-frame")
+    {
+        HandleTTDExplainFrame(session, context, args);
+    }
     else if (subcommand == "coverage" || subcommand == "cov")
     {
         HandleTTDCoverage(session, context, args);
@@ -440,8 +445,10 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "    port <in|out> <port> [value V] [--mask M] [--value-mask M]" << NEWLINE;
     ss << "    border [COLOUR]                   the border changed (to COLOUR)" << NEWLINE;
     ss << "    key [KEY] [--released]            a key pressed (released), from the input journal" << NEWLINE;
+    ss << "  ttd explain [F] [--sections a,b,...] [--limit N]   What frame F (default: the current) did: time split," << NEWLINE;
+    ss << "      routines by time, interrupt, paging, ports, memory changed with its writers, screen, keys (one replay)" << NEWLINE;
     ss << "  Aliases: rs=reverse-step, rc=reverse-continue, pf=probe-frames, tl=timeline, cause-chain=cause, "
-          "find-event=event" << NEWLINE;
+          "find-event=event, explain-frame=explain" << NEWLINE;
     ss << NEWLINE;
     ss << "Notes:" << NEWLINE;
     ss << "  - Seek/step/resume require the emulator to be paused." << NEWLINE;
@@ -1775,6 +1782,47 @@ void CLIProcessor::HandleTTDFindEvent(const ClientSession& session, EmulatorCont
         return;
     }
     const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"find-event", options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    std::string text = reply.body.find("text")->s;
+    std::string out;
+    for (char c : text)
+        out += c == '\n' ? std::string(NEWLINE) : std::string(1, c);
+    session.SendResponse(out);
+}
+
+/// `ttd explain [F] [--sections a,b] [--limit N]`: what frame F (default: the current one) did, as text
+void CLIProcessor::HandleTTDExplainFrame(const ClientSession& session, EmulatorContext* context,
+                                         const std::vector<std::string>& args)
+{
+    const std::string usage =
+        std::string("Usage: ttd explain [F] [--sections time,routines,interrupt,paging,ports,memory,screen,input,markers] "
+                    "[--limit N]") +
+        NEWLINE;
+    std::map<std::string, std::string> options = {{"text", "true"}};
+    bool haveFrame = false;
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        if ((args[i] == "--sections" || args[i] == "--limit") && i + 1 < args.size())
+        {
+            options[args[i].substr(2)] = args[i + 1];
+            ++i;
+        }
+        else if (!haveFrame && !args[i].empty() && std::isdigit(static_cast<unsigned char>(args[i][0])))
+        {
+            options["frame"] = args[i];
+            haveFrame = true;
+        }
+        else
+        {
+            session.SendResponse(usage);
+            return;
+        }
+    }
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"explain-frame", options});
     if (!reply.Ok())
     {
         session.SendResponse("Error: " + reply.message + NEWLINE);

@@ -36,6 +36,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/config.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/execution/runcontrol.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/cpu/core.h"
 #include "emulator/memory/memory.h"
@@ -174,17 +175,15 @@ public:
     std::string page_title(unsigned int page) override
     {
         if (m_kind == BANK_RAM) return ZxRamNote(m_paging, page);
-        // The ROM the page holds now, by its signature: a flash write or an edit gives it another name
+        // The ROM the page holds now, by its signature: a flash write or an edit gives it another name. Blank pages
+        // and copies of a lower page say so (ROM::GetROMPageTitle); kept per page and signature
         ROM * rom = m_emu->GetContext()->pCore ? m_emu->GetContext()->pCore->GetROM() : nullptr;
         const uint8_t * host = MemorySearch::PageHost(m_emu->GetContext(), BANK_ROM, page);
         if (rom == nullptr || host == nullptr) return std::string();
         const std::string signature = rom->CalculateSignature(host, PAGE_SIZE);
-        auto it = m_titles.find(signature);
-        if (it == m_titles.end()) {
-            std::string title = rom->GetROMTitle(signature);
-            if (title.rfind("Unknown ROM", 0) == 0) title = "unknown ROM";
-            it = m_titles.emplace(signature, title).first;
-        }
+        auto it = m_titles.find({page, signature});
+        if (it == m_titles.end())
+            it = m_titles.emplace(std::make_pair(page, signature), ZxRomPageNote(rom->GetROMPageTitle((uint8_t)page))).first;
         return it->second;
     }
     std::string page_role(unsigned int page) override
@@ -221,7 +220,7 @@ private:
     uint32_t m_pages;
     ZxPaging m_paging;
     // A ROM's title by its signature: the lookup once per ROM image, the signature at each ask
-    std::map<std::string, std::string> m_titles;
+    std::map<std::pair<unsigned int, std::string>, std::string> m_titles;
 };
 
 // A device memory region (DeviceMemory): a card's RAM and flash, video memory, a clock's CMOS. As a Memory it is a
@@ -736,8 +735,8 @@ private:
 };
 
 // A sound card's Z80: the General Sound's ("gs") or the GS of a MultiSound card ("ms"). Its registers and memory
-// come through the card's debug target; it has no step of its own in the core, so a step of this tab is a step of
-// the machine (ecat's "a step is a step in time")
+// come through the card's debug target; a step of this tab is the card's step (RunControl::CardStep: the machine
+// runs until the card's step ends)
 class CardZ80 : public Z80CpuBase
 {
 public:
@@ -1031,19 +1030,23 @@ public:
         if (r.outcome != execution::Outcome::Applied && r.outcome != execution::Outcome::Coalesced)
             fprintf(stderr, "ecat-debugger: resume not applied (outcome %d): %s\n", (int)r.outcome, r.detail.c_str());
     }
-    void debug_step(ecatshim::CPU *, unsigned int count) override
+    // A step of a card's tab is the card's step (RunControl::CardStep): the machine runs until it ends
+    void debug_step(ecatshim::CPU * c, unsigned int count) override
     {
         clear_run_to();
+        if (card_step(c, "in", count)) return;
         for (unsigned int i = 0; i < count; i++) m_emu->RunSingleCPUCycle(true);
     }
-    void debug_step_over(ecatshim::CPU *) override
+    void debug_step_over(ecatshim::CPU * c) override
     {
         clear_run_to();
+        if (card_step(c, "over", 1)) return;
         m_emu->StepOver();
     }
-    void debug_step_out(ecatshim::CPU *) override
+    void debug_step_out(ecatshim::CPU * c) override
     {
         clear_run_to();
+        if (card_step(c, "out", 1)) return;
         m_emu->StepOut();
     }
     void debug_run_to(ecatshim::CPU * c, unsigned int address) override
@@ -1062,7 +1065,7 @@ public:
     ecatshim::CPU * debug_stop_cpu() const override
     {
         const ::Emulator::DebugStop s = m_emu->LastStop();
-        if (s.reason == ::Emulator::DebugStop::Reason::Breakpoint)
+        if (s.reason == ::Emulator::DebugStop::Reason::Breakpoint || s.reason == ::Emulator::DebugStop::Reason::Step)
             for (const auto &c : m_cards)
                 if (s.breakpoint.cpu == c->id()) return c.get();
         return m_main.get();
@@ -1123,6 +1126,15 @@ private:
     {
         m_main->clear_run_to();
         for (const auto &c : m_cards) c->clear_run_to();
+    }
+    // A card's step when the tab is a card's: false for the main CPU's tab
+    bool card_step(ecatshim::CPU * c, const char * kind, unsigned int count)
+    {
+        auto * card = dynamic_cast<CardZ80 *>(c);
+        if (card == nullptr) return false;
+        const execution::RunReply r = execution::RunControl(m_emu).CardStep(kGui, card->id(), kind, std::max(1u, count));
+        if (!r.Ok()) fprintf(stderr, "ecat-debugger: card step refused: %s\n", r.message.c_str());
+        return true;
     }
 
     void on_core_event()

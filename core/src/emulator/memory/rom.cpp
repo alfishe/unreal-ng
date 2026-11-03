@@ -721,6 +721,39 @@ std::string ROM::GetROMTitle(const std::string& signature)
     return result;
 }
 
+std::string ROM::GetROMPageTitle(uint8_t page)
+{
+    if (!_context || !_context->pMemory)
+        return "";
+
+    Memory& memory = *_context->pMemory;
+    const uint8_t* data = memory.ROMPageHostAddress(page);
+    if (!data)
+        return "";
+
+    // Blank pages first: a 512 KB flash has several, all alike, and a "= ROM page N" on each says nothing
+    const auto filledWith = [data](uint8_t value) {
+        return std::all_of(data, data + 0x4000, [value](uint8_t b) { return b == value; });
+    };
+    if (filledWith(0xFF))
+        return "Empty (all #FF)";
+    if (filledWith(0x00))
+        return "Empty (all #00)";
+
+    std::string title = GetROMTitle(CalculateSignature(data, 0x4000));
+    for (int lower = 0; lower < page; lower++)
+    {
+        const uint8_t* other = memory.ROMPageHostAddress(static_cast<uint8_t>(lower));
+        if (other && std::memcmp(other, data, 0x4000) == 0)
+        {
+            title += StringHelper::Format(" (= ROM page %d)", lower);
+            break;
+        }
+    }
+
+    return title;
+}
+
 std::string ROM::GetROMPageRole(uint8_t page) const
 {
     static const char* PENTAGON_SCORP_ROLES[] =

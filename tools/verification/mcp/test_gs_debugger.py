@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The sound card CPU as a debug target (gs-debugger design §4): control_execution bp_* with cpu "gs" set the card's
 breakpoints (the NeoGS of the PENTAGON), a card stop parks the machine and wait names the CPU and the card instruction,
-the lists are per CPU, and the card refuses what it has not (NextREG, the host's events)"""
+the lists are per CPU, the card refuses what it has not (NextREG, the host's events), and its registers, memory and code
+are read and written with cpu "gs" (core CpuView), and it steps (RunControl::CardStep)"""
 
 import re
 import time
@@ -144,6 +145,130 @@ def test_a_python_tap_on_the_card(s):
     entry = next(e for e in r.structured['callbacks'] if e['label'] == 'gs-check')
     expect(entry['cpu'] == 'gs', 'cpu in structuredContent', entry)
     s.call('control_execution', {'action': 'callback_remove', 'callback_id': entry['id']})
+    clear(s)
+
+
+def test_the_card_cpus_registers_memory_and_code(s):
+    """inspect_state cpu gs: the card's registers, windows and code; memory_access space gs writes and reads its RAM
+    window; a card CPU that is not there (ms on the PENTAGON) is said in the text"""
+    clear(s)
+    pc = card_pc(s)
+    r = s.call('inspect_state', {'aspects': ['registers', 'memory_map', 'disasm'], 'cpu': 'gs'})
+    expect('[registers] cpu gs:' in r.text and 'PC=0x%04X' % pc in r.text, "the card's PC in the text", r.text)
+    windows = (r.structured or {}).get('memory_map', {}).get('windows', [])
+    expect(len(windows) == 4, 'four windows', windows)
+    expect(any(w.get('kind') == 'ram' for w in windows) and 'the CPU\'s windows' in r.text,
+           'RAM windows, listed in the text', r.text)
+    code = (r.structured or {}).get('disasm', {}).get('instructions', [])
+    expect(code and code[0].get('address') == pc, "the code from the card's PC", code[:1])
+
+    # The NeoGS firmware runs from RAM with RAMRO: its pages 0 / 1 keep their bytes as the card CPU's writes would
+    landed = None
+    for window in (w for w in windows if w.get('kind') == 'ram'):
+        address = '0x%04X' % (window['start'] + 0x100)
+        w = s.call('memory_access', {'action': 'write', 'space': 'gs', 'offset': address, 'hex': 'A55A'})
+        rd = s.call('memory_access', {'action': 'read', 'space': 'gs', 'offset': address, 'length': 2})
+        took = bool(re.search(r'A5\s*5A', rd.text.upper()))
+        expect("into the gs CPU's view" in w.text and took == ('kept by a read-only window' not in w.text),
+               'the write says what landed', (w.text, rd.text))
+        if took and landed is None:
+            landed = address
+    expect(landed is not None, 'a writable RAM window of the card', windows)
+    address = landed
+    rd = s.call('memory_access', {'action': 'read', 'space': 'gs', 'offset': address, 'length': 2})
+    expect("the gs CPU's view" in rd.text, 'read back from the card', rd.text)
+    main_rd = s.call('memory_access', {'action': 'read', 'offset': address, 'length': 2})
+    expect(main_rd.text != rd.text, "the machine's view is another memory", main_rd.text)
+
+    r = s.call('inspect_state', {'aspects': ['registers'], 'cpu': 'ms'})
+    expect('[registers] unavailable:' in r.text and 'ms' in r.text, 'no MultiSound card: said in the text', r.text)
+    r = s.call('control_execution', {'action': 'set_register', 'name': 'a', 'value': 16, 'cpu': 'gs'})
+    expect(not r.is_error, "the card's A set", r.text)
+    clear(s)
+
+
+def test_the_card_cpu_from_python(s):
+    """Python's cpu= on the register, memory and code functions; memory_map('gs') the windows; ms is a RuntimeError"""
+    clear(s)
+    code = ('import unreal_emulator as ue\n'
+            'emu = ue.emu_get_selected()\n'
+            'r = emu.get_registers(cpu="gs")\n'
+            'assert r["cpu"] == "gs" and "card_time" in r and "t" not in r\n'
+            'assert emu.get_register("pc", cpu="gs") == r["pc"]\n'
+            'assert emu.set_register("b", 0x24, cpu="gs") and emu.get_register("b", cpu="gs") == 0x24\n'
+            'rams = [w["start"] + 0x100 for w in emu.memory_map("gs")["windows"] if w["kind"] == "ram"]\n'
+            'for a in rams: emu.mem_write(a, 0x5A, cpu="gs")\n'
+            'assert any(emu.mem_read(a, cpu="gs") == 0x5A for a in rams)\n'
+            'assert emu.disasm(-1, 2, cpu="gs")[0]["address"] == r["pc"]\n'
+            'try:\n'
+            '    emu.get_registers(cpu="ms")\n'
+            '    print("ms answered")\n'
+            'except RuntimeError as e:\n'
+            '    print("card-ok", e)\n')
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/python/exec', 'body': {'code': code}}, ok=False)
+    if 'Python automation is not available' in r.text:
+        print('        no Python in this build (ENABLE_PYTHON_AUTOMATION=OFF): not checked')
+        return
+    output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
+    expect(not r.is_error and 'card-ok' in output and 'not available' in output, 'the card CPU from Python',
+           r.structured or r.text)
+    clear(s)
+
+
+def test_the_card_cpu_steps(s):
+    """control_execution step / step_n / step_over / step_out with cpu gs: the machine runs until the card's step ends
+    and is paused again; the text names where the card and the main CPU stand; a card breakpoint ends a step; Lua and
+    Python step it too"""
+    clear(s)
+    before = card_pc(s)
+    r = s.call('control_execution', {'action': 'step', 'cpu': 'gs'})
+    stop = (r.structured or {}).get('stop', {})
+    expect(stop.get('reason') == 'step' and stop.get('cpu') == 'gs', 'a step of the card CPU', r.structured)
+    expect(stop.get('cpu_pc') == r.structured.get('pc') == card_pc(s), 'the reply has the card PC', r.structured)
+    expect(re.search(r'Card CPU gs at \$[0-9A-F]{4}; main CPU at \$[0-9A-F]{4}', r.text), 'said in the text', r.text)
+    expect(r.structured.get('state') == 'paused', 'paused again', r.structured)
+    expect(card_pc(s) != before or r.structured.get('sp') is not None, 'the card moved on', (before, r.structured))
+
+    r = s.call('control_execution', {'action': 'step_n', 'count': 3, 'cpu': 'gs'})
+    expect((r.structured or {}).get('stop', {}).get('reason') == 'step', 'three card instructions', r.structured)
+    r = s.call('control_execution', {'action': 'step_over', 'cpu': 'gs'})
+    expect((r.structured or {}).get('stop', {}).get('reason') == 'step', 'a step over on the card', r.structured)
+
+    # A card breakpoint where the loader loops ends a step out of its top level
+    pc = card_pc(s)
+    s.call('control_execution', {'action': 'step', 'cpu': 'gs'})
+    s.call('control_execution', {'action': 'bp_add', 'address': pc, 'cpu': 'gs'})
+    r = s.call('control_execution', {'action': 'step_out', 'cpu': 'gs'})
+    stop = (r.structured or {}).get('stop', {})
+    expect(stop.get('reason') in ('breakpoint', 'step'), 'the step out ended', r.structured)
+    if stop.get('reason') == 'breakpoint':
+        expect(stop.get('cpu') == 'gs' and stop.get('cpu_pc') == pc and 'of cpu gs' in r.text,
+               "the card breakpoint's stop", (r.text, stop))
+    s.call('control_execution', {'action': 'bp_clear', 'cpu': 'gs'})
+
+    r = s.call('control_execution', {'action': 'run_frame', 'cpu': 'gs'}, ok=False)
+    expect(r.is_error and 'a card CPU takes step' in r.text, 'a frame run stays the machine\'s', r.text)
+    r = s.call('control_execution', {'action': 'step', 'cpu': 'ms'}, ok=False)
+    expect(r.is_error, 'no MultiSound card', r.text)
+
+    # A script MCP sends acts in MCP's session: it steps the machine MCP holds, release_control leaves that session
+    code = ('local r = step("gs") release_control() '
+            'if r.ok then print(r.ok, r.stop.reason, r.stop.cpu) else print("refused", r.error) end')
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/lua/exec', 'body': {'code': code}}, ok=False)
+    output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
+    expect('true\tstep\tgs' in output or 'true step gs' in output, 'Lua steps the card', output)
+
+    code = ('import unreal_emulator as ue\n'
+            'emu = ue.emu_get_selected()\n'
+            'emu.take_control("gs-step")\n'
+            'r = emu.steps(2, cpu="gs")\n'
+            'print("card-step", r["ok"], r["stop"]["reason"], r["cpu"])\n')
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/python/exec', 'body': {'code': code}}, ok=False)
+    if 'Python automation is not available' not in r.text:
+        output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
+        expect('card-step True step gs' in output, 'Python steps the card', output)
+    r = s.call('control_execution', {'action': 'step', 'cpu': 'gs'})
+    expect((r.structured or {}).get('stop', {}).get('reason') == 'step', 'MCP still holds the machine', r.text)
     clear(s)
 
 

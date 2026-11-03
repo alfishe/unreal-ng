@@ -86,6 +86,7 @@
 #include "ttdprobe.h"
 #include "ttdcausechain.h"
 #include "ttdfindevent.h"
+#include "ttdexplainframe.h"
 #include "ttdcoverageindex.h"
 #include "ttdtimeline.h"
 #include "ttdperipheralregistry.h"
@@ -1285,6 +1286,12 @@ public:
     /// ran, a port access, a border change, a key. Frames are filtered from what the session stores; only the hit
     /// frames are replayed. The machine is put back where it stood; a live recording pauses for browsing
     TTDFindEventResult QueryFindEvent(const TTDFindEventQuery& query);
+
+    /// @brief Explain frame (docs/inprogress/2026-11-02-ttd-explain-frame): what one frame did - its time split, the
+    /// routines by time, the interrupts, paging, ports per device, the memory changed with its writers, the screen,
+    /// the border, the keys and the markers - from one replay of the frame with the instruction and bus hooks. The
+    /// machine is put back where it stood; a live recording pauses for browsing
+    TTDExplainFrameResult QueryExplainFrame(const TTDExplainFrameQuery& query);
     
     /// @brief Step back one instruction (TDD §10.2 + §16 row 2).
     ///

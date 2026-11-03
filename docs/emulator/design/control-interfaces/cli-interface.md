@@ -164,6 +164,12 @@ Available commands:
   ...
 ```
 
+**The sound card CPU**: `--cpu gs` (`ms`: the MultiSound's) on `registers`, `memory`, `memory info` and `disasm`
+works on the General Sound / NeoGS card's Z80 (`registers a 0x10 --cpu gs`, `memory 0x4000 32 --cpu gs`,
+`disasm --cpu gs`; [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)), and on
+`step [count]`, `steps <count>`, `stepover` and `stepout` steps it: the machine runs until the card's step ends
+(`stepover --cpu gs`).
+
 **Command Aliases**:
 The CLI supports command aliases for convenience:
 - `?` → `help`
@@ -279,6 +285,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd timeline` | `ttd tl` | The recording cut into phases of the same activity, each with its facts (no replay). | ✅ Implemented |
 | `ttd cause <addr>[:page] \| <reg>` | `ttd cause-chain` | Where a byte or a register got its value: the chain back to constants, port reads and the initial memory, one line per link (`--frame F [--tin T]`, `--depth N`, `--links N`, `--frames N`, `--flags`). | ✅ Implemented |
 | `ttd event <kind> ...` | `ttd find-event` | When did it happen: `mem <addr>[:page] [cond [V\|B]] [--size 2] [--exact]`, `screen [PERCENT\|cleared]`, `exec <addr>[-<to>][:page]`, `port <in\|out> <port> [value V] [--mask M]`, `border [COLOUR]`, `key [KEY] [--released]`; `--last`, `--from F`, `--to F`, `--limit N`. One line per hit: frame+t, PC, instruction, before -> after, why; then a summary. | ✅ Implemented |
+| `ttd explain [F] [--sections a,b] [--limit N]` | `ttd explain-frame` | What frame F (default: the current one) did: the time split, the routines by time, the interrupt, paging, ports per device, memory changed with its writers, the screen and border, input, markers. Sections: `time`, `routines`, `interrupt`, `paging`, `ports`, `memory`, `screen`, `input`, `markers`, `all`; `--limit` 1..100 (default 8) per list. Prints the text; the machine stays where it was. | ✅ Implemented |
 
 **Interactive session example** (post-mortem crash forensics):
 

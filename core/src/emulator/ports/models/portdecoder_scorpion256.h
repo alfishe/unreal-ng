@@ -100,6 +100,7 @@ public:
     bool IsPort_7EFD(uint16_t port);  // ProfROM window latch (#7FFD pattern with A8 low)
     bool IsPort_SMUC(uint16_t port);  // SMUC board (#xxBA/#xxBE family)
     bool IsPort_KempstonJoystick(uint16_t port);  // Kempston Joystick (#FF1F)
+    bool IsPort_PrinterCovox(uint16_t port) const;  // Scorpion printer Covox (#DD, CovoxDD=1; Covox::PrinterDecodeOf)
     bool IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const override;     // Kempston Mouse (standard decode, A5-A0=#1F A9=1)
     bool ScorpionTrDosSelected() const;                                 // TR-DOS session or armed DOS trigger
     /// The SMUC's ISA window (#18E6-#7FFE, SMUC hardware reference §5.1): the ISA address a port reaches when the

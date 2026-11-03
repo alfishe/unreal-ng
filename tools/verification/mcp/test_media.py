@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """media / load_software / rzx_playback: the slots, loading a tape from testdata, errors name the file, the files of
 a disk, writing a file onto a TR-DOS disk, an ATM CP/M floppy read, a Profi CP/M .pro read, written and exported, a snapshot
-for another machine switches only when asked"""
+for another machine switches only when asked, an .spg uploaded"""
 
 import base64
 import os
@@ -18,6 +18,7 @@ MB02 = os.path.join(ROOT, 'testdata', 'loaders', 'mb02', 'SYS308.MB2')
 MDOS = os.path.join(ROOT, 'testdata', 'loaders', 'mdos', 'bootdisk.d80')
 PROFI_PRO = os.path.join(ROOT, 'testdata', 'loaders', 'pro', 'ReadFile.pro')
 Z80_128 = os.path.join(ROOT, 'testdata', 'loaders', 'z80', 'libspectrum', 'synth-128.z80')
+SPG = os.path.join(ROOT, 'testdata', 'machines', 'tsconf', 'spg', 'sprites.spg')
 
 
 def test_slots_listed(s):
@@ -310,6 +311,16 @@ def test_zz_snapshot_for_another_machine_switches_only_when_asked(s):
         expect(not r.is_error, 'loaded after the switch', r.text[:400])
         status = s.call('emulator_manage', {'action': 'status', 'response_format': 'json'})
         expect('128' in status.text, 'the machine is a 128K now', status.text[:400])
+    finally:
+        s.fresh_machine()
+
+
+def test_zz_every_snapshot_format_of_the_core_uploads(s):
+    """An .spg (the core opens it on TS-Conf) goes through the upload: the WebAPI takes the core's format lists"""
+    s.fresh_machine('TSCONF')
+    try:
+        r = s.call('load_software', {'path': SPG})
+        expect(not r.is_error and 'extension' not in r.text.lower(), 'the .spg loaded', r.text[:400])
     finally:
         s.fresh_machine()
 

@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 
+#include "debugger/targets/debugcpuid.h"
 #include "emulator/execution/executionarbiter.h"
 #include "emulator/state/statenode.h"
 
@@ -99,6 +100,13 @@ public:
     /// Until PC is at the first code byte of listing line `line` or the next one with code (POST
     /// /listing/run_to_line); at most `maxTStates` (0: 500 frames). Not Found for no such line
     RunReply RunToLine(const Requester& requester, int line, uint64_t maxTStates);
+    /// A sound card CPU's step (gs-debugger design §5.3; `kind` "in", "over" or "out", `count` 1..10000 for in): the
+    /// machine runs until the card ends it, then pauses. The card follows the main CPU's run (catch-up at a host port
+    /// access or the frame end), so the main CPU moves on to that point. A breakpoint of any CPU on the way ends it;
+    /// no end within the deadline (2 s, over / out 5 s) pauses the machine with the reason timeout. The body: `stop`
+    /// ({cpu, reason step / breakpoint / pause / timeout, cpu_pc, breakpoint_id, address, access}), the card CPU's
+    /// pc and sp, the main CPU's main_pc and main_sp
+    RunReply CardStep(const Requester& requester, DebugCpuId cpu, const std::string& kind, unsigned count = 1);
     /// endregion </Steps and runs>
 
     /// region <Machine>

@@ -73,6 +73,11 @@ Code sent to the interpreter (`POST /api/v1/python/exec`, the CLI `python` comma
 and callbacks see its top-level names, and the names stay for the next call, as in the Lua console. Its `print`
 output comes back with the answer.
 
+Code sent by `POST /api/v1/python/exec` or `/python/file` acts in the sender's automation session on a machine the
+sender holds (its `X-Unreal-Session`, or its implicit session, an MCP agent's too): its control calls pass without a
+`take_control()`, and `release_control()` leaves the sender's session in place
+([execution arbiter design §6a](../../../inprogress/2026-10-09-execution-arbiter/design.md#6a-automation-sessions-visible-remote-control-x7)).
+
 ### Machine Identity and Lifecycle
 The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
@@ -565,6 +570,14 @@ def companion_revoke(id: str) -> int:
     def set_register(self, name: str, value: int) -> bool:
         """False for an unknown name or a value im (0-2) / iff1, iff2 (0-1) cannot hold;
         8-bit registers take the low byte"""
+
+    # cpu="gs" ("ms": the MultiSound's) on get_registers, get_register, set_register, mem_read, mem_write and
+    # disasm reads and writes the sound card CPU (card_time instead of t; disasm from its PC, no labels);
+    # memory_map("gs") is its four windows {cpu, windows: [{start, size, kind, page, offset}]}. ValueError for
+    # another name, RuntimeError when no card with a CPU is in the slot or for an edit in the recorded past.
+    # cpu="gs" on step, steps, stepover and step_out steps the card CPU: the machine runs until the card's step
+    # ends, then is paused; the answer {ok, stop: {cpu, reason, cpu_pc, ...}, pc, sp, main_pc, main_sp, state}
+    # or {ok: False, error}
         
     def run_frame(self):
         """Run exactly one video frame (config.frame t-states)"""
@@ -1828,6 +1841,13 @@ down = emu.ttd_find_event('mem', addr=0xA130, cond='decreased', limit=3)
 #   'text': 'ld (hl),a', 'before': 3, 'after': 2, 'why': '(#A130 RAM 2) #03 -> #02  decreased'}, ...],
 #  'more': True, 'next_from_frame': ..., 'frames_scanned': ..., 'frames_replayed': 3, 'ms': ...}
 first_run = emu.ttd_find_event('exec', addr=0x8A14, text=True)
+
+# What one frame did: frame=None (the current one), sections='time,routines,interrupt,paging,ports,memory,screen,
+# input,markers' (default all), limit=8, text=False
+f = emu.ttd_explain_frame(1204, sections='time,routines,memory', limit=4)
+# {'frame': 1204, 'frame_t': 69888, 'instructions': 18312, 'time': {'isr': 6210, 'halt': 21700, 'code': ...},
+#  'routines': [{'pc': 35348, 'calls': 1, 't': 31220, 'own_t': 2110, 'insns': 4812, 'caller': 32771, ...}, ...],
+#  'memory': [{'region': 'screen pixels', 'addr': 18432, 'changed': 1024, 'writers': [...]}, ...], 'ms': ...}
 
 summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50, limit=100)
 # {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,

@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <string>
 
 struct ZxPaging {
@@ -39,4 +40,17 @@ inline std::string ZxRamNote(const ZxPaging &p, unsigned int page)
     //The second screen is a 128K's: a 48K has no paging and no page 7 on the screen
     if (page == 7 && (p.switchable[0] || p.switchable[3])) return "screen 1";
     return std::string();
+}
+
+// A ROM page's title (ROM::GetROMPageTitle, /state/memory/rom) as a page list shows it: "Unknown ROM, <digest>" cut
+// to "unknown ROM <8 digits>" (one unknown page told from another); blank pages and the " (= ROM page N)" of a copy
+// stay
+inline std::string ZxRomPageNote(const std::string &title)
+{
+    if (title.rfind("Unknown ROM", 0) != 0) return title;
+    const size_t open = title.find('<');
+    const size_t close = title.find('>', open);
+    std::string note = "unknown ROM";
+    if (open != std::string::npos && close != std::string::npos) note += ' ' + title.substr(open + 1, std::min<size_t>(8, close - open - 1));
+    return close == std::string::npos ? note : note + title.substr(close + 1);
 }

@@ -4,6 +4,7 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runpacer.h"
+#include "emulator/execution/runcontrol.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memorycounters.h"
@@ -14,6 +15,7 @@
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
+#include "debugger/targets/cpuview.h"
 #include "emulator/state/statenodejson.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
@@ -179,6 +181,56 @@ inline BreakpointManager* PythonBreakpoints(Emulator& self, const std::string& c
         throw py::value_error("cpu must be 'main', 'gs' or 'ms'");
     EmulatorContext* ctx = self.GetContext();
     return ctx && ctx->pDebugManager ? ctx->pDebugManager->GetBreakpointsManager(cpu) : nullptr;
+}
+
+/// The CPU a register, memory or disassembly call names ("" or "main": the main CPU; "gs" / "ms": a sound card's,
+/// cpuview.h): ValueError for an unknown name, RuntimeError for a card CPU that is not there
+inline DebugCpuId PythonCpu(Emulator& self, const std::string& name)
+{
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (name.empty())
+        return cpu;
+    if (!DebugManager::ParseCpuName(name, cpu))
+        throw py::value_error("cpu must be 'main', 'gs' or 'ms'");
+    const std::string error = CpuView::Select(self.GetContext(), name, cpu);
+    if (!error.empty())
+        throw std::runtime_error(error);
+    return cpu;
+}
+
+inline pybind11::object StateNodeToPy(const StateNode& node);
+
+/// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out): the reply's body and ok = True, or
+/// ok = False and error. The machine runs until the card ends it, then is paused; the GIL is free meanwhile
+inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind, unsigned count)
+{
+    py::dict d;
+    std::shared_ptr<Emulator> shared = EmulatorManager::GetInstance()->GetEmulator(self.GetId());
+    if (!shared)
+    {
+        d["ok"] = false;
+        d["error"] = "no emulator";
+        return d;
+    }
+    // The automation gate as every step of a script: its session, or an implicit one
+    execution::script::Check(self, execution::Origin::Python);
+    const execution::Requester requester = execution::script::RequesterOf(self, execution::Origin::Python);
+    execution::RunReply reply;
+    {
+        py::gil_scoped_release release;  // the card runs until its step ends (up to 5 s)
+        reply = execution::RunControl(shared).CardStep(requester, cpu, kind, count);
+    }
+    if (reply.status == execution::RunReply::Status::Revoked)
+        throw std::runtime_error(reply.message);
+    if (!reply.Ok())
+    {
+        d["ok"] = false;
+        d["error"] = reply.message;
+        return d;
+    }
+    d = StateNodeToPy(reply.body).cast<py::dict>();
+    d["ok"] = true;
+    return d;
 }
 
 /// bp / bp_read / bp_write / bp_port_in / bp_port_out: the options as keyword arguments (BreakpointManager::
@@ -2048,7 +2100,10 @@ namespace PythonBindings
                 Z80State* z80 = self.GetZ80State();
                 return z80 ? z80->iy : 0;
             }, "Get IY register")
-            .def("get_registers", [](Emulator& self) -> py::dict {
+            // cpu "gs" / "ms": the sound card CPU's, the same keys with card_time for t (cpuview.h)
+            .def("get_registers", [](Emulator& self, const std::string& cpu) -> py::dict {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return StateNodeToPy(CpuView::FlatRegisters(self.GetContext(), card)).cast<py::dict>();
                 py::dict regs;
                 Z80State* z80 = self.GetZ80State();
                 if (z80) {
@@ -2076,8 +2131,13 @@ namespace PythonBindings
                     regs["t"] = static_cast<uint32_t>(z80->t);  // CPU T-states since the frame's start
                 }
                 return regs;
-            }, "Get all registers as dictionary")
-            .def("get_register", [](Emulator& self, const std::string& name) -> py::object {
+            }, "Get all registers as dictionary (cpu: 'main', 'gs', 'ms')", py::arg("cpu") = "")
+            .def("get_register", [](Emulator& self, const std::string& name, const std::string& cpu) -> py::object {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    uint16_t value = 0;
+                    return CpuView::GetRegister(self.GetContext(), card, name, value) ? py::cast(value) : py::none();
+                }
                 Z80State* z80 = self.GetZ80State();
                 if (!z80)
                     return py::none();
@@ -2086,27 +2146,51 @@ namespace PythonBindings
                 if (!Z80::GetRegisterValue(z80, name, value, is16bit))
                     return py::none();
                 return py::cast(value);
-            }, "Get register value by name", py::arg("name"))
-            .def("set_register", [](Emulator& self, const std::string& name, uint16_t value) -> bool {
+            }, "Get register value by name", py::arg("name"), py::arg("cpu") = "")
+            .def("set_register", [](Emulator& self, const std::string& name, uint16_t value, const std::string& cpu) -> bool {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    // An unknown register or a value out of range is false, as for the main CPU; the past refuses
+                    const std::string refused = CpuView::SetRegister(&self, card, "python register", name, value);
+                    if (refused.rfind("unknown register", 0) == 0)
+                        return false;
+                    if (!refused.empty())
+                        throw std::runtime_error(refused);
+                    return true;
+                }
                 // A tool edit (TTD records it); refused in the recorded past: a script error
                 std::string refused;
                 const bool set = self.SetRegisterFromTool("python register", name, value, &refused);
                 if (!refused.empty())
                     throw std::runtime_error(refused);
                 return set;
-            }, "Set register value by name", py::arg("name"), py::arg("value"))
+            }, "Set register value by name", py::arg("name"), py::arg("value"), py::arg("cpu") = "")
 
             // Memory access: direct (non-mutating) reads so inspecting
             // memory never drives the ProfROM quadrant machine
-            .def("mem_read", [](Emulator& self, uint16_t addr) -> uint8_t {
+            // cpu "gs" / "ms": the sound card CPU's view (cpuview.h)
+            .def("mem_read", [](Emulator& self, uint16_t addr, const std::string& cpu) -> uint8_t {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    std::vector<uint8_t> byte;
+                    CpuView::Read(self.GetContext(), card, addr, 1, byte);
+                    return byte.empty() ? 0xFF : byte[0];
+                }
                 Memory* mem = self.GetMemory();
                 return mem ? mem->DirectReadFromZ80Memory(addr) : 0;
-            }, "Read byte from memory")
-            .def("mem_write", [](Emulator& self, uint16_t addr, uint8_t value) {
+            }, "Read byte from memory", py::arg("addr"), py::arg("cpu") = "")
+            .def("mem_write", [](Emulator& self, uint16_t addr, uint8_t value, const std::string& cpu) {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    const std::string refused = CpuView::Write(&self, card, "Python memory write", addr, {value});
+                    if (!refused.empty())
+                        throw std::runtime_error(refused);
+                    return;
+                }
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
                 self.EditMemoryFromToolOrThrow("Python memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
-            }, "Write byte to memory")
+            }, "Write byte to memory", py::arg("addr"), py::arg("value"), py::arg("cpu") = "")
             .def("mem_read_word", [](Emulator& self, uint16_t addr) -> uint16_t {
                 Memory* mem = self.GetMemory();
                 if (!mem) return 0;
@@ -2349,6 +2433,10 @@ namespace PythonBindings
             // TD-3 Phase 1: sparse non-zero block overview (same core source
             // as GET /memory/map and MCP inspect_state 'memory_map')
             .def("memory_map", [](Emulator& self, const std::string& viewName, int minRun, int maxBlocks) -> py::dict {
+                // view "gs" / "ms": the sound card CPU's four windows {cpu, windows: [{start, size, kind, page,
+                // offset}]} (cpuview.h)
+                if (viewName == "gs" || viewName == "ms")
+                    return StateNodeToPy(CpuView::Windows(self.GetContext(), PythonCpu(self, viewName))).cast<py::dict>();
                 Memory* mem = self.GetMemory();
                 EmulatorContext* ctx = self.GetContext();
                 py::dict result;
@@ -2385,7 +2473,7 @@ namespace PythonBindings
                 }
                 result["blocks"] = blocks;
                 return result;
-            }, "Sparse non-zero memory block overview (view: 'address'|'ram')",
+            }, "Sparse non-zero memory block overview (view: 'address'|'ram'; 'gs'|'ms': a sound card CPU's windows)",
                py::arg("view") = "address", py::arg("min_run") = 64, py::arg("max_blocks") = 48)
             .def("mem_hexdump", [](Emulator& self, uint16_t addr, int len) -> std::string {
                 Memory* mem = self.GetMemory();
@@ -2979,22 +3067,33 @@ namespace PythonBindings
             // Execution control
             // step / steps return how the run ended: {executed, stopped, breakpoint_id, address, access}
             // (stopped: a breakpoint ended it - an execution one before its instruction)
-            .def("step", [](Emulator& self, bool skipBreakpoints) {
+            // cpu="gs" / "ms": the sound card CPU's step (PythonCardStep): the machine runs until the card ends it
+            .def("step", [](Emulator& self, bool skipBreakpoints, const std::string& cpu) {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return PythonCardStep(self, card, "in", 1);
                 execution::script::Check(self, execution::Origin::Python);
                 self.RunSingleCPUCycle(skipBreakpoints);
                 const Emulator::BreakpointStop& stop = self.LastDirectStop();
                 return StepOutcome(self, (stop.hit && stop.kind == BreakpointHitKind::Execute) ? 0u : 1u);
-            }, "Execute single CPU instruction; returns {executed, stopped, breakpoint_id, address, access}",
-               py::arg("skip_breakpoints") = true)
-            .def("steps", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+            }, "Execute single CPU instruction; returns {executed, stopped, breakpoint_id, address, access}. cpu='gs' / "
+               "'ms': one instruction of the sound card CPU; returns {ok, stop, pc, sp, main_pc, main_sp, state}",
+               py::arg("skip_breakpoints") = true, py::arg("cpu") = "")
+            .def("steps", [](Emulator& self, unsigned count, bool skipBreakpoints, const std::string& cpu) {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return PythonCardStep(self, card, "in", count);
                 execution::script::Check(self, execution::Origin::Python);
                 return StepOutcome(self, self.RunNCPUCycles(count, skipBreakpoints));
-            }, "Execute N CPU instructions; returns {executed, stopped, breakpoint_id, address, access}",
-               py::arg("count"), py::arg("skip_breakpoints") = false)
-            .def("stepover", [](Emulator& self) {
+            }, "Execute N CPU instructions; returns {executed, stopped, breakpoint_id, address, access}. cpu='gs' / "
+               "'ms': N (1-10000) instructions of the sound card CPU",
+               py::arg("count"), py::arg("skip_breakpoints") = false, py::arg("cpu") = "")
+            .def("stepover", [](Emulator& self, const std::string& cpu) -> py::object {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return PythonCardStep(self, card, "over", 1);
                 execution::script::Check(self, execution::Origin::Python);
                 self.StepOver();
-            }, "Step over call instructions")
+                return py::none();
+            }, "Step over call instructions; cpu='gs' / 'ms': the sound card CPU's (returns its step's reply)",
+               py::arg("cpu") = "")
 
             // Frame stepping
             .def("run_frame", [](Emulator& self, bool skipBreakpoints) {
@@ -3896,10 +3995,23 @@ namespace PythonBindings
                  "Read a label table from RAM into a set (scanner=, page=, offset=, set=, policy=)")
 
             // Disassembly
-            .def("disasm", [](Emulator& self, int address, int count) -> py::list {
+            .def("disasm", [](Emulator& self, int address, int count, const std::string& cpu) -> py::list {
                 py::list result;
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) {
+                    return result;
+                }
+                // cpu "gs" / "ms": the sound card CPU's code, from its PC by default (cpuview.h)
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    uint16_t at = 0;
+                    CpuView::GetRegister(ctx, card, "pc", at);
+                    if (address >= 0)
+                        at = static_cast<uint16_t>(address);
+                    const StateNode listing = CpuView::Disasm(ctx, card, at, static_cast<size_t>(std::clamp(count < 1 ? 10 : count, 1, 100)));
+                    if (const StateNode* instructions = listing.find("instructions"))
+                        for (const StateNode& line : instructions->items)
+                            result.append(StateNodeToPy(line));
                     return result;
                 }
                 Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
@@ -3974,7 +4086,8 @@ namespace PythonBindings
                     addr += cmdLen;
                 }
                 return result;
-            }, py::arg("address") = -1, py::arg("count") = 10, "Disassemble code at address (default: PC)")
+            }, py::arg("address") = -1, py::arg("count") = 10, py::arg("cpu") = "",
+               "Disassemble code at address (default: PC; cpu 'gs' / 'ms': a sound card CPU's)")
             
             // Physical page disassembly
             .def("disasm_page", [](Emulator& self, const std::string& type, int page, int offset, int count) -> py::list {
@@ -6715,6 +6828,23 @@ namespace PythonBindings
                "(value), key (key, pressed); order first / last, from_frame, to_frame, limit, text",
                 py::arg("kind"));
 
+        emulatorClass.def("ttd_explain_frame", [](Emulator& self, py::object frame, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                if (!frame.is_none())
+                    options["frame"] = std::to_string(frame.cast<uint64_t>());
+                const ttd::TTDReply reply = TtdRunPy(self, "explain-frame", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "What one frame did (default: the current one): time split (isr / halt / code), routines by time, "
+               "interrupts, paging, ports per device, memory changed with its writers, screen and border, keys, "
+               "markers. kwargs: sections ('routines,memory'), limit, text",
+                py::arg("frame") = py::none());
+
         // ================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI/Lua:
         // step out, skip until, memory find, screen digest, beam, frame cost,
@@ -6776,7 +6906,9 @@ namespace PythonBindings
                py::arg("role") = "view", py::arg("cpu") = "gs");
         }
 
-        emulatorClass.def("step_out", [](Emulator& self) -> py::dict {
+        emulatorClass.def("step_out", [](Emulator& self, const std::string& cpu) -> py::dict {
+            if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                return PythonCardStep(self, card, "out", 1);
             py::dict d;
             try
             {
@@ -6795,7 +6927,8 @@ namespace PythonBindings
                 d["error"] = e.what();
             }
             return d;
-        }, "Step out of the current subroutine (emulation ends paused)")
+        }, "Step out of the current subroutine (emulation ends paused); cpu='gs' / 'ms': the sound card CPU's",
+           py::arg("cpu") = "")
 
         .def("skip_until", [](Emulator& self, py::object pcValue, unsigned maxTStates) -> py::dict {
             py::dict d;
@@ -7129,10 +7262,11 @@ namespace PythonBindings
                         if (pagePtr)
                         {
                             std::string sig = rom->CalculateSignature(pagePtr, 0x4000);
-                            // GetROMTitle carries the "Unknown ROM, <digest>"
-                            // fallback; role = core layout table (§5.2) - a
-                            // role/name mismatch is the wrong-ROM signal
-                            bank["name"] = rom->GetROMTitle(sig);
+                            // GetROMPageTitle carries the "Unknown ROM, <digest>"
+                            // fallback and names blank pages and copies; role =
+                            // core layout table (§5.2) - a role/name mismatch is
+                            // the wrong-ROM signal
+                            bank["name"] = rom->GetROMPageTitle(romPage);
                             bank["signature"] = sig;
                         }
                         bank["role"] = rom->GetROMPageRole(romPage);

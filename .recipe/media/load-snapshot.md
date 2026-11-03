@@ -61,11 +61,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/load" \
 # → {"status":"success", ...}
 ```
 
-Multipart upload (`-F "file=@game.sna"`) and MCP both work. Upload by bytes
-accepts only `.sna .z80 .szx .sp .snp .rzx` (others, `.spg` included, are
-rejected with "Unrecognized file extension"): for an `.spg` send a JSON `path` the emulator can read (`snapshot/load`
-with `{"path":...}`). `load_software` uploads a file it can read locally, so a local `.spg`
-is rejected that way: use `invoke_api` `POST /snapshot/load` with the path instead. An MCP example:
+Multipart upload (`-F "file=@game.sna"`) and MCP both work. Upload by bytes takes every snapshot format the core
+loads (`Emulator::SupportedSnapshotExtensions()`: `.sna .snx .z80 .szx .spg .nex .rzx`, plus `.sp .snp`), so
+`load_software` on a local `.spg` or `.nex` works too; disk and tape uploads follow the core's disk and tape lists
+the same way. A JSON `path` the emulator can read (`snapshot/load` with `{"path":...}`) skips the upload. An MCP example:
 
 ```bash
 curl -s -X POST http://localhost:8092/mcp -H 'Content-Type: application/json' -d '{

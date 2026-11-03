@@ -2,6 +2,8 @@
 #include <fstream>
 #include "automation.h"
 #include "common/filehelper.h"
+#include "../common/session_helper.h"
+#include "emulator/execution/scriptsession.h"
 
 // Include actual automation module headers for method access
 #if ENABLE_PYTHON_AUTOMATION
@@ -77,6 +79,8 @@ void InterpreterAPI::executePythonCode(const HttpRequestPtr& req,
     std::string errorMessage;
     std::string capturedOutput;
 
+    // The script acts in the sender's sessions: a client holding a machine drives it from its scripts too
+    const execution::script::BorrowedSessions borrowed(execution::Origin::Python, webapi_session::SessionsOfClient(req));
     bool success = python->executeCode(code, errorMessage, capturedOutput);
 
     Json::Value response;
@@ -182,6 +186,8 @@ void InterpreterAPI::executePythonFile(const HttpRequestPtr& req,
     // Execute
     std::string errorMessage;
     std::string capturedOutput;
+    // The script acts in the sender's sessions: a client holding a machine drives it from its scripts too
+    const execution::script::BorrowedSessions borrowed(execution::Origin::Python, webapi_session::SessionsOfClient(req));
     bool success = automation->getPython()->executeCode(code, errorMessage, capturedOutput);
 
     Json::Value response;
@@ -374,6 +380,8 @@ void InterpreterAPI::executeLuaCode(const HttpRequestPtr& req,
     std::string errorMessage;
     std::string capturedOutput;
 
+    // The script acts in the sender's sessions: a client holding a machine drives it from its scripts too
+    const execution::script::BorrowedSessions borrowed(execution::Origin::Lua, webapi_session::SessionsOfClient(req));
     bool success = lua->executeCode(code, errorMessage, capturedOutput);
 
     Json::Value response;
@@ -479,6 +487,8 @@ void InterpreterAPI::executeLuaFile(const HttpRequestPtr& req,
     // Execute
     std::string errorMessage;
     std::string capturedOutput;
+    // The script acts in the sender's sessions: a client holding a machine drives it from its scripts too
+    const execution::script::BorrowedSessions borrowed(execution::Origin::Lua, webapi_session::SessionsOfClient(req));
     bool success = automation->getLua()->executeCode(code, errorMessage, capturedOutput);
 
     Json::Value response;
