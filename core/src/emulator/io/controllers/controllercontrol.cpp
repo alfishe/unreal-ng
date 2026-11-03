@@ -8,6 +8,7 @@
 #include <cctype>
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/ports/deviceaccessnode.h"
 #include "emulator/state/statenodejson.h"
 
 namespace controllers
@@ -383,47 +384,7 @@ ControllerReply ControllerControl::Auto(const ControllerRequest& request)
         _manager->WatchPortReads(true);
     const DeviceAccessEvidence evidence = _manager->PortReads();
     ControllerReply reply;
-    StateNode watch = StateNode::Object();
-    watch["active"] = evidence.active;
-    watch["frames_observed"] = static_cast<uint64_t>(evidence.framesObserved);
-    watch["window"] = static_cast<uint64_t>(evidence.window);
-    // Per device of the slot registry and channel: what the machine's own decode says each access is
-    StateNode channels = StateNode::Array();
-    for (const DeviceAccessChannel& channel : evidence.channels)
-    {
-        if (channel.frames == 0)
-            continue;  // seen earlier, not in the window
-        StateNode entry = StateNode::Object();
-        entry["device"] = channel.device;
-        entry["channel"] = channel.channel;
-        entry["dir"] = channel.out ? "out" : "in";
-        entry["port"] = static_cast<uint64_t>(channel.port);
-        if (channel.input != slots::InputRole::None)
-            entry["input"] = InputRoleName(channel.input);
-        entry["frames"] = static_cast<uint64_t>(channel.frames);
-        entry["reads_per_frame"] = static_cast<double>(channel.perFrame);
-        if (channel.tested != 0)
-        {
-            // The bits the code tested after its reads (the sampled AND n / BIT b / shift into carry)
-            StateNode bits = StateNode::Array();
-            for (unsigned bit = 0; bit < 8; ++bit)
-                if ((channel.tested >> bit) & 1u)
-                    bits.push(static_cast<uint64_t>(bit));
-            entry["tested_bits"] = bits;
-        }
-        StateNode sites = StateNode::Array();
-        for (const DeviceAccessSite& site : channel.sites)
-        {
-            StateNode s = StateNode::Object();
-            s["pc"] = static_cast<uint64_t>(site.pc);
-            s["count"] = static_cast<uint64_t>(site.count);
-            sites.push(std::move(s));
-        }
-        entry["sites"] = sites;
-        channels.push(std::move(entry));
-    }
-    watch["channels"] = channels;
-    reply.body["evidence"] = watch;
+    reply.body["evidence"] = DeviceAccessEvidenceNode(evidence);
 #ifdef ENABLE_CONTROLLERS
     // The library's heuristic (mapping-and-profiles.md §6.1 step 2): what the Qt host would plug
     const controllers::AutoDecision decision = controllers::DecideAuto(evidence);
@@ -431,7 +392,14 @@ ControllerReply ControllerControl::Auto(const ControllerRequest& request)
     value["decisive"] = decision.decisive;
     value["keyboard"] = decision.keyboard;
     value["device"] = decision.device.empty() ? StateNode() : StateNode(decision.device);
-    value["connector"] = decision.connector.empty() ? StateNode() : StateNode(decision.connector);
+    // The machine's connector for the decisive reads (`kempston` on a Pentagon, `next.left` on a Next); a device
+    // with none (a Kempston mouse, the keyboard joysticks) is plugged on `auto`
+    std::string connector = decision.connector;
+    if (const int found = connector.empty() ? _manager->FindForInput(decision.input, decision.source) : -1; found >= 0)
+        connector = _manager->At(static_cast<size_t>(found)).id;
+    value["connector"] = connector.empty() ? StateNode() : StateNode(connector);
+    if (decision.input != slots::InputRole::None)
+        value["input"] = InputRoleName(decision.input);
     value["label"] = decision.label;
     value["reason"] = decision.reason;
     if (!decision.hint.empty())

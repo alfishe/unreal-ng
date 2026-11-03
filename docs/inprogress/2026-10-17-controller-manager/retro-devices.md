@@ -285,9 +285,11 @@ DeviceAccessEvidence { active, framesObserved, window: 50,
     each board's decode; the chip select; the seeded selection; sites; the window; every machine's keyboard and AY);
   - `HostInputMachine_Test.AccessWatch*` on a running Pentagon and a Next, a TurboSound Pentagon that selected R14
     before the watch, and the keyboard through every machine's real decoder.
-- Not done: the Next's board ports are `next.left` / `next.right`, so a `#1F` decision (`kempston`) on a Next names a
-  connector the Next lacks and the Qt client ignores it (`applyAuto`); a mapping of `kempston` to `next.left` there is
-  left.
+- **Connectors by input role.** A decision names the input role of its reads and the registry device that answered
+  them (`AutoDecision::input`, `source`); the machine finds its connector for them (`ControllerManager::FindForInput`):
+  `#1F` is `kempston` on a Pentagon, `next.left` on a Next, `#37` `next.right`, an AMX card's PIO its `amx` socket.
+- **The whole evidence** is the monitoring name `devices.access` on every plane (WebAPI
+  `GET /api/v1/monitor/devices.access`, the WebSocket topic, CLI / Python / Lua `monitor`, MCP `inspect_state`).
 
 ## 7. What the core must add
 

@@ -1393,13 +1393,26 @@ void HostControllers::applyAuto(const AutoDecision& chosen)
         return;
     }
     std::string connector = decision.connector;
-    if (!connector.empty())
+    if (connector.empty())
     {
-        if (manager->Find(connector) < 0)
-            return;  // the machine has no such connector: the default stays
+        // The machine's connector for the reads the decision rests on: `kempston` on a Pentagon, `next.left` on a
+        // Next; a fixed one carries the board's device (the Next's MD pad), which the profile then binds
+        if (const int found = manager->FindForInput(decision.input, decision.source); found >= 0)
+        {
+            const Connector fitted = manager->At(static_cast<size_t>(found));
+            connector = fitted.id;
+            if (fitted.fixed)
+                decision.device = RetroDeviceKindName(fitted.device);
+        }
     }
-    else
+    else if (manager->Find(connector) < 0)
     {
+        return;  // the machine has no such connector: the default stays
+    }
+    if (connector.empty())
+    {
+        // No connector of the machine answers those reads: plug the device where one takes it (the refusal names
+        // what is missing, such as a Kempston card on a bare 48K)
         ControllerRequest request{"plug", "auto", decision.device, {{"async", ""}}};
         if (!decision.option.empty())
             request.options[decision.option] = decision.optionValue;

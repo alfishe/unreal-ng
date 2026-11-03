@@ -133,6 +133,16 @@ public:
 
     /// What the watch saw (any thread)
     DeviceAccessEvidence Evidence() const;
+    /// Bumped at every start, stop and folded frame (any thread): a reader's cache key (`devices.access`)
+    uint64_t Revision() const
+    {
+        return _revision.load(std::memory_order_acquire);
+    }
+    /// The continuous watch as last requested (feature `deviceaccess`; any thread)
+    bool Continuous() const
+    {
+        return _continuousRequest.load(std::memory_order_acquire);
+    }
 
 private:
     static constexpr uint16_t kValueSelect = 256;  ///< a select access (Channel::Select / SelectIndexed OUT)
@@ -185,6 +195,7 @@ private:
     std::vector<std::array<uint8_t, kSlots>> _ringTested;
     uint32_t _frames = 0;
     std::atomic<bool> _active{false};
+    std::atomic<uint64_t> _revision{0};
 
     std::atomic<uint32_t> _windowRequest{0};  ///< frames of a requested window; kCloseWindow ends it
     std::atomic<bool> _continuousRequest{false};

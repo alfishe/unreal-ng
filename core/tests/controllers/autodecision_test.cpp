@@ -70,7 +70,9 @@ TEST(AutoDecision_Test, Decide_RolesRowsAndTheKeyboard)
         Evidence({ { .input = InputRole::KempstonJoystick, .device = "kempston-joystick" }, Row(4) }));
     ASSERT_TRUE(decision.decisive);
     EXPECT_EQ(decision.device, "kempston-joystick") << "the dedicated device beats the half-row";
-    EXPECT_EQ(decision.connector, "kempston");
+    EXPECT_EQ(decision.input, InputRole::KempstonJoystick) << "the machine's connector for #1F, not a name";
+    EXPECT_EQ(decision.source, "kempston-joystick");
+    EXPECT_TRUE(decision.connector.empty());
     EXPECT_NE(decision.reason.find("kempston-joystick #1F read in 50 of 50"), std::string::npos) << decision.reason;
 
     // A read no input role claims (a TR-DOS #1F, a DAC) is nothing
@@ -84,12 +86,13 @@ TEST(AutoDecision_Test, Decide_RolesRowsAndTheKeyboard)
     decision = DecideFromAccess(Evidence({ Row(1), Row(2), Row(5), Row(7) }));
     EXPECT_EQ(decision.device, "keys-joystick");
     EXPECT_EQ(decision.optionValue, "up:q,down:a,left:o,right:p,fire:space");
-    EXPECT_EQ(DecideFromAccess(Evidence({ { .input = InputRole::KempstonJoystick2 } })).connector, "next.right");
+    EXPECT_EQ(DecideFromAccess(Evidence({ { .input = InputRole::KempstonJoystick2 } })).input,
+              InputRole::KempstonJoystick2);
     EXPECT_EQ(DecideFromAccess(Evidence({ { .input = InputRole::FullerJoystick } })).device, "fuller-joystick");
     EXPECT_EQ(DecideFromAccess(Evidence({ { .input = InputRole::KempstonMouse } })).device, "kempston-mouse");
     decision = DecideFromAccess(Evidence({ { .input = InputRole::AmxMouse } }));
     EXPECT_EQ(decision.device, "amx-mouse");
-    EXPECT_EQ(decision.connector, "amx");
+    EXPECT_EQ(decision.input, InputRole::AmxMouse);
 
     // The ROM's key scan: every half-row, a hint and no plug
     decision = DecideFromAccess(Evidence({ Row(0), Row(1), Row(2), Row(3), Row(4), Row(5), Row(6), Row(7) }));
@@ -104,10 +107,10 @@ TEST(AutoDecision_Test, Decide_NextB2RowBitsAndAyR14)
     AutoDecision decision = DecideFromAccess(Evidence({ b2, { .input = InputRole::KempstonJoystick } }));
     ASSERT_TRUE(decision.decisive);
     EXPECT_EQ(decision.device, "md6-pad");
-    EXPECT_EQ(decision.connector, "next.left") << "NR #B2 beats #1F: a 6-button pad on the left";
+    EXPECT_EQ(decision.input, InputRole::KempstonJoystick) << "NR #B2 beats #1F: a 6-button pad on the left";
     EXPECT_NE(decision.reason.find("nextreg NR #B2 read in 50 of 50"), std::string::npos) << decision.reason;
     decision = DecideFromAccess(Evidence({ b2, { .input = InputRole::KempstonJoystick2 } }));
-    EXPECT_EQ(decision.connector, "next.right");
+    EXPECT_EQ(decision.input, InputRole::KempstonJoystick2);
     EXPECT_FALSE(DecideFromAccess(Evidence({ { .input = InputRole::NextReg, .index = 0xB1 } })).decisive)
         << "another NextREG decides nothing";
 

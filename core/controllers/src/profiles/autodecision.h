@@ -16,6 +16,10 @@
 
 #include "emulator/ports/deviceaccesswatch.h"
 
+// Qt defines `slots` as a macro; this header reaches Qt translation units and names slots::InputRole
+#pragma push_macro("slots")
+#undef slots
+
 namespace controllers
 {
 
@@ -25,7 +29,14 @@ struct AutoDecision
     bool keyboard = false;   ///< the program polls the whole keyboard: hint, not a plug
     std::string device;      ///< RetroDeviceKindName ("kempston-joystick", "sinclair-joystick", ...); "kempston-mouse",
                              ///< "amx-mouse" (a mouse: said, not plugged)
-    std::string connector;   ///< the connector it wants when it is a fixed one ("kempston", "next.right"); "" = auto
+    /// The input role of the decisive reads and the registry device that answered them ("kempston-joystick",
+    /// "zxbus.1"): the machine's connector for them is ControllerManager::FindForInput(input, source), so a #1F
+    /// decision lands on `kempston` on a Pentagon and on `next.left` on a Next. None for the keyboard joysticks
+    slots::InputRole input = slots::InputRole::None;
+    std::string source;
+    /// A connector named outright (a signature matcher may); "" = the machine's connector for `input`, else an
+    /// auto plug of `device`
+    std::string connector;
     std::string option;      ///< the plug option ("port"), with optionValue ("1")
     std::string optionValue;
     std::string label;       ///< "Kempston", "Sinclair 1"
@@ -67,3 +78,5 @@ std::shared_ptr<const ISignatureMatcher> GetSignatureMatcher();
 AutoDecision DecideAuto(const DeviceAccessEvidence& evidence, SignatureQuery query = {});
 
 }  // namespace controllers
+
+#pragma pop_macro("slots")

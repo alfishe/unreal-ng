@@ -28,6 +28,10 @@
 #include <vector>
 
 #include "controllertypes.h"
+// Qt defines `slots` as a macro; this header reaches Qt translation units and names slots::InputRole
+#pragma push_macro("slots")
+#undef slots
+#include "emulator/slots/slottypes.h"
 #include "emulator/io/controllers/ihapticfeed.h"
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
 #include "debugger/ttd/ttdinputjournal.h"
@@ -72,6 +76,11 @@ struct Connector
     OverlayOptions options;
     uint16_t mask = 0;  ///< keyboard joysticks and card sockets: the controls held (the others read their device)
     const void* owner = nullptr;  ///< the card that brought the connector (ICard); null for the machine's own
+    /// The input role of the port its device answers (the slot registry's claim: KempstonJoystick for `kempston` and
+    /// `next.left`, KempstonJoystick2 for `next.right`, FullerJoystick, AmxMouse); None for the keyboard joysticks
+    slots::InputRole input = slots::InputRole::None;
+    /// The registry device whose claim that is: the card's slot ("edge.1") for a card's socket, "" for the board's
+    std::string source;
 };
 
 class ControllerManager : public ttd::TTDSerializable
@@ -90,6 +99,9 @@ public:
     std::vector<Connector> Connectors() const;
     /// id, alias or kind:index (kempston:0, next-db9:1, keyboard-joystick:0), case-insensitive; -1 when none
     int Find(const std::string& selector) const;
+    /// The connector whose device answers reads of @p input: the one @p source brought (a card's slot, the device
+    /// access evidence's registry id) first, else the first of that role; -1 when the machine has none
+    int FindForInput(slots::InputRole input, const std::string& source = {}) const;
     /// Bumped on every plug, unplug and rebuild
     uint64_t Revision() const;
     /// endregion </Connectors>
@@ -268,3 +280,5 @@ private:
 };
 
 }  // namespace controllers
+
+#pragma pop_macro("slots")

@@ -232,12 +232,14 @@ void DeviceAccessWatch::Start()
     }
     _on = _index != nullptr;
     _active.store(_on, std::memory_order_release);
+    _revision.fetch_add(1, std::memory_order_release);
 }
 
 void DeviceAccessWatch::Stop()
 {
     _on = false;
     _active.store(false, std::memory_order_release);
+    _revision.fetch_add(1, std::memory_order_release);
 }
 
 void DeviceAccessWatch::RequestWindow(uint32_t frames)
@@ -434,6 +436,7 @@ void DeviceAccessWatch::EndFrame()
     _publishedDropped = _dropped;
     _frame.fill(0);
     _frameTested.fill(0);
+    _revision.fetch_add(1, std::memory_order_release);
 }
 
 namespace

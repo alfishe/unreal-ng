@@ -136,6 +136,22 @@ bool Journaled(const Connector& connector)
     return connector.kind == ConnectorKind::KeyboardJoystick || connector.kind == ConnectorKind::Fuller;
 }
 
+/// The input role of a card's socket: the claim its card declares for the port the socket's device answers
+slots::InputRole InputOf(ConnectorKind kind)
+{
+    switch (kind)
+    {
+        case ConnectorKind::Fuller:
+            return slots::InputRole::FullerJoystick;
+        case ConnectorKind::Amx:
+            return slots::InputRole::AmxMouse;
+        case ConnectorKind::Kempston:
+            return slots::InputRole::KempstonJoystick;
+        default:
+            return slots::InputRole::None;
+    }
+}
+
 Connector MakeConnector(const std::string& id, const char* alias, ConnectorKind kind, bool fixed, RetroDeviceKind device,
                         std::vector<RetroDeviceKind> accepts)
 {
@@ -174,13 +190,16 @@ void ControllerManager::Rebuild()
         // The Next's two DB9 connectors: the pad is part of the machine, its projection follows NR #05
         built.push_back(MakeConnector("next.left", "left", ConnectorKind::NextDb9, true, RetroDeviceKind::Md6Pad,
                                       {RetroDeviceKind::Md6Pad}));
+        built.back().input = slots::InputRole::KempstonJoystick;  // #1F
         built.push_back(MakeConnector("next.right", "right", ConnectorKind::NextDb9, true, RetroDeviceKind::Md6Pad,
                                       {RetroDeviceKind::Md6Pad}));
+        built.back().input = slots::InputRole::KempstonJoystick2;  // #37
     }
     else if (decoder && decoder->HasKempstonJoystick())
     {
         built.push_back(MakeConnector("kempston", "", ConnectorKind::Kempston, true, RetroDeviceKind::KempstonJoystick,
                                       {RetroDeviceKind::KempstonJoystick}));
+        built.back().input = slots::InputRole::KempstonJoystick;
     }
 
     // The +2 / +2A / +3 joystick sockets are wired to the keyboard rows
@@ -210,6 +229,8 @@ void ControllerManager::Rebuild()
                     id = socket.id + "." + std::to_string(n);
                 built.push_back(MakeConnector(id, "", socket.kind, true, socket.device, {socket.device}));
                 built.back().owner = card.get();
+                built.back().input = InputOf(socket.kind);
+                built.back().source = card->SlotId();
             }
         }
     }
@@ -280,6 +301,24 @@ int ControllerManager::Find(const std::string& selector) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
     return FindLocked(selector);
+}
+
+int ControllerManager::FindForInput(slots::InputRole input, const std::string& source) const
+{
+    if (input == slots::InputRole::None)
+        return -1;
+    std::lock_guard<std::mutex> lock(_mutex);
+    int first = -1;
+    for (size_t i = 0; i < _connectors.size(); i++)
+    {
+        if (_connectors[i].input != input)
+            continue;
+        if (!source.empty() && _connectors[i].source == source)
+            return static_cast<int>(i);
+        if (first < 0)
+            first = static_cast<int>(i);
+    }
+    return first;
 }
 
 int ControllerManager::FindLocked(const std::string& selector) const

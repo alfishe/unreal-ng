@@ -31,6 +31,7 @@
 #include "emulator/execution/companionregistry.h"
 #include "emulator/io/controllers/controllermanager.h"
 #include "emulator/io/controllers/controllertypes.h"
+#include "emulator/ports/deviceaccessnode.h"
 #include "emulator/mainloop.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
@@ -666,6 +667,25 @@ StateNode Controllers(Emulator& emulator)
     });
 }
 
+/// The device access watch's evidence (deviceaccesswatch.h): a new value at every folded frame while it counts
+StateNode DevicesAccess(Emulator& emulator)
+{
+    PortDecoder* decoder = emulator.GetContext()->pPortDecoder;
+    if (decoder == nullptr)
+    {
+        StateNode node = StateNode::Object();
+        node["available"] = false;
+        return node;
+    }
+    const DeviceAccessWatch& watch = decoder->GetAccessWatch();
+    return CachedValue("devices.access", emulator.GetId(), watch.Revision(), 5.0, [&watch] {
+        StateNode node = DeviceAccessEvidenceNode(watch.Evidence());
+        node["available"] = true;
+        node["continuous"] = watch.Continuous();
+        return node;
+    });
+}
+
 StateNode GameEvents(Emulator& emulator)
 {
     controllers::ControllerManager* manager = emulator.GetContext()->pControllerManager;
@@ -774,6 +794,16 @@ StateNode InstanceEntry(const std::string& id, size_t index, Emulator& emulator)
         entry["model"] = StateNode();
     for (const std::string& name : InstanceNames())
         entry[name] = ReadInstance(name, emulator);
+    // The access evidence holds every channel with its code sites: `all` carries how many, the name itself the list
+    StateNode& access = entry["devices.access"];
+    if (const StateNode* channels = access.find("channels"))
+    {
+        const auto count = static_cast<int64_t>(channels->items.size());
+        access["channel_count"] = count;
+        access.members.erase(std::remove_if(access.members.begin(), access.members.end(),
+                                            [](const auto& member) { return member.first == "channels"; }),
+                             access.members.end());
+    }
     return entry;
 }
 
@@ -792,7 +822,7 @@ const std::vector<std::string>& InstanceNames()
                                                    "recording.state", "debug.labels",     "ttd.status",
                                                    "debug.analyzers", "controllers.state", "debug.buffers",
                                                    "game.events",     "debug.watches",     "analysis.progress",
-                                                   "analysis.ready"};
+                                                   "analysis.ready",  "devices.access"};
     return names;
 }
 
@@ -842,6 +872,8 @@ StateNode ReadInstance(const std::string& name, Emulator& emulator)
         return Controllers(emulator);
     if (name == "game.events")
         return GameEvents(emulator);
+    if (name == "devices.access")
+        return DevicesAccess(emulator);
     if (name == "debug.watches")
         return Watches(emulator);
     if (name == "analysis.progress")
