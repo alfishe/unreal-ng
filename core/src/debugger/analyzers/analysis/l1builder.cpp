@@ -123,6 +123,7 @@ struct Node
     uint8_t length = 1;
     const OpInfo* op = nullptr;
     bool smc = false;
+    bool rerunCheck = false;  ///< a byte of it was written after it ran: its next run clears UseAcc::overwritten
 
     uint64_t exec = 0;
     uint64_t tstates = 0;
@@ -487,6 +488,14 @@ struct UseAcc
     uint32_t writes = 0;
     PhysKey origin = 0xFFFFFFFFu;  ///< the byte a block copy brought here (the first source of a chain); none: kNoKey
     uint16_t originZ80 = 0;
+    uint16_t memFromZ80 = 0;
+    /// The memory byte a register store copied here (LD A,(table) / LD (list),A): a pointer word stored into a list
+    /// and used from there still names the table it was read from. Any other write forgets it (kNoKey: none)
+    PhysKey memFrom = 0xFFFFFFFFu;
+    bool ran = false;  ///< executed already (opcode or operand): a write from now on is self-modification (use::kSmc)
+    bool overwritten = false;  ///< written after it ran (use::kSmc), and no run after any such write yet
+    bool patched = false;      ///< ran again after a write after its run: a patch (never ByteUse::overlaid)
+    bool memFromPopped = false;  ///< memFrom is a stack slot a POP read as memory (an SP walk's word)
 };
 
 /// Where the value of an 8-bit register came from (the pointer provenance: kept until the register is overwritten)
@@ -502,6 +511,12 @@ struct Origin
     /// index (IndexUse), whatever the kind says of pointers
     PhysKey index = kNoKey;
     uint16_t indexZ80 = 0;
+    /// memory: the byte this one was copied from (a register loaded from a table, stored into a list, loaded back
+    /// from it): the word a pointer came from before it went through memory
+    PhysKey via = kNoKey;
+    uint16_t viaZ80 = 0;
+    bool popped = false;     ///< memory: a stack slot a POP read as memory (an SP walk), not a register's push
+    bool viaPopped = false;  ///< via is such a slot
 };
 constexpr uint8_t kOriginImm16Lo = 1;
 constexpr uint8_t kOriginImm16Hi = 2;
@@ -554,6 +569,8 @@ struct PointerAcc
 {
     PointerUse use;
     bool seen = false;
+    bool popped = false;  ///< Word: used after a POP read it from a slot as memory
+    bool loaded = false;  ///< Word: used after any other load (LD E,(HL) / LD D,(HL), LD rr,(nn), ...)
 };
 
 /// An IndexUse being folded
@@ -603,6 +620,33 @@ struct L1Builder::Impl
 
     // Per physical byte: what the code did with it
     std::vector<std::unique_ptr<UseAcc[]>> usePages;
+    /// First runs of written bytes (CodeArrival before the per-writer merge in Build)
+    struct ArrivalAcc
+    {
+        uint32_t node = kNone;
+        uint32_t prev = kNone;
+        uint32_t writer = kNone;
+        uint32_t prevWriter = kNone;  ///< kNone: the instruction before was never written
+        uint64_t frame = 0;
+        uint64_t now = 0;
+        uint32_t tInFrame = 0;
+        uint16_t lo = 0;
+        uint16_t hi = 0;
+    };
+    std::vector<ArrivalAcc> arrivalAccs;
+    /// (writer, physical key of the first byte of its run) of every arrival so far: one each (a 128 K stage written to
+    /// the same Z80 address in another page is another run)
+    std::set<uint64_t> arrivalRuns;
+    /// (writer, page, first byte) -> the last byte of each run found so far: a first run inside one is no new arrival,
+    /// told before the run is scanned again
+    std::map<uint64_t, uint16_t> arrivalSpans;
+    static uint64_t SpanKey(uint32_t writer, uint16_t page, uint16_t z80)
+    {
+        return (static_cast<uint64_t>(writer) << 32) | (static_cast<uint64_t>(page) << 16) | z80;
+    }
+    std::vector<ValueFlow::Access> accessSpill;  ///< the accesses of an instruction with more than kMaxEvents
+    uint32_t tInFrame = 0;  ///< of the instruction starting now
+    static constexpr size_t kMaxArrivalAccs = 65536;
     uint64_t firstFrameSeen = 0;
     bool frameBaseSet = false;
     // Pointer provenance of the 8-bit registers, and the pointer uses it found
@@ -610,6 +654,11 @@ struct L1Builder::Impl
     Origin shadowOrigins[6];  ///< B', C', D', E', H', L' (EXX swaps them with origins[0..5])
     std::vector<PointerAcc> ptrs;
     std::unordered_map<uint16_t, Origin> stackOrigins;  ///< stack slot -> the provenance a PUSH left there
+    /// The stack pointer the replay began with, and the one the last LD SP (nn / HL / IX / IY / (nn)) set: a POP from a
+    /// slot nothing pushed reads memory only in an SP walk such an LD SP began (spLoaded)
+    uint16_t startSp = 0;
+    uint16_t walkBase = 0;
+    bool spLoaded = false;
     /// Value provenance: the source bytes of what was drawn to the screen
     ValueFlow valueFlow;
     int32_t interruptPush = -1;  ///< the stack slot (low byte) an interrupt pushed to before this start (-1: none)
@@ -637,7 +686,13 @@ struct L1Builder::Impl
         PhysKey dstKey = 0;
     };
     std::map<std::tuple<uint32_t, uint16_t, uint16_t, uint32_t, int>, CopySeen> copyRuns;
-    static constexpr size_t kMaxCopies = 65536;  // a back buffer copied a row at a time is hundreds of distinct runs
+    std::map<uint32_t, size_t> copyRunsOf;  ///< distinct runs kept per copier (its first node)
+    // A back buffer copied a row at a time is tens of thousands of distinct runs: one copier keeps at most
+    // kMaxCopiesOne, all of them kMaxCopies, and a copier always has room for its first kCopyReserve (a template
+    // copier first seen after two blitters filled the list still reaches L1)
+    static constexpr size_t kMaxCopies = 131072;
+    static constexpr size_t kMaxCopiesOne = 32768;
+    static constexpr size_t kCopyReserve = 1024;
 
     void Record(const CopyRun& run)
     {
@@ -647,8 +702,15 @@ struct L1Builder::Impl
             const auto it = copyRuns.find(key);
             if (it != copyRuns.end())
                 ++it->second.count;
-            else if (copyRuns.size() < kMaxCopies)
-                copyRuns.emplace(key, CopySeen{1, run.srcKey, run.dstKey});
+            else
+            {
+                size_t& mine = copyRunsOf[run.node];
+                if (mine < kMaxCopiesOne && (copyRuns.size() < kMaxCopies || mine < kCopyReserve))
+                {
+                    copyRuns.emplace(key, CopySeen{1, run.srcKey, run.dstKey});
+                    ++mine;
+                }
+            }
         }
     }
 
@@ -729,6 +791,10 @@ struct L1Builder::Impl
         c.dstKey = MakeKey(pageOf(dst), dst);
     }
     std::unordered_map<PhysKey, uint32_t, SaltedHash> wordPtrs;
+    /// Bytes holding the memory byte their value was copied from through a register (UseAcc::memFrom): at most
+    /// kMaxMemOrigins at a time
+    size_t memOriginCount = 0;
+    static constexpr size_t kMaxMemOrigins = 1u << 16;
     /// (selector, node) -> the index use, kMaxIndexes at most
     std::unordered_map<uint64_t, IndexAcc, SaltedHash> indexUses;
 
@@ -784,6 +850,66 @@ struct L1Builder::Impl
         dataPages[page] = 1;
     }
 
+    const UseAcc* FindUse(uint16_t page, uint16_t address) const
+    {
+        return page < usePages.size() && usePages[page] ? &usePages[page][address & 0x3FFF] : nullptr;
+    }
+
+    /// The first run of an instruction whose opcode the replay wrote before: a candidate arrival, unless the one
+    /// before was written by the same instruction (running on through one block) or the run of bytes its writer
+    /// left around it arrived already (the code came back from a call into code written elsewhere)
+    void NoteArrival(uint32_t current, uint32_t prev, uint16_t page, uint16_t pc, uint64_t now, uint64_t frame)
+    {
+        if (nodes[current].exec != 0 || arrivalAccs.size() >= kMaxArrivalAccs)
+            return;
+        const UseAcc* acc = FindUse(page, pc);
+        if (acc == nullptr || acc->writes == 0)
+            return;
+        ArrivalAcc a;
+        a.node = current;
+        a.prev = prev;
+        a.writer = acc->lastWriter;
+        if (prev != kNone)
+            if (const UseAcc* before = FindUse(KeyPage(nodes[prev].key), nodes[prev].z80); before && before->writes != 0)
+            {
+                if (before->lastWriter == acc->lastWriter)
+                    return;
+                a.prevWriter = before->lastWriter;
+            }
+        const uint32_t writer = acc->lastWriter;
+        // Inside a run of this writer found before (in this page): no new arrival, and no scan of the run again
+        {
+            const uint64_t probe = SpanKey(writer, page, pc);
+            auto it = arrivalSpans.upper_bound(probe);
+            if (it != arrivalSpans.begin())
+            {
+                --it;
+                if ((it->first >> 16) == (probe >> 16) && pc <= it->second)
+                    return;
+            }
+        }
+        const auto written = [this, writer](uint16_t address) {
+            const UseAcc* u = FindUse(pageOf(address), address);
+            return u != nullptr && u->writes != 0 && u->lastWriter == writer;
+        };
+        uint16_t lo = pc;
+        while (lo != 0 && written(static_cast<uint16_t>(lo - 1)))
+            --lo;
+        uint16_t hi = pc;
+        while (hi != 0xFFFF && written(static_cast<uint16_t>(hi + 1)))
+            ++hi;
+        if ((lo >> 14) == (pc >> 14) && (hi >> 14) == (pc >> 14))
+            arrivalSpans.emplace(SpanKey(writer, page, lo), hi);  // a run inside pc's bank: one page
+        if (!arrivalRuns.insert(static_cast<uint64_t>(writer) << 32 | MakeKey(pageOf(lo), lo)).second)
+            return;
+        a.frame = frame;
+        a.now = now;
+        a.tInFrame = tInFrame;
+        a.lo = lo;
+        a.hi = hi;
+        arrivalAccs.push_back(a);
+    }
+
     UseAcc& UseOf(uint16_t page, uint16_t address)
     {
         if (page >= usePages.size())
@@ -795,6 +921,29 @@ struct L1Builder::Impl
     }
 
     /// One data or stack access of the pending instruction
+    /// A tool edit's write (L1Builder::OnEditWrite): a plain data write of the pending instruction
+    void NoteEditWrite(uint16_t address, uint8_t value)
+    {
+        if (!pending.active)
+            return;
+        static const OpInfo kEditOp{};  // no memory form: neither a push nor a block move
+        const uint16_t page = pageOf(address);
+        NoteDataPage(page);
+        NoteUse(page, address, false, value, pending.node, kEditOp, pending.frame, false);
+        AddInterval(nodes[pending.node].writes, MakeKey(page, address), address);
+        valueFlow.Forget(MakeKey(page, address));  // its own source now, not the byte a copy brought before
+    }
+
+    /// A write to @p u: the byte no longer holds a copy of the memory byte a register store put there
+    void ForgetMemFrom(UseAcc& u)
+    {
+        if (u.memFrom == kNoKey)
+            return;
+        u.memFrom = kNoKey;
+        u.memFromPopped = false;
+        --memOriginCount;
+    }
+
     void NoteUse(uint16_t page, uint16_t address, bool read, uint8_t value, uint32_t node, const OpInfo& op,
                  uint64_t frame, bool word)
     {
@@ -803,6 +952,23 @@ struct L1Builder::Impl
         if (u.flags == 0 && u.reads == 0 && u.writes == 0)
             u.firstFrame = rel;
         u.lastFrame = rel;
+        if (!read)
+            ForgetMemFrom(u);  // any write: a data write, a push, a tool edit (a store sets it again after this)
+        if (!read && u.ran)
+        {
+            u.flags |= use::kSmc;
+            if (!u.overwritten && !u.patched)
+            {
+                u.overwritten = true;
+                // The instructions this byte belongs to (it may be an operand): their next run is a patch's run
+                for (uint16_t k = 0; k < 4 && k <= (address & 0x3FFF); ++k)
+                {
+                    const uint32_t at = FindNode(MakeKey(page, static_cast<uint16_t>(address - k)));
+                    if (at != kNone && nodes[at].length > k)
+                        nodes[at].rerunCheck = true;
+                }
+            }
+        }
         if (op.mem == MemForm::Stack)
         {
             u.flags |= read ? use::kStackRead : use::kStackWrite;
@@ -944,18 +1110,99 @@ struct L1Builder::Impl
         else if (hi.kind == kOriginMemory && lo.kind == kOriginMemory &&
                  static_cast<uint16_t>(lo.value + 1) == hi.value && SamePage(lo.key, hi.key))
         {
-            auto [it, added] = wordPtrs.emplace(lo.key, static_cast<uint32_t>(ptrs.size()));
-            if (added)
-            {
-                PointerAcc& acc = NewPointer(PointerForm::Word, lo.key, lo.value, static_cast<uint8_t>(pair));
-                acc.use.minValue = acc.use.maxValue = value;
-            }
-            PointerAcc& acc = ptrs[it->second];
-            acc.use.value = value;
-            acc.use.minValue = std::min(acc.use.minValue, value);
-            acc.use.maxValue = std::max(acc.use.maxValue, value);
-            CountPointer(acc, static_cast<int32_t>(address) - static_cast<int32_t>(value), pc, code);
+            WordPointer(lo.key, lo.value, pair, address, value, pc, code, lo.popped && hi.popped);
+            // The word was copied there from another one (a draw list filled from a sprite table): that one is a
+            // pointer as well
+            if (hi.via != kNoKey && lo.via != kNoKey && lo.via != lo.key &&
+                static_cast<uint16_t>(lo.viaZ80 + 1) == hi.viaZ80 && SamePage(lo.via, hi.via))
+                WordPointer(lo.via, lo.viaZ80, pair, address, value, pc, code, lo.viaPopped && hi.viaPopped);
         }
+    }
+
+    /// @p popped: the word's bytes came from a POP that read a slot as memory (an SP walk)
+    void WordPointer(PhysKey key, uint16_t z80, int pair, uint16_t address, uint16_t value, uint16_t pc, bool code,
+                     bool popped)
+    {
+        auto [it, added] = wordPtrs.emplace(key, static_cast<uint32_t>(ptrs.size()));
+        if (added)
+        {
+            PointerAcc& acc = NewPointer(PointerForm::Word, key, z80, static_cast<uint8_t>(pair));
+            acc.use.minValue = acc.use.maxValue = value;
+        }
+        PointerAcc& acc = ptrs[it->second];
+        acc.popped = acc.popped || popped;
+        acc.loaded = acc.loaded || !popped;
+        acc.use.value = value;
+        acc.use.minValue = std::min(acc.use.minValue, value);
+        acc.use.maxValue = std::max(acc.use.maxValue, value);
+        CountPointer(acc, static_cast<int32_t>(address) - static_cast<int32_t>(value), pc, code);
+    }
+
+    /// A memory origin for a byte loaded from @p key at @p z80, with the byte it was copied from, if any
+    Origin Loaded(PhysKey key, uint16_t z80, bool index) const
+    {
+        Origin o{kOriginMemory, kNone, z80, key};
+        if (index)
+        {
+            o.index = key;
+            o.indexZ80 = z80;
+        }
+        if (memOriginCount != 0)
+            if (const UseAcc* u = FindUse(KeyPage(key), KeyOffset(key)); u != nullptr && u->memFrom != kNoKey)
+            {
+                o.via = u->memFrom;
+                o.viaZ80 = u->memFromZ80;
+                o.viaPopped = u->memFromPopped;
+            }
+        return o;
+    }
+
+    /// A store of a register's byte with provenance @p o into @p key: remember the memory byte it came from
+    void Stored(PhysKey key, const Origin& o)
+    {
+        const PhysKey from = o.via != kNoKey ? o.via : o.kind == kOriginMemory ? o.key : kNoKey;
+        if (from == kNoKey)
+            return;
+        UseAcc& u = UseOf(KeyPage(key), KeyOffset(key));
+        if (u.memFrom == kNoKey)
+        {
+            if (memOriginCount >= kMaxMemOrigins)
+                return;
+            ++memOriginCount;
+        }
+        u.memFrom = from;
+        u.memFromZ80 = o.via != kNoKey ? o.viaZ80 : o.value;
+        u.memFromPopped = o.via != kNoKey ? o.viaPopped : o.popped;
+    }
+
+    /// A plain store (LD (HL),r / LD (nn),rr / LD (IX+d),r): what each written byte was copied from
+    void StoreOrigins(const OpInfo& op, int writes, const PhysKey* writeKey)
+    {
+        if (writes == 0 || op.cls != OpClass::Load || !op.memWrite || op.memRead || op.mem == MemForm::Stack ||
+            op.mem == MemForm::Block)
+            return;
+        uint16_t src = static_cast<uint16_t>(op.regsRead & ~reg::kF);
+        const int address = memPairOf(op.mem);
+        if (address >= 0)
+            src = static_cast<uint16_t>(src & ~kPairMask[address]);
+        if (writes == 2)
+        {
+            const int pair = PairOfMask(src);
+            if (pair < 0)
+                return;
+            Stored(writeKey[0], origins[2 * pair + 1]);
+            Stored(writeKey[1], origins[2 * pair]);
+        }
+        else if (SingleBit(src) && OriginSlot(src) >= 0)
+            Stored(writeKey[0], origins[OriginSlot(src)]);
+    }
+
+    /// A stack slot nothing pushed in the replay is memory an SP walk reads: an LD SP in the replay set the stack
+    /// pointer, and the slot is no frame pushed before the replay (at or above the stack pointer the replay began
+    /// with, while the walk began at or below it: the stack restored or unwound, not a table)
+    bool WalkedSlot(uint16_t address) const
+    {
+        return spLoaded && !(address >= startSp && walkBase <= startSp);
     }
 
     /// The provenance after the pending instruction: what it loaded into which register. @p stackRead: the two
@@ -998,8 +1245,21 @@ struct L1Builder::Impl
                 const int pair = PairOfMask(op.loadDest);
                 if (pair <= 4)
                 {
-                    origins[2 * pair + 1] = slot(stackRead[0]);
-                    origins[2 * pair] = slot(stackRead[1]);
+                    // A slot no PUSH, CALL or interrupt wrote in the replay holds memory when SP walks a table (LD SP,
+                    // list / POP HL: a blit's address list): the POP reads the word there. Not a slot pushed before
+                    // the replay began (a recording that starts inside a routine pops its saved registers)
+                    const auto popped = [&](uint16_t address) {
+                        const auto it = stackOrigins.find(address);
+                        if (it != stackOrigins.end())
+                            return it->second;
+                        if (!WalkedSlot(address))
+                            return Origin{};
+                        Origin o{kOriginMemory, kNone, address, MakeKey(pageOf(address), address)};
+                        o.popped = true;
+                        return o;
+                    };
+                    origins[2 * pair + 1] = popped(stackRead[0]);
+                    origins[2 * pair] = popped(stackRead[1]);
                     return;
                 }
             }
@@ -1055,14 +1315,13 @@ struct L1Builder::Impl
             const int pair = PairOfMask(op.loadDest);
             if (pair >= 0 && reads >= 2)
             {
-                origins[2 * pair + 1] = Origin{kOriginMemory, kNone, readZ80[0], readKey[0]};
-                origins[2 * pair] = Origin{kOriginMemory, kNone, readZ80[1], readKey[1]};
+                origins[2 * pair + 1] = Loaded(readKey[0], readZ80[0], false);
+                origins[2 * pair] = Loaded(readKey[1], readZ80[1], false);
                 return;
             }
             if (SingleBit(op.loadDest) && OriginSlot(op.loadDest) >= 0)
             {
-                origins[OriginSlot(op.loadDest)] =
-                    Origin{kOriginMemory, kNone, readZ80[0], readKey[0], readKey[0], readZ80[0]};
+                origins[OriginSlot(op.loadDest)] = Loaded(readKey[0], readZ80[0], true);
                 return;
             }
         }
@@ -1438,6 +1697,26 @@ struct L1Builder::Impl
             std::memcpy(n.bytes, b, 4);
         }
 
+        if (n.exec == 0)
+            for (int i = 0; i < len; ++i)
+            {
+                const auto z80 = static_cast<uint16_t>(n.z80 + i);
+                UseOf(pageOf(z80), z80).ran = true;
+            }
+        if (n.rerunCheck)
+        {
+            n.rerunCheck = false;  // run again after a write into it: those bytes were patched, not overlaid
+            for (int i = 0; i < len; ++i)
+            {
+                const auto z80 = static_cast<uint16_t>(n.z80 + i);
+                UseAcc& u = UseOf(pageOf(z80), z80);
+                if (u.overwritten)
+                {
+                    u.overwritten = false;
+                    u.patched = true;  // for good: a later write and no run after it before the end is still a patch
+                }
+            }
+        }
         ++n.exec;
         ++instructions;
         const uint64_t dt = now >= p.tStart ? now - p.tStart : 0;
@@ -1473,6 +1752,8 @@ struct L1Builder::Impl
         uint16_t stackRead[2] = {0, 0}, stackWrite[2] = {0, 0};
         uint16_t readZ80[2] = {0, 0};
         PhysKey readKey[2] = {0, 0};
+        int writes = 0;
+        PhysKey writeKey[2] = {0, 0};
         bool ptrRead = false, ptrWrite = false;
         uint16_t ptrReadAddress = 0, ptrWriteAddress = 0;
         for (int i = dataStart; i < count; ++i)
@@ -1506,6 +1787,8 @@ struct L1Builder::Impl
                     readKey[reads] = MakeKey(page, e.address);
                     ++reads;
                 }
+                if (!read && writes < 2)
+                    writeKey[writes++] = MakeKey(page, e.address);  // NoteUse forgot what it held a copy of
                 if (read && !ptrRead)
                 {
                     ptrRead = true;
@@ -1574,7 +1857,13 @@ struct L1Builder::Impl
 
         // Value provenance
         {
-            ValueFlow::Access accesses[L1Builder::kMaxEvents];
+            ValueFlow::Access local[L1Builder::kMaxEvents];
+            ValueFlow::Access* accesses = local;
+            if (count > L1Builder::kMaxEvents)
+            {
+                accessSpill.resize(static_cast<size_t>(count));
+                accesses = accessSpill.data();
+            }
             int accessCount = 0;
             for (int i = dataStart; i < count; ++i)
             {
@@ -1626,7 +1915,10 @@ struct L1Builder::Impl
         if (op.mem == MemForm::Block)
         {
             if (ptrRead)
+            {
                 PointerAccess(2, ptrReadAddress, p.regs.hl, p.pc, false);
+                IndexAccess(2, ptrReadAddress, p.node);  // a tile copied from base + 8 x a map byte
+            }
             if (ptrWrite)
                 PointerAccess(op.memRead ? 1 : 2, ptrWriteAddress, op.memRead ? p.regs.de : p.regs.hl, p.pc, false);
         }
@@ -1643,8 +1935,15 @@ struct L1Builder::Impl
             const int pair = (op.regsRead & reg::kIX) != 0 ? 3 : (op.regsRead & reg::kIY) != 0 ? 4 : 2;
             PointerAccess(pair, nextPc, static_cast<uint16_t>(RegValue(p.regs, pair)), p.pc, true);
         }
+        StoreOrigins(op, writes, writeKey);
         DefineOrigins(op, b, p.node, reads, readZ80, readKey, stackReads, stackRead, stackWrites, stackWrite, nextPc,
                       p.pc);
+        // LD SP,nn / LD SP,HL / LD SP,IX / LD SP,(nn): where an SP walk begins (not PUSH / POP / CALL / RET / INC SP)
+        if ((op.regsWritten & reg::kSP) != 0 && op.mem != MemForm::Stack && op.cls != OpClass::IncDec)
+        {
+            spLoaded = true;
+            walkBase = after.sp;
+        }
         if (op.cls == OpClass::Block && op.mem == MemForm::Block && op.memRead && op.memWrite && ptrRead && ptrWrite)
             NoteCopy(p.node, ptrReadAddress, ptrWriteAddress);
 
@@ -1989,6 +2288,7 @@ struct L1Builder::Impl
             return true;  // the HALT repeating: an idle fetch, its time goes to the HALT
 
         const uint32_t current = GetNode(page, pc);
+        const uint32_t prev = pending.active ? pending.node : kNone;
         uint32_t succNode = current;
         uint16_t nextPc = pc;
         if (interrupted)
@@ -2008,11 +2308,13 @@ struct L1Builder::Impl
             Finish(succNode, nextPc, after, now, events, count);
             interruptPush = -1;
         }
+        NoteArrival(current, prev, page, pc, now, frame);
         if (first)
         {
             nodes[current].entryKinds |= entry::kRoot;
             first = false;
             firstFrameSeen = frame;
+            startSp = regs.sp;
         }
         if (interrupted)
         {
@@ -2048,14 +2350,22 @@ L1Builder::L1Builder(PageOf pageOf, uint64_t salt)
 L1Builder::~L1Builder() = default;
 
 void L1Builder::OnStart(uint16_t pc, uint16_t page, const Regs& regs, uint64_t now, uint64_t frame, bool halted,
-                        bool interrupted, bool nmi, uint16_t returnAddress)
+                        bool interrupted, bool nmi, uint16_t returnAddress, uint32_t tInFrame)
 {
-    if (_impl->OnStart(pc, page, regs, now, frame, halted, interrupted, nmi, returnAddress, _events, _eventCount))
+    _impl->tInFrame = tInFrame;
+    if (_impl->OnStart(pc, page, regs, now, frame, halted, interrupted, nmi, returnAddress, Events(), _eventCount))
     {
         _eventCount = std::min(_eventCount, 1);  // keep the HALT's own fetch, drop the idle one
+        _spill.clear();
         return;
     }
     _eventCount = 0;
+    _spill.clear();
+}
+
+void L1Builder::OnEditWrite(uint16_t address, uint8_t value)
+{
+    _impl->NoteEditWrite(address, value);
 }
 
 void L1Builder::Flush(const Regs& regs, uint64_t now)
@@ -2065,9 +2375,10 @@ void L1Builder::Flush(const Regs& regs, uint64_t now)
         return;
     const uint16_t next = regs.pc;
     const uint32_t succNode = impl.GetNode(impl.pageOf(next), next);
-    impl.Finish(succNode, next, regs, now, _events, _eventCount);
+    impl.Finish(succNode, next, regs, now, Events(), _eventCount);
     impl.pending.active = false;
     _eventCount = 0;
+    _spill.clear();
 }
 
 uint64_t L1Builder::Instructions() const
@@ -2570,17 +2881,26 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
                 const size_t n = it != acc.offsetsByBase.end() ? it->second.size() : 0;
                 pattern.offsetsAtBase.push_back(static_cast<uint8_t>(std::min<size_t>(n, 255)));
             }
-        // The step: the most common distance between consecutive bases (the smallest of equals)
-        std::map<int32_t, uint32_t> gaps;
-        for (size_t i = 1; i < pattern.bases.size(); ++i)
-            ++gaps[static_cast<int32_t>(pattern.bases[i]) - static_cast<int32_t>(pattern.bases[i - 1])];
+        // The step: the lattice period, the distance d that most bases repeat at (base + d is a base too; the
+        // smallest of equals). Not the most common gap between neighbours: a walk that also restarts inside its
+        // records (bases at 16k and 16k + 2) has gaps 2 and 14 as often as each other, and a period of 16
+        std::set<uint16_t> baseSet(pattern.bases.begin(), pattern.bases.end());
+        std::set<int32_t> candidates;
+        for (size_t i = 0; i < pattern.bases.size(); ++i)
+            for (size_t j = i + 1; j < pattern.bases.size(); ++j)
+                candidates.insert(static_cast<int32_t>(pattern.bases[j]) - static_cast<int32_t>(pattern.bases[i]));
         uint32_t best = 0;
-        for (const auto& [gap, times] : gaps)
+        for (const int32_t d : candidates)
+        {
+            uint32_t times = 0;
+            for (const uint16_t base : pattern.bases)
+                times += static_cast<uint32_t>(base + d <= 0xFFFF && baseSet.count(static_cast<uint16_t>(base + d)));
             if (times > best)
             {
                 best = times;
-                pattern.step = gap;
+                pattern.step = d;
             }
+        }
         out.patterns.push_back(std::move(pattern));
     }
 
@@ -2661,9 +2981,23 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
         return std::make_pair(a.selector, a.instruction) < std::make_pair(b.selector, b.instruction);
     });
 
-    // Pointer uses, sorted by form and origin
+    // Pointer uses, sorted by form and origin. A word in the stack itself is no pointer in memory: one only POPs took
+    // (a walk over slots a PUSH, CALL or interrupt wrote in the replay: the stack the code ran on), or one a register
+    // load read from slots that were pushed and popped (a return address read through HL). A buffer a PUSH only
+    // cleared (LD SP,end / PUSH DE ...) and the code filled with pointers keeps them
+    const auto inStack = [this](const PointerAcc& acc) {
+        if (acc.use.form != PointerForm::Word)
+            return false;
+        uint16_t flags = 0;
+        for (const PhysKey key : {acc.use.origin, static_cast<PhysKey>(acc.use.origin + 1)})
+            if (const UseAcc* u = FindUse(KeyPage(key), KeyOffset(key)))
+                flags = static_cast<uint16_t>(flags | u->flags);
+        if ((flags & use::kStackWrite) == 0)
+            return false;
+        return (acc.popped && !acc.loaded) || (flags & use::kStackRead) != 0;
+    };
     for (const PointerAcc& acc : ptrs)
-        if (acc.seen)
+        if (acc.seen && !inStack(acc))
             out.pointers.push_back(acc.use);
     std::sort(out.pointers.begin(), out.pointers.end(), [](const PointerUse& a, const PointerUse& b) {
         return std::make_pair(static_cast<int>(a.form), a.origin) < std::make_pair(static_cast<int>(b.form), b.origin);
@@ -2707,6 +3041,7 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
                     u.lastFrame = a.lastFrame;
                     u.reads = a.reads;
                     u.writes = a.writes;
+                    u.overlaid = a.overwritten;
                 }
             }
             out.bytePages.push_back(std::move(bp));
@@ -2728,7 +3063,7 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
                 if (b == nullptr)
                     continue;
                 b->flags |= i == 0 ? use::kOpcode : use::kOperand;
-                if ((b->flags & use::kWrite) != 0 || n.smc)
+                if (n.smc)
                     b->flags |= use::kSmc;
             }
         }
@@ -2750,6 +3085,35 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
     pages.erase(std::unique(pages.begin(), pages.end()), pages.end());
     for (const uint16_t page : pages)
         out.pageNames.emplace_back(page, pageName ? pageName(page) : std::to_string(page));
+
+    // Arrivals: one per writer routine (a depacker's literal and match copies are one writer)
+    for (const ArrivalAcc& a : arrivalAccs)
+    {
+        if (out.arrivals.size() >= kMaxArrivals)
+            break;
+        const auto ownerOf = [&](uint32_t node) { return node < count ? owner[node] : kNone; };
+        if (a.prevWriter != kNone && ownerOf(a.prevWriter) != kNone && ownerOf(a.prevWriter) == ownerOf(a.writer))
+            continue;
+        CodeArrival c;
+        c.key = nodes[a.node].key;
+        c.z80 = nodes[a.node].z80;
+        c.frame = a.frame;
+        c.tstate = a.now;
+        c.tInFrame = a.tInFrame;
+        if (a.writer < count)
+        {
+            c.writer = nodes[a.writer].key;
+            c.writerZ80 = nodes[a.writer].z80;
+        }
+        if (a.prev != kNone)
+        {
+            c.from = nodes[a.prev].key;
+            c.fromZ80 = nodes[a.prev].z80;
+        }
+        c.writtenStart = a.lo;
+        c.writtenEnd = a.hi;
+        out.arrivals.push_back(c);
+    }
 
     out.BuildIndex();
     return out;

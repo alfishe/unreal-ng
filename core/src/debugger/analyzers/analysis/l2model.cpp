@@ -234,7 +234,15 @@ std::vector<RegionStore::Conflict> RegionStore::Conflicts() const
                 break;
             if (a.lo > b.hi || b.lo > a.hi)
                 continue;
-            const bool clash = (Exclusive(a.kind) || Exclusive(b.kind)) ? a.kind != b.kind
+            // Untouched says no access reached the bytes, not what they are: a claim from their content (a ROM
+            // signature, text found by its bytes) holds over it. Text is data: a data claim may hold it
+            // ROM bytes only written (the writes lost) say nothing of the bytes either
+            const bool compatible = a.kind == RegionKind::Untouched || b.kind == RegionKind::Untouched ||
+                                    a.title == kRomWriteSink || b.title == kRomWriteSink ||
+                                    (a.kind == RegionKind::Data && b.kind == RegionKind::Text) ||
+                                    (a.kind == RegionKind::Text && b.kind == RegionKind::Data);
+            const bool clash = compatible ? false
+                               : (Exclusive(a.kind) || Exclusive(b.kind)) ? a.kind != b.kind
                                : (a.kind == RegionKind::RecordArray && b.kind == RegionKind::RecordArray)
                                    ? a.geometry.stride != b.geometry.stride
                                    : false;
@@ -302,6 +310,8 @@ StateNode RegionNode(const Region& region)
         geometry["prefix"] = static_cast<uint64_t>(g.prefix);
     if (g.pitch != 0)
         geometry["pitch"] = static_cast<uint64_t>(g.pitch);
+    if (g.bottomUp)
+        geometry["bottom_up"] = true;
     if (!g.layout.empty())
         geometry["layout"] = g.layout;
     if (!g.terminator.empty())

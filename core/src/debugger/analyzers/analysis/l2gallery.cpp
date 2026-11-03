@@ -101,8 +101,9 @@ Canvas DrawFrames(const L1Result& l1, const Region& r, const GalleryOptions& opt
         for (uint32_t y = 0; y < g.height; ++y)
             for (uint32_t c = 0; c < columns; ++c)
             {
-                const uint32_t at = base + g.prefix + (g.layout == "columns" ? c * lineStep + y * across
-                                                                             : y * lineStep + c * across);
+                const uint32_t line = g.bottomUp ? g.height - 1u - y : y;  // stored bottom up: the last line on top
+                const uint32_t at = base + g.prefix + (g.layout == "columns" ? c * lineStep + line * across
+                                                                             : line * lineStep + c * across);
                 const uint8_t pixels = ByteOf(l1, r, at + (g.mask ? 1u : 0u));
                 const uint8_t mask = g.mask ? ByteOf(l1, r, at) : 0;
                 for (uint32_t bit = 0; bit < 8; ++bit)

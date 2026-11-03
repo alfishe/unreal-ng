@@ -75,14 +75,18 @@ curl -s "$BASE/emulator/$EMU_ID/state/fdc" | jq .
 Then boot a disk the usual way —
 [autostart](../run/autostart-disk.md) or
 [manual TR-DOS](../run/manual-trdos-run.md) both work out of the box here.
+The autostart and SNA / Z80 loads keep the Turbo+ clock the machine ran at (the flip-flop set by `IN #7FFD`, 7 MHz):
+their quick reset skips the program that strobed it. A real reset clears it (3.5 MHz). The GMX keeps its own
+`#7EFD` bit 7, which its loader sets.
 
 ## Pitfalls
 
 - **`SCORPION` vs `PROFSCORP` is a config-level choice, not RAM** — same
   RAM sizes; software probing for ProfROM behaves differently on the two.
-- **Two Covox ports** — the Scorpion Covox on the printer port `#DD`
-  (`CovoxDD=1`, slot built-in `covox-dd`, on by default) and the
-  Pentagon-style `#FB` (`CovoxFB=1`); `CovoxDD=0` takes `#DD` away — see
+- **One Covox, two ports** — the printer port `#DD` (`CovoxDD=1`, slot
+  built-in `covox-dd`, on by default) and the Pentagon-style `#FB`
+  (`CovoxFB=1`) write the same mono latch, one mixer COVOX control;
+  `CovoxDD=0` takes `#DD` away — see
   [covox-sounddrive.md](../peripherals/covox-sounddrive.md).
 - **Shadow Monitor code disappears from normal memory views** — while
   `shadow_monitor_paged` is true, bank 0 is the monitor ROM; step out or

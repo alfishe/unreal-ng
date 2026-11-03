@@ -1355,10 +1355,10 @@ void HostControllers::checkAuto()
     EmulatorContext* context = _binding->context();
     if (context == nullptr || context->pControllerManager == nullptr)
         return;
-    const PortReadEvidence evidence = context->pControllerManager->PortReads();
+    const DeviceAccessEvidence evidence = context->pControllerManager->PortReads();
     if (!evidence.active)
         return;
-    const AutoDecision decision = DecideFromPortReads(evidence);
+    const AutoDecision decision = DecideAuto(evidence);
     if (decision.keyboard)
     {
         // A menu or a text prompt reads every key: say so once and keep watching, the joystick comes later
@@ -1386,9 +1386,10 @@ void HostControllers::applyAuto(const AutoDecision& chosen)
         decision.optionValue = _resolved.joystickKeys;
     _autoDone = true;
     manager->WatchPortReads(false);
-    if (decision.device == "kempston-mouse")
+    if (decision.device == "kempston-mouse" || decision.device == "amx-mouse")
     {
-        emit notice(tr("This program reads the Kempston mouse (%1)").arg(QString::fromStdString(decision.reason)));
+        emit notice(tr("This program reads the %1 (%2)")
+                        .arg(QString::fromStdString(decision.label), QString::fromStdString(decision.reason)));
         return;
     }
     std::string connector = decision.connector;

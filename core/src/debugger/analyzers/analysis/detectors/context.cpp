@@ -77,7 +77,8 @@ std::vector<uint8_t> DetectorContext::ClaimedMap() const
     for (const Region& r : out.store.Regions())
     {
         // The code map's fallback claims (plain data, untouched) do not stop later detectors
-        if (r.kind == RegionKind::Untouched || (r.detector == DetectorId::CodeMap && r.kind != RegionKind::Code))
+        if (r.kind == RegionKind::Untouched ||
+            (r.detector == DetectorId::CodeMap && r.kind != RegionKind::Code && r.kind != RegionKind::Unused))
             continue;
         uint16_t z80 = 0;
         if (!Z80Of(r.lo, z80))
@@ -114,6 +115,8 @@ L2Result RunDetectors(const L1Result& l1, const DetectorOptions& options)
     DetectSignatures(context);
     DetectCodeMap(context);
     DetectText(context);
+    // Save areas before the init tables: the slots the copies wrote least look like a table one routine built
+    DetectSaveAreas(context);
     DetectInitTables(context);
     // Word pointers before records: a table whose words the code used as addresses is a pointer table even where
     // its walk also looks like an array of 2-byte records
@@ -127,6 +130,8 @@ L2Result RunDetectors(const L1Result& l1, const DetectorOptions& options)
     DetectRng(context);
     DetectUnpackers(context);
     DetectMusic(context);
+    // Last: what no detector explained and nothing touched, when it is a fill or code that never ran
+    FinishUnused(context);
     out.store.Finish();
     // One name per entry: the first detector's non-empty one (signatures before roles); empty: the export's sub_XXXX
     std::stable_sort(out.entries.begin(), out.entries.end(),

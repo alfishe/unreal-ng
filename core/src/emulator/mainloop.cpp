@@ -21,7 +21,9 @@
 #include "emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/tape/tape.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/media/mediamanager.h"
 #include "stdafx.h"
 
@@ -545,6 +547,12 @@ void MainLoop::CompleteFrame()
     {
         _context->pDebugManager->GetJoystickManager()->OnFrame();
     }
+
+    // The device access watch: the frame's counts into its window (nothing while it is off). A tape still playing
+    // is the program still loading
+    if (_context->pPortDecoder)
+        _context->pPortDecoder->GetAccessWatch().OnFrameBoundary(_context->pTape != nullptr &&
+                                                                 _context->pTape->IsPlaying());
 
     // Host controllers: the frame's sample of every connector the host drives (journaled input, after the checkpoint)
     if (_context->pControllerManager)

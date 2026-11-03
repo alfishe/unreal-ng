@@ -739,7 +739,7 @@ std::string PlannedCovox(MEM_MODEL model, std::initializer_list<std::pair<std::s
     return CovoxOf(*config);
 }
 
-/// The Scorpion printer Covox (#DD): a switchable built-in of the Scorpion family, on by default, switched by
+/// The Covox on the Scorpion printer port (#DD): a switchable built-in of the Scorpion family, on by default, switched by
 /// builtin.covox-dd or the legacy [SOUND] CovoxDD
 TEST(SlotManager_Test, ScorpionPrinterCovoxIsASwitchableBuiltIn)
 {
@@ -755,7 +755,7 @@ TEST(SlotManager_Test, ScorpionPrinterCovoxIsASwitchableBuiltIn)
     EXPECT_EQ(planned(MM_SCORP, { { "builtin.covox-dd", "off" } }), 0);
     EXPECT_EQ(planned(MM_PROFSCORP, { { "builtin.covox-dd", "on" } }), 1);
     EXPECT_EQ(planned(MM_GMX, { { "builtin.covox-dd", "on" } }), 1);
-    EXPECT_EQ(planned(MM_PENTAGON, { { "builtin.covox-dd", "on" } }), 0) << "no printer Covox on the Pentagon";
+    EXPECT_EQ(planned(MM_PENTAGON, { { "builtin.covox-dd", "on" } }), 0) << "no printer port Covox on the Pentagon";
 
     auto scorpion = MakeConfig(MM_SCORP);
     scorpion->sound.covoxDD = 0;

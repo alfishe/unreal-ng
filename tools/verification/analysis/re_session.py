@@ -9,8 +9,22 @@ instance per game, kept between calls, so an agent works the review queue on it 
       input scripts are given, saves the start state (W/start.szx, the Z80 view as W/start.bin) and starts the
       recording there, plays (the scripts, or the found keys then seeded random play), builds L1 / L2 and writes the
       queue's first page (W/review.txt), the findings counts (W/findings.txt) and eight screens through the run
-      on one sheet (W/screens.png). The instance stays up:
-      W/session.json holds its process and ports.
+      on one sheet (W/screens.png), and keeps the recording (W/session.ttd). The instance stays up:
+      W/session.json holds its process and ports. --record-load records from power-on, the load included: the
+      stages before the game (a loader in a REM, a depacker) are in the recording (no explorer: the --inputs
+      scripts, else seeded random play); W/start.bin is then the memory at the recording's first keyframe.
+  re_session.py open --work W --ttd session.ttd [--model 48K] [--port-base 9720]
+      A new instance with a saved recording loaded: one recording serves every later build.
+  re_session.py build --work W [--stage N | --from-frame F [--from-tinframe T]] [--to-frame G] [--into W2]
+      Builds L1 / L2 again from the loaded recording, a window of it for one stage; writes l1.json, start.bin (the
+      memory at the window's start, with no window at the recording's first keyframe), review.txt and findings.txt
+      (into W2: the stage's own folder, which shares the instance but does not own it).
+  re_session.py stages --work W
+      The code arrivals of the last build: the stages and the window to build each (--to-frame: the next
+      arrival's frame + 1).
+  re_session.py interrupts --work W
+      The interrupt handlers of the last build (l1.json): each routine entered by an interrupt, the single tail jumps
+      it runs on through, its entries and entries a frame, T-states an entry, its share of the CPU and its callees.
   re_session.py call --work W ACTION ['{"op":"next"}']
       One `analysis` call on the live instance (the control session is taken first); prints the answer's text,
       --json OUT writes its structuredContent too.
@@ -23,7 +37,7 @@ instance per game, kept between calls, so an agent works the review queue on it 
       the @isub operands resolved;  the skool2asm warnings are the operands still left as numbers), and with --reference the score of the draft
       (score_draft.py with the draft's fields and geometry).
   re_session.py stop --work W
-      Ends the instance.
+      Ends the instance the folder launched, once its pid is checked to still be that unreal-qt.
 
 Input scripts are mm_session.py's (zx-reaper's tests/inputs format). Everything the game leaves (screens, RAM, the
 recording's start image, the draft) stays in W: keep W under scratch/.
@@ -70,7 +84,8 @@ def capture(args):
     os.makedirs(work, exist_ok=True)
     process = mcplib.launch(args.binary, args.port_base)
     with open(os.path.join(work, 'session.json'), 'w') as f:
-        json.dump({'pid': process.pid, 'port_base': args.port_base, 'model': args.model, 'ranges': args.ranges}, f)
+        json.dump({'pid': process.pid, 'binary': args.binary, 'port_base': args.port_base, 'model': args.model,
+                   'ranges': args.ranges}, f)
     s = mcplib.Session(f'http://127.0.0.1:{args.port_base + 200}/mcp', args.model)
     s.fresh_machine(args.model, ram_power_on='zero')
     s.call('emulator_manage', {'action': 'slots_plug', 'slot': 'edge.1', 'card': 'kempston'}, ok=False)
@@ -86,6 +101,12 @@ def capture(args):
     player = corpus.Input(s)
     steps, reached = [], True
     explorer = None
+    if args.record_load:
+        # The recording starts at power-on: the load and every stage before the game (a loader in a REM, a depacker,
+        # a title overlay) are in it; build --from / --to cuts one stage out. The explorer loads saved states, which
+        # a recording cannot cross: random play only
+        m.post('/snapshot/save', {'path': os.path.join(work, 'power-on.szx'), 'force': True})
+        s.call('analysis', {'action': 'start', 'record': True})
     if args.snapshot:
         m.post('/snapshot/load', {'path': os.path.abspath(args.snapshot)})
     else:
@@ -94,7 +115,7 @@ def capture(args):
             media = corpus.unpack(media, work, corpus.MEDIA_SUFFIXES['disk' if args.disk else 'tape'])
         game = {'kind': 'disk' if args.disk else 'tape', 'model': args.model}
         report['load_frames'] = corpus.load(m, game, media, report, args)
-    if not args.inputs:
+    if not args.inputs and not args.record_load:
         explorer = corpus.Explorer(m, player, work)
         steps, trace, reached = explorer.run()
         report['explore'] = {'keys': steps, 'reached_control': reached, 'trace': trace}
@@ -103,7 +124,8 @@ def capture(args):
     m.post('/snapshot/save', {'path': os.path.join(work, 'start.szx'), 'force': True})
     with open(os.path.join(work, 'start.bin'), 'wb') as f:
         f.write(m.read(0, 0x10000))
-    s.call('analysis', {'action': 'start', 'record': True})
+    if not args.record_load:
+        s.call('analysis', {'action': 'start', 'record': True})
     screens = os.path.join(work, 'screens')
     os.makedirs(screens, exist_ok=True)
     frames = 0
@@ -111,8 +133,9 @@ def capture(args):
         for path in args.inputs:
             frames += play_script(s, m, path, screens, frames)
     else:
-        frames = explorer.play(steps)
-        explorer.clean()
+        if explorer:
+            frames = explorer.play(steps)
+            explorer.clean()
         for count, keys in corpus.generic_input(os.path.basename(work), args.frames, start=not reached):
             player.set(keys)
             frames = corpus.run_frames(m, min(count, args.frames - frames), screens, frames)
@@ -127,12 +150,20 @@ def capture(args):
         subprocess.run([sys.executable, os.path.join(HERE, 'scr2png.py'), os.path.join(work, 'screens.png'), *picked])
     if explorer_start and os.path.exists(explorer_start):
         os.remove(explorer_start)
-    s.call('analysis', {'action': 'build', 'path': os.path.join(work, 'l1.json'), 'wait': 30000})
+    built = s.call('analysis', {'action': 'build', 'path': os.path.join(work, 'l1.json'), 'wait': 30000})
     state = s.call('analysis', {'action': 'status'}).text
     while ': running' in state:
         time.sleep(5)
         state = s.call('analysis', {'action': 'status'}).text
     report['status'] = state.splitlines()
+    if args.record_load:
+        # The recording starts at power-on, the build replays from there: start.bin is the memory at its first
+        # keyframe, not after the load
+        frame, tinframe = write_start_memory(s, os.path.join(work, 'start.bin'), bundle_first_frame(built))
+        report['start'] = {'frame': frame, 'tinframe': tinframe}
+    # The recording, kept: `open` loads it into a new instance, `build` replays any window of it again
+    dumped = s.call('time_travel', {'action': 'dump', 'path': os.path.join(work, 'session.ttd')}, ok=False)
+    report['ttd'] = (dumped.text or '').splitlines()[:1]
     with open(os.path.join(work, 'review.txt'), 'w') as f:
         f.write(s.call('analysis', {'action': 'review', 'op': 'list'}).text + '\n')
     with open(os.path.join(work, 'findings.txt'), 'w') as f:
@@ -279,9 +310,204 @@ def check(args):
         raise SystemExit(1)
 
 
+def read_memory(s, frame, tinframe):
+    """The 64 K Z80 view at a moment of the recording (TTD memory_at): (bytes, None), or (None, the refusal)"""
+    data = bytearray()
+    for offset in range(0, 0x10000, 0x4000):
+        r = s.call('time_travel', {'action': 'memory_at', 'space': 'cpu', 'frame': frame, 'tinframe': tinframe,
+                                   'offset': offset, 'length': 0x4000}, ok=False)
+        body = r.structured or {}
+        if r.is_error or not body.get('exact', False) or len(body.get('hex', '')) != 0x8000:
+            return None, f'memory_at frame {frame} t {tinframe} offset {offset:#x}: {r.text}'
+        data += bytes.fromhex(body['hex'])
+    return bytes(data), None
+
+
+def write_memory(s, path, frame, tinframe):
+    """The 64 K Z80 view at a moment of the recording, as start.bin is for the capture's start"""
+    data, error = read_memory(s, frame, tinframe)
+    if data is None:
+        raise SystemExit(error)
+    with open(path, 'wb') as f:
+        f.write(data)
+
+
+def bundle_first_frame(reply):
+    """The recording's first frame from a build's answer (its bundle: the keyframes the build replays from)"""
+    return int(((reply.structured or {}).get('bundle') or {}).get('first_frame', 0))
+
+
+def write_start_memory(s, path, frame):
+    """start.bin of a build with no window: the memory at the recording's first keyframe, which may lie inside its
+    first frame (a recording started mid-frame). The frame's start first; refused (before the keyframe), a seek there
+    names the earliest moment kept. Returns (frame, tinframe) read"""
+    data, error = read_memory(s, frame, 0)
+    if data is None:
+        r = s.call('time_travel', {'action': 'seek', 'frame': frame, 'tinframe': 0}, ok=False)
+        earliest = (r.structured or {}).get('earliest') or {}
+        if 'frame' not in earliest:
+            raise SystemExit(error)
+        frame, tinframe = int(earliest['frame']), int(earliest.get('tinframe', 0))
+        write_memory(s, path, frame, tinframe)
+        return frame, tinframe
+    with open(path, 'wb') as f:
+        f.write(data)
+    return frame, 0
+
+
+def open_session(args):
+    """A new instance with a saved recording loaded (the capture's session.ttd or any .ttd): build, review and export
+    work on it as on the capture's own"""
+    work = os.path.abspath(args.work)
+    os.makedirs(work, exist_ok=True)
+    process = mcplib.launch(args.binary, args.port_base)
+    with open(os.path.join(work, 'session.json'), 'w') as f:
+        json.dump({'pid': process.pid, 'binary': args.binary, 'port_base': args.port_base, 'model': args.model,
+                   'ranges': args.ranges}, f)
+    s = mcplib.Session(f'http://127.0.0.1:{args.port_base + 200}/mcp', args.model)
+    s.fresh_machine(args.model, ram_power_on='zero')
+    s.call('control_execution', {'action': 'take_control'}, ok=False)
+    s.call('emulator_manage', {'action': 'slots_plug', 'slot': 'edge.1', 'card': 'kempston'}, ok=False)
+    for _ in range(100):  # the plug restarts the machine: wait for the wired stick
+        if 'slots_plug slot=edge.1' not in s.call('joystick_input', {'action': 'status'}, ok=False).text:
+            break
+        time.sleep(0.1)
+    s.call('control_execution', {'action': 'pause'}, ok=False)
+    s.call('invoke_api', {'method': 'PUT', 'path': '/api/v1/emulator/{id}/audio/mixer/master',
+                          'body': {'muted': True}}, ok=False)
+    r = s.call('time_travel', {'action': 'load', 'path': os.path.abspath(args.ttd)}, ok=False)
+    print((r.text or '').splitlines()[0])
+    if r.is_error:
+        raise SystemExit(1)
+    print(f"MCP http://127.0.0.1:{args.port_base + 200}/mcp  WebAPI http://127.0.0.1:{args.port_base}")
+
+
+def build(args):
+    """One build of the loaded recording, a window of it with --from / --to (a stage: `stages` lists them); writes
+    l1.json, start.bin (the memory at the window's start: the image the draft decodes from and the rebuild gate
+    compares with), review.txt and findings.txt"""
+    s, _ = session_of(args.work)
+    work = os.path.abspath(args.work)
+    out = os.path.abspath(args.into) if args.into else work
+    if out != work:
+        # The stage's folder works on the same instance: call / export / check --work <into>
+        os.makedirs(out, exist_ok=True)
+        # Without the pid: only the instance's own folder stops it (a second stop could hit a reused pid)
+        with open(os.path.join(work, 'session.json')) as f:
+            shared = json.load(f)
+        shared.pop('pid', None)
+        shared['instance_of'] = shared.get('instance_of', work)
+        with open(os.path.join(out, 'session.json'), 'w') as f:
+            json.dump(shared, f)
+    body = {'action': 'build', 'path': os.path.join(out, 'l1.json'), 'wait': 30000}
+    frame, tinframe = 0, 0
+    if args.stage is not None:
+        with open(os.path.join(work, 'l1.json')) as f:
+            arrivals = json.load(f).get('arrivals', [])
+        if not 0 <= args.stage < len(arrivals):
+            raise SystemExit(f'stage {args.stage}: the last build lists {len(arrivals)} arrivals')
+        frame, tinframe = arrivals[args.stage]['frame'], arrivals[args.stage]['tinframe']
+    if args.from_frame is not None:
+        frame, tinframe = args.from_frame, args.from_tinframe
+    if frame or tinframe:
+        body.update(from_frame=frame, from_tinframe=tinframe)
+    if args.to_frame:
+        body['to_frame'] = args.to_frame
+    started = time.monotonic()
+    r = s.call('analysis', body, ok=False)
+    if r.is_error:
+        raise SystemExit(r.text)
+    state = s.call('analysis', {'action': 'status'}).text
+    while ': running' in state:
+        time.sleep(2)
+        state = s.call('analysis', {'action': 'status'}).text
+    if frame or tinframe:
+        write_memory(s, os.path.join(out, 'start.bin'), frame, tinframe)
+    else:
+        # No window: the replay starts at the recording's first keyframe, frame 0 may not be recorded
+        frame, tinframe = write_start_memory(s, os.path.join(out, 'start.bin'), bundle_first_frame(r))
+    with open(os.path.join(out, 'review.txt'), 'w') as f:
+        f.write(s.call('analysis', {'action': 'review', 'op': 'list'}).text + '\n')
+    with open(os.path.join(out, 'findings.txt'), 'w') as f:
+        f.write(s.call('analysis', {'action': 'findings', 'limit': 0}, ok=False).text + '\n')
+    print(state.splitlines()[-1] if state else '')
+    print(f'window from frame {frame} t {tinframe}' + (f' to {args.to_frame}' if args.to_frame else '') +
+          f', {time.monotonic() - started:.1f} s')
+
+
+def stages(args):
+    """The arrivals of the last build (l1.json): where execution first entered code the recording wrote, one line
+    each with the window to build that stage from"""
+    with open(os.path.join(args.work, 'l1.json')) as f:
+        arrivals = json.load(f).get('arrivals', [])
+    for i, a in enumerate(arrivals):
+        # The window ends before --to-frame: up to the next arrival's frame included, so a next arrival in the same
+        # frame leaves a window of one frame, not an empty one the build refuses
+        to = arrivals[i + 1]['frame'] + 1 if i + 1 < len(arrivals) else None
+        if to is not None and to <= a['frame']:
+            to = None
+        print(f"{i:3}  {a['at']}  frame {a['frame']} t {a['tinframe']}  written {a['written_from']}-{a['written_to']}"
+              f" by {a['writer'] or '?'}, entered from {a['from'] or '-'}"
+              f"  (build --stage {i}{f' --to-frame {to}' if to else ''})")
+    if not arrivals:
+        print('no arrivals: the recording ran no code it wrote')
+
+
+def interrupts(args):
+    """The interrupt handlers of the last build (l1.json), found by L1 with no breakpoint: each routine entered by an
+    interrupt (or an NMI), the jumps it runs on through (an IM 2 vector slot's JP, a ROM's JP to a hook), how often it
+    ran, what one entry costs and what it calls"""
+    with open(os.path.join(args.work, 'l1.json')) as f:
+        doc = json.load(f)
+    routines, calls, replay = doc['routines'], doc['calls'], doc['replay']
+    out = {}
+    for c in calls:
+        out.setdefault(c['caller'], []).append(c)
+    found = False
+    for i, r in enumerate(routines):
+        kinds = r['kinds'].split(',') if isinstance(r['kinds'], str) else r['kinds']
+        if not any(k.strip() in ('interrupt', 'nmi') for k in kinds):
+            continue
+        found = True
+        chain, at, seen = [i], i, {i}
+        while True:  # a handler of one jump runs on into the next routine (a tail call)
+            tails = [c['callee'] for c in out.get(at, []) if c['kind'] == 'tail' and c['callee'] not in seen]
+            if len(tails) != 1:
+                break
+            at = tails[0]
+            chain.append(at)
+            seen.add(at)
+        p = r['profile']
+        entries = max(1, p['entries'])
+        inclusive = p['tstates_inclusive']  # the entry's: the chain and everything it calls
+        frames = max(1, replay['frames'])
+        print(f"{r['kinds']} {' -> '.join(routines[k]['entry'] for k in chain)}: {p['entries']} entries in {frames} "
+              f"frames ({p['entries'] / frames:.2f} a frame), {inclusive // entries} T an entry, "
+              f"{100.0 * inclusive / max(1, replay['tstates']):.1f} % of the CPU")
+        for k in chain:
+            for c in sorted(out.get(k, []), key=lambda c: -c['count']):
+                if c['kind'] != 'tail' or c['callee'] not in seen:
+                    print(f"    {routines[k]['entry']} {c['kind']} {routines[c['callee']]['entry']} x{c['count']}")
+    if not found:
+        print('no routine was entered by an interrupt: interrupts off (DI), or IM 1 into the ROM outside --ranges')
+
+
 def stop(args):
     with open(os.path.join(args.work, 'session.json')) as f:
-        pid = json.load(f)['pid']
+        state = json.load(f)
+    if 'pid' not in state:
+        print(f"the instance is {state.get('instance_of', 'another folder')}'s: stop it with --work there")
+        return
+    pid = state['pid']
+    # The pid may be another process's by now (the instance ended, the pid reused): only the launched binary,
+    # offscreen, gets the signal
+    p = subprocess.run(['ps', '-p', str(pid), '-o', 'command='], capture_output=True, text=True)
+    command = p.stdout.strip()
+    if p.returncode != 0 or not command:
+        return  # gone already
+    if '-platform offscreen' not in command or state.get('binary', 'unreal-qt') not in command:
+        print(f'pid {pid} is no longer the instance ({command[:120]}): not stopped')
+        return
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -304,7 +530,27 @@ def main():
     p.add_argument('--port-base', type=int, default=9720)
     p.add_argument('--binary', default=corpus.DEFAULT_BINARY)
     p.add_argument('--load-frames', type=int, default=30000)
+    p.add_argument('--record-load', action='store_true',
+                   help='record from power-on, the load included (the stages before the game: build --from / --to)')
     p.add_argument('--disk-boot-frames', type=int, default=1500)
+    p = sub.add_parser('open')
+    p.add_argument('--work', required=True)
+    p.add_argument('--ttd', required=True, help="a saved recording (a capture's session.ttd)")
+    p.add_argument('--model', default='48K')
+    p.add_argument('--ranges', default='5B00-FFFF')
+    p.add_argument('--port-base', type=int, default=9720)
+    p.add_argument('--binary', default=corpus.DEFAULT_BINARY)
+    p = sub.add_parser('build')
+    p.add_argument('--work', required=True)
+    p.add_argument('--stage', type=int, help="build from the last build's arrival N (stages lists them)")
+    p.add_argument('--from-frame', type=int)
+    p.add_argument('--from-tinframe', type=int, default=0)
+    p.add_argument('--to-frame', type=int)
+    p.add_argument('--into', help="the stage's own folder (default: --work); later calls take it as --work")
+    p = sub.add_parser('stages')
+    p.add_argument('--work', required=True)
+    p = sub.add_parser('interrupts')
+    p.add_argument('--work', required=True)
     p = sub.add_parser('call')
     p.add_argument('--work', required=True)
     p.add_argument('--json')
@@ -321,7 +567,8 @@ def main():
     p = sub.add_parser('stop')
     p.add_argument('--work', required=True)
     args = parser.parse_args()
-    {'capture': capture, 'call': call, 'export': export, 'check': check, 'stop': stop}[args.command](args)
+    {'capture': capture, 'open': open_session, 'build': build, 'stages': stages, 'interrupts': interrupts, 'call': call, 'export': export,
+     'check': check, 'stop': stop}[args.command](args)
 
 
 if __name__ == '__main__':

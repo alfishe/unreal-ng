@@ -16,6 +16,8 @@
 #include "emulator/io/serial/uart16550.h"
 #include "emulator/io/fdc/fdc.h"
 #include "emulator/io/ide/ideadapter.h"
+#include "emulator/ports/deviceaccesswatch.h"
+#include "emulator/ports/portclaimindex.h"
 #include "emulator/ports/porthistory.h"
 #include "emulator/ports/portdiagrecorder.h"
 #include "emulator/slots/portclaimtable.h"   // guards the Qt `slots` macro itself
@@ -429,7 +431,9 @@ public:
     /// region <Fields>
 protected:
     EmulatorContext* _context = nullptr;
+    PortClaimIndex _claimIndex;
     PortHistories _portHistories;
+    DeviceAccessWatch _accessWatch;
 
     EmulatorState* _state = nullptr;
     snapshot::ISnapshotCommitPolicy* _snapshotPolicy = nullptr;   ///< not owned (SetSnapshotPolicy)
@@ -689,6 +693,13 @@ public:
     bool HasKempstonJoystick() const { return _slotKempstonJoystick || BoardHasKempstonJoystick(); }
     /// The model's own decode (#1F; Scorpion #FF1F). Machines without the arm stay false
     virtual bool BoardHasKempstonJoystick() const { return false; }
+    /// The register a device of this machine has selected now, by the input role of its select claims (the device
+    /// access watch's seed when it starts): AyIo = the AY data read's register (ITurboSoundDevice::getBusReadRegister),
+    /// the Next adds NextReg; -1 when not known or not a register (the TSFM status byte)
+#pragma push_macro("slots")
+#undef slots
+    virtual int SelectedIndex(slots::InputRole role) const;
+#pragma pop_macro("slots")
     /// A slot-built card with the kempston-joystick function is fitted (SlotManager::BuildCards / ReleaseCards)
     void SetSlotKempstonJoystick(bool fitted) { _slotKempstonJoystick = fitted; }
 
@@ -757,6 +768,13 @@ public:
     {
         return _portHistories;
     }
+    /// What the program uses, attributed by the registry's claims (deviceaccesswatch.h)
+    DeviceAccessWatch& GetAccessWatch()
+    {
+        return _accessWatch;
+    }
+    /// The registry's claims of the machine's slots now, for the histories and the watch: after the cards are built
+    void BuildAccessObservers();
 
     PortDiagnosticRecorder* getPortTraceRecorder()
     {

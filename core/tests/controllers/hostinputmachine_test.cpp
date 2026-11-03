@@ -24,6 +24,8 @@
 #include "emulator/io/keyboard/keyboard.h"
 #include "fake/fakebackend.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
+#include "emulator/slots/refdata/refdata.h"
+#include "emulator/slots/slottypes.h"
 #include "hostinputservice.h"
 #include "router/zxkeys.h"
 
@@ -158,7 +160,7 @@ TEST(HostInputMachine_Test, KeyTargetReachesTheSprinterPs2Keyboard)
 }
 
 // Boot-bound (~15 ms): one Pentagon, four frames
-TEST(HostInputMachine_Test, PortReadWatchCountsTheGuestsReads)
+TEST(HostInputMachine_Test, AccessWatchCountsTheGuestsReads)
 {
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
@@ -173,13 +175,21 @@ TEST(HostInputMachine_Test, PortReadWatchCountsTheGuestsReads)
     EXPECT_FALSE(manager->PortReads().active);
     manager->WatchPortReads(true);
     emulator->RunNFrames(3);  // the first boundary starts the watch, the next two fold a frame each
-    PortReadEvidence evidence = manager->PortReads();
+    DeviceAccessEvidence evidence = manager->PortReads();
     EXPECT_TRUE(evidence.active);
     EXPECT_GE(evidence.framesObserved, 1u);
-    EXPECT_EQ(evidence.Frames(PortReadClass::Kempston), evidence.window);
-    EXPECT_GT(evidence.Reads(PortReadClass::Kempston), 1000.0f) << "a tight loop: thousands of reads per frame";
-    EXPECT_EQ(evidence.Frames(PortReadClass::Row4), evidence.window) << "#EFFE";
-    EXPECT_EQ(evidence.Frames(PortReadClass::Row0), 0u);
+    const DeviceAccessChannel* kempston = evidence.Find(slots::InputRole::KempstonJoystick);
+    ASSERT_NE(kempston, nullptr);
+    EXPECT_EQ(kempston->device, "kempston-joystick");
+    EXPECT_EQ(kempston->frames, evidence.window);
+    EXPECT_GT(kempston->perFrame, 1000.0f) << "a tight loop: thousands of reads per frame";
+    ASSERT_FALSE(kempston->sites.empty());
+    EXPECT_EQ(kempston->sites[0].pc, 0x8001);
+    const DeviceAccessChannel* row = evidence.Find(slots::InputRole::KeyMatrix, 12);
+    ASSERT_NE(row, nullptr) << "#EFFE";
+    EXPECT_EQ(row->device, "ula");
+    EXPECT_EQ(row->frames, evidence.window);
+    EXPECT_EQ(evidence.Find(slots::InputRole::KeyMatrix, 8), nullptr);
 
     manager->WatchPortReads(false);
     emulator->RunNFrames(1);
@@ -199,7 +209,7 @@ void RunAt8000(EmulatorContext* context, const std::vector<uint8_t>& program)
 }  // namespace
 
 // Boot-bound (~20 ms): one Pentagon, three frames
-TEST(HostInputMachine_Test, PortReadWatchRowBitsAndAyR14)
+TEST(HostInputMachine_Test, AccessWatchRowBitsAndAyR14)
 {
     SoundCardScope sound(TestSound::TurboSound);  // the AY on #FFFD: the runner's policy leaves the slot empty
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
@@ -212,11 +222,16 @@ TEST(HostInputMachine_Test, PortReadWatchRowBitsAndAyR14)
     ControllerManager* manager = context->pControllerManager;
     manager->WatchPortReads(true);
     emulator->RunNFrames(3);
-    const PortReadEvidence evidence = manager->PortReads();
-    EXPECT_EQ(evidence.Frames(PortReadClass::Row4), evidence.window);
-    EXPECT_EQ(evidence.RowBits(PortReadClass::Row4), 0x03) << "two shifts into a carry test: bits 0 and 1";
-    EXPECT_EQ(evidence.Frames(PortReadClass::AyR14), evidence.window) << "IN #FFFD with R14 selected";
+    const DeviceAccessEvidence evidence = manager->PortReads();
     EXPECT_GT(evidence.window, 0u);
+    const DeviceAccessChannel* row = evidence.Find(slots::InputRole::KeyMatrix, 12);
+    ASSERT_NE(row, nullptr);
+    EXPECT_EQ(row->frames, evidence.window);
+    EXPECT_EQ(row->tested, 0x03) << "two shifts into a carry test: bits 0 and 1";
+    const DeviceAccessChannel* r14 = evidence.Find(slots::InputRole::AyIo, 14);
+    ASSERT_NE(r14, nullptr) << "IN #FFFD with R14 selected";
+    EXPECT_EQ(r14->frames, evidence.window);
+    EXPECT_EQ(r14->channel, "reg.0e");
 
     manager->WatchPortReads(false);
     emulator->RunNFrames(1);
@@ -225,7 +240,7 @@ TEST(HostInputMachine_Test, PortReadWatchRowBitsAndAyR14)
 }
 
 // Boot-bound (~30 ms): one Next, three frames
-TEST(HostInputMachine_Test, PortReadWatchNextB2)
+TEST(HostInputMachine_Test, AccessWatchNextB2)
 {
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
@@ -237,10 +252,63 @@ TEST(HostInputMachine_Test, PortReadWatchNextB2)
     ControllerManager* manager = context->pControllerManager;
     manager->WatchPortReads(true);
     emulator->RunNFrames(3);
-    const PortReadEvidence evidence = manager->PortReads();
+    const DeviceAccessEvidence evidence = manager->PortReads();
     EXPECT_GT(evidence.window, 0u);
-    EXPECT_EQ(evidence.Frames(PortReadClass::NextB2), evidence.window);
-    EXPECT_GT(evidence.Reads(PortReadClass::NextB2), 100.0f);
-    EXPECT_EQ(evidence.Frames(PortReadClass::AyR14), 0u);
+    const DeviceAccessChannel* b2 = evidence.Find(slots::InputRole::NextReg, 0xB2);
+    ASSERT_NE(b2, nullptr);
+    EXPECT_EQ(b2->frames, evidence.window);
+    EXPECT_GT(b2->perFrame, 100.0f);
+    const DeviceAccessChannel* b1 = evidence.Find(slots::InputRole::NextReg, 0xB1);
+    ASSERT_NE(b1, nullptr) << "every register is its own channel";
+    EXPECT_EQ(evidence.Find(slots::InputRole::AyIo, 14), nullptr);
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// Boot-bound (~25 ms): one Pentagon with an AY, five frames. The program selects R14 before the watch starts and only
+// reads afterwards: the watch takes the selection from the chip when it starts
+TEST(HostInputMachine_Test, AccessWatchSeedsTheAySelection)
+{
+    SoundCardScope sound(TestSound::TurboSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    // DI; LD BC,#FFFD; LD A,14; OUT (C),A; loop: IN A,(C); JR loop
+    RunAt8000(context, {0xF3, 0x01, 0xFD, 0xFF, 0x3E, 0x0E, 0xED, 0x79, 0xED, 0x78, 0x18, 0xFC});
+    emulator->RunNFrames(2);  // the select runs with the watch off
+    ControllerManager* manager = context->pControllerManager;
+    manager->WatchPortReads(true);
+    emulator->RunNFrames(3);
+    const DeviceAccessEvidence evidence = manager->PortReads();
+    EXPECT_GT(evidence.window, 0u);
+    const DeviceAccessChannel* r14 = evidence.Find(slots::InputRole::AyIo, 14);
+    ASSERT_NE(r14, nullptr) << "the seed: R14 as the chip holds it";
+    EXPECT_EQ(r14->frames, evidence.window);
+    EXPECT_EQ(evidence.Find(slots::InputRole::AyIo, DeviceAccessChannel::kNoIndex, true), nullptr)
+        << "no select while the watch ran";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// Boot-bound (~0.4 s): every machine of the slot registry, three frames each. A half-row read reaches the watch
+// through each model's own decoder: the hook is the decoder's IN completion, which every model must call
+TEST(HostInputMachine_Test, AccessWatchSeesTheKeyboardOnEveryMachine)
+{
+    for (const slots::MachineDef& machine : slots::refdata::Machines())
+    {
+        SCOPED_TRACE(machine.name);
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(machine.name, LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr);
+        EmulatorContext* context = emulator->GetContext();
+        // DI; loop: LD BC,#EFFE; IN A,(C); OUT (C),A; JR loop
+        RunAt8000(context, {0xF3, 0x01, 0xFE, 0xEF, 0xED, 0x78, 0xED, 0x79, 0x18, 0xF7});
+        ControllerManager* manager = context->pControllerManager;
+        manager->WatchPortReads(true);
+        emulator->RunNFrames(3);
+        const DeviceAccessEvidence evidence = manager->PortReads();
+        const DeviceAccessChannel* row = evidence.Find(slots::InputRole::KeyMatrix, 12);
+        ASSERT_NE(row, nullptr) << "IN #EFFE did not reach the watch";
+        EXPECT_EQ(row->frames, evidence.window);
+        EXPECT_NE(evidence.Find(slots::InputRole::KeyMatrix, DeviceAccessChannel::kNoIndex, true), nullptr)
+            << "OUT #EFFE did not reach the watch";
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
 }

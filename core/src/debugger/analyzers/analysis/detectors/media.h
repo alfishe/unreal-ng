@@ -19,6 +19,7 @@
 /// source stride.
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -57,6 +58,24 @@ struct DisplayInfo
 };
 
 DisplayInfo FindDisplay(const DetectorContext& context);
+
+/// A back buffer the code puts on the screen with plain loads and stores (an unrolled column blit, no block copy the
+/// display set could follow): a run of 2048 bytes or more outside the display file that routines writing the screen's
+/// pixels read, and that the code rewrites again and again (kDrawnMinRewrites writes or more, at least one for every
+/// kDrawnMaxReadsPerWrite reads: a sprite's, a font's or a level map's source is never written, or once). Bytes those
+/// routines did not read (32 at most) do not split it; a byte they read that is not rewritten does. A map unpacked
+/// again for each room is no buffer: most of its rewritten bytes are indexes (L1 indexes) and fewer than half of them
+/// reach the screen (L1 drawn, or block-copied from a byte drawn). The run may cross a 16 K page boundary (Z80 view)
+constexpr uint32_t kDrawnMinRewrites = 4;
+constexpr uint64_t kDrawnMaxReadsPerWrite = 64;
+struct DrawnBuffer
+{
+    uint16_t lo = 0;
+    uint16_t hi = 0;
+    uint32_t count = 0;                     ///< bytes read by a screen writer and rewritten
+    std::map<uint32_t, uint32_t> readers;   ///< screen-writing routine (L1 index) -> bytes of the buffer it read
+};
+std::vector<DrawnBuffer> FindDrawnBuffers(const DetectorContext& context);
 
 /// The bytes a stride's ranges cover in the Z80 view, how many of them are display bytes of @p type (0: any)
 struct Coverage

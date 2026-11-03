@@ -20,6 +20,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
+#include "debugger/analyzers/analysis/l1builder.h"
 #include "debugger/analyzers/analysis/l1model.h"
 #include "debugger/analyzers/analysis/replaytracer.h"
 #include "debugger/assembler/z80textassembler.h"
@@ -574,6 +575,217 @@ TEST_F(AnalysisL1_Test, ReplayDeterministic)
     }
 }
 
+TEST_F(AnalysisL1_Test, CodeArrivalsOnePerWriter)
+{
+    const L1Result l1 = Run("stages.asm", 5);
+    ASSERT_FALSE(HasFailure());
+    const uint16_t stage1 = At("stage1");
+    const auto stage1Bytes = static_cast<uint16_t>(At("stage1_end") - stage1);
+    ASSERT_EQ(l1.arrivals.size(), 2u) << "the copied stage and the depacked one; running on through either is no new "
+                                         "arrival, nor the depacker's second writer, nor coming back from a call";
+    const CodeArrival& first = l1.arrivals[0];
+    EXPECT_EQ(first.z80, 0xA000);
+    EXPECT_EQ(first.writerZ80, At("copy1"));
+    EXPECT_EQ(first.fromZ80, static_cast<uint16_t>(At("copy1") + 2)) << "the JP after the LDIR";
+    EXPECT_EQ(first.writtenStart, 0xA000);
+    EXPECT_EQ(first.writtenEnd, static_cast<uint16_t>(0xA000 + stage1Bytes - 1));
+    const CodeArrival& second = l1.arrivals[1];
+    EXPECT_EQ(second.z80, 0xB000);
+    EXPECT_EQ(second.writerZ80, static_cast<uint16_t>(0xA000 + At("put2") - stage1)) << "LD (DE),A wrote its opcode";
+    EXPECT_GT(second.frame * 100000 + second.tInFrame, first.frame * 100000 + first.tInFrame);
+    // The code loaded before it ran is no self-modification
+    const ByteUse* use = l1.UseAt(l1.StartKey(0xB000));
+    ASSERT_NE(use, nullptr);
+    EXPECT_EQ(use->flags & use::kSmc, 0) << "written, then run: not modified after it ran";
+
+    // The heatmap counters in the JSON: the counter stage 2 increments, read and written once a pass
+    const PhysKey counter = l1.StartKey(At("counter"));
+    const ByteUse* counted = l1.UseAt(counter);
+    ASSERT_NE(counted, nullptr);
+    ASSERT_GT(counted->writes, 1u);
+    const StateNode doc = l1.ToStateNode();
+    const StateNode* pages = doc.find("byte_counts");
+    ASSERT_NE(pages, nullptr);
+    bool found = false;
+    for (const StateNode& page : pages->items)
+    {
+        const StateNode* number = page.find("page");
+        if (number == nullptr || number->i != KeyPage(counter))
+            continue;
+        found = true;
+        ASSERT_EQ(page.find("writes")->items.size(), 0x4000u);
+        EXPECT_EQ(page.find("writes")->items[KeyOffset(counter)].i, static_cast<int64_t>(counted->writes));
+        EXPECT_EQ(page.find("reads")->items[KeyOffset(counter)].i, static_cast<int64_t>(counted->reads));
+        EXPECT_GE(page.find("last_frame")->items[KeyOffset(counter)].i, 2) << "still counting in the last frames";
+    }
+    EXPECT_TRUE(found);
+}
+
+// A host trap runs as one instruction: the fast tape load writes a whole block at the ROM loader's entry. Every
+// write is the instruction's, past the per-instruction event buffer too.
+TEST(AnalysisL1Builder_Test, TrapWritesPastTheEventBuffer)
+{
+    L1Builder builder([](uint16_t z80) { return static_cast<uint16_t>(z80 >> 14); }, 1);
+    L1Builder::Regs regs;
+    constexpr int kWrites = 200;
+    static_assert(kWrites > L1Builder::kMaxEvents, "more than one instruction's events");
+    regs.pc = 0x0556;
+    builder.OnStart(0x0556, 0, regs, 0, 0, false, false, false, 0);
+    builder.OnBus('R', 0x0556, 0x00);  // the fetch of a NOP, then the trap's stores
+    for (int i = 0; i < kWrites; ++i)
+        builder.OnBus('W', static_cast<uint16_t>(0x9000 + i), static_cast<uint8_t>(i));
+    regs.pc = 0x0557;
+    builder.OnStart(0x0557, 0, regs, 100, 0, false, false, false, 0);
+    builder.OnBus('R', 0x0557, 0x00);
+    regs.pc = 0x0558;
+    builder.Flush(regs, 104);
+    ReplaySummary summary;
+    summary.lastFrame = 1;
+    summary.frames = 1;
+    const L1Result l1 = builder.Build(summary, [](uint16_t page) { return "page " + std::to_string(page); });
+    for (int i : {0, L1Builder::kMaxEvents, kWrites - 1})
+    {
+        const ByteUse* use = l1.UseAt(MakeKey(2, static_cast<uint16_t>(0x9000 + i)));
+        ASSERT_NE(use, nullptr) << "byte " << i;
+        EXPECT_EQ(use->writes, 1u) << "byte " << i;
+        EXPECT_EQ(use->lastWriter, MakeKey(0, 0x0556)) << "byte " << i;
+    }
+}
+
+TEST_F(AnalysisL1_Test, ToolEditWritesAreUses)
+{
+    // A tool edit (the fast tape load, a script's poke) reaches memory past the bus. The replay applies it from the
+    // recording; L1 sees the bytes it changed as writes of the instruction pending at the edit
+    Load("stages.asm");
+    ASSERT_FALSE(HasFatalFailure());
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+    ASSERT_TRUE(ttd->StartRecording()) << ttd->LastStartError();
+    _emulator->RunNFrames(1);
+    ASSERT_GE(_z80->pc, At("wait0")) << "the edit lands in the first wait";
+    ASSERT_LT(_z80->pc, At("helper"));
+    ttd->BeginToolEdit();
+    for (uint16_t k = 0; k < 4; ++k)
+        _memory->ToolWriteToZ80Memory(static_cast<uint16_t>(0xC100 + k), static_cast<uint8_t>(k + 1));
+    _memory->ToolWriteToZ80Memory(0xC104, 0x00);  // the value it held: no change, no write
+    ttd->EndToolEdit("test");
+    _emulator->RunNFrames(2);
+    std::string error;
+    ASSERT_TRUE(TraceBundle::Capture(*_emulator, _bundle, error)) << error;
+    const L1Result l1 = Build();
+    for (uint16_t k = 0; k < 4; ++k)
+    {
+        const ByteUse* use = l1.UseAt(l1.StartKey(static_cast<uint16_t>(0xC100 + k)));
+        ASSERT_NE(use, nullptr) << "byte " << k;
+        EXPECT_EQ(use->writes, 1u) << "byte " << k;
+        EXPECT_GE(use->lastWriter, l1.StartKey(At("wait0"))) << "byte " << k;
+        EXPECT_LT(use->lastWriter, l1.StartKey(At("helper"))) << "byte " << k;
+    }
+    const ByteUse* same = l1.UseAt(l1.StartKey(0xC104));
+    EXPECT_TRUE(same == nullptr || same->writes == 0) << "a byte the edit left as it was";
+}
+
+TEST_F(AnalysisL1_Test, FastTapeLoadWritesAreUses)
+{
+    // The fast tape load is a trap at the ROM's LD-BYTES entry ($0556): the recording keeps it as a tool edit with
+    // the block's bytes. The replay applies the edit; every loaded byte, in each bank the block crosses, is a write
+    // of the trapped instruction
+    Load("stages.asm");
+    ASSERT_FALSE(HasFatalFailure());
+    constexpr uint16_t kAt = 0x7F80;  // banks 1 and 2
+    constexpr uint16_t kLength = 0x0100;
+    std::vector<uint8_t> block(kLength + 2);
+    block[0] = 0xFF;
+    uint8_t checksum = 0xFF;
+    for (size_t i = 1; i <= kLength; ++i)
+    {
+        block[i] = static_cast<uint8_t>(i * 7 + 3);
+        checksum ^= block[i];
+    }
+    block[kLength + 1] = checksum;
+    const std::string tap = TestPathHelper::GetUniqueTestScratchPath("fastload-uses.tap");
+    {
+        std::ofstream out(tap, std::ios::binary);
+        const uint8_t length[2] = {static_cast<uint8_t>(block.size() & 0xFF), static_cast<uint8_t>(block.size() >> 8)};
+        out.write(reinterpret_cast<const char*>(length), 2);
+        out.write(reinterpret_cast<const char*>(block.data()), static_cast<std::streamsize>(block.size()));
+    }
+    ASSERT_TRUE(_emulator->LoadTape(tap));
+    // The trap checks the ROM's LD-BYTES signature
+    uint8_t* rom = _memory->GetPhysicalAddressForZ80Page(0);
+    const uint8_t signature1[8] = {0x14, 0x08, 0x15, 0xF3, 0x3E, 0x0F, 0xD3, 0xFE};
+    const uint8_t signature2[3] = {0xDB, 0xFE, 0x1F};
+    std::memcpy(rom + 0x0556, signature1, sizeof(signature1));
+    std::memcpy(rom + 0x0556 + 12, signature2, sizeof(signature2));
+    // LD A,#FF; LD DE,kLength; LD IX,kAt; SCF; CALL #0556; loop: JR loop
+    const uint8_t program[] = {0x3E, 0xFF, 0x11, kLength & 0xFF, kLength >> 8, 0xDD, 0x21, kAt & 0xFF, kAt >> 8,
+                               0x37, 0xCD, 0x56, 0x05, 0x18, 0xFE};
+    for (size_t i = 0; i < sizeof(program); ++i)
+        _memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0xC000 + i), program[i]);
+    _z80->pc = 0xC000;
+    ASSERT_TRUE(_emulator->GetFeatureManager()->setFeature(Features::kFastTape, true));
+    Record(2);
+    ASSERT_FALSE(HasFatalFailure());
+    ASSERT_EQ(_memory->DirectReadFromZ80Memory(kAt), block[1]) << "the trap loaded the block";
+    const L1Result l1 = Build();
+    for (const uint16_t address : {kAt, static_cast<uint16_t>(0x7FFF), static_cast<uint16_t>(0x8000),
+                                   static_cast<uint16_t>(kAt + kLength - 1)})
+    {
+        const ByteUse* use = l1.UseAt(l1.StartKey(address));
+        ASSERT_NE(use, nullptr) << std::hex << address;
+        EXPECT_EQ(use->writes, 1u) << std::hex << address;
+        // The trap runs the loader at its entry's fetch and returns: the writer is the CALL into it ($C00A)
+        EXPECT_EQ(use->lastWriter, l1.StartKey(0xC00A)) << std::hex << address;
+        EXPECT_EQ(use->flags & use::kStackWrite, 0) << "a data write, not a push: " << std::hex << address;
+    }
+}
+
+TEST_F(AnalysisL1_Test, PatchIsNotOverlay)
+{
+    const L1Result l1 = Run("patch-overlay.asm", 2);
+    ASSERT_FALSE(HasFailure());
+    const ByteUse* patched = l1.UseAt(l1.StartKey(static_cast<uint16_t>(At("patched") + 1)));
+    ASSERT_NE(patched, nullptr);
+    EXPECT_NE(patched->flags & use::kSmc, 0) << "written after it ran";
+    EXPECT_FALSE(patched->overlaid) << "and run again after each write: a patch";
+    for (uint16_t a = At("once"); a < At("once_end"); ++a)
+    {
+        const ByteUse* use = l1.UseAt(l1.StartKey(a));
+        ASSERT_NE(use, nullptr);
+        EXPECT_NE(use->flags & use::kSmc, 0) << std::hex << a;
+        EXPECT_TRUE(use->overlaid) << "ran once, then the buffer: never run again " << std::hex << a;
+    }
+    EXPECT_NE(l1.ToJson().find("\"byte_use\""), std::string::npos);
+}
+
+TEST_F(AnalysisL1_Test, WindowFromAnArrival)
+{
+    // Its own recording: the window replays _bundle, which a cached Run does not set
+    Load("stages.asm");
+    ASSERT_FALSE(HasFatalFailure());
+    Record(5);
+    ASSERT_FALSE(HasFatalFailure());
+    const L1Result whole = Build();
+    ASSERT_EQ(whole.arrivals.size(), 2u);
+    const CodeArrival& second = whole.arrivals[1];
+    L1Result l1;
+    ReplayOptions options;
+    options.fromFrame = second.frame;
+    options.fromTInFrame = second.tInFrame;
+    std::string error;
+    ASSERT_TRUE(ReplayBuild(_bundle, options, l1, error)) << error;
+    EXPECT_EQ(l1.replay.diverged, 0u);
+    EXPECT_EQ(l1.replay.firstFrame, second.frame);
+    uint8_t value = 0;
+    ASSERT_TRUE(l1.StartByte(l1.StartKey(0xB000), value));
+    EXPECT_EQ(value, 0x01) << "the start image is the memory at the arrival: stage 2's LD BC,nn is in place";
+    EXPECT_EQ(RoutineAt(l1, At("start")), nullptr) << "the loader ran before the window";
+    EXPECT_TRUE(l1.arrivals.empty()) << "nothing arrives after the last stage";
+    ReplayOptions empty;
+    empty.fromFrame = 1000;
+    EXPECT_FALSE(ReplayBuild(_bundle, empty, l1, error));
+    EXPECT_NE(error.find("window"), std::string::npos) << error;
+}
+
 TEST_F(AnalysisL1_Test, PassOverTheImageIsNoUse)
 {
     const L1Result l1 = Run("sweep.asm", 8);
@@ -624,4 +836,134 @@ TEST_F(AnalysisL1_Test, FactSheetBudget)
         const auto lines = static_cast<size_t>(std::count(sheet.begin(), sheet.end(), '\n'));
         EXPECT_LE(lines, 24u + 12u);
     }
+}
+
+TEST_F(AnalysisL1_Test, ToolEditPageWritesThroughTheEditsPaging)
+{
+    // A tool edit's RAM page images are reported as writes where the CPU sees them after the edit (its paging
+    // record follows the pages): a page the edit maps in counts, a page mapped in two banks counts once
+    Load("stages.asm", "128K");
+    ASSERT_FALSE(HasFatalFailure());
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+    ASSERT_TRUE(ttd->StartRecording()) << ttd->LastStartError();
+    _emulator->RunNFrames(1);
+    // Paging through the 7FFD latch, which the edit records with the chipset (a direct bank switch is not recorded)
+    const auto page = [this](uint8_t ram) {
+        uint8_t& latch = _context->emulatorState.p7FFD;
+        latch = static_cast<uint8_t>((latch & ~0x07) | ram);
+        _memory->UpdateZ80Banks();
+    };
+    // Page 5 in bank 3 as well as in bank 1
+    ASSERT_TRUE(_emulator->EditMemoryFromTool("test", [&] { page(5); }).empty());
+    _emulator->RunNFrames(1);
+    ASSERT_TRUE(_emulator->EditMemoryFromTool("test", [this] {
+                    for (uint16_t k = 0; k < 4; ++k)
+                        _memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0xC100 + k), static_cast<uint8_t>(k + 1));
+                }).empty());
+    _emulator->RunNFrames(1);
+    // Page 3 into bank 3 by the edit that writes it: not mapped before the edit
+    ASSERT_TRUE(_emulator->EditMemoryFromTool("test", [&] {
+                    page(3);
+                    for (uint16_t k = 0; k < 4; ++k)
+                        _memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0xC200 + k), static_cast<uint8_t>(k + 9));
+                }).empty());
+    const uint16_t page3 = _memory->GetPageForBank(3);
+    _emulator->RunNFrames(1);
+    std::string error;
+    ASSERT_TRUE(TraceBundle::Capture(*_emulator, _bundle, error)) << error;
+    const L1Result l1 = Build();
+    for (uint16_t k = 0; k < 4; ++k)
+    {
+        // Bank 1 maps page 5 from the start
+        const ByteUse* twice = l1.UseAt(l1.StartKey(static_cast<uint16_t>(0x4100 + k)));
+        ASSERT_NE(twice, nullptr) << "page 5 byte " << k;
+        EXPECT_EQ(twice->writes, 1u) << "page 5 (banks 1 and 3) byte " << k;
+        const ByteUse* mapped = l1.UseAt(MakeKey(page3, static_cast<uint16_t>(0xC200 + k)));
+        ASSERT_NE(mapped, nullptr) << "page 3 byte " << k;
+        EXPECT_EQ(mapped->writes, 1u) << "page 3 byte " << k;
+    }
+}
+
+// A buffer the PUSH trick cleared (LD SP,buf_end / PUSH HL), then filled with pointers read back through IX: a PUSH
+// wrote its bytes and nothing popped them. Its words are pointers in memory, not the stack's slots
+TEST_F(AnalysisL1_Test, PushClearedBufferKeepsItsPointers)
+{
+    const L1Result l1 = Run("push-cleared-pointers.asm", 1);
+    ASSERT_FALSE(HasFailure());
+    const auto wordAt = [&l1](uint16_t z80) {
+        return std::any_of(l1.pointers.begin(), l1.pointers.end(), [&](const PointerUse& p) {
+            return p.form == PointerForm::Word && p.origin == l1.StartKey(z80);
+        });
+    };
+    const ByteUse* buf = l1.UseAt(l1.StartKey(At("buf")));
+    ASSERT_NE(buf, nullptr);
+    ASSERT_NE(buf->flags & use::kStackWrite, 0) << "the PUSH cleared it";
+    EXPECT_TRUE(wordAt(At("buf")));
+    EXPECT_TRUE(wordAt(static_cast<uint16_t>(At("buf") + 2)));
+}
+
+// LD HL,(table) / LD (list),HL: the list remembers the table its word came from; a PUSH over the list writes other
+// bytes. Read back and used as an address, the list's word is a pointer, the table's is not
+TEST_F(AnalysisL1_Test, PushOverACopyForgetsIt)
+{
+    const L1Result l1 = Run("pushed-over-list.asm", 1);
+    ASSERT_FALSE(HasFailure());
+    const auto wordAt = [&l1](uint16_t z80) {
+        return std::any_of(l1.pointers.begin(), l1.pointers.end(), [&](const PointerUse& p) {
+            return p.form == PointerForm::Word && p.origin == l1.StartKey(z80);
+        });
+    };
+    EXPECT_TRUE(wordAt(At("list")));
+    EXPECT_FALSE(wordAt(At("table"))) << "the push wrote over the copy of the table's word";
+}
+
+// The same with a tool edit (a script's poke) over the list: the list's word holds its own value, as a pointer and as
+// the source of the byte drawn from it
+TEST_F(AnalysisL1_Test, ToolEditOverACopyForgetsIt)
+{
+    Load("edit-over-list.asm");
+    ASSERT_FALSE(HasFatalFailure());
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+    ASSERT_TRUE(ttd->StartRecording()) << ttd->LastStartError();
+    _emulator->RunNFrames(1);
+    ASSERT_GE(_z80->pc, At("wait")) << "the edit lands in the wait for the flag";
+    ASSERT_LT(_z80->pc, At("main"));
+    ttd->BeginToolEdit();
+    _memory->ToolWriteToZ80Memory(At("list"), 0x00);
+    _memory->ToolWriteToZ80Memory(static_cast<uint16_t>(At("list") + 1), 0x58);
+    _memory->ToolWriteToZ80Memory(At("flag"), 0x01);
+    ttd->EndToolEdit("test");
+    _emulator->RunNFrames(1);
+    std::string error;
+    ASSERT_TRUE(TraceBundle::Capture(*_emulator, _bundle, error)) << error;
+    const L1Result l1 = Build();
+    const auto wordAt = [&l1](uint16_t z80) {
+        return std::any_of(l1.pointers.begin(), l1.pointers.end(), [&](const PointerUse& p) {
+            return p.form == PointerForm::Word && p.origin == l1.StartKey(z80);
+        });
+    };
+    const auto drawnFrom = [&l1](uint16_t z80) {
+        return std::any_of(l1.drawn.begin(), l1.drawn.end(),
+                           [&](const DrawnByte& d) { return d.key == l1.StartKey(z80); });
+    };
+    EXPECT_TRUE(wordAt(At("list")));
+    EXPECT_FALSE(wordAt(At("table"))) << "the edit wrote over the copy of the table's word";
+    EXPECT_TRUE(drawnFrom(At("list"))) << "the edited byte is its own source";
+    EXPECT_FALSE(drawnFrom(At("table")));
+}
+
+// 128K: one copier writes the same stage to $C000 in RAM 1, then in RAM 3, and calls it in each: two arrivals, told
+// apart by the page
+TEST_F(AnalysisL1_Test, ArrivalsInTwoPagesAtOneAddress)
+{
+    const L1Result l1 = Run("banked-stages.asm", 1, "128K");
+    ASSERT_FALSE(HasFailure());
+    std::vector<const CodeArrival*> at;
+    for (const CodeArrival& a : l1.arrivals)
+        if (a.z80 == 0xC000)
+            at.push_back(&a);
+    ASSERT_EQ(at.size(), 2u) << "one per page: the same copier, the same Z80 address";
+    EXPECT_NE(KeyPage(at[0]->key), KeyPage(at[1]->key));
+    EXPECT_EQ(at[0]->writerZ80, At("copy"));
+    EXPECT_EQ(at[1]->writerZ80, At("copy"));
 }

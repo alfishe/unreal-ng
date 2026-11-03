@@ -25,6 +25,10 @@
 namespace analysis
 {
 
+/// The title (and evidence) of a code map data claim over ROM bytes only written: the writes are lost, the claim
+/// says nothing of the bytes and conflicts with no claim from their content
+inline constexpr const char* kRomWriteSink = "rom-write";
+
 enum class RegionKind : uint8_t
 {
     Code,          ///< executed (or reached from executed code)
@@ -129,6 +133,8 @@ struct Geometry
     /// Graphics: bytes from the start of one row to the next (layout "columns": of one column to the next); 0: the
     /// row's own bytes. Larger: a window of a wider picture (a scrolled landscape shows part of each row)
     uint16_t pitch = 0;
+    /// Graphics: the lines stored bottom up (the first line in memory is the picture's bottom one)
+    bool bottomUp = false;
 
     /// Graphics: bytes from one row's start (a column's) to the next
     uint32_t LineStep() const;
