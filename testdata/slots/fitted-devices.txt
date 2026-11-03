@@ -116,6 +116,7 @@ port 0077 00FF/0077 Z-Controller SD chip select (reads #00)
 port 007F FFFF/007F Beta128 FDC data
 port 00B3 FFFF/00B3 Registered peripheral device
 port 00BB FFFF/00BB Registered peripheral device
+port 00DD 0027/0005 Scorpion printer Covox (8-bit DAC on the printer data latch, write only)
 port 00FE 0023/0022 Keyboard / Beeper / Border / MIC+EAR
 port 00FF 00FF/00FF Beta128 system register
 port 1FFD D027/1025 RAM 0 at #0000, Shadow Monitor, RAM page bit 3, TR-DOS page
@@ -137,7 +138,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 15:39 17:50 18:95 20:39 23:14 35:52 45:var 54:44 56:22 notRecorded 0
+ttd 1:72 2:34 3:23 4:109 6:20 7:20 10:216 12:137 15:39 17:50 18:95 20:39 23:14 35:52 45:var 54:44 56:22 notRecorded 0
 == next
 model 16
 mixer [Beeper] [Next AY 1] [Next AY 2] [Next AY 3] [Next DAC]
@@ -281,6 +282,7 @@ port 005F FFFF/005F Beta128 FDC sector
 port 007F FFFF/007F Beta128 FDC data
 port 00B3 FFFF/00B3 Registered peripheral device
 port 00BA 00FE/00BA SMUC board (EEPROM / RTC / PIC / IDE window)
+port 00DD 0023/0001 Scorpion printer Covox (8-bit DAC on the printer data latch, write only)
 port 00FE 0023/0022 Keyboard / Beeper / Border / MIC+EAR
 port 00FF 00FF/00FF Beta128 system register
 port 1FFD D027/1025 Window latch / Shadow Monitor (bit 1)
@@ -298,7 +300,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:44 56:22 notRecorded 0
+ttd 1:72 2:34 3:23 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:44 56:22 notRecorded 0
 == scorpion
 model 9
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -313,6 +315,7 @@ port 005F FFFF/005F Beta128 FDC sector
 port 007F FFFF/007F Beta128 FDC data
 port 00B3 FFFF/00B3 Registered peripheral device
 port 00BB FFFF/00BB Registered peripheral device
+port 00DD 0027/0005 Scorpion printer Covox (8-bit DAC on the printer data latch, write only)
 port 00FE 0023/0022 Keyboard / Beeper / Border / MIC+EAR
 port 00FF 00FF/00FF Beta128 system register
 port 1FFD D027/1025 Window latch / Shadow Monitor (bit 1)
@@ -329,7 +332,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:44 56:22 notRecorded 0
+ttd 1:72 2:34 3:23 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:44 56:22 notRecorded 0
 == spectrum128
 model 2
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]

@@ -661,11 +661,31 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         }
         check(gsame, "gs windows: each listed page holds its bytes");
 
-        gs->add_breakpoint(gpc);
+        // An address the card's Z80 comes back to: the one it has been at most often (a loop's), else where it stands.
+        // Its own PC alone may be an address it visits once in several seconds (a timer routine), which a slow host misses
+        const std::vector<unsigned int> ghistory = gs->get_history();
+        std::map<unsigned int, int> gseen;
+        unsigned int gbp = gpc;
+        if (!ghistory.empty()) {
+            gbp = ghistory.front();
+            for (unsigned int h : ghistory)
+                if (++gseen[h] > gseen[gbp]) gbp = h;
+        }
+        gs->add_breakpoint(gbp);
         m->debug_run(true);
-        const bool ghit = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 3000);
-        check(ghit && m->debug_stop_cpu() == gs && gs->get_pc() == gpc, "gs breakpoint stops the machine, gs in front");
-        gs->remove_breakpoint(gpc);
+        const bool ghit = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 5000);
+        check(ghit && m->debug_stop_cpu() == gs && gs->get_pc() == gbp, "gs breakpoint stops the machine, gs in front");
+        if (!ghit || m->debug_stop_cpu() != gs || gs->get_pc() != gbp)
+            printf("  (gs breakpoint #%04X, %u times in %zu of history: %s, gs PC #%04X, stop cpu %s, paused %d stepping %d,"
+                   " reason %d, frames %llu)\n",
+                   gbp, (unsigned)gseen[gbp], ghistory.size(), ghit ? "stopped" : "not stopped in 5 s", gs->get_pc(),
+                   m->debug_stop_cpu() == gs ? "gs" : "other", m->debug_paused(), m->debug_stepping(),
+                   m->debug_stop_reason(), (unsigned long long)machine_frames(m));
+        gs->remove_breakpoint(gbp);
+        if (!ghit) {
+            m->debug_pause();
+            wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+        }
 
         // A step of the card's tab is the card's step: the machine stops after one card instruction, gs in front
         const unsigned int gr = reg(gs, "R");

@@ -805,7 +805,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 
 	// SOUND section
 	config.sound.covoxFB = (int)inimanager.GetLongValue(sound, "CovoxFB", 0);
-	config.sound.covoxDD = (int)inimanager.GetLongValue(sound, "CovoxDD", 0);
+	config.sound.covoxDD = (int)inimanager.GetLongValue(sound, "CovoxDD", 1);
 	config.sound.sd = (int)inimanager.GetLongValue(sound, "SD", 0);
 
 	// Core audio rate: auto | 44100 | 48000 | 88200 | 96000 | 176400 | 192000

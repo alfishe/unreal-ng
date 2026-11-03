@@ -27,4 +27,4 @@
   [evidence/](evidence/).
 
 ## Follow-ups
-- The Scorpion Covox at `#DD` (VPlayer's "DD" port) is not emulated: the `CovoxDD` ini keys and the `covox-dd` slot vocabulary entry have no device behind them.
+- None open. The Scorpion printer Covox at `#DD` (VPlayer's "DD" port) is emulated since 2026-11-03 (built-in `covox-dd`).

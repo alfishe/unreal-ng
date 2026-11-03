@@ -184,8 +184,9 @@ SoundManager::SoundManager(EmulatorContext* context)
     // Covox / SoundDrive when either config flag is set. The same 4-channel
     // DAC class serves both: SD=1 wires the full SoundDrive quad (#F1/#F3/
     // #F9/#FB), CovoxFB=1 alone wires only the mono Covox port #FB
-    // (see attachToPorts)
-    if (_context->config.sound.covoxFB || _context->config.sound.sd)
+    // (see attachToPorts). CovoxDD=1 on a Scorpion fits the printer-port DAC (#DD) in the same device
+    if (_context->config.sound.covoxFB || _context->config.sound.sd ||
+        (_context->config.sound.covoxDD && Covox::PrinterDecodeOf(_context->config.mem_model).mask != 0))
     {
         _covox = new Covox(_context, _coreRate);
         _devices.push_back({AudioSourceType::COVOX, "COVOX", false, false, 1.0f, 0.0f, false});
