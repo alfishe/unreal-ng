@@ -146,6 +146,28 @@ void PortDecoder_Scorpion256::reset()
     SyncTurboWaits();
 }
 
+/// region <Clock select>
+
+uint16_t PortDecoder_Scorpion256::GetClockSelect() const
+{
+    return _turboPlusHost ? static_cast<uint16_t>(_state->scorpion.turbo ? 1 : 0) : 0;
+}
+
+void PortDecoder_Scorpion256::RestoreClockSelect(uint16_t select)
+{
+    // The reset cleared the flip-flop; the quick reset skips the program that would strobe IN #7FFD again, so the
+    // latch comes back as that strobe leaves it (DecodePortIn): 7 MHz now, the Turbo+ waits with it
+    if (!_turboPlusHost || !select || _state->scorpion.turbo)
+        return;
+    _state->scorpion.turbo = 1;
+    _state->hw_turbo_ratio = 2;
+    if (_context->pCore && _context->pCore->GetZ80())
+        _context->pCore->GetZ80()->ApplyHardwareTurboNow();
+    SyncTurboWaits();
+}
+
+/// endregion </Clock select>
+
 /// region <Turbo+ wait states>
 
 void PortDecoder_Scorpion256::SyncTurboWaits()

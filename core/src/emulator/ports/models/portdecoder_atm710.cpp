@@ -1,6 +1,8 @@
 #include "debugger/ttd/atm/ttdatm2kbc.h"
 #include "stdafx.h"
 #include "portdecoder_atm710.h"
+
+#include <cstring>
 #include "loaders/snapshot/snapshotcapture.h"
 
 #include <algorithm>
@@ -234,7 +236,30 @@ bool PortDecoder_ATM710::FinishAutostartColdStart(uint16_t pc)
 
 uint16_t PortDecoder_ATM710::GetClockSelect() const
 {
+    // The autostart from the BIOS menu stands in for choosing an entry: TURBO ON there means 7 MHz, as the user's own
+    // boot of the disk through the menu would run (owner report 2026-11-02: the autostart from the menu ran at 3.5 MHz)
+    if (!(_state->pFF77 & ATM_FF77_TURBO) && BiosMenuTurbo())
+        return ATM_FF77_TURBO;
     return _state->pFF77 & ATM_FF77_TURBO;
+}
+
+bool PortDecoder_ATM710::BiosMenuTurbo() const
+{
+    Memory* memory = _context->pMemory;
+    if (!memory || !memory->HasDosRom())
+        return false;
+    const uint8_t* menu = memory->RAMPageAddress(2);
+    const uint8_t* rom = memory->base_dos_rom + BIOS_MENU_ROM_OFFSET;
+    if (!menu)
+        return false;
+    // The running menu keeps its variables and self-modified code inside the copy: 20-30 of its 2048 bytes differ from
+    // the ROM (measured over its animation). Anything else in RAM 2 matches about 8 of them by chance
+    unsigned differing = 0;
+    for (uint16_t i = 0; i < BIOS_MENU_SIZE; i++)
+        differing += menu[i] != rom[i] ? 1u : 0u;
+    if (differing > BIOS_MENU_MAX_DIFFERING)
+        return false;
+    return menu[BIOS_MENU_TURBO_FLAG] != 0;
 }
 
 void PortDecoder_ATM710::RestoreClockSelect(uint16_t select)
