@@ -227,58 +227,64 @@ ConnectorState { connectorIndex: u8, mask: u16 }   // the retro controls held on
 
 ## 6. Port-read evidence
 
-The second source of `auto` (D7) after signatures. `PortReadWatch` (`core/src/emulator/io/controllers/portreadwatch.h`)
-is the cheap counter mode C-4 asks for in [integration.md](../2026-10-08-steamdeck-client/integration.md): counts per
-port class per frame, no per-access record, switchable at run time. It builds on the monitored ports of
-`MemoryAccessTracker` (`core/src/emulator/memory/memoryaccesstracker.h:96`, `MonitoredPort`, `AccessStats`) but needs
-neither its per-access records nor its call traces.
+The second source of `auto` (D7) after signatures. Since 2026-11-02 it is the core's device access watch
+(`core/src/emulator/ports/deviceaccesswatch.h`, design in
+[../2026-11-02-device-access-watch](../2026-11-02-device-access-watch/README.md)); it replaced `PortReadWatch`, which
+classified ports by number. The watch sits on the port decoder's IN / OUT path after the decode. Each access counts
+for the slot registry's claim that answers it on this machine, as configured, so the input roles come from the
+machine's own declaration:
 
-Counted classes (one `u16` counter each, reset per frame, folded into a 50-frame window):
+- `#1F` is the Kempston joystick only where a Kempston claim answers it outside DOS. Under TR-DOS it is the WD1793.
+  On a Next OUT it is the DAC. With an AMX card fitted it is the card's PIO.
+- the ULA's `#FE` reads are the half-rows by address lines A8-A15 (`row.ef`, plus `row.multi` and `row.none`), with
+  each board's own decode (Scorpion, ATM, Evo);
+- the AY's and NextREG's data accesses are the register the program selected (`reg.0e`, `reg.b2`). The watch tracks
+  the selects from the OUT traffic, so no chip carries a hook. A select value outside the index bits (TurboSound
+  chip select `#FE` / `#FF`) keeps the register; the selection made before the watch started is asked from the
+  decoder once per start (`PortDecoder::SelectedIndex`), else the reads are `reg.unknown`;
+- the Kempston mouse the emulator fits (`[INPUT] Mouse=`) is declared per machine as `MachineDef::fitted` with that
+  board's decode (`#xxDF` and mirrors; ATM: low byte `#DF`), outside the slot planner, so it never blocks a card.
 
-| Class | Matches |
-|:--|:--|
-| `kempston` | reads the board's Kempston decode accepts (`#1F` and aliases) |
-| `kempston2` | `#37` (Next) |
-| `fuller` | `#7F` |
-| `kmouse` | `#FADF / #FBDF / #FFDF` |
-| `row.<half-row>` | `#FE` reads by high byte, eight counters; plus `rows.multi` for reads with several address lines low |
-| `row-bits.<half-row>` | which bits of a half-row the code tests after the read (sampled: the next `AND n` / `BIT n` within 8 instructions, when cheap; optional) |
-| `ay.r14` | `IN` from the AY data port with R14 selected |
-| `nr.b2` | a read of Next register #B2 (the MD pads' X Z Y MODE bits) through `#253B` |
+The claims declare this as data: `PortClaim::channel` (`AddressBits`, `Select`, `Indexed`, `SelectIndexed`) and
+`PortClaim::input` (`KeyMatrix`, `KempstonJoystick`, `KempstonJoystick2`, `FullerJoystick`, `KempstonMouse`,
+`AmxMouse`, `AyIo`, `NextReg`).
 
-Output, per instance, read by the library's heuristic ([mapping-and-profiles.md](mapping-and-profiles.md)):
+Output (`DeviceAccessEvidence`, read by `controllers::DecideFromAccess`):
 
 ```
-PortReadEvidence { framesObserved, window: 50, perClass: { class → framesWithReads, readsPerFrame (avg) },
-                   sinceLoad: frames since the last media change }
+DeviceAccessEvidence { active, framesObserved, window: 50,
+                       channels: [ { device, channel, input, port, index, out, frames, perFrame, tested,
+                                     sites: [ { pc, count, tested } ], otherSites } ] }
 ```
 
-The watch starts at the end of loading (media `NC_MEDIA_*` and tape stop) and runs until a decision is decisive or for
-30 s of play; the cost target is one table increment per `IN`, zero when off.
+- **Tested bits.** For every read of an input claim, the watch reads the code after the `IN` without executing it
+  (`TestedBitsAfterIn`) and follows the value:
+  - the read itself: `IN A,(n)` or `IN r,(C)`;
+  - then up to 8 instructions of `AND n`, `BIT b,r`, right shifts of A, `LD A,r` from the held register, and a carry
+    test right after a shift;
+  - the scan stops at a jump, a call, a return, a reload of the register, or an ALU op that replaces A.
 
-Built (C6):
+  The scan runs once per code site. A channel's `tested` is the union over its sites; `auto` shows it as
+  `evidence.channels[].tested_bits`.
+- **When it runs.** A media load opens a window of 30 s (`ControllerManager::WatchPortReads`: tape, disk, snapshot).
+  The count restarts while a tape plays. The feature `deviceaccess` (alias `dacc`, off by default) keeps it on
+  continuously. Off, it costs the decoder one flag test.
+- **`DecideFromAccess`** checks the roles in this order:
+  1. NR #B2 every frame: an MD 6-button pad on `next.left`, or on `next.right` when `#37` is read every frame too;
+  2. Kempston 2, Kempston, Fuller, Kempston mouse, AMX mouse;
+  3. the half-rows: `#EFFE` and `#F7FE` with bits 0-3 of `#F7FE` tested is Sinclair 1 (two players); with only bit 4
+     tested it is Cursor;
+  4. AY R14 every frame gives a `hint`, not a decision.
 
-- **Row bits.** For a single half-row `#FE` read the watch reads the code after the `IN` (no execution:
-  `TestedBitsAfterIn` over `Memory::DirectReadFromZ80Memory`, set by `ControllerManager` while the watch runs) and
-  follows the value: `IN A,(n)` or `IN r,(C)`, then up to 8 instructions of `AND n`, `BIT b,r`, `RRA` / `RRCA` /
-  `RRC A` / `RR A` / `SRL A` (each shift moves the tested bit), `LD A,r` from the held register, a carry test right after a
-  shift (`JR C`, `JP NC`, `CALL C`, `RET NC`, ...), until a jump, a call, a return, a reload of the register or an ALU
-  op that replaces A (`CP` keeps it). The bits are cached per half-row by the code address, so a polling loop costs
-  one scan; `PortReadEvidence::RowBits(row)` holds the window's union, `auto` shows them as `evidence.row_bits`
-  (`{"row.ef": [0, 1, 2, 3, 4]}`).
-- **`ay.r14`** (an IN of the AY's data port, `#FFFD` as the 128K family decodes it, with R14 selected) and
-  **`nr.b2`** (an IN of the Next's `#253B` with register #B2 selected) are counted by the watch itself, on the same
-  IN-hook path as the ports: `PortReadWatch::OnRead` asks a register probe `ControllerManager` sets while the watch
-  runs (`ITurboSoundDevice::getBusReadRegister`: the selected chip's register, -1 for the TSFM status byte or an FM
-  address; `NextBoard::SelectedRegister`). The chips and the port decoder carry no hook: nothing while the watch is
-  off (the unarmed R14 read benchmarks within noise of the code without the watch).
-- **`DecideFromPortReads`**: `nr.b2` every frame comes before the dedicated ports: an MD 6-button pad on
-  `next.left`, on `next.right` when `#37` is read every frame too. `#EFFE` and `#F7FE` with bits 0-3 of `#F7FE` tested
-  (keys 1-4: Sinclair 2's) is Sinclair 1 (two players), with only bit 4 (key 5) it stays Cursor; the reasons name the
-  tested bits. `ay.r14` every frame with nothing else decided gives a `hint` (a Timex joystick, the 128 keypad or an
-  AY mouse: none of them exists here yet), not a decision. Tests: `AutoDecision_Test` (`RowBits_*`,
-  `Watch_RowBitsAndRegisterReads`, `Decide_NextB2RowBitsAndAyR14`) and `HostInputMachine_Test.PortReadWatchRowBitsAndAyR14`
-  / `PortReadWatchNextB2` on a Pentagon and a Next.
+  The reasons name the device and the tested bits.
+- **Signature hook.** `controllers::ISignatureMatcher` (`SetSignatureMatcher`; `DecideAuto` asks it before the table).
+  The signature library (D16) implements it; tests use a fake.
+- Tests:
+  - `AutoDecision_Test`;
+  - `DeviceAccessWatch_Test` (attribution by the claims on Pentagon, Next, Scorpion, a 48K with AMX; the mouse by
+    each board's decode; the chip select; the seeded selection; sites; the window; every machine's keyboard and AY);
+  - `HostInputMachine_Test.AccessWatch*` on a running Pentagon and a Next, a TurboSound Pentagon that selected R14
+    before the watch, and the keyboard through every machine's real decoder.
 - Not done: the Next's board ports are `next.left` / `next.right`, so a `#1F` decision (`kempston`) on a Next names a
   connector the Next lacks and the Qt client ignores it (`applyAuto`); a mapping of `kempston` to `next.left` there is
   left.
@@ -298,7 +304,7 @@ Built (C6):
 7. `fuller-joystick` (C1c); then `timex-joystick` with a Timex machine.
 8. Mouse button order per board (the default changes for Next, Karabas-class and Scorpion ProfROM: E-1 in
    [research §10](research-retro-hardware.md#10-errata-in-other-unreal-ng-docs)), with a test per board.
-9. `PortReadWatch` ([§6](#6-port-read-evidence)).
+9. The device access watch ([§6](#6-port-read-evidence)).
 10. `[CONTROLLERS]` INI section; legacy `[INPUT] Joystick=` / `JoystickKeys=` and Unreal Speccy `KJoystick=`,
     `FJoystick=`, `Fire=`, `FireRate=` read as defaults for unset connectors.
 11. Later: `amx-mouse` (built in C11 with the daisy-chained IM2 model), `light-gun` (with a beam-position query), `ay-mouse`.

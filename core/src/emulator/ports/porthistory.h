@@ -19,11 +19,8 @@
 #include "debugger/history/devicehistory.h"
 
 class EmulatorContext;
+class PortClaimIndex;
 struct StateNode;
-namespace slots
-{
-class PortOwners;
-}
 
 /// One IN or OUT
 struct PortAccessRecord
@@ -47,9 +44,9 @@ public:
     PortHistories();
     ~PortHistories();
 
-    /// A history for every device the registry has now (kept across a rebuild by name), the claims snapshot. After
-    /// the slot manager built the cards
-    void Build(EmulatorContext* context);
+    /// A history for every device of the claims of @p index (kept across a rebuild by name). After the slot manager
+    /// built the cards and @p index took their claims
+    void Build(EmulatorContext* context, PortClaimIndex& index);
 
     /// The whole cost while every port history is off
     bool AnyOn() const
@@ -57,8 +54,8 @@ public:
         return _on.load(std::memory_order_relaxed) != 0;
     }
 
-    /// One access, after the decoder applied it (emulation thread). The caller checks AnyOn(). The owner comes from a
-    /// table (port, direction, DOS) -> device, built at the first access after Build: one load an access
+    /// One access, after the decoder applied it (emulation thread). The caller checks AnyOn(). The owner comes from the
+    /// claim index (one load) and a claim -> device array
     void Record(uint16_t port, uint8_t value, bool out, bool dos, uint16_t pc);
 
     /// The registry ids that have one ("beta128", ..., "board"); tests
@@ -72,11 +69,9 @@ private:
         std::unique_ptr<History> history;
     };
 
-    void BuildTable();
-
     EmulatorContext* _context = nullptr;
+    PortClaimIndex* _index = nullptr;
     std::atomic<int> _on{ 0 };
-    std::unique_ptr<slots::PortOwners> _owners;  ///< the claims snapshot of the last Build
-    std::vector<Device> _devices;   ///< the board's first
-    std::vector<uint8_t> _table;    ///< device index by (out << 17 | dos << 16 | port); empty until the first access
+    std::vector<Device> _devices;        ///< the board's first
+    std::vector<uint8_t> _claimDevice;   ///< device index by claim; kBoard (255) is the board's
 };

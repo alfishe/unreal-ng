@@ -3,6 +3,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/ports/portclaimindex.h"
 #include "emulator/slots/portowners.h"
 #include "emulator/state/statenode.h"
 
@@ -21,10 +22,11 @@ void PortAccessRecord::ToState(StateNode& node) const
 PortHistories::PortHistories() = default;
 PortHistories::~PortHistories() = default;
 
-void PortHistories::Build(EmulatorContext* context)
+void PortHistories::Build(EmulatorContext* context, PortClaimIndex& index)
 {
     _context = context;
-    _owners = std::make_unique<slots::PortOwners>(slots::PortOwners::Of(_context));
+    _index = &index;
+    const slots::PortOwners& owners = index.Owners();
     std::vector<Device> devices;
     auto take = [&](const std::string& id) {
         for (const Device& d : devices)
@@ -44,35 +46,22 @@ void PortHistories::Build(EmulatorContext* context)
         devices.push_back(std::move(device));
     };
     take("board");
-    for (size_t i = 0; i < _owners->ClaimCount(); i++)
-        take(_owners->ClaimOwner(static_cast<int>(i)));
+    for (size_t i = 0; i < owners.ClaimCount(); i++)
+        take(owners.ClaimOwner(static_cast<int>(i)));
     _devices = std::move(devices);  // the ones gone leave the registry with their history
-    _table.clear();                 // the next access builds it from the new claims
-}
-
-void PortHistories::BuildTable()
-{
-    // 256 devices at most in a byte: a machine has some tens
-    std::vector<uint8_t> claimDevice(_owners->ClaimCount(), 0);
-    for (size_t i = 0; i < claimDevice.size(); i++)
+    // 256 devices at most in a byte: a machine has some tens. Index 255 (PortClaimIndex::kBoard) is the board's
+    _claimDevice.assign(256, 0);
+    for (size_t i = 0; i < owners.ClaimCount() && i < PortClaimIndex::kBoard; i++)
         for (size_t d = 0; d < _devices.size() && d < 256; d++)
-            if (_devices[d].id == _owners->ClaimOwner(static_cast<int>(i)))
-                claimDevice[i] = static_cast<uint8_t>(d);
-    _table.assign(size_t(4) << 16, 0);
-    for (uint32_t key = 0; key < _table.size(); key++)
-    {
-        const int claim = _owners->FindClaim(static_cast<uint16_t>(key), (key >> 17) & 1, (key >> 16) & 1);
-        _table[key] = claim < 0 ? 0 : claimDevice[static_cast<size_t>(claim)];
-    }
+            if (_devices[d].id == owners.ClaimOwner(static_cast<int>(i)))
+                _claimDevice[i] = static_cast<uint8_t>(d);
 }
 
 void PortHistories::Record(uint16_t port, uint8_t value, bool out, bool dos, uint16_t pc)
 {
     if (_devices.empty() || (_context && _context->ttdReplayActive))
         return;
-    if (_table.empty()) [[unlikely]]
-        BuildTable();
-    History* history = _devices[_table[(uint32_t(out) << 17) | (uint32_t(dos) << 16) | port]].history.get();
+    History* history = _devices[_claimDevice[_index->Claim(port, out, dos)]].history.get();
     if (!history->On())
         return;
     PortAccessRecord record;

@@ -30,6 +30,8 @@
 #include "emulator/ports/models/portdecoder_spectrum3.h"
 #include "emulator/ports/models/portdecoder_spectrum48.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
+#include "emulator/sound/chips/iturbosounddevice.h"
+#include "emulator/sound/soundmanager.h"
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/sound/beeper.h"
@@ -368,11 +370,11 @@ void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, [[maybe_unused
         RecordPortTrace(/*isOut=*/false, port, result, pc, disp);
     }
 
-    // 4. The port histories of the registry's devices (one count test while they are off)
+    // 4. The port histories of the registry's devices (one count test while they are off) and the device access watch
     if (_portHistories.AnyOn()) [[unlikely]]
         _portHistories.Record(port, result, false, _state && (_state->flags & CF_TRDOS), pc);
-
-    // 4. Future: Analyzer notifications can be added here
+    if (_accessWatch.On()) [[unlikely]]
+        _accessWatch.Record(port, result, false, _state && (_state->flags & CF_TRDOS), pc);
 }
 
 void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [[maybe_unused]] uint16_t pc)
@@ -424,6 +426,8 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
 {
     if (_portHistories.AnyOn()) [[unlikely]]
         _portHistories.Record(port, value, true, _state && (_state->flags & CF_TRDOS), pc);
+    if (_accessWatch.On()) [[unlikely]]
+        _accessWatch.Record(port, value, true, _state && (_state->flags & CF_TRDOS), pc);
 
     // 1. Breakpoint handling
     if (_context->pDebugManager != nullptr)
@@ -496,6 +500,16 @@ void PortDecoder::OnPortWriteWithoutBusCycle(uint16_t port, uint8_t value, uint1
     }
 }
 
+void PortDecoder::BuildAccessObservers()
+{
+    const bool watching = _accessWatch.On();
+    _claimIndex.Build(_context);
+    _portHistories.Build(_context, _claimIndex);
+    _accessWatch.Build(_context, _claimIndex);
+    if (watching)
+        _accessWatch.Start();
+}
+
 /// region <Port trace (runtime feature "porttrace")>
 
 /// Re-read the porttrace feature flag and instantiate/release the recorder.
@@ -528,6 +542,9 @@ void PortDecoder::UpdateFeatureCache()
 
     // Release: a thread that sees the flag set also sees the recorder
     _portTraceFeatureCache.store(enabled, std::memory_order_release);
+
+    // The continuous device access watch: applied by the watch at the next frame boundary
+    _accessWatch.SetContinuous(fm && fm->isEnabled(Features::kDeviceAccess));
 
     UpdateModelFeatureCache();
 }
@@ -1472,6 +1489,14 @@ bool PortDecoder::Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegist
 bool PortDecoder::IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const
 {
     return Default_IsPort_KempstonMouse(port, outRegister);
+}
+
+int PortDecoder::SelectedIndex(slots::InputRole role) const
+{
+    if (role != slots::InputRole::AyIo || _context == nullptr || _context->pSoundManager == nullptr)
+        return -1;
+    const ITurboSoundDevice* ay = _context->pSoundManager->getTurboSound();
+    return ay != nullptr ? ay->getBusReadRegister() : -1;
 }
 
 bool PortDecoder::IsKempstonJoystickFitted() const

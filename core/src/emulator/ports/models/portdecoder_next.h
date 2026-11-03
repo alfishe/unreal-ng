@@ -156,6 +156,11 @@ public:
     bool SpiByteInFlight() const { return _spiPendingValid; }
     uint8_t SpiLastReceived() const { return _spiRx; }
 
+    /// NextReg: the register #243B selected; the rest as every machine
+#pragma push_macro("slots")
+#undef slots
+    int SelectedIndex(slots::InputRole role) const override;
+#pragma pop_macro("slots")
     NextBoard& Board() { return *_board; }
     NextInterruptSource& Interrupts() { return *_interrupts; }
     NextCtc& Ctc() { return _ctc; }

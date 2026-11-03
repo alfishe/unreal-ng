@@ -633,6 +633,13 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryDebug});
+    registerFeature({Features::kDeviceAccess,
+                     Features::kDeviceAccessAlias,
+                     Features::kDeviceAccessDesc,
+                     false,  // OFF by default (owner 2026-11-02): always-on only after the hot-path A/B
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryAnalysis});
     registerFeature({Features::kZXDLSS,
                      Features::kZXDLSSAlias,
                      Features::kZXDLSSDesc,

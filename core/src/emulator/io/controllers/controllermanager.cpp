@@ -879,83 +879,24 @@ void ControllerManager::EvaluateHapticConditions(HapticFrame& summary)
 
 void ControllerManager::WatchPortReads(bool on)
 {
-    _watchRequest.store(on ? 1 : 2, std::memory_order_release);
+    if (_context == nullptr || _context->pPortDecoder == nullptr)
+        return;
+    DeviceAccessWatch& watch = _context->pPortDecoder->GetAccessWatch();
+    if (on)
+        watch.RequestWindow(kPortReadWatchFrames);
+    else
+        watch.CloseWindow();
 }
 
-PortReadEvidence ControllerManager::PortReads() const
+DeviceAccessEvidence ControllerManager::PortReads() const
 {
-    PortReadEvidence evidence = _watch.Evidence();
-    evidence.active = _watching.load(std::memory_order_acquire);
-    return evidence;
-}
-
-namespace
-{
-/// The watch's register probe (PortReadRegisterProbe): an IN of the AY's data port (#FFFD as the 128K family decodes
-/// it) with R14 selected, an IN of the Next's #253B with NR #B2 selected. Runs only while the watch does, after the IN
-bool ProbeRegisterRead(const void* context, uint16_t port, PortReadClass& cls)
-{
-    const EmulatorContext* ctx = static_cast<const EmulatorContext*>(context);
-    if (port == 0x253B)
-    {
-        auto* next = dynamic_cast<PortDecoder_Next*>(ctx->pPortDecoder);
-        if (next == nullptr || next->Board().SelectedRegister() != 0xB2)
-            return false;
-        cls = PortReadClass::NextB2;
-        return true;
-    }
-    if ((port & 0xC002) != 0xC000 || ctx->pSoundManager == nullptr)
-        return false;
-    const ITurboSoundDevice* ay = ctx->pSoundManager->getTurboSound();
-    if (ay == nullptr || ay->getBusReadRegister() != 14)
-        return false;
-    cls = PortReadClass::AyR14;
-    return true;
-}
-}  // namespace
-
-void ControllerManager::ApplyWatchRequest()
-{
-    Z80* cpu = _context->pCore != nullptr ? _context->pCore->GetZ80() : nullptr;
-    const int request = _watchRequest.exchange(0, std::memory_order_acq_rel);
-    if (request == 1)
-    {
-        _watch.Reset();
-        // The row bits read the code after a half-row IN as the CPU sees it, without side effects
-        if (_context->pMemory != nullptr)
-            _watch.SetCodeReader(
-                [](const void* memory, uint16_t address) {
-                    return static_cast<Memory*>(const_cast<void*>(memory))->DirectReadFromZ80Memory(address);
-                },
-                _context->pMemory);
-        _watch.SetRegisterProbe(&ProbeRegisterRead, _context);
-        _watching.store(true, std::memory_order_release);
-        if (cpu != nullptr)
-            cpu->SetPortReadWatch(&_watch);
-        return;
-    }
-    if (!_watching.load(std::memory_order_relaxed))
-        return;
-    // While a tape plays the program is still loading: the watch starts counting when it stops
-    if (_context->pTape != nullptr && _context->pTape->IsPlaying())
-    {
-        _watch.Reset();
-        return;
-    }
-    _watch.EndFrame();
-    if (request == 2 || _watch.Evidence().framesObserved >= kPortReadWatchFrames)
-    {
-        _watching.store(false, std::memory_order_release);
-        if (cpu != nullptr)
-            cpu->SetPortReadWatch(nullptr);
-        _watch.SetCodeReader(nullptr, nullptr);
-        _watch.SetRegisterProbe(nullptr, nullptr);
-    }
+    if (_context == nullptr || _context->pPortDecoder == nullptr)
+        return {};
+    return _context->pPortDecoder->GetAccessWatch().Evidence();
 }
 
 void ControllerManager::OnFrame(uint64_t frame)
 {
-    ApplyWatchRequest();
     if (InputOwnedByReplay())
     {
         _wasOwned = true;

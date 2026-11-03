@@ -1,90 +1,179 @@
 /// @file autodecision_test.cpp
-/// @brief The port-read watch's classes (retro-devices.md §6) and the heuristic that turns its evidence into the
-/// auto connector (mapping-and-profiles.md §6.1 step 2): dedicated ports beat half-rows, the whole keyboard is a
-/// hint, half a window decides nothing (C6).
+/// @brief The heuristic that turns the device access evidence (docs/inprogress/2026-11-02-device-access-watch) into
+/// the auto connector (mapping-and-profiles.md §6.1 step 2): input roles, not port numbers; dedicated devices beat
+/// half-rows, the whole keyboard is a hint, half a window decides nothing; the signature matcher is asked first (C6).
 
 #include <gtest/gtest.h>
 
 #include <array>
 #include <initializer_list>
+#include <memory>
+#include <string>
 #include <vector>
 
-#include "emulator/io/controllers/portreadwatch.h"
+#include "emulator/ports/deviceaccesswatch.h"
 #include "profiles/autodecision.h"
 
 using namespace controllers;
+using slots::InputRole;
 
 namespace
 {
-/// @p frames frames, each reading every port of @p ports once
-PortReadEvidence Watch(std::initializer_list<uint16_t> ports, unsigned frames = kPortReadWindow)
+constexpr uint16_t kWindow = DeviceAccessWatch::kWindow;
+
+/// One channel read in @p frames of a full window, once per frame
+struct Read
 {
-    PortReadWatch watch;
-    for (unsigned frame = 0; frame < frames; ++frame)
+    InputRole input = InputRole::None;
+    int index = DeviceAccessChannel::kNoIndex;
+    uint8_t tested = 0;
+    uint16_t frames = kWindow;
+    const char* device = "dev";
+};
+
+/// A window of @p window frames with @p reads
+DeviceAccessEvidence Evidence(std::initializer_list<Read> reads, uint32_t window = kWindow)
+{
+    DeviceAccessEvidence evidence;
+    evidence.active = true;
+    evidence.framesObserved = window;
+    evidence.window = window;
+    for (const Read& read : reads)
     {
-        for (uint16_t port : ports)
-            watch.OnRead(port);
-        watch.EndFrame();
+        DeviceAccessChannel channel;
+        channel.device = read.device;
+        channel.input = read.input;
+        channel.index = read.index;
+        channel.frames = read.frames;
+        channel.perFrame = 1.0f;
+        channel.tested = read.tested;
+        evidence.channels.push_back(channel);
     }
-    return watch.Evidence();
+    return evidence;
+}
+
+/// The key matrix's half-row @p row (Row0 = #FEFE .. Row7 = #7FFE): address line 8 + row
+Read Row(int row, uint8_t tested = 0)
+{
+    return { .input = InputRole::KeyMatrix, .index = 8 + row, .tested = tested, .device = "ula" };
 }
 }  // namespace
 
-TEST(AutoDecision_Test, Watch_ClassesAndTheWindow)
+TEST(AutoDecision_Test, Decide_RolesRowsAndTheKeyboard)
 {
-    PortReadWatch watch;
-    for (uint16_t port : {0x001F, 0x001F, 0x0037, 0x007F, 0xFBDF, 0xEFFE, 0x00FE, 0xFFFE, 0xFFFD})
-        watch.OnRead(port);
-    watch.EndFrame();
-    PortReadEvidence evidence = watch.Evidence();
-    EXPECT_EQ(evidence.window, 1u);
-    EXPECT_EQ(evidence.Reads(PortReadClass::Kempston), 2.0f);
-    EXPECT_EQ(evidence.Frames(PortReadClass::Kempston2), 1u);
-    EXPECT_EQ(evidence.Frames(PortReadClass::Fuller), 1u);
-    EXPECT_EQ(evidence.Frames(PortReadClass::KMouse), 1u) << "#FBDF is the mouse, not a Kempston alias";
-    EXPECT_EQ(evidence.Frames(PortReadClass::Row4), 1u) << "#EFFE";
-    EXPECT_EQ(evidence.Frames(PortReadClass::RowsMulti), 1u) << "#00FE: every half-row at once";
-    EXPECT_EQ(evidence.Frames(PortReadClass::Row7), 0u) << "#FFFE selects no half-row (an EAR read)";
+    EXPECT_FALSE(DecideFromAccess(Evidence({ { .input = InputRole::KempstonJoystick } }, 30)).decisive)
+        << "half a window";
+    EXPECT_FALSE(DecideFromAccess(Evidence({ { .input = InputRole::KempstonJoystick, .frames = 20 } })).decisive)
+        << "not nearly every frame";
 
-    for (int frame = 0; frame < 60; ++frame)
-        watch.EndFrame();
-    evidence = watch.Evidence();
-    EXPECT_EQ(evidence.framesObserved, 61u);
-    EXPECT_EQ(evidence.window, kPortReadWindow);
-    EXPECT_EQ(evidence.Frames(PortReadClass::Kempston), 0u) << "the first frame left the window";
-}
-
-TEST(AutoDecision_Test, Decide_PortsRowsAndTheKeyboard)
-{
-    EXPECT_FALSE(DecideFromPortReads(Watch({0x001F}, 30)).decisive) << "half a window";
-
-    AutoDecision decision = DecideFromPortReads(Watch({0x001F, 0xEFFE}));
+    AutoDecision decision = DecideFromAccess(
+        Evidence({ { .input = InputRole::KempstonJoystick, .device = "kempston-joystick" }, Row(4) }));
     ASSERT_TRUE(decision.decisive);
-    EXPECT_EQ(decision.device, "kempston-joystick") << "the dedicated port beats the half-row";
+    EXPECT_EQ(decision.device, "kempston-joystick") << "the dedicated device beats the half-row";
     EXPECT_EQ(decision.connector, "kempston");
-    EXPECT_NE(decision.reason.find("#1F read in 50 of 50"), std::string::npos) << decision.reason;
+    EXPECT_NE(decision.reason.find("kempston-joystick #1F read in 50 of 50"), std::string::npos) << decision.reason;
 
-    decision = DecideFromPortReads(Watch({0xEFFE}));
+    // A read no input role claims (a TR-DOS #1F, a DAC) is nothing
+    EXPECT_FALSE(DecideFromAccess(Evidence({ { .input = InputRole::None, .device = "beta128" } })).decisive);
+
+    decision = DecideFromAccess(Evidence({ Row(4) }));
     EXPECT_EQ(decision.label, "Sinclair 1");
     EXPECT_EQ(decision.optionValue, "1");
-    EXPECT_EQ(DecideFromPortReads(Watch({0xF7FE})).label, "Sinclair 2");
-    EXPECT_EQ(DecideFromPortReads(Watch({0xEFFE, 0xF7FE})).device, "cursor-joystick");
-    decision = DecideFromPortReads(Watch({0xFBFE, 0xFDFE, 0xDFFE, 0x7FFE}));
+    EXPECT_EQ(DecideFromAccess(Evidence({ Row(3) })).label, "Sinclair 2");
+    EXPECT_EQ(DecideFromAccess(Evidence({ Row(4), Row(3) })).device, "cursor-joystick");
+    decision = DecideFromAccess(Evidence({ Row(1), Row(2), Row(5), Row(7) }));
     EXPECT_EQ(decision.device, "keys-joystick");
     EXPECT_EQ(decision.optionValue, "up:q,down:a,left:o,right:p,fire:space");
-    EXPECT_EQ(DecideFromPortReads(Watch({0x0037})).connector, "next.right");
-    EXPECT_EQ(DecideFromPortReads(Watch({0x007F})).device, "fuller-joystick");
+    EXPECT_EQ(DecideFromAccess(Evidence({ { .input = InputRole::KempstonJoystick2 } })).connector, "next.right");
+    EXPECT_EQ(DecideFromAccess(Evidence({ { .input = InputRole::FullerJoystick } })).device, "fuller-joystick");
+    EXPECT_EQ(DecideFromAccess(Evidence({ { .input = InputRole::KempstonMouse } })).device, "kempston-mouse");
+    decision = DecideFromAccess(Evidence({ { .input = InputRole::AmxMouse } }));
+    EXPECT_EQ(decision.device, "amx-mouse");
+    EXPECT_EQ(decision.connector, "amx");
 
     // The ROM's key scan: every half-row, a hint and no plug
-    decision = DecideFromPortReads(Watch({0xFEFE, 0xFDFE, 0xFBFE, 0xF7FE, 0xEFFE, 0xDFFE, 0xBFFE, 0x7FFE}));
+    decision = DecideFromAccess(Evidence({ Row(0), Row(1), Row(2), Row(3), Row(4), Row(5), Row(6), Row(7) }));
     EXPECT_FALSE(decision.decisive);
     EXPECT_TRUE(decision.keyboard);
-    EXPECT_FALSE(DecideFromPortReads(Watch({0x7FFE})).decisive) << "SPACE / BREAK alone decides nothing";
+    EXPECT_FALSE(DecideFromAccess(Evidence({ Row(7) })).decisive) << "SPACE / BREAK alone decides nothing";
+}
+
+TEST(AutoDecision_Test, Decide_NextB2RowBitsAndAyR14)
+{
+    const Read b2{ .input = InputRole::NextReg, .index = 0xB2, .device = "nextreg" };
+    AutoDecision decision = DecideFromAccess(Evidence({ b2, { .input = InputRole::KempstonJoystick } }));
+    ASSERT_TRUE(decision.decisive);
+    EXPECT_EQ(decision.device, "md6-pad");
+    EXPECT_EQ(decision.connector, "next.left") << "NR #B2 beats #1F: a 6-button pad on the left";
+    EXPECT_NE(decision.reason.find("nextreg NR #B2 read in 50 of 50"), std::string::npos) << decision.reason;
+    decision = DecideFromAccess(Evidence({ b2, { .input = InputRole::KempstonJoystick2 } }));
+    EXPECT_EQ(decision.connector, "next.right");
+    EXPECT_FALSE(DecideFromAccess(Evidence({ { .input = InputRole::NextReg, .index = 0xB1 } })).decisive)
+        << "another NextREG decides nothing";
+
+    // #EFFE and #F7FE: key 5 alone on #F7FE is Cursor, keys 1-5 are a second Sinclair port
+    decision = DecideFromAccess(Evidence({ Row(4, 0x1D), Row(3, 0x10) }));
+    EXPECT_EQ(decision.device, "cursor-joystick");
+    EXPECT_NE(decision.reason.find("bits 4 tested"), std::string::npos) << decision.reason;
+    decision = DecideFromAccess(Evidence({ Row(4, 0x1D), Row(3, 0x1F) }));
+    EXPECT_EQ(decision.label, "Sinclair 1");
+    EXPECT_EQ(decision.optionValue, "1");
+    EXPECT_NE(decision.reason.find("two players"), std::string::npos) << decision.reason;
+
+    // AY port A: a hint, nothing to plug
+    const Read r14{ .input = InputRole::AyIo, .index = 14, .device = "ay" };
+    decision = DecideFromAccess(Evidence({ r14 }));
+    EXPECT_FALSE(decision.decisive);
+    EXPECT_NE(decision.hint.find("R14"), std::string::npos) << decision.hint;
+    EXPECT_TRUE(DecideFromAccess(Evidence({ { .input = InputRole::AyIo, .index = 7 } })).hint.empty())
+        << "another AY register is no hint";
+    EXPECT_TRUE(DecideFromAccess(Evidence({ r14, { .input = InputRole::KempstonJoystick } })).hint.empty())
+        << "a decision leaves no hint";
 }
 
 namespace
 {
-/// Guest code for the row-bit sampler: @p bytes at address 0x8000, #FF elsewhere
+/// A matcher that knows one program by its media
+class FakeMatcher : public ISignatureMatcher
+{
+public:
+    mutable int asked = 0;
+    bool Match(const SignatureQuery& query, AutoDecision& decision) const override
+    {
+        ++asked;
+        if (query.mediaSha256 != "abc")
+            return false;
+        decision.decisive = true;
+        decision.device = "fuller-joystick";
+        decision.reason = "signature: media abc";
+        return true;
+    }
+};
+}  // namespace
+
+/// The signature matcher is asked first; no match falls back to the evidence table
+TEST(AutoDecision_Test, SignatureMatcherFirst)
+{
+    const DeviceAccessEvidence evidence = Evidence({ { .input = InputRole::KempstonJoystick } });
+    EXPECT_EQ(DecideAuto(evidence).device, "kempston-joystick") << "no matcher: the table";
+
+    auto matcher = std::make_shared<FakeMatcher>();
+    SetSignatureMatcher(matcher);
+    SignatureQuery query;
+    query.mediaSha256 = "abc";
+    AutoDecision decision = DecideAuto(evidence, query);
+    EXPECT_EQ(decision.device, "fuller-joystick") << "the matcher beats the evidence";
+    EXPECT_EQ(decision.reason, "signature: media abc");
+    query.mediaSha256 = "other";
+    EXPECT_EQ(DecideAuto(evidence, query).device, "kempston-joystick");
+    EXPECT_EQ(matcher->asked, 2);
+    SetSignatureMatcher(nullptr);
+    EXPECT_EQ(GetSignatureMatcher(), nullptr);
+}
+
+namespace
+{
+/// Guest code for the tested-bits scan: @p bytes at address 0x8000, #FF elsewhere
 struct Code
 {
     std::vector<uint8_t> bytes;
@@ -100,23 +189,15 @@ struct Code
         return TestedBitsAfterIn(&Code::Read, this, 0x8002);
     }
 };
-
-/// A full window: @p every classes read in each frame, half-rows with the row bits of @p bits (Row0 .. Row7)
-PortReadEvidence Evidence(std::initializer_list<PortReadClass> every, std::array<uint8_t, 8> bits = {})
-{
-    PortReadEvidence evidence;
-    evidence.active = true;
-    evidence.framesObserved = kPortReadWindow;
-    evidence.window = kPortReadWindow;
-    for (PortReadClass cls : every)
-    {
-        evidence.framesWithReads[static_cast<size_t>(cls)] = kPortReadWindow;
-        evidence.readsPerFrame[static_cast<size_t>(cls)] = 1.0f;
-    }
-    evidence.rowBits = bits;
-    return evidence;
-}
 }  // namespace
+
+TEST(AutoDecision_Test, InputRoleNames)
+{
+    EXPECT_STREQ(InputRoleName(InputRole::KeyMatrix), "key-matrix");
+    EXPECT_STREQ(InputRoleName(InputRole::AyIo), "ay-io");
+    EXPECT_STREQ(InputRoleName(InputRole::NextReg), "nextreg");
+    EXPECT_STREQ(InputRoleName(InputRole::None), "");
+}
 
 TEST(AutoDecision_Test, RowBits_TheCodeAfterTheIn)
 {
@@ -136,58 +217,6 @@ TEST(AutoDecision_Test, RowBits_TheCodeAfterTheIn)
     EXPECT_EQ((Code{{0xDB, 0xFE, 0, 0, 0, 0, 0, 0, 0, 0, 0xE6, 0x01}}.Tested()), 0);
     // INI (ED A2) loads no register
     EXPECT_EQ((Code{{0xED, 0xA2, 0xE6, 0x01}}.Tested()), 0);
-}
-
-TEST(AutoDecision_Test, Watch_RowBitsAndRegisterReads)
-{
-    const Code code{{0xDB, 0xFE, 0xE6, 0x1F}};
-    PortReadWatch watch;
-    watch.SetCodeReader(&Code::Read, &code);
-    for (int i = 0; i < 3; ++i)
-        watch.OnRead(0xEFFE, 0x8002);  // the second and third reads take the first scan's bits
-    watch.OnRead(0x7FFE);              // no code address: no row bits
-    watch.OnRegisterRead(PortReadClass::AyR14);
-    watch.OnRegisterRead(PortReadClass::NextB2);
-    watch.EndFrame();
-    const PortReadEvidence evidence = watch.Evidence();
-    EXPECT_EQ(evidence.RowBits(PortReadClass::Row4), 0x1F);
-    EXPECT_EQ(evidence.RowBits(PortReadClass::Row7), 0);
-    EXPECT_EQ(evidence.RowBits(PortReadClass::Kempston), 0) << "not a half-row";
-    EXPECT_EQ(evidence.Frames(PortReadClass::AyR14), 1u);
-    EXPECT_EQ(evidence.Frames(PortReadClass::NextB2), 1u);
-    EXPECT_STREQ(PortReadClassName(PortReadClass::AyR14), "ay.r14");
-    EXPECT_STREQ(PortReadClassName(PortReadClass::NextB2), "nr.b2");
-}
-
-TEST(AutoDecision_Test, Decide_NextB2RowBitsAndAyR14)
-{
-    AutoDecision decision = DecideFromPortReads(Evidence({PortReadClass::NextB2, PortReadClass::Kempston}));
-    ASSERT_TRUE(decision.decisive);
-    EXPECT_EQ(decision.device, "md6-pad");
-    EXPECT_EQ(decision.connector, "next.left") << "NR #B2 beats #1F: a 6-button pad on the left";
-    EXPECT_NE(decision.reason.find("NR #B2 read in 50 of 50"), std::string::npos) << decision.reason;
-    decision = DecideFromPortReads(Evidence({PortReadClass::NextB2, PortReadClass::Kempston2}));
-    EXPECT_EQ(decision.connector, "next.right");
-
-    // #EFFE and #F7FE: key 5 alone on #F7FE is Cursor, keys 1-5 are a second Sinclair port
-    std::array<uint8_t, 8> bits{};
-    bits[4] = 0x1D;
-    bits[3] = 0x10;
-    decision = DecideFromPortReads(Evidence({PortReadClass::Row4, PortReadClass::Row3}, bits));
-    EXPECT_EQ(decision.device, "cursor-joystick");
-    EXPECT_NE(decision.reason.find("bits 4 tested"), std::string::npos) << decision.reason;
-    bits[3] = 0x1F;
-    decision = DecideFromPortReads(Evidence({PortReadClass::Row4, PortReadClass::Row3}, bits));
-    EXPECT_EQ(decision.label, "Sinclair 1");
-    EXPECT_EQ(decision.optionValue, "1");
-    EXPECT_NE(decision.reason.find("two players"), std::string::npos) << decision.reason;
-
-    // AY port A: a hint, nothing to plug
-    decision = DecideFromPortReads(Evidence({PortReadClass::AyR14}));
-    EXPECT_FALSE(decision.decisive);
-    EXPECT_NE(decision.hint.find("AY R14"), std::string::npos) << decision.hint;
-    EXPECT_TRUE(DecideFromPortReads(Evidence({PortReadClass::AyR14, PortReadClass::Kempston})).hint.empty())
-        << "a decision leaves no hint";
 }
 
 TEST(AutoDecision_Test, RowBits_StopWhereTheValueIsGone)

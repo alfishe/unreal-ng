@@ -276,6 +276,12 @@ public:
             // Answered from the event loop, not from here: an answer may open a dialog of its own (a file that
             // exists), which this timer has to reach
             if (auto * f = qobject_cast<QFileDialog *>(w)) {
+                // A dialog that stays open after 20 answers (a file that is not there, a folder that cannot be written)
+                // is closed: the check fails on its result instead of waiting for ever
+                if (ticks >= 400) {
+                    QMetaObject::invokeMethod(f, "reject", Qt::QueuedConnection);
+                    return;
+                }
                 // The name typed in, as a user does (selectFile does not replace the suggested name here)
                 if (auto * name = f->findChild<QLineEdit *>("fileNameEdit")) name->setText(path);
                 QMetaObject::invokeMethod(f, "accept", Qt::QueuedConnection);
@@ -301,10 +307,16 @@ void send_mouse(QWidget * w, QEvent::Type type, const QPoint &at)
 // running at once must not meet each other's files
 QString scratch_dir()
 {
+    // No scratch/ above the binary (a CI checkout has none): the system temp folder, not a path from the root of the
+    // file system, which macOS does not let a user create
     QDir d(QCoreApplication::applicationDirPath());
     while (!d.exists("scratch") && d.cdUp()) {}
-    const QString path = d.filePath("scratch/debugger-self-check/" + QString::number(QCoreApplication::applicationPid()));
-    QDir().mkpath(path);
+    const QString leaf = "debugger-self-check/" + QString::number(QCoreApplication::applicationPid());
+    QString path = d.exists("scratch") ? d.filePath("scratch/" + leaf) : QDir::temp().filePath(leaf);
+    if (!QDir().mkpath(path)) {
+        path = QDir::temp().filePath(leaf);
+        QDir().mkpath(path);
+    }
     return path;
 }
 
