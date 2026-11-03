@@ -881,7 +881,7 @@ TTDExplainFrameResult TimeTravelController::QueryExplainFrame(const TTDExplainFr
                 const TTDTraceEvent& ev = events[e];
                 if (ev.type != 'W' || ev.page == kPhysPageNone || ev.page > kPhysPageMax)
                     continue;
-                const uint32_t offset = static_cast<uint32_t>(ev.page) * 0x4000u + (ev.address & 0x3FFFu);
+                const uint32_t offset = static_cast<uint32_t>(ev.page) * 0x4000u + ev.offset;
                 if (offset >= startRam.size())
                     continue;
                 const bool stack = stackKnown && ev.address >= spLow && ev.address <= spHigh;

@@ -11,13 +11,18 @@
 /// The automation gate (automationgate.h): a script that drives the machine without having taken control gets a
 /// session implicitly at its first control call (a pause opens none); each control call renews its 15 s idle lease.
 /// The script is told once (Python: a UserWarning; otherwise the emulator's log) and advised to take control itself.
+///
+/// A script a client sends (POST /api/v1/lua/exec, /python/exec) acts in that client's session while it runs
+/// (BorrowedSessions): an MCP agent or a host script that holds a machine drives it from its scripts too.
 
 #include <functional>
 #include <map>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "common/uuid.h"
 #include "emulator/emulator.h"
@@ -61,6 +66,13 @@ inline unreal::UUID Owner(const Emulator& emulator, Origin origin)
     auto it = Sessions().find({&emulator, origin});
     return it == Sessions().end() ? unreal::UUID() : it->second;
 }
+/// The sessions a running script borrowed from the client that sent it (BorrowedSessions): never released by the
+/// script, only forgotten
+inline std::set<std::pair<const Emulator*, Origin>>& Borrowed()
+{
+    static std::set<std::pair<const Emulator*, Origin>> borrowed;
+    return borrowed;
+}
 /// Where a surface tells its script about an implicit session (the binding sets it: Python warns)
 inline std::map<Origin, std::function<void(const std::string&)>>& AdviceSinks()
 {
@@ -81,6 +93,43 @@ inline void SetAdviceSink(Origin origin, std::function<void(const std::string&)>
     detail::AdviceSinks()[origin] = std::move(sink);
 }
 
+/// While a client's script runs (POST /lua/exec, /python/exec): the script's surface acts in the client's sessions,
+/// one per machine it holds. A session of the script's own stays; at the end the borrowed ones are forgotten (never
+/// released: they are the client's)
+class BorrowedSessions
+{
+public:
+    BorrowedSessions(Origin origin, const std::vector<std::pair<const Emulator*, unreal::UUID>>& sessions)
+        : _origin(origin)
+    {
+        std::lock_guard<std::mutex> lock(detail::Mutex());
+        for (const auto& [emulator, owner] : sessions)
+        {
+            if (owner.isNil() || !detail::Sessions().emplace(std::make_pair(emulator, origin), owner).second)
+                continue;
+            detail::Borrowed().insert({emulator, origin});
+            _lent.emplace_back(emulator, owner);
+        }
+    }
+    ~BorrowedSessions()
+    {
+        std::lock_guard<std::mutex> lock(detail::Mutex());
+        for (const auto& [emulator, owner] : _lent)
+        {
+            auto it = detail::Sessions().find({emulator, _origin});
+            if (it != detail::Sessions().end() && it->second == owner)
+                detail::Sessions().erase(it);
+            detail::Borrowed().erase({emulator, _origin});
+        }
+    }
+    BorrowedSessions(const BorrowedSessions&) = delete;
+    BorrowedSessions& operator=(const BorrowedSessions&) = delete;
+
+private:
+    Origin _origin;
+    std::vector<std::pair<const Emulator*, unreal::UUID>> _lent;
+};
+
 /// Open the session: true, or false with the reason (held by another surface; revoked_cooldown)
 inline bool TakeControl(Emulator& emulator, Origin origin, const std::string& client, std::string& reason)
 {
@@ -89,6 +138,14 @@ inline bool TakeControl(Emulator& emulator, Origin origin, const std::string& cl
     {
         reason = "no emulator context";
         return false;
+    }
+    {
+        // Running in a borrowed session: the script already drives the machine as its client
+        std::lock_guard<std::mutex> lock(detail::Mutex());
+        auto it = detail::Sessions().find({&emulator, origin});
+        if (detail::Borrowed().count({&emulator, origin}) && it != detail::Sessions().end() &&
+            context->HasRunControl(it->second))
+            return true;
     }
     // The gate's implicit session for this surface gives way to the explicit one
     context->ReleaseImplicitRunControl(detail::GateIdentity(origin));
@@ -109,6 +166,8 @@ inline void ReleaseControl(Emulator& emulator, Origin origin)
         auto it = detail::Sessions().find({&emulator, origin});
         if (it == detail::Sessions().end())
             return;
+        if (detail::Borrowed().count({&emulator, origin}))
+            return;  // the client's session: it ends it, not its script
         owner = it->second;
         detail::Sessions().erase(it);
     }
@@ -197,7 +256,18 @@ inline Requester RequesterOf(Emulator& emulator, Origin origin)
     const unreal::UUID owner = detail::Owner(emulator, origin);
     EmulatorContext* context = emulator.GetContext();
     if (!owner.isNil() && context && context->HasRunControl(owner))
+    {
+        // A borrowed session is the client's: its requests are the client's, under the client's surface (the claim
+        // the arbiter holds is {surface, owner})
+        bool borrowed = false;
+        {
+            std::lock_guard<std::mutex> lock(detail::Mutex());
+            borrowed = detail::Borrowed().count({&emulator, origin}) != 0;
+        }
+        if (borrowed)
+            return Requester{OriginFromName(context->GetRunControlState().surfaceLabel), owner.toString()};
         return Requester{origin, owner.toString()};
+    }
     return Requester{origin, {}};
 }
 

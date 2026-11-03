@@ -331,11 +331,11 @@ void CLIProcessor::HandlePaging(const ClientSession& session, const std::vector<
             uint8_t* pagePtr = memory.ROMPageHostAddress(romPage);
             if (pagePtr)
             {
-                std::string sig = rom->CalculateSignature(pagePtr, 0x4000);
-                // GetROMTitle carries the "Unknown ROM, <digest>" fallback;
-                // role comes from the core layout table (ROM::GetROMPageRole,
-                // §5.2) - a role/name mismatch is the wrong-ROM signal
-                ss << "  \"" << rom->GetROMTitle(sig) << "\"";
+                // GetROMPageTitle carries the "Unknown ROM, <digest>" fallback
+                // and names blank pages and copies; role comes from the core
+                // layout table (ROM::GetROMPageRole, §5.2) - a role/name
+                // mismatch is the wrong-ROM signal
+                ss << "  \"" << rom->GetROMPageTitle(romPage) << "\"";
                 ss << "  [" << rom->GetROMPageRole(romPage) << "]";
             }
         }

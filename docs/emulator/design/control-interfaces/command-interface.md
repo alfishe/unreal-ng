@@ -577,6 +577,17 @@ Commands to view and analyze the internal state of the selected emulator instanc
 | `memcounters [reset]` | `memstats` | `[reset]` | Display memory access statistics when debug mode is active. Shows: <br/>• Read/write/execute access counts per address<br/>• Hotspot identification (most frequently accessed)<br/>• Access type breakdown (code vs data)<br/>If `reset` is specified, clears all accumulated statistics. Requires `debugmode on` to collect data. |
 | `calltrace [depth]` | | `[max-entries]` | Display execution call trace history (CALL/RET tracking). Shows:<br/>• Call stack with return addresses<br/>• Function entry points<br/>• Nesting level<br/>• Symbolic names if loaded from .map file<br/>Default shows last 50 entries. Specify `depth` to override (max 1000). The trace buffer is circular and maintained during execution. |
 
+`--cpu gs` (`--cpu ms`: the MultiSound card's General Sound) on `registers`, `memory`, `memory info` and `disasm`
+reads and writes the sound card CPU (General Sound / NeoGS) instead of the machine's: its registers (the card's own
+clock `card_time` for the frame time), its 64K as its four windows map them, its code from its PC (no labels: they
+are the machine's). `registers pc --cpu gs`, `r a 0x10 --cpu gs`, `memory 0x4000 32 --cpu gs`,
+`memory write 0x4000 01 02 --cpu gs`, `memory info --cpu gs` (the windows: ROM / RAM and page), `disasm --cpu gs`.
+Edits are tool edits (refused in the recorded past, recorded by a time travel session). A card without a CPU or an
+empty slot answers that the CPU is not there. On `step [count]`, `steps <count>`, `stepover` and `stepout` it steps
+the card CPU: the machine resumes until the card's step ends and pauses again; the main CPU moves on to where the
+card catches up (a host port access or the frame end). The reply names the card's PC and SP and the main PC. Every
+plane: [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu).
+
 #### 3.1 Memory Commands
 
 The `memory` command provides unified access to emulator memory with two addressing modes:
@@ -1225,7 +1236,9 @@ through core `tracecontrol` (names `opcode`, `memory`, `calltrace`, `coverage`, 
 | Profiler / trace start, stop, pause, resume, clear | `profiler`, `coverage`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `audiocapture` | `trace(name, op, opts)` (+ `porttrace_*`, `gs_porttrace_*`, `coverage_*`, `ay_log_*`, `pc_history*`, `audio_capture_*`) | `trace(name, op, **opts)` (+ the per-profiler functions) | `analyze_performance` `profiler` {profiler, op}, `gs_trace`, `aylog`, `pchist`, `coverage_*`, `profile_*`; `capture_media` audio | `/profiler/{opcode,memory,calltrace,porttrace}/*`, `/profiler/*`, `/coverage/*`, `/control/audio/gs/porttrace`, `/debug/pchist`, `/ay/log`, `/audio/capture` | `prof.toggle`, `prof.pause_toggle`, `prof.clear` (state `toggle.profiler.<name>`, `toggle.profiler_paused.<name>`) |
 | Analyzers on / off, clear | `analyzer` | `analyzer_list/enable/disable/active` | `analyzer_*` | `analyze_performance` `analyzers` {op, name} | `GET /analyzers`, `PUT /analyzer/{name}`, `DELETE /analyzer/{name}/events` | `analyzer.toggle` (state `toggle.analyzer.<name>`), `analyzer.clear` |
 | Analysis layers: start (optionally recording), stop, status, the L1 build and cancel, explain an address (L0 byte facts or the L1 routine fact sheet), query the L2 structure, export the L2 draft (ctl, skool, fields, geometry, layout, symbols, map), the gallery of the L2 graphics (one as a PNG); L3 review: the findings register, the review queue and its decisions, experiments on muted clones, directed coverage | `analysis start [facts\|counters] [z80\|physical] [record]`, `analysis stop\|status\|cancel`, `analysis build [frames] [from_frame=] [from_tinframe=] [to_frame=] [path=] [wait=]`, `analysis explain <addr> [page] [routine\|byte]`, `analysis query [kind] [range] [limit=]`, `analysis export <format> [path] [ranges=] [width=]`, `analysis gallery [kind] [addr [path]] [scale=]`, `analysis findings [list\|add]`, `analysis review [next\|list\|show\|resolve] [id]`, `analysis experiment <spec>`, `analysis cover [budget]` | `analysis(action, opts)` | `analysis(action, **opts)` | `analysis` {action: start, stop, status, build, cancel, explain, query, export, gallery, findings, review, experiment, cover} | `POST /analysis/start`, `POST /analysis/stop`, `GET /analysis/status`, `POST /analysis/build`, `POST /analysis/cancel`, `GET /analysis/explain?address=&page=&what=`, `GET /analysis/query?kind=&range=&limit=`, `POST /analysis/export`, `POST /analysis/gallery`, `GET\|POST /analysis/findings`, `GET\|POST /analysis/review`, `POST /analysis/experiment`, `POST /analysis/cover` | topics `analysis.progress`, `analysis.ready` |
-| Set a register | `reg <name> <value>` | `set_register` | `set_register` | `control_execution` `set_register` | `PUT /registers/{name}` | `dbg.register_set` |
+| Set a register | `registers <name> <value>` | `set_register` | `set_register` | `control_execution` `set_register` | `PUT /registers/{name}` | `dbg.register_set` |
+| The sound card CPU's registers, memory, disassembly, windows ([§8](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)) | `--cpu gs\|ms` on `registers`, `memory`, `memory info`, `disasm` | `cpu` last on `get_registers`, `get_register`, `set_register`, `mem_read`, `mem_write`, `disasm`; `memory_map("gs")` | `cpu=` on the same; `memory_map("gs")` | `inspect_state` `cpu`, `control_execution` `set_register` `cpu`, `memory_access` space `gs` / `ms` | `?cpu=gs` on `/registers`, `/registers/{name}`, `/memory/{addr}`, `/memory/read/{address}`, `/disasm`, `/memory/map`, `/memory/info`; body `cpu` on `/memory/write` | - |
+| The sound card CPU's step in / over / out ([§8](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)) | `--cpu gs\|ms` on `step`, `steps`, `stepover`, `stepout` | `cpu` last on `step`, `steps`, `stepover`, `step_out` | `cpu=` on the same | `control_execution` `step` / `step_n` / `step_over` / `step_out` `cpu` | `?cpu=gs` on `/step`, `/steps`, `/stepover`, `/stepout` | - |
 | Write / fill memory | `memory write`, `memory fill` | `mem_write*` | `mem_write*` | `memory_access` `write` | `PUT /memory/{addr}`, `POST /memory/write` | `mem.write` (bytes, or value + count) |
 | Port OUT | `out` | `port_out` | `port_out` | `control_execution` `port_out` | `POST /ports/out` | `port.out` (port or a preset, value) |
 | Symbols: load, save, import from source / RAM, drop, set on / off | `symbols ...` | `symbols_*` | `symbols_*` | `manage_symbols` | `/symbols/*` | `sym.import`, `sym.export`, `sym.import_source`, `sym.import_live`, `sym.drop`, `sym.set_toggle` (state `toggle.sym_set.<id>`) |
@@ -5633,6 +5646,11 @@ REST API endpoints for remote interpreter control via HTTP.
 | `GET` | `/api/v1/lua/status` | - | Get Lua interpreter status (JSON). |
 | `POST` | `/api/v1/lua/stop` | - | Request Lua execution stop. |  
 | `GET` | `/api/v1/lua/globals` | - | List Lua global variables (JSON array). |
+
+Code sent through `exec` / `file` acts in the sender's automation session: on a machine the sender holds (its
+`X-Unreal-Session`, or its implicit session, an MCP agent's for example) the script's control calls pass as the
+sender's own, so the client and its script drive one machine together; `release_control()` in the script leaves the
+sender's session in place ([execution arbiter design §6a](../../../inprogress/2026-10-09-execution-arbiter/design.md#6a-automation-sessions-visible-remote-control-x7)).
 
 **Response Format**:
 

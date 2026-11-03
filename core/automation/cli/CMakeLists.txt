@@ -24,6 +24,7 @@ set(SOURCES
     src/commands/cli-processor-asm.cpp
     src/commands/cli-processor-signature.cpp
     src/commands/cli-processor-breakpoint.cpp
+    src/commands/cli-processor-cardcpu.cpp
     src/commands/cli-processor-memory.cpp
     src/commands/cli-processor-analyzer.cpp
     src/commands/cli-processor-analyzer-mgr.cpp

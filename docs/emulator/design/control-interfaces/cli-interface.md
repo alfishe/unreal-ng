@@ -164,6 +164,12 @@ Available commands:
   ...
 ```
 
+**The sound card CPU**: `--cpu gs` (`ms`: the MultiSound's) on `registers`, `memory`, `memory info` and `disasm`
+works on the General Sound / NeoGS card's Z80 (`registers a 0x10 --cpu gs`, `memory 0x4000 32 --cpu gs`,
+`disasm --cpu gs`; [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)), and on
+`step [count]`, `steps <count>`, `stepover` and `stepout` steps it: the machine runs until the card's step ends
+(`stepover --cpu gs`).
+
 **Command Aliases**:
 The CLI supports command aliases for convenience:
 - `?` → `help`

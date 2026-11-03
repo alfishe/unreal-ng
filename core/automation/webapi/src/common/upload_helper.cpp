@@ -3,6 +3,7 @@
 #include "upload_helper.h"
 
 #include <common/filehelper.h>
+#include "emulator/emulator.h"
 #include <platform/processinfo.h>
 #include "upload_sweep.h"
 #include <drogon/HttpTypes.h>
@@ -28,24 +29,21 @@ MediaType getMediaTypeFromFilename(const std::string& filename)
     auto dot = filename.rfind('.');
     if (dot == std::string::npos) return MediaType::Unknown;
 
-    std::string ext = filename.substr(dot);
-    // Lowercase
+    // The extension without the dot, lowercase, as the core's format lists hold them
+    std::string ext = filename.substr(dot + 1);
     std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    auto in = [&ext](const std::vector<std::string>& list) {
+        return std::find(list.begin(), list.end(), ext) != list.end();
+    };
 
-    // Snapshots
-    // .rzx: an input recording, played from its start snapshot
-    if (ext == ".sna" || ext == ".z80" || ext == ".szx" || ext == ".sp" || ext == ".snp" || ext == ".rzx")
+    // The core's lists, so every format the emulator opens can be uploaded (spg for TS-Conf, nex / snx for the
+    // Next, rzx as its start snapshot); sp / snp (old snapshot names) and csw / wav (outside the tape registry) as before
+    if (in(Emulator::SupportedSnapshotExtensions()) || ext == "sp" || ext == "snp")
         return MediaType::Snapshot;
-
-    // Disks
-    if (ext == ".trd" || ext == ".scl" || ext == ".fdi" || ext == ".udi" || ext == ".td0" || ext == ".img" ||
-        ext == ".ima" || ext == ".dsk" || ext == ".mgt" || ext == ".mb2" || ext == ".mbd" || ext == ".d40" ||
-        ext == ".d80" || ext == ".pro")
+    if (in(Emulator::SupportedDiskExtensions()))
         return MediaType::Disk;
-
-    // Tapes
-    if (ext == ".tap" || ext == ".tzx" || ext == ".csw" || ext == ".wav")
+    if (in(Emulator::SupportedTapeExtensions()) || ext == "csw" || ext == "wav")
         return MediaType::Tape;
 
     return MediaType::Unknown;

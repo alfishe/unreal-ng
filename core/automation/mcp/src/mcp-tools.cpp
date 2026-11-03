@@ -1321,9 +1321,12 @@ void RegisterControlExecution(ToolRegistry& registry)
         "For bp_add of chipreg: one chip of the kind (TurboSound / TS-FM 0-1, the Next's AYs 0-2); absent: any";
     schema["properties"]["cpu"]["type"] = "string";
     schema["properties"]["cpu"]["description"] =
-        "For bp_*: whose breakpoints, main (default), gs (the CPU of the General Sound / NeoGS card: execution, read, "
-        "write, port and card events; a gs stop parks the machine, wait reports the card instruction) or ms (the "
-        "General Sound on a MultiSound card, the same way)";
+        "For bp_*, set_register and the steps: whose breakpoints / register / step, main (default), gs (the CPU of the "
+        "General Sound / NeoGS card: execution, read, write, port and card events; a gs stop parks the machine, wait "
+        "reports the card instruction) or ms (the General Sound on a MultiSound card, the same way). A card CPU's "
+        "step / step_n / step_over / step_out resumes the machine until the card ends it and pauses it again; the "
+        "main CPU moves on to where the card catches up (a host port access or the frame end); a breakpoint of any "
+        "CPU ends it first, none within 2 s (over / out 5 s) answers timeout";
     schema["properties"]["event"]["type"] = "string";
     schema["properties"]["event"]["description"] =
         "For bp_add of event: int, nmi, reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, "
@@ -1875,13 +1878,13 @@ void RegisterControlExecution(ToolRegistry& registry)
                     Json::Value body;
                     body["value"] = args["value"];
                     const std::string name = args["name"].asString();
-                    ForwardCall("PUT", Endpoint(id, "/registers/" + name), &body, caller, "", [id, name, &caller, done](ToolResult set) {
+                    ForwardCall("PUT", Endpoint(id, "/registers/" + name + cpuQuery), &body, caller, "", [id, name, cpuQuery, &caller, done](ToolResult set) {
                         if (set.isError)
                         {
                             done(std::move(set));
                             return;
                         }
-                        caller.Call("GET", Endpoint(id, "/registers"), nullptr, [name, done](int status, Json::Value registers) {
+                        caller.Call("GET", Endpoint(id, "/registers" + cpuQuery), nullptr, [name, done](int status, Json::Value registers) {
                             if (status != 200)
                             {
                                 done(ToolResult::Ok(name + " set", Json::Value(Json::objectValue)));
@@ -1948,8 +1951,18 @@ void RegisterControlExecution(ToolRegistry& registry)
                     return;
                 }
 
-                // Execution-advancing actions: perform the call, then append registers
-                auto execute = [action, &args, &caller, id, done]() {
+                // Execution-advancing actions: perform the call, then append registers. A card CPU (cpu gs / ms)
+                // steps through the same routes with ?cpu=, and its registers follow
+                const bool cardCpu = args.isMember("cpu") && args["cpu"].asString() != "main";
+                const bool stepAction =
+                    action == "step" || action == "step_n" || action == "step_over" || action == "step_out";
+                if (cardCpu && !stepAction)
+                {
+                    done(ToolResult::Error("cpu " + args["cpu"].asString() + ": a card CPU takes step, step_n, "
+                                           "step_over and step_out; '" + action + "' runs the machine's CPU"));
+                    return;
+                }
+                auto execute = [action, &args, &caller, id, done, cardCpu, cpuQuery]() {
                     std::string method = "POST";
                     std::string path;
                     Json::Value body;
@@ -2037,8 +2050,10 @@ void RegisterControlExecution(ToolRegistry& registry)
                         return;
                     }
 
+                    if (cardCpu)
+                        path += cpuQuery;
                     const Json::Value* bodyPtr = body.isNull() ? nullptr : &body;
-                    caller.Call(method, path, bodyPtr, [summary, &caller, id, done](int status, Json::Value response) mutable {
+                    caller.Call(method, path, bodyPtr, [summary, &caller, id, done, cardCpu, cpuQuery](int status, Json::Value response) mutable {
                         // A breakpoint that ended a step says so (the structured result carries `stop`)
                         if (response.isObject() && response.isMember("stop") &&
                             response["stop"].get("reason", "").asString() == "breakpoint")
@@ -2048,6 +2063,31 @@ void RegisterControlExecution(ToolRegistry& registry)
                             std::snprintf(where, sizeof(where), "Stopped at breakpoint #%u (%s) at $%04X after %u instruction(s). ",
                                           stop.get("breakpoint_id", 0).asUInt(), stop.get("access", "").asString().c_str(),
                                           stop.get("address", 0).asUInt(), response.get("executed", 0).asUInt());
+                            summary = where;
+                            if (stop.isMember("cpu_pc"))
+                            {
+                                std::snprintf(where, sizeof(where), "Stopped at breakpoint #%u of cpu %s (%s) at $%04X, card instruction $%04X. ",
+                                              stop.get("breakpoint_id", 0).asUInt(), stop.get("cpu", "").asString().c_str(),
+                                              stop.get("access", "").asString().c_str(), stop.get("address", 0).asUInt(),
+                                              stop.get("cpu_pc", 0).asUInt());
+                                summary = where;
+                            }
+                        }
+                        else if (cardCpu && response.isObject() && response.isMember("stop"))
+                        {
+                            // The card CPU's step: where it ended, and where the main CPU stands now
+                            const Json::Value& stop = response["stop"];
+                            const std::string reason = stop.get("reason", "").asString();
+                            char where[160];
+                            if (reason == "step")
+                                std::snprintf(where, sizeof(where), "%s. Card CPU %s at $%04X; main CPU at $%04X. ",
+                                              response.get("message", "").asString().c_str(),
+                                              stop.get("cpu", "").asString().c_str(), stop.get("cpu_pc", 0).asUInt(),
+                                              response.get("main_pc", 0).asUInt());
+                            else
+                                std::snprintf(where, sizeof(where), "%s (reason %s). Card CPU at $%04X; main CPU at $%04X. ",
+                                              response.get("message", "").asString().c_str(), reason.c_str(),
+                                              response.get("pc", 0).asUInt(), response.get("main_pc", 0).asUInt());
                             summary = where;
                         }
                         if (status < 200 || status >= 300)
@@ -2061,7 +2101,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                                                    DescribeErrorBody(response) + hint));
                             return;
                         }
-                        caller.Call("GET", Endpoint(id, "/registers"), nullptr,
+                        caller.Call("GET", Endpoint(id, "/registers") + (cardCpu ? cpuQuery : std::string()), nullptr,
                                     [summary, response, done](int regStatus, Json::Value registers) mutable {
                                         if (regStatus == 200)
                                         {
@@ -2512,6 +2552,11 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["max_blocks"]["type"] = "integer";
     schema["properties"]["max_blocks"]["default"] = 48;
     schema["properties"]["max_blocks"]["description"] = "'memory_map' block budget before zero-run granularity coarsens";
+    schema["properties"]["cpu"]["type"] = "string";
+    schema["properties"]["cpu"]["description"] =
+        "Whose 'registers', 'memory', 'disasm', 'memory_map' and 'breakpoints': main (default), gs (the CPU of the "
+        "General Sound / NeoGS card: its registers, its address space, its code from its PC, its four 16K windows) "
+        "or ms (the General Sound on a MultiSound card)";
     schema["properties"]["include_image"]["type"] = "boolean";
     schema["properties"]["include_image"]["default"] = false;
     schema["properties"]["include_image"]["description"] = "Include base64 image data for 'screen_image' (large payload)";
@@ -2690,10 +2735,12 @@ void RegisterInspectState(ToolRegistry& registry)
                         snapshotWindows += "&memory=" + window.asString();
             if (args.isMember("pchist") && args["pchist"].isIntegral())
                 snapshotWindows += "&pchist=" + std::to_string(args["pchist"].asUInt());
+            // The CPU of the register, memory, code and breakpoint aspects (the routes' ?cpu=); its refusal is shown
+            const std::string cpu = args.isMember("cpu") && args["cpu"].isString() ? args["cpu"].asString() : std::string();
 
             TargetResolver::ResolveFromArgs(
                 args, caller,
-                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, region, pldQuery, nrQuery, nrReports, snapshotWindows, &caller, done, progress](
+                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, region, pldQuery, nrQuery, nrReports, snapshotWindows, cpu, &caller, done, progress](
                     bool ok, const std::string& idOrError) {
                     if (!ok)
                     {
@@ -2718,9 +2765,11 @@ void RegisterInspectState(ToolRegistry& registry)
                         else if (aspect == "registers" || aspect == "breakpoints" || aspect == "memory_banks")
                         {
                             std::string suffix = aspect == "registers" ? "/registers" : (aspect == "breakpoints" ? "/breakpoints" : "/state/memory");
-                            steps.push_back([&caller, id, aspect, suffix](Json::Value& acc, std::function<void(bool)> next) {
-                                caller.Call("GET", Endpoint(id, suffix), nullptr, [&caller, id, aspect, &acc, next](int status, Json::Value body) mutable {
+                            const std::string cpuQuery = cpu.empty() || aspect == "memory_banks" ? std::string() : "?cpu=" + cpu;
+                            steps.push_back([&caller, id, aspect, suffix, cpuQuery](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, suffix + cpuQuery), nullptr, [&caller, id, aspect, cpuQuery, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
+                                    else if (!cpuQuery.empty()) acc[aspect]["unavailable"] = body["message"];
                                     if (aspect != "breakpoints" || !acc[aspect].isObject())
                                     {
                                         next(true);
@@ -2728,7 +2777,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                     }
                                     // The breakpoints' groups (name, total, active, ids) beside the list: within this
                                     // aspect's one step (the progress reports one label per step)
-                                    caller.Call("GET", Endpoint(id, "/breakpoints/groups"), nullptr, [aspect, &acc, next](int groupsStatus, Json::Value groups) mutable {
+                                    caller.Call("GET", Endpoint(id, "/breakpoints/groups" + cpuQuery), nullptr, [aspect, &acc, next](int groupsStatus, Json::Value groups) mutable {
                                         if (groupsStatus == 200) acc[aspect]["groups"] = groups["groups"];
                                         next(true);
                                     });
@@ -2737,36 +2786,41 @@ void RegisterInspectState(ToolRegistry& registry)
                         }
                         else if (aspect == "memory")
                         {
-                            steps.push_back([&caller, id, aspect, address, size, format](Json::Value& acc, std::function<void(bool)> next) {
+                            steps.push_back([&caller, id, aspect, address, size, format, cpu](Json::Value& acc, std::function<void(bool)> next) {
                                 std::string path = Endpoint(id, "/memory/" + std::to_string(address)) + "?len=" + std::to_string(size) +
-                                                   "&format=" + format;
-                                caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                                   "&format=" + format + (cpu.empty() ? std::string() : "&cpu=" + cpu);
+                                caller.Call("GET", path, nullptr, [aspect, cpu, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
+                                    else if (!cpu.empty()) acc[aspect]["unavailable"] = body["message"];
                                     next(true);
                                 });
                             });
                         }
                         else if (aspect == "memory_map")
                         {
-                            steps.push_back([&caller, id, aspect, view, minRun, maxBlocks](Json::Value& acc, std::function<void(bool)> next) {
+                            steps.push_back([&caller, id, aspect, view, minRun, maxBlocks, cpu](Json::Value& acc, std::function<void(bool)> next) {
                                 std::string path = Endpoint(id, "/memory/map") + "?view=" + view + "&min_run=" + std::to_string(minRun) +
-                                                   "&max_blocks=" + std::to_string(maxBlocks);
-                                caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                                   "&max_blocks=" + std::to_string(maxBlocks) + (cpu.empty() ? std::string() : "&cpu=" + cpu);
+                                caller.Call("GET", path, nullptr, [aspect, cpu, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
+                                    else if (!cpu.empty()) acc[aspect]["unavailable"] = body["message"];
                                     next(true);
                                 });
                             });
                         }
                         else if (aspect == "disasm")
                         {
-                            steps.push_back([&caller, id, aspect, address, hasAddress, count](Json::Value& acc, std::function<void(bool)> next) {
+                            steps.push_back([&caller, id, aspect, address, hasAddress, count, cpu](Json::Value& acc, std::function<void(bool)> next) {
                                 std::string path = Endpoint(id, "/disasm") + "?count=" + std::to_string(count);
                                 if (hasAddress)
                                 {
                                     path += "&address=" + std::to_string(address);
                                 }
-                                caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                if (!cpu.empty())
+                                    path += "&cpu=" + cpu;
+                                caller.Call("GET", path, nullptr, [aspect, cpu, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
+                                    else if (!cpu.empty()) acc[aspect]["unavailable"] = body["message"];
                                     next(true);
                                 });
                             });
@@ -3339,9 +3393,27 @@ void RegisterInspectState(ToolRegistry& registry)
                                 continue;
                             }
                             const Json::Value& value = acc[aspect];
+                            if (value.isMember("unavailable"))
+                            {
+                                // A card CPU that is not there (the routes' 404) or a bad cpu name
+                                out << "\n[" << aspect << "] unavailable: " << value["unavailable"].asString();
+                                continue;
+                            }
+                            if (value.isMember("cpu") && value["cpu"].isString())
+                                out << "\n[" << aspect << "] cpu " << value["cpu"].asString() << ":";
                             if (aspect == "registers")
                             {
                                 out << "\n[registers] " << FormatRegisters(value, true);
+                            }
+                            else if (aspect == "memory_map" && value.isMember("windows"))
+                            {
+                                out << "\n[memory_map] the CPU's windows:";
+                                for (const Json::Value& window : value["windows"])
+                                {
+                                    out << "\n  " << Hex16(window["start"].asUInt()) << " " << window["kind"].asString();
+                                    if (window.isMember("page"))
+                                        out << " page " << window["page"].asUInt();
+                                }
                             }
                             else if (aspect == "disasm" && value["instructions"].isArray())
                             {
@@ -6976,8 +7048,9 @@ void RegisterMemoryAccess(ToolRegistry& registry)
     schema["properties"]["space"]["type"] = "string";
     schema["properties"]["space"]["default"] = "cpu";
     schema["properties"]["space"]["description"] =
-        "cpu (the Z80 address space through the current banking) or a region name / alias from 'regions' "
-        "(sprinter.vram / vram, neogs.ram, gs.ram, moonsound.wave, tsconf.cram, rtc.cmos, evo.flash, ...)";
+        "cpu (the Z80 address space through the current banking), gs / ms (the address space of the General Sound / "
+        "NeoGS card's CPU, of the MultiSound's General Sound, as it pages now) or a region name / alias from "
+        "'regions' (sprinter.vram / vram, neogs.ram, gs.ram, moonsound.wave, tsconf.cram, rtc.cmos, evo.flash, ...)";
     schema["properties"]["offset"]["type"] = "string";
     schema["properties"]["offset"]["description"] = "Z80 address (cpu) or offset in the region: number, '0x..' or '#..'";
     schema["properties"]["address"]["type"] = "string";
@@ -7006,7 +7079,10 @@ void RegisterMemoryAccess(ToolRegistry& registry)
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
             const std::string space = args.isMember("space") && args["space"].isString() ? args["space"].asString() : "cpu";
-            const bool cpu = space == "cpu";
+            // A CPU's view: the main Z80's, or a sound card CPU's (the routes' cpu)
+            const bool card = space == "gs" || space == "ms";
+            const bool cpu = space == "cpu" || card;
+            const std::string view = card ? "the " + space + " CPU's view" : std::string("the Z80 view");
             // 'address' is what the other tools call it: an agent writing it must not read from 0 instead
             if (args.isMember("offset") && args.isMember("address"))
             {
@@ -7077,10 +7153,11 @@ void RegisterMemoryAccess(ToolRegistry& registry)
                     {
                         CallAndSummarize("GET",
                                          Endpoint(id, "/memory/read/" + offset + "?length=" + std::to_string(length) +
-                                                          (format == "sparse" ? "&format=sparse" : "")),
+                                                          (format == "sparse" ? "&format=sparse" : "") +
+                                                          (card ? "&cpu=" + space : std::string())),
                                          nullptr, caller,
-                                         [length](const Json::Value& b) {
-                                             return "Read " + std::to_string(length) + " bytes of the Z80 view at " +
+                                         [length, view](const Json::Value& b) {
+                                             return "Read " + std::to_string(length) + " bytes of " + view + " at " +
                                                     b["address"].asString() + "." + MemoryReadText(b);
                                          },
                                          done);
@@ -7090,8 +7167,17 @@ void RegisterMemoryAccess(ToolRegistry& registry)
                     (*body)["address"] = address;
                     for (uint8_t b : bytes)
                         (*body)["data"].append(b);
+                    if (card)
+                        (*body)["cpu"] = space;
                     CallAndSummarize("POST", Endpoint(id, "/memory/write"), body.get(), caller,
-                                     [n = bytes.size()](const Json::Value&) { return "Wrote " + std::to_string(n) + " bytes."; },
+                                     [n = bytes.size(), view](const Json::Value& b) {
+                                         // A card's read-only window (ROM, flash, a protected RAM page) keeps its bytes
+                                         const size_t written = b.isMember("bytes_written") ? b["bytes_written"].asUInt() : n;
+                                         return "Wrote " + std::to_string(written) + " bytes into " + view +
+                                                (written < n ? " (" + std::to_string(n - written) +
+                                                                   " kept by a read-only window)."
+                                                             : std::string("."));
+                                     },
                                      done);
                     return;
                 }

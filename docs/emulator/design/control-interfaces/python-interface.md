@@ -73,6 +73,11 @@ Code sent to the interpreter (`POST /api/v1/python/exec`, the CLI `python` comma
 and callbacks see its top-level names, and the names stay for the next call, as in the Lua console. Its `print`
 output comes back with the answer.
 
+Code sent by `POST /api/v1/python/exec` or `/python/file` acts in the sender's automation session on a machine the
+sender holds (its `X-Unreal-Session`, or its implicit session, an MCP agent's too): its control calls pass without a
+`take_control()`, and `release_control()` leaves the sender's session in place
+([execution arbiter design §6a](../../../inprogress/2026-10-09-execution-arbiter/design.md#6a-automation-sessions-visible-remote-control-x7)).
+
 ### Machine Identity and Lifecycle
 The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
@@ -565,6 +570,14 @@ def companion_revoke(id: str) -> int:
     def set_register(self, name: str, value: int) -> bool:
         """False for an unknown name or a value im (0-2) / iff1, iff2 (0-1) cannot hold;
         8-bit registers take the low byte"""
+
+    # cpu="gs" ("ms": the MultiSound's) on get_registers, get_register, set_register, mem_read, mem_write and
+    # disasm reads and writes the sound card CPU (card_time instead of t; disasm from its PC, no labels);
+    # memory_map("gs") is its four windows {cpu, windows: [{start, size, kind, page, offset}]}. ValueError for
+    # another name, RuntimeError when no card with a CPU is in the slot or for an edit in the recorded past.
+    # cpu="gs" on step, steps, stepover and step_out steps the card CPU: the machine runs until the card's step
+    # ends, then is paused; the answer {ok, stop: {cpu, reason, cpu_pc, ...}, pc, sp, main_pc, main_sp, state}
+    # or {ok: False, error}
         
     def run_frame(self):
         """Run exactly one video frame (config.frame t-states)"""

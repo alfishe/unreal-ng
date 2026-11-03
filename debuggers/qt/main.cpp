@@ -330,6 +330,9 @@ void window_check(QWidget * window, ecatshim::CPU * cpu, const std::function<voi
             saved[i] = cpu->peek_mem(0xC000 + i);
             cpu->poke_mem(0xC000 + i, 0x00);
         }
+        // Over the WebAPI the edits' events come through the long poll: let them land (a stop's refresh brings the
+        // listing back to PC) before the row is looked for
+        wait_for([]() { return false; }, 600);
         code->refresh_memory();
         code->go_to(0xC000);
         QApplication::processEvents();
@@ -356,8 +359,10 @@ void window_check(QWidget * window, ecatshim::CPU * cpu, const std::function<voi
                   code->describe(0xC000).contains("42"),
               "listing: instruction bytes typed over (LD A,#42)");
         if (editor == nullptr || cpu->peek_mem(0xC000) != 0x3E || cpu->peek_mem(0xC001) != 0x42)
-            printf("  (row y %d, editor %s, #C000 = %02X %02X, listing \"%s\")\n", y, editor ? "opened" : "none",
-                   cpu->peek_mem(0xC000), cpu->peek_mem(0xC001), code->describe(0xC000).toUtf8().constData());
+            printf("  (row y %d, editor %s, #C000 = %02X %02X, listing \"%s\", tab %d, listing %s %dx%d)\n", y,
+                   editor ? "opened" : "none", cpu->peek_mem(0xC000), cpu->peek_mem(0xC001),
+                   code->describe(0xC000).toUtf8().constData(), cpu_tabs->currentIndex(),
+                   code->isVisible() ? "shown" : "hidden", vp->width(), vp->height());
         for (unsigned int i = 0; i < 4; i++) cpu->poke_mem(0xC000 + i, saved[i]);
         code->refresh_memory();
     }
@@ -668,19 +673,46 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         }
         gs->add_breakpoint(gbp);
         m->debug_run(true);
-        const bool ghit = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 5000);
-        check(ghit && m->debug_stop_cpu() == gs && gs->get_pc() == gbp, "gs breakpoint stops the machine, gs in front");
-        if (!ghit || m->debug_stop_cpu() != gs || gs->get_pc() != gbp)
+        // The run resumes asynchronously: a bare "paused" may still be the earlier pause. Wait for the stop the card's
+        // breakpoint makes (its reason and its CPU), then read the state once
+        const bool ghit = wait_for(
+            [m, gs]() {
+                return m->debug_paused() && !m->debug_stepping() && m->debug_stop_reason() == ecatshim::Emulator::DSTOP_BREAKPOINT &&
+                       m->debug_stop_cpu() == gs;
+            },
+            5000);
+        const unsigned int gstopPc = gs->get_pc();
+        const int greason = m->debug_stop_reason();
+        const bool gpaused = m->debug_paused(), gstepping = m->debug_stepping(), gcardStop = m->debug_stop_cpu() == gs;
+        check(ghit && gstopPc == gbp, "gs breakpoint stops the machine, gs in front");
+        if (!ghit || gstopPc != gbp)
             printf("  (gs breakpoint #%04X, %u times in %zu of history: %s, gs PC #%04X, stop cpu %s, paused %d stepping %d,"
                    " reason %d, frames %llu)\n",
-                   gbp, (unsigned)gseen[gbp], ghistory.size(), ghit ? "stopped" : "not stopped in 5 s", gs->get_pc(),
-                   m->debug_stop_cpu() == gs ? "gs" : "other", m->debug_paused(), m->debug_stepping(),
-                   m->debug_stop_reason(), (unsigned long long)machine_frames(m));
+                   gbp, (unsigned)gseen[gbp], ghistory.size(), ghit ? "stopped" : "not stopped in 5 s", gstopPc,
+                   gcardStop ? "gs" : "other", gpaused, gstepping, greason, (unsigned long long)machine_frames(m));
         gs->remove_breakpoint(gbp);
         if (!ghit) {
             m->debug_pause();
             wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
         }
+
+        // A step of the card's tab is the card's step: the machine stops after one card instruction, gs in front
+        const unsigned int gr = reg(gs, "R");
+        m->debug_step(gs);
+        const bool gstep = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 3000);
+        check(gstep && m->debug_stop_cpu() == gs && m->debug_stop_reason() == ecatshim::Emulator::DSTOP_STEP &&
+                  reg(gs, "R") != gr,
+              "gs step (the card's own, gs in front)");
+        m->debug_step_over(gs);
+        const bool gover = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 6000);
+        check(gover && m->debug_stop_cpu() == gs, "gs step over");
+
+        // A step of the main CPU's tab brings it to the front again (the window checks below type into its listing;
+        // over the WebAPI the card's stop event may come late, so wait for the main CPU's stop to be the last)
+        m->debug_step(cpu);
+        const bool back = wait_for([m, cpu]() { return m->debug_paused() && !m->debug_stepping() && m->debug_stop_cpu() == cpu; }, 3000);
+        wait_for([]() { return false; }, 600);  // the event of that stop, past one long poll
+        check(back, "main step after the card's: main in front");
     }
 
     size_t fields = 0;
@@ -710,7 +742,10 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         const double z0 = w->zoom();
         w->set_zoom(1.0);
         QApplication::processEvents();
-        DisasmView * code = window->findChild<DisasmView *>();
+        // The listing in sight (each processor's tab has one)
+        DisasmView * code = nullptr;
+        for (DisasmView * v : window->findChildren<DisasmView *>())
+            if (code == nullptr && v->isVisible()) code = v;
         QToolBar * tb = window->findChild<QToolBar *>();
         const int rows1 = code ? code->viewport()->height() / QFontMetrics(code->font()).height() : 0;
         const int h1 = code ? QFontMetrics(code->font()).height() : 0;

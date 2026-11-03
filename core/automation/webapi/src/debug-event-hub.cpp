@@ -256,6 +256,13 @@ void DebugEventHub::OnStateChange(Message* message)
                 AddBreakpointFields(event, payload->breakpointId, payload->address, payload->hitKind, payload->cpu,
                                     payload->cpuPc);
             }
+            else if (payload->pauseCause == PauseCause::Step)
+            {
+                // Another CPU's step ended (a sound card's): that CPU and its instruction
+                event["reason"] = "step";
+                event["cpu"] = payload->cpu;
+                event["cpu_pc"] = payload->cpuPc;
+            }
             else
                 event["reason"] = "pause";
             break;

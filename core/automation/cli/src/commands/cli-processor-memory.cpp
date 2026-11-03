@@ -42,6 +42,10 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+    // --cpu gs / ms: the sound card CPU's view (cli-processor-cardcpu.cpp)
+    if (HandleCardCpuCommand(session, *emulator, "memory", args,
+                             [&](const std::vector<std::string>& rest) { HandleMemory(session, rest); }))
+        return;
 
     if (args.empty())
     {
@@ -144,6 +148,8 @@ void CLIProcessor::ShowMemoryHelp(const ClientSession& session)
     oss << "Z80 Address Space:" << NEWLINE;
     oss << "  memory read <addr> [len]          - Read from Z80 address space" << NEWLINE;
     oss << "  memory write <addr> <bytes...>    - Write to Z80 address space" << NEWLINE;
+    oss << "  ... --cpu gs|ms                   - The sound card CPU's view (read, write, info / map: its windows)"
+        << NEWLINE;
     oss << NEWLINE;
     oss << "Device memory regions (the Sprinter's video RAM 'vram'):" << NEWLINE;
     oss << "  memory regions                                    - List the regions" << NEWLINE;
@@ -1116,6 +1122,10 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
+    // --cpu gs / ms: the sound card CPU's registers (cli-processor-cardcpu.cpp)
+    if (HandleCardCpuCommand(session, *emulator, "registers", args,
+                             [&](const std::vector<std::string>& rest) { HandleRegisters(session, rest); }))
+        return;
 
     // Get the Z80 state from the emulator
     Z80State* z80State = emulator->GetZ80State();
@@ -1134,6 +1144,7 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
         ss << "  reg get <name>           - Get single register" << NEWLINE;
         ss << "  reg <name> <value>       - Set register" << NEWLINE;
         ss << "  reg set <name> <value>   - Set register" << NEWLINE;
+        ss << "  ... --cpu gs|ms          - The sound card CPU's (General Sound / NeoGS, MultiSound)" << NEWLINE;
         ss << NEWLINE;
         ss << "8-bit registers:  A, B, C, D, E, H, L, F, I, R" << NEWLINE;
         ss << "                  A', B', C', D', E', H', L', F' (alternate)" << NEWLINE;

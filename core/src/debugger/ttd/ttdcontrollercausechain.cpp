@@ -135,7 +135,7 @@ std::shared_ptr<TTDFrameTrace> TimeTravelController::TraceCauseFrame(size_t cpIn
             pushed = static_cast<uint16_t>(pushed | (e.address == static_cast<uint16_t>(cpu.sp + 1) ? e.value << 8 : e.value));
         }
         in.pc = pushed;
-        in.codePage = memory->TtdPageOfBank(static_cast<uint8_t>(in.pc >> 14));
+        in.codePage = memory->TtdPageOf(in.pc);
         ReadRegs(cpu, in.regs);
         const uint16_t sp = static_cast<uint16_t>(cpu.sp + 2);
         in.regs[size_t(TTDCauseReg::SPH)] = static_cast<uint8_t>(sp >> 8);
@@ -174,7 +174,7 @@ std::shared_ptr<TTDFrameTrace> TimeTravelController::TraceCauseFrame(size_t cpIn
         TTDTraceInsn in;
         in.tInFrame = st.TtdTInFrame(static_cast<uint32_t>(cpu.t));
         in.pc = pc;
-        in.codePage = memory->TtdPageOfBank(static_cast<uint8_t>(pc >> 14));
+        in.codePage = memory->TtdPageOf(pc);
         for (uint8_t k = 0; k < 4; ++k)
             in.bytes[k] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(pc + k));
         ReadRegs(cpu, in.regs);
@@ -191,7 +191,8 @@ std::shared_ptr<TTDFrameTrace> TimeTravelController::TraceCauseFrame(size_t cpIn
         e.type = type;
         e.value = value;
         e.address = address;
-        e.page = type == 'R' || type == 'W' ? memory->TtdPageOfBank(static_cast<uint8_t>(address >> 14)) : kPhysPageNone;
+        if (type == 'R' || type == 'W')
+            e.page = memory->TtdLocate(address, type == 'W', e.offset);
         e.tInFrame = st.TtdTInFrame(static_cast<uint32_t>(z80->t));
         if (trace->insns.empty())
         {
@@ -289,7 +290,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
             return finish();
         }
         if (!query.hasPage)
-            targetPage = memory->TtdPageOfBank(static_cast<uint8_t>(query.address >> 14));
+            targetPage = memory->TtdPageOf(query.address);
         targetValue = memory->DirectReadFromZ80Memory(query.address);
     }
 

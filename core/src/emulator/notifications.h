@@ -370,7 +370,8 @@ inline const char* BreakpointHitKindName(BreakpointHitKind kind)
 enum class PauseCause : uint8_t
 {
     Request = 0,  // Pause() called by a user, a surface or the machine
-    Breakpoint    // a breakpoint fired during the emulator's own run
+    Breakpoint,   // a breakpoint fired during the emulator's own run
+    Step          // another CPU's step ended (a sound card's: the machine parked with it at `cpuPc`)
 };
 
 /// Payload for NC_EMULATOR_STATE_CHANGE.
