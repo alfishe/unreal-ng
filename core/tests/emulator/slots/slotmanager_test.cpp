@@ -81,6 +81,7 @@ std::string DescribeFittedDevices(EmulatorContext* context)
                 : sound->getCovox()->fitment() == Covox::Fitment::Mode1     ? "mode1"
                 : sound->getCovox()->fitment() == Covox::Fitment::Mode2     ? "mode2"
                 : sound->getCovox()->fitment() == Covox::Fitment::Mode1Mono ? "mode1+mono"
+                : sound->getCovox()->fitment() == Covox::Fitment::None      ? "dd"
                                                                             : "mono")
             << "\n";
     }

@@ -47,10 +47,11 @@ inspect_state {"aspects":["fdc"]}
   that is the only decoder-level difference from `SCORPION`.
 - Beta128 disk interface is **built in** (`trdos_present`): TR-DOS boots
   without inserting anything, and `#FF` FDC ports are always decoded.
-- The shipped `[SLOTS]` fit `zxbus.1 = neogs` (NeoGS, as on every clone), a MoonSound, a SounDrive and the TSFM
-  (`inspect_state {"aspects":["slots"]}`).
-- The ZX-MultiSound card fits the `PROFSCORP` ZX-bus as on real hardware (not shipped; it replaces the TSFM, NeoGS
-  and SounDrive); the `SCORPION` board has +12 V only on the control port, so there it is an `unrealistic` fit that
+- The shipped `[SLOTS]` fit `zxbus.1 = neogs` (NeoGS, as on every clone), a MoonSound and the TSFM
+  (`inspect_state {"aspects":["slots"]}`); no SounDrive since 2026-11-03 - the board's Covox is `#DD`
+  (`slots plug zxbus.3 soundrive` fits one).
+- The ZX-MultiSound card fits the `PROFSCORP` ZX-bus as on real hardware (not shipped; it replaces the TSFM and
+  NeoGS); the `SCORPION` board has +12 V only on the control port, so there it is an `unrealistic` fit that
   needs the override: [multisound.md](../peripherals/multisound.md), [docs/features/multisound.md](../../docs/features/multisound.md).
 
 ## WebAPI

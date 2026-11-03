@@ -104,7 +104,7 @@ model 11
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
 turbosound 2 fm
 gs NeoGS
-covox quad
+covox dd
 network.card 0 comport 0
 port 0000 00FF/0000 GMX configuration: scheme, RECONF, FIXROM, BLKEXT, INT type
 port 001F FFFF/001F Beta128 FDC status/command
@@ -273,7 +273,7 @@ model 10
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
 turbosound 2 fm
 gs NeoGS
-covox quad
+covox dd
 network.card 0 comport 0
 port 001F FFFF/001F Beta128 FDC status/command
 port 0033 FFFF/0033 Registered peripheral device
@@ -306,7 +306,7 @@ model 9
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
 turbosound 2 fm
 gs NeoGS
-covox quad
+covox dd
 network.card 0 comport 0
 port 001F FFFF/001F Beta128 FDC status/command
 port 0033 FFFF/0033 Registered peripheral device
