@@ -1509,7 +1509,7 @@ emu.window_record("/abs/demo.mp4", {keyboard = "default", codec = "h264"})  -- r
                                      --   the on-screen keyboard, the machine's sound, one video frame per emulated
                                      --   frame); options: keyboard ("default", a picture id, false), codec ("prores" /
                                      --   "h264"), audio (boolean), fps (1..100, audio = false only), scale (1..4),
-                                     --   picture_height (0..4320, GPU), width / height (the frame), layout ("below" /
+                                     --   hardware, fit, picture_height (0..4320, GPU), width / height (the frame), layout ("below" /
                                      --   "side"). Returns { recording, path, keyboard, frames, width, height, fps,
                                      --   audio, sample_rate, audio_samples }, or { ok = false, error, kind }
 emu.window_record_frames(100)        -- a paused machine runs 100 frames, every one recorded; the status with ran

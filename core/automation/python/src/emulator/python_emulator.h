@@ -7371,7 +7371,7 @@ namespace PythonBindings
         }, "Record the GUI window as it draws (CRT and all) with the on-screen keyboard and the machine's sound, one "
            "video frame per emulated frame, to path (.mov: prores, .mp4: h264): keyboard= ('default', a picture id, "
            "False), codec= ('prores', 'h264'), audio= (bool), fps= (1..100, audio=False only), scale= (1..4), "
-           "picture_height= (0..4320, GPU), width= / height= (the frame), layout= ('below', 'side'); returns {recording, "
+           "hardware= / fit= (booleans), picture_height= (0..4320, GPU), width= / height= (the frame), layout= ('below', 'side'); returns {recording, "
            "path, keyboard, frames, width, height, fps, audio, sample_rate, audio_samples} or {ok: False, error, kind}",
            py::arg("path"))
         .def("window_record_frames", [](Emulator& self, int frames) -> py::object {

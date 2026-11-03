@@ -44,12 +44,28 @@ struct RecordingSettings
     // Audio codec override (empty = default for container)
     QString audioCodec;
 
+    // Picture source of a video recording: false = the emulator's raw frame buffer, true = the window as it draws
+    // it (CRT shaders, temporal processing)
+    bool windowSource = false;
+
     // Audio bitrate for lossy formats like MP3 (kbps, default 192)
     int audioBitrate = 192;
 
     void load()
     {
         QSettings settings(QStringLiteral("unreal-ng"), QStringLiteral("recording"));
+        load(settings);
+    }
+
+    void save() const
+    {
+        QSettings settings(QStringLiteral("unreal-ng"), QStringLiteral("recording"));
+        save(settings);
+    }
+
+    /// From / to a given store (the tests use a file of their own)
+    void load(QSettings& settings)
+    {
         backend = settings.value(QStringLiteral("backend"), 0).toInt();
         container = settings.value(QStringLiteral("container"), QStringLiteral("MP4")).toString();
         quality = settings.value(QStringLiteral("quality"), 2).toInt();
@@ -60,11 +76,11 @@ struct RecordingSettings
         videoCodec = settings.value(QStringLiteral("videoCodec"), QStringLiteral("h265")).toString();
         audioCodec = settings.value(QStringLiteral("audioCodec"), QString()).toString();
         audioBitrate = settings.value(QStringLiteral("audioBitrate"), 192).toInt();
+        windowSource = settings.value(QStringLiteral("windowSource"), false).toBool();
     }
 
-    void save() const
+    void save(QSettings& settings) const
     {
-        QSettings settings(QStringLiteral("unreal-ng"), QStringLiteral("recording"));
         settings.setValue(QStringLiteral("backend"), backend);
         settings.setValue(QStringLiteral("container"), container);
         settings.setValue(QStringLiteral("quality"), quality);
@@ -75,5 +91,6 @@ struct RecordingSettings
         settings.setValue(QStringLiteral("videoCodec"), videoCodec);
         settings.setValue(QStringLiteral("audioCodec"), audioCodec);
         settings.setValue(QStringLiteral("audioBitrate"), audioBitrate);
+        settings.setValue(QStringLiteral("windowSource"), windowSource);
     }
 };

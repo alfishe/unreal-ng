@@ -2968,6 +2968,8 @@ TEST_F(McpTools_Test, CaptureMedia_WindowRecord_StartsRunsFramesAndStops)
     args["filename"] = "/tmp/demo.mov";
     args["keyboard"] = "pentagon2plus";
     args["picture_height"] = 1080;
+    args["hardware"] = true;
+    args["fit"] = true;
     args["scale"] = 2;
     args["width"] = 3840;
     args["height"] = 2160;
@@ -2980,6 +2982,8 @@ TEST_F(McpTools_Test, CaptureMedia_WindowRecord_StartsRunsFramesAndStops)
     EXPECT_EQ(call->body["path"].asString(), "/tmp/demo.mov");
     EXPECT_EQ(call->body["keyboard"].asString(), "pentagon2plus");
     EXPECT_EQ(call->body["picture_height"].asInt(), 1080);
+    EXPECT_TRUE(call->body["hardware"].asBool());
+    EXPECT_TRUE(call->body["fit"].asBool());
     EXPECT_EQ(call->body["layout"].asString(), "side");
     EXPECT_TRUE(call->body["audio"].asBool()) << "a codec word means a sound track";
     // the text alone tells an agent the file, its size, the keyboard and what to do next

@@ -1221,16 +1221,15 @@ void MainWindow::registerWindowView()
             error = "The window is closed";
             return false;
         }
-        if (!window->_windowRecorder)
-            window->_windowRecorder = new WindowRecorder(window->_osdKeyboardWindow, window);
+        WindowRecorder* recorder = window->windowRecorder();
         switch (action)
         {
             case WindowViewProvider::RecordAction::Start:
-                return window->_windowRecorder->start(window->_screenWrapper, window->_emulator, *request, out, error);
+                return recorder->start(window->_screenWrapper, window->_emulator, *request, out, error);
             case WindowViewProvider::RecordAction::Stop:
-                return window->_windowRecorder->stop(out, error);
+                return recorder->stop(out, error);
             case WindowViewProvider::RecordAction::Status:
-                window->_windowRecorder->status(out);
+                recorder->status(out);
                 return true;
         }
         return false;
@@ -4575,6 +4574,13 @@ bool MainWindow::switchMachineModel(const std::string& modelName, uint32_t ramSi
 }
 
 #ifdef ENABLE_RECORDING
+WindowRecorder* MainWindow::windowRecorder()
+{
+    if (!_windowRecorder)
+        _windowRecorder = new WindowRecorder(_osdKeyboardWindow, this);
+    return _windowRecorder;
+}
+
 void MainWindow::handleVideoRecordingRequested()
 {
     if (!_recordingWidget)

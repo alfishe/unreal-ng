@@ -421,7 +421,7 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
         "  video window record <path> [<key>=<value> ...] - record the window as drawn (CRT, on-screen keyboard,\n"
         "                                   sound) to a .mov (prores) / .mp4 (h264): keyboard default|<picture id>,\n"
         "                                   codec prores|h264, audio on|off, fps 1..100 (audio off), scale 1..4,\n"
-        "                                   picture_height 0..4320, width / height, layout below|side\n"
+        "                                   hardware on|off, fit on|off, picture_height 0..4320, width / height, layout below|side\n"
         "  video window record frames <N> - a paused machine runs N frames, every one recorded\n"
         "  video window record stop       - finish the file (waits for ffmpeg, muxes the sound in)\n"
         "  video viewport [<name>]        - the overscan frame's crop: full, symmetric, standard, screen_only, next, prev\n"

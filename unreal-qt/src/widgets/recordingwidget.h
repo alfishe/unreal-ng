@@ -5,6 +5,7 @@
 #include <QToolButton>
 #include <QComboBox>
 #include <QLabel>
+#include <QElapsedTimer>
 #include <QTimer>
 #include <memory>
 #include <string>
@@ -55,6 +56,7 @@ private slots:
     void onQualityChanged(int index);
     void onRegionChanged(int index);
     void onProfileChanged(int index);
+    void onSourceChanged(int index);
     void onUpdateStats();
 
 private:
@@ -64,6 +66,11 @@ private:
     QString currentCodec() const;
     void updateQualityOptions();
     void updateRegionAvailability();
+    /// True for a video format the window recording can write (MP4 / MKV / MOV / WebM)
+    bool windowSourceAvailable() const;
+    bool startWindowRecording(const QString& container);
+    void stopWindowRecording();
+    void finishRecordingUi();
     void applySettingsToUI();
     void updateStatusLabel();
     EmulatorContext* getActiveContext() const;
@@ -78,6 +85,7 @@ private:
     QComboBox* _formatCombo = nullptr;  ///< Codec + container: H.265 MP4, H.264 MKV, GIF, WAV...
     QComboBox* _qualityCombo = nullptr;
     QComboBox* _regionCombo = nullptr;
+    QComboBox* _sourceCombo = nullptr;   ///< Raw frame buffer / Window (as drawn: shaders, temporal processing)
     QComboBox* _profileCombo = nullptr;  ///< Native / 1080p / 1440p / 4K (fixed frame, sharp scale)
     QLabel* _statusLabel = nullptr;
     QToolButton* _advancedBtn = nullptr;
@@ -89,4 +97,8 @@ private:
     bool _visibleByUser = false;
     bool _isRecording = false;
     bool _isPaused = false;
+    QElapsedTimer _finishingTimer;  ///< since the window recording was stopped, while its file is finished
+    QString _finishingPath;
+    uint64_t _finishingStartPending = 0;  ///< frames the encoder owed when the recording stopped
+    bool _windowRecording = false;  ///< the running recording is the window's, not the recording manager's
 };

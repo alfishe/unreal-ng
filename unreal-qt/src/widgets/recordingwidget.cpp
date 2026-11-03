@@ -8,6 +8,8 @@
 #include <QDir>
 #include <QDateTime>
 #include <QMessageBox>
+#include <algorithm>
+#include <QElapsedTimer>
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -17,6 +19,8 @@
 #include "platform_encoder.h"
 #include "ffmpeg_probe.h"
 #include "widgets/tintedsvgicon.h"
+#include "widgets/windowrecorder.h"
+#include "emulator/video/windowview.h"
 
 namespace {
 
@@ -129,6 +133,16 @@ RecordingWidget::RecordingWidget(MainWindow* mainWindow, QWidget* parent)
     connect(_regionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &RecordingWidget::onRegionChanged);
 
+    _sourceCombo = new QComboBox(this);
+    _sourceCombo->addItem(tr("Raw"), false);
+    _sourceCombo->addItem(tr("Window"), true);
+    _sourceCombo->setToolTip(tr("Picture source: the emulator's raw frame buffer, or the window as it draws it "
+                                "(CRT shaders, temporal processing)"));
+    _sourceCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    _sourceCombo->setFixedWidth(76);
+    connect(_sourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &RecordingWidget::onSourceChanged);
+
     _profileCombo = new QComboBox(this);
     _profileCombo->addItem(tr("Original"), QStringLiteral("native"));
     _profileCombo->addItem(tr("1080p"), QStringLiteral("1080p"));
@@ -209,6 +223,7 @@ RecordingWidget::RecordingWidget(MainWindow* mainWindow, QWidget* parent)
     controlLayout->addWidget(_recordBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_pauseBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_formatCombo, 0, Qt::AlignVCenter);
+    controlLayout->addWidget(_sourceCombo, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_qualityCombo, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_regionCombo, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_profileCombo, 0, Qt::AlignVCenter);
@@ -286,6 +301,9 @@ void RecordingWidget::setVisibleByUser(bool visible)
 void RecordingWidget::updateState(std::shared_ptr<Emulator> activeEmulator)
 {
     _activeEmulator = activeEmulator;
+
+    if (_windowRecording)
+        return;  // the window recording is not the recording manager's
 
     EmulatorContext* context = getActiveContext();
     if (context && context->pRecordingManager)
@@ -379,6 +397,12 @@ void RecordingWidget::populateFormats()
                                     FFmpegProbe::isEncoderAvailable("libwebp", ffmpegPath)))
             _formatCombo->addItem(QStringLiteral("WebP"), QStringLiteral("WebP|webp"));
     }
+
+#ifdef Q_OS_MAC
+    // True 4:4:4 on the Mac's ProRes engine, real time at any size: only the window recording writes it
+    if (!nativeOnly)
+        _formatCombo->addItem(QStringLiteral("ProRes 4444 · MOV"), QStringLiteral("MOV|prores"));
+#endif
 
     // Audio only
     _formatCombo->insertSeparator(_formatCombo->count());
@@ -476,7 +500,20 @@ void RecordingWidget::updateRegionAvailability()
 
     // The profiles are H.264 / H.265 frames: the other formats (VP9, GIF, WebP, audio) have no fixed size
     const QString codec = currentCodec();
-    const bool profileFormat = (codec == QStringLiteral("h264") || codec == QStringLiteral("h265"));
+    const bool profileFormat = (codec == QStringLiteral("h264") || codec == QStringLiteral("h265") ||
+                                codec == QStringLiteral("prores"));
+    const bool windowAvail = windowSourceAvailable();
+    const bool proresFormat = (codec == QStringLiteral("prores"));
+    _sourceCombo->setEnabled(windowAvail && !proresFormat && !_isRecording);
+    if (proresFormat)  // ProRes is the window recording's alone
+    {
+        _sourceCombo->blockSignals(true);
+        _sourceCombo->setCurrentIndex(1);
+        _sourceCombo->blockSignals(false);
+    }
+    _sourceCombo->setToolTip(windowAvail ? tr("Picture source: the emulator's raw frame buffer, or the window as it "
+                                              "draws it (CRT shaders, temporal processing)")
+                                         : tr("The window as source needs an MP4 / MKV / MOV / WebM format"));
     _profileCombo->setEnabled(profileFormat && !_isRecording);
     _profileCombo->setToolTip(profileFormat
         ? tr("Output size: Original (the picture times the scale factor) or a fixed 1080p / 1440p / 4K frame. The "
@@ -487,6 +524,11 @@ void RecordingWidget::updateRegionAvailability()
     {
         _regionCombo->setEnabled(false);
         _regionCombo->setToolTip(tr("Capture region applies to video/animation recording only"));
+    }
+    else if (windowSourceAvailable() && (_settings.windowSource || currentCodec() == QStringLiteral("prores")))
+    {
+        _regionCombo->setEnabled(false);
+        _regionCombo->setToolTip(tr("The window recording takes the picture as the window shows it"));
     }
     else
     {
@@ -501,6 +543,10 @@ void RecordingWidget::applySettingsToUI()
 
     if (_settings.captureRegion >= 0 && _settings.captureRegion < _regionCombo->count())
         _regionCombo->setCurrentIndex(_settings.captureRegion);
+
+    _sourceCombo->blockSignals(true);
+    _sourceCombo->setCurrentIndex(_settings.windowSource ? 1 : 0);
+    _sourceCombo->blockSignals(false);
 
     _profileCombo->blockSignals(true);
     const int profileIdx = _profileCombo->findData(_settings.profile);
@@ -524,7 +570,9 @@ void RecordingWidget::updateStatusLabel()
     }
     else
     {
-        const QString regionStr = (_settings.captureRegion == 1) ? tr("Screen") : tr("Full");
+        const QString regionStr = (windowSourceAvailable() && (_settings.windowSource || currentCodec() == QStringLiteral("prores")))
+                                      ? tr("Window")
+                                      : (_settings.captureRegion == 1) ? tr("Screen") : tr("Full");
         const QString profileStr = _profileCombo->isEnabled() && _settings.profile != QStringLiteral("native")
                                        ? _profileCombo->currentText() : QString();
         _statusLabel->setText(profileStr.isEmpty() ? tr("Ready | %1 | %2 | %3").arg(cont, qualityStr, regionStr)
@@ -562,6 +610,12 @@ QString RecordingWidget::generateOutputPath(const QString& container) const
 
 void RecordingWidget::onRecordToggled()
 {
+    if (_windowRecording)
+    {
+        stopWindowRecording();
+        return;
+    }
+
     EmulatorContext* context = getActiveContext();
     if (!context || !context->pRecordingManager)
     {
@@ -588,6 +642,13 @@ void RecordingWidget::onRecordToggled()
     }
     else
     {
+        if (windowSourceAvailable() && (_settings.windowSource || currentCodec() == QStringLiteral("prores")))
+        {
+            _settings.load();  // the full dialog may have changed the shared settings
+            startWindowRecording(currentContainer());
+            return;
+        }
+
         // Start recording
         if (context->pFeatureManager && !context->pFeatureManager->isEnabled(Features::kRecording))
         {
@@ -678,6 +739,9 @@ void RecordingWidget::onRecordToggled()
 
 void RecordingWidget::onPauseToggled()
 {
+    if (_windowRecording)
+        return;  // the window recording has no pause
+
     EmulatorContext* context = getActiveContext();
     if (!context || !context->pRecordingManager)
         return;
@@ -739,8 +803,153 @@ void RecordingWidget::onProfileChanged(int)
     updateStatusLabel();
 }
 
+void RecordingWidget::onSourceChanged(int)
+{
+    _settings.windowSource = _sourceCombo->currentData().toBool();
+    _settings.save();
+    updateRegionAvailability();
+    updateStatusLabel();
+}
+
+bool RecordingWidget::windowSourceAvailable() const
+{
+    const QString cont = currentContainer();
+    const QString codec = currentCodec();
+    return (cont == QStringLiteral("MP4") || cont == QStringLiteral("MKV") || cont == QStringLiteral("MOV")) &&
+           (codec == QStringLiteral("h264") || codec == QStringLiteral("h265") || codec == QStringLiteral("prores"));
+}
+
+bool RecordingWidget::startWindowRecording(const QString& container)
+{
+    if (!_mainWindow || !_activeEmulator)
+    {
+        QMessageBox::warning(this, tr("Recording Error"), tr("No active emulator available for recording."));
+        return false;
+    }
+
+    // The format's own codec; the GPU's encoder when View > GPU acceleration is on (H.265 4:2:2 10-bit, H.264 4:2:0; real time at 4K), else
+    // 4:4:4 in software (a CRT mask a pixel wide survives, but 4K is slower than real time)
+    WindowRecordingRequest request;
+    request.codec = currentCodec().toStdString();
+    // The Mac's hardware encoder writes MP4 / MOV; MKV goes through ffmpeg (software, 4:4:4)
+    request.hardware = UiGpuAcceleration() && container != QStringLiteral("MKV");
+    request.audio = _settings.includeAudio;
+    // A fixed frame: the CRT is drawn at the frame's height (sharp, not scaled up afterwards) and centred in it
+    const QString profile = _settings.profile;
+    const struct { const char* id; int w, h; } profiles[] = {{"1080p", 1920, 1080}, {"1440p", 2560, 1440}, {"4k", 3840, 2160}};
+    for (const auto& fixed : profiles)
+        if (profile == QLatin1String(fixed.id))
+        {
+            request.frameWidth = static_cast<uint16_t>(fixed.w);
+            request.frameHeight = static_cast<uint16_t>(fixed.h);
+            request.pictureHeight = fixed.h;
+            request.fit = true;  // without a CRT shader the window's picture is its own size: fitted to the frame
+        }
+    request.path = generateOutputPath(container).toStdString();
+
+    WindowRecordingStatus status;
+    std::string error;
+    if (!_mainWindow->windowRecorder()->start(_mainWindow->windowRecorderScreen(), _activeEmulator, request, status,
+                                              error))
+    {
+        QMessageBox::critical(this, tr("Recording Failed"), QString::fromStdString(error));
+        return false;
+    }
+
+    _windowRecording = true;
+    _isRecording = true;
+    _isPaused = false;
+    _recordBtn->setText(tr("Stop Rec"));
+    _pauseBtn->setEnabled(false);
+    _formatCombo->setEnabled(false);
+    _sourceCombo->setEnabled(false);
+    _qualityCombo->setEnabled(false);
+    _regionCombo->setEnabled(false);
+    _profileCombo->setEnabled(false);
+    _statsTimer->start();
+    onUpdateStats();
+    emit recordingStateChanged(true);
+    return true;
+}
+
+void RecordingWidget::stopWindowRecording()
+{
+    // Never waits: the file is finished by the recorder's thread; the stats timer sees when it is done
+    WindowRecordingStatus status;
+    std::string error;
+    if (!_mainWindow->windowRecorder()->stop(status, error))
+    {
+        QMessageBox::warning(this, tr("Recording Error"), QString::fromStdString(error));
+        finishRecordingUi();
+        return;
+    }
+    _recordBtn->setEnabled(false);
+    _finishingTimer.start();
+    _finishingStartPending = 0;
+    _finishingPath = QString::fromStdString(status.path);
+    _statusLabel->setText(tr("Finishing the file..."));
+    if (!_statsTimer->isActive())
+        _statsTimer->start();
+}
+
+void RecordingWidget::finishRecordingUi()
+{
+    _windowRecording = false;
+    _isRecording = false;
+    _isPaused = false;
+    _statsTimer->stop();
+    _recordBtn->setEnabled(true);
+    _recordBtn->setText(tr("Start Rec"));
+    _pauseBtn->setEnabled(false);
+    _pauseBtn->setText(tr("Pause"));
+    _formatCombo->setEnabled(true);
+    _qualityCombo->setEnabled(true);
+    updateRegionAvailability();
+    updateStatusLabel();
+    emit recordingStateChanged(false);
+}
+
 void RecordingWidget::onUpdateStats()
 {
+    if (_windowRecording)
+    {
+        WindowRecordingStatus status;
+        _mainWindow->windowRecorder()->status(status);
+        if (status.finalizing)
+        {
+            const qint64 seconds = _finishingTimer.isValid() ? _finishingTimer.elapsed() / 1000 : 0;
+            if (_finishingStartPending == 0)
+                _finishingStartPending = status.framesPending;
+            const double done = static_cast<double>(_finishingStartPending - std::min(_finishingStartPending, status.framesPending));
+            const double rate = seconds > 2 ? done / static_cast<double>(seconds) : 0.0;  // frames per second
+            QString eta;
+            if (rate > 0.5)
+                eta = tr(", about %1 s more").arg(static_cast<qint64>(static_cast<double>(status.framesPending) / rate));
+            _statusLabel->setText(tr("Finishing the file: %1 frames left%2 (%3 s)")
+                                      .arg(status.framesPending).arg(eta).arg(seconds));
+            return;
+        }
+        if (!status.recording)  // finished (stopped here, or the window closed / ffmpeg died)
+        {
+            const QString savedPath = _finishingPath;
+            if (!status.error.empty())
+                QMessageBox::warning(this, tr("Recording Error"), QString::fromStdString(status.error));
+            finishRecordingUi();
+            if (status.error.empty() && !savedPath.isEmpty())
+                _statusLabel->setText(tr("Saved %1").arg(savedPath));
+            return;
+        }
+        const int totalSec = status.fps > 0 ? static_cast<int>(static_cast<double>(status.frames) / status.fps) : 0;
+        _statusLabel->setText(tr("REC %1:%2:%3 | %4 frames | %5x%6 | window")
+                                  .arg(totalSec / 3600, 2, 10, QChar('0'))
+                                  .arg((totalSec % 3600) / 60, 2, 10, QChar('0'))
+                                  .arg(totalSec % 60, 2, 10, QChar('0'))
+                                  .arg(status.frames)
+                                  .arg(status.width)
+                                  .arg(status.height));
+        return;
+    }
+
     EmulatorContext* context = getActiveContext();
     if (!context || !context->pRecordingManager)
         return;

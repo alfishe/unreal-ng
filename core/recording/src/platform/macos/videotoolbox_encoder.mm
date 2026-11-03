@@ -66,6 +66,7 @@ bool VideoToolboxEncoder::Start(const std::string& filename, const EncoderConfig
     std::string codec = config.videoCodec;
     std::transform(codec.begin(), codec.end(), codec.begin(), ::tolower);
     _useHEVC = (codec == "h265" || codec == "h.265" || codec == "hevc");
+    _useProRes = (codec == "prores" || codec == "prores4444");
 
     // Validate dimensions
     if (_width == 0 || _height == 0)
@@ -203,7 +204,13 @@ bool VideoToolboxEncoder::initAssetWriter(const std::string& filename, const Enc
             AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
         };
 
-        NSDictionary* videoSettings = @{
+        // ProRes 4444 (the Mac's ProRes engine, full 4:4:4 colour) takes no rate or key frame settings
+        NSDictionary* videoSettings = _useProRes ? @{
+            AVVideoCodecKey: AVVideoCodecTypeAppleProRes4444,
+            AVVideoWidthKey: @(_width),
+            AVVideoHeightKey: @(_height),
+            AVVideoColorPropertiesKey: colorProps
+        } : @{
             AVVideoCodecKey: _useHEVC ? AVVideoCodecTypeHEVC : AVVideoCodecTypeH264,
             AVVideoWidthKey: @(_width),
             AVVideoHeightKey: @(_height),
