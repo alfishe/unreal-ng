@@ -139,9 +139,10 @@ against (see Remainders).
 ## Remainders
 
 - ~~`CovoxDD` (`#DD` mono Covox) still parsed-but-inert~~ — done 2026-11-02:
-  the Scorpion printer port `#DD` is one more port of the one `Covox`, on
-  the mono `#FB` latch (slot built-in `covox-dd`, on by default on the
-  Scorpion family; 2026-11-03: no fifth latch, no per-port volume).
+  the Scorpion Covox on `#DD` (its only port, the printer data latch) is
+  the mono latch of the one `Covox` (slot built-in `covox-dd`, on by
+  default on the Scorpion family; 2026-11-03: no fifth latch, no per-port
+  volume).
 - `PortDecoder_Spectrum128` (plain 128K models) does not decode any
   Covox/SoundDrive ports at all, even though clone configs (e.g.
   `spectrum128/unreal.ini`) ship `SD=1`. `PortDecoder_ATM710`/`ATM3`/the

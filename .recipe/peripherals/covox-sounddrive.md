@@ -116,10 +116,12 @@ fitted"; use the port-trace/audio-capture checks below instead.
 - **`CovoxDD` is on by default on the Scorpion family** — `#DD` software
   (VPlayer's "DD" port) plays out of the box; `CovoxDD=0` /
   `builtin.covox-dd = off` takes the DAC away. With `[SLOTS]` in the INI
-  the built-in switch decides and `CovoxDD` is ignored. `#DD` is one more
-  port of the same Covox: it writes the mono `#FB` latch (`right_b`), so
-  one instance, one control - the mixer's COVOX row; there is no per-port
-  volume (the old `CovoxFBVol` / `CovoxDDVol` / `SDVol` keys are gone).
+  the built-in switch decides and `CovoxDD` is ignored. `#DD` is the
+  Scorpion's only Covox port (no `#FB` on the board); it drives the mono
+  latch (`right_b`) of the one Covox instance, and a `covox-fb` /
+  `soundrive` card in a slot adds its ports to that instance. One control,
+  the mixer's COVOX row; no per-port volume (the old `CovoxFBVol` /
+  `CovoxDDVol` / `SDVol` keys are gone).
 - **The printer port decodes before the AY** — `OUT (#DD),A` puts the
   sample on A15-A8, and the emulator's AY masks ignore A5; the printer arm
   (A5 = 0) comes first, so samples of `#80` and up never reach the AY.

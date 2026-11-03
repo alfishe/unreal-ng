@@ -6,10 +6,10 @@
 #include "emulator/ports/models/portdecoder_scorpion256.h"
 #include "emulator/sound/covox.h"
 
-/// The Covox on the Scorpion printer port ([SOUND] CovoxDD=1, slot built-in covox-dd): the printer data latch #DD,
-/// decoded as the board does (yellow board and GMX: A0 = 1, A1 = 0, A2 = 1, A5 = 0; Turbo+: no A2), is one more port
-/// of the one Covox: it writes the mono #FB latch (RightB), one control. VPlayer's "DD (Scorp.)" sound port writes it
-/// with OUT (C),A
+/// The Scorpion Covox ([SOUND] CovoxDD=1, slot built-in covox-dd): its only port is the printer data latch #DD,
+/// decoded as the board does (yellow board and GMX: A0 = 1, A1 = 0, A2 = 1, A5 = 0; Turbo+: no A2). It is the mono
+/// latch (RightB) of the one Covox instance, one control; a #FB / SounDrive card in a slot adds its ports to the same
+/// instance. VPlayer's "DD (Scorp.)" sound port writes it with OUT (C),A
 class PortDecoder_Scorpion_CovoxDd_Test : public ::testing::Test
 {
 protected:
@@ -168,7 +168,7 @@ TEST_F(PortDecoder_Scorpion_CovoxDd_Test, OneLatchWithTheFbPortAndOneTtdState)
     EXPECT_EQ(covox.fitment(), Covox::Fitment::Mono);
     ASSERT_TRUE(_portDecoder->RegisterSelfDecodingDevice(&covox));
 
-    // #FB and #DD are two ports of the same latch: the last write wins, no sum
+    // A Covox #FB card in a slot (CovoxFB=1) adds #FB to the same mono latch: the last write wins, no sum
     _portDecoder->DecodePortOut(0x00FB, 0xC0, 0x0000);
     EXPECT_EQ(MonoLatch(covox), 0xC0);
     _portDecoder->DecodePortOut(0x00DD, 0xA0, 0x0000);

@@ -755,7 +755,7 @@ TEST(SlotManager_Test, ScorpionPrinterCovoxIsASwitchableBuiltIn)
     EXPECT_EQ(planned(MM_SCORP, { { "builtin.covox-dd", "off" } }), 0);
     EXPECT_EQ(planned(MM_PROFSCORP, { { "builtin.covox-dd", "on" } }), 1);
     EXPECT_EQ(planned(MM_GMX, { { "builtin.covox-dd", "on" } }), 1);
-    EXPECT_EQ(planned(MM_PENTAGON, { { "builtin.covox-dd", "on" } }), 0) << "no printer port Covox on the Pentagon";
+    EXPECT_EQ(planned(MM_PENTAGON, { { "builtin.covox-dd", "on" } }), 0) << "no Scorpion Covox on the Pentagon";
 
     auto scorpion = MakeConfig(MM_SCORP);
     scorpion->sound.covoxDD = 0;

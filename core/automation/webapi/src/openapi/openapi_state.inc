@@ -976,7 +976,8 @@
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["tags"].append("Audio State");
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["description"] =
         "Covox or SoundDrive DAC. One report for every interface (DeviceState::Covox; CLI state audio covox, "
-        "Lua/Python audio_covox_state, MCP audio_covox): fitment (mono #FB or quad SoundDrive), the ports this "
+        "Lua/Python audio_covox_state, MCP audio_covox): fitment (mono #FB, quad SoundDrive, or none: the Scorpion Covox #DD alone), printer_port "
+        "(the Scorpion Covox #DD answered), the ports this "
         "model's decoder routes to it (from its port map: port, mask, match, decode, gate), shared_with_beta128 "
         "(Beta-128 registers a DAC row also decodes, with shared_port_rule), the four DAC latches with mute state, "
         "the last left/right amplitude, sound_last_frame, dc_removal and synthesis_suppressed.";
