@@ -70,6 +70,11 @@ public:
     /// #FF1F answers Joystick::Read()
     bool BoardHasKempstonJoystick() const override { return true; }
 
+    /// The Turbo+ flip-flop (scorpion.turbo) is the clock select a disk autostart or a snapshot load keeps over its
+    /// quick reset; 0 on the GMX, whose fitting cuts the host clock (its turbo is #7EFD bit 7, set by its loader)
+    uint16_t GetClockSelect() const override;
+    void RestoreClockSelect(uint16_t select) override;
+
     void SetRAMPage(uint8_t page) override;
     void SetROMPage(uint8_t page) override;
 

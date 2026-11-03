@@ -75,6 +75,9 @@ curl -s "$BASE/emulator/$EMU_ID/state/fdc" | jq .
 Then boot a disk the usual way —
 [autostart](../run/autostart-disk.md) or
 [manual TR-DOS](../run/manual-trdos-run.md) both work out of the box here.
+The autostart and SNA / Z80 loads keep the Turbo+ clock the machine ran at (the flip-flop set by `IN #7FFD`, 7 MHz):
+their quick reset skips the program that strobed it. A real reset clears it (3.5 MHz). The GMX keeps its own
+`#7EFD` bit 7, which its loader sets.
 
 ## Pitfalls
 
