@@ -256,7 +256,7 @@ whatever port pair, latch order or board the program reaches it through.
 | `saa` | 0-#1F | SAA1099 (MultiSound) |
 | `opl4` | #000-#1FF | MoonSound OPL4 FM: bank 1 as #100-#1FF |
 | `opl4wave` | 0-#FF | MoonSound OPL4 wave part (while NEW2 is set) |
-| `dac` | 0-3 (the channel), 4 (the Scorpion printer Covox `#DD`) | Covox / SounDrive, the MultiSound's SounDrive; the value is the sample |
+| `dac` | 0-3 (the channel) | Covox / SounDrive, the MultiSound's SounDrive; the value is the sample |
 | `cbl` | 0-1 | the Sprinter's Covox Blaster: 0 the data (code #88, ports #FB / #4F: the DAC with the ring off, the ring's next entry with it on; the accelerator's copies into page #FD), 1 the control (code #89, port #4E: bit 7 the ring, 6 stereo, 5 16-bit, 4 the INT, 3-0 the rate) |
 
 - **Cost.** A chip reports only while `EmulatorContext::chipRegisterWatch` is set: the main CPU's breakpoint manager

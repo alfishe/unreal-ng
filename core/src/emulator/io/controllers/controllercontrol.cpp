@@ -381,41 +381,52 @@ ControllerReply ControllerControl::Auto(const ControllerRequest& request)
 {
     if (request.options.count("apply") != 0)
         _manager->WatchPortReads(true);
-    const PortReadEvidence evidence = _manager->PortReads();
+    const DeviceAccessEvidence evidence = _manager->PortReads();
     ControllerReply reply;
     StateNode watch = StateNode::Object();
     watch["active"] = evidence.active;
     watch["frames_observed"] = static_cast<uint64_t>(evidence.framesObserved);
     watch["window"] = static_cast<uint64_t>(evidence.window);
-    StateNode classes = StateNode::Object();
-    for (size_t index = 0; index < kPortReadClasses; ++index)
+    // Per device of the slot registry and channel: what the machine's own decode says each access is
+    StateNode channels = StateNode::Array();
+    for (const DeviceAccessChannel& channel : evidence.channels)
     {
-        if (evidence.framesWithReads[index] == 0)
-            continue;
+        if (channel.frames == 0)
+            continue;  // seen earlier, not in the window
         StateNode entry = StateNode::Object();
-        entry["frames"] = static_cast<uint64_t>(evidence.framesWithReads[index]);
-        entry["reads_per_frame"] = static_cast<double>(evidence.readsPerFrame[index]);
-        classes[PortReadClassName(static_cast<PortReadClass>(index))] = entry;
+        entry["device"] = channel.device;
+        entry["channel"] = channel.channel;
+        entry["dir"] = channel.out ? "out" : "in";
+        entry["port"] = static_cast<uint64_t>(channel.port);
+        if (channel.input != slots::InputRole::None)
+            entry["input"] = InputRoleName(channel.input);
+        entry["frames"] = static_cast<uint64_t>(channel.frames);
+        entry["reads_per_frame"] = static_cast<double>(channel.perFrame);
+        if (channel.tested != 0)
+        {
+            // The bits the code tested after its reads (the sampled AND n / BIT b / shift into carry)
+            StateNode bits = StateNode::Array();
+            for (unsigned bit = 0; bit < 8; ++bit)
+                if ((channel.tested >> bit) & 1u)
+                    bits.push(static_cast<uint64_t>(bit));
+            entry["tested_bits"] = bits;
+        }
+        StateNode sites = StateNode::Array();
+        for (const DeviceAccessSite& site : channel.sites)
+        {
+            StateNode s = StateNode::Object();
+            s["pc"] = static_cast<uint64_t>(site.pc);
+            s["count"] = static_cast<uint64_t>(site.count);
+            sites.push(std::move(s));
+        }
+        entry["sites"] = sites;
+        channels.push(std::move(entry));
     }
-    watch["classes"] = classes;
-    // row-bits.<half-row>: the bits the code tested after its reads (the sampled AND n / BIT b / shift into carry)
-    StateNode rowBits = StateNode::Object();
-    for (unsigned row = 0; row < evidence.rowBits.size(); ++row)
-    {
-        const auto cls = static_cast<PortReadClass>(static_cast<unsigned>(PortReadClass::Row0) + row);
-        if (evidence.RowBits(cls) == 0)
-            continue;
-        StateNode bits = StateNode::Array();
-        for (unsigned bit = 0; bit < 8; ++bit)
-            if ((evidence.RowBits(cls) >> bit) & 1u)
-                bits.push(static_cast<uint64_t>(bit));
-        rowBits[PortReadClassName(cls)] = bits;
-    }
-    watch["row_bits"] = rowBits;
+    watch["channels"] = channels;
     reply.body["evidence"] = watch;
 #ifdef ENABLE_CONTROLLERS
     // The library's heuristic (mapping-and-profiles.md §6.1 step 2): what the Qt host would plug
-    const controllers::AutoDecision decision = controllers::DecideFromPortReads(evidence);
+    const controllers::AutoDecision decision = controllers::DecideAuto(evidence);
     StateNode value = StateNode::Object();
     value["decisive"] = decision.decisive;
     value["keyboard"] = decision.keyboard;

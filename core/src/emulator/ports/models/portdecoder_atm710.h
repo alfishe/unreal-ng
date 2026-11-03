@@ -124,11 +124,26 @@ public:
     /// The cold start is the BIOS menu's "TR-DOS 48" entry, which leaves window 3 of the #7FFD.4 = 1 set on RAM 24-31
     /// (above 128 KB): a disk is booted the 128K way instead, "SPECTRUM 128" and then its menu's TR-DOS
     bool FinishAutostartColdStart(uint16_t pc) override;
-    /// #FF77 bit 3: 7 MHz
+    /// #FF77 bit 3: 7 MHz. While the BIOS menu is up the latch is still clear: the clock is the menu's TURBO ON / OFF,
+    /// which the BIOS writes to #FF77 only when an entry is chosen (BiosMenuTurbo)
     uint16_t GetClockSelect() const override;
     void RestoreClockSelect(uint16_t select) override;
     void UpdateModelMemoryBanks() override;
     /// endregion </Interface methods>
+
+    /// region <BIOS menu>
+public:
+    /// The BIOS 1.07.13 menu (atm2.rom) runs from a copy in RAM page 2: bytes #0000-#07FF come from the DOS ROM page at
+    /// #0805, and #053E is its TURBO ON (1) / OFF (0) item, set to ON by every reset. True when that copy (give or take
+    /// its own variables) is in RAM 2
+    /// with TURBO ON: the menu is up (or was left with RAM 2 intact) and its entries start the machine at 7 MHz.
+    /// Another BIOS has no such copy: false
+    bool BiosMenuTurbo() const;
+    static constexpr uint16_t BIOS_MENU_ROM_OFFSET = 0x0805;
+    static constexpr uint16_t BIOS_MENU_SIZE = 0x0800;
+    static constexpr uint16_t BIOS_MENU_TURBO_FLAG = 0x053E;
+    static constexpr unsigned BIOS_MENU_MAX_DIFFERING = 256;  // the menu's own variables, with a wide margin
+    /// endregion </BIOS menu>
 
     /// region <Port detection>
 public:

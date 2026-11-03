@@ -33,7 +33,7 @@
 #include "debugger/ttd/ttdinputjournal.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/io/keyboard/keyboard.h"
-#include "portreadwatch.h"
+#include "emulator/ports/deviceaccesswatch.h"
 
 class BreakpointConditionProgram;
 class EmulatorContext;
@@ -154,14 +154,15 @@ public:
     void OnFrame(uint64_t frame);
     /// endregion </Input>
 
-    /// region <Port-read evidence (retro-devices.md §6)>
-    /// Start (from zero) or stop the port-read watch; applied at the next frame boundary on the machine's thread.
-    /// A media load starts it; it counts from the end of a tape's playing and stops itself after kPortReadWatchFrames
+    /// region <Device access evidence (docs/inprogress/2026-11-02-device-access-watch)>
+    /// Open (from zero) or close the device access watch's window of the auto connector: the decoder's watch
+    /// (PortDecoder::GetAccessWatch), applied at the next frame boundary. A media load opens it; it counts from the end
+    /// of a tape's playing and closes itself after kPortReadWatchFrames (the feature `deviceaccess` keeps the watch on)
     void WatchPortReads(bool on);
     /// What the watch saw over its last window (active false when it does not run)
-    PortReadEvidence PortReads() const;
+    DeviceAccessEvidence PortReads() const;
     static constexpr uint32_t kPortReadWatchFrames = 1500;  ///< 30 s of play at 50 Hz
-    /// endregion </Port-read evidence>
+    /// endregion </Device access evidence>
 
     /// The keyboard-joystick connectors that have a device
     bool HasOverlayDevices() const;
@@ -261,10 +262,6 @@ private:
     uint8_t _mouseButtons = 0;           ///< the mouse buttons the host source held at its last sample
 
     /// The watch request (0 none, 1 start, 2 stop), taken at the frame boundary
-    std::atomic<int> _watchRequest{0};
-    std::atomic<bool> _watching{false};
-    PortReadWatch _watch;
-    void ApplyWatchRequest();
 
     void SubmitHostKeys(const std::vector<uint8_t>& keys);
     void SubmitMouse(const MouseSample& mouse);

@@ -30,8 +30,9 @@ class PortOwners
 {
 public:
     /// The owners of a machine: the fitted cards in slot order first (a card answers before the board's device on the
-    /// same port), then the built-ins that are on and in their socket; a board in a built-in's socket (the TSFM in the
-    /// AY socket) owns that built-in's ports under its slot (`ay-socket`)
+    /// same port), then the devices the emulator fits (MachineDef::fitted), then the built-ins that are on and in
+    /// their socket; a board in a built-in's socket (the TSFM in the AY socket) owns that built-in's ports under its
+    /// slot (`ay-socket`)
     static PortOwners Of(const SlotManager::Result& result, const SlotPlanner& planner);
     /// The owners of a running machine (none without its slot manager)
     static PortOwners Of(const EmulatorContext* context);
@@ -57,7 +58,6 @@ public:
         return _declared;
     }
 
-private:
     struct Claim
     {
         std::string owner;
@@ -65,7 +65,19 @@ private:
         uint16_t match = 0;
         Dir dir = Dir::InOut;
         Gate gate = Gate::Always;
+        uint16_t port = 0;                 ///< the documented port (the match with every undecoded line high if none)
+        Channel channel = Channel::None;   ///< what an access means below the device (PortClaim::channel)
+        uint16_t channelMask = 0;
+        InputRole input = InputRole::None;
+        std::string channelName;
     };
+    const Claim& At(int claim) const
+    {
+        return _claims[static_cast<size_t>(claim)];
+    }
+
+private:
+    void Add(const std::string& owner, const PortClaim& claim);
 
     std::vector<Claim> _claims;
     bool _declared = false;
