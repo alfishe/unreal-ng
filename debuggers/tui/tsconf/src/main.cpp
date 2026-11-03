@@ -18,6 +18,7 @@
 
 #include "backend/debugger-backend.h"
 #include "backend/mock-backend.h"
+#include "gui/sdl-info.h"
 #include "gui/sdl-runner.h"
 #include "panels/paint-tsconf.h"
 #include "panels/paint.h"
@@ -125,8 +126,9 @@ int main(int argc, char** argv) {
                         "  --backend   ws: a running unreal-ng through its WebSocket (default, ws://localhost:8090)\n"
                         "              rest: the same through REST requests (http://localhost:8090)\n"
                         "              mock: the built-in Z80 machine of the tests\n"
-                        "  --tui       the terminal even when the pixel window can open\n",
-                        argv[0]);
+                        "  --tui       the terminal even when the pixel window can open\n"
+                        "pixel window: %s\n",
+                        argv[0], dbg::SdlWindowInfo().c_str());
             return 0;
         }
     }

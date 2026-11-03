@@ -75,7 +75,7 @@ contributors) as the format reference; no MAME source is vendored.
 | eCat3 debugger window (Mikhail Revzin, <https://github.com/Ptr314/ecat3>, `dev` @ 27a98108; adapted, see `tools/poc/041-ecat-debugger/`) | `debuggers/qt/ecat/` | GPL-3.0-or-later | static (unreal-debugger) |
 | FTXUI 7.1.0 | `debuggers/tui/lib/ftxui/` | MIT | static (terminal debuggers) |
 | Z80Ex 1.1.21 (the mock machine and its disassembler) | `debuggers/tui/lib/z80ex/` | GPL-2.0 ("Released under GNU GPL v2"; "or later" not stated) | static (terminal debuggers) |
-| SDL3 (system, optional: the pixel window; off in packages) | via `find_package(SDL3)` | zlib | dynamic |
+| SDL 3.4.18 (the pixel window; video and the 2D renderer only) | `lib/SDL/` (submodule; else an installed SDL3) | zlib | static (terminal debuggers, in every package) |
 
 ## Tools, tests and benchmarks only
 

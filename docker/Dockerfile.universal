@@ -98,6 +98,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # needed by the Qt plugins the packages bundle (dpkg-shlibdeps / linuxdeploy
     # must resolve them): multimedia FFmpeg backend, XCB and Wayland platforms
     libpulse0 libxrandr2 libsm6 libice6 libwayland-cursor0 libwayland-egl1 \
+    # SDL3's X11 and Wayland video drivers (the terminal debuggers' pixel window, lib/SDL)
+    # build from these headers; SDL loads the libraries at run time
+    libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev \
+    libxtst-dev libxkbcommon-dev libwayland-dev libegl-dev libdecor-0-dev \
     && python3 -m pip install --no-cache-dir --break-system-packages cmake==3.31.6 \
     && rm -rf /var/lib/apt/lists/* \
     && locale-gen C.UTF-8
