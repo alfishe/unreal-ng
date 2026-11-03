@@ -1282,10 +1282,17 @@ end   -- kind: tape_control | disk_write | debugger_edit | other
 
 ttd_bookmark_add("before crash")            -- at the current position
 ttd_bookmark_add("umt entry", 4823, 14982)  -- at (frame, tinframe)
--- --> { added = true, label, frame, tinframe }  or  { added = false, error = "..." }
-for _, bm in ipairs(ttd_bookmarks()) do     -- time-sorted
-    print(bm.frame, bm.tinframe, bm.label)
+ttd_bookmark_add("lives", 212, 31540, {note = "the life counter drops", tags = {"lives"}, watch = {"#A13C"}})
+ttd_bookmark_add("here", {note = "...", context = false})  -- the options table may stand in for the frame
+-- --> { added = true, label, frame, tinframe, bookmark, text }  or  { added = false, error = "..." }
+-- bookmark.context = { pc, sp, af, ..., instruction, text } taken once (another moment: one silent seek)
+for _, bm in ipairs(ttd_bookmarks()) do     -- time-sorted; ttd_bookmarks("lives"): one tag
+    print(bm.frame, bm.tinframe, bm.label, bm.note)
 end
+ttd_bookmark_note("lives", {note = "only on contact", append = true, add_tags = {"enemy"}})
+-- also tags = {...}, remove_tags = {...}, rename = "..."; --> { updated = true, bookmark, text } or { updated = false, error }
+local e = ttd_bookmark_export{format = "markdown", tag = "lives", title = "Green Beret"}   -- or "profile", "json"
+print(e.text)                               -- path = "..." writes it too: e.path, e.bytes
 ttd_bookmark_delete("before crash")        --> bool
 ttd_seek_bookmark("umt entry")
 -- --> same table as ttd_seek (blocking_marker included when a marker stops it)

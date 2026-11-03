@@ -18,6 +18,7 @@
 #include "common/filehelper.h"
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/ttdbookmarkexport.h"
 #include "debugger/ttd/ttdbookmarks.h"
 #include "debugger/ttd/ttdexternalevents.h"
 #include "debugger/ttd/ttdfileinfo.h"
@@ -27,6 +28,7 @@
 #include "debugger/ttd/ttdrecordingfolders.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "emulator/capture/recordingcontrol.h"
+#include "emulator/config.h"
 #include "emulator/coordinator/ports.h"
 #include "emulator/emulator.h"
 #include "emulator/memory/devicememory.h"
@@ -351,8 +353,10 @@ private:
     TTDReply FindEvent(const TTDRequest& request);
     TTDReply ExplainFrame(const TTDRequest& request);
     TTDReply DiffMoments(const TTDRequest& request);
-    TTDReply Bookmarks();
+    TTDReply Bookmarks(const TTDRequest& request);
     TTDReply BookmarkAdd(const TTDRequest& request);
+    TTDReply BookmarkNote(const TTDRequest& request);
+    TTDReply BookmarkExport(const TTDRequest& request);
     TTDReply BookmarkDelete(const TTDRequest& request);
     TTDReply PortEvents(const TTDRequest& request);
     TTDReply FindLast(const TTDRequest& request);
@@ -440,7 +444,7 @@ const std::vector<std::string>& TTDControl::Verbs()
     static const std::vector<std::string> verbs = {
         "status", "start", "stop", "invalidate", "history-limit", "journal", "journal-build", "journal-build-cancel",
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
-        "markers", "bookmarks", "bookmark-add", "bookmark-delete",
+        "markers", "bookmarks", "bookmark-add", "bookmark-note", "bookmark-delete", "bookmark-export",
         "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
         "timeline", "cause-chain", "find-event", "explain-frame", "diff", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
     return verbs;
@@ -458,7 +462,10 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"resume", {"frame", "tinframe", "media"}},
         {"step-instruction", {"dir"}},
         {"reverse-step", {"count", "tstates", "scanlines"}},
-        {"bookmark-add", {"label", "frame", "tinframe"}},
+        {"bookmarks", {"tag", "text"}},
+        {"bookmark-add", {"label", "frame", "tinframe", "note", "tags", "watch", "context"}},
+        {"bookmark-note", {"label", "note", "append", "tags", "add_tags", "remove_tags", "rename"}},
+        {"bookmark-export", {"format", "tag", "title", "path"}},
         {"bookmark-delete", {"label"}},
         {"port-events", {"*"}},
         {"find-last", {"addr", "addr_from", "addr_to", "access", "value", "pc_from", "pc_to", "phys_page", "space",
@@ -591,9 +598,13 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
     if (verb == "markers")
         return Markers();
     if (verb == "bookmarks")
-        return Bookmarks();
+        return Bookmarks(request);
     if (verb == "bookmark-add")
         return BookmarkAdd(request);
+    if (verb == "bookmark-note")
+        return BookmarkNote(request);
+    if (verb == "bookmark-export")
+        return BookmarkExport(request);
     if (verb == "bookmark-delete")
         return BookmarkDelete(request);
     if (verb == "port-events")
@@ -1287,20 +1298,167 @@ TTDReply TTDControlBackend::Markers()
 }
 
 // TD-4: agent bookmarks are advisory annotations, never replay barriers. Labels are
-// keys: non-empty, at most 63 characters, unique per session
-TTDReply TTDControlBackend::Bookmarks()
+// keys: non-empty, at most 63 characters, unique per session. Agent notes (2026-11-03): a note, tags, the context
+// at the moment and watched bytes (docs/inprogress/2026-11-03-ttd-agent-bookmarks/design.md)
+namespace
+{
+
+/// "a,b, c" -> {"a", "b", "c"} (blanks around the commas dropped, empty items skipped)
+std::vector<std::string> SplitList(const std::string& text)
+{
+    std::vector<std::string> items;
+    size_t from = 0;
+    while (from <= text.size())
+    {
+        const size_t comma = std::min(text.find(',', from), text.size());
+        std::string item = text.substr(from, comma - from);
+        const size_t b = item.find_first_not_of(" \t");
+        const size_t e = item.find_last_not_of(" \t");
+        if (b != std::string::npos)
+            items.push_back(item.substr(b, e - b + 1));
+        from = comma + 1;
+    }
+    return items;
+}
+
+/// "#A130,#A140:4,23560" -> watched ranges (address[:length], hex as 0x / # / $, length 1..16)
+bool ParseWatches(const std::string& text, std::vector<TTDBookmarkWatch>& out, std::string& err)
+{
+    for (const std::string& item : SplitList(text))
+    {
+        const size_t colon = item.find(':');
+        uint64_t address = 0;
+        uint64_t length = 1;
+        if (!ParseU64(item.substr(0, colon), address) || address > 0xFFFF ||
+            (colon != std::string::npos && (!ParseU64(item.substr(colon + 1), length) || length == 0 ||
+                                            length > kMaxBookmarkWatchLength)))
+        {
+            err = "Invalid watch '" + item + "' (expected address[:length], length 1.." +
+                  std::to_string(kMaxBookmarkWatchLength) + ")";
+            return false;
+        }
+        TTDBookmarkWatch w;
+        w.address = static_cast<uint16_t>(address);
+        w.length = static_cast<uint8_t>(length);
+        out.push_back(w);
+    }
+    return true;
+}
+
+const char* CodeKindName(uint8_t kind)
+{
+    switch (kind)
+    {
+        case 0: return "rom";
+        case 1: return "ram";
+        case 2: return "cache";
+        default: return "unknown";
+    }
+}
+
+StateNode BookmarkNode(const TTDBookmark& bm)
+{
+    StateNode entry = TimePointNode(bm.time);
+    entry["label"] = bm.label;
+    entry["note"] = bm.note;
+    StateNode tags = StateNode::Array();
+    for (const std::string& tag : bm.tags)
+        tags.push(StateNode(tag));
+    entry["tags"] = tags;
+    const TTDBookmarkContext& c = bm.context;
+    if (c.valid)
+    {
+        StateNode ctx = StateNode::Object();
+        ctx["pc"] = static_cast<unsigned>(c.pc);
+        ctx["sp"] = static_cast<unsigned>(c.sp);
+        ctx["af"] = static_cast<unsigned>(c.af);
+        ctx["bc"] = static_cast<unsigned>(c.bc);
+        ctx["de"] = static_cast<unsigned>(c.de);
+        ctx["hl"] = static_cast<unsigned>(c.hl);
+        ctx["ix"] = static_cast<unsigned>(c.ix);
+        ctx["iy"] = static_cast<unsigned>(c.iy);
+        ctx["iff1"] = c.iff1 != 0;
+        ctx["im"] = static_cast<unsigned>(c.im);
+        ctx["p7ffd"] = static_cast<unsigned>(c.p7FFD);
+        if (c.codePage != 0xFFFF)
+        {
+            ctx["code_page"] = static_cast<unsigned>(c.codePage);
+            ctx["code_kind"] = std::string(CodeKindName(c.codeKind));
+        }
+        ctx["instruction"] = c.instruction;
+        ctx["text"] = TTDBookmarkContextText(c);
+        entry["context"] = ctx;
+    }
+    else
+        entry["context"] = StateNode();
+    StateNode watches = StateNode::Array();
+    for (const TTDBookmarkWatch& w : bm.watches)
+    {
+        StateNode n = StateNode::Object();
+        n["address"] = static_cast<unsigned>(w.address);
+        n["length"] = static_cast<unsigned>(w.length);
+        StateNode bytes = StateNode::Array();
+        for (const uint8_t v : w.bytes)
+            bytes.push(StateNode(static_cast<unsigned>(v)));
+        n["bytes"] = bytes;
+        watches.push(n);
+    }
+    entry["watch"] = watches;
+    return entry;
+}
+
+/// One line per bookmark: "label f1834+21980 [tag,tag]: PC #8A14 ld (hl),a; #A130=02 - the note's first line"
+std::string BookmarkLine(const TTDBookmark& bm)
+{
+    std::string line = "'" + bm.label + "' " + TTDBookmarkTimeText(bm.time);
+    if (!bm.tags.empty())
+    {
+        line += " [";
+        for (size_t i = 0; i < bm.tags.size(); ++i)
+            line += (i ? "," : "") + bm.tags[i];
+        line += "]";
+    }
+    if (bm.context.valid)
+        line += ": PC #" + [&] {
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "%04X", bm.context.pc);
+            return std::string(buf);
+        }() + (bm.context.instruction.empty() ? "" : " " + bm.context.instruction);
+    if (!bm.watches.empty())
+        line += "; " + TTDBookmarkWatchText(bm.watches);
+    if (!bm.note.empty())
+        line += " - " + bm.note;
+    return line;
+}
+
+}  // namespace
+
+TTDReply TTDControlBackend::Bookmarks(const TTDRequest& request)
 {
     const auto bookmarks = _manager->GetBookmarks();  // time-sorted snapshot copy
+    const std::string* tag = Option(request, "tag");
+    bool text = false;
+    if (const std::string* t = Option(request, "text"); t && !ParseBool(*t, text))
+        return Fail(TTDControlError::BadRequest, "text must be true or false");
     TTDReply reply;
-    reply.body["count"] = static_cast<uint64_t>(bookmarks.size());
     StateNode list = StateNode::Array();
+    std::string lines;
+    uint64_t count = 0;
     for (const auto& bm : bookmarks)
     {
-        StateNode entry = TimePointNode(bm.time);
-        entry["label"] = bm.label;
-        list.push(entry);
+        if (tag && !tag->empty() && !bm.HasTag(*tag))
+            continue;
+        list.push(BookmarkNode(bm));
+        lines += BookmarkLine(bm) + "\n";
+        ++count;
     }
+    reply.body["count"] = count;
     reply.body["bookmarks"] = list;
+    if (tag && !tag->empty())
+        reply.body["tag"] = *tag;
+    if (text)
+        reply.body["text"] = std::to_string(count) + " bookmark(s)" + (tag && !tag->empty() ? " tagged " + *tag : "") +
+                             (count ? ":\n" + lines : "\n");
     return reply;
 }
 
@@ -1312,7 +1470,9 @@ TTDReply TTDControlBackend::BookmarkAdd(const TTDRequest& request)
                     "Missing or empty required field: label (non-empty string, at most 63 characters)");
 
     // No frame: the current position ("mark here")
-    TTDTimePoint time = _manager->CurrentPosition();
+    TTDBookmark bookmark;
+    bookmark.label = *label;
+    bookmark.time = _manager->CurrentPosition();
     if (const std::string* frameText = Option(request, "frame"))
     {
         uint64_t frame = 0;
@@ -1320,25 +1480,149 @@ TTDReply TTDControlBackend::BookmarkAdd(const TTDRequest& request)
         const std::string* tText = Option(request, "tinframe");
         if (!ParseU64(*frameText, frame) || (tText && (!ParseU64(*tText, t) || t > UINT32_MAX)))
             return Fail(TTDControlError::BadRequest, "frame and tinframe must be non-negative integers");
-        time = {frame, static_cast<uint32_t>(t)};
+        bookmark.time = {frame, static_cast<uint32_t>(t)};
     }
     else if (Option(request, "tinframe"))
         return Fail(TTDControlError::BadRequest, "tinframe needs a frame");
-
-    // The label contract is the client's (400); a duplicate label or a position outside
-    // the timeline conflicts with the session (409)
-    if (label->size() > kMaxBookmarkLabelLength)
-        return Fail(TTDControlError::BadRequest, "bookmark label is longer than " +
-                                                     std::to_string(kMaxBookmarkLabelLength) +
-                                                     " characters");
+    if (const std::string* note = Option(request, "note"))
+        bookmark.note = *note;
+    if (const std::string* tags = Option(request, "tags"))
+        bookmark.tags = SplitList(*tags);
     std::string err;
-    if (!_manager->AddBookmark(time, *label, &err))
+    if (const std::string* watch = Option(request, "watch"); watch && !ParseWatches(*watch, bookmark.watches, err))
+        return Fail(TTDControlError::BadRequest, err);
+    bool context = true;
+    if (const std::string* c = Option(request, "context"); c && !ParseBool(*c, context))
+        return Fail(TTDControlError::BadRequest, "context must be true or false");
+
+    // The label and the bounds are the client's contract (400); a duplicate label or a position outside
+    // the timeline conflicts with the session (409)
+    if (!ValidateBookmark(bookmark, &err))
+        return Fail(TTDControlError::BadRequest, err);
+    if (!_manager->AddAgentBookmark(bookmark, context, &err))
         return Fail(TTDControlError::Conflict, err);
     TTDReply reply;
     reply.created = true;
     reply.body["added"] = true;
     reply.body["label"] = *label;
-    AddPosition(reply.body, time);
+    AddPosition(reply.body, bookmark.time);
+    TTDBookmark added;
+    if (_manager->FindBookmark(*label, added))
+    {
+        reply.body["bookmark"] = BookmarkNode(added);
+        reply.body["text"] = "Bookmark " + BookmarkLine(added);
+    }
+    return reply;
+}
+
+TTDReply TTDControlBackend::BookmarkNote(const TTDRequest& request)
+{
+    const std::string* label = Option(request, "label");
+    if (!label || label->empty())
+        return Fail(TTDControlError::BadRequest, "Missing required field: label");
+    const std::string* note = Option(request, "note");
+    const std::string* tags = Option(request, "tags");
+    const std::string* addTags = Option(request, "add_tags");
+    const std::string* removeTags = Option(request, "remove_tags");
+    const std::string* rename = Option(request, "rename");
+    bool append = false;
+    if (const std::string* a = Option(request, "append"); a && !ParseBool(*a, append))
+        return Fail(TTDControlError::BadRequest, "append must be true or false");
+    if (!note && !tags && !addTags && !removeTags && !rename)
+        return Fail(TTDControlError::BadRequest,
+                    "bookmark-note needs note (append), tags, add_tags, remove_tags or rename");
+    if (rename && rename->empty())
+        return Fail(TTDControlError::BadRequest, "rename must be a non-empty label");
+    TTDBookmark found;
+    if (!_manager->FindBookmark(*label, found))
+        return Fail(TTDControlError::NotFound, "Unknown bookmark label: " + *label);
+    std::string err;
+    const bool ok = _manager->EditBookmark(
+        *label,
+        [&](TTDBookmark& b) {
+            if (note)
+                b.note = append && !b.note.empty() ? b.note + "\n" + *note : *note;
+            if (tags)
+                b.tags = SplitList(*tags);
+            if (addTags)
+                for (const std::string& t : SplitList(*addTags))
+                    if (!b.HasTag(t))
+                        b.tags.push_back(t);
+            if (removeTags)
+                for (const std::string& t : SplitList(*removeTags))
+                    b.tags.erase(std::remove(b.tags.begin(), b.tags.end(), t), b.tags.end());
+            if (rename)
+                b.label = *rename;
+        },
+        &err);
+    if (!ok)
+        return Fail(err.find("already exists") != std::string::npos ? TTDControlError::Conflict
+                                                                     : TTDControlError::BadRequest,
+                    err);
+    TTDBookmark edited;
+    _manager->FindBookmark(rename ? *rename : *label, edited);
+    TTDReply reply;
+    reply.body["updated"] = true;
+    reply.body["bookmark"] = BookmarkNode(edited);
+    reply.body["text"] = "Bookmark " + BookmarkLine(edited);
+    return reply;
+}
+
+TTDReply TTDControlBackend::BookmarkExport(const TTDRequest& request)
+{
+    TTDBookmarkExportFormat format = TTDBookmarkExportFormat::Markdown;
+    if (const std::string* f = Option(request, "format"); f && !TTDBookmarkExportFormatByName(*f, format))
+        return Fail(TTDControlError::BadRequest, "Invalid format: '" + *f + "' (markdown, profile, json)");
+    TTDBookmarkExportInfo info;
+    if (const std::string* tag = Option(request, "tag"))
+        info.tag = *tag;
+    if (const std::string* title = Option(request, "title"))
+        info.title = *title;
+    if (_context)
+        if (const TMemModel* m = Config::FindModelByEnum(_context->config.mem_model))
+            info.machine = m->ShortName ? m->ShortName : "";
+    const TTDCursor cursor = _manager->PublishedCursor();
+    info.first = {cursor.first, 0};
+    info.last = {cursor.end, cursor.endTinframe};
+
+    std::vector<TTDBookmark> chosen;
+    StateNode list = StateNode::Array();
+    for (const TTDBookmark& bm : _manager->GetBookmarks())
+        if (info.tag.empty() || bm.HasTag(info.tag))
+        {
+            chosen.push_back(bm);
+            list.push(BookmarkNode(bm));
+        }
+    std::string text;
+    if (format == TTDBookmarkExportFormat::Json)
+    {
+        StateNode doc = StateNode::Object();
+        doc["title"] = info.title;
+        doc["machine"] = info.machine;
+        doc["count"] = static_cast<uint64_t>(chosen.size());
+        doc["bookmarks"] = list;
+        text = StateNodeToJsonText(doc) + "\n";
+    }
+    else
+        text = TTDBookmarksExportText(chosen, format, info);
+
+    TTDReply reply;
+    reply.body["format"] = std::string(format == TTDBookmarkExportFormat::Markdown  ? "markdown"
+                                       : format == TTDBookmarkExportFormat::Profile ? "profile"
+                                                                                    : "json");
+    reply.body["count"] = static_cast<uint64_t>(chosen.size());
+    if (!info.tag.empty())
+        reply.body["tag"] = info.tag;
+    if (const std::string* path = Option(request, "path"); path && !path->empty())
+    {
+        // UTF-8 path: FileHelper turns it into the host's form (non-ASCII names on Windows)
+        std::ofstream out(FileHelper::ToFsPath(*path), std::ios::binary);
+        if (!out.is_open() || !out.write(text.data(), static_cast<std::streamsize>(text.size())))
+            return Fail(TTDControlError::Conflict, "Cannot write file: " + *path);
+        reply.body["path"] = *path;
+        reply.body["bytes"] = static_cast<uint64_t>(text.size());
+    }
+    reply.body["text"] = text;
     return reply;
 }
 

@@ -105,8 +105,9 @@ static std::map<std::string, std::string> OptionsFromQuery(const HttpRequestPtr&
     return options;
 }
 
-/// A JSON body's scalar members as TTDControl options (null: absent). False when a
-/// member is an object or an array: the verbs take scalars only
+/// A JSON body's scalar members as TTDControl options (null: absent); an array of scalars (tags, watched
+/// addresses) as its items joined by commas. False when a member is an object or holds one: the verbs take
+/// scalars and lists only
 static bool OptionsFromJson(const HttpRequestPtr& req, std::map<std::string, std::string>& options,
                             std::function<void(const HttpResponsePtr&)>& callback)
 {
@@ -118,11 +119,28 @@ static bool OptionsFromJson(const HttpRequestPtr& req, std::map<std::string, std
         const Json::Value& v = (*json)[name];
         if (v.isNull())
             continue;
+        if (v.isArray())
+        {
+            std::string joined;
+            bool scalars = true;
+            for (const Json::Value& item : v)
+            {
+                scalars = scalars && !item.isObject() && !item.isArray() && !item.isNull();
+                if (scalars)
+                    joined += (joined.empty() ? "" : ",") + (item.isBool() ? (item.asBool() ? "true" : "false")
+                                                                            : item.asString());
+            }
+            if (scalars)
+            {
+                options[name] = joined;
+                continue;
+            }
+        }
         if (v.isObject() || v.isArray())
         {
             Json::Value error;
             error["error"]   = "Bad Request";
-            error["message"] = "'" + name + "' must be a number, a string or true / false";
+            error["message"] = "'" + name + "' must be a number, a string, true / false or a list of them";
             auto resp = HttpResponse::newHttpJsonResponse(error);
             resp->setStatusCode(HttpStatusCode::k400BadRequest);
             addCorsHeaders(resp);
@@ -326,20 +344,22 @@ void EmulatorAPI::getTTDMarkers(const HttpRequestPtr& req,
 
 /// @brief GET /api/v1/emulator/{id}/ttd/bookmarks
 ///
-/// Response: { "count": N, "bookmarks": [ { "frame", "tinframe", "label" } ] }
+/// Response: { "count": N, "bookmarks": [ { "frame", "tinframe", "label", "note", "tags", "context", "watch" } ] }
 /// Time-sorted. Unlike /ttd/markers these entries never halt a seek.
 void EmulatorAPI::getTTDBookmarks(const HttpRequestPtr& req,
                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
-    (void)req;
-    RespondTTD(id, "bookmarks", {}, callback);
+    // ?tag=T (only the bookmarks with that tag), &text=true (one line per bookmark)
+    RespondTTD(id, "bookmarks", OptionsFromQuery(req, "bookmarks"), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/bookmarks
 ///
-/// Body: { "label": "umt entry", "frame": F (optional), "tinframe": T (optional) }
-/// When frame is omitted the bookmark is placed at the current position.
+/// Body: { "label": "umt entry", "frame": F (optional), "tinframe": T (optional), "note": "...", "tags": ["a", "b"]
+/// or "a,b", "watch": ["#A130", "#A140:4"] or "#A130,#A140:4", "context": true (default) }
+/// When frame is omitted the bookmark is placed at the current position. The context (registers, the
+/// instruction, its page, the paging latch) and the watched bytes are taken at the bookmark's moment.
 /// Labels are keys: non-empty, at most 63 characters, unique per session.
 ///
 /// Status codes:
@@ -353,6 +373,37 @@ void EmulatorAPI::postTTDBookmark(const HttpRequestPtr& req,
     std::map<std::string, std::string> options;
     if (OptionsFromJson(req, options, callback))
         RespondTTD(id, "bookmark-add", std::move(options), callback);
+}
+
+/// @brief PUT /api/v1/emulator/{id}/ttd/bookmarks/{label} (only the fields given change)
+///
+/// Body: { "note": "...", "append": true (add the note as a new line), "tags": [...] (replace), "add_tags": [...],
+/// "remove_tags": [...], "rename": "new label" }. 200 with the bookmark, 400 for a broken bound, 404 for an unknown
+/// label, 409 for a rename onto an existing label.
+void EmulatorAPI::putTTDBookmark(const HttpRequestPtr& req,
+                                 std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id, const std::string& label) const
+{
+    std::map<std::string, std::string> options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    options["label"] = label;
+    RespondTTD(id, "bookmark-note", std::move(options), callback);
+}
+
+/// @brief GET or POST /api/v1/emulator/{id}/ttd/export-bookmarks (beside export-clip: not under bookmarks/{label})
+///
+/// Query (GET) or body (POST): format = markdown (a WALKTHROUGH section, default) | profile (YAML comment lines for a
+/// game profile's header) | json, tag, title, path (written there as well). Response: { "format", "count", "text",
+/// "path", "bytes" }. The machine does not move.
+void EmulatorAPI::exportTTDBookmarks(const HttpRequestPtr& req,
+                                     std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    std::map<std::string, std::string> options = OptionsFromQuery(req, "bookmark-export");
+    if (req->method() == drogon::Post && !OptionsFromJson(req, options, callback))
+        return;
+    RespondTTD(id, "bookmark-export", std::move(options), callback);
 }
 
 /// @brief DELETE /api/v1/emulator/{id}/ttd/bookmarks/{label}
@@ -581,11 +632,28 @@ void EmulatorAPI::reverseContinueTTD(const HttpRequestPtr& req,
         const Json::Value& v = (*json)[name];
         if (name == "pcs" || v.isNull())
             continue;
+        if (v.isArray())
+        {
+            std::string joined;
+            bool scalars = true;
+            for (const Json::Value& item : v)
+            {
+                scalars = scalars && !item.isObject() && !item.isArray() && !item.isNull();
+                if (scalars)
+                    joined += (joined.empty() ? "" : ",") + (item.isBool() ? (item.asBool() ? "true" : "false")
+                                                                            : item.asString());
+            }
+            if (scalars)
+            {
+                options[name] = joined;
+                continue;
+            }
+        }
         if (v.isObject() || v.isArray())
         {
             Json::Value error;
             error["error"]   = "Bad Request";
-            error["message"] = "'" + name + "' must be a number, a string or true / false";
+            error["message"] = "'" + name + "' must be a number, a string, true / false or a list of them";
             auto resp = HttpResponse::newHttpJsonResponse(error);
             resp->setStatusCode(k400BadRequest);
             addCorsHeaders(resp);

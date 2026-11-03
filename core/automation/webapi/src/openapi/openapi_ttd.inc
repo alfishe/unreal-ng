@@ -2,7 +2,7 @@
     //
     // Phase 2 surface (10 endpoints) + Phase 4 reverse-search (3 endpoints)
     // + Phase 4 reverse-execution (2 endpoints) + session restore via load
-    // (1 endpoint) + TD-4 agent bookmarks (3 endpoints) = 19 endpoints total,
+    // (1 endpoint) + TD-4 agent bookmarks (5 endpoints) = 21 endpoints total,
     // all exposed by core/automation/webapi/src/api/ttd_api.cpp.
     // The status endpoint also serves as a capability probe: it returns 200
     // with state="idle" and ttd_available=false when the TTD engine is not
@@ -500,6 +500,61 @@
         "Duplicate label, no recorded history, or position beyond the session end";
     paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["responses"]["501"]["description"] =
         "TTD engine not available in this build";
+
+    // =====================================================================
+    // PUT /ttd/bookmarks/{label} — edit a bookmark's note, tags, label
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["summary"] = "Edit a TTD agent bookmark: note, tags, label";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["description"] =
+        "Only the fields given change: note (append: as a new line), tags (replace), add_tags, remove_tags, "
+        "rename. The bookmark's time and context stay.";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][1]["name"] = "label";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/TTDBookmarkNoteRequest";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["responses"]["200"]["description"] = "The bookmark as it is now (bookmark, text)";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["responses"]["400"]["description"] = "Nothing to change, or a bound broken";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["responses"]["404"]["description"] = "Emulator instance not found, or unknown bookmark label";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["responses"]["409"]["description"] = "rename onto an existing label";
+
+    // =====================================================================
+    // GET / POST /ttd/export-bookmarks — the bookmarks written up
+    // =====================================================================
+    for (const char* method : {"get", "post"})
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/export-bookmarks"][method];
+        op["summary"] = "Export the TTD agent bookmarks: WALKTHROUGH section, profile comment or JSON";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "format = markdown (default: a WALKTHROUGH section, one block per bookmark with its note, context, "
+            "watched bytes, tags and the seek call), profile (YAML comment lines of at most 120 columns for a game "
+            "profile's header) or json; tag (only those), title, path (written there too). GET takes them as the "
+            "query, POST as the body. The machine does not move.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["responses"]["200"]["description"] = "The export";
+        op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBookmarkExportResponse";
+        op["responses"]["400"]["description"] = "Unknown format";
+        op["responses"]["409"]["description"] = "The file could not be written";
+    }
+    for (const char* name : {"format", "tag", "title", "path"})
+    {
+        Json::Value p;
+        p["name"] = name;
+        p["in"] = "query";
+        p["schema"]["type"] = "string";
+        paths["/api/v1/emulator/{id}/ttd/export-bookmarks"]["get"]["parameters"].append(p);
+    }
 
     // =====================================================================
     // DELETE /ttd/bookmarks/{label} — remove an agent bookmark (TD-4)

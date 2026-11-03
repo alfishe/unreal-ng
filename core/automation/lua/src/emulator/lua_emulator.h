@@ -296,6 +296,15 @@ protected:
             return o.as<bool>() ? "true" : "false";
         if (o.get_type() == sol::type::number)
             return std::to_string(static_cast<long long>(o.as<double>()));
+        if (o.get_type() == sol::type::table)
+        {
+            // A list (tags, watched addresses) as its items joined by commas, in order
+            const sol::table t = o.as<sol::table>();
+            std::string text;
+            for (size_t i = 1; i <= t.size(); ++i)
+                text += (i > 1 ? "," : "") + TtdOptionText(t[i]);
+            return text;
+        }
         return o.is<std::string>() ? o.as<std::string>() : std::string();
     }
 
@@ -6103,16 +6112,25 @@ public:
         // Labels are keys: non-empty, at most 63 chars, unique per session.
         // -----------------------------------------------------------------
 
-        lua.set_function("ttd_bookmark_add", [this](sol::this_state ts, const std::string& label,
-                                                     sol::optional<uint64_t> frameOpt,
-                                                     sol::optional<uint32_t> tInFrameOpt) -> sol::object {
+        // ttd_bookmark_add(label [, frame [, tinframe]] [, {note = "...", tags = {"a", "b"}, watch = {"#A130",
+        // "#A140:4"}, context = true}]): the options table may stand in for the frame
+        lua.set_function("ttd_bookmark_add", [this](sol::this_state ts, const std::string& label, sol::object a,
+                                                     sol::object b, sol::object c) -> sol::object {
             // Position omitted: the current position (mark here)
             std::map<std::string, std::string> options{{"label", label}};
-            if (frameOpt)
+            sol::object table;
+            if (a.get_type() == sol::type::number)
             {
-                options["frame"] = std::to_string(*frameOpt);
-                options["tinframe"] = std::to_string(tInFrameOpt.value_or(0));
+                options["frame"] = TtdOptionText(a);
+                options["tinframe"] = b.get_type() == sol::type::number ? TtdOptionText(b) : "0";
+                table = b.get_type() == sol::type::table ? b : c;
             }
+            else
+                table = a;
+            if (table.get_type() == sol::type::table)
+                for (const auto& [key, value] : table.as<sol::table>())
+                    if (key.is<std::string>())
+                        options[key.as<std::string>()] = TtdOptionText(value);
             const ttd::TTDReply reply = TtdRun("bookmark-add", options);
             StateNode value = reply.body;
             if (!reply.Ok())
@@ -6123,9 +6141,42 @@ public:
             return StateNodeToLua(ts, value);
         });
 
-        lua.set_function("ttd_bookmarks", [this](sol::this_state ts) -> sol::object {
-            const ttd::TTDReply reply = TtdRun("bookmarks");
+        lua.set_function("ttd_bookmarks", [this](sol::this_state ts, sol::optional<std::string> tag) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (tag)
+                options["tag"] = *tag;
+            const ttd::TTDReply reply = TtdRun("bookmarks", options);
             return StateNodeToLua(ts, reply.Ok() ? *reply.body.find("bookmarks") : StateNode::Array());
+        });
+
+        // ttd_bookmark_note(label, {note = "...", append = true, tags = {...}, add_tags = {...}, remove_tags = {...},
+        // rename = "..."}): the bookmark as it is now, or {updated = false, error = ...}
+        lua.set_function("ttd_bookmark_note", [this](sol::this_state ts, const std::string& label,
+                                                      sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options{{"label", label}};
+            for (const auto& [key, value] : argsTable)
+                if (key.is<std::string>())
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            const ttd::TTDReply reply = TtdRun("bookmark-note", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["updated"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+
+        // ttd_bookmark_export{format = "markdown" | "profile" | "json", tag = "...", title = "...", path = "..."}:
+        // {format, count, text, path, bytes}
+        lua.set_function("ttd_bookmark_export", [this](sol::this_state ts, sol::optional<sol::table> argsTable)
+                                                    -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    if (key.is<std::string>())
+                        options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("bookmark-export", options)));
         });
 
         lua.set_function("ttd_bookmark_delete", [this](const std::string& label) -> bool {

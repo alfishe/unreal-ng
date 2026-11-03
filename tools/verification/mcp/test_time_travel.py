@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """time_travel: record, stop, the history in status, seek back, the machine state follows, rare coverage,
 port events with their context, reverse-continue first per PC, memory-at the machine now, probe frames, the
-timeline, the cause chain, find event, explain frame, diff of two moments"""
+timeline, the cause chain, find event, explain frame, diff of two moments, bookmarks with notes and export"""
 
 import re
 import sys
@@ -259,6 +259,46 @@ def test_diff_tells_what_differs_between_two_moments(s):
     expect(r.is_error and 'from_frame' in r.text, 'no first moment named', r.text)
     r = s.call('time_travel', {'action': 'diff', 'from_frame': first + 2, 'sections': 'nosuch'}, ok=False)
     expect(r.is_error and 'section' in r.text, 'an unknown section named', r.text)
+
+
+def test_bookmarks_keep_notes_context_and_export(s):
+    # The history of test_record_stop_seek: FRAMES (#5C78) counts up once a frame
+    before = s.call('time_travel', {'action': 'status'}).text
+    first = int(re.search(r'frames (\d+)\.\.', before).group(1))
+    r = s.call('time_travel', {'action': 'bookmark_add', 'label': 'mcp-frames', 'frame': first + 3, 'tinframe': 1000,
+                               'note': 'FRAMES counts here', 'tags': ['rom', 'counter'], 'watch': ['#5C78:3']})
+    b = r.structured.get('bookmark', {})
+    ctx = b.get('context') or {}
+    expect(not r.is_error and b.get('note') == 'FRAMES counts here' and b.get('tags') == ['rom', 'counter'],
+           'the note and tags kept', r.text)
+    expect(ctx.get('instruction') and 'PC #' in r.text, 'the context taken: the instruction at PC', r.text)
+    watch = b.get('watch') or [{}]
+    expect(watch[0].get('address') == 0x5C78 and len(watch[0].get('bytes', [])) == 3, 'the watched bytes', watch)
+    at_after = re.search(r'at frame (\d+)', s.call('time_travel', {'action': 'status'}).text)
+    at_before = re.search(r'at frame (\d+)', before)
+    expect((at_before and at_before.group(1)) == (at_after and at_after.group(1)), 'the position did not move',
+           (before[:200], at_after))
+    r = s.call('time_travel', {'action': 'bookmark_note', 'label': 'mcp-frames', 'note': 'in the IM 1 handler',
+                               'append': True, 'remove_tags': ['counter']})
+    b = r.structured.get('bookmark', {})
+    expect(not r.is_error and b.get('note') == 'FRAMES counts here\nin the IM 1 handler' and b.get('tags') == ['rom'],
+           'the note appended, a tag removed', r.text)
+    r = s.call('time_travel', {'action': 'bookmark_list', 'tag': 'rom'})
+    expect(not r.is_error and 'mcp-frames' in r.text and 'FRAMES counts here' in r.text, 'the list shows the note',
+           r.text)
+    r = s.call('time_travel', {'action': 'bookmark_export', 'format': 'markdown', 'title': 'MCP test', 'tag': 'rom'})
+    expect(not r.is_error and r.structured.get('count') == 1 and '### mcp-frames' in r.text and '`#5C78' in r.text,
+           'the markdown section with the watched bytes in a code span', r.text)
+    r = s.call('time_travel', {'action': 'bookmark_export', 'format': 'profile', 'tag': 'rom'})
+    expect(not r.is_error and all(line.startswith('#') for line in r.structured.get('text', 'x').splitlines()),
+           'the profile comment lines', r.text)
+    r = s.call('time_travel', {'action': 'bookmark_export', 'format': 'nosuch'}, ok=False)
+    expect(r.is_error and 'format' in r.text, 'an unknown format named', r.text)
+    r = s.call('time_travel', {'action': 'bookmark_note', 'label': 'nosuch', 'note': 'x'}, ok=False)
+    expect(r.is_error, 'an unknown label refused', r.text)
+    r = s.call('time_travel', {'action': 'bookmark_add', 'label': 'mcp-bad', 'tags': ['a b']}, ok=False)
+    expect(r.is_error and 'tag' in r.text, 'a bad tag refused', r.text)
+    s.call('time_travel', {'action': 'bookmark_delete', 'label': 'mcp-frames'})
 
 
 if __name__ == '__main__':

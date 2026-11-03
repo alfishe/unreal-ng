@@ -13,7 +13,7 @@
 ///   ttd resume [frame] [tin] [media=ask|empty|keep] — resume recording from current or specified point
 ///   ttd position               — show current TTDTimePoint (frame + tInFrame)
 ///   ttd markers                — list external-event markers (replay barriers)
-///   ttd bookmark [add|del|list] — agent bookmarks (advisory, never barriers)
+///   ttd bookmark [add|note|export|del|list] — agent bookmarks with notes (advisory, never barriers)
 ///   ttd seek --bookmark <label> — seek to a bookmarked position
 ///   ttd cause <addr>|<reg>     — the cause chain: where a byte or a register got its value
 ///   ttd event <kind> ...       — find event: when a value, the screen, a run, a port, the border or a key changed
@@ -391,8 +391,13 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "                                   ask lists them and resumes nothing" << NEWLINE;
     ss << "  ttd position                     Show current TTDTimePoint (frame + tInFrame)" << NEWLINE;
     ss << "  ttd markers                      List external-event markers (replay barriers)" << NEWLINE;
-    ss << "  ttd bookmark [list]              List agent bookmarks (advisory, never barriers)" << NEWLINE;
-    ss << "  ttd bookmark add <l> [f] [t]     Add bookmark <label> at frame/tinframe (default: here)" << NEWLINE;
+    ss << "  ttd bookmark [list] [--tag T]    List agent bookmarks with notes, tags, context (never barriers)" << NEWLINE;
+    ss << "  ttd bookmark add <l> [f] [t]     Add bookmark <label> at frame/tinframe (default: here):" << NEWLINE;
+    ss << "        [--note TEXT] [--tags a,b] [--watch #A130,#A140:4] [--no-context]" << NEWLINE;
+    ss << "  ttd bookmark note <label>        Edit: --note TEXT | --append TEXT, --tags, --add-tags," << NEWLINE;
+    ss << "        --remove-tags, --rename L" << NEWLINE;
+    ss << "  ttd bookmark export              The bookmarks written up: [--format markdown|profile|json]" << NEWLINE;
+    ss << "        [--tag T] [--title T] [--path FILE]" << NEWLINE;
     ss << "  ttd bookmark del <label>         Remove a bookmark by label" << NEWLINE;
     ss << "  ttd seek --bookmark <label>      Seek to a bookmarked position" << NEWLINE;
     ss << NEWLINE;
@@ -868,89 +873,129 @@ void CLIProcessor::HandleTTDSeek(const ClientSession& session, EmulatorContext* 
 void CLIProcessor::HandleTTDBookmark(const ClientSession& session, EmulatorContext* context,
                                       const std::vector<std::string>& args)
 {
-    const ttd::TTDSessionView view(context);
-    const ttd::TTDSessionView* mgr = &view;
-
     const std::string action = args.size() > 1 ? args[1] : "list";
+
+    // The options after the positional arguments: --note TEXT, --append TEXT, --tags a,b, --add-tags, --remove-tags,
+    // --rename L, --watch #A130,#A140:4, --no-context, --tag T, --format F, --title T, --path P
+    std::map<std::string, std::string> options;
+    std::vector<std::string> positional;
+    for (size_t i = 2; i < args.size(); ++i)
+    {
+        static const std::map<std::string, std::string> valued = {
+            {"--note", "note"},       {"--tags", "tags"},           {"--add-tags", "add_tags"},
+            {"--remove-tags", "remove_tags"}, {"--rename", "rename"}, {"--watch", "watch"},
+            {"--tag", "tag"},         {"--format", "format"},       {"--title", "title"},
+            {"--path", "path"}};
+        if (const auto it = valued.find(args[i]); it != valued.end())
+        {
+            if (i + 1 >= args.size())
+            {
+                session.SendResponse("Error: " + args[i] + " needs a value" + NEWLINE);
+                return;
+            }
+            options[it->second] = args[++i];
+        }
+        else if (args[i] == "--append" && i + 1 < args.size())
+        {
+            options["note"] = args[++i];
+            options["append"] = "true";
+        }
+        else if (args[i] == "--no-context")
+            options["context"] = "false";
+        else if (args[i].rfind("--", 0) == 0)
+        {
+            session.SendResponse("Error: unknown option " + args[i] + NEWLINE);
+            return;
+        }
+        else
+            positional.push_back(args[i]);
+    }
+    auto run = [&](const char* verb) {
+        const ttd::TTDReply reply = ttd::TTDControl(context).Execute({verb, options});
+        if (!reply.Ok())
+        {
+            session.SendResponse("Error: " + reply.message + NEWLINE);
+            return;
+        }
+        const StateNode* text = reply.body.find("text");
+        std::string out = text ? text->s : std::string();
+        if (const StateNode* path = reply.body.find("path"))
+            out += "Written to " + path->s + " (" + std::to_string(reply.body.find("bytes")->i) + " bytes)\n";
+        if (!out.empty() && out.back() != '\n')
+            out += "\n";
+        session.SendResponse(out);
+    };
 
     if (action == "list" || action == "ls")
     {
-        const auto bookmarks = mgr->GetBookmarks();
-
-        std::stringstream ss;
-        ss << "TTD Bookmarks (" << bookmarks.size() << " total, advisory — never replay barriers)" << NEWLINE;
-        ss << "==========================================================" << NEWLINE;
-
-        if (bookmarks.empty())
-        {
-            ss << "  (none)" << NEWLINE;
-        }
-        else
-        {
-            for (size_t i = 0; i < bookmarks.size(); ++i)
-            {
-                ss << "  [" << i << "] frame=" << bookmarks[i].time.frame
-                   << " tInFrame=" << bookmarks[i].time.tInFrame
-                   << " label=\"" << bookmarks[i].label << "\"" << NEWLINE;
-            }
-        }
-
-        session.SendResponse(ss.str());
+        options["text"] = "true";
+        run("bookmarks");
         return;
     }
 
     if (action == "add" || action == "mark")
     {
-        if (args.size() < 3)
+        if (positional.empty())
         {
             session.SendResponse(std::string("Error: Missing label argument") + NEWLINE +
-                                 "Usage: ttd bookmark add <label> [frame] [tinframe]" + NEWLINE +
+                                 "Usage: ttd bookmark add <label> [frame] [tinframe] [--note TEXT] [--tags a,b] "
+                                 "[--watch #A130,#A140:4] [--no-context]" + NEWLINE +
                                  "       (frame omitted → bookmark the current position)" + NEWLINE);
             return;
         }
-        const std::string label = args[2];
         // Optional position; omitted: the current position (mark here)
-        std::map<std::string, std::string> options{{"label", label}};
-        if (args.size() > 3)
+        options["label"] = positional[0];
+        if (positional.size() > 1)
         {
-            options["frame"] = args[3];
-            options["tinframe"] = args.size() > 4 ? args[4] : "0";
+            options["frame"] = positional[1];
+            options["tinframe"] = positional.size() > 2 ? positional[2] : "0";
         }
-        const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"bookmark-add", options});
-        if (!reply.Ok())
+        run("bookmark-add");
+        return;
+    }
+
+    if (action == "note" || action == "edit")
+    {
+        if (positional.empty())
         {
-            session.SendResponse(std::string("Error: ") + reply.message + NEWLINE);
+            session.SendResponse(std::string("Error: Missing label argument") + NEWLINE +
+                                 "Usage: ttd bookmark note <label> [--note TEXT | --append TEXT] [--tags a,b] "
+                                 "[--add-tags a] [--remove-tags a] [--rename L]" + NEWLINE);
             return;
         }
-        std::stringstream ss;
-        ss << "TTD: Bookmark '" << label << "' added at (frame=" << reply.body.find("frame")->i
-           << ", tInFrame=" << reply.body.find("tinframe")->i << ")" << NEWLINE;
-        session.SendResponse(ss.str());
+        options["label"] = positional[0];
+        run("bookmark-note");
+        return;
+    }
+
+    if (action == "export")
+    {
+        run("bookmark-export");
         return;
     }
 
     if (action == "del" || action == "delete" || action == "remove" || action == "rm")
     {
-        if (args.size() < 3)
+        if (positional.empty())
         {
             session.SendResponse(std::string("Error: Missing label argument") + NEWLINE +
                                  "Usage: ttd bookmark del <label>" + NEWLINE);
             return;
         }
 
-        const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"bookmark-delete", {{"label", args[2]}}});
+        const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"bookmark-delete", {{"label", positional[0]}}});
         if (!reply.Ok())
         {
             session.SendResponse("Error: " + reply.message + NEWLINE);
             return;
         }
 
-        session.SendResponse(std::string("TTD: Bookmark '") + args[2] + "' removed" + NEWLINE);
+        session.SendResponse(std::string("TTD: Bookmark '") + positional[0] + "' removed" + NEWLINE);
         return;
     }
 
     session.SendResponse(std::string("Error: Unknown bookmark action '") + action + "'" + NEWLINE +
-                         "Usage: ttd bookmark [list|add|del]" + NEWLINE);
+                         "Usage: ttd bookmark [list|add|note|export|del]" + NEWLINE);
 }
 
 void CLIProcessor::HandleTTDStepBack(const ClientSession& session, EmulatorContext* context)

@@ -39,7 +39,10 @@ time_travel {"action":"resume"}                                # needs detached 
 
 # bookmarks
 time_travel {"action":"bookmark_add","label":"before-crash"}   # at the current position
-time_travel {"action":"bookmark_list"}                         # → structuredContent.bookmarks
+time_travel {"action":"bookmark_add","label":"menu","frame":5000,"note":"the menu loop","tags":["ui"],"watch":["#5C78:3"]}
+time_travel {"action":"bookmark_list"}                         # → structuredContent.bookmarks (note, tags, context)
+time_travel {"action":"bookmark_note","label":"menu","add_tags":["loop"]}
+time_travel {"action":"bookmark_export","format":"markdown"}   # all of them written up (profile, json)
 time_travel {"action":"seek_bookmark","label":"before-crash"}
 time_travel {"action":"bookmark_delete","label":"before-crash"}
 
@@ -233,15 +236,22 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/bookmarks" \
 # or at a specific point:
 #   {"label": "menu", "frame": 5000}
 
-curl -s "$BASE/emulator/$EMU_ID/ttd/bookmarks" | jq '.bookmarks[]'
+#   {"label": "menu", "frame": 5000, "note": "...", "tags": ["ui"], "watch": ["#5C78:3"]}
+#   (the moment's registers, instruction and watched bytes are kept with it; "context": false skips them)
+
+curl -s "$BASE/emulator/$EMU_ID/ttd/bookmarks?tag=ui" | jq '.bookmarks[]'
+curl -s -X PUT "$BASE/emulator/$EMU_ID/ttd/bookmarks/menu" \
+     -H 'Content-Type: application/json' -d '{"note": "the menu loop at #8A10", "add_tags": ["loop"]}' | jq .text
+curl -s "$BASE/emulator/$EMU_ID/ttd/export-bookmarks?format=markdown" | jq -r .text   # or profile / json; path=...
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" \
      -H 'Content-Type: application/json' \
      -d '{"bookmark": "before-crash"}' | jq '.arrived_at'
 curl -s -X DELETE "$BASE/emulator/$EMU_ID/ttd/bookmarks/before-crash" | jq .
 ```
 
-MCP: `time_travel` actions `bookmark_add` / `bookmark_list` /
-`bookmark_delete` / `seek_bookmark`. Labels: non-empty, ≤ 63 chars.
+MCP: `time_travel` actions `bookmark_add` / `bookmark_list` / `bookmark_note` / `bookmark_export` /
+`bookmark_delete` / `seek_bookmark`. Labels: non-empty, ≤ 63 chars; notes ≤ 4096; ≤ 8 tags; ≤ 8 watched ranges of
+≤ 16 bytes. Notes, tags and context are saved in the `.ttd` file.
 Bookmarks are advisory annotations — they never block replay.
 
 ### Save the session (.ttd) and load it back

@@ -955,6 +955,17 @@ public:
     bool AddBookmark(const TTDTimePoint& time, const std::string& label,
                      std::string* err = nullptr);
 
+    /// @brief Add a bookmark with its note, tags and watched ranges (agent notes, 2026-11-03). With
+    /// @p captureContext the context (registers, the instruction at PC, its page, the paging latch) and the watched
+    /// bytes are taken at the bookmark's moment: the current position as the machine stands, another moment by one
+    /// silent seek with the machine put back (a live recording pauses for browsing then). A moment the replay cannot
+    /// reach leaves the context invalid and the bytes empty; the bookmark is still added. The same position checks
+    /// as above, and the bounds of ValidateBookmark.
+    bool AddAgentBookmark(TTDBookmark bookmark, bool captureContext, std::string* err);
+
+    /// @brief Change a bookmark's note, tags or label under the journal's lock (TTDBookmarkJournal::Edit).
+    bool EditBookmark(const std::string& label, const std::function<void(TTDBookmark&)>& edit, std::string* err);
+
     /// @brief All bookmarks, time-sorted (thread-safe snapshot copy).
     std::vector<TTDBookmark> GetBookmarks() const;
 
@@ -1726,6 +1737,9 @@ private:
     /// (_pausedEnd), browsable; execution reaching that point again, or a
     /// resume there, continues it. A stop ends it
     void PauseRecordingForBrowsing();
+
+    /// The context and watched bytes of @p bookmark at its moment (AddBookmark); false when it cannot be reached
+    bool CaptureBookmarkMoment(TTDBookmark& bookmark);
     /// @brief Continue recording from the machine's present (at or after
     /// @p from), dropping what was recorded after it: the second half of
     /// ResumeRecordingFrom, after its seek; called without one at a paused end

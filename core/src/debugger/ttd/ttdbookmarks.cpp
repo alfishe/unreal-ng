@@ -1,25 +1,59 @@
 #include "ttdbookmarks.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cstddef>
 
 namespace ttd {
+
+bool TTDBookmark::HasTag(const std::string& tag) const
+{
+    return std::find(tags.begin(), tags.end(), tag) != tags.end();
+}
+
+bool ValidateBookmark(const TTDBookmark& bookmark, std::string* err)
+{
+    auto fail = [err](const std::string& why) {
+        if (err)
+            *err = why;
+        return false;
+    };
+    if (bookmark.label.empty())
+        return fail("bookmark label must not be empty");
+    if (bookmark.label.size() > kMaxBookmarkLabelLength)
+        return fail("bookmark label longer than " + std::to_string(kMaxBookmarkLabelLength) + " chars");
+    if (bookmark.note.size() > kMaxBookmarkNoteLength)
+        return fail("bookmark note longer than " + std::to_string(kMaxBookmarkNoteLength) + " chars");
+    if (bookmark.tags.size() > kMaxBookmarkTags)
+        return fail("more than " + std::to_string(kMaxBookmarkTags) + " tags");
+    for (size_t i = 0; i < bookmark.tags.size(); ++i)
+    {
+        const std::string& tag = bookmark.tags[i];
+        if (tag.empty() || tag.size() > kMaxBookmarkTagLength)
+            return fail("tag '" + tag + "': 1.." + std::to_string(kMaxBookmarkTagLength) + " chars");
+        for (const char c : tag)
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' && c != '.')
+                return fail("tag '" + tag + "': only letters, digits, '_', '-', '.'");
+        if (std::find(bookmark.tags.begin(), bookmark.tags.begin() + static_cast<std::ptrdiff_t>(i), tag) !=
+            bookmark.tags.begin() + static_cast<std::ptrdiff_t>(i))
+            return fail("tag '" + tag + "' given twice");
+    }
+    if (bookmark.watches.size() > kMaxBookmarkWatches)
+        return fail("more than " + std::to_string(kMaxBookmarkWatches) + " watched ranges");
+    for (const TTDBookmarkWatch& w : bookmark.watches)
+        if (w.length == 0 || w.length > kMaxBookmarkWatchLength || (!w.bytes.empty() && w.bytes.size() != w.length))
+            return fail("a watched range is 1.." + std::to_string(kMaxBookmarkWatchLength) + " bytes");
+    if (bookmark.context.instruction.size() > kMaxBookmarkInstructionLength)
+        return fail("the context's instruction text is too long");
+    return true;
+}
 
 bool TTDBookmarkJournal::Add(const TTDBookmark& bookmark, std::string* err)
 {
     // Validation before the lock: none of it touches shared state, and a
     // rejected Add leaves the journal untouched either way.
-    if (bookmark.label.empty())
-    {
-        if (err) *err = "bookmark label must not be empty";
+    if (!ValidateBookmark(bookmark, err))
         return false;
-    }
-    if (bookmark.label.size() > kMaxBookmarkLabelLength)
-    {
-        if (err)
-            *err = "bookmark label longer than " +
-                   std::to_string(kMaxBookmarkLabelLength) + " chars";
-        return false;
-    }
 
     std::lock_guard<std::mutex> lk(_mutex);
 
@@ -62,6 +96,34 @@ bool TTDBookmarkJournal::Find(const std::string& label, TTDBookmark& out) const
         }
     }
     return false;
+}
+
+bool TTDBookmarkJournal::Edit(const std::string& label, const std::function<void(TTDBookmark&)>& edit, std::string* err)
+{
+    std::lock_guard<std::mutex> lk(_mutex);
+    auto it = std::find_if(_bookmarks.begin(), _bookmarks.end(), [&](const TTDBookmark& b) { return b.label == label; });
+    if (it == _bookmarks.end())
+    {
+        if (err)
+            *err = "unknown bookmark label: " + label;
+        return false;
+    }
+    TTDBookmark changed = *it;
+    edit(changed);
+    changed.time = it->time;   // an edit never moves a bookmark
+    if (!ValidateBookmark(changed, err))
+        return false;
+    if (changed.label != label)
+        for (const TTDBookmark& other : _bookmarks)
+            if (other.label == changed.label)
+            {
+                if (err)
+                    *err = "bookmark label '" + changed.label + "' already exists at frame " +
+                           std::to_string(other.time.frame);
+                return false;
+            }
+    *it = std::move(changed);
+    return true;
 }
 
 bool TTDBookmarkJournal::Remove(const std::string& label)

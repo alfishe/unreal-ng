@@ -3370,37 +3370,10 @@ bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* out
 bool TimeTravelController::AddBookmark(const TTDTimePoint& time, const std::string& label,
                                     std::string* err)
 {
-    const SessionOperation op{*this, SessionOperation::Kind::Change};
-    // A bookmark into empty history dangles immediately — there is no
-    // checkpoint to return to. Refuse at creation instead of at seek time.
-    if (_timeline.empty())
-    {
-        if (err)
-            *err = "no recorded history to bookmark (start recording first)";
-        MLOGWARNING("TimeTravelController::AddBookmark — rejected: timeline is empty");
-        return false;
-    }
-
-    // Same principle for a position past the session end: the bookmark can
-    // never be reached, so it must never be created.
-    // While recording the present is in reach (a seek there pauses the recording at it)
-    const TTDTimePoint end = _state == TTDSessionState::Recording ? CurrentPosition() : SessionEndPosition();
-    if (end < time)
-    {
-        if (err)
-            *err = "bookmark position (frame=" + std::to_string(time.frame) +
-                   ", tInFrame=" + std::to_string(time.tInFrame) +
-                   ") is beyond the session end (frame=" + std::to_string(end.frame) + ")";
-        MLOGWARNING("TimeTravelController::AddBookmark — rejected: frame %llu beyond session end %llu",
-                    static_cast<unsigned long long>(time.frame),
-                    static_cast<unsigned long long>(end.frame));
-        return false;
-    }
-
     TTDBookmark bookmark;
     bookmark.time  = time;
     bookmark.label = label;
-    return _bookmarks.Add(bookmark, err);
+    return AddAgentBookmark(std::move(bookmark), false, err);
 }
 
 std::vector<TTDBookmark> TimeTravelController::GetBookmarks() const

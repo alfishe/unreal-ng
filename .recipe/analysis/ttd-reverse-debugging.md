@@ -23,6 +23,11 @@ These are the "answer the question backwards" primitives:
   side of an OUT) → `diff` (MCP `diff`: the registers, latches and 8K slots that differ, the memory ranges with their
   bytes and last writers, screen, border, the devices changed, the keys and markers in between; any T inside a frame;
   no `seek` + `inspect_state` at each moment + `memory_diff` + `memory_at` / `find_last` per range + seek back)
+- *Keep what I found and write it up* (a WALKTHROUGH step, a game profile's header) → `bookmark_add` with `note`,
+  `tags` and `watch` at each finding (the moment's PC, instruction, registers and watched bytes are taken once), then
+  one `bookmark_export` (`format` markdown / profile / json, `tag`, `path`); the notes live in the session and its
+  `.ttd` file, not in the agent's context. No `seek_bookmark` + `inspect_state` + `disassemble` + memory reads per
+  bookmark
 - *What ran just before the crash?* → `reverse-step` / `reverse-continue`
 - *What happened in this recording, and where?* → `timeline` first (MCP `timeline`: the phases with their tags and
   busiest frames, one call, no replay), then the queries below on a phase
@@ -94,6 +99,15 @@ time_travel {"action":"diff","from_frame":1201,"from_tinframe":20000,"to_frame":
 # follow-ups once find-last names a writer PC:
 debug_code  {"action":"disassemble","address":"0x8174","count":12}   # pc-16 window (= /disasm)
 time_travel {"action":"bookmark_add","label":"writer"}               # pin the finding
+
+# keep the finding with the bookmark, then write all of them up in one call (the machine stays):
+time_travel {"action":"bookmark_add","label":"lives-dec","frame":212,"tinframe":31540,
+             "note":"the life counter drops on contact","tags":["lives"],"watch":["#A13C","#A140:4"]}
+#   Bookmark 'lives-dec' f212+31540 [lives]: PC #A1F3 dec (hl); #A13C=03, #A140..#A143=.. - the life counter ...
+time_travel {"action":"bookmark_note","label":"lives-dec","note":"also on a bullet","append":true}
+time_travel {"action":"bookmark_export","format":"markdown","title":"Green Beret"}   # a WALKTHROUGH section
+time_travel {"action":"bookmark_export","format":"profile","tag":"lives"}            # a game profile's header comment
+#   path = a file on the emulator's machine: written there too
 ```
 
 ## WebAPI

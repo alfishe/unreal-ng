@@ -406,12 +406,20 @@ inline const StateNode& TtdBodyOrThrow(const ttd::TTDReply& reply)
     return reply.body;
 }
 
-/// A Python value as option text: True / False, an integer, a string
+/// A Python value as option text: True / False, an integer, a string; a list or tuple as its items joined by commas
+/// (tags, watched addresses)
 inline std::string TtdOptionTextPy(const pybind11::handle& o)
 {
     namespace py = pybind11;
     if (py::isinstance<py::bool_>(o))
         return o.cast<bool>() ? "true" : "false";
+    if (py::isinstance<py::list>(o) || py::isinstance<py::tuple>(o))
+    {
+        std::string text;
+        for (const auto& item : o)
+            text += (text.empty() ? "" : ",") + TtdOptionTextPy(item);
+        return text;
+    }
     return py::str(o).cast<std::string>();
 }
 
@@ -6405,9 +6413,10 @@ namespace PythonBindings
             // -------------------------------------------------------------
 
             .def("ttd_bookmark_add", [](Emulator& self, const std::string& label,
-                                         py::object frameObj, uint32_t tInFrame) -> py::object {
-                // Position omitted: the current position (mark here)
+                                         py::object frameObj, uint32_t tInFrame, py::kwargs kwargs) -> py::object {
+                // Position omitted: the current position (mark here). Keywords: note, tags, watch, context
                 std::map<std::string, std::string> options{{"label", label}};
+                TtdKwargsPy(options, kwargs);
                 if (!frameObj.is_none())
                 {
                     options["frame"] = std::to_string(frameObj.cast<uint64_t>());
@@ -6421,13 +6430,48 @@ namespace PythonBindings
                     value["error"] = reply.message;
                 }
                 return StateNodeToPy(value);
-            }, "Add an agent bookmark (advisory, never a replay barrier); omit frame to mark the current position",
+            }, "Add an agent bookmark (advisory, never a replay barrier); omit frame to mark the current position. "
+               "Keywords: note='...', tags=['a', 'b'], watch=['#A130', '#A140:4'], context=True (the registers, the "
+               "instruction and the watched bytes at the moment)",
                py::arg("label"), py::arg("frame") = py::none(), py::arg("tinframe") = 0)
 
-            .def("ttd_bookmarks", [](Emulator& self) -> py::object {
-                const ttd::TTDReply reply = TtdRunPy(self, "bookmarks");
+            .def("ttd_bookmarks", [](Emulator& self, py::object tag) -> py::object {
+                std::map<std::string, std::string> options;
+                if (!tag.is_none())
+                    options["tag"] = py::str(tag).cast<std::string>();
+                const ttd::TTDReply reply = TtdRunPy(self, "bookmarks", options);
                 return StateNodeToPy(reply.Ok() ? *reply.body.find("bookmarks") : StateNode::Array());
-            }, "List agent bookmarks (time-sorted)")
+            }, "List agent bookmarks (time-sorted) with their notes, tags, context and watched bytes; tag: only those",
+               py::arg("tag") = py::none())
+
+            .def("ttd_bookmark_note", [](Emulator& self, const std::string& label, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options{{"label", label}};
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "bookmark-note", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                {
+                    value["updated"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Edit an agent bookmark: note='...' (append=True: as a new line), tags=[...], add_tags=[...], "
+               "remove_tags=[...], rename='...'", py::arg("label"))
+
+            .def("ttd_bookmark_export", [](Emulator& self, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "bookmark-export", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The agent bookmarks written up: format='markdown' (a WALKTHROUGH section) | 'profile' (a game "
+               "profile's header comment) | 'json', tag, title, path (written there too); the machine does not move")
 
             .def("ttd_bookmark_delete", [](Emulator& self, const std::string& label) -> bool {
                 return TtdRunPy(self, "bookmark-delete", {{"label", label}}).Ok();

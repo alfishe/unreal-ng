@@ -1737,10 +1737,14 @@ for m in emu.ttd_markers():                 # replay barriers
 
 emu.ttd_bookmark_add('before crash')                        # at the current position
 emu.ttd_bookmark_add('umt entry', frame=4823, tinframe=14982)
-# -> {'added': True, 'label': ..., 'frame': ..., 'tinframe': ...}
-#    or {'added': False, 'error': '...'}
-for bm in emu.ttd_bookmarks():              # time-sorted
-    print(bm['frame'], bm['tinframe'], bm['label'])
+emu.ttd_bookmark_add('lives', 212, 31540, note='the life counter drops', tags=['lives'], watch=['#A13C'])
+# -> {'added': True, 'label': ..., 'frame': ..., 'tinframe': ..., 'bookmark': {...}, 'text': ...}
+#    or {'added': False, 'error': '...'}; context=False skips the moment's registers / instruction / watched bytes
+for bm in emu.ttd_bookmarks():              # time-sorted; ttd_bookmarks(tag='lives'): one tag
+    print(bm['frame'], bm['tinframe'], bm['label'], bm['note'], bm['context'])
+emu.ttd_bookmark_note('lives', note='only on contact', append=True, add_tags=['enemy'])   # also tags, remove_tags, rename
+e = emu.ttd_bookmark_export(format='markdown', tag='lives', title='Green Beret')        # or 'profile', 'json'
+print(e['text'])                            # path='...' writes it too: e['path'], e['bytes']
 emu.ttd_bookmark_delete('before crash')     # -> bool
 emu.ttd_seek_bookmark('umt entry')          # same dict as ttd_seek (blocking_marker included) plus 'bookmark'
                                             # ('error' for an unknown label)
