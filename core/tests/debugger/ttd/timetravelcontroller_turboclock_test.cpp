@@ -48,6 +48,24 @@ TEST(TimeTravelController_TurboClock_Test, ModelsWithoutTurboKeepTStates)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
+TEST(TimeTravelController_TurboClock_Test, NextCountsItsTopClock)
+{
+    // 3.5 / 7 / 14 / 28 MHz: a frame is config.frame T at 28 MHz x 8 units, so a frame run at 28 MHz is a whole
+    // frame of TTD time (with 1 unit a replay to the frame's end stopped after its first eighth)
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    EXPECT_EQ(context->emulatorState.ttd_clock_units, 8u);
+    EXPECT_EQ(context->pTimeTravelController->FrameSpan(), context->config.frame * 8u);
+    for (uint8_t ratio : {1, 2, 4, 8})
+    {
+        context->emulatorState.hw_turbo_ratio_applied = ratio;
+        EXPECT_EQ(context->emulatorState.TtdTInFrame(context->config.frame * ratio), context->config.frame * 8u) << int(ratio);
+    }
+    context->emulatorState.hw_turbo_ratio_applied = 1;
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
 class TimeTravelController_TurboSwitch_Test : public ::testing::Test
 {
 protected:

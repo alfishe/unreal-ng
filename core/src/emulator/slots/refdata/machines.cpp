@@ -333,12 +333,33 @@ constexpr PortClaim kScorpionAyClaims[] = {
     { .mask = 0xC023, .match = 0x8021, .dir = Dir::Out, .port = 0xBFFD,
       .channel = Channel::Indexed, .input = InputRole::AyIo, .channelName = "reg" },
 };
+// The printer port's data latch (#DD) and the Covox DAC on it ([SOUND] CovoxDD, on by default: Scorpion Covox
+// software expects it). Yellow board: A0 = 1, A1 = 0, A2 = 1, A5 = 0 (Xpeccy scorpion.c
+// {0x0027, 0x00dd}); Turbo+: A2 not decoded (Xpeccy {0x0023, 0x00dd}, MAME scorpion.cpp Centronics mirror #FFDC).
+// Covox::PrinterDecodeOf is the same decode
+constexpr PortClaim kScorpionPrinterClaims[] = {
+    { .mask = 0x0027, .match = 0x0005, .dir = Dir::Out, .port = 0x00DD },
+};
+constexpr PortClaim kProfScorpionPrinterClaims[] = {
+    { .mask = 0x0023, .match = 0x0001, .dir = Dir::Out, .port = 0x00DD },
+};
 constexpr BuiltInDef kScorpionBuiltIns[] = {
     { .id = "ay", .name = "AY-3-8912", .socket = "ay-socket", .functions = kAyFunctions, .claims = kScorpionAyClaims },
     { .id = "beta128", .name = "Beta-128 (WD1793)", .functions = kBetaFunctions, .claims = kBetaClaims },
     { .id = "kempston-joystick", .name = "Kempston joystick", .functions = kKempstonFunctions,
       .claims = kKempstonClaims },
     { .id = "ula", .name = "keyboard and border `#FE`", .claims = kScorpionUlaClaims },
+    { .id = "covox-dd", .name = "Covox on the printer port `#DD`", .kind = BuiltInKind::Switchable,
+      .claims = kScorpionPrinterClaims },
+};
+constexpr BuiltInDef kProfScorpionBuiltIns[] = {
+    { .id = "ay", .name = "AY-3-8912", .socket = "ay-socket", .functions = kAyFunctions, .claims = kScorpionAyClaims },
+    { .id = "beta128", .name = "Beta-128 (WD1793)", .functions = kBetaFunctions, .claims = kBetaClaims },
+    { .id = "kempston-joystick", .name = "Kempston joystick", .functions = kKempstonFunctions,
+      .claims = kKempstonClaims },
+    { .id = "ula", .name = "keyboard and border `#FE`", .claims = kScorpionUlaClaims },
+    { .id = "covox-dd", .name = "Covox on the printer port `#DD`", .kind = BuiltInKind::Switchable,
+      .claims = kProfScorpionPrinterClaims },
 };
 constexpr Src kScorpionSources[] = { Src::ScorpionPortGuide, Src::ScorpionYellowReconstruction,
                                      Src::SpectrumExpert02, Src::MameScorpion };
@@ -535,6 +556,8 @@ constexpr BuiltInDef kGmxBuiltIns[] = {
       .claims = kKempstonClaims },
     { .id = "sd-zc", .name = "Z-Controller SD", .functions = kSdZcFunctions, .claims = kSdZcClaims },
     { .id = "ula", .name = "keyboard and border `#FE`", .claims = kScorpionUlaClaims },
+    { .id = "covox-dd", .name = "Covox on the printer port `#DD`", .kind = BuiltInKind::Switchable,
+      .claims = kScorpionPrinterClaims },
 };
 constexpr Src kAtm3Sources[] = { Src::ZxevoSchematicRevC, Src::BaseconfZbus, Src::BaseconfZports };
 constexpr Src kTsconfSources[] = { Src::ZxevoSchematicRevC, Src::TsconfZbus, Src::TsconfZports, Src::TsconfTune,
@@ -649,7 +672,7 @@ constexpr MachineDef kMachines[] = {
     { .model = MM_SCORP, .name = "SCORPION", .variant = "Scorpion ZS-256 yellow board", .buses = kScorpionBuses,
       .builtIns = kScorpionBuiltIns, .fitted = kStdMouseFitted, .sources = kScorpionSources },
     { .model = MM_PROFSCORP, .name = "PROFSCORP", .variant = "Scorpion ZS-256 Turbo+ with ProfROM",
-      .buses = kProfScorpionBuses, .builtIns = kScorpionBuiltIns, .fitted = kStdMouseFitted,
+      .buses = kProfScorpionBuses, .builtIns = kProfScorpionBuiltIns, .fitted = kStdMouseFitted,
       .sources = kProfScorpionSources },
     // The card sits in the CPU socket of a yellow board (GMX design 2.1): the host buses and built-ins stay
     { .model = MM_GMX, .name = "GMX", .variant = "Scorpion ZS-256 with the GMX card", .buses = kScorpionBuses,

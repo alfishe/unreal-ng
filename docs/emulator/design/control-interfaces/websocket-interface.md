@@ -33,7 +33,10 @@ socket, and the socket also pushes state changes, so clients never poll.
 ```
 
 The same handler as the REST route: same scopes, body and errors. Calls with different `rid` may be answered out of
-order.
+order. The sound card CPU's registers, memory and code are the REST routes with `?cpu=gs`
+(`{"op":"call","method":"GET","path":"/api/v1/emulator/{id}/registers?cpu=gs"}`;
+[the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)), its steps `POST /step?cpu=gs`
+and the others; the `debug` topic's `paused` event after one has `reason` `step`, `cpu` and `cpu_pc`.
 
 As implemented:
 

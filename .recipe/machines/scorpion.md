@@ -80,9 +80,9 @@ Then boot a disk the usual way —
 
 - **`SCORPION` vs `PROFSCORP` is a config-level choice, not RAM** — same
   RAM sizes; software probing for ProfROM behaves differently on the two.
-- **Scorpion Covox is off by default** (`CovoxDD=0` in the config; the
-  Pentagon-style `CovoxFB=1` is on). A Covox demo silent on a Scorpion is
-  usually the config, not the card — see
+- **Two Covox ports** — the Scorpion Covox on the printer port `#DD`
+  (`CovoxDD=1`, slot built-in `covox-dd`, on by default) and the
+  Pentagon-style `#FB` (`CovoxFB=1`); `CovoxDD=0` takes `#DD` away — see
   [covox-sounddrive.md](../peripherals/covox-sounddrive.md).
 - **Shadow Monitor code disappears from normal memory views** — while
   `shadow_monitor_paged` is true, bank 0 is the monitor ROM; step out or

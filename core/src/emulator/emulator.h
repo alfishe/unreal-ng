@@ -202,6 +202,8 @@ public:
         /// Whose breakpoint: another CPU's (a card) stopped the machine at that CPU's instruction `cpuPc`
         DebugCpuId cpu = DebugCpuId::Main;
         uint16_t cpuPc = 0;
+        /// No breakpoint (`hit` false): a step of `cpu` ended at `cpuPc` (OnTargetStep)
+        bool step = false;
     };
 
     /// Why the emulator stopped last (the debugger snapshot's `pause`)
@@ -981,6 +983,9 @@ public:
     /// stop and ends after its current instruction
     void OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoints, uint16_t breakpointId, uint16_t address,
                                BreakpointHitKind kind, uint16_t cpuPc);
+    /// Another CPU's step ended at its instruction boundary `cpuPc` (GSCardTarget::ArmStep, the emulation thread):
+    /// the machine pauses with the reason step, the main CPU wherever it stands, and this thread parks until Resume()
+    void OnTargetStep(DebugCpuId cpu, uint16_t cpuPc);
     /// The stop goes to the script callbacks that wait for this breakpoint (on_breakpoint), before the pause
     void NoteBreakpointCallbacks(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
     /// The breakpoint that ended the last direct run early; hit = false when the run did all it was asked

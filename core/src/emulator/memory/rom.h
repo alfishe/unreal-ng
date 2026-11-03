@@ -75,6 +75,14 @@ public:
 	/// @return Title from the known-ROM table, "Unknown ROM, <digest>" for an unlisted digest, "Empty signature" for ""
 	std::string GetROMTitle(const std::string& signature);
 
+	/// @brief What a ROM page holds now, for a page list: a blank page is "Empty (all #FF)" (erased flash) or
+	///        "Empty (all #00)", any other page the GetROMTitle of its digest; a page byte for byte equal to a lower
+	///        page adds " (= ROM page N)" with the lowest such page. Single source for /state/memory/rom, /state/paging,
+	///        the CLI and the debuggers' page lists
+	/// @param page ROM page index
+	/// @return Title, or an empty string when the page has no memory
+	std::string GetROMPageTitle(uint8_t page);
+
 	/// @brief Semantic name of a ROM page slot from the machine's ROM layout
 	///        ("128K Editor/Menu ROM", "TR-DOS ROM", "+3DOS ROM", ...; generic
 	///        "ROM Page N" for models without a curated layout). Single source

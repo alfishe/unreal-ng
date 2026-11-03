@@ -150,6 +150,21 @@ MemoryPageDescriptor NextMemory::MapZ80AddressToPhysicalPage(uint16_t address)
     return result;
 }
 
+ttd::PhysPage NextMemory::TtdLocate(uint16_t addr, bool write, uint16_t& offsetInPage) const
+{
+    // The slot's own 8K: an odd 8K page in an even slot is the upper half of its 16K page, not the lower
+    const unsigned slot = addr >> 13;
+    const uint32_t host = (write ? _writeOff[slot] : _readOff[slot]) + (addr & (kSlotSize - 1));
+    const uint32_t ram = static_cast<uint32_t>(_ramBase - _memory);
+    if (host >= ram && host - ram < static_cast<uint32_t>(InstalledRamPages()) * PAGE_SIZE)
+    {
+        offsetInPage = static_cast<uint16_t>((host - ram) % PAGE_SIZE);
+        return static_cast<ttd::PhysPage>((host - ram) / PAGE_SIZE);
+    }
+    offsetInPage = static_cast<uint16_t>(addr & 0x3FFF);
+    return ttd::kPhysPageNone;
+}
+
 uint8_t NextMemory::PeekSlot(uint16_t addr) const
 {
     return _memory[_readOff[addr >> 13] + (addr & (kSlotSize - 1))];

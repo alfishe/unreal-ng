@@ -622,7 +622,7 @@ lv = audio_levels()                           -- every row's and channel's peak,
 r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 exe = execution_state()     -- execution arbiter: phase, intent + intent_set_by, serving, queue, claim, driver_violations
-take_control("my script")   -- automation session: the GUI shows it; after the user takes control back, control calls raise revoked_by_user - stop, do not retry. Takes over another client's implicit session, never an explicit one
+take_control("my script")   -- automation session: the GUI shows it; after the user takes control back, control calls raise revoked_by_user - stop, do not retry. Takes over another client's implicit session, never an explicit one. Code sent by POST /api/v1/lua/exec or /lua/file acts in the sender's session on a machine the sender holds (an MCP agent's too): no take needed, release_control() leaves that session in place
 release_control()
 c = companions()            -- companion clients (devices acting as the user's hands): {companions = {...}, pairings = {...}, approval_available}
 n = companion_revoke("Desk panel")   -- revoke by id or name ("all": every one); the number revoked. A script never pairs or acts as a companion
@@ -688,6 +688,14 @@ regs = get_registers()   -- pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr q
 -- t = CPU T-states since the frame's start
 v = get_register("memptr")        -- any name of the register table, nil when unknown
 ok = set_register("im", 2)        -- false for an unknown name or im > 2 / iff1, iff2 > 1
+-- The sound card CPU (General Sound / NeoGS; "ms": the MultiSound's): the CPU name last. get_registers has
+-- card_time instead of t; an unknown name or a card CPU that is not there is a script error
+regs = get_registers("gs");  pc = get_register("pc", "gs");  set_register("a", 0x10, "gs")
+b = mem_read(0x4000, "gs");  mem_write(0x4000, 1, "gs");  lines = disasm(-1, 8, "gs")  -- from the card's PC
+w = memory_map("gs")              -- {cpu, windows = {{start, size, kind = "rom"|"ram"|"none", page, offset}, ...}}
+-- Its steps: the machine runs until the card's step ends, then is paused; {ok, stop = {cpu, reason, cpu_pc, ...},
+-- pc, sp, main_pc, main_sp, state}, or {ok = false, error}
+r = step("gs");  r = steps(10, false, "gs");  r = stepover("gs");  r = step_out("gs")
 
 -- Properties
 id = emu:get_id()

@@ -1597,13 +1597,14 @@ execution::Result Emulator::Pause(const execution::Requester& requester, const s
     if (_arbiter.IsLoopThread())
     {
         const bool breakpoint = _pendingPauseCause.hit;
+        const bool step = _pendingPauseCause.step;  // another CPU's step (OnTargetStep): the debugger's stop too
         execution::Requester who = requester;
-        if (breakpoint)
+        if (breakpoint || step)
         {
             const execution::Origin owner = execution::OriginFromName(_pendingPauseOwner);
             who = execution::Requester{owner == execution::Origin::Internal ? execution::Origin::Debugger : owner, {}};
         }
-        _arbiter.PauseFromDriver(who, breakpoint ? "breakpoint" : reason);
+        _arbiter.PauseFromDriver(who, breakpoint ? "breakpoint" : step ? "step" : reason);
         return execution::Result{execution::Outcome::Applied, 0, execution::Intent::Pause, {}};
     }
 
@@ -1732,7 +1733,9 @@ void Emulator::OnIntentEdgeGate(const execution::IntentEdge& edge, bool parked)
         // The stop's cause, for LastStop() and the broadcast: a breakpoint (OnBreakpointHit set it just before, on
         // this same thread) or a request
         std::lock_guard<std::mutex> lock(_prevStopMutex);
-        _lastStop.reason = _pendingPauseCause.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Pause;
+        _lastStop.reason = _pendingPauseCause.hit    ? DebugStop::Reason::Breakpoint
+                           : _pendingPauseCause.step ? DebugStop::Reason::Step
+                                                     : DebugStop::Reason::Pause;
         _lastStop.breakpoint = _pendingPauseCause;
         {
             std::lock_guard<std::mutex> causes(_edgeCausesMutex);
@@ -1807,6 +1810,13 @@ void Emulator::OnIntentEdge(const execution::IntentEdge& edge)
             payload->breakpointId = cause.breakpointId;
             payload->address = cause.address;
             payload->hitKind = cause.kind;
+            payload->cpu = DebugCpuName(cause.cpu);
+            payload->cpuPc = cause.cpuPc;
+        }
+        else if (cause.step)
+        {
+            payload->pauseCause = PauseCause::Step;
+            payload->address = cause.address;
             payload->cpu = DebugCpuName(cause.cpu);
             payload->cpuPc = cause.cpuPc;
         }
@@ -3037,6 +3047,19 @@ void Emulator::OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoi
     _pendingPauseCause = BreakpointStop{};
     _pendingPauseOwner.clear();
     post();
+    WaitWhilePaused();
+}
+
+void Emulator::OnTargetStep(DebugCpuId cpu, uint16_t cpuPc)
+{
+    BreakpointStop stop;
+    stop.step = true;
+    stop.address = cpuPc;
+    stop.cpu = cpu;
+    stop.cpuPc = cpuPc;
+    _pendingPauseCause = stop;
+    Pause();
+    _pendingPauseCause = BreakpointStop{};
     WaitWhilePaused();
 }
 

@@ -4,6 +4,7 @@
 #include "debugger/memory/memoryread.h"
 #include "debugger/search/memorysearch.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "../common/cpu_selector.h"
 #include "../common/binaryresponse.h"
 #include "../common/jsonnumber.h"
 #include "../emulator_api.h"
@@ -449,9 +450,9 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& /*req*/,
         uint8_t* pagePtr = memory.ROMPageHostAddress(pageNum);
         if (pagePtr && rom)
         {
-            std::string signature = rom->CalculateSignature(pagePtr, 0x4000);
-            pageInfo["signature"] = signature;
-            std::string title = rom->GetROMTitle(signature);
+            pageInfo["signature"] = rom->CalculateSignature(pagePtr, 0x4000);
+            // Blank pages and copies of a lower page say so (ROM::GetROMPageTitle, the same on every surface)
+            std::string title = rom->GetROMPageTitle(static_cast<uint8_t>(pageNum));
             pageInfo["title"] = title.empty() ? "Unknown ROM" : title;
         }
 
@@ -484,7 +485,7 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& /*req*/,
         if (activePagePtr && rom)
         {
             std::string sig = rom->CalculateSignature(activePagePtr, 0x4000);
-            std::string title = rom->GetROMTitle(sig);
+            std::string title = rom->GetROMPageTitle(memory.GetROMPage());
             mapping["bank0_rom_title"] = title.empty() ? "Unknown ROM" : title;
             mapping["bank0_rom_signature"] = sig;
         }
@@ -616,9 +617,14 @@ void EmulatorAPI::readMemory(const HttpRequestPtr& req, std::function<void(const
     auto filterParam = req->getOptionalParameter<std::string>("filter");
     if (formatParam && !formatParam->empty()) format = *formatParam;
     else if (filterParam && *filterParam == "sparse") format = "sparse";
+    // ?cpu=gs / ms: the sound card CPU's view instead of the main CPU's (cpuview.h)
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!webapi_cpu::CpuOrError(emulator, req, callback, cpu))
+        return;
     if (format == "binary")
     {
-        const MemoryRead::Result read = MemoryRead::Bytes(emulator->GetContext(), "cpu", address, std::max<uint32_t>(length, 1));
+        const MemoryRead::Result read = MemoryRead::Bytes(emulator->GetContext(), IsCardCpu(cpu) ? DebugCpuName(cpu) : "cpu",
+                                                          address, std::max<uint32_t>(length, 1));
         if (!read.error.empty())
         {
             Json::Value error;
@@ -647,10 +653,15 @@ void EmulatorAPI::readMemory(const HttpRequestPtr& req, std::function<void(const
     }
 
     std::vector<uint8_t> buffer(length);
-    for (uint32_t i = 0; i < length; i++)
-        buffer[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address + i));
+    if (IsCardCpu(cpu))
+        CpuView::Read(emulator->GetContext(), cpu, address, length, buffer);
+    else
+        for (uint32_t i = 0; i < length; i++)
+            buffer[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address + i));
 
     Json::Value ret;
+    if (IsCardCpu(cpu))
+        ret["cpu"] = DebugCpuName(cpu);
     ret["address"] = StringHelper::Format("0x%04X", address);
     ret["length"] = length;
     const Json::Value payload = RenderMemoryWindowFormat(buffer.data(), buffer.size(), address, format);
@@ -737,17 +748,31 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
     // Write data
     Json::Value& data = (*body)["data"];
     size_t bytesWritten = 0;
+    // "cpu": gs / ms writes the sound card CPU's view (cpuview.h)
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!webapi_cpu::CpuOrError(emulator, req, callback, cpu))
+        return;
 
     // A tool edit (Emulator::EditMemoryFromTool): it parks a running machine and,
     // while TTD records, records the write as an event with its bytes, so a
     // replay reproduces it (D9). Refused in the recorded past (409)
-    const std::string refused = emulator->EditMemoryFromTool("WebAPI memory write", [&]() {
-        for (Json::ArrayIndex i = 0; i < data.size(); i++)
-        {
-            memory->DirectWriteToZ80Memory(address + i, static_cast<uint8_t>(data[i].asUInt()));
-            bytesWritten++;
-        }
-    });
+    std::string refused;
+    if (IsCardCpu(cpu))
+    {
+        std::vector<uint8_t> bytes;
+        for (const Json::Value& value : data)
+            bytes.push_back(static_cast<uint8_t>(value.asUInt()));
+        // A read-only window keeps its bytes: bytes_written counts the ones that landed
+        refused = CpuView::Write(emulator.get(), cpu, "WebAPI memory write", address, bytes, &bytesWritten);
+    }
+    else
+        refused = emulator->EditMemoryFromTool("WebAPI memory write", [&]() {
+            for (Json::ArrayIndex i = 0; i < data.size(); i++)
+            {
+                memory->DirectWriteToZ80Memory(address + i, static_cast<uint8_t>(data[i].asUInt()));
+                bytesWritten++;
+            }
+        });
     if (!refused.empty())
     {
         Json::Value error;
@@ -762,6 +787,8 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
 
     Json::Value ret;
     ret["success"] = true;
+    if (IsCardCpu(cpu))
+        ret["cpu"] = DebugCpuName(cpu);
     ret["address"] = StringHelper::Format("0x%04X", address);
     ret["bytes_written"] = static_cast<Json::UInt>(bytesWritten);
 
@@ -1692,9 +1719,9 @@ void EmulatorAPI::getStatePaging(const HttpRequestPtr& /*req*/, std::function<vo
                 if (pagePtr)
                 {
                     std::string signature = rom->CalculateSignature(pagePtr, 0x4000);
-                    // GetROMTitle already carries the "Unknown ROM, <digest>"
-                    // fallback - identical wording on every surface
-                    bank["name"] = rom->GetROMTitle(signature);
+                    // GetROMPageTitle: the "Unknown ROM, <digest>" fallback, blank
+                    // pages and copies named - identical wording on every surface
+                    bank["name"] = rom->GetROMPageTitle(romPage);
                     bank["signature"] = signature;
                 }
                 // Role: what the model layout says this slot is (core single

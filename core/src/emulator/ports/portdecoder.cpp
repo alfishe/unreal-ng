@@ -35,6 +35,7 @@
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/sound/beeper.h"
+#include "emulator/sound/covox.h"
 #include "stdafx.h"
 
 const char* FrontPanelSwitchName(FrontPanelSwitch sw)
@@ -774,6 +775,12 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
             entries.push_back({0xFF1F, 0xFFFF, 0xFF1F, "Kempston joystick interface",
                                "gives #1F up while TR-DOS selected / Shadow Monitor paged",
                                Tags(PortTag::Joystick)});
+            if (_context->config.sound.covoxDD)
+            {
+                const PortMaskMatch printer = Covox::PrinterDecodeOf(model);
+                entries.push_back({0x00DD, printer.mask, printer.match, "Scorpion printer Covox (8-bit DAC on the printer data latch, write only)",
+                                   nullptr, Tags(PortTag::SoundCovox)});
+            }
             if (model == MM_PROFSCORP)
             {
                 entries.push_back({0x7EFD, 0xD127, 0x5025, "ProfROM service-window latch", nullptr,
@@ -809,6 +816,12 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
             entries.push_back({0x0077, 0x00FF, 0x0077, "Z-Controller SD chip select (reads #00)", nullptr,
                                Tags(PortTag::StorageSd)});
             entries.push_back({0x0057, 0x00FF, 0x0057, "Z-Controller SD data", nullptr, Tags(PortTag::StorageSd)});
+            if (_context->config.sound.covoxDD)
+            {
+                const PortMaskMatch printer = Covox::PrinterDecodeOf(model);
+                entries.push_back({0x00DD, printer.mask, printer.match, "Scorpion printer Covox (8-bit DAC on the printer data latch, write only)",
+                                   nullptr, Tags(PortTag::SoundCovox)});
+            }
             break;
         case MM_PENTAGON:
             // pentagonPortMasksMatches (PortDecoder_Pentagon128/512/1024): paging row keeps

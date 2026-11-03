@@ -165,7 +165,9 @@ A folder is a FAT32 volume behind an MBR (the monitor finds the first partition,
 LBA 63). Verified 2026-10-30 (wt-gmx-impl): OSZ boots from the card into the None Commander 2025.09.10
 (`GmxBoot_Test.OszBootsFromTheSdCard`, long tier).
 
-Slots (`/slots`, MCP `slots`): the built-ins are the Scorpion's AY, Beta 128, Kempston joystick and `sd-zc`.
+Slots (`/slots`, MCP `slots`): the built-ins are the Scorpion's AY, Beta 128, Kempston joystick, `sd-zc` and
+`covox-dd` (the Covox on the printer port `#DD`, on by default: VPlayer's "DD" sound port; the mixer channel
+`covox.dd`).
 The config fits a NeoGS on `zxbus.1`; a classic General Sound replaces it as on any Scorpion
 (`slots plug zxbus.1 gs ram=512k`, forced: same ports). History only:
 Apollonov's 1999 article (City #18, ZX-Pilot #31) said the classic GS did not work with the card; the official site
