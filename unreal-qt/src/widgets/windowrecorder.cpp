@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <functional>
@@ -283,7 +284,10 @@ struct WindowRecorder::Writer
         std::string failure;
         int fifoFd = -1;
         std::deque<QByteArray> backlog;  // sound waiting for ffmpeg to open the FIFO (it does so after the first frames)
-        // Opens the FIFO once ffmpeg reads it (never blocks), then hands over what waits. False: ffmpeg is gone
+        // Opens the FIFO once ffmpeg reads it (never blocks), then hands over what the pipe takes. It never waits for
+        // the pipe: ffmpeg reads the sound only as fast as the picture lets it, and a writer stuck on the sound could
+        // not feed the picture (a deadlock). False: ffmpeg is gone
+        size_t backlogOffset = 0;
         auto pumpSound = [&]() -> bool {
 #ifdef Q_OS_UNIX
             if (fifoPath.isEmpty())
@@ -293,32 +297,24 @@ struct WindowRecorder::Writer
                 fifoFd = ::open(fifoPath.toLocal8Bit().constData(), O_WRONLY | O_NONBLOCK);
                 if (fifoFd < 0)
                     return true;  // no reader yet
-                ::fcntl(fifoFd, F_SETFL, ::fcntl(fifoFd, F_GETFL) & ~O_NONBLOCK);
             }
             while (!backlog.empty())
             {
                 const QByteArray& chunk = backlog.front();
-                qsizetype done = 0;
-                while (done < chunk.size())
+                const ssize_t n = ::write(fifoFd, chunk.constData() + backlogOffset,
+                                          static_cast<size_t>(chunk.size()) - backlogOffset);
+                if (n < 0)
+                    return errno == EAGAIN || errno == EWOULDBLOCK;  // the pipe is full: the rest waits
+                backlogOffset += static_cast<size_t>(n);
+                if (backlogOffset == static_cast<size_t>(chunk.size()))
                 {
-                    const ssize_t n = ::write(fifoFd, chunk.constData() + done, static_cast<size_t>(chunk.size() - done));
-                    if (n < 0)
-                        return false;  // ffmpeg closed its end
-                    done += n;
+                    backlog.pop_front();
+                    backlogOffset = 0;
                 }
-                backlog.pop_front();
             }
 #endif
             return true;
         };
-        if (!process.waitForStarted(5000))
-            failure = "ffmpeg did not start: " + process.errorString().toStdString();
-        else if (!mux.soundPath.isEmpty())
-        {
-            sound.setFileName(mux.soundPath);
-            if (!sound.open(QIODevice::WriteOnly | QIODevice::Truncate))
-                failure = "Cannot write " + mux.soundPath.toStdString() + ": " + sound.errorString().toStdString();
-        }
         auto fail = [&](const std::string& why) {
             if (failure.empty())
                 failure = why;
@@ -376,33 +372,36 @@ struct WindowRecorder::Writer
 
         sound.close();
         std::string result = failure;
-#ifdef Q_OS_UNIX
-        if (!fifoPath.isEmpty())
-        {
-            // A short recording: ffmpeg opens the FIFO only after it has the frames. Wait for it (it never opens it
-            // once it has failed), hand over the rest, close it: that is the end of the sound
-            for (int i = 0; i < 1000 && failure.empty() && fifoFd < 0 && process.state() == QProcess::Running; i++)
-            {
-                if (!pumpSound())
-                    break;
-                if (fifoFd < 0)
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-            if (failure.empty() && fifoFd >= 0 && !pumpSound())
-                failure = result = "ffmpeg stopped taking the sound";
-            if (fifoFd >= 0)
-                ::close(fifoFd);
-            ::unlink(fifoPath.toLocal8Bit().constData());
-        }
-#endif
         if (failure.empty())
         {
-            process.closeWriteChannel();
+            process.closeWriteChannel();  // the end of the picture first: ffmpeg interleaves the sound with it
+#ifdef Q_OS_UNIX
+            if (!fifoPath.isEmpty())
+            {
+                // The rest of the sound goes in as ffmpeg takes it (it opens the FIFO only after it has the frames),
+                // then the FIFO closes: that is the end of the sound. A slow encoder is waited for, never killed
+                while ((fifoFd < 0 || !backlog.empty()) && process.state() != QProcess::NotRunning)
+                {
+                    if (!pumpSound())
+                    {
+                        failure = result = "ffmpeg stopped taking the sound";
+                        break;
+                    }
+                    process.waitForFinished(5);
+                }
+                if (fifoFd >= 0)
+                    ::close(fifoFd);
+                fifoFd = -1;
+            }
+#endif
             // A slow encoder is not a failed one: wait as long as ffmpeg runs (killing it loses the whole file)
             while (!process.waitForFinished(5000) && process.state() != QProcess::NotRunning)
             {
             }
-            if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0)
+            if (!failure.empty())
+            {
+            }
+            else if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0)
                 result = "ffmpeg failed with code " + std::to_string(process.exitCode());
             else if (!mux.soundPath.isEmpty() && !Mux(mux, result))
             {
@@ -413,6 +412,12 @@ struct WindowRecorder::Writer
             process.kill();
             process.waitForFinished(5000);
         }
+#ifdef Q_OS_UNIX
+        if (fifoFd >= 0)
+            ::close(fifoFd);
+        if (!fifoPath.isEmpty())
+            ::unlink(fifoPath.toLocal8Bit().constData());
+#endif
         error = result;
         done = true;
     }
