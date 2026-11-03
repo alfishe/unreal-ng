@@ -1,4 +1,5 @@
 #include "disassemblerwidget.h"
+#include "emulator/readoutschanged.h"
 #include "emulator/remotecontrolguard.h"
 
 // Column widths for disassembly output
@@ -158,7 +159,8 @@ std::atomic<bool>& DisassemblerWidget::LabelsShown()
 
 void DisassemblerWidget::setShowLabels(bool show)
 {
-    LabelsShown().store(show);
+    if (LabelsShown().exchange(show) != show)
+        NotifyReadoutsChanged(std::string(), "debugger.labels");  // toggle.dbg.labels_toggle of the GUI's debugger
     refreshPreservingPosition(m_displayAddress);
 }
 

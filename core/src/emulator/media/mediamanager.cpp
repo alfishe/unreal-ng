@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "emulator/readoutschanged.h"
 
 #include "mediamanager.h"
 
@@ -933,11 +934,13 @@ MediaResult MediaManager::SetWriteProtect(const std::string& slotId, bool on)
     {
         state.pendingProtect = on;
         _revision++;
+        NotifyReadoutsChanged(_context, "media.protect");
         return MediaResult::Success();
     }
     state.pendingProtect.reset();
     ApplyProtect(slotId, state, on);
     _revision++;
+    NotifyReadoutsChanged(_context, "media.protect");
     return MediaResult::Success();
 }
 

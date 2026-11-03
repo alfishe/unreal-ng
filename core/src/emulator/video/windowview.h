@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "emulator/readoutschanged.h"
 #include "emulator/video/screen.h"
 
 /// @file windowview.h
@@ -226,13 +227,16 @@ class WindowView
 public:
     static void SetProvider(std::shared_ptr<IWindowViewProvider> provider)
     {
-        std::lock_guard<std::mutex> lock(Mutex());
-        Slot() = std::move(provider);
-        if (!Slot())
         {
-            Published().reset();  // no window: nothing published stays
-            PublishedParameters().reset();
+            std::lock_guard<std::mutex> lock(Mutex());
+            Slot() = std::move(provider);
+            if (!Slot())
+            {
+                Published().reset();  // no window: nothing published stays
+                PublishedParameters().reset();
+            }
         }
+        NotifyReadoutsChanged(std::string(), "window");  // the window toggles and actions.unavailable of every instance
     }
 
     static std::shared_ptr<IWindowViewProvider> Provider()
@@ -245,10 +249,13 @@ public:
     /// of the catalogue read this copy, never waiting for the GUI. Withdrawn (nullopt) when the window goes
     static void Publish(std::optional<WindowDisplaySettings> settings, std::optional<CrtParameters> parameters = {})
     {
-        std::lock_guard<std::mutex> lock(Mutex());
-        Published() = std::move(settings);
-        if (parameters || !Published())
-            PublishedParameters() = std::move(parameters);
+        {
+            std::lock_guard<std::mutex> lock(Mutex());
+            Published() = std::move(settings);
+            if (parameters || !Published())
+                PublishedParameters() = std::move(parameters);
+        }
+        NotifyReadoutsChanged(std::string(), "window");  // video.window / video.crt_params, the view toggles
     }
 
     /// The settings the front end published last; nullopt headless

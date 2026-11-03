@@ -1,4 +1,5 @@
 #include "recordingmanager.h"
+#include "emulator/readoutschanged.h"
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "base/featuremanager.h"
@@ -1271,6 +1272,7 @@ void RecordingManager::SetRecordingMode(RecordingMode mode)
 
     _recordingMode = mode;
     MLOGINFO("RecordingManager::SetRecordingMode - Mode set to %s", GetRecordingModeString(mode));
+    NotifyReadoutsChanged(_context, "recording.mode");
 }
 
 void RecordingManager::SetVideoEnabled(bool enabled)

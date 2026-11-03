@@ -1,4 +1,5 @@
 #include "soundcharactersettings.h"
+#include "emulator/readoutschanged.h"
 
 #include <algorithm>
 #include <cctype>
@@ -213,6 +214,15 @@ std::vector<std::string> SoundCharacterSettings::AllowedValues(std::string_view 
 
 bool SoundCharacterSettings::Set(SoundManager& sound, std::string_view name, std::string_view value,
                                  std::string& error)
+{
+    const bool set = Apply(sound, name, value, error);
+    if (set)
+        NotifyReadoutsChanged(sound.getContext(), "settings");  // the set.* toggles a deck shows
+    return set;
+}
+
+bool SoundCharacterSettings::Apply(SoundManager& sound, std::string_view name, std::string_view value,
+                                   std::string& error)
 {
     const std::string key = ToLower(name);
     auto reject = [&]() {

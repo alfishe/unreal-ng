@@ -62,6 +62,9 @@ bool IsInstanceName(const std::string& name);
 /// One value now; Null for an unknown name
 StateNode ReadProcess(const std::string& name);
 StateNode ReadInstance(const std::string& name, Emulator& emulator);
+/// The values kept for polled readers (a TTL, some keyed on nothing) of instance `instanceId` ("" every one)
+/// dropped: the next read computes them (an event-driven reader after a change)
+void ForgetCached(const std::string& instanceId);
 
 /// Every verb: `all`, the names, `breakpoint_groups`
 const std::vector<std::string>& Verbs();

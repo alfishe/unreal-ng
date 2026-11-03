@@ -35,10 +35,13 @@
 /// Threads and I/O (no thread of its own, none per connection):
 /// - Messages arrive on the WebAPI's I/O loops (ApiWebSocket); producers (the message centre, the actions workers)
 ///   never touch a socket: they post a task to the hub's loop (SetLoop: the WebAPI's main loop).
-/// - One timer drives every readout and topic, armed only while somebody subscribes, at the highest `max_hz` asked
-///   for; each tick reads published state only (the TTD cursor, the run state, the context: never a read that holds
-///   the emulation thread), builds each value's JSON once, and sends each connection what changed since its last
-///   message when its own interval has passed.
+/// - Values are read on events, never on a beat (ReadoutCadence): a notification of the core or an action run marks
+///   every value of the instances it may concern stale; a frame of an instance (NC_VIDEO_FRAME_REFRESH: emulation,
+///   a TTD seek, a step) marks only the values that change with emulated time. A paused machine nobody touches costs
+///   nothing. The tick reads what is marked (published state only: never a read that holds the emulation thread),
+///   builds each value's JSON once and sends each connection what changed; a value marked within the subscriber's
+///   `max_hz` interval waits for it on a one-shot timer. Only the process's meters (`host.stats`) and the `instances`
+///   cooldowns are read on time alone, at the subscriber's rate.
 /// - Every message is built under the hub's lock and sent after it (WsOutbox): a send never runs under the lock.
 ///
 /// Drogon-free (each connection is a send and a close function), so core-tests drive it directly with an inline
@@ -97,8 +100,9 @@ struct WsConnection
     /// region <Topics>
     std::set<std::string> topics;
     double topicHz = 10;
-    std::chrono::steady_clock::time_point topicSentAt{};
+    std::chrono::steady_clock::time_point topicSentAt{};  ///< the last read of its values (the rate's clock)
     bool topicFull = false;                         ///< send every value at the next tick (after a subscribe)
+    uint8_t topicStale = 0;                         ///< kStaleEvent / kStaleFrame: what to read again
     std::map<std::string, std::string> topicSent;   ///< "topic|instance" -> value as last sent
     /// endregion </Topics>
 
@@ -141,7 +145,8 @@ public:
     /// Runs a task on the hub's loop (the WebAPI: its main loop's queueInLoop; tests: at once)
     using Post = std::function<void(Task task)>;
     using Clock = std::function<std::chrono::steady_clock::time_point()>;
-    /// The readout timer (the WebAPI: runEvery / invalidateTimer on its main loop)
+    /// The one-shot timer of a value waiting for its subscriber's interval (the WebAPI: runAfter / invalidateTimer on
+    /// its main loop)
     struct Timer
     {
         std::function<uint64_t(double seconds, Task tick)> arm;
@@ -154,6 +159,17 @@ public:
         std::string source;  ///< X-Unreal-Source
         std::string host;
     };
+
+    /// How a value comes to change, so what makes the hub read it again
+    enum class ReadoutCadence
+    {
+        Events,  ///< only by a notification or an action (a toggle, the media's names, the breakpoints)
+        Frames,  ///< with emulated time too (the TTD cursor, the tape's block): also read on the instance's frames
+        Meter,   ///< with wall time (the process's CPU): read at the subscriber's rate while subscribed
+    };
+    /// Stale marks of a subscription (kStaleEvent: every value; kStaleFrame: the Frames ones)
+    static constexpr uint8_t kStaleEvent = 1;
+    static constexpr uint8_t kStaleFrame = 2;
 
     static constexpr double kMaxHz = 50;
     static constexpr double kDefaultHz = 10;
@@ -205,8 +221,13 @@ public:
     /// endregion </Connections>
 
     /// region <Driven by the loop>
-    /// The timer: changed values to every connection that is due
+    /// The values marked stale, read and sent to every connection whose interval passed; arms the timer for the rest
     void Tick();
+    /// Something of instance `instanceId` ("" any) may have changed (a notification, an action): every value of it is
+    /// read again at the next tick. Any thread; coalesced
+    void OnChange(const std::string& instanceId);
+    /// A frame of instance `instanceId` ("" any): its Frames values are read again. Any thread; coalesced
+    void OnFrame(const std::string& instanceId);
     /// Instances came or went, the selection changed, a companion changed: rebinds following surfaces, tells and
     /// closes revoked companions
     void Refresh();
@@ -228,8 +249,15 @@ public:
 
     /// region <Introspection (tests, docs)>
     size_t Connections() const;
-    /// The timer's rate; 0 when it is not armed
-    double TimerHz() const;
+    /// The armed timer's delay in seconds; 0 when it is not armed
+    double TimerDelay() const;
+    /// How many values the ticks have read (a value read for several subscribers once)
+    uint64_t ValuesRead() const { return _valuesRead.load(std::memory_order_relaxed); }
+    /// How `name` (a readout or a state topic) changes
+    static ReadoutCadence Cadence(const std::string& name);
+    /// `name` is read when a subscription wants `want` (kStaleEvent: every value; kStaleFrame: the Frames and Meter
+    /// ones; any other bit: the Meter ones)
+    static bool Reads(uint8_t want, const std::string& name);
     /// Every topic `subscribe` takes (state, `instances`, events) and the state topics alone
     static const std::vector<std::string>& TopicNames();
     static const std::vector<std::string>& StateTopicNames();
@@ -258,8 +286,16 @@ private:
     void SubscribeTopics(WsConnection& connection, const Json::Value& message, WsOutbox& out);
     void UnsubscribeTopics(WsConnection& connection, const Json::Value& message, WsOutbox& out);
     /// The state topics and readouts of the connections due (the tick, the hub's lock held)
-    using SurfaceDue = std::vector<std::pair<WsConnection*, SurfaceSession*>>;
-    void DeliverValues(const std::vector<WsConnection*>& topicDue, const std::set<std::string>& topicNames,
+    /// What each due subscription reads (kStaleEvent, kStaleFrame and the meters' bit: Want in ws-hub.cpp)
+    using TopicDue = std::vector<std::pair<WsConnection*, uint8_t>>;
+    struct SurfaceWant
+    {
+        WsConnection* connection;
+        SurfaceSession* session;
+        uint8_t want;
+    };
+    using SurfaceDue = std::vector<SurfaceWant>;
+    void DeliverValues(const TopicDue& topicDue, const std::set<std::string>& topicNames,
                        const SurfaceDue& surfaceDue, std::chrono::steady_clock::time_point now, WsOutbox& out);
     /// Posts RefreshInstances once while somebody subscribes `instances` (coalesced)
     void WakeInstances();
@@ -267,8 +303,14 @@ private:
     void WakeTick();
     /// The queued events of a connection that is not congested, the first with `dropped` when some were
     static void FlushEvents(WsConnection& connection, WsOutbox& out);
-    /// Re-arms the timer at the highest rate anyone asked for (disarms it when nobody subscribes)
+    /// Who listens to what (subscriptions came or went): the flags the producers check, the instances whose frames
+    /// matter; a timer nobody needs any more is disarmed
     void UpdateTimer();
+    /// The stale marks posted since the last tick onto the subscriptions they concern (the hub's lock held)
+    void ApplyStale();
+    /// The timer for the earliest of `deadlines` (none: disarmed)
+    void ArmFor(std::optional<std::chrono::steady_clock::time_point> deadline,
+                std::chrono::steady_clock::time_point now);
     void PostTask(Task task);
     std::chrono::steady_clock::time_point Now() const;
     actions::ActionRegistry& Registry() const;
@@ -305,10 +347,18 @@ private:
     uint64_t _activityListener = 0;
     std::atomic<bool> _activitySubscribed{false};  ///< some surface asked for `activity`
 
+    std::atomic<uint64_t> _valuesRead{0};
+    std::mutex _staleMutex;  ///< the producers' marks, waiting for the tick
+    std::map<std::string, uint8_t> _stale;  ///< instance id ("" every instance) -> kStaleEvent | kStaleFrame
+    std::set<std::string> _frameWatch;      ///< the instances a Frames value is subscribed on
+    bool _frameWatchAll = false;            ///< a state topic of the Frames cadence: every instance's frames
+
     mutable std::mutex _timerMutex;
     Timer _timer;
-    double _timerHz = 0;
+    double _timerDelay = 0;  ///< the armed timer's delay (introspection)
+    std::chrono::steady_clock::time_point _timerAt{};  ///< when the armed timer fires
     uint64_t _timerId = 0;
+    uint64_t _timerGeneration = 0;  ///< the armed timer's: a fired older one leaves the newer armed
     bool _armed = false;
     std::atomic<bool> _subscribed{false};  ///< anyone subscribes (a state change then wakes a tick)
 

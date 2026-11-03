@@ -1,4 +1,5 @@
 #include "debugger/analyzers/analysis/analysisjobs.h"
+#include "emulator/readoutschanged.h"
 
 #include <chrono>
 #include <fstream>
@@ -90,15 +91,24 @@ bool L1Jobs::Start(const std::string& emulatorId, TraceBundle bundle, ReplayOpti
         previous->thread.join();
     id = job->id;
     job->thread = std::thread(&L1Jobs::Run, this, emulatorId, job, std::move(bundle), std::move(options));
+    NotifyReadoutsChanged(emulatorId, "analysis");  // analysis.progress / analysis.ready: on the job, not on frames
     return true;
 }
 
 void L1Jobs::Run(const std::string& emulatorId, std::shared_ptr<Job> job, TraceBundle bundle, ReplayOptions options)
 {
     Job& j = *job;
-    options.progress = [&j](uint64_t done, uint64_t total) {
+    // A whole percent more: told (the job runs on its thread, beside or without the machine's frames)
+    uint64_t percent = 0;
+    options.progress = [&j, &percent, &emulatorId](uint64_t done, uint64_t total) {
         j.done = done;
         j.total = total;
+        const uint64_t now = total != 0 ? done * 100 / total : 0;
+        if (now != percent)
+        {
+            percent = now;
+            NotifyReadoutsChanged(emulatorId, "analysis");
+        }
         return !j.cancel.load();
     };
     auto result = std::make_shared<L1Result>();
@@ -150,6 +160,7 @@ void L1Jobs::Run(const std::string& emulatorId, std::shared_ptr<Job> job, TraceB
         j.finished = true;
     }
     j.ended.notify_all();
+    NotifyReadoutsChanged(emulatorId, "analysis");
 }
 
 JobView L1Jobs::View(const std::string& emulatorId) const
@@ -267,6 +278,7 @@ void L1Jobs::Forget(const std::string& emulatorId)
         if (slot.job->thread.joinable())
             slot.job->thread.join();
     }
+    NotifyReadoutsChanged(emulatorId, "analysis");
 }
 
 void L1Jobs::NoteRecording(const std::string& emulatorId, bool owned)
