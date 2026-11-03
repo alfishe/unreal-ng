@@ -220,6 +220,28 @@ TEST(SmoothMotion_Test, LayersKeepAStillPictureAndUnrelatedChanges)
     EXPECT_EQ(Wrong(Layers(a, a, b, 200), b), 0);
 }
 
+TEST(SmoothMotion_Test, KeepInkGivesATileThatLostItsDotsTheNearerFrame)
+{
+    // Two 24-pixel tiles of paper with 8 dots in a and b each. The first tile's picture wiped 3 of them (over a
+    // quarter): the nearer frame there. The second's lost 1 (an eighth), and the third gained none: left alone
+    Image a(72, 24), b(72, 24), out(72, 24);
+    for (int i = 0; i < 8; i++)
+        for (int tile = 0; tile < 3; tile++)
+        {
+            a.At(tile * 24 + 2 + i * 2, 4 + i) = WHITE;
+            b.At(tile * 24 + 3 + i * 2, 5 + i) = WHITE;
+        }
+    out = a;
+    for (int i = 0; i < 3; i++)
+        out.At(2 + i * 2, 4 + i) = BLACK;
+    out.At(24 + 2, 4) = BLACK;
+    const Image before = out;
+    LayerFlow::KeepInk(a.View(), b.View(), b.View(), out.pixels.data());
+    for (int y = 0; y < 24; y++)
+        for (int x = 0; x < 72; x++)
+            ASSERT_EQ(out.At(x, y), x < 24 ? b.At(x, y) : before.At(x, y)) << x << "," << y;
+}
+
 TEST(SmoothMotion_Test, NoMotionFoundIsTheBlend)
 {
     // Unrelated noise: no block matches, the output is the blend everywhere
@@ -491,15 +513,15 @@ TEST(SmoothMotion_Test, FlickerIsHeldAsTheFrameDue)
     {
         Feed feed;
         feed.engine.SetMode(mode);
-        for (int k = 0; k < 4; k++)
+        for (int k = 0; k < 5; k++)
             feed.Push(frame(k));
         Image out(96, 32);
-        // Frames 2 -> 3: the rows went 0, 1, 0, 1
-        const auto r = feed.engine.Render(feed.TargetOf(3) + PERIOD / 2, out.pixels.data());
-        EXPECT_EQ(r.from, 3u);
-        EXPECT_EQ(r.to, 4u);
-        const Image due = frame(2);
-        const Image next = frame(3);
+        // Frames 3 -> 4: the rows went 1, 0, 1, 0, 1
+        const auto r = feed.engine.Render(feed.TargetOf(4) + PERIOD / 2, out.pixels.data());
+        EXPECT_EQ(r.from, 4u);
+        EXPECT_EQ(r.to, 5u);
+        const Image due = frame(3);
+        const Image next = frame(4);
         for (int x = 0; x < 96; x++)
         {
             // The alternating rows: the frame due wherever they differ
@@ -509,7 +531,7 @@ TEST(SmoothMotion_Test, FlickerIsHeldAsTheFrameDue)
                 EXPECT_EQ(out.At(x, 8), Mix(due.At(x, 8), next.At(x, 8), r.weight)) << "x " << x;
         }
         if (mode == Mode::Interpolate)
-            EXPECT_EQ(out.At(40, 4), Scroller(96, 32, 10, 0, 16).At(40, 4));
+            EXPECT_EQ(out.At(40, 4), Scroller(96, 32, 14, 0, 16).At(40, 4));
         EXPECT_EQ(feed.engine.GetStats().heldFlicker, 1u);
     }
 
@@ -518,14 +540,14 @@ TEST(SmoothMotion_Test, FlickerIsHeldAsTheFrameDue)
     feed.engine.SetMode(Mode::Interpolate);
     const Image a = Scroller(64, 32, 0, 0, 32);
     const Image b = Scroller(64, 32, 300, 0, 32);
-    for (int k = 0; k < 4; k++)
+    for (int k = 0; k < 5; k++)
         feed.Push(k % 2 ? b : a);
     Image out(64, 32);
-    auto r = feed.engine.Render(feed.TargetOf(3) + PERIOD / 2, out.pixels.data());
+    auto r = feed.engine.Render(feed.TargetOf(4) + PERIOD / 2, out.pixels.data());
     EXPECT_EQ(r.kind, SmoothMotion::Kind::Frame);
-    EXPECT_EQ(out.pixels, a.pixels);
-    // Three frames are no evidence yet: the first pairs are interpolated
-    EXPECT_EQ(feed.engine.Render(feed.TargetOf(2) + PERIOD / 2, out.pixels.data()).kind,
+    EXPECT_EQ(out.pixels, b.pixels);
+    // Four frames are no evidence yet: the first pairs are interpolated
+    EXPECT_EQ(feed.engine.Render(feed.TargetOf(3) + PERIOD / 2, out.pixels.data()).kind,
               SmoothMotion::Kind::Interpolate);
 }
 

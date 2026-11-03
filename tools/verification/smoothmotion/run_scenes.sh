@@ -10,7 +10,8 @@ O=scratch/smoothmotion
 T=testdata/video/smoothmotion
 mkdir -p $O
 clang++ -std=c++20 -O2 -Wall -Wextra -Icore/src tools/poc/039-smoothing-filters/filters.cpp \
-    core/src/emulator/video/smoothmotion.cpp core/src/emulator/video/smoothlayers.cpp -o $O/filters
+    core/src/emulator/video/smoothmotion.cpp core/src/emulator/video/smoothlayers.cpp core/src/common/threadpool.cpp \
+    core/src/common/threadhelper.cpp -o $O/filters
 results=()
 for m in speeds scroll cadence dots; do
     python3 -I tools/poc/039-smoothing-filters/capture.py --port "$PORT" --out $O --warmup 50 --frames 300 $T/smooth-$m.sna

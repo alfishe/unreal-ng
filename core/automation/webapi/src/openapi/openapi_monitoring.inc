@@ -29,7 +29,7 @@
         Json::Value& all = op("/api/v1/monitor", "Everything a monitoring page shows",
                               "The host process, the clients and every instance (or the one named) with each "
                               "summary; published state only, never a wait for an emulation thread",
-                              "{ok, host: host.stats, clients: host.clients, instances: [{instance, index, model, "
+                              "{ok, host: host.stats, clients: host.clients, video: video.present, instances: [{instance, index, model, "
                               "emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, "
                               "ttd.status, debug.analyzers, controllers.state, game.events}]}");
         param(all, "instance", "query", false, instanceText);
@@ -38,7 +38,9 @@
             "/api/v1/monitor/{name}", "One monitoring value",
             "host.stats: {cpu_percent (100 = one core), cpu_percent_host, cores, rss_bytes, peak_rss_bytes, "
             "virtual_bytes, threads, cpu_time_s, uptime_s, interval_s}; host.clients: per plane (rest, ws, events, "
-            "debug_ws, mcp, cli) {connections, opened, requests}, companions, instances; emulator.stats: {state, "
+            "debug_ws, mcp, cli) {connections, opened, requests}, companions, instances; video.present: {available, "
+            "emulator, presenter, present_policy, fixed_display, vrr, refresh_hz {min, max}, smooth {setting, mode, "
+            "device, game}, display {setting, state, reason, hz, original_hz, machine_hz}}; emulator.stats: {state, "
             "measuring, fps, nominal_fps, speed_percent, frame_time_us {avg, max}, frame_budget_percent, "
             "halted_percent, interrupts_per_frame, frame, t_states, turbo, cpu {mhz, base_mhz, multiplier, "
             "host_multiplier, hw_turbo_ratio}}; debug.breakpoints: {total, active, inactive, owned, by_kind, groups, "
@@ -54,7 +56,7 @@
             "[{name, total, active, ids}]}",
             "{ok, instance? (an instance's name), ...the value's fields}");
         param(name, "name", "path", true,
-              "host.stats | host.clients | emulator.stats | debug.breakpoints | media.slots | recording.state | "
+              "host.stats | host.clients | video.present | emulator.stats | debug.breakpoints | media.slots | recording.state | "
               "debug.labels | ttd.status | debug.analyzers | debug.buffers | controllers.state | game.events | "
               "breakpoint_groups");
         param(name, "instance", "query", false, instanceText);

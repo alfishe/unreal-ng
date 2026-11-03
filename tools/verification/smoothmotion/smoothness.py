@@ -398,6 +398,8 @@ def main():
     ap.add_argument("--src-hz", type=float, default=50.0)
     ap.add_argument("--disp-hz", type=float, default=60.0)
     ap.add_argument("--phase-ms", type=float, default=3.0)
+    ap.add_argument("--times", help="each refresh's time in source frames, one a line (a live trace, live/replay): "
+                                    "instead of --disp-hz and --phase-ms")
     ap.add_argument("--search", type=int, default=12, help="source track search, px")
     ap.add_argument("--json", help="write the result here")
     ap.add_argument("--trace", action="store_true", help="keep [refresh, error, ghost, tear, pic] of every refresh")
@@ -411,7 +413,10 @@ def main():
         f[:-5] for f in os.listdir(args.out_dir)
         if f.endswith(".rgba") and os.path.join(args.out_dir, f) != os.path.normpath(args.source))
     outs = {n: Frames(os.path.join(args.out_dir, n + ".rgba"), width, height) for n in names}
-    times = refresh_times(src.count, args.src_hz, args.disp_hz, args.phase_ms)
+    if args.times:
+        times = [float(line) for line in open(args.times) if line.strip()]
+    else:
+        times = refresh_times(src.count, args.src_hz, args.disp_hz, args.phase_ms)
 
     regions = []
     if args.truth:

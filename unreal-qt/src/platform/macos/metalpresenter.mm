@@ -366,8 +366,15 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
 
     // The GL commands done before Metal reads the surface: IOSurface sharing has no cross-API fence
     const int64_t wait0 = SteadyNs();
+    // Polled: a blocking wait with a timeout sleeps in steps of about 10 ms on macOS's GL (gpu wait p90 10.2 ms with
+    // smooth motion, measured 2026-11-02), a refresh's time; flushed once, then asked without waiting, 0.1 ms apart
     GLsync sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-    glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, 100'000'000);
+    GLenum state = glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
+    while (state == GL_TIMEOUT_EXPIRED && SteadyNs() - wait0 < 100'000'000)
+    {
+        usleep(100);
+        state = glClientWaitSync(sync, 0, 0);
+    }
     glDeleteSync(sync);
     const double waitMs = static_cast<double>(SteadyNs() - wait0) / 1e6;
 
@@ -408,6 +415,7 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
 
         const int64_t now = SteadyNs();
         const int64_t asked = std::max(atNs, now);
+        const uint64_t number = p.presented.load(std::memory_order_relaxed) + 1;
         Impl* impl = &p;
         const TraceInfo traced = info;
         [drawable addPresentedHandler:^(id<MTLDrawable> d) {
@@ -429,7 +437,7 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
           impl->shown.fetch_add(1, std::memory_order_relaxed);
           impl->lastPresentedNs.store(SecondsToNs(t), std::memory_order_relaxed);
           // The lead from the frame's own time: a window that handed it over late was late too
-          impl->lead.Shown(SecondsToNs(t) - (atNs > 0 ? atNs : asked));
+          impl->lead.Shown(SecondsToNs(t) - (atNs > 0 ? atNs : asked), number, asked - now);
           std::lock_guard<std::mutex> lock(impl->statsMutex);
           impl->AddSample(impl->errors, impl->errorNext, static_cast<double>(SecondsToNs(t) - asked) / 1e6);
         }];
@@ -443,6 +451,26 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
     std::lock_guard<std::mutex> lock(p.statsMutex);
     p.AddSample(p.gpuWaits, p.gpuWaitNext, waitMs);
     p.AddSample(p.drawableWaits, p.drawableWaitNext, static_cast<double>(drawableWaitNs) / 1e6);
+}
+
+uint64_t MetalPresenter::Presented() const
+{
+    return _impl->presented.load(std::memory_order_relaxed);
+}
+
+uint64_t MetalPresenter::LastLatePresent() const
+{
+    return _impl->lead.LastLate();
+}
+
+uint32_t MetalPresenter::LastLateLag() const
+{
+    return _impl->lead.LastLateLag();
+}
+
+uint64_t MetalPresenter::LastOnTimePresent() const
+{
+    return _impl->lead.LastOnTime();
 }
 
 int64_t MetalPresenter::LeadNs(int64_t refreshPeriodNs) const

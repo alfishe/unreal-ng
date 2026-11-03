@@ -38,6 +38,9 @@ public:
     static constexpr int kSupportRadius = 16;  ///< the support's window: sparse content has its changes far apart
     static constexpr size_t kCommon = 8;       ///< the common vectors, zero included
     static constexpr size_t kPalette = 32;     ///< the colours of A the cover rule tells apart
+    static constexpr int kNear = 8;            ///< nearTies: the main motion within 1/kNear of a block's best fit
+    static constexpr int kInkTile = 24;        ///< keepInk's tile: a few dots' worth of a dot cloud
+    static constexpr int kInkOff = 4;          ///< keepInk: a tile off by more than 1/kInkOff of its ink falls back
 
     /// The common vectors of the two fields: zero, then the moving vectors at least two matched blocks share, most
     /// shared first (equals in the order the blocks are met: `next` row by row, then `prev`)
@@ -47,6 +50,9 @@ public:
     /// `a`; `prev` the field p -> a, `next` the field a -> b, both estimated over MotionField::kRangeFrames
     void Compose(const Picture& p, const Picture& a, const Picture& b, const MotionField& prev, const MotionField& next,
                  int w, uint32_t* out);
+    /// Compose's per-vector and per-pixel passes split over the pool's threads (null: the caller's alone); the same
+    /// picture either way
+    void SetPool(ThreadPool* pool) { _pool = pool; }
 
     // Compose's steps a device shares: the CPU prepares the vectors and takes the block decisions from the counts
     // and answers of the per-pixel passes, wherever they ran
@@ -95,13 +101,29 @@ public:
     /// carryFirst's test: `v` explains at least half of the block's changes from a to b
     static bool Explains(const Picture& a, const Picture& b, int bi, int bj, V v);
 
+    /// keepInk: per kInkTile tile, ink is a tile's pixels other than its paper (a's most frequent colour there). A
+    /// tile of `out` with less ink than both a and b, or more than both, by over 1/kInkOff (at least a pixel) shows
+    /// no motion of what is there (a cloud of dots, each its own motion: the layers' vectors wipe half of them) and
+    /// takes `nearer` instead. The CPU's and the GPU's pictures both go through it
+    static void KeepInk(const Picture& a, const Picture& b, const Picture& nearer, uint32_t* out);
+
 private:
     // kept from call to call: a refresh allocates nothing once the sizes settle
     std::vector<uint32_t> _paddedP, _paddedA, _paddedB;
-    std::vector<uint8_t> _fits, _score, _usable, _fitting, _changes, _changed, _explained, _calm;
+    std::vector<uint8_t> _fits, _score, _usable, _changed, _explained, _calm;
     std::vector<uint16_t> _support;
     std::vector<int> _column, _sums, _unexplained;
     Layers _layers;
+    ThreadPool* _pool = nullptr;
+    static constexpr int kVectorParts = 8;  ///< the per-vector pass's split over a pool
+    static constexpr int kBandParts = 12;   ///< the pixels' split, in block rows
+    /// A split part's own buffers in the per-vector pass
+    struct Part
+    {
+        std::vector<uint8_t> fitting, changes, explained;
+        std::vector<int> column;
+    };
+    std::vector<Part> _parts;
 };
 
 }  // namespace smoothmotion

@@ -367,7 +367,7 @@ public:
     }
 
     /// The presenter thread presents at the time itself; the window draws a margin before, adapted to the load
-    /// (PresentLead: from 8 ms, 4 to 12 ms)
+    /// (PresentLead: from 8 ms, 4 to 20 ms)
     int64_t LeadNs(int64_t refreshPeriodNs) const override
     {
         return _lead.Margin(refreshPeriodNs);

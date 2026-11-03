@@ -47,7 +47,7 @@ void main() {
 // to limit + 1
 const char* const kCost = R"(
 const int kBlock = 8;
-const int kAccept = 4;
+const int kAccept = 16;  // MotionField::kAccept
 int Cost(ivec2 blk, ivec2 v, int limit) {
     ivec2 s = ivec2(Shift(128, v.x), Shift(128, v.y));
     ivec2 ka = -s;
@@ -951,6 +951,7 @@ bool SmoothMotionGPU::readPicture(int width, int height, uint32_t* out)
 
 bool SmoothMotionGPU::Estimate(const Picture& a, const Picture& b, int range, MotionField& field)
 {
+
     if (!_fieldsOnGpu || !_gl || a.width <= 0 || a.height <= 0)
         return false;
     GLint previousFramebuffer = 0;
@@ -1049,6 +1050,7 @@ bool SmoothMotionGPU::Estimate(const Picture& a, const Picture& b, int range, Mo
 
 bool SmoothMotionGPU::Blend(const Picture& a, const Picture& b, int w, uint32_t* out)
 {
+
     if (!_gl || a.width <= 0 || a.height <= 0 || !out)
         return false;
     GLint previousFramebuffer = 0;
@@ -1339,6 +1341,8 @@ bool SmoothMotionGPU::composeLayers(const Picture& p, const Picture& a, const Pi
     _layers->setUniformValue("maxAllowed", static_cast<int>(maxAllowed));
     ok = drawInto(_layers, Output, width, height) && readPicture(width, height, out);
     _layers->release();
+    if (ok)
+        LayerFlow::KeepInk(a, b, w < smoothmotion::kOne / 2 ? a : b, out);
     return ok;
 }
 

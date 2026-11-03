@@ -20,7 +20,9 @@
 #include <mutex>
 #include <atomic>
 
+#include "emulator/video/displayrate.h"
 #include "emulator/video/screen.h"
+#include "emulator/video/smoothtrace.h"
 #include "crtbeammodel.h"
 #include "crtbeammodelgpu.h"
 #include "crtprofiles.h"
@@ -32,6 +34,7 @@
 
 class Emulator;
 class NativePresenter;
+class DisplayModeSwitch;
 class QTimer;
 
 /// GPU renderer of the emulator's screen (CRT composition, beam models, presets, HUD), on a window of its own with
@@ -189,6 +192,8 @@ protected:
     bool event(QEvent* event) override;
 
 private:
+    /// probeGPUAcceleration's work, done once
+    static bool probeGPUAccelerationOnce();
     /// The context made and current, the GL objects initialised on the first call
     bool prepareContext();
     /// GL way: draw the frame due at the next refresh and swap
@@ -205,6 +210,10 @@ private:
     bool smoothActive() const;
     /// Under _frameSourceMutex: the frames latched since the last one into _smooth
     void feedSmooth();
+    /// [VIDEO] DisplayRate = match: the display under the window at the machine's rate while the application is
+    /// active, its own mode otherwise (frame presenter design, section 4.6)
+    void updateDisplayRate();
+    void restoreDisplayRate(const char* reason);
     /// When the refresh being drawn reaches the screen: one refresh after now (the swap waits for the vblank)
     int64_t refreshTargetNs() const;
     int64_t refreshPeriodNs() const;  ///< the display's refresh (60 Hz when it does not say)
@@ -240,6 +249,13 @@ private:
     QSize _glSize;                                ///< the surface size resizeGL saw, device pixels
     std::unique_ptr<NativePresenter> _presenter;  ///< native way, made on the first paint (needs the window)
     PresentPolicy _presentPolicy = PresentPolicy::Auto;  ///< ScreenFrames::policy, UNREAL_PRESENT_POLICY overrides it
+    DisplayRate _displayRate = DisplayRate::Keep;         ///< ScreenFrames::displayRate
+    std::unique_ptr<DisplayModeSwitch> _displaySwitch;    ///< made on the first match; restores the mode when gone
+    FrameRateMeter _frameRate;                            ///< the machine's rate from the shown frames' targets
+    std::string _displayState = "keep";                   ///< WindowPresentStats::displayState and the rest
+    std::string _displayReason;
+    double _displayHz = 0.0;
+    double _originalHz = 0.0;
     QTimer* _presentTimer = nullptr;              ///< native way: the next frame's present
     bool _presentPending = false;                 ///< native way: a forced present asked for
     int64_t _presentLeadNs = 0;                   ///< native way: UNREAL_PRESENT_LEAD_MS, 0 = presentLeadNs() picks
@@ -284,8 +300,12 @@ private:
     QImage _nextFrame;    ///< a frame from _nextFrameSource on its way into _smooth
     QImage _smoothFrame;  ///< the picture in _texture
     smoothmotion::SmoothMotion::Result _smoothShown;  ///< what _smoothFrame is made of
+    smoothmotion::TraceWriter _smoothTrace;           ///< UNREAL_SMOOTH_TRACE (smoothtrace.h)
+    bool _smoothTraced = false;                       ///< UNREAL_SMOOTH_TRACE is set
     bool _smoothUsed = false;     ///< the last updateTexture's picture was smooth motion's
     bool _smoothChanged = false;  ///< and another one than before
+    uint64_t _smoothDrained = 0;
+    uint32_t _smoothLag = 0;  // the lag (refreshes) of the run of late presents the last drain answered  ///< presents handed over before the last refresh left out (a late one: renderNative)
     int64_t _smoothRefreshNs = 0;  ///< native way on a refresh grid: the refresh drawn for (0: no grid)
     int64_t _smoothPeriodNs = 0;
 

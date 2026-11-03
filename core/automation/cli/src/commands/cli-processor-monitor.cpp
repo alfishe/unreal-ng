@@ -17,6 +17,7 @@ const char* const kMonitorUsage =
     "monitor [all]                          - Everything: host, clients, every instance's values\n"
     "monitor host.stats                     - The process: CPU %, resident / peak memory, threads, uptime\n"
     "monitor host.clients                   - Connections and requests per plane (rest, ws, events, mcp, cli)\n"
+    "monitor video.present                  - The window's way to the screen: presenter, VRR, display rate switch\n"
     "monitor emulator.stats [instance=]     - fps, real-time speed %, frame time, CPU MHz, interrupts / frame\n"
     "monitor debug.breakpoints [instance=]  - Breakpoints: total, active, by kind, groups, last hit\n"
     "monitor media.slots | recording.state | debug.labels | ttd.status | debug.analyzers | controllers.state\n"

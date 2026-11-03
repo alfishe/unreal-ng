@@ -5,6 +5,8 @@
 #include <memory>
 #include <vector>
 
+class ThreadPool;
+
 /// Smooth motion on a fixed display (frame presenter design, docs/inprogress/2026-10-26-frame-presenter, sections 4.3-4.5
 /// and 6.5): the picture a refresh between two emulated frames shows.
 ///
@@ -62,7 +64,13 @@ struct Picture
     int width = 0;
     int height = 0;
     const uint32_t* pixels = nullptr;
-    uint32_t At(int x, int y) const;  ///< clamped to the edges
+    /// Clamped to the edges
+    uint32_t At(int x, int y) const
+    {
+        x = x < 0 ? 0 : (x >= width ? width - 1 : x);
+        y = y < 0 ? 0 : (y >= height ? height - 1 : y);
+        return pixels[static_cast<size_t>(y) * width + x];
+    }
 };
 
 /// The weight of one: 0 = A, kOne = B, up to 2 * kOne extrapolates past B along the motion from A to B
@@ -99,11 +107,16 @@ class MotionField
 {
 public:
     static constexpr int kBlock = 8;
-    static constexpr int kAccept = 4;       ///< mismatching pixels of 64 still taken as a match
+    /// Mismatching pixels of 64 still taken as a match: a quarter, so content that changes shape as it moves (water,
+    /// spinning dots, a fifth of the pixels new each frame) keeps its motion (POC 039 suite: 4 -> 16 took `animated` from
+    /// 52 to 38 %, the rest and the game clips the same, the game modes on the POC 038 clips the same or better; 20
+    /// and 24 no better)
+    static constexpr int kAccept = 16;
     static constexpr int kRangeFrames = 8;  ///< consecutive frames
     static constexpr int kRangePictures = 16;  ///< a game's pictures, several frames apart
     static constexpr size_t kGlobalVectors = 4;  ///< the most common vectors of a pass every block also tries
     static constexpr int kRefinePasses = 2;     ///< after the search
+    static constexpr int kRowParts = 18;        ///< Estimate's split of the block rows over a pool
     static constexpr size_t kComposeCommon = 2;  ///< the most common vectors of the field Compose also tries
 
     struct Vector
@@ -125,7 +138,9 @@ public:
         int unmatched = 0;  ///< nothing within kAccept: the blend there
     };
 
-    void Estimate(const Picture& a, const Picture& b, int range);
+    /// `pool` (optional): the block rows split over its threads, the same field (each block reads only the pass
+    /// before)
+    void Estimate(const Picture& a, const Picture& b, int range, ThreadPool* pool = nullptr);
     /// `w` 0..2 * kOne. `mask` (width * height, optional): only the pixels whose byte is non-zero are written
     void Compose(const Picture& a, const Picture& b, int w, uint32_t* out, const uint8_t* mask = nullptr) const;
 
@@ -178,9 +193,11 @@ class LayerFlow;
 ///
 /// Flicker is not motion: pixels that alternate frame by frame (gigascreen, a 25 Hz blink) belong to the temporal
 /// effects (ZX DLSS, the blending). An 8x8 block where at least 3/4 of the pixels changing from A to B went the same
-/// way two frames before (A B A B) is flicker: Blend and Interpolate show it as the frame due, and a pair that differs
-/// in nothing else as the frame; blended or moved, it would beat against the refresh even harder. Per block, over
-/// four frames: a thin stroke scrolling by turns a lone pixel back now and then, not a block for two frames.
+/// way two and four frames before (B A B A B) is flicker: Blend and Interpolate show it as the frame due, and a pair
+/// that differs in nothing else as the frame; blended or moved, it would beat against the refresh even harder. Per
+/// block, over five frames: a thin stroke scrolling by turns a lone pixel back now and then, not a block for two
+/// frames; a dot-matrix letter scrolling by its dot pitch repeats itself two frames apart by chance (Aleste's M), not
+/// three times.
 class SmoothMotion
 {
 public:
@@ -284,7 +301,7 @@ private:
                  const uint8_t* mask);
     bool ChangedInWindow(const uint32_t* a, const uint32_t* b) const;
     /// The flickering blocks of `a` on its way to `b` (the frames y, z, a before it, in order)
-    void FindFlicker(const Stored& y, const Stored& z, Stored& a, const uint32_t* b);
+    void FindFlicker(const Stored& x, const Stored& y, const Stored& z, Stored& a, const uint32_t* b);
     void BuildMask();
     int64_t FramePeriodNs() const;
 
@@ -301,6 +318,11 @@ private:
     CachedField _fields[2];
     MotionField _still;  ///< every block matched still: the field a -> a when no frame comes before a
     std::unique_ptr<LayerFlow> _layers;
+    /// The fields and the layers' passes on several cores (the pictures are the same: every split part writes only
+    /// its own pixels), made on the first picture that needs them
+    static constexpr size_t kMaxThreads = 8;
+    std::unique_ptr<ThreadPool> _pool;
+    ThreadPool* Pool();
     size_t _nextField = 0;
     Stats _stats;
 };

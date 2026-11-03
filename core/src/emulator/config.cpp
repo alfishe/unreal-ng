@@ -13,6 +13,7 @@
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/atm/atmgeometry.h"
+#include "emulator/video/displayrate.h"
 #include "emulator/video/presentpolicy.h"
 #include "emulator/video/smoothmotion.h"
 #include "emulator/io/network/networkspec.h"
@@ -1090,6 +1091,15 @@ bool Config::ParseConfig(IniFile& inimanager)
 		if (line[0] != '\0' && !ParsePresentPolicy(line, policy))
 			MLOGWARNING("Config: unsupported [VIDEO] PresentPolicy='%s', using auto", line);
 		config.presentPolicy = static_cast<uint8_t>(policy);
+	}
+	// The display's rate for the machine's: keep (default) | match. Unknown values warn and keep keep
+	{
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(video, "DisplayRate", nullptr), line, sizeof line);
+		DisplayRate rate = DisplayRate::Keep;
+		if (line[0] != '\0' && !ParseDisplayRate(line, rate))
+			MLOGWARNING("Config: unsupported [VIDEO] DisplayRate='%s', using keep", line);
+		config.displayRate = static_cast<uint8_t>(rate);
 	}
 	// Smooth motion on a fixed display: off (default) | blend | interpolate. Unknown values warn and keep off
 	{

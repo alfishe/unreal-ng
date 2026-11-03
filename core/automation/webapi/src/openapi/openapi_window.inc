@@ -29,8 +29,8 @@
             "How the GUI window draws the picture: backend (gpu / software), gpu_available, gpu, crt, crt_profile and "
             "the crt_profiles offered, blending (temporal blending, gigascreen smoothing), blending_frames, "
             "blending_weights, blending_decay, smooth motion (smooth_motion, effects_device: the shown instance's "
-            "[VIDEO] settings), present_policy and lip_sync_offset_ms (the shown instance's [VIDEO] PresentPolicy, "
-            "LipSyncOffsetMs), present (the frame presenter's on-screen timing and smooth motion's counters), the "
+            "[VIDEO] settings), present_policy, display_rate and lip_sync_offset_ms (the shown instance's [VIDEO] "
+            "PresentPolicy, DisplayRate, LipSyncOffsetMs), present (the frame presenter's on-screen timing and smooth motion's counters), the "
             "emulator the window shows, fullscreen, scale, toolbar, status_bar, "
             "the HUD (hud, hud_theme, hud_themes, hud_notices), the on-screen keyboard (osd_keyboard, "
             "osd_keyboard_picture, osd_keyboard_pictures, osd_keyboard_style, osd_keyboard_styles) and the ZX Next layers window (next_layers, "
@@ -71,6 +71,10 @@
             field("present_policy", "string",
                   "auto, vrr or vsync: how the native presenter shows the frames (auto: each at its time on a VRR "
                   "display, the refresh grid on a fixed one; vrr / vsync force one), until the instance restarts");
+            field("display_rate", "string",
+                  "keep or match: while the emulator is the active application, the display under the window runs the "
+                  "mode of the same resolution whose rate fits the machine's (50 Hz, 100 Hz); restored on focus loss "
+                  "and on quit; until the instance restarts");
             field("lip_sync_offset_ms", "integer",
                   "-200..200: added to every frame's target time, positive = the picture later; from the next frame");
             field("fullscreen", "boolean", "Full screen on / off (follows after the window system's transition)");

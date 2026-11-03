@@ -12,6 +12,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/monitoring/clientstats.h"
 #include "emulator/monitoring/monitoringapi.h"
+#include "emulator/video/windowview.h"
 
 #include <algorithm>
 #include <string>
@@ -147,4 +148,36 @@ TEST_F(MonitoringApi_Test, HostClientsCountWhatThePlanesReport)
     }
     EXPECT_EQ(clients.Read(monitoring::ClientPlane::Cli).connections, before.connections) << "closed";
     EXPECT_EQ(clients.Read(monitoring::ClientPlane::Cli).opened, before.opened + 1);
+}
+
+TEST_F(MonitoringApi_Test, VideoPresentIsThePublishedWindowWithoutCounters)
+{
+    EXPECT_FALSE(monitoring::Call("video.present", StateNode::Object()).body.find("available")->b) << "headless";
+
+    WindowDisplaySettings settings;
+    settings.emulatorId = _id;
+    settings.presentPolicy = "auto";
+    settings.displayRate = "match";
+    settings.present.presenter = "metal";
+    settings.present.vrr = false;
+    settings.present.minRefreshHz = settings.present.maxRefreshHz = 60.0;
+    settings.present.presented = 1234;
+    settings.present.displayState = "matched";
+    settings.present.displayHz = 50.0;
+    settings.present.originalHz = 60.0;
+    settings.present.machineHz = 48.828;
+    WindowView::Publish(settings);
+    const monitoring::Reply reply = monitoring::Call("video.present", StateNode::Object());
+    WindowView::Publish(std::nullopt);
+    ASSERT_TRUE(reply.Ok());
+    EXPECT_TRUE(reply.body.find("available")->b);
+    EXPECT_EQ(reply.body.find("presenter")->s, "metal");
+    EXPECT_EQ(reply.body.find("presented"), nullptr) << "counters change every frame: a topic would send each second";
+    const StateNode* display = reply.body.find("display");
+    ASSERT_NE(display, nullptr);
+    EXPECT_EQ(display->find("setting")->s, "match");
+    EXPECT_EQ(display->find("state")->s, "matched");
+    EXPECT_DOUBLE_EQ(display->find("original_hz")->d, 60.0);
+    EXPECT_DOUBLE_EQ(display->find("machine_hz")->d, 48.83);
+    EXPECT_NE(monitoring::Call("all", Args()).body.find("video"), nullptr);
 }

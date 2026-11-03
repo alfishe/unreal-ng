@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 
+#include "emulator/video/displayrate.h"
 #include "emulator/video/presentpolicy.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/smoothmotion.h"
@@ -30,6 +31,7 @@ struct ScreenFrames
     smoothmotion::Mode smooth = smoothmotion::Mode::Off;  ///< [VIDEO] SmoothMotion
     bool onCpu = false;  ///< [VIDEO] EffectsDevice = cpu: the GPU screen runs smooth motion on the CPU reference
     PresentPolicy policy = PresentPolicy::Auto;  ///< [VIDEO] PresentPolicy: the native presenter's
+    DisplayRate displayRate = DisplayRate::Keep;  ///< [VIDEO] DisplayRate: the display's mode for the machine
 };
 
 /// The steady clock's now in ns: the clock frame targets are on

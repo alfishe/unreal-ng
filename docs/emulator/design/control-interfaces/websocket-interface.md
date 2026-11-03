@@ -101,6 +101,7 @@ The surface targets, readouts and activity (Stream Deck SD4: `GET /api/v1/surfac
 | `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
 | `host.stats` | the host process, once for the process (no `instance`): `{cpu_percent, cpu_percent_host, cores, rss_bytes, peak_rss_bytes, virtual_bytes, threads, cpu_time_s, uptime_s, …}`, sampled at most twice a second (`GET /api/v1/monitor/host.stats`, [command-interface.md §17](./command-interface.md#17-monitoring)) | none | implemented |
 | `host.clients` | the process: per plane (`rest`, `ws`, `events`, `debug_ws`, `mcp`, `cli`) `{connections, opened, requests}`, `companions`, `instances` (`GET /api/v1/monitor/host.clients`) | none | implemented |
+| `video.present` | the process: the GUI window's way to the screen, `available` (false headless), `emulator`, `presenter` (metal / dxgi / gl / software), `present_policy`, `fixed_display`, `vrr`, `refresh_hz` {`min`, `max`}, `smooth` {`setting`, `mode` in effect, `device`, `game`}, `display` {`setting` keep / match, `state` keep / matched / unchanged, `reason`, `hz`, `original_hz`, `machine_hz`}; a message when the presenter turns to VRR or back, the display rate switch acts or a setting changes, never per frame (`GET /api/v1/monitor/video.present`) | none | implemented |
 | `emulator.stats` | per instance the measured pace `{state, measuring, fps, nominal_fps, speed_percent, frame_time_us {avg, max}, frame_budget_percent, halted_percent, interrupts_per_frame, frame, t_states, turbo, cpu {mhz, base_mhz, multiplier, host_multiplier, hw_turbo_ratio}}`: a new value every 0.5 s while it runs (`GET /api/v1/monitor/emulator.stats`) | none | implemented |
 | `debug.breakpoints` | per instance `{total, active, inactive, owned, by_kind {…}, groups [{name, total, active}], last_hit}` on every change of the set and on a new last hit (`GET /api/v1/monitor/debug.breakpoints`; the events are `breakpoints_changed` on `debug.events`) | none | implemented |
 | `media.slots` | per instance every media slot `{slots [{id, kind, present, pending, name, format, dirty, changed_units, protect}], loaded, dirty}` (`GET /api/v1/monitor/media.slots`) | none | implemented |
@@ -121,7 +122,7 @@ The surface targets, readouts and activity (Stream Deck SD4: `GET /api/v1/surfac
   instance went.
 - A prefix such as `debug.*` from a peer without a token (a loopback debugger) takes the event topics and skips the
   state topics it may not have, without an error; a name it may not have is still `companion_required`.
-- A topic of the process (`streamdeck.status`, `host.stats`, `host.clients`) sends one `state` message without `instance`:
+- A topic of the process (`streamdeck.status`, `host.stats`, `host.clients`, `video.present`) sends one `state` message without `instance`:
   `{"t":"streamdeck.status","op":"state","value":{…}}`, at once on `subscribe`, then on change.
 - Messages of the hub itself (`subscribed`, `unsubscribed`, their errors, `revoked` before a `join`, `slow_consumer`)
   carry `t: "ws"`; those of the calls (`result`, `auth`) `t: "call"`.

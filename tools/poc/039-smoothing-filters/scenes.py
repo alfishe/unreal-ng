@@ -174,8 +174,9 @@ class Layer:
         m = self.steps(t)
         px = self.p0[0] + v[0] * m
         py = self.p0[1] + v[1] * m
-        rx, ry = (rounding, rounding) if isinstance(rounding, str) else rounding  # per axis: "floor" or "ceil"
-        px, py = (int(np.floor(c)) if r == "floor" else int(np.ceil(c)) for c, r in ((px, rx), (py, ry)))
+        rx, ry = (rounding, rounding) if isinstance(rounding, str) else rounding  # per axis: "floor", "ceil", "round"
+        whole = {"floor": np.floor, "ceil": np.ceil, "round": lambda c: np.floor(c + 0.5)}
+        px, py = (int(whole[r](c)) for c, r in ((px, rx), (py, ry)))
         bh, bw = bitmap.shape
         y, x = np.mgrid[0:h, 0:w]
         u, v = x - px, y - py
@@ -198,9 +199,9 @@ class Flux:
     def __init__(self, name, rect, frame):
         self.name, self.rect, self.frame = name, rect, frame
 
-    def draw(self, img, ids, eid, t, rounding, v=None):
+    def draw(self, img, ids, eid, t, rounding, v=None, shape=0):
         x0, y0, w, h = self.rect
-        colours = self.frame(int(t))
+        colours = self.frame(int(t) + shape)
         sy, sx = slice(SY + y0, SY + y0 + h), slice(SX + x0, SX + x0 + w)
         drawn = colours >= 0
         img[sy, sx] = np.where(drawn[..., None], PALETTE[np.maximum(colours, 0)], img[sy, sx])
@@ -402,7 +403,8 @@ def render(elements, t, rounding="floor", velocities=None, shapes=0):
             shape = shapes.get(e, 0) if isinstance(shapes, dict) else shapes
             element.draw(img, ids, e + 1, t, rounding, (velocities or {}).get(e), shape)
         else:
-            element.draw(img, ids, e + 1, t, rounding, (velocities or {}).get(e))
+            shape = shapes.get(e, 0) if isinstance(shapes, dict) else shapes
+            element.draw(img, ids, e + 1, t, rounding, (velocities or {}).get(e), shape)
     return img, ids
 
 

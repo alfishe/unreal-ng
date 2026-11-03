@@ -4,9 +4,14 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <mutex>
+#include <thread>
+
+#include "common/threadpool.h"
 
 namespace smoothmotion
 {
@@ -99,13 +104,6 @@ bool ParseGameMode(const char* text, GameMode& mode)
     return false;
 }
 
-uint32_t Picture::At(int x, int y) const
-{
-    x = std::clamp(x, 0, width - 1);
-    y = std::clamp(y, 0, height - 1);
-    return pixels[static_cast<size_t>(y) * width + x];
-}
-
 uint32_t Mix(uint32_t a, uint32_t b, int w)
 {
     if (a == b)
@@ -157,7 +155,7 @@ const std::vector<MotionField::Vector>& MotionField::SearchOrder(int range)
     return orders.emplace(range, std::move(order)).first->second;
 }
 
-void MotionField::Estimate(const Picture& a, const Picture& b, int range)
+void MotionField::Estimate(const Picture& a, const Picture& b, int range, ThreadPool* pool)
 {
     _blocksWide = (a.width + kBlock - 1) / kBlock;
     _blocksHigh = (a.height + kBlock - 1) / kBlock;
@@ -178,9 +176,18 @@ void MotionField::Estimate(const Picture& a, const Picture& b, int range)
         return bad;
     };
 
+    // The block rows j0..j1 of a pass, over the pool's threads (each block writes only its own)
+    const auto rows = [&](const std::function<void(int, int)>& pass) {
+        if (pool)
+            pool->ParallelFor(_blocksHigh, kRowParts, pass);
+        else
+            pass(0, _blocksHigh);
+    };
+
     // Pass 1, per block: the first vector of the search order with the fewest mismatches, at most kAccept
     std::vector<Block> first(count);
-    for (int j = 0; j < _blocksHigh; j++)
+    rows([&](int j0, int j1) {
+    for (int j = j0; j < j1; j++)
         for (int i = 0; i < _blocksWide; i++)
         {
             int best = kAccept + 1;
@@ -200,6 +207,7 @@ void MotionField::Estimate(const Picture& a, const Picture& b, int range)
             block.matched = best <= kAccept;
             block.v = block.matched ? bestV : Vector{};
         }
+    });
 
     // Refinement passes, per block from the previous pass alone: zero, the common vectors (most first) and the eight
     // neighbours' (row by row); the fewest mismatches within kAccept, the first of equals; none of them: the block's
@@ -211,7 +219,8 @@ void MotionField::Estimate(const Picture& a, const Picture& b, int range)
     {
         const std::vector<Vector> votes = CommonVectors(prev, kGlobalVectors, range);
 
-        for (int j = 0; j < _blocksHigh; j++)
+        rows([&](int j0, int j1) {
+        for (int j = j0; j < j1; j++)
             for (int i = 0; i < _blocksWide; i++)
             {
                 Vector cands[1 + kGlobalVectors + 8];
@@ -250,6 +259,7 @@ void MotionField::Estimate(const Picture& a, const Picture& b, int range)
                 else
                     block = first[static_cast<size_t>(j) * _blocksWide + i];
             }
+        });
         std::swap(prev, next);
     }
 
@@ -376,6 +386,23 @@ SmoothMotion::SmoothMotion() : _layers(std::make_unique<LayerFlow>()) {}
 
 SmoothMotion::~SmoothMotion() = default;
 
+ThreadPool* SmoothMotion::Pool()
+{
+    if (!_pool)
+    {
+        // Half the cores, at most kMaxThreads with the caller (the window's thread): the rest stays the machine's.
+        // UNREAL_SMOOTH_THREADS (1..32) sets it, 1: the caller alone
+        const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
+        size_t threads = std::clamp<size_t>(cores / 2, 1, kMaxThreads);
+        if (const char* env = std::getenv("UNREAL_SMOOTH_THREADS"))
+            if (const long wanted = std::strtol(env, nullptr, 10); wanted >= 1 && wanted <= 32)
+                threads = static_cast<size_t>(wanted);
+        _pool = std::make_unique<ThreadPool>(threads - 1, "smooth", ThreadPool::Priority::Interactive);
+        _layers->SetPool(_pool.get());
+    }
+    return _pool.get();
+}
+
 void SmoothMotion::SetMode(Mode mode)
 {
     _mode = mode;
@@ -467,8 +494,9 @@ void SmoothMotion::Push(uint64_t serial, int64_t targetNs, const uint32_t* pixel
         frame.changed = 0;
         for (size_t p = 0; p < size; p++)
             frame.changed += before.pixels[p] != pixels[p] ? 1 : 0;
-        if (_frames.size() >= 3)
-            FindFlicker(_frames[_frames.size() - 3], _frames[_frames.size() - 2], before, pixels);
+        if (_frames.size() >= 4)
+            FindFlicker(_frames[_frames.size() - 4], _frames[_frames.size() - 3], _frames[_frames.size() - 2], before,
+                        pixels);
     }
 
     // A game's picture: a frame whose play area differs from the frame before it
@@ -490,7 +518,7 @@ void SmoothMotion::Push(uint64_t serial, int64_t targetNs, const uint32_t* pixel
     _stats.frames++;
 }
 
-void SmoothMotion::FindFlicker(const Stored& y, const Stored& z, Stored& a, const uint32_t* b)
+void SmoothMotion::FindFlicker(const Stored& x, const Stored& y, const Stored& z, Stored& a, const uint32_t* b)
 {
     // Per 8x8 block: the pixels that change from A to B, and those of them alternating y = A, z = B
     const int block = MotionField::kBlock;
@@ -510,7 +538,7 @@ void SmoothMotion::FindFlicker(const Stored& y, const Stored& z, Stored& a, cons
                     if (a.pixels[p] == b[p])
                         continue;
                     changed++;
-                    if (z.pixels[p] == b[p] && y.pixels[p] == a.pixels[p])
+                    if (x.pixels[p] == b[p] && z.pixels[p] == b[p] && y.pixels[p] == a.pixels[p])
                         alternating++;
                 }
             }
@@ -547,7 +575,7 @@ const MotionField& SmoothMotion::FieldFor(const Stored& a, const Stored& b, int 
     if (_device && _device->Estimate(a.View(_width, _height), b.View(_width, _height), range, slot.field))
         _stats.onDevice++;
     else
-        slot.field.Estimate(a.View(_width, _height), b.View(_width, _height), range);
+        slot.field.Estimate(a.View(_width, _height), b.View(_width, _height), range, Pool());
     _stats.estimates++;
     return slot.field;
 }
@@ -711,7 +739,10 @@ void SmoothMotion::ComposeLayers(const Stored& p, const Stored& a, const Stored&
     if (_device && _device->ComposeLayers(pp, pa, pb, *prev, next, w, out))
         _stats.onDevice++;
     else
+    {
+        Pool();
         _layers->Compose(pp, pa, pb, *prev, next, w, out);
+    }
 }
 
 SmoothMotion::Result SmoothMotion::Render(int64_t tNs, uint32_t* out)

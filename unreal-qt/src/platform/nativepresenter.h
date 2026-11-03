@@ -73,6 +73,16 @@ public:
     /// for each of them. false: none seen yet, or the display follows the presents (VRR: every frame at its own time)
     virtual bool RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const = 0;
 
+    /// Presents handed over so far, the number of the newest one shown a refresh late (counting from 1; 0: none) and
+    /// its lag in refreshes, the number of the newest one shown on time. A presenter that queues every present (Metal)
+    /// shows each one after the one before: one late, all after it are late while one comes every refresh, until a
+    /// refresh comes without one (smooth motion leaves one out). A presenter that replaces the present still waiting
+    /// (DXGI Present(1)) has no such queue: 0
+    virtual uint64_t Presented() const { return 0; }
+    virtual uint64_t LastLatePresent() const { return 0; }
+    virtual uint32_t LastLateLag() const { return 0; }
+    virtual uint64_t LastOnTimePresent() const { return 0; }
+
     virtual Stats GetStats() const = 0;
     /// One line for the log
     virtual std::string Describe() const = 0;

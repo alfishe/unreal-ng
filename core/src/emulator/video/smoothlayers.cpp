@@ -6,7 +6,10 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <utility>
+
+#include "common/threadpool.h"
 
 namespace smoothmotion
 {
@@ -473,6 +476,12 @@ void LayerFlow::Decide(const Layers& layers, const uint8_t* fitCounts, const uin
                 if (Slower(all[c], all[blockVector[block]]))
                     blockVector[block] = c;
         }
+        // nearTies: the frame's main motion (the most shared moving vector) fitting nearly as much of the block as
+        // its own vector does (within 1/kNear): content that changes as it moves (spinning dots) fits a look-alike
+        // by a few pixels of chance
+        if (layers.common > 1 && blockVector[block] != 1 && !(all[blockVector[block]] == V{}) && fitCountOf[1] > 0 &&
+            fitCountOf[1] * kNear >= fitCountOf[blockVector[block]] * (kNear - 1))
+            blockVector[block] = 1;
         // a slower moving look-alike fitting some of the block, else the aliases rule keeps the vector
         bool lookAlike = false;
         for (int s = 1; s < n && blockVector[block] > 0; s++)
@@ -578,15 +587,13 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
     // fits: per vector, the pixels it fits; score (window kRadius, at most 121) and support (window kSupportRadius).
     // The buffers are written whole before they are read, explained excepted; the hot loops go through raw pointers
     // (a byte store may alias a vector's own pointer, its reload would stop the vectorizer)
-    auto &fits = _fits, &score = _score, &usableAt = _usable, &fitting = _fitting, &changes = _changes;
+    auto &fits = _fits, &score = _score, &usableAt = _usable;
     auto &changed = _changed, &explained = _explained, &calm = _calm;
     auto& support = _support;
     auto &column = _column, &sums = _sums, &unexplained = _unexplained;
     fits.resize(pixels * n);
     score.resize(pixels * n);
     support.resize(pixels * n);
-    fitting.resize(pixels);  // fitting: the pair fits the score counts
-    changes.resize(pixels);
     changed.resize(pixels);
     calm.resize(pixels);
     sums.resize(pixels);
@@ -600,39 +607,64 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
     WindowSums(changed.data(), width, height, kRadius, sums.data(), column);
     for (size_t q = 0; q < pixels; q++)
         calm.data()[q] = sums.data()[q] == 0;
-    for (int c = 0; c < n; c++)
+    // per vector its fits, score and support; the moving ones' explained changes. Split over the pool by vectors,
+    // each part with its own buffers, its explained changes or'ed in after (the same whatever the split)
+    const int parts = _pool ? std::min(n, kVectorParts) : 1;
+    const int perPart = (n + parts - 1) / parts;
+    _parts.resize(static_cast<size_t>(parts));
+    for (Part& part : _parts)
     {
-        const V v = all[c];
-        const bool still = v == V{};
-        const int sx = shift(v.x), sy = shift(v.y);
-        uint8_t* const fitsOf = fits.data() + static_cast<size_t>(c) * pixels;
-        uint8_t *const fittingOf = fitting.data(), *const changesOf = changes.data(), *const explainedOf = explained.data();
-        const uint8_t* const calmOf = calm.data();
-        for (int y = 0; y < height; y++)
+        part.fitting.resize(pixels);
+        part.changes.resize(pixels);
+        part.explained.assign(pixels, 0);
+    }
+    const auto vectors = [&](int c0, int c1) {
+        Part& part = _parts[static_cast<size_t>(c0 / perPart)];
+        for (int c = c0; c < c1; c++)
         {
-            // the rows the pixels x of the row y read, at x: the samples a(x - wv), b(x - wv), b(x - wv + v),
-            // a(x - wv - v); the pixel's own a(x), b(x + v), b(x), a(x - v), p(x)
-            const uint32_t *sampleA = a.Row(-sx, y - sy), *sampleB = b.Row(-sx, y - sy);
-            const uint32_t *sampleOn = b.Row(v.x - sx, y - sy + v.y), *sampleFrom = a.Row(-sx - v.x, y - sy - v.y);
-            const uint32_t *hereA = a.Row(0, y), *hereB = b.Row(0, y), *hereP = p.Row(0, y);
-            const uint32_t *onB = b.Row(v.x, y + v.y), *fromA = a.Row(-v.x, y - v.y);
-            const size_t row = static_cast<size_t>(y) * width;
-            for (int x = 0; x < width; x++)
+            const V v = all[c];
+            const bool still = v == V{};
+            const int sx = shift(v.x), sy = shift(v.y);
+            uint8_t* const fitsOf = fits.data() + static_cast<size_t>(c) * pixels;
+            uint8_t *const fittingOf = part.fitting.data(), *const changesOf = part.changes.data(), *const explainedOf = part.explained.data();
+            const uint8_t* const calmOf = calm.data();
+            for (int y = 0; y < height; y++)
             {
-                const uint32_t va = sampleA[x], vb = sampleB[x];
-                const uint8_t fit = (va == sampleOn[x]) & ((hereA[x] == onB[x]) | (hereB[x] == fromA[x]));
-                // still3: zero fits only a pixel the same in k - 1, k and k + 1 (static stays static at any
-                // cadence); stopped: or where nothing changes round the pixel either (the layer stopped)
-                fitsOf[row + x] = fit & (!still | (hereP[x] == va) | calmOf[row + x]);
-                fittingOf[row + x] = fit;
-                changesOf[row + x] = fit & (va != vb) & (vb == sampleFrom[x]);
-            }
-            if (!still)
+                // the rows the pixels x of the row y read, at x: the samples a(x - wv), b(x - wv), b(x - wv + v),
+                // a(x - wv - v); the pixel's own a(x), b(x + v), b(x), a(x - v), p(x)
+                const uint32_t *sampleA = a.Row(-sx, y - sy), *sampleB = b.Row(-sx, y - sy);
+                const uint32_t *sampleOn = b.Row(v.x - sx, y - sy + v.y), *sampleFrom = a.Row(-sx - v.x, y - sy - v.y);
+                const uint32_t *hereA = a.Row(0, y), *hereB = b.Row(0, y), *hereP = p.Row(0, y);
+                const uint32_t *onB = b.Row(v.x, y + v.y), *fromA = a.Row(-v.x, y - v.y);
+                const size_t row = static_cast<size_t>(y) * width;
                 for (int x = 0; x < width; x++)
-                    explainedOf[row + x] |= changesOf[row + x];
+                {
+                    const uint32_t va = sampleA[x], vb = sampleB[x];
+                    const uint8_t fit = (va == sampleOn[x]) & ((hereA[x] == onB[x]) | (hereB[x] == fromA[x]));
+                    // still3: zero fits only a pixel the same in k - 1, k and k + 1 (static stays static at any
+                    // cadence); stopped: or where nothing changes round the pixel either (the layer stopped)
+                    fitsOf[row + x] = fit & (!still | (hereP[x] == va) | calmOf[row + x]);
+                    fittingOf[row + x] = fit;
+                    changesOf[row + x] = fit & (va != vb) & (vb == sampleFrom[x]);
+                }
+                if (!still)
+                    for (int x = 0; x < width; x++)
+                        explainedOf[row + x] |= changesOf[row + x];
+            }
+            WindowSums(part.fitting.data(), width, height, kRadius, score.data() + static_cast<size_t>(c) * pixels, part.column);
+            WindowSums(part.changes.data(), width, height, kSupportRadius, support.data() + static_cast<size_t>(c) * pixels, part.column);
         }
-        WindowSums(fitting.data(), width, height, kRadius, score.data() + static_cast<size_t>(c) * pixels, column);
-        WindowSums(changes.data(), width, height, kSupportRadius, support.data() + static_cast<size_t>(c) * pixels, column);
+    };
+    if (_pool && parts > 1)
+        _pool->ParallelFor(n, parts, vectors);
+    else
+        vectors(0, n);
+    for (const Part& part : _parts)
+    {
+        const uint8_t* const from = part.explained.data();
+        uint8_t* const into = explained.data();
+        for (size_t q = 0; q < pixels; q++)
+            into[q] |= from[q];
     }
     const Picture& nearer = w < kOne / 2 ? pictureA : pictureB;
     // credible: a moving vector explains at least the window's changes no vector explains (flux: none); the
@@ -662,54 +694,40 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
         // lost: still over k - 1, k, k + 1 while the layer's content, steady from k - 1, is due
         return b.At(px, py) == here && p.At(px - 2 * v.x, py - 2 * v.y) == from ? -1 : 0;
     };
-    constexpr int kAsksBeforeBuild = 64;  // a window image costs about as much as 64 windows summed at the pixel
-    std::vector<int> balanceOf(static_cast<size_t>(n) * palette.size(), -1), asks(balanceOf.size());
-    std::vector<Box> balances;
-    const auto coverable = [&](int c, int x, int y) {
-        const size_t q = static_cast<size_t>(y) * width + x;
-        const int col = colourAt[q];
-        if (col == 255)
-            return false;
-        const V v = all[c];
-        const size_t pair = static_cast<size_t>(c) * palette.size() + col;
-        int& index = balanceOf[pair];
-        if (index < 0 && ++asks[pair] <= kAsksBeforeBuild)
-        {
-            int sum = 0;
-            for (int py = std::max(y - kSupportRadius, 0); py < std::min(y + kSupportRadius + 1, height); py++)
-                for (int px = std::max(x - kSupportRadius, 0); px < std::min(x + kSupportRadius + 1, width); px++)
-                    sum += balance(v, col, px, py);
-            return sum > 0;
-        }
-        if (index < 0)
-        {
-            index = static_cast<int>(balances.size());
-            balances.emplace_back(width, height, kSupportRadius);
-            balances.back().Build([&](int px, int py) { return balance(v, col, px, py); });
-        }
-        return balances[static_cast<size_t>(index)].Window(x, y) > 0;
-    };
     // a fitting vector a pixel may take: zero, or a moving one with support that is credible
     usableAt.resize(pixels * n);
     std::copy(fits.begin(), fits.begin() + static_cast<ptrdiff_t>(pixels), usableAt.begin());
-    for (int c = 1; c < n; c++)
-    {
-        const uint8_t* fitsOf = fits.data() + static_cast<size_t>(c) * pixels;
-        const uint16_t* supportOf = support.data() + static_cast<size_t>(c) * pixels;
-        uint8_t* usableOf = usableAt.data() + static_cast<size_t>(c) * pixels;
-        const int* const bar = unexplained.data();
-        for (size_t q = 0; q < pixels; q++)
-            usableOf[q] = fitsOf[q] & (supportOf[q] > 0) & (supportOf[q] >= bar[q]);
-    }
+    // per vector (its own rows of the buffers), split over the pool
+    const auto byVectors = [&](int first, const std::function<void(int, int)>& pass) {
+        if (_pool && n - first > 1)
+            _pool->ParallelFor(n - first, std::min(n - first, kVectorParts),
+                               [&](int c0, int c1) { pass(first + c0, first + c1); });
+        else
+            pass(first, n);
+    };
+    byVectors(1, [&](int c0, int c1) {
+        for (int c = c0; c < c1; c++)
+        {
+            const uint8_t* fitsOf = fits.data() + static_cast<size_t>(c) * pixels;
+            const uint16_t* supportOf = support.data() + static_cast<size_t>(c) * pixels;
+            uint8_t* usableOf = usableAt.data() + static_cast<size_t>(c) * pixels;
+            const int* const bar = unexplained.data();
+            for (size_t q = 0; q < pixels; q++)
+                usableOf[q] = fitsOf[q] & (supportOf[q] > 0) & (supportOf[q] >= bar[q]);
+        }
+    });
     const auto usable = [&](int c, size_t q) { return usableAt[static_cast<size_t>(c) * pixels + q] != 0; };
     // per vector and block, the pixels it fits and the ones it may take
     const size_t blocks = _layers.allowed.size();
     std::vector<uint8_t> fitCounts(blocks * n), usableCounts(blocks * n);
-    for (int c = 0; c < n; c++)
-    {
-        BlockCounts(fits.data() + static_cast<size_t>(c) * pixels, width, height, fitCounts.data() + c * blocks);
-        BlockCounts(usableAt.data() + static_cast<size_t>(c) * pixels, width, height, usableCounts.data() + c * blocks);
-    }
+    byVectors(0, [&](int c0, int c1) {
+        for (int c = c0; c < c1; c++)
+        {
+            BlockCounts(fits.data() + static_cast<size_t>(c) * pixels, width, height, fitCounts.data() + c * blocks);
+            BlockCounts(usableAt.data() + static_cast<size_t>(c) * pixels, width, height,
+                        usableCounts.data() + c * blocks);
+        }
+    });
     const int blocksWide = _layers.blocksWide;
     std::vector<int> blockVector;
     std::vector<uint8_t> tied;
@@ -724,84 +742,169 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
                                            static_cast<int>(block / blocksWide), all[blockVector[block]]);
         return explainsAt[block] == 1;
     };
-    for (int y = 0; y < height; y++)
-        for (int x = 0; x < width; x++)
-        {
-            const size_t block = static_cast<size_t>(y / MotionField::kBlock) * blocksWide + x / MotionField::kBlock;
-            const auto& allowed = _layers.allowed[block];
+    // The pixels, split over the pool by block rows: a block's lazy answers (explainsAt) are its band's alone; each
+    // band its own cover windows (summed at the pixel or built, the same count either way)
+    const int blockRows = (height + MotionField::kBlock - 1) / MotionField::kBlock;
+    const auto band = [&](int by0, int by1) {
+        constexpr int kAsksBeforeBuild = 64;  // a window image costs about as much as 64 windows summed at the pixel
+        std::vector<int> balanceOf(static_cast<size_t>(n) * palette.size(), -1), asks(balanceOf.size());
+        std::vector<Box> balances;
+        const auto coverable = [&](int c, int x, int y) {
             const size_t q = static_cast<size_t>(y) * width + x;
-            if (a.At(x, y) == b.At(x, y) &&
-                !(blockVector[block] >= 0 && !(all[blockVector[block]] == V{}) && usable(blockVector[block], q)) &&
-                p.At(x, y) == a.At(x, y))
+            const int col = colourAt[q];
+            if (col == 255)
+                return false;
+            const V v = all[c];
+            const size_t pair = static_cast<size_t>(c) * palette.size() + col;
+            int& index = balanceOf[pair];
+            if (index < 0 && ++asks[pair] <= kAsksBeforeBuild)
             {
-                // cover (still, three): a pixel still over k - 1, k, k + 1 the block's moving vector does not
-                // take, a moving layer passes over (a sprite's hole): its content, carried from a, other than
-                // the pixel's
-                int over = -1;
-                for (int c : allowed)
+                int sum = 0;
+                for (int py = std::max(y - kSupportRadius, 0); py < std::min(y + kSupportRadius + 1, height); py++)
+                    for (int px = std::max(x - kSupportRadius, 0); px < std::min(x + kSupportRadius + 1, width); px++)
+                        sum += balance(v, col, px, py);
+                return sum > 0;
+            }
+            if (index < 0)
+            {
+                index = static_cast<int>(balances.size());
+                balances.emplace_back(width, height, kSupportRadius);
+                balances.back().Build([&](int px, int py) { return balance(v, col, px, py); });
+            }
+            return balances[static_cast<size_t>(index)].Window(x, y) > 0;
+        };
+        for (int y = by0 * MotionField::kBlock; y < std::min(by1 * MotionField::kBlock, height); y++)
+            for (int x = 0; x < width; x++)
+            {
+                const size_t block = static_cast<size_t>(y / MotionField::kBlock) * blocksWide + x / MotionField::kBlock;
+                const auto& allowed = _layers.allowed[block];
+                const size_t q = static_cast<size_t>(y) * width + x;
+                if (a.At(x, y) == b.At(x, y) &&
+                    !(blockVector[block] >= 0 && !(all[blockVector[block]] == V{}) && usable(blockVector[block], q)) &&
+                    p.At(x, y) == a.At(x, y))
                 {
-                    const V v = all[c];
-                    const size_t cq = static_cast<size_t>(c) * pixels + q;
-                    if (v == V{} || support[cq] == 0)
+                    // cover (still, three): a pixel still over k - 1, k, k + 1 the block's moving vector does not
+                    // take, a moving layer passes over (a sprite's hole): its content, carried from a, other than
+                    // the pixel's
+                    int over = -1;
+                    for (int c : allowed)
+                    {
+                        const V v = all[c];
+                        const size_t cq = static_cast<size_t>(c) * pixels + q;
+                        if (v == V{} || support[cq] == 0)
+                            continue;
+                        const int ax = x - shift(v.x), ay = y - shift(v.y);
+                        const uint32_t va = a.At(ax, ay);
+                        if (va != b.At(ax + v.x, ay + v.y) || va == b.At(ax, ay) || va == a.At(x, y))
+                            continue;
+                        // steady: the sample is the layer's: it moved so from k - 1 too (rigid content, not a growing glyph)
+                        if (p.At(ax - v.x, ay - v.y) != va || !coverable(c, x, y))
+                            continue;
+                        if (over < 0 || support[cq] > support[static_cast<size_t>(over) * pixels + q])
+                            over = c;
+                    }
+                    if (over >= 0)
+                    {
+                        const V v = all[over];
+                        out[q] = a.At(x - shift(v.x), y - shift(v.y));
                         continue;
-                    const int ax = x - shift(v.x), ay = y - shift(v.y);
-                    const uint32_t va = a.At(ax, ay);
-                    if (va != b.At(ax + v.x, ay + v.y) || va == b.At(ax, ay) || va == a.At(x, y))
-                        continue;
-                    // steady: the sample is the layer's: it moved so from k - 1 too (rigid content, not a growing glyph)
-                    if (p.At(ax - v.x, ay - v.y) != va || !coverable(c, x, y))
-                        continue;
-                    if (over < 0 || support[cq] > support[static_cast<size_t>(over) * pixels + q])
-                        over = c;
+                    }
                 }
-                if (over >= 0)
+                // the block's vector where it is usable, or (fitTies) fits a tied block
+                if (blockVector[block] >= 0 &&
+                    (usable(blockVector[block], q) ||
+                     (tied[block] && fits[static_cast<size_t>(blockVector[block]) * pixels + q])))
                 {
-                    const V v = all[over];
+                    const V v = all[blockVector[block]];
                     out[q] = a.At(x - shift(v.x), y - shift(v.y));
                     continue;
                 }
-            }
-            // the block's vector where it is usable, or (fitTies) fits a tied block
-            if (blockVector[block] >= 0 &&
-                (usable(blockVector[block], q) ||
-                 (tied[block] && fits[static_cast<size_t>(blockVector[block]) * pixels + q])))
-            {
-                const V v = all[blockVector[block]];
-                out[q] = a.At(x - shift(v.x), y - shift(v.y));
-                continue;
-            }
-            if (blockVector[block] >= 0 && !(all[blockVector[block]] == V{}) && !tied[block] &&
-                blockExplains(block) && !(p.At(x, y) == a.At(x, y) && a.At(x, y) != b.At(x, y)))
-            {
-                // carryFirst: a decided moving block keeps a pixel its vector does not fit unless another vector
-                // fitting it explains more changes round it, or a slower one fits it (a layer behind showing
-                // through, zero included); a pixel that stood still into a and changes only towards b (a blink in
-                // place) is not carried. Carried: the block's vector from the nearer frame
-                const int cb = blockVector[block];
-                const int mine = support[static_cast<size_t>(cb) * pixels + q];
-                bool other = false;
-                for (int c : allowed)
-                    other |= c != cb && usable(c, q) &&
-                             (Slower(all[c], all[cb]) || support[static_cast<size_t>(c) * pixels + q] > mine);
-                if (!other)
+                if (blockVector[block] >= 0 && !(all[blockVector[block]] == V{}) && !tied[block] &&
+                    blockExplains(block) && !(p.At(x, y) == a.At(x, y) && a.At(x, y) != b.At(x, y)))
                 {
-                    const V v = all[cb];
-                    const int ax = x - shift(v.x), ay = y - shift(v.y);
-                    out[q] = w < kOne / 2 ? a.At(ax, ay) : b.At(ax + v.x, ay + v.y);
-                    continue;
+                    // carryFirst: a decided moving block keeps a pixel its vector does not fit unless another vector
+                    // fitting it explains more changes round it, or a slower one fits it (a layer behind showing
+                    // through, zero included); a pixel that stood still into a and changes only towards b (a blink in
+                    // place) is not carried. Carried: the block's vector from the nearer frame
+                    const int cb = blockVector[block];
+                    const int mine = support[static_cast<size_t>(cb) * pixels + q];
+                    bool other = false;
+                    for (int c : allowed)
+                        other |= c != cb && usable(c, q) &&
+                                 (Slower(all[c], all[cb]) || support[static_cast<size_t>(c) * pixels + q] > mine);
+                    if (!other)
+                    {
+                        const V v = all[cb];
+                        const int ax = x - shift(v.x), ay = y - shift(v.y);
+                        out[q] = w < kOne / 2 ? a.At(ax, ay) : b.At(ax + v.x, ay + v.y);
+                        continue;
+                    }
                 }
-            }
-            int best = -1, bestScore = -1;
-            for (int c : allowed)  // ties: the slowest, the earlier (zero, then the most shared)
-            {
-                const size_t cq = static_cast<size_t>(c) * pixels + q;
-                if (usable(c, q) && (score[cq] > bestScore || (score[cq] == bestScore && Slower(all[c], all[best]))))
+                int best = -1, bestScore = -1;
+                for (int c : allowed)  // ties: the slowest, the earlier (zero, then the most shared)
                 {
-                    best = c;
-                    bestScore = score[cq];
+                    const size_t cq = static_cast<size_t>(c) * pixels + q;
+                    if (usable(c, q) && (score[cq] > bestScore || (score[cq] == bestScore && Slower(all[c], all[best]))))
+                    {
+                        best = c;
+                        bestScore = score[cq];
+                    }
                 }
+                out[q] = best < 0 ? nearer.pixels[q] : a.At(x - shift(all[best].x), y - shift(all[best].y));
             }
-            out[q] = best < 0 ? nearer.pixels[q] : a.At(x - shift(all[best].x), y - shift(all[best].y));
+    };
+    if (_pool)
+        _pool->ParallelFor(blockRows, kBandParts, band);
+    else
+        band(0, blockRows);
+    KeepInk(pictureA, pictureB, nearer, out);
+}
+
+void LayerFlow::KeepInk(const Picture& a, const Picture& b, const Picture& nearer, uint32_t* out)
+{
+    const int width = a.width, height = a.height;
+    std::array<uint32_t, kInkTile * kInkTile> colours;
+    std::array<int, kInkTile * kInkTile> counts;
+    for (int y0 = 0; y0 < height; y0 += kInkTile)
+        for (int x0 = 0; x0 < width; x0 += kInkTile)
+        {
+            const int x1 = std::min(x0 + kInkTile, width), y1 = std::min(y0 + kInkTile, height);
+            // the paper: a's most frequent colour in the tile, the first met of equals
+            size_t kinds = 0;
+            for (int y = y0; y < y1; y++)
+                for (int x = x0; x < x1; x++)
+                {
+                    const uint32_t colour = a.pixels[static_cast<size_t>(y) * width + x];
+                    size_t i = 0;
+                    while (i < kinds && colours[i] != colour)
+                        i++;
+                    if (i == kinds)
+                    {
+                        colours[kinds] = colour;
+                        counts[kinds++] = 0;
+                    }
+                    counts[i]++;
+                }
+            size_t top = 0;
+            for (size_t i = 1; i < kinds; i++)
+                if (counts[i] > counts[top])
+                    top = i;
+            const uint32_t paper = colours[top];
+            int inkA = 0, inkB = 0, inkOut = 0;
+            for (int y = y0; y < y1; y++)
+                for (int x = x0; x < x1; x++)
+                {
+                    const size_t q = static_cast<size_t>(y) * width + x;
+                    inkA += a.pixels[q] != paper;
+                    inkB += b.pixels[q] != paper;
+                    inkOut += out[q] != paper;
+                }
+            const int low = std::min(inkA, inkB), high = std::max(inkA, inkB);
+            const int lost = low - inkOut, gained = inkOut - high;
+            if ((lost > 0 && lost * kInkOff > low) || (gained > 0 && gained * kInkOff > high))
+                for (int y = y0; y < y1; y++)
+                    std::copy(nearer.pixels + static_cast<size_t>(y) * width + x0,
+                              nearer.pixels + static_cast<size_t>(y) * width + x1, out + static_cast<size_t>(y) * width + x0);
         }
 }
 

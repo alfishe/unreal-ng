@@ -42,6 +42,7 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/monitoring/clientstats.h"
 #include "emulator/platform.h"
+#include "emulator/video/windowview.h"
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
 #endif
@@ -143,6 +144,43 @@ StateNode HostStats()
     node["cpu_time_s"] = Round2(static_cast<double>(stats.sample.cpuTimeUs) / 1e6);
     node["uptime_s"] = static_cast<int64_t>(stats.uptimeSeconds);
     node["interval_s"] = Round2(stats.intervalSeconds);
+    return node;
+}
+
+/// How the GUI window's frames reach the screen, the parts that change with the setup and never per frame (the
+/// counters stay in /video/window): a topic message when the presenter turns to VRR or back, the display rate switch
+/// acts or a setting changes. From the settings the window published (WindowView::Publish, at most once a second)
+StateNode VideoPresent()
+{
+    StateNode node = StateNode::Object();
+    const std::optional<WindowDisplaySettings> settings = WindowView::PublishedSettings();
+    node["available"] = settings.has_value();
+    if (!settings)
+        return node;
+    const WindowPresentStats& p = settings->present;
+    node["emulator"] = settings->emulatorId;
+    node["presenter"] = p.presenter;
+    node["present_policy"] = settings->presentPolicy;
+    node["fixed_display"] = p.fixedDisplay;
+    node["vrr"] = p.vrr;
+    StateNode refresh = StateNode::Object();
+    refresh["min"] = Round2(p.minRefreshHz);
+    refresh["max"] = Round2(p.maxRefreshHz);
+    node["refresh_hz"] = refresh;
+    StateNode smooth = StateNode::Object();
+    smooth["setting"] = settings->smoothMotion;
+    smooth["mode"] = p.smooth;
+    smooth["device"] = p.smoothDevice;
+    smooth["game"] = p.game;
+    node["smooth"] = smooth;
+    StateNode display = StateNode::Object();
+    display["setting"] = settings->displayRate;
+    display["state"] = p.displayState;
+    display["reason"] = p.displayReason;
+    display["hz"] = Round2(p.displayHz);
+    display["original_hz"] = Round2(p.originalHz);
+    display["machine_hz"] = Round2(p.machineHz);
+    node["display"] = display;
     return node;
 }
 
@@ -722,7 +760,7 @@ StateNode InstanceEntry(const std::string& id, size_t index, Emulator& emulator)
 
 const std::vector<std::string>& ProcessNames()
 {
-    static const std::vector<std::string> names = {"host.stats", "host.clients"};
+    static const std::vector<std::string> names = {"host.stats", "host.clients", "video.present"};
     return names;
 }
 
@@ -753,6 +791,8 @@ StateNode ReadProcess(const std::string& name)
         return HostStats();
     if (name == "host.clients")
         return HostClients();
+    if (name == "video.present")
+        return VideoPresent();
     return {};
 }
 
@@ -806,6 +846,7 @@ Reply Call(std::string_view verbView, const StateNode& args)
     {
         reply.body["host"] = HostStats();
         reply.body["clients"] = HostClients();
+        reply.body["video"] = VideoPresent();
         StateNode& instances = reply.body["instances"];
         instances = StateNode::Array();
         const std::vector<std::string> ids = manager->GetEmulatorIds();

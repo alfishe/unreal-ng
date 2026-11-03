@@ -178,7 +178,7 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     for (const auto& member : report.members)
         keys += member.first + " ";
     EXPECT_EQ(keys, "backend gpu_available gpu crt crt_profile crt_profiles blending blending_frames blending_weights "
-                    "blending_decay smooth_motion effects_device present_policy lip_sync_offset_ms present emulator fullscreen scale toolbar status_bar hud hud_theme hud_themes hud_notices "
+                    "blending_decay smooth_motion effects_device present_policy display_rate lip_sync_offset_ms present emulator fullscreen scale toolbar status_bar hud hud_theme hud_themes hud_notices "
                     "osd_keyboard osd_keyboard_picture osd_keyboard_pictures osd_keyboard_style osd_keyboard_styles next_layers "
                     "next_layers_mode "
                     "next_layers_shown ");
@@ -209,6 +209,7 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     EXPECT_EQ(present.find("smooth")->find("mode")->s, "interpolate");
     EXPECT_EQ(present.find("smooth")->find("held_flicker")->i, 7);
     ASSERT_NE(present.find("vrr"), nullptr);
+    ASSERT_NE(present.find("display"), nullptr);
 
     // The present policy shows for a native presenter, the lip sync trim when set
     fake.settings.smoothMotion = "off";
@@ -378,4 +379,30 @@ TEST(WindowDisplay_Test, ThePublishedCopyEndsWithTheWindow)
     WindowView::SetProvider(nullptr);
     EXPECT_FALSE(WindowView::PublishedSettings()) << "no window: nothing published stays";
     EXPECT_FALSE(WindowView::PublishedCrtParameters());
+}
+
+TEST(WindowDisplay_Test, DisplayRateWordsAndSummary)
+{
+    WindowDisplayChange change;
+    std::string error;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "display_rate", "Match", error)) << error;
+    EXPECT_EQ(change.displayRate, "match");
+    EXPECT_FALSE(change.Empty());
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "display_rate", "50", error));
+    EXPECT_NE(error.find("keep or match"), std::string::npos) << error;
+
+    WindowDisplaySettings s;
+    s.displayRate = "match";
+    s.present.displayState = "matched";
+    s.present.displayHz = 50;
+    s.present.machineHz = 48.83;
+    s.present.originalHz = 60;
+    EXPECT_NE(WindowDisplay::Summary(s).find("display rate match (50 Hz for 48.83, was 60)"), std::string::npos)
+        << WindowDisplay::Summary(s);
+    s.present.displayState = "unchanged";
+    s.present.displayReason = "no mode within 5 % of 48.83 Hz";
+    EXPECT_NE(WindowDisplay::Summary(s).find("display rate match (no mode within 5 % of 48.83 Hz)"), std::string::npos)
+        << WindowDisplay::Summary(s);
+    s.displayRate = "keep";
+    EXPECT_EQ(WindowDisplay::Summary(s).find("display rate"), std::string::npos);
 }

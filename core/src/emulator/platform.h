@@ -680,6 +680,8 @@ struct CONFIG
 	LiveInt lipSyncOffsetMs = 0;
 	/// How the native presenter shows the frames ([VIDEO] PresentPolicy: auto | vrr | vsync; a PresentPolicy)
 	uint8_t presentPolicy = 0;
+	/// The display's refresh rate while the emulator is active ([VIDEO] DisplayRate: keep | match; a DisplayRate)
+	uint8_t displayRate = 0;
 	/// The picture between two frames on a fixed display ([VIDEO] SmoothMotion: off | blend | interpolate; a
 	/// smoothmotion::Mode). Off: the frame due (frame presenter design, sections 4.3-4.5)
 	uint8_t smoothMotion = 0;

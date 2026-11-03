@@ -175,6 +175,8 @@ std::string WindowDisplaySummary(const Json::Value& s)
         const int lipSync = s.get("lip_sync_offset_ms", 0).asInt();
         line += ", lip sync " + std::string(lipSync > 0 ? "+" : "") + std::to_string(lipSync) + " ms";
     }
+    if (s.isMember("display_rate"))
+        line += ", display rate " + s["display_rate"].asString();
     if (s.isMember("fullscreen"))
     {
         const int scale = s.get("scale", 0).asInt();
@@ -212,6 +214,15 @@ std::string WindowDisplaySummary(const Json::Value& s)
                     NumberText(std::round(error.get("p50", 0.0).asDouble() * 100) / 100) + " p99 " +
                     NumberText(std::round(error.get("p99", 0.0).asDouble() * 100) / 100) + " ms";
         }
+        // [VIDEO] DisplayRate: the display's mode switched for the machine, or why not
+        const Json::Value& display = present["display"];
+        const std::string state = display.get("state", "keep").asString();
+        if (state == "matched")
+            line += ", display at " + NumberText(display.get("hz", 0.0).asDouble()) + " Hz for the machine's " +
+                    NumberText(display.get("machine_hz", 0.0).asDouble()) + " (was " +
+                    NumberText(display.get("original_hz", 0.0).asDouble()) + ")";
+        else if (state == "unchanged")
+            line += ", display rate unchanged: " + display.get("reason", "").asString();
         const Json::Value& smooth = present["smooth"];
         const std::string mode = smooth.get("mode", "off").asString();
         line += "; smooth motion in effect " + mode;
@@ -439,6 +450,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "smoothing), blending_frames (2..5), blending_weights (equal, exponential), blending_decay (0.1..0.9), "
         "smooth_motion (off, blend, interpolate: the shown instance's picture between two frames on a fixed display), "
         "effects_device (gpu, cpu), present_policy (auto, vrr, vsync: how the native presenter shows the frames), "
+        "display_rate (keep, match: while the emulator is active, the display runs the rate of the machine), "
         "lip_sync_offset_ms (-200..200, positive = the picture later), "
         "fullscreen (bool), scale (1..4), toolbar, status_bar, hud (bool), hud_theme (one of hud_themes), "
         "hud_notices ({id: bool}, ids from window_display), osd_keyboard (bool), osd_keyboard_picture (one of "
@@ -449,7 +461,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     for (const char* flag : {"gpu", "crt", "blending", "fullscreen", "toolbar", "status_bar", "hud", "osd_keyboard",
                              "next_layers"})
         schema["properties"]["display"]["properties"][flag]["type"] = "boolean";
-    for (const char* word : {"crt_profile", "blending_weights", "smooth_motion", "effects_device", "present_policy", "hud_theme",
+    for (const char* word : {"crt_profile", "blending_weights", "smooth_motion", "effects_device", "present_policy", "display_rate", "hud_theme",
                              "osd_keyboard_picture", "osd_keyboard_style", "next_layers_mode"})
         schema["properties"]["display"]["properties"][word]["type"] = "string";
     schema["properties"]["display"]["properties"]["blending_frames"]["type"] = "integer";

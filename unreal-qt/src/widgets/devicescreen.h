@@ -170,6 +170,7 @@ private:
     // Smooth motion (GUI thread)
     bool smoothActive() const;
     smoothmotion::SmoothMotion _smooth;
+    DisplayRate _displayRate = DisplayRate::Keep;  // ScreenFrames::displayRate: reported, not done (no presenter)
     QImage _nextFrame;    // a frame on its way into _smooth
     QImage _smoothFrame;  // the picture drawn
     smoothmotion::SmoothMotion::Result _smoothShown;  // what _smoothFrame is made of

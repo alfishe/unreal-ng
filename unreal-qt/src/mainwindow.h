@@ -271,6 +271,8 @@ protected:
     void registerWindowView();
     /// The View menu's display settings (GPU, CRT, temporal blending) for the automation. GUI thread
     WindowDisplaySettings windowDisplaySettings() const;
+    /// The present part of the settings (the emulator, smooth motion, the policy, the display rate, the presenter)
+    void fillPresentSettings(WindowDisplaySettings& s) const;
     /// Apply an automation change (validated by the core) through the View menu's handlers, menu checks in step. GUI thread
     void applyWindowDisplay(const WindowDisplayChange& change);
     /// The active CRT profile's parameters: a libretro preset's own, the built-in profile's (basic, a custom shader's
@@ -284,6 +286,7 @@ protected:
     void schedulePublishWindowDisplay();
     /// The View menu's changes, the side windows and the window state all publish (once, from the constructor)
     void connectWindowDisplayPublishing();
+    void publishIfPresentChanged();
     /// QSettings View/*: GPU, CRT profile / shader and its values, blending, scale, HUD and theme (not overscan: the machine's).
     /// UNREAL_QT_VIEW_SETTINGS=off: neither read nor written
     void saveViewSettings() const;
@@ -527,6 +530,8 @@ private:
     double _zoomFactor = 2.0;  // Window zoom over the picture's native size, kept across video modes
     int _startScale = 2;       // the zoom of the first fit (View/Scale)
     QTimer* _publishTimer = nullptr;  // coalesces publishWindowDisplay after a burst of changes
+    QTimer* _presentWatch = nullptr;  // once a second: publishes when the way to the screen changed (video.present)
+    std::string _presentShown;        // that way as last published
     bool _viewSettingsEnabled = true; // UNREAL_QT_VIEW_SETTINGS=off: View/* neither read nor written
     HudThemeId _hudTheme = HudThemeId::DarkGlass;
     QSize _chrome;  // Last sane windowChrome()

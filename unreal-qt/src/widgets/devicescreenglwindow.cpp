@@ -8,6 +8,7 @@
 #include <QPainter>
 #include <QDragEnterEvent>
 #include <QFocusEvent>
+#include <QGuiApplication>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QDropEvent>
@@ -29,6 +30,7 @@
 #include <cstring>
 
 #include "emulator/emulator.h"
+#include "platform/displaymodeswitch.h"
 #include "platform/nativepresenter.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/keyboardmanager.h"
@@ -82,6 +84,13 @@ DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent) : QWindow(parent), _
         _presentTimer->setTimerType(Qt::PreciseTimer);
         connect(_presentTimer, &QTimer::timeout, this, [this]() { renderNative(false); });
     }
+    _smoothTraced = smoothmotion::TraceWriter::FromEnvironment(_smoothTrace);
+    // [VIDEO] DisplayRate: the display's mode follows the application's focus and the window's display
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this]() { updateDisplayRate(); });
+    connect(this, &QWindow::screenChanged, this, [this]() {
+        restoreDisplayRate("the window moved to another display");
+        updateDisplayRate();
+    });
 }
 
 bool DeviceScreenGLWindow::prepareContext()
@@ -159,6 +168,7 @@ void DeviceScreenGLWindow::renderGL()
     onFrameSwapped();
 }
 
+
 void DeviceScreenGLWindow::renderNative(bool force)
 {
     if (_isShuttingDown || !isExposed() || !handle() || !prepareContext())
@@ -200,16 +210,25 @@ void DeviceScreenGLWindow::renderNative(bool force)
     const uint64_t uploads = _frameSerial;
     const uint64_t shownSerial = _uploadedSerial;
     const int64_t lead = presentLeadNs();
-    // Smooth motion on a fixed display: the picture of the first refresh a lead away, drawn now, presented half a
-    // refresh before it (shown at the first refresh after the time asked for)
+    // Smooth motion on a fixed display: the picture of a refresh, presented half a refresh before it (shown at the
+    // first refresh after the time asked for). The lead counts to that time asked, as for a frame's own target: the
+    // first refresh whose present is a lead away, drawn now (counted to the refresh itself, every present missed its
+    // refresh by one, the lead at its bound)
     const bool smooth = smoothActive();
     int64_t refreshNs = 0;
     int64_t periodNs = 0;
+    const int64_t lastRefreshNs = _smoothRefreshNs;
     _smoothRefreshNs = 0;
     if (smooth && _presenter->RefreshGrid(refreshNs, periodNs))
     {
-        const int64_t ahead = now + lead - refreshNs;
+        const int64_t half = periodNs / 2;
+        const int64_t ahead = now + lead + half - refreshNs;
         _smoothRefreshNs = refreshNs + (ahead > 0 ? (ahead + periodNs - 1) / periodNs : 0) * periodNs;
+        // The wake for the refresh after the last picture comes a timer tick late (whole milliseconds, the event
+        // loop): still that refresh while half a refresh of the lead is left, or every other refresh is skipped
+        const int64_t following = _smoothRefreshNs - periodNs;
+        if (lastRefreshNs != 0 && following > lastRefreshNs + half && following - half - now >= lead - half)
+            _smoothRefreshNs = following;
         _smoothPeriodNs = periodNs;
         updateTexture(_smoothRefreshNs, true);
     }
@@ -221,9 +240,26 @@ void DeviceScreenGLWindow::renderNative(bool force)
     // frame on screen is uploaded again when the wake comes before the next one is due: presenting that again would
     // start an extra refresh on a VRR display (Windows: 10 % of the frames moved by up to a scan-out). Smooth motion:
     // another picture
-    const bool newFrame = smooth && _smoothUsed
-                              ? _smoothChanged
-                              : _frameSerial != uploads && (_uploadedSerial == 0 || _uploadedSerial != shownSerial);
+    bool newFrame = smooth && _smoothUsed
+                        ? _smoothChanged
+                        : _frameSerial != uploads && (_uploadedSerial == 0 || _uploadedSerial != shownSerial);
+    // Smooth motion presents every refresh: one present shown a refresh late leaves all after it late (a queuing
+    // presenter shows each after the one before), the picture a refresh behind and the lag stepping by a refresh each
+    // time it changes. A present late since the last one left out: this refresh's left out, the queue drains (the
+    // picture before stays a refresh); the presents still queued then come late too, but before the drain
+    // Once per run of late presents: when the presents handed over after a drain still come a refresh late (none on
+    // time since), the system shows them all a refresh late for a while (the compositor behind under load), evenly;
+    // leaving more refreshes out would only stutter (one held picture every few refreshes). Again when the lag grows.
+    if (newFrame && _smoothRefreshNs != 0 && _presenter->LastLatePresent() > _smoothDrained)
+    {
+        const uint32_t lag = _presenter->LastLateLag();
+        if (_presenter->LastOnTimePresent() > _smoothDrained || lag > _smoothLag)
+        {
+            _smoothLag = lag;
+            newFrame = false;
+        }
+        _smoothDrained = _presenter->Presented();
+    }
     // Occluded: the system would drop every present; the texture keeps up, the GPU rests
     if ((newFrame || force) && _presenter->IsVisible())
     {
@@ -276,7 +312,7 @@ void DeviceScreenGLWindow::scheduleNative()
         // Smooth motion on a fixed display: the next refresh's picture, while frames come
         if (_idleRefreshes > idleLimit)
             return;
-        wakeNs = _smoothRefreshNs + _smoothPeriodNs - presentLeadNs();
+        wakeNs = _smoothRefreshNs + _smoothPeriodNs / 2 - presentLeadNs();  // the next refresh's present, a lead ahead
     }
     else if (_shownInfo.nextSerial != 0 && _shownInfo.nextSerial != _uploadedSerial && _shownInfo.nextTargetNs > 0)
     {
@@ -336,6 +372,11 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
     }
     out.fixedDisplay = out.maxRefreshHz - out.minRefreshHz <= out.minRefreshHz * 0.01;
     FillSmoothStats(_smooth, smoothActive(), _smoothOnGpu && _smoothGpu.isCreated(), out);
+    out.displayState = _displayState;
+    out.displayReason = _displayReason;
+    out.displayHz = _displayHz;
+    out.originalHz = _originalHz;
+    out.machineHz = _frameRate.Hz();
     return out;
 }
 
@@ -358,6 +399,14 @@ QSurfaceFormat DeviceScreenGLWindow::surfaceFormat()
 }
 
 bool DeviceScreenGLWindow::probeGPUAcceleration()
+{
+    // Once per process (the GUI thread): a context made and its functions resolved take ~80 ms, and the settings
+    // published to the automation planes ask it (a stall the screen's present timer showed as 4-5 skipped refreshes)
+    static const bool available = probeGPUAccelerationOnce();
+    return available;
+}
+
+bool DeviceScreenGLWindow::probeGPUAccelerationOnce()
 {
     QOpenGLContext ctx;
     ctx.setFormat(surfaceFormat());
@@ -414,6 +463,7 @@ bool DeviceScreenGLWindow::probeGPUAcceleration()
 
 DeviceScreenGLWindow::~DeviceScreenGLWindow()
 {
+    _displaySwitch.reset();  // the display's own mode back
     if (_presentTimer)
         _presentTimer->stop();
     if (!makeCurrent())
@@ -497,10 +547,91 @@ void DeviceScreenGLWindow::setFrameSource(ScreenFrames source)
         qWarning() << "DeviceScreenGLWindow: UNREAL_PRESENT_POLICY=" << policy << "is not auto | vrr | vsync";
     if (_presenter)
         _presenter->SetPolicy(_presentPolicy);
+    _displayRate = source.displayRate;
+    updateDisplayRate();
     _smooth.Reset();
     _smooth.SetMode(mode);
     _smoothShown = {};
     _uploadedSerial = 0;
+}
+
+void DeviceScreenGLWindow::restoreDisplayRate(const char* reason)
+{
+    if (_displaySwitch && _displaySwitch->Switched())
+    {
+        _displaySwitch->Restore();
+        qInfo() << "DeviceScreenGLWindow: display rate back to" << _originalHz << "Hz:" << reason;
+    }
+    _displayHz = _originalHz;
+    if (_displayRate == DisplayRate::Match)
+    {
+        _displayState = "unchanged";
+        _displayReason = reason;
+    }
+}
+
+void DeviceScreenGLWindow::updateDisplayRate()
+{
+    if (_displayRate != DisplayRate::Match)
+    {
+        restoreDisplayRate("display_rate keep");
+        _displayState = "keep";
+        _displayReason.clear();
+        return;
+    }
+    if (QGuiApplication::applicationState() != Qt::ApplicationActive)
+        return restoreDisplayRate("the emulator is not the active application");
+    if (_presenter && _presenter->GetStats().vrr)
+        return restoreDisplayRate("the display shows each frame at its own time (VRR)");
+    const double machineHz = _frameRate.Hz();
+    if (machineHz <= 0.0)
+    {
+        // Paused, turbo or just started: whatever runs stays
+        if (!_displaySwitch || !_displaySwitch->Switched())
+        {
+            _displayState = "unchanged";
+            _displayReason = "the machine's frame rate is not steady yet";
+        }
+        return;
+    }
+    if (!_displaySwitch)
+        _displaySwitch = DisplayModeSwitch::Create();
+    const QScreen* display = screen();
+    std::vector<double> rates;
+    double currentHz = 0.0;
+    if (!_displaySwitch || !display)
+        return restoreDisplayRate("this platform cannot change the display's mode");
+    if (!_displaySwitch->Rates(display, rates, currentHz))
+        return restoreDisplayRate("the display's modes are unknown");
+    if (!_displaySwitch->Switched())
+        _originalHz = currentHz;
+    DisplayRateFit pick;
+    if (!DisplayRatePick(machineHz, currentHz, rates, pick))
+    {
+        // The rate running fits as well as any (the switched one, or the display's own)
+        if (FitDisplayRate(currentHz, machineHz).error <= kDisplayRateMaxError)
+        {
+            _displayHz = currentHz;
+            _displayState = _displaySwitch->Switched() ? "matched" : "unchanged";
+            _displayReason = _displaySwitch->Switched() ? "" : "the display already runs a fitting rate";
+            return;
+        }
+        std::string list;
+        for (double hz : rates)
+            list += (list.empty() ? "" : ", ") + QString::number(hz).toStdString();
+        restoreDisplayRate("");
+        _displayReason = "no mode within 5 % of " + QString::number(machineHz).toStdString() +
+                         " Hz or its multiples (" + list + ")";
+        return;
+    }
+    std::string error;
+    if (!_displaySwitch->Set(display, pick.hz, error))
+        return restoreDisplayRate(error.c_str());
+    qInfo() << "DeviceScreenGLWindow: display rate" << pick.hz << "Hz for the machine's" << machineHz << "(was"
+            << _originalHz << ")";
+    _displayHz = pick.hz;
+    _displayState = "matched";
+    _displayReason.clear();
 }
 
 bool DeviceScreenGLWindow::smoothActive() const
@@ -522,6 +653,8 @@ void DeviceScreenGLWindow::feedSmooth()
             break;
         _smooth.Push(next.serial, next.targetNs, reinterpret_cast<const uint32_t*>(_nextFrame.constBits()),
                      _nextFrame.width(), _nextFrame.height());
+        _smoothTrace.Frame(next.serial, next.targetNs, reinterpret_cast<const uint32_t*>(_nextFrame.constBits()),
+                           _nextFrame.width(), _nextFrame.height());
     }
 }
 
@@ -977,8 +1110,20 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
             else
                 _idleRefreshes++;
             _shownInfo = info;
+            // The machine's rate: a change (another machine, the first steady second) decides the display's
+            if (newFrame && info.serial != 0 && info.targetNs > 0 && _frameRate.Push(info.targetNs) &&
+                _displayRate == DisplayRate::Match)
+                QMetaObject::invokeMethod(this, [this]() { updateDisplayRate(); }, Qt::QueuedConnection);
             if (smoothActive())
+            {
+                // UNREAL_SMOOTH_TRACE: from a reset on, so the trace holds every frame smooth motion has
+                if (_smoothTraced && atRefresh && !_renderingImage && _smoothTrace.StartsNow(_smooth.GetMode()))
+                {
+                    _smooth.Reset();
+                    _smoothShown = {};
+                }
                 feedSmooth();
+            }
         }
         // A frame source is installed: never fall back to _devicePixels. It wraps the emulator's framebuffer, which
         // is freed and reallocated when the guest switches video mode (Profi 352x288 <-> 512x240 hi-res, ATM, AlCo)
@@ -1016,21 +1161,33 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
             qWarning() << "DeviceScreenGLWindow: smooth motion on the CPU, the GPU passes failed:" << _smoothGpu.log();
         }
         _smooth.SetDevice(_smoothOnGpu && _smoothGpu.isCreated() ? &_smoothGpu : nullptr);
-        const smoothmotion::SmoothMotion::Result plan = _smooth.Plan(atRefresh ? hostNs : _shownInfo.targetNs);
+        const int64_t planNs = atRefresh ? hostNs : _shownInfo.targetNs;
+        const smoothmotion::SmoothMotion::Result plan = _smooth.Plan(planNs);
+        bool kept = false;
         if (plan.kind != smoothmotion::SmoothMotion::Kind::None)
         {
             _smoothUsed = true;
-            if (plan == _smoothShown && !forced && _texture->isCreated())
-                return;
-            if (_smoothFrame.size() != sourceImage->size())
-                _smoothFrame = QImage(sourceImage->size(), QImage::Format_RGBA8888);
-            if (plan == _smoothShown || _smooth.Draw(plan, reinterpret_cast<uint32_t*>(_smoothFrame.bits())))
+            kept = plan == _smoothShown && !forced && _texture->isCreated();
+            if (!kept)
             {
-                _smoothChanged = !(plan == _smoothShown);
-                _smoothShown = plan;
-                smoothImage = &_smoothFrame;
+                if (_smoothFrame.size() != sourceImage->size())
+                    _smoothFrame = QImage(sourceImage->size(), QImage::Format_RGBA8888);
+                if (plan == _smoothShown || _smooth.Draw(plan, reinterpret_cast<uint32_t*>(_smoothFrame.bits())))
+                {
+                    _smoothChanged = !(plan == _smoothShown);
+                    _smoothShown = plan;
+                    smoothImage = &_smoothFrame;
+                }
             }
         }
+        if (_smoothTrace.Active() && atRefresh && !_renderingImage)
+        {
+            const QImage& shown = kept || smoothImage ? _smoothFrame : *sourceImage;
+            _smoothTrace.Refresh(planNs, plan, !kept && smoothImage && _smoothChanged,
+                                 reinterpret_cast<const uint32_t*>(shown.constBits()), shown.width(), shown.height());
+        }
+        if (kept)
+            return;
     }
     // The frame is in the texture already (a viewport change forces the upload, it does not repeat the frame)
     if (!smoothImage && !newFrame && !forced && _texture->isCreated())

@@ -41,6 +41,13 @@ struct WindowPresentStats
     std::string presenter;     ///< "metal", "dxgi" (native present-at-time), "gl" (the window's own swap), "software"
     bool fixedDisplay = true;  ///< a fixed refresh (min = max); false: VRR / ProMotion range
     bool vrr = false;          ///< frames presented each at its own time (c-vrr); false: on the refresh grid (b-vsync)
+    /// [VIDEO] DisplayRate's state: "keep" (off), "matched" (the display runs `displayHz` for the machine's
+    /// `machineHz`, its own mode `originalHz`), "unchanged" (match asked, nothing switched: `displayReason` says why)
+    std::string displayState = "keep";
+    std::string displayReason;
+    double displayHz = 0.0;
+    double originalHz = 0.0;
+    double machineHz = 0.0;
     double minRefreshHz = 0.0;
     double maxRefreshHz = 0.0;
     uint64_t presented = 0;  ///< native presenter only (0 otherwise), as NativePresenter::Stats
@@ -84,6 +91,7 @@ struct WindowDisplaySettings
     std::string smoothMotion = "off";      ///< [VIDEO] SmoothMotion of the shown instance: off / blend / interpolate
     std::string effectsDevice = "gpu";     ///< [VIDEO] EffectsDevice of the shown instance: gpu / cpu
     std::string presentPolicy = "auto";    ///< [VIDEO] PresentPolicy of the shown instance: auto / vrr / vsync
+    std::string displayRate = "keep";      ///< [VIDEO] DisplayRate of the shown instance: keep / match
     int lipSyncOffsetMs = 0;               ///< [VIDEO] LipSyncOffsetMs of the shown instance, -200..200
     WindowPresentStats present;            ///< read with the settings (Get), not published
 
@@ -121,6 +129,7 @@ struct WindowDisplayChange
     std::optional<std::string> smoothMotion;
     std::optional<std::string> effectsDevice;
     std::optional<std::string> presentPolicy;
+    std::optional<std::string> displayRate;
     std::optional<int> lipSyncOffsetMs;
     std::optional<bool> fullscreen;
     std::optional<int> scale;
@@ -139,7 +148,7 @@ struct WindowDisplayChange
     bool Empty() const
     {
         return !gpu && !crt && !crtProfile && !blending && !blendingFrames && !blendingWeights && !blendingDecay &&
-               !smoothMotion && !effectsDevice && !presentPolicy && !lipSyncOffsetMs && !fullscreen && !scale && !toolbar && !statusBar && !hud && !hudTheme && hudNotices.empty() &&
+               !smoothMotion && !effectsDevice && !presentPolicy && !displayRate && !lipSyncOffsetMs && !fullscreen && !scale && !toolbar && !statusBar && !hud && !hudTheme && hudNotices.empty() &&
                !osdKeyboard && !osdKeyboardPicture && !osdKeyboardStyle && !nextLayers && !nextLayersMode && nextLayersShown.empty();
     }
 };

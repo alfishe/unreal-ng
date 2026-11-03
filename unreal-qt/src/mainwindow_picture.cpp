@@ -13,11 +13,13 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
+#include "emulator/video/displayrate.h"
 #include "emulator/video/viewportcontrol.h"
 #include "emulator/video/windowdisplay.h"
 #include "hud/core/hudmodel.h"
@@ -80,6 +82,25 @@ int ViewportIndex(const std::string& name)
 
 /// region <Display settings>
 
+void MainWindow::fillPresentSettings(WindowDisplaySettings& s) const
+{
+    s.emulatorId = _emulator ? _emulator->GetId() : std::string();
+    const EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: held by _emulator
+    if (context)
+    {
+        const auto mode = static_cast<smoothmotion::Mode>(context->config.smoothMotion);
+        s.smoothMotion = smoothmotion::ModeName(mode);
+        PresentPolicy policy = PresentPolicy::Auto;
+        if (context->config.presentPolicy <= static_cast<uint8_t>(PresentPolicy::Vsync))
+            policy = static_cast<PresentPolicy>(context->config.presentPolicy);
+        s.presentPolicy = PresentPolicyName(policy);
+        s.displayRate = DisplayRateName(context->config.displayRate == static_cast<uint8_t>(DisplayRate::Match)
+                                            ? DisplayRate::Match
+                                            : DisplayRate::Keep);
+    }
+    s.present = _screenWrapper->presentStats();
+}
+
 WindowDisplaySettings MainWindow::windowDisplaySettings() const
 {
     WindowDisplaySettings s;
@@ -102,20 +123,13 @@ WindowDisplaySettings MainWindow::windowDisplaySettings() const
     s.blendingFrames = _screenWrapper->temporalHistorySize();
     s.blendingWeights = _screenWrapper->temporalWeightMode() == 1 ? "exponential" : "equal";
     s.blendingDecay = Shown(_screenWrapper->temporalDecay());
-    s.emulatorId = _emulator ? _emulator->GetId() : std::string();
+    fillPresentSettings(s);
     const EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: held by _emulator
     if (context)
     {
-        const auto mode = static_cast<smoothmotion::Mode>(context->config.smoothMotion);
-        s.smoothMotion = smoothmotion::ModeName(mode);
         s.effectsDevice = context->config.effectsOnCpu ? "cpu" : "gpu";
-        PresentPolicy policy = PresentPolicy::Auto;
-        if (context->config.presentPolicy <= static_cast<uint8_t>(PresentPolicy::Vsync))
-            policy = static_cast<PresentPolicy>(context->config.presentPolicy);
-        s.presentPolicy = PresentPolicyName(policy);
         s.lipSyncOffsetMs = context->config.lipSyncOffsetMs;
     }
-    s.present = _screenWrapper->presentStats();
 
     s.fullscreen = isFullScreen();
     // A whole zoom while the window is fitted to the picture; resized by hand, maximized or full screen: none
@@ -200,7 +214,7 @@ void MainWindow::applyWindowDisplay(const WindowDisplayChange& change)
     }
     // Smooth motion is the shown instance's [VIDEO] setting: its frames go to the screen again with it
     EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: held by _emulator
-    if ((change.smoothMotion || change.effectsDevice || change.presentPolicy) && context)
+    if ((change.smoothMotion || change.effectsDevice || change.presentPolicy || change.displayRate) && context)
     {
         smoothmotion::Mode mode = smoothmotion::Mode::Off;
         if (change.smoothMotion && smoothmotion::ParseMode(change.smoothMotion->c_str(), mode))
@@ -210,6 +224,9 @@ void MainWindow::applyWindowDisplay(const WindowDisplayChange& change)
         PresentPolicy policy = PresentPolicy::Auto;
         if (change.presentPolicy && ParsePresentPolicy(change.presentPolicy->c_str(), policy))
             context->config.presentPolicy = static_cast<uint8_t>(policy);
+        DisplayRate rate = DisplayRate::Keep;
+        if (change.displayRate && ParseDisplayRate(change.displayRate->c_str(), rate))
+            context->config.displayRate = static_cast<uint8_t>(rate);
         refreshFrameSource();
     }
     // The emulation thread reads it at the next latch
@@ -424,12 +441,47 @@ void MainWindow::schedulePublishWindowDisplay()
         _publishTimer->start();
 }
 
+namespace
+{
+/// The parts of the way to the screen video.present reports (monitoringapi.cpp VideoPresent): no counters
+std::string presentKey(const WindowDisplaySettings& s)
+{
+    const WindowPresentStats& p = s.present;
+    std::ostringstream key;
+    key << s.emulatorId << '|' << p.presenter << '|' << s.presentPolicy << '|' << p.fixedDisplay << p.vrr << '|'
+        << std::lround(p.minRefreshHz * 100) << '|' << std::lround(p.maxRefreshHz * 100) << '|' << s.smoothMotion
+        << '|' << p.smooth << '|' << p.smoothDevice << '|' << p.game << '|' << s.displayRate << '|' << p.displayState
+        << '|' << p.displayReason << '|' << std::lround(p.displayHz * 100) << '|' << std::lround(p.originalHz * 100);
+    // Not the machine's rate: measured, it moves by hundredths every second (48.57, 48.78, 48.84 Hz), and every change
+    // published the whole settings; it goes out with the next publish
+    return key.str();
+}
+}  // namespace
+
 void MainWindow::publishWindowDisplay()
 {
     if (!_screenWrapper)
         return;
-    WindowView::Publish(windowDisplaySettings(), crtParameters());
+    WindowDisplaySettings settings = windowDisplaySettings();
+    _presentShown = presentKey(settings);
+    WindowView::Publish(std::move(settings), crtParameters());
     saveViewSettings();
+}
+
+void MainWindow::publishIfPresentChanged()
+{
+    // The presenter turning to VRR or back, the display rate switch acting: no menu signal says so
+    if (!_screenWrapper)
+        return;
+    // Only the fields of the key, every second on the GUI thread: the whole settings (the shader list, the OSD
+    // keyboard's pictures) take tens of ms, a stall the screen window's present timer shows as skipped refreshes
+    WindowDisplaySettings present;
+    fillPresentSettings(present);
+    std::string key = presentKey(present);
+    if (key == _presentShown)
+        return;
+    _presentShown = std::move(key);
+    WindowView::Publish(windowDisplaySettings());
 }
 
 void MainWindow::connectWindowDisplayPublishing()
@@ -455,6 +507,10 @@ void MainWindow::connectWindowDisplayPublishing()
         connect(_nextLayersWindow, &NextLayersWindow::visibilityChanged, this, publish);
         connect(_nextLayersWindow, &NextLayersWindow::viewChanged, this, publish);
     }
+    _presentWatch = new QTimer(this);
+    _presentWatch->setInterval(1000);
+    connect(_presentWatch, &QTimer::timeout, this, &MainWindow::publishIfPresentChanged);
+    _presentWatch->start();
     // The HUD Notifications dialog's check boxes (and automation's hud_notice)
     HudSettingsDialog::setChangedCallback([guard = QPointer<MainWindow>(this)]() {
         if (guard)

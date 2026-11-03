@@ -269,8 +269,11 @@ has at the refresh's time: the scroller moves 4 x w pixels, not two half-bright 
 - **Flicker is not motion** (found on the live demo: a gigascreen dot ring, blue and magenta frames in turn,
   interpolated into a strobe). Alternating frames are the temporal effects' (ZX DLSS, the blending), which have their
   own algorithms (owner). Blend and Interpolate leave them alone: an 8x8 block where at least 3/4 of the pixels
-  changing from A to B went the same way two frames before (A B A B over four frames) shows the frame due, and a
-  pair that differs in nothing else is shown as the frame. A single pixel turning back is no evidence: a thin stroke
+  changing from A to B alternated over the five frames before and including B (B A B A B) shows the frame due, and a
+  pair that differs in nothing else is shown as the frame. Four frames (A B A B) were too little: the moving "M" of
+  Aleste's title turns one segment on and off and then on again, A B A B by chance, and the hold left that segment
+  standing while the letter moved (five frames: Aleste jstep 0.76 -> 0.72, ghost 2.11 -> 1.88; some `earshaver-1`
+  border holds lost, its off-ink 3 % up). A single pixel turning back is no evidence: a thin stroke
   of a scroller does that now and then (a per-pixel rule held those and broke the scroll).
 - **Measured in [POC 038](../../../tools/poc/038-motion-interpolation/conclusions.md):** on scrollers and moving
   pictures 1/2 to 1/6 of the blend's error, 52-90 % of the changed pixels exact; full-screen effects fall back to the
@@ -311,6 +314,32 @@ POC 037 measured a "display-locked" mode: the refresh ticks `MainLoop`, one fram
 needed a ±4 % trim, which shifts the pitch. It contradicts the audio design ("the audio device is the only master
 clock") and the owner's decision, so it is not part of the design. The Steam Deck client's display-locked mode
 (rendering.md section 4) is subject to the same decision and needs revisiting there.
+
+### 4.7 Fixed display, optional: switch it to the machine's rate (`[VIDEO] DisplayRate`)
+
+The reverse of section 4.6: the machine keeps its own rate and the display follows it. Most "60 Hz" monitors and TVs
+also have a 50 Hz mode at the same resolution (the Dell U4320Q: 24, 30, 50, 60 Hz at 4K). At 50 Hz a 48.83 Hz
+Pentagon shows each frame once, with one repeat every ~0.85 s (a 2.4 % beat), and a 50.08 Hz Spectrum one every
+~12 s: no 3:2 cadence and nothing for smooth motion to invent.
+
+- `[VIDEO] DisplayRate = keep | match`, default `keep`. With `match`, while the emulator is the active application
+  the display under the window runs the mode at its current resolution whose rate fits the machine's: a multiple of
+  it (50, 100, 150 Hz...) within 5 %, the least error, then the lower rate. Nothing changes when the current rate
+  fits as well (a 100 Hz display, a 50 Hz one already) or no mode fits (only 60 / 75 / 144 Hz).
+- The machine's rate is measured from the shown frames' target times (`FrameRateMeter`: the median of the last
+  25 periods, steady when their interquartile range is within 1 %), so pause and turbo keep whatever runs and a
+  machine change (Pentagon to Next 60 Hz) re-decides.
+- The display gets its own mode back when the application loses focus, the window moves to another display, the
+  setting goes back to `keep` and at quit. A VRR presenter needs no switch: there the display follows the frames
+  already (section 4.1), so `match` restores the mode.
+- macOS: `CGConfigureDisplayWithDisplayMode` with `kCGConfigureForAppOnly`, so the system restores the mode however
+  the application ends. Windows: `ChangeDisplaySettingsExW` with `CDS_FULLSCREEN`, a temporary mode Windows
+  restores at exit. X11 / Wayland: none (the report says so).
+- The picking (`FitDisplayRate`, `DisplayRatePick`) and the meter live in `core/src/emulator/video/displayrate.h`
+  with unit tests; the switch in `unreal-qt/src/platform/displaymodeswitch.h`. The report's `present.display` says
+  `keep`, `matched` (with the rate and the original rate) or `unchanged` with the reason.
+- A mode switch blanks the display for a second or two on most monitors: that is why it is opt-in, and why focus
+  changes switch back rather than back and forth on every frame.
 
 ## 5. What "exceptionally smooth" takes
 
@@ -432,12 +461,34 @@ classDiagram
     18 ms 4-15 % (by load); 23 ms 2 %, error p50 8.1 ms, which is the wait for the next vsync on a fixed display
     (uniform 0-16.7 ms). Frames latch 60-75 ms before their target, so the lead costs nothing.
   - **The margin follows the load.** It starts at 6 ms over a refresh; each present shown a refresh late (more than
-    a refresh and 1 ms after the time asked for: the first vsync it can make is less than a refresh away) adds 1 ms, up to 12 ms, and 600 presents on time in a row take 1 ms
-    back, down to 4 ms. Late counts from the frame's own time: a window that handed it over after it was late too.
+    a refresh and 1 ms after the time asked for: the first vsync it can make is less than a refresh away) adds 1 ms, up to 20 ms, and 600 presents on time in a row take 1 ms
+    back, down to 4 ms (12 ms was the bound until smooth motion's interpolation, whose draw takes up to 24 ms from the
+    wake on the GUI thread, measured 2026-11-01). Late counts from the frame's own time: a window that handed it over after it was late too.
     The DXGI presenter adapts the same way (`platform/presentlead.h`) from 8 ms with no refresh on top: its own thread
     presents at the time. `UNREAL_PRESENT_LEAD_MS` fixes it. `UNREAL_PRESENT_LOG` shows the late count and the lead.
   - The rest of the late tail is the GL fence wait on a busy GPU (p50 0.7 ms, up to 11 ms with other GPU work).
-    `nextDrawable` waits under 0.1 ms. The system rounds a present to the nearest vsync: 2-3 % of the frames show
+    `glClientWaitSync` with a timeout sleeps in steps of about 10 ms on macOS (p90 10.2 ms with nothing to wait
+    for), so the presenter polls the fence without one, 0.1 ms apart: p90 0.85 ms.
+    `nextDrawable` waits under 0.1 ms.
+  - **Smooth motion's presents (one every refresh) count the lead to the time asked for**, half a refresh before the
+    refresh, as a frame's own target does; counted to the refresh itself, every present missed it by one (Aleste on
+    60 Hz: error p50 25 ms, 425 of 444 late). **Metal queues the presents**: each is shown after the one before, so one
+    present shown late leaves all after it late while one comes every refresh, and the lag stepped 0 -> 1 -> 2
+    refreshes (the "jitter" seen; asking earlier only deepened the queue). The presenter tells the window the number
+    of the newest late present (`NativePresenter::LastLatePresent`); one late since the last refresh left out: the
+    window leaves this refresh out, the queue drains, the picture before stays a refresh. DXGI replaces the present
+    still waiting and has no queue. Blend after it: 0 late of 481, error 8.33 ms on every present.
+    Once per run of late presents: under load the compositor itself falls a refresh behind for a while (every 3-4 s
+    for 0.1-0.6 s on the loaded M1 Ultra), presents handed over 20-35 ms ahead still come a refresh late, and a drain
+    on every late one left a refresh out every 5 refreshes (a 12 Hz stutter). When the presents handed over after a
+    drain are late too (none on time since), the window keeps the lag (each refresh a new picture, a refresh later)
+    and drains again only when the lag grows (`LastOnTimePresent`, `LastLateLag`). Aleste, 30 s: on-screen steps of
+    one refresh 1074 of 1076 in such a run. A late present widens the lead only when it was handed over less than a
+    refresh before its time: more lead cannot help one the compositor held, it only queues more.
+  - The GUI thread runs the window's present timer: anything long there skips refreshes. The settings published to
+    the automation planes probed the GPU (a GL context made and resolved, ~80 ms) on every publish, and the measured
+    machine rate in the publish key changed every second: 4-5 refreshes skipped every 1-3 s. The probe runs once per
+    process, the key leaves the measured rate out. The system rounds a present to the nearest vsync: 2-3 % of the frames show
     up to 0.5 ms before their target.
   - Diagnostics: `UNREAL_PRESENT_LOG` (stats every 5 s), `UNREAL_PRESENT_TRACE` (one line per present),
     `UNREAL_PRESENT_DUMP` (the drawable as shown, read back: checked upright with crt-geom and the HUD).
@@ -467,6 +518,7 @@ directly: the screen time minus the frame's target.
   there every frame is shown for its own period. With `interpolate`, a game whose profile has a `video:` section gets
   its cadence mode (section 4.5).
 - `[VIDEO] EffectsDevice = gpu | cpu` (section 6.5), default `gpu`; `UNREAL_EFFECTS_DEVICE` overrides it.
+- `[VIDEO] DisplayRate = keep | match` (section 4.7), default `keep`.
 - `[VIDEO] LipSyncOffsetMs = 0`. It replaces `AVSyncDelayFrames`, whose job the audio clock now does; the old key is
   read once and dropped.
 - Per the automation-planes guidelines, every plane gets the same:
@@ -488,7 +540,13 @@ directly: the screen time minus the frame's target.
   tearing presents or `Present(0)`, auto keeps its VRR check); `UNREAL_PRESENT_POLICY` overrides it. The report's
   `present.vrr` says which way the frames go now. `lip_sync_offset_ms` (-200..200) is `[VIDEO] LipSyncOffsetMs`,
   a relaxed atomic the emulation thread reads per latch: it moves the next frame's target time. Not yet: the
-  clock in use, frames off the beat pattern, the screen-to-sound offset and the WebSocket policy topic.
+  clock in use, frames off the beat pattern and the screen-to-sound offset. The policy topic is `video.present`, a
+  monitoring name (so a verb on every plane and a WebSocket topic of the process): the presenter, the policy, VRR,
+  the refresh range, smooth motion's setting and mode in effect, the display rate switch's state; no counters, so
+  a message only when one of them changes. The window publishes its settings when they change, checked once a second
+  (`MainWindow::publishIfPresentChanged`): the presenter's turn to VRR or back has no menu signal.
+  `display_rate` (keep / match) is `[VIDEO] DisplayRate` (section 4.7), applied at once; `present.display` reports
+  its state (`keep`, `matched`, `unchanged`), the reason, the display's rate now and before, and the machine's rate.
 
 ### 6.5 Every effect on the GPU and on the CPU
 
@@ -644,6 +702,17 @@ Each phase lands on its own with tests and docs.
       a device has it; until step 4 it runs on the CPU. Done; unit tests for the scroller, a sprite over paper, a still
       picture and the pinned hashes. Known limit: a sprite over random background of few colours. The background it
       left between k - 1 and k is not still, and moving vectors fit the noise by chance there.
+      The block match takes up to 16 mismatching pixels of 64 (`MotionField::kAccept`, was 4): content that changes
+      shape as it moves (water, spinning dots) matched no block before. Measured with the eye model of
+      [`tools/verification/smoothmotion/truth`](../../../tools/verification/smoothmotion/README.md#what-the-eye-sees-truth):
+      the suite's pursuit sum 196 -> 179 % (`animated` 52 -> 38, the native 50 Hz source 38), the six game clips
+      the same, the game modes on the POC 038 clips the same or better (Green Beret exact 38 -> 46 %).
+      `nearTies` (`LayerFlow::kNear`): a block takes the frame's main motion when it fits within 1/8 of the block's
+      best vector. Aleste's spinning dots on a letter's diagonal stroke (spacing 8 x 8, moving -8, 0) fit (0, 8) by a
+      few pixels of chance and tore; now whole. Suite 179 -> 177 %, Aleste ghost 1.70 -> 1.63 px, tear 5.5 -> 4.9 %,
+      the other clips the same; 1/4 helped Aleste more but cost `flux` and `dotmatrix`. Known limit: a dot row whose
+      spacing equals its step (Aleste's rows) is still or moving alike in its middle, and spinning dots give its ends
+      no exact fit either.
    4. The GPU passes in `SmoothMotionGPU`: the per-pixel fits and windows as passes, the per-block votes as a pass
       per block. The tied regions (44 x 36 blocks) need a sequential flood: either iterated on the GPU or read back
       and done on the CPU, whichever is cheaper. The result is tested to the bit against the CPU. Done:
@@ -657,12 +726,50 @@ Each phase lands on its own with tests and docs.
         scenes: GPU 3.9-6.2 ms wall per refresh against CPU 2.7-7.3 ms, the GPU work itself ~2.3 ms, the rest the
         waits and the CPU steps. Byte-identical to the CPU on all 12 scenes (118 refreshes each); unreal-qt-tests
         `SmoothMotionGPU_Test.LayerFlowOnTheGpuIsTheCpus` pins it on mixed scenes.
-   5. Live check through the WebAPI on the hold-out clips; then the owner looks. The device split found here: fields
-      on the CPU, the composition on the GPU (section 6.5).
+      - the CPU path in parallel: the field estimate by row parts, the per-vector loop, the block counts and the
+        final pixels by bands of block rows, on a pool of half the cores up to 8 (`UNREAL_SMOOTH_THREADS`, Interactive
+        QoS). The split depends only on the picture size, every part has its own buffers, so the bits do not depend on
+        the thread count (the bench hashes unchanged). Idle M3 Ultra, a whole interpolated refresh, p50 / p90 / max:
+        Aleste 8.45 / 11.5 / 15.8 -> 3.22 / 4.30 / 5.68 ms, Cobra 4.9 / 7.6 / 10.7 -> 1.92 / 2.84 / 3.73 ms. `Decide`
+        stays serial (about a sixth). The GPU composition, with four synchronous reads per refresh, is now slower than
+        the CPU's (about 5 ms live); moving `Decide` to the GPU would cut the reads to one, not started.
+   5. Live check through the WebAPI on the hold-out clips
+      ([`live/`](../../../tools/verification/smoothmotion/README.md#what-the-window-shows-live)). The device split
+      found here: fields on the CPU, the composition on the GPU (section 6.5). Aleste on the 60 Hz panel, the window in
+      front, 8 s per mode after the presenter fixes (section 4) and the parallel CPU: `blend`, `interpolate` on the GPU
+      and on the CPU 0 late presents of ~480 each, the present error 8.33 ms (half a refresh, as asked) at p50; the
+      window's work per refresh p50 6.3-6.9 / p90 8.1-8.5 ms with interpolation (was up to 24 ms), the Metal present
+      call p90 0.6-0.9 ms after the GL fence is polled instead of waited (its timed wait slept in ~10 ms steps).
+      The six hold-out clips, `interpolate` on the GPU, 600 refreshes each (2026-11-02, load 60-70): every plan and
+      picture the core's; refreshes skipped 0 on five clips, one stall of 100 ms on Cobra; late presents 0-17 of 600;
+      jstep live / perfect clock / `off`: Aleste 0.85 / 0.76 / 3.12, Zynaps 0.77 / 0.79 / 1.06, Uridium Plus
+      1.83 / 1.82 / 2.84, Cobra 1.01 / 1.01 / 1.15, Hysteria 0.54, Flying Shark 0.47 (both at their perfect clock).
+      The trace itself first cost the skips (14-31 per clip): its buffers grew by doubling on the render thread.
+      **keepInk** (`LayerFlow::KeepInk`, both devices: the GPU's picture is read back through it). The `action` demo's
+      3D dot cloud flickered: each dot has its own motion, the layers' block vectors carried the paper and wiped
+      50-75 % of the dots on the refreshes between frames. A 24-pixel tile whose picture lost or gained over a quarter
+      of its ink (pixels other than the tile's paper) against both frames takes the nearer frame. Ink off over the
+      clip (lost + gained / ink): `action` 34 % -> 1.7 %, `earshaver-1` 0.3 -> 0.1 % (max 15.5 -> 5.1), `s4b-2`
+      2.3 -> 1.6 %, `vibrations` 0.5 -> 0.3 %, the other demos unchanged; the truth suite 177 -> 179 wrong, the six
+      game clips unchanged (jstep, ghost, tear within 0.01); cost within the run-to-run noise. Thresholds tried:
+      1 pixel / 25 % / 24 px kept the dots best without moving the suites; 16 px tiles, 2 pixels or 50 % kept fewer.
+      Rejected on the way: preferring a vector that carries a change over one carrying still paper (action 0.85 of
+      the dots kept, the truth suite 177 -> 232).
+      Known limit: a picture zoomed by resampling (the `action` demo's cyan cube of small squares, frames
+      4750-5000 after the snapshot). Between two frames no shift carries its texture (the best one matches 20-50 %
+      of the dots), the layers piece the refresh from chance vectors (up to 84 a frame) and the letters break.
+      Tried and dropped (none tells it from the dot clouds or the games): the share of a tile's ink the best two
+      shifts carry, ink density, joined ink pairs, a block's best shift kept from k - 1 to k + 1, the share of a
+      block's changes one shift explains both ways; each one either missed half of the zoom or caught 3-16 % of the
+      games' blocks or most of the dot clouds. Owner 2026-11-03: left as a limit.
 6. **Automation planes.** Settings and `PresentStats` on CLI, Python, Lua, MCP, REST and WebSocket; docs chain per the
-   guidelines. On the branch: `smooth_motion`, `effects_device` and the `present` report (section 6.4); not yet the
-   policy and the lip-sync offset.
-7. Later:
+   guidelines. On the branch: `smooth_motion`, `effects_device`, `present_policy`, `lip_sync_offset_ms`,
+   `display_rate`, the `present` report and the `video.present` topic (section 6.4); not yet the clock in use, the
+   frames off the beat pattern and the screen-to-sound offset.
+7. **Display rate switch** (section 4.7, on the branch): `[VIDEO] DisplayRate`, the mode picking and the frame-rate
+   meter with unit tests (`DisplayRate_Test`), the macOS and Windows switches, `display_rate` and `present.display`
+   on every plane. Measured on a monitor by the owner: the agent's shell has no window server.
+8. Later:
    - a Vulkan / Wayland presenter;
    - the iOS host (section 9) moves to `FrameClock` and the Metal presenter;
    - late input sampling in `c-vrr` (input-latency doc option B, nearly free once frames have target times).

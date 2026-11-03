@@ -192,6 +192,8 @@ ScreenFrames TimedFrameSource(Screen* screen, EmulatorContext* context)
     source.onCpu = context && context->config.effectsOnCpu;
     if (context && context->config.presentPolicy <= static_cast<uint8_t>(PresentPolicy::Vsync))
         source.policy = static_cast<PresentPolicy>(context->config.presentPolicy);
+    if (context && context->config.displayRate <= static_cast<uint8_t>(DisplayRate::Match))
+        source.displayRate = static_cast<DisplayRate>(context->config.displayRate);
     source.at = [screen, context](int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFrameInfo* info) {
         PresentFrameInfo shown;
         if (!context || !screen->CopyFrameAt(hostNs, dst, dstSize, &shown))

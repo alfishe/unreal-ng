@@ -14,6 +14,7 @@
 /// |:--|:--|:--|
 /// | `host.stats` | the process | available, cpu_percent (100 = one core), cpu_percent_host (of all cores), cores, rss_bytes, peak_rss_bytes, virtual_bytes, threads, cpu_time_s, uptime_s, interval_s |
 /// | `host.clients` | the process | per plane (rest, ws, events, debug_ws, mcp, cli): connections, opened, requests; companions (paired), instances |
+/// | `video.present` | the process | The GUI window's way to the screen, changed with the setup only (frame presenter design, section 6.4): available (false headless), emulator, presenter (metal / dxgi / gl / software), present_policy, fixed_display, vrr, refresh_hz {min, max}, smooth {setting, mode in effect, device, game}, display {setting keep / match, state keep / matched / unchanged, reason, hz, original_hz, machine_hz} |
 /// | `emulator.stats` | an instance | state, measuring, fps, nominal_fps, speed_percent, frame_time_us {avg, max}, frame_budget_percent, halted_percent, interrupts_per_frame, frame, t_states, turbo, cpu {mhz, base_mhz, multiplier (host x hardware), host_multiplier, hw_turbo_ratio} |
 /// | `debug.breakpoints` | an instance | available, total, active, inactive, owned, by_kind {memory, exec, read, write, port, port_in, port_out, keyboard, nextreg, beam, copper, magic}, groups [{name, total, active}], last_hit {id, type, address, access, group, note} or null |
 /// | `media.slots` | an instance | available, slots [{id, kind, present, pending, name, format, dirty, changed_units, protect}], loaded, dirty (any) |

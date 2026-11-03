@@ -99,6 +99,7 @@ void DeviceScreen::detach()
 
 void DeviceScreen::setFrameSource(ScreenFrames source)
 {
+    _displayRate = source.displayRate;
     smoothmotion::Mode mode = source.smooth;
     const QByteArray forced = qgetenv("UNREAL_SMOOTH_MOTION");
     if (!forced.isEmpty() && !smoothmotion::ParseMode(forced.constData(), mode))
@@ -120,6 +121,11 @@ WindowPresentStats DeviceScreen::presentStats() const
     const QScreen* display = screen();
     out.minRefreshHz = out.maxRefreshHz = display ? display->refreshRate() : 0.0;
     FillSmoothStats(_smooth, smoothActive(), false, out);
+    if (_displayRate == DisplayRate::Match)
+    {
+        out.displayState = "unchanged";
+        out.displayReason = "the software screen does not switch the display's mode (gpu on does)";
+    }
     return out;
 }
 

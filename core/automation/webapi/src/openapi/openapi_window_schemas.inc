@@ -24,6 +24,7 @@
               "fixed display)");
         field("effects_device", "string", "The shown instance's [VIDEO] EffectsDevice: gpu or cpu (the same bits)");
         field("present_policy", "string", "The shown instance's [VIDEO] PresentPolicy: auto, vrr or vsync");
+        field("display_rate", "string", "The shown instance's [VIDEO] DisplayRate: keep or match");
         field("lip_sync_offset_ms", "integer", "The shown instance's [VIDEO] LipSyncOffsetMs, -200..200");
         {
             Json::Value& p = s["properties"]["present"];
@@ -50,6 +51,10 @@
                "{mode (in effect: off with temporal blending or without timed frames), device (gpu / cpu), game (a "
                "game profile's cadence applies), frames, pictures, renders, blended, interpolated, motion_fields, "
                "on_device, held_flicker}");
+            pf("display", "object",
+               "[VIDEO] DisplayRate: {state (keep; matched: the display runs hz for the machine's machine_hz, its own "
+               "mode original_hz; unchanged: match asked, nothing switched), reason (why unchanged), hz, original_hz, "
+               "machine_hz}");
         }
         field("fullscreen", "boolean", "The window fills the display");
         field("scale", "integer", "The whole zoom the window is fitted to, 1..4; 0 when resized by hand, maximized or full screen");

@@ -14,6 +14,7 @@
 /// Validation lives here, so every surface refuses the same words with the same message; the provider only applies.
 
 #include <emulator/state/statenode.h>
+#include <emulator/video/displayrate.h>
 #include <emulator/video/presentpolicy.h>
 #include <emulator/video/smoothmotion.h>
 #include <emulator/video/windowview.h>
@@ -31,7 +32,7 @@ namespace WindowDisplay
 /// The settings a change can name, in the order every surface lists them
 inline constexpr const char* kKeys =
     "gpu, crt, crt_profile, blending, blending_frames, blending_weights, blending_decay, smooth_motion, effects_device, "
-    "present_policy, lip_sync_offset_ms, fullscreen, scale, toolbar, "
+    "present_policy, display_rate, lip_sync_offset_ms, fullscreen, scale, toolbar, "
     "status_bar, hud, hud_theme, hud_notice.<id>, osd_keyboard, osd_keyboard_picture, osd_keyboard_style, next_layers, next_layers_mode, "
     "next_layer.<ula|layer2|tilemap|sprites>";
 
@@ -277,6 +278,17 @@ inline bool ApplyWord(WindowDisplayChange& change, const std::string& key, const
         change.presentPolicy = PresentPolicyName(policy);
         return true;
     }
+    if (k == "display_rate")
+    {
+        DisplayRate rate = DisplayRate::Keep;
+        if (!ParseDisplayRate(value.c_str(), rate))
+        {
+            error = "'display_rate' takes keep or match, not '" + value + "'";
+            return false;
+        }
+        change.displayRate = DisplayRateName(rate);
+        return true;
+    }
     if (k == "lip_sync_offset_ms")
     {
         double ms = 0;
@@ -444,7 +456,8 @@ inline Result Set(const WindowDisplayChange& change)
 
 /// The frame presenter's part of the report: presenter, fixed_display, vrr, refresh_hz {min, max}, presented, shown, dropped,
 /// late, lead_ms, error_ms {p50, p99, max}, gpu_wait_ms {p50, max}, smooth {mode, device, game, frames, pictures,
-/// renders, blended, interpolated, motion_fields, on_device, held_flicker}
+/// renders, blended, interpolated, motion_fields, on_device, held_flicker}, display {state, reason, hz, original_hz,
+/// machine_hz}
 inline StateNode PresentReport(const WindowPresentStats& p)
 {
     StateNode node = StateNode::Object();
@@ -482,11 +495,18 @@ inline StateNode PresentReport(const WindowPresentStats& p)
     smooth["on_device"] = p.onDevice;
     smooth["held_flicker"] = p.heldFlicker;
     node["smooth"] = smooth;
+    StateNode display = StateNode::Object();
+    display["state"] = p.displayState;
+    display["reason"] = p.displayReason;
+    display["hz"] = p.displayHz;
+    display["original_hz"] = p.originalHz;
+    display["machine_hz"] = p.machineHz;
+    node["display"] = display;
     return node;
 }
 
 /// The report every surface returns: backend, gpu_available, gpu, crt, crt_profile, crt_profiles[], blending,
-/// blending_frames, blending_weights, smooth_motion, effects_device, present_policy, lip_sync_offset_ms, present
+/// blending_frames, blending_weights, smooth_motion, effects_device, present_policy, display_rate, lip_sync_offset_ms, present
 /// (PresentReport), emulator (the instance
 /// the window shows, "" = none)
 inline StateNode Report(const WindowDisplaySettings& s)
@@ -508,6 +528,7 @@ inline StateNode Report(const WindowDisplaySettings& s)
     node["smooth_motion"] = s.smoothMotion;
     node["effects_device"] = s.effectsDevice;
     node["present_policy"] = s.presentPolicy;
+    node["display_rate"] = s.displayRate;
     node["lip_sync_offset_ms"] = s.lipSyncOffsetMs;
     node["present"] = PresentReport(s.present);
     node["emulator"] = s.emulatorId;
@@ -567,6 +588,15 @@ inline std::string Summary(const WindowDisplaySettings& s)
     // The policy in effect only where a native presenter applies it
     const bool native = s.present.presenter == "metal" || s.present.presenter == "dxgi";
     line += ", present " + s.presentPolicy + (native ? (s.present.vrr ? " (vrr)" : " (vsync)") : "");
+    if (s.displayRate != "keep")
+    {
+        const WindowPresentStats& p = s.present;
+        line += ", display rate " + s.displayRate +
+                (p.displayState == "matched"
+                     ? " (" + NumberWord(p.displayHz) + " Hz for " + NumberWord(p.machineHz) + ", was " +
+                           NumberWord(p.originalHz) + ")"
+                     : (p.displayReason.empty() ? "" : " (" + p.displayReason + ")"));
+    }
     if (s.lipSyncOffsetMs != 0)
         line += ", lip sync " + std::string(s.lipSyncOffsetMs > 0 ? "+" : "") + std::to_string(s.lipSyncOffsetMs) +
                 " ms";

@@ -25,13 +25,17 @@ public:
     /// draw (a GL fence wait up to 10 ms on a busy GPU) comes on top. Frames latch some 60 ms before their target, so
     /// a long lead costs nothing (at 60 Hz under load, frames a refresh late: lead 6 ms 65 %, 18 ms 15 %, 23 ms 2 %):
     /// a refresh plus 6 ms to start with, adapted to the load: each present shown a refresh late adds 1 ms (up to a
-    /// refresh plus 12 ms), 600 on time in a row take 1 ms back (down to a refresh plus 4 ms)
+    /// refresh plus 20 ms), 600 on time in a row take 1 ms back (down to a refresh plus 4 ms)
     int64_t LeadNs(int64_t refreshPeriodNs) const override;
     /// auto: a display with a refresh range (ProMotion, adaptive sync) shows each present at its time, a fixed one at
     /// the first refresh after it; vrr: no grid, the frames at their times; vsync: the grid, a range at its top rate
     void SetPolicy(PresentPolicy policy) override;
     /// The last present's presentedTime and the screen's refresh interval; false while each present shows at its time
     bool RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const override;
+    uint64_t Presented() const override;
+    uint64_t LastLatePresent() const override;
+    uint32_t LastLateLag() const override;
+    uint64_t LastOnTimePresent() const override;
     Stats GetStats() const override;
     std::string Describe() const override;
 
