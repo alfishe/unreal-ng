@@ -816,10 +816,10 @@ bool TableEntryPoint(const DetectorContext& context, uint32_t start)
             continue;
         for (const int step : {-4, -2, 2, 4})
         {
-            const int64_t near = static_cast<int64_t>(at) + step;
-            if (near < 0x4000 || near + 1 > 0xFFFF)
+            const int64_t neighbour = static_cast<int64_t>(at) + step;
+            if (neighbour < 0x4000 || neighbour + 1 > 0xFFFF)
                 continue;
-            const uint32_t other = word(static_cast<uint32_t>(near));
+            const uint32_t other = word(static_cast<uint32_t>(neighbour));
             if ((other > start ? other - start : start - other) < kTableNeighbourSpan)
                 return true;
         }
