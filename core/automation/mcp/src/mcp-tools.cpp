@@ -5370,7 +5370,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
-                               "cause_chain", "find_event", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
+                               "cause_chain", "find_event", "explain_frame", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
                                "memory_at", "memory_diff"})
     {
@@ -5440,6 +5440,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "limit 1..100; the answer is one line per hit: frame+tinframe, PC, the instruction, before -> after and why; "
         "'more' gives the frame to continue from; frames are filtered from the stored history, only hit frames are "
         "replayed, the machine stays where it was). "
+        "'explain_frame' (what one frame did: one call instead of memory_diff + find_last per range + port_events + "
+        "stepping; frame (default: the current one); the answer: the time split (ISR / HALT / code), the routines by "
+        "time from the call structure (calls, inclusive and own T, instructions, caller), the interrupt (IM, vector, "
+        "entry, T, where it returned), paging changes, ports per device (count, values, keys seen down), the memory "
+        "changed per range (screen pixels / attributes, stack, RAM) with its writers, the screen % changed and the "
+        "border colours, keys held / pressed, markers; sections picks some ('routines,memory'), limit entries per "
+        "list (default 8); one replay of the frame, the machine stays where it was). "
         "'cause_chain' (why does a byte or a register hold its value: one call instead of find_last + disassemble + "
         "reverse_step loops; addr (with phys_page) or reg (A, HL, IX, SP, E'...), at frame / tinframe (default: the "
         "current position); the answer is the chain back from the value, one line per link: the instruction that "
@@ -5484,7 +5491,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["frame"]["description"] =
         "Frame number: target for seek (required), optional start point for resume (default: the current point), optional position for bookmark_add "
         "(default: current position), frame to test for coverage_probe, the moment for cause_chain (default: the "
-        "current position)";
+        "current position), the frame for explain_frame (default: the current one)";
     schema["properties"]["tinframe"]["type"] = "integer";
     schema["properties"]["tinframe"]["description"] =
         "T-states within 'frame' for seek / resume / bookmark_add (default 0). A seek without it lands at the frame's end "
@@ -5526,6 +5533,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["order"]["description"] =
         "coverage_scan: the list keeps the first 'limit' matches oldest first (default) or newest first; find_event: "
         "first (default, = oldest) or last (= newest)";
+    schema["properties"]["sections"]["type"] = "string";
+    schema["properties"]["sections"]["description"] =
+        "explain_frame: comma list of time, routines, interrupt, paging, ports, memory, screen, input, markers "
+        "(default all)";
     schema["properties"]["find"]["type"] = "string";
     schema["properties"]["find"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* e : {"mem", "screen", "exec", "port", "border", "key"})
@@ -5667,7 +5678,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["limit"]["description"] =
         "Max results for coverage_scan and blocks for coverage_rare (default 200, at most 10000), port_events (default 100), find_last / "
         "reverse_continue with all (default 100, at most 10000), frames per probe for probe_frames (default 1000, at most "
-        "10000), or max buckets for coverage_summary (default 100)";
+        "10000), or max buckets for coverage_summary (default 100), entries per list for explain_frame (default 8, at "
+        "most 100)";
     schema["properties"]["max_frames"]["type"] = "integer";
     schema["properties"]["max_frames"]["description"] =
         "coverage_rare: an address is rare when at most this many frames touched it (default 1, at most 1000); "
@@ -6677,6 +6689,27 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         if (body["hits"].empty())
                             out += "No hit: widen the window (from_frame / to_frame), loosen the condition, or check "
                                    "the address and phys_page.\n";
+                        body.removeMember("text");
+                        done(ToolResult::Ok(out, std::move(body)));
+                    });
+                }
+                else if (action == "explain_frame")
+                {
+                    std::string query = "/ttd/explain-frame?text=true";
+                    if (args.isMember("frame"))
+                        query += "&frame=" + std::to_string(args["frame"].asUInt64());
+                    if (args.isMember("limit"))
+                        query += "&limit=" + std::to_string(args["limit"].asUInt64());
+                    if (args.isMember("sections"))
+                        query += "&sections=" + UrlEncodeSegment(args["sections"].asString());
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        // One block per section: an agent may read only this
+                        std::string out = body["text"].asString();
                         body.removeMember("text");
                         done(ToolResult::Ok(out, std::move(body)));
                     });

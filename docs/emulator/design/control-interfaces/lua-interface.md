@@ -1381,6 +1381,13 @@ local down = ttd_find_event("mem", {addr = 0xA130, cond = "decreased", limit = 3
 local scene = ttd_find_event("screen", {min_changed = 60})
 local fire = ttd_find_event("key", {key = "SPACE"})
 
+-- What one frame did: frame (default the current one), options sections ("time,routines,..."), limit (8), text
+local f = ttd_explain_frame(1204, {sections = "time,routines,memory", limit = 4})
+-- { frame = 1204, frame_t = 69888, end_t = 69888, instructions = 18312, time = {isr = 6210, halt = 21700, code = ...},
+--   routines = { {pc = 0x8A14, calls = 1, t = 31220, own_t = 2110, insns = 4812, caller = 0x8003}, ... },
+--   memory = { {region = "screen pixels", addr = 0x4800, changed = 1024, writers = { {pc = 0x9A12,
+--   text = "ld (hl),a", count = 1024} }}, ... }, more_memory = 2, frames_replayed = 1, ms = ... }
+
 local summary = ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50, limit = 100}
 -- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,
 --   bucket_size = 50, bucket_count = 10, index_available = true,

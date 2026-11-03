@@ -192,5 +192,41 @@ def test_find_event_names_the_moment(s):
     r = s.call('time_travel', {'action': 'find_event'}, ok=False)
     expect(r.is_error and 'find' in r.text, 'no kind named', r.text)
 
+def test_explain_frame_tells_what_the_frame_did(s):
+    # The history of test_record_stop_seek: the ROM's IM 1 handler at #0038 counts FRAMES (#5C78) and scans the
+    # keyboard. The frame after the first one that ran it: on a Pentagon the INT comes at the frame end, so the handler
+    # runs on into that frame (carried over from the frame before, which the session's first frame lacks)
+    before = s.call('time_travel', {'action': 'status'}).text
+    run = s.call('time_travel', {'action': 'find_event', 'find': 'exec', 'addr': '0x0038'}).structured.get('hits', [])
+    expect(len(run) == 1, 'a frame with the IM 1 handler', run)
+    frame = run[0]['frame'] + 1
+    r = s.call('time_travel', {'action': 'explain_frame', 'frame': frame})
+    v = r.structured
+    expect(not r.is_error and v.get('frame') == frame, 'the frame explained', r.text)
+    irqs = v.get('interrupts', [])
+    expect(len(irqs) >= 1 and all(i.get('mode') == 1 and i.get('entry') == 0x38 for i in irqs), 'the IM 1 acknowledge',
+           irqs)
+    expect(any(i.get('returned') for i in irqs), 'back to the interrupted code', irqs)
+    isr = [x for x in v.get('routines', []) if x.get('pc') == 0x38 and x.get('isr')]
+    expect(len(isr) == 1 and isr[0].get('t', 0) > 0, 'the handler as a routine with its time', r.text)
+    frames = [m for m in v.get('memory', []) if m.get('addr') == 0x5C78]
+    expect(len(frames) == 1 and frames[0].get('changed', 0) >= 1 and frames[0].get('writers'),
+           'FRAMES changed, with its writer', v.get('memory'))
+    reads = [p for p in v.get('ports', []) if p.get('dir') == 'in']
+    expect(reads and reads[0].get('count', 0) >= 8, 'the keyboard scan read the half-rows', v.get('ports'))
+    t = v.get('time', {})
+    expect(t.get('isr', 0) + t.get('halt', 0) + t.get('code', 0) == v.get('end_t'), 'the time adds up', t)
+    expect(all(w in r.text for w in ('routines by time:', 'interrupt: ', 'IM 1', 'memory:', '#5C78', 'ports:')),
+           'every section in the text', r.text)
+    r = s.call('time_travel', {'action': 'explain_frame', 'frame': frame, 'sections': 'routines', 'limit': 2})
+    expect(not r.is_error and len(r.structured.get('routines', [])) <= 2 and 'memory' not in r.structured
+           and 'memory:' not in r.text, 'sections and limit', r.text)
+    at_before = re.search(r'at frame (\d+)', before)
+    at_after = re.search(r'at frame (\d+)', s.call('time_travel', {'action': 'status'}).text)
+    expect((at_before and at_before.group(1)) == (at_after and at_after.group(1)), 'the position did not move',
+           (before[:200], at_after))
+    r = s.call('time_travel', {'action': 'explain_frame', 'sections': 'nosuch'}, ok=False)
+    expect(r.is_error and 'section' in r.text, 'an unknown section named', r.text)
+
 if __name__ == '__main__':
     sys.exit(main(globals()))

@@ -18,7 +18,7 @@ namespace controllers
 
 struct TestEffect
 {
-    std::string id;     ///< identify, low, high, clicks, left-trigger, right-trigger, swell
+    std::string id;     ///< identify, low, high, clicks, left-trigger, right-trigger, hd-left, hd-right, hd-knocks, click, swell
     std::string label;  ///< for a person: "Identify (both motors)"
     HapticEffect effect;                ///< the motors' envelope (HostInputService::PlayEffect)
     std::optional<HapticClicks> clicks;  ///< a clicker's effect instead (IBackend::PlayClicks)
@@ -29,7 +29,7 @@ std::vector<TestEffect> TestEffects(uint8_t actuators);
 /// How long a test effect plays: its envelope, or a clicker's clicks and the periods between them
 uint32_t DurationMs(const TestEffect& test);
 
-/// The names of RumbleActuator bits: low, high, left-trigger, right-trigger, clicker
+/// The names of RumbleActuator bits: low, high, left-trigger, right-trigger, clicker, hd-left, hd-right
 std::vector<std::string> ActuatorNames(uint8_t actuators);
 
 }  // namespace controllers

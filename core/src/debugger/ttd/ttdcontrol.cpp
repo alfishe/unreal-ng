@@ -349,6 +349,7 @@ private:
     TTDReply Timeline(const TTDRequest& request);
     TTDReply CauseChain(const TTDRequest& request);
     TTDReply FindEvent(const TTDRequest& request);
+    TTDReply ExplainFrame(const TTDRequest& request);
     TTDReply Bookmarks();
     TTDReply BookmarkAdd(const TTDRequest& request);
     TTDReply BookmarkDelete(const TTDRequest& request);
@@ -440,7 +441,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-delete",
         "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
-        "timeline", "cause-chain", "find-event", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
+        "timeline", "cause-chain", "find-event", "explain-frame", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
     return verbs;
 }
 
@@ -479,6 +480,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"find-event", {"kind", "cond", "addr", "addr_to", "phys_page", "size", "value", "bit", "exact", "min_changed",
                         "dir", "port", "port_mask", "value_mask", "key", "pressed", "order", "from_frame", "to_frame",
                         "limit", "max_frames", "text"}},
+        {"explain-frame", {"frame", "sections", "limit", "text"}},
         {"file-info", {"path"}},
         {"dump", {"path"}},
         {"load", {"path"}},
@@ -580,6 +582,8 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return CauseChain(request);
     if (verb == "find-event")
         return FindEvent(request);
+    if (verb == "explain-frame")
+        return ExplainFrame(request);
     if (verb == "markers")
         return Markers();
     if (verb == "bookmarks")
@@ -2808,6 +2812,261 @@ TTDReply TTDControlBackend::FindEvent(const TTDRequest& request)
     reply.body["ms"] = res.ms;
     if (text)
         reply.body["text"] = TTDFindEventText(q, res);
+    return reply;
+}
+
+TTDReply TTDControlBackend::ExplainFrame(const TTDRequest& request)
+{
+    TTDExplainFrameQuery q;
+    if (const std::string* t = Option(request, "frame"))
+    {
+        if (!ParseUpTo(*t, UINT64_MAX, q.frame))
+            return Fail(TTDControlError::BadRequest, "Invalid frame: '" + *t + "'");
+        q.hasFrame = true;
+    }
+    if (const std::string* t = Option(request, "sections"))
+    {
+        q.sections = 0;
+        size_t from = 0;
+        while (from <= t->size())
+        {
+            const size_t comma = std::min(t->find(',', from), t->size());
+            const std::string name = t->substr(from, comma - from);
+            uint32_t bit = 0;
+            if (!name.empty() && !TTDExplainSectionByName(name, bit))
+                return Fail(TTDControlError::BadRequest, "Invalid section: '" + name +
+                                                             "' (time routines interrupt paging ports memory screen "
+                                                             "input markers all)");
+            q.sections |= bit;
+            from = comma + 1;
+        }
+        if (q.sections == 0)
+            q.sections = kExplainAll;
+    }
+    if (const std::string* t = Option(request, "limit"))
+    {
+        uint64_t n = 0;
+        if (!ParseUpTo(*t, TTDExplainFrameQuery::kMaxLimit, n) || n == 0)
+            return Fail(TTDControlError::BadRequest, "Invalid limit: '" + *t + "' (expected 1.." +
+                                                         std::to_string(TTDExplainFrameQuery::kMaxLimit) + ")");
+        q.limit = static_cast<uint32_t>(n);
+    }
+    bool text = false;
+    if (std::string flag = FlagOption(request, "text", text); !flag.empty())
+        return Fail(TTDControlError::BadRequest, flag);
+
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    const TTDExplainFrameResult res = _manager->QueryExplainFrame(q);
+    if (!res.error.empty())
+        return Fail(TTDControlError::BadRequest, res.error);
+
+    TTDReply reply;
+    StateNode& b = reply.body;
+    b["frame"] = res.frame;
+    b["frame_t"] = static_cast<unsigned>(res.frameT);
+    b["end_t"] = static_cast<unsigned>(res.endT);
+    b["partial"] = res.partial;
+    if (!res.barrier.empty())
+        b["barrier"] = res.barrier;
+    b["instructions"] = res.instructions;
+    if (q.sections & kExplainTime)
+    {
+        StateNode time = StateNode::Object();
+        time["isr"] = res.isrT;
+        time["halt"] = res.haltT;
+        time["code"] = res.codeT;
+        b["time"] = time;
+    }
+    if (q.sections & kExplainRoutines)
+    {
+        StateNode list = StateNode::Array();
+        for (const TTDExplainRoutine& r : res.routines)
+        {
+            StateNode n = StateNode::Object();
+            n["pc"] = static_cast<unsigned>(r.pc);
+            n["code_page"] = PhysPageNode(r.codePage);
+            if (r.isr)
+                n["isr"] = true;
+            if (r.start)
+                n["start"] = true;
+            if (!r.label.empty())
+                n["label"] = r.label;
+            n["calls"] = r.calls;
+            n["t"] = r.t;
+            n["own_t"] = r.ownT;
+            n["insns"] = r.insns;
+            if (r.hasCaller)
+                n["caller"] = static_cast<unsigned>(r.caller);
+            list.push(n);
+        }
+        b["routines"] = list;
+        b["more_routines"] = res.moreRoutines;
+    }
+    if (q.sections & kExplainInterrupt)
+    {
+        b["interrupts_enabled"] = res.interruptsEnabled;
+        StateNode list = StateNode::Array();
+        for (const TTDExplainInterrupt& i : res.interrupts)
+        {
+            StateNode n = StateNode::Object();
+            n["tinframe"] = static_cast<unsigned>(i.tInFrame);
+            n["mode"] = static_cast<unsigned>(i.mode);
+            if (i.hasVector)
+                n["vector"] = static_cast<unsigned>(i.vectorAddress);
+            n["entry"] = static_cast<unsigned>(i.entry);
+            n["t"] = i.t;
+            if (i.beforeFrame)
+                n["before_frame"] = true;
+            n["returned"] = i.returned;
+            if (i.returned)
+                n["returned_to"] = static_cast<unsigned>(i.returnedTo);
+            list.push(n);
+        }
+        b["interrupts"] = list;
+    }
+    if (q.sections & kExplainPaging)
+    {
+        StateNode list = StateNode::Array();
+        for (const TTDExplainPaging& p : res.paging)
+        {
+            StateNode n = StateNode::Object();
+            n["tinframe"] = static_cast<unsigned>(p.tInFrame);
+            n["pc"] = static_cast<unsigned>(p.pc);
+            n["bank"] = static_cast<unsigned>(p.bank);
+            n["page"] = PhysPageNode(p.page);
+            n["was"] = PhysPageNode(p.was);
+            list.push(n);
+        }
+        b["paging"] = list;
+        b["more_paging"] = res.morePaging;
+    }
+    if (q.sections & kExplainPorts)
+    {
+        StateNode list = StateNode::Array();
+        for (const TTDExplainPort& p : res.ports)
+        {
+            StateNode n = StateNode::Object();
+            n["dir"] = p.out ? "out" : "in";
+            n["device"] = p.device;
+            n["port"] = static_cast<unsigned>(p.port);
+            if (p.manyPorts)
+                n["many_ports"] = true;
+            n["count"] = p.count;
+            n["tinframe"] = static_cast<unsigned>(p.tInFrame);
+            n["pc"] = static_cast<unsigned>(p.pc);
+            StateNode values = StateNode::Array();
+            for (uint8_t v : p.values)
+                values.push(StateNode(static_cast<unsigned>(v)));
+            n["values"] = values;
+            if (p.moreValues)
+                n["more_values"] = true;
+            if (p.rows)
+                n["rows"] = static_cast<unsigned>(p.rows);
+            if (!p.keys.empty())
+            {
+                StateNode keys = StateNode::Array();
+                for (const std::string& k : p.keys)
+                    keys.push(StateNode(k));
+                n["keys"] = keys;
+            }
+            list.push(n);
+        }
+        b["ports"] = list;
+        b["more_ports"] = res.morePorts;
+    }
+    if (q.sections & kExplainMemory)
+    {
+        StateNode list = StateNode::Array();
+        for (const TTDExplainRange& m : res.memory)
+        {
+            StateNode n = StateNode::Object();
+            n["region"] = TTDExplainRegionName(m.region);
+            n["phys_page"] = PhysPageNode(m.page);
+            n["offset"] = static_cast<unsigned>(m.offset);
+            if (m.hasAddress)
+                n["addr"] = static_cast<unsigned>(m.address);
+            n["length"] = m.length;
+            n["changed"] = m.changed;
+            n["written"] = m.written;
+            if (m.hasValues)
+            {
+                n["before"] = static_cast<unsigned>(m.before);
+                n["after"] = static_cast<unsigned>(m.after);
+            }
+            if (m.device)
+                n["device"] = true;
+            StateNode writers = StateNode::Array();
+            for (const TTDExplainWriter& w : m.writers)
+            {
+                StateNode wn = StateNode::Object();
+                wn["pc"] = static_cast<unsigned>(w.pc);
+                wn["code_page"] = PhysPageNode(w.codePage);
+                wn["text"] = w.text;
+                wn["count"] = w.count;
+                writers.push(wn);
+            }
+            n["writers"] = writers;
+            if (m.moreWriters)
+                n["more_writers"] = true;
+            list.push(n);
+        }
+        b["memory"] = list;
+        b["more_memory"] = res.moreMemory;
+    }
+    if (q.sections & kExplainScreen)
+    {
+        StateNode screen = StateNode::Object();
+        if (res.hasScreen)
+        {
+            screen["bytes"] = res.screenBytes;
+            screen["changed"] = res.screenChanged;
+            screen["pixels"] = res.pixelsChanged;
+            screen["attributes"] = res.attributesChanged;
+            screen["switched"] = res.screenSwitched;
+        }
+        StateNode border = StateNode::Array();
+        for (const TTDExplainBorder& c : res.border)
+        {
+            StateNode n = StateNode::Object();
+            n["colour"] = static_cast<unsigned>(c.colour);
+            n["count"] = c.count;
+            border.push(n);
+        }
+        screen["border"] = border;
+        b["screen"] = screen;
+    }
+    if (q.sections & kExplainInput)
+    {
+        StateNode input = StateNode::Object();
+        StateNode held = StateNode::Array();
+        for (const std::string& k : res.keysHeld)
+            held.push(StateNode(k));
+        input["held"] = held;
+        StateNode events = StateNode::Array();
+        for (const TTDExplainKey& k : res.keys)
+        {
+            StateNode n = StateNode::Object();
+            n["tinframe"] = static_cast<unsigned>(k.tInFrame);
+            n["key"] = k.key;
+            n["pressed"] = k.pressed;
+            events.push(n);
+        }
+        input["events"] = events;
+        b["input"] = input;
+    }
+    if (q.sections & kExplainMarkers)
+    {
+        StateNode markers = StateNode::Array();
+        for (const std::string& m : res.markers)
+            markers.push(StateNode(m));
+        b["markers"] = markers;
+    }
+    b["frames_replayed"] = res.framesReplayed;
+    b["ms"] = res.ms;
+    if (text)
+        b["text"] = TTDExplainFrameText(q, res);
     return reply;
 }
 

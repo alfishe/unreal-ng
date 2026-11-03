@@ -96,6 +96,14 @@ std::shared_ptr<TTDFrameTrace> TimeTravelController::TraceCauseFrame(size_t cpIn
     const EmulatorState& st = _context->emulatorState;
 
     RestoreCheckpointForReplay(cp);
+    {
+        auto word = [&](uint16_t addr) {
+            return static_cast<uint16_t>(memory->DirectReadFromZ80Memory(addr) |
+                                         memory->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + 1)) << 8);
+        };
+        trace->startStackWord = word(z80->sp);
+        trace->startIm2Entry = word(static_cast<uint16_t>(z80->i << 8 | 0xFF));
+    }
     uint64_t interrupts = z80->interruptsAccepted;
     bool haltIdle = false;   // the open record is a HALT whose idle fetches follow
     std::vector<TTDTraceEvent> early;   // bus events before the frame's first instruction start

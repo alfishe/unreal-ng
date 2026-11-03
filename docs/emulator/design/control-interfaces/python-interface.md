@@ -1829,6 +1829,13 @@ down = emu.ttd_find_event('mem', addr=0xA130, cond='decreased', limit=3)
 #  'more': True, 'next_from_frame': ..., 'frames_scanned': ..., 'frames_replayed': 3, 'ms': ...}
 first_run = emu.ttd_find_event('exec', addr=0x8A14, text=True)
 
+# What one frame did: frame=None (the current one), sections='time,routines,interrupt,paging,ports,memory,screen,
+# input,markers' (default all), limit=8, text=False
+f = emu.ttd_explain_frame(1204, sections='time,routines,memory', limit=4)
+# {'frame': 1204, 'frame_t': 69888, 'instructions': 18312, 'time': {'isr': 6210, 'halt': 21700, 'code': ...},
+#  'routines': [{'pc': 35348, 'calls': 1, 't': 31220, 'own_t': 2110, 'insns': 4812, 'caller': 32771, ...}, ...],
+#  'memory': [{'region': 'screen pixels', 'addr': 18432, 'changed': 1024, 'writers': [...]}, ...], 'ms': ...}
+
 summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50, limit=100)
 # {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,
 #  'bucket_size': 50, 'bucket_count': 10, 'index_available': True,

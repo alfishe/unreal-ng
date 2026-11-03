@@ -105,6 +105,10 @@ struct TTDFrameTrace
     std::vector<TTDTraceInsn> insns;
     std::vector<TTDTraceEvent> events;
     uint8_t finalRegs[static_cast<size_t>(TTDCauseReg::Count)] = {};
+    /// At the frame start (read after the checkpoint restore): the word at SP and the IM 2 vector word at
+    /// I * 256 + #FF, so a frame that starts inside an interrupt routine acknowledged at the frame before's end is seen
+    uint16_t startStackWord = 0;
+    uint16_t startIm2Entry = 0;
 
     /// The registers after instruction @p index (the next one's start, or finalRegs)
     const uint8_t* RegsAfter(size_t index) const
