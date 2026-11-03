@@ -5444,7 +5444,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
-                               "cause_chain", "find_event", "explain_frame", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
+                               "cause_chain", "find_event", "explain_frame", "diff", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
                                "memory_at", "memory_diff"})
     {
@@ -5521,6 +5521,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "changed per range (screen pixels / attributes, stack, RAM) with its writers, the screen % changed and the "
         "border colours, keys held / pressed, markers; sections picks some ('routines,memory'), limit entries per "
         "list (default 8); one replay of the frame, the machine stays where it was). "
+        "'diff' (what differs between two moments: one call instead of seek + registers + memory reads at each end "
+        "+ memory_diff + find_last per range; from_frame (from_tinframe) and to_frame (to_tinframe; default: the "
+        "current position), any T inside a frame; the answer: the registers, latches and 8K slot mapping that "
+        "differ, the RAM changed in ranges (screen pixels / attributes, RAM per page) with the bytes of short ranges "
+        "and the last CPU write in between (time, PC, instruction), the screen % changed and the border, the devices "
+        "whose state differs, the frames / T / keys / markers in between; sections picks some ('cpu,memory'), limit "
+        "entries per list (default 16), writers=false skips the write search; the machine stays where it was). "
         "'cause_chain' (why does a byte or a register hold its value: one call instead of find_last + disassemble + "
         "reverse_step loops; addr (with phys_page) or reg (A, HL, IX, SP, E'...), at frame / tinframe (default: the "
         "current position); the answer is the chain back from the value, one line per link: the instruction that "
@@ -5610,7 +5617,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["sections"]["type"] = "string";
     schema["properties"]["sections"]["description"] =
         "explain_frame: comma list of time, routines, interrupt, paging, ports, memory, screen, input, markers "
-        "(default all)";
+        "(default all); diff: cpu, paging, memory, screen, devices, between (default all)";
+    schema["properties"]["from_tinframe"]["type"] = "integer";
+    schema["properties"]["from_tinframe"]["description"] = "diff: T inside from_frame (default 0)";
+    schema["properties"]["to_tinframe"]["type"] = "integer";
+    schema["properties"]["to_tinframe"]["description"] = "diff: T inside to_frame (default 0)";
+    schema["properties"]["writers"]["type"] = "boolean";
+    schema["properties"]["writers"]["description"] = "diff: the last write in between per memory range (default true)";
     schema["properties"]["find"]["type"] = "string";
     schema["properties"]["find"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* e : {"mem", "screen", "exec", "port", "border", "key"})
@@ -5728,10 +5741,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["from_frame"]["type"] = "integer";
     schema["properties"]["from_frame"]["description"] =
         "Starting frame for coverage_scan / coverage_rare / coverage_summary / port_events / probe_frames / journal_build / export_clip; the oldest "
-        "frame find_last / reverse_continue look at";
+        "frame find_last / reverse_continue look at; diff: the first moment";
     schema["properties"]["to_frame"]["type"] = "integer";
     schema["properties"]["to_frame"]["description"] =
-        "Ending frame for coverage_scan / coverage_rare / coverage_summary / port_events / probe_frames / journal_build / export_clip";
+        "Ending frame for coverage_scan / coverage_rare / coverage_summary / port_events / probe_frames / journal_build / export_clip; diff: the "
+        "second moment (default: the current position)";
     schema["properties"]["chunk"]["type"] = "integer";
     schema["properties"]["chunk"]["description"] = "export_clip: frames per zstd chunk (default 500)";
     schema["properties"]["kind"]["type"] = "string";
@@ -5753,7 +5767,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Max results for coverage_scan and blocks for coverage_rare (default 200, at most 10000), port_events (default 100), find_last / "
         "reverse_continue with all (default 100, at most 10000), frames per probe for probe_frames (default 1000, at most "
         "10000), or max buckets for coverage_summary (default 100), entries per list for explain_frame (default 8, at "
-        "most 100)";
+        "most 100) and diff (default 16, at most 200)";
     schema["properties"]["max_frames"]["type"] = "integer";
     schema["properties"]["max_frames"]["description"] =
         "coverage_rare: an address is rare when at most this many frames touched it (default 1, at most 1000); "
@@ -6763,6 +6777,33 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         if (body["hits"].empty())
                             out += "No hit: widen the window (from_frame / to_frame), loosen the condition, or check "
                                    "the address and phys_page.\n";
+                        body.removeMember("text");
+                        done(ToolResult::Ok(out, std::move(body)));
+                    });
+                }
+                else if (action == "diff")
+                {
+                    if (!args.isMember("from_frame"))
+                    {
+                        done(ToolResult::Error("Action 'diff' requires 'from_frame'"));
+                        return;
+                    }
+                    std::string query = "/ttd/diff?text=true";
+                    for (const char* field : {"from_frame", "from_tinframe", "to_frame", "to_tinframe", "limit"})
+                        if (args.isMember(field))
+                            query += std::string("&") + field + "=" + std::to_string(args[field].asUInt64());
+                    if (args.isMember("sections"))
+                        query += "&sections=" + UrlEncodeSegment(args["sections"].asString());
+                    if (args.isMember("writers"))
+                        query += std::string("&writers=") + (args["writers"].asBool() ? "true" : "false");
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        // One block per section: an agent may read only this
+                        std::string out = body["text"].asString();
                         body.removeMember("text");
                         done(ToolResult::Ok(out, std::move(body)));
                     });

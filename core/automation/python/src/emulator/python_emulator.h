@@ -6847,6 +6847,23 @@ namespace PythonBindings
                "markers. kwargs: sections ('routines,memory'), limit, text",
                 py::arg("frame") = py::none());
 
+        emulatorClass.def("ttd_diff", [](Emulator& self, uint64_t fromFrame, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                options["from_frame"] = std::to_string(fromFrame);
+                const ttd::TTDReply reply = TtdRunPy(self, "diff", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "What differs between two moments: from_frame (from_tinframe) and to_frame / to_tinframe (default: the "
+               "current position) - registers, latches, the slot mapping, memory ranges with the last write in "
+               "between, screen and border, devices, the time, keys and markers in between. kwargs: from_tinframe, "
+               "to_frame, to_tinframe, sections ('cpu,memory'), limit, writers, text",
+                py::arg("from_frame"));
+
         // ================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI/Lua:
         // step out, skip until, memory find, screen digest, beam, frame cost,

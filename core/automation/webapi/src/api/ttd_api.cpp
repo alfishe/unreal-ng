@@ -649,6 +649,15 @@ void EmulatorAPI::getTTDExplainFrame(const HttpRequestPtr& req, std::function<vo
     RespondTTD(id, "explain-frame", OptionsFromQuery(req, "explain-frame"), callback);
 }
 
+/// @brief GET /api/v1/emulator/{id}/ttd/diff
+/// What differs between two moments (docs/inprogress/2026-11-03-ttd-diff-moments): registers, latches, the slot
+/// mapping, memory ranges with the last write in between, screen, devices, the time, keys and markers in between
+void EmulatorAPI::getTTDDiffMoments(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    RespondTTD(id, "diff", OptionsFromQuery(req, "diff"), callback);
+}
+
 }  // namespace v1
 }  // namespace api
 

@@ -6405,6 +6405,16 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("explain-frame", options)));
         });
 
+        // ttd_diff{from_frame = F, from_tinframe = T, to_frame = G, to_tinframe = T, sections = "cpu,memory", limit = N,
+        // writers = false, text = true}: what differs between two moments (the second defaults to the current one) -
+        // registers, latches, mapping, memory with the last writes, screen, devices, the keys and markers in between
+        lua.set_function("ttd_diff", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("diff", options)));
+        });
+
         // A memory at a past checkpoint and what changed between two, from the store (no seek):
         // ttd_memory_at{space = "vram", frame = F, offset = 0x4805, length = 16}
         // ttd_memory_diff{space = "ram5", from_frame = F1, to_frame = F2, limit = 100}
