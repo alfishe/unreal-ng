@@ -11,6 +11,9 @@
   (1533c4d1d); phase 7 the SMUC peripherals of the 6.44 fast test (ccc18fbc4, f485570c3).
 - 2026-11-02: no slot rule against a General Sound on a GMX (Apollonov's 1999 article stays as history, the official
   site named the 20.04.99 firmware as the fix); Puzzle Bobble plays its samples on the NeoGS and on a GS 512 KB.
+- 2026-11-02: the video players' sound checked against the files' tracks: VIDEO03 on the NeoGS and a GS 512 KB
+  (silent on 128 KB like the hardware), VPlayer 0.1.7 on `#B3` (NeoGS, GS) and `#FB` (SounDrive); VPlayer 0.1.6 plays
+  the native 0.1.5 sample `DD-ak` with sound on `#B3`.
 - Phase 8 (8649e564b and the follow-up): a disk autostart at power-on waits for the firmware boot (the first 48 BASIC
   KEY-SCAN) and starts TR-DOS on the floppy; the SMUC NVRAM file per firmware; ProfROM MFS hard disks in unreal-disk /
   zxdisk; fifteen programs from the collection run ([software-compatibility.md](software-compatibility.md)).
@@ -22,5 +25,5 @@
   [evidence/](evidence/).
 
 ## Follow-ups
-- VPlayer 0.1.6 (zxart) needs a sample in its own frame layout to be checked; 0.1.7 plays.
+- The Scorpion Covox at `#DD` (VPlayer's "DD" port) is not emulated: the `CovoxDD` ini keys and the `covox-dd` slot vocabulary entry have no device behind them.
 - CP/M (CPMZSGMX) on its SMUC HDD partition `CPMZS0` was not set up.
