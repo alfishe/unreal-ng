@@ -1131,3 +1131,52 @@
             ++i;
         }
     }
+
+    // =====================================================================
+    // GET /ttd/explain-frame — what one frame did (TTD explain frame)
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/explain-frame"]["get"];
+        op["summary"] = "What one frame did: time split, routines, interrupt, paging, ports, memory, screen, input";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "One replay of the frame with the instruction and bus hooks answers: time (T in the interrupt routine, in "
+            "HALT, in the rest), routines (from the call structure: CALL / RST / the interrupt acknowledge / RET; "
+            "calls, inclusive and own T, instructions, the first caller; sorted by time), interrupts (when, IM, the "
+            "vector, the routine, its T, where it returned), paging (bank changes with time and PC), ports (per "
+            "direction and device: count, values, first time and PC; ULA reads with the keys seen down), memory (the "
+            "bytes changed and written per range - the screen's pixels and attributes, the stack, RAM ranges - with "
+            "their writers; changed bytes no CPU write explains are marked device), screen (% changed, the border "
+            "colours in order), input (keys held and pressed / released) and markers. The machine goes back where it "
+            "stood; a live recording pauses for browsing. Reply: frame, frame_t, end_t, partial, barrier, "
+            "instructions, time {isr, halt, code}, routines[] {pc, code_page, isr, start, label, calls, t, own_t, "
+            "insns, caller}, more_routines, interrupts_enabled, interrupts[] {tinframe, mode, vector, entry, t, "
+            "returned, returned_to, before_frame}, paging[] {tinframe, pc, bank, page, was}, ports[] {dir, device, port, many_ports, count, "
+            "tinframe, pc, values[], rows, keys[]}, memory[] {region, phys_page, offset, addr, length, changed, "
+            "written, before, after, device, writers[] {pc, code_page, text, count}}, screen {bytes, changed, pixels, "
+            "attributes, switched, border[] {colour, count}}, input {held[], events[] {tinframe, key, pressed}}, "
+            "markers[], frames_replayed, ms, text (text=true).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"frame", "integer", "The frame (default: the current position's frame)"},
+            {"sections", "string", "Comma list: time, routines, interrupt, paging, ports, memory, screen, input, markers (default all)"},
+            {"limit", "integer", "Entries per list (routines, paging, ports, memory ranges, writers per range), 1..100 (default 8)"},
+            {"text", "boolean", "Also return the answer as text, one block per section (default false)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }

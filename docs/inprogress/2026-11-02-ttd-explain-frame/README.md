@@ -1,6 +1,6 @@
 # TTD explain frame: what one frame did, in one call
 
-**Status 2026-11-02:** design. Plan row [#114](../PLAN.md). The third item of the agent UX roadmap, after the cause chain
+**Status 2026-11-02:** done on all six planes and accepted (one call instead of 59-71, see [plan.md](plan.md#measurements)). Plan row [#114](../PLAN.md). The third item of the agent UX roadmap, after the cause chain
 ([2026-11-02-ttd-cause-chain](../2026-11-02-ttd-cause-chain/README.md)) and find event
 ([2026-11-02-ttd-find-event](../2026-11-02-ttd-find-event/README.md)). Accepted only if WebAPI / MCP measurements prove
 it (owner 2026-11-01).

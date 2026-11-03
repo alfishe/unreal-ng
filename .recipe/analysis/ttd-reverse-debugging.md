@@ -15,6 +15,10 @@ These are the "answer the question backwards" primitives:
 - *When did it happen?* (a counter went down, the scene changed, a routine first ran, fire was pressed, the border
   turned red) → `find-event` (MCP `find_event`: the first or last hits in a window, each with frame+t, PC, the
   instruction and before -> after, in one call; no `memory_at` / screen diff / `coverage_scan` + step loop)
+- *What did this frame do?* (where its time went, what it wrote, which ports it used) → `explain-frame` (MCP
+  `explain_frame`: the time split, the routines by time, the interrupt, paging, ports per device, memory changed with
+  its writers, screen, border, input and markers from one replay; no `seek` + `memory_diff` + `find_last` per range +
+  `port_events` + stepping loop)
 - *What ran just before the crash?* → `reverse-step` / `reverse-continue`
 - *What happened in this recording, and where?* → `timeline` first (MCP `timeline`: the phases with their tags and
   busiest frames, one call, no replay), then the queries below on a phase
@@ -68,6 +72,13 @@ time_travel {"action":"find_event","find":"key","key":"SPACE"}                  
 time_travel {"action":"find_event","find":"border","value":2}                               # border turned red
 #   one line per hit: f<frame>+<t> PC instruction  why (before -> after); "more from frame N": from_frame=N goes on
 #   a value changed and back within one frame: "exact":true; a mem hit marked device: no CPU write explains it
+
+# what one frame did (one replay; the machine stays):
+time_travel {"action":"explain_frame"}                                   # the current position's frame
+time_travel {"action":"explain_frame","frame":1204,"sections":"routines,memory","limit":4}
+#   frame N (T, instructions): ISR x %, HALT y %, code z %; routines by time (isr / start marked), the interrupt,
+#   paging, ports per device (keys down on ULA reads), memory ranges with writers, screen %, border, input, markers
+#   a typical chain: find_event names the frame -> explain_frame says what ran in it -> cause_chain on one byte
 
 # follow-ups once find-last names a writer PC:
 debug_code  {"action":"disassemble","address":"0x8174","count":12}   # pc-16 window (= /disasm)

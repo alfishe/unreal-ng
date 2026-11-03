@@ -6260,6 +6260,22 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("find-event", options)));
         });
 
+        // ttd_explain_frame([frame], {sections = "routines,memory", limit = N, text = true}): what one frame did -
+        // time split, routines by time, interrupts, paging, ports, memory changed with its writers, screen, keys
+        lua.set_function("ttd_explain_frame", [this](sol::this_state ts, sol::optional<sol::object> frame,
+                                                     sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            sol::optional<sol::table> table = argsTable;
+            if (frame && frame->get_type() == sol::type::table)
+                table = frame->as<sol::table>();
+            else if (frame && frame->get_type() != sol::type::lua_nil)
+                options["frame"] = TtdOptionText(*frame);
+            if (table)
+                for (const auto& [key, value] : *table)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("explain-frame", options)));
+        });
+
         // A memory at a past checkpoint and what changed between two, from the store (no seek):
         // ttd_memory_at{space = "vram", frame = F, offset = 0x4805, length = 16}
         // ttd_memory_diff{space = "ram5", from_frame = F1, to_frame = F2, limit = 100}

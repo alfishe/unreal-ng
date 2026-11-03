@@ -37,7 +37,7 @@ Times are TTD time units inside the frame (T-states at the base clock, as every 
 next record's start minus its own (the last one: the frame end minus its start).
 
 **time.** The frame's T split three ways: the interrupt routine (from the acknowledge to its return, see routines),
-`HALT` (the HALT records' durations), the rest; and the instruction count. "ISR 9 %, HALT 31 %, code 60 %".
+`HALT` (the HALT records' durations), the rest; and the instruction count. "ISR 9 %, HALT 31 %, code 60 %". Shares under 10 % get one decimal ("ISR 0.4 %").
 
 **routines.** The call structure from the trace, generic for any Z80 code:
 
@@ -52,8 +52,21 @@ next record's start minus its own (the last one: the frame end minus its start).
   frame start").
 
 Per entry: calls, inclusive T (every open frame of the entry counts once, so recursion is not double counted), own T
-(the top frame only), instructions, and the first caller (the PC of the first call). The list is sorted by inclusive T,
-`limit` of them, then "+N more". The interrupt routine is marked `isr`.
+(the top frame only), instructions, and the first caller (the PC of the first call). Inclusive time stops at the
+innermost interrupt frame: the T of an interrupt routine is not added to the routines it interrupted. The list is
+sorted by inclusive T, `limit` of them, then "+N more". The interrupt routine is marked `isr`.
+
+- An interrupt acknowledged in the frame before and still running at its end (a Pentagon: the INT at +71658 of
+  71680; a 128K ROM's IM 1 handler pages ROMs through `PUSH` + `RET` jumps): with IFF1 off at the frame start the
+  frame before is traced too (a second replay, only then), its call frames still open at its end from the outermost
+  interrupt up are carried into this frame with their SPs. The interrupt is listed `before_frame`, its RETI pops it
+  and the code it returns to becomes the starting context; a `RET` used as a jump inside it pops nothing, its SP being
+  below the carried frames. IFF1 on at the start costs nothing more.
+- The session's first frame has no frame before: when it starts at the interrupt entry with IFF1 off (the first PC
+  #0038 for IM 1, the IM 2 vector word at `I * 256 + #FF`, both with the word at SP read after the checkpoint
+  restore: the interrupted PC), that routine is the interrupt; otherwise the code is a starting context.
+- The first record may start a few T after the frame start (the instruction under way at the boundary); those T go to
+  the starting context.
 
 **interrupt.** Each acknowledge: time, the mode (IM 1 / IM 2 with the vector read), the routine entry, its T until the
 return, and the PC it returned to (the interrupted PC). None: "no interrupt (DI)" when IFF1 was off at the frame start.
@@ -126,7 +139,7 @@ input: held SPACE; +12000 Q pressed
 
 ## 5. Costs
 
-One replay of the frame with the M1 and bus hooks (the cause chain measured 2-6 ms on a 69888 T frame), one RAM
+One replay of the frame (two when IFF1 is off at its start) with the M1 and bus hooks (the cause chain measured 2-6 ms on a 69888 T frame), one RAM
 restore at the checkpoint (a memcpy of the RAM region), a pass over the trace. Read-only: `SessionOperation` with the
 live state saved and put back, `PauseRecordingForBrowsing` for a live recording, as the cause chain.
 

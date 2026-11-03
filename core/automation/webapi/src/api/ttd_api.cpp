@@ -643,6 +643,12 @@ void EmulatorAPI::getTTDFindEvent(const HttpRequestPtr& req, std::function<void(
     RespondTTD(id, "find-event", OptionsFromQuery(req, "find-event"), callback);
 }
 
+void EmulatorAPI::getTTDExplainFrame(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    RespondTTD(id, "explain-frame", OptionsFromQuery(req, "explain-frame"), callback);
+}
+
 }  // namespace v1
 }  // namespace api
 
