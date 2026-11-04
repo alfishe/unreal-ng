@@ -3751,7 +3751,8 @@ namespace PythonBindings
                "limit=N: the review queue) | experiment (spec=a "
                "dict or a list of dicts, or path='e.json', finding='F12', parallel=N: poke / regs / input, N frames, "
                "checks on a muted clone) | cover (budget=64, per_branch=8, frames=50, ranges=: flip one-sided "
-               "branches). "
+               "branches) | trace (path='pass.uatr', from_frame=F, from_tinframe=T, to_frame=E, "
+               "to_tinframe=U, max_cycles=N: the CPU access trace of a window, written to path). "
                "The reply's fields plus text (the readable answer); "
                "a refusal: ok = False, error = why",
                py::arg("action") = "status")

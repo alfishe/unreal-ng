@@ -273,6 +273,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::analysisReview, "/api/v1/emulator/{id}/analysis/review", drogon::Get, drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::analysisExperiment, "/api/v1/emulator/{id}/analysis/experiment", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::analysisCover, "/api/v1/emulator/{id}/analysis/cover", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::analysisTrace, "/api/v1/emulator/{id}/analysis/trace", drogon::Post);
 
     // AY register-write log (MCP automation)
     ADD_METHOD_TO(EmulatorAPI::ayLog, "/api/v1/emulator/{id}/ay/log", drogon::Post);
@@ -1231,6 +1232,10 @@ public:
     void analysisExperiment(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void analysisCover(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    // POST trace {path, from_frame, from_tinframe, to_frame, to_tinframe, max_cycles}: the CPU access trace of a
+    // window of the recording, written to path (accesstrace.h)
+    void analysisTrace(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id) const;
 
     /// @brief POST /api/v1/emulator/{id}/ay/log — body: {"action":"start|stop|clear", "capacity":4096}

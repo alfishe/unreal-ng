@@ -331,6 +331,36 @@ TEST_F(McpDebugTools_Test, Analysis_BuildCancelAndRoutineExplainGoToTheirRoutes)
     EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/analysis/explain?address=%248000&what=routine"), nullptr);
 }
 
+/// analysis trace: the window and the file go to POST /analysis/trace as they are; the answer's text is the tool's
+TEST_F(McpDebugTools_Test, Analysis_TraceGoesToItsRouteWithTheWindow)
+{
+    Json::Value traceBody;
+    traceBody["instructions"] = 4211;
+    traceBody["text"] = "access trace 1001:5336 .. 1001:45336: 4211 instructions, 15820 bus cycles";
+    _caller->routes["POST /api/v1/emulator/emu-1/analysis/trace"] = {200, traceBody};
+
+    Json::Value args;
+    args["action"] = "trace";
+    args["path"] = "/tmp/pass.uatr";
+    args["from_frame"] = 1001;
+    args["from_tinframe"] = 5336;
+    args["to_frame"] = 1001;
+    args["to_tinframe"] = 45336;
+    args["max_cycles"] = 100000;
+    mcp::ToolResult result = Run("analysis", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("4211 instructions"), std::string::npos) << result.text;
+    const FakeCaller::RecordedCall* trace = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/trace");
+    ASSERT_NE(trace, nullptr);
+    EXPECT_EQ(trace->body["path"].asString(), "/tmp/pass.uatr");
+    EXPECT_EQ(trace->body["from_frame"].asUInt64(), 1001u);
+    EXPECT_EQ(trace->body["from_tinframe"].asUInt64(), 5336u);
+    EXPECT_EQ(trace->body["to_frame"].asUInt64(), 1001u);
+    EXPECT_EQ(trace->body["to_tinframe"].asUInt64(), 45336u);
+    EXPECT_EQ(trace->body["max_cycles"].asUInt64(), 100000u);
+    EXPECT_FALSE(trace->body.isMember("action")) << "only the route's options";
+}
+
 /// analysis query / export (P3): the query's options go into the URL, the export's into the body; export needs a format
 TEST_F(McpDebugTools_Test, Analysis_QueryAndExportGoToTheirRoutes)
 {

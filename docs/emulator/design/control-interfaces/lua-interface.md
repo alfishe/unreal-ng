@@ -1657,6 +1657,7 @@ emu.analysis("export", {format = "skool", path = "game.skool", ranges = "5900-59
 emu.analysis("gallery", {kind = "sprite"})           -- the graphics found: { regions, count, truncated, text }
 local g = emu.analysis("gallery", "$8200")           -- a string: the address; g.png is the PNG (base64)
 emu.analysis("gallery", {address = 0x8200, scale = 4, path = "sprite.png"})
+emu.analysis("trace", {path = "scratch/pass.uatr", from_frame = 1001, to_frame = 1003})  -- the CPU access trace
 
 -- L3 (the review): findings register, review queue, experiments on muted clones, directed coverage
 emu.analysis("findings", {kind = "bug"})             -- { count, total, by_kind, by_status, findings, text }
