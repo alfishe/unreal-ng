@@ -4,10 +4,12 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -89,6 +91,30 @@ TEST_F(AutomationLua_Test, AScriptErrorAnswersAnErrorAndTheInterpreterKeepsRunni
 }
 
 /// The headless runner's file (unreal-qt --script): the chunk's result is the exit code; an error is 1 with its message
+// unreal-qt's close stops the interpreter: a script still looping (a --script waiting with os.time) held it forever
+TEST_F(AutomationLua_Test, StopBreaksIntoARunningScriptEvenThroughPcall)
+{
+    std::atomic<bool> running = false;
+    _lua.dispatchSync([&running](sol::state& lua) { lua.set_function("mark_running", [&running] { running = true; }); });
+
+    std::atomic<bool> answered = false;
+    bool ok = true;
+    std::string message;
+    std::thread script([&] {
+        std::string output;
+        ok = _lua.executeCode("mark_running(); while true do pcall(function() while true do end end) end", message,
+                              output);
+        answered = true;
+    });
+    ASSERT_TRUE(TestWait::For([&running] { return running.load(); })) << "the script did not start";
+    EXPECT_FALSE(answered.load()) << "the script loops until stopped";
+
+    _lua.stop();
+    script.join();
+    EXPECT_FALSE(ok);
+    EXPECT_NE(message.find("stopped"), std::string::npos) << message;
+}
+
 TEST_F(AutomationLua_Test, RunFileAnswersTheScriptsExitCode)
 {
     const std::filesystem::path dir = TestPathHelper::GetUniqueTestScratchPath("runfile");

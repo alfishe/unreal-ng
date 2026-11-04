@@ -797,8 +797,8 @@ emu.controllers_match(path="/games/elite.tzx")           # {matches: [{id, how}]
 ```
 
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
-**options)`, `controllers_light(device, color)`, `controllers_haptics_probe(kind, address, page=, port_mask=,
-play=)` (a haptic probe with its rule in the loaded game's user profile), `controllers_match(path=)`, `controllers_role(device, role)`, `controllers_pin(device, pin)`,
+**options)`, `controllers_light(device, color)`, `controllers_haptics_trial(text="",
+clear=False)` (events and rules tried on the loaded game for this session, never written), `controllers_match(path=)`, `controllers_role(device, role)`, `controllers_pin(device, pin)`,
 `controllers_identify(device)`, `controllers_player(device, connector=None)`, `controllers_probe(**options)`,
 `controllers_reports(device)`, `controllers_database(**lookup)`, `controllers_database_save(text)`,
 `controllers_database_delete(id)`, `controllers_database_import(text, save=True)`, `controllers_learn(device,

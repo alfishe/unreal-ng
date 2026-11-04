@@ -164,6 +164,18 @@ public:
     {
         return _host.PlayerChoice(device);
     }
+    std::string SetHapticsTrial(const JsonValue& overlay, std::string& message) override
+    {
+        return _host.SetHapticsTrial(overlay, message);
+    }
+    JsonValue HapticsTrial() const override
+    {
+        return _host.HapticsTrial();
+    }
+    JsonValue HapticsUnderTrial() const override
+    {
+        return _host.HapticsUnderTrial();
+    }
     bool SignaturesOf(const std::string& path, ProfileContext& context, std::string& error) override
     {
         return ProgramSignatures(path, context, error);
@@ -896,6 +908,8 @@ void HostControllers::poll()
 connectorview::Led HostControllers::ConnectorLed() const
 {
 #ifdef ENABLE_CONTROLLERS
+    if (!_service || _binding == nullptr)
+        return {};
     EmulatorContext* context = _binding->context();
     ControllerManager* manager = context != nullptr ? context->pControllerManager : nullptr;
     if (manager == nullptr)
@@ -917,6 +931,8 @@ connectorview::Led HostControllers::ConnectorLed() const
 bool HostControllers::DebugLayerHeld() const
 {
 #ifdef ENABLE_CONTROLLERS
+    if (!_service)
+        return false;
     if (_playersFollow)
         return false;  // the context has the pads in the debugger: no key is held for it
     for (const HostDeviceInfo& device : _service->Router().Devices())
@@ -949,6 +965,29 @@ void HostControllers::Reapply()
     context.debugLayer = _debugLayer || _playersFollow;
     assignPlayers(context.devices);
     _resolved = _profiles.Apply(_service->Router(), context);
+    // The session trial lies over the game haptics of its own program only: another one drops it
+    _hapticsUnderTrial = _resolved.haptics;
+    const std::string sha = context.fileSha256.empty() ? std::string() : context.fileSha256.front();
+    if (!_trial.IsNull() && sha != _trialSha)
+        _trial = JsonValue();
+    if (!_trial.IsNull())
+    {
+        JsonValue haptics = OverlayHaptics(_resolved.haptics, _trial);
+        HapticProfile check;
+        std::string error;
+        if (ParseHapticProfile(haptics, check, error))
+        {
+            _resolved.haptics = std::move(haptics);
+            _resolved.hapticsProfile = _resolved.hapticsProfile.empty() ? std::string("session/trial")
+                                                                        : _resolved.hapticsProfile + "+trial";
+            _resolved.hapticsReason += (_resolved.hapticsReason.empty() ? "" : "; ") + std::string("session trial");
+        }
+        else
+        {
+            _trialError = error;
+            _trial = JsonValue();
+        }
+    }
     // The user's drag and drop (the player verb) wins over the machine default and a profile's pin
     for (const HostDeviceInfo& device : context.devices)
         if (const auto choice = _playerChoice.find(device.id); choice != _playerChoice.end())
@@ -1238,27 +1277,26 @@ bool HostControllers::KeepAutoDecision(QString& error)
     return saveUserProfile(std::move(profile), error);
 }
 
-bool HostControllers::AddHapticProbe(const HapticProbe& probe, QString& name, QString& error)
+std::string HostControllers::SetHapticsTrial(const JsonValue& overlay, std::string& message)
 {
-    // The surfaces' haptics_probe verb, so the menu and an agent write the same profile
-    static const char* const kKinds[] = {"exec", "read", "write", "port-in", "port-out"};
-    HostRequest request;
-    request.verb = "haptics_probe";
-    request.options["kind"] = kKinds[static_cast<size_t>(probe.kind)];
-    request.options["address"] = std::to_string(probe.address);
-    if (probe.page != 0xFFFF)
-        request.options["page"] = std::to_string(probe.page);
-    if (probe.kind == HapticProbeKind::PortIn || probe.kind == HapticProbeKind::PortOut)
-        request.options["port_mask"] = std::to_string(probe.portMask);
-    const HostReply reply = Host(request);
-    if (!reply.Ok())
+    if (!_attached)
     {
-        error = QString::fromStdString(reply.message);
-        return false;
+        message = "no emulator instance to try the haptics on";
+        return "unavailable";
     }
-    const JsonValue* source = reply.body.Find("source");
-    name = source != nullptr ? QString::fromStdString(source->AsString()) : QString();
-    return true;
+    const JsonValue previous = _trial;
+    const std::string previousSha = _trialSha;
+    _trial = overlay;
+    _trialSha = _program.fileSha256.empty() ? std::string() : _program.fileSha256.front();
+    _trialError.clear();
+    Reapply();
+    if (_trialError.empty())
+        return {};
+    message = _trialError;
+    _trial = previous;
+    _trialSha = previousSha;
+    Reapply();
+    return "bad-request";
 }
 
 void HostControllers::updateHapticsGate()

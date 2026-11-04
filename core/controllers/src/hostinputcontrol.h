@@ -22,7 +22,7 @@
 /// gamecontrollerdb line or a RetroArch autoconfig file as a user family with its control map), learn (the learn
 /// wizard for an unknown device as data: start, status, sample, skip, back, finish, cancel), aliases (the old ids of
 /// promoted devices: a `gc:` device later matched to its IOHID endpoint, architecture.md §5), unalias (forget one),
-/// haptics_probe (a debugger probe as a haptic source), match (the game profiles a program's signatures choose, D7).
+/// haptics_trial (a session-only overlay of events and haptics rules on the loaded game, never written), match (the game profiles a program's signatures choose, D7).
 ///
 /// @code
 ///   HostRequest request{"apply", {{"id", "builtin/game/vradarks-revenge"}}};
@@ -122,6 +122,25 @@ public:
         (void)device;
         return {};
     }
+    /// The session's haptics trial (haptics.md §11, the haptics_trial verb): a `haptics` overlay (ParseHapticTrial)
+    /// laid over the resolved game haptics and applied at once; kept in memory for the loaded program only (another
+    /// program drops it), never written. Null clears. Empty when done, else the error code with @p message
+    virtual std::string SetHapticsTrial(const JsonValue& overlay, std::string& message)
+    {
+        (void)overlay;
+        message = "this process plays no game haptics";
+        return "unavailable";
+    }
+    /// The overlay in effect (null: none)
+    virtual JsonValue HapticsTrial() const
+    {
+        return {};
+    }
+    /// The game haptics the profiles resolve, under the trial
+    virtual JsonValue HapticsUnderTrial() const
+    {
+        return Resolved().haptics;
+    }
 };
 
 class HostInputControl
@@ -161,7 +180,8 @@ private:
     HostReply Scheme(const HostRequest& request);
     HostReply Haptics(const HostRequest& request);
     HostReply Rumble(const HostRequest& request);
-    HostReply HapticsProbe(const HostRequest& request);
+    /// The session trial: text= (events: / haptics: of a play profile) lays it on, clear drops it, neither reads it
+    HostReply HapticsTrial(const HostRequest& request);
     /// A surface's outputs (control surfaces controls-and-feedback.md §3): a pattern, the steps / clicks, or a seek's
     /// marks as the device's top layer plays them
     HostReply Output(const HostRequest& request);

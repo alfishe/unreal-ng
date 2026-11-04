@@ -252,7 +252,9 @@ enum class BackendKind { Mock, Rest, WebSocket, Ipc };
 
 // Creates a backend of the given kind: WebSocket ("--endpoint
 // ws://localhost:8090"), Rest ("--endpoint http://localhost:8090") or Mock;
-// Ipc has no transport and returns nullptr.
-std::unique_ptr<IDebuggerBackend> CreateBackend(BackendKind kind, const std::string& endpoint);
+// Ipc has no transport and returns nullptr. emulator: only that instance (id or symbolic id), else the first
+// suitable one.
+std::unique_ptr<IDebuggerBackend> CreateBackend(BackendKind kind, const std::string& endpoint,
+                                                const std::string& emulator = {});
 
 }  // namespace dbg

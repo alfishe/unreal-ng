@@ -86,6 +86,19 @@ Things that bite:
 - A snapshot saved mid-run (`snapshot/save` into `scratch/`) makes each try start from the same state.
 - An address found by code but not seen by play stays out of the profile; name it in the profile's comment.
 
+Try the candidates as the profile will hold them before writing it: `haptics_trial` lays the `events:` and
+`haptics:` over the loaded game for this session, in memory only (nothing lands in the user folder, where a file would
+shadow the shipped profile). Play the event, read `game.events`, adjust, and clear the trial when done:
+
+```text
+controllers {"action":"haptics_trial","text":"events:\n  died: {probe: exec, address: \"0x8B80\"}\nhaptics:\n  rules:\n    - {on: died, play: life-lost}\n"}
+GET  /api/v1/monitor/game.events        # "died 1 (last frame N)" once per death, nothing in between
+controllers {"action":"haptics_trial","clear":true}
+```
+
+The trial is checked as the profile would be (a rule may name the game's own events, an event may replace one), and
+loading another program drops it.
+
 ## 5. Write the profile
 
 `data/controllers/profiles/games/<machine>/<game>.yaml`: the bindings, the match, the game's `events` and the haptics

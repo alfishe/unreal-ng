@@ -411,6 +411,71 @@ bool ParseProfile(const std::string& text, Profile& out, std::string& error)
     return ParseProfile(root, out, error);
 }
 
+bool ParseHapticTrial(const std::string& text, const JsonValue& base, JsonValue& overlay, std::string& error)
+{
+    JsonValue root;
+    const size_t first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos)
+    {
+        error = "a trial needs events: and / or haptics:";
+        return false;
+    }
+    if (!(text[first] == '{' ? ParseJson(text, root, error) : ParseYaml(text, root, error)))
+        return false;
+    if (!root.IsObject())
+    {
+        error = "a trial is an object with events: and / or haptics:";
+        return false;
+    }
+    JsonValue section = JsonValue::Object();
+    for (const auto& [field, value] : root.GetMembers())
+    {
+        if (field != "events" && field != "haptics")
+        {
+            error = "unknown field '" + field + "' (a trial takes events and haptics)";
+            return false;
+        }
+        if (!value.IsObject())
+        {
+            error = field + ": an object expected";
+            return false;
+        }
+    }
+    if (const JsonValue* haptics = root.Find("haptics"))
+        section = *haptics;
+    if (const JsonValue* events = root.Find("events"))
+    {
+        // As a profile keeps them: the game's facts are the sources of its haptics and of game.events
+        JsonValue sources = section.Find("sources") != nullptr ? *section.Find("sources") : JsonValue::Object();
+        if (!sources.IsObject())
+        {
+            error = "haptics.sources: an object expected";
+            return false;
+        }
+        for (const auto& [name, spec] : events->GetMembers())
+        {
+            if (sources.Find(name) != nullptr)
+            {
+                error = "events: '" + name + "' is also a haptics source";
+                return false;
+            }
+            sources.Set(name, spec);
+        }
+        section.Set("sources", std::move(sources));
+    }
+    // Checked as the profile it makes with the game's haptics would be
+    JsonValue check = JsonValue::Object();
+    check.Set("schema", JsonValue::Number(kSchema));
+    check.Set("kind", JsonValue::String("play"));
+    check.Set("id", JsonValue::String("session/trial"));
+    check.Set("haptics", OverlayHaptics(base, section));
+    Profile checked;
+    if (!ParseProfile(check, checked, error))
+        return false;
+    overlay = std::move(section);
+    return true;
+}
+
 bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
 {
     if (!root.IsObject())

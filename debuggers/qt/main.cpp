@@ -76,8 +76,8 @@
 
 namespace {
 
-// SIGINT / SIGTERM end the event loop, so the machine is destroyed: over the WebAPI that releases the run-control
-// session and debug mode (killed outright, the session stays held until its lease runs out)
+// SIGINT / SIGTERM end the event loop, so the machine is destroyed: over the WebAPI that restores the debug mode and
+// turns off the histories the debugger started (killed outright, they stay as they are)
 std::atomic<bool> g_quit{false};
 // The first signal asks the event loop to end; a second one (a GUI thread stuck in a request) ends the process
 void on_quit_signal(int sig)

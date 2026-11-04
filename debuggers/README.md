@@ -43,12 +43,23 @@ cmake-build-agent-release/bin/unreal-debugger --model PENTAGON [file.sna|.z80|.t
 cmake-build-agent-release/bin/unreal-debugger --connect 127.0.0.1:8090 [--emulator <id>]
 
 # the terminal debuggers over a running unreal-qt (ws://localhost:8090 by default)
-cmake-build-agent-release/bin/unreal-tui-debugger [--endpoint ws://host:port] [--tui]
+cmake-build-agent-release/bin/unreal-tui-debugger [--endpoint ws://host:port | --port 8190] [--emulator <id>] [--tui]
 cmake-build-agent-release/bin/unreal-tui-debugger-tsconf --backend rest --endpoint http://host:port
 cmake-build-agent-release/bin/unreal-tui-debugger --backend mock     # no emulator: the built-in test machine
 ```
 
-A terminal debugger attaches to the emulator's first instance (or creates a 128K one), pauses it and turns its debug
+unreal-qt starts each of them over its own emulator: **Debug > Debugger** has **Embedded** (its debugger window),
+**eCat** (`unreal-debugger --connect 127.0.0.1:<port>`), **Unreal TUI** and, on a TS-Conf machine, **Unreal TUI, TS-Conf**
+(`--endpoint ws://127.0.0.1:<port>`), each with `--emulator <the window's instance id>`; the port is the one this
+unreal-qt's WebAPI listens on (8090 or `UNREAL_WEBAPI_PORT`: several emulators side by side, each on its own). An
+emulator whose WebAPI did not start (its port taken) says so instead. The programs are looked for beside unreal-qt (the packages) or beside its bundle (a build tree);
+an absent one is grayed out. Any of them can be open and used at the same time: a debugger's requests say
+`X-Unreal-Source: debugger`, they open no run-control session (the GUI and the other debuggers are not locked), and
+every client sees the changes. While an automation session (an MCP agent, GDB, a script) holds the machine their
+changes are refused, as the GUI is locked.
+
+A terminal debugger attaches to the emulator's first instance (`--emulator <id or symbolic id>`: that one only;
+`--port <n>`: the emulator on this host at that port, short for `--endpoint ws://localhost:<n>`) (or creates a 128K one), pauses it and turns its debug
 mode on (the emulator's breakpoints stop a run). An emulator that does not answer is reported at once (exit code 2).
 
 The keys are UnrealSpeccy's (`unreal.ini`, `[SYSTEM.KEYS]`; `tui/common/src/ui/actions.*`). F10 opens the system menu:
