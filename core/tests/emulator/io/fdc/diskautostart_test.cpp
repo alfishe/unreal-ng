@@ -14,6 +14,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/video/screen.h"
 #include "loaders/disk/loader_trd.h"
 #include "base/featuremanager.h"
@@ -772,6 +773,43 @@ TEST_P(DiskAutostart_ScorpionClock_Test, TheClockTheMachineRanAtIsKept)
 }
 
 INSTANTIATE_TEST_SUITE_P(Models, DiskAutostart_ScorpionClock_Test, ::testing::Values("Scorpion", "ProfScorp"));
+
+/// Owner request 2026-11-03: the TS-Conf autostart answered "boot" but every reset went through TS-BIOS, which booted
+/// Wild Commander from the SD card: the disk never ran. The quick reset now enters TR-DOS 5.04T (ROM page 1) at once and
+/// keeps the clock TS-BIOS or the program set (SYS_CONFIG[1:0]: 3.5 / 7 / 14 MHz). Boot-bound: the TR-DOS cold start
+/// runs to its command loop (a few frames, in turbo)
+TEST(DiskAutostart_TsConf, TheDiskBootsInTrdosAtTheClockTheMachineRan)
+{
+    for (const uint8_t clock : {uint8_t{0}, uint8_t{1}, uint8_t{2}})
+    {
+        MessageCenter::DisposeDefaultMessageCenter();
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("TSL", LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr);
+        EmulatorContext* context = emulator->GetContext();
+        EmulatorState& state = context->emulatorState;
+        auto* decoder = dynamic_cast<PortDecoder_TSConf*>(context->pPortDecoder);
+        ASSERT_NE(decoder, nullptr);
+        emulator->EnableTurboMode();
+        context->pPortDecoder->DecodePortOut(0x20AF, clock, 0x0000);  // SYS_CONFIG, as TS-BIOS sets the clock
+        const uint8_t ratio = static_cast<uint8_t>(1u << clock);
+        ASSERT_EQ(state.hw_turbo_ratio, ratio);
+
+        auto result = emulator->AutostartDisk(TestPathHelper::GetTestDataPath("loaders/trd/atarin.trd"));
+        ASSERT_TRUE(result.started) << result.message;
+        EXPECT_EQ(decoder->GetState().dos, 1) << "the quick reset enters TR-DOS, not TS-BIOS";
+        EXPECT_EQ(context->pMemory->GetROMPageForBank(0), 1) << "window 0: TR-DOS 5.04T, ROM page 1";
+        EXPECT_EQ(state.hw_turbo_ratio, ratio) << "SYS_CONFIG clock " << int(clock) << " after the quick reset";
+        for (int frames = 0; frames < 200 && context->pDiskAutostart->IsColdStartFinishPending(); frames++)
+            emulator->RunNFrames(1, true);
+        ASSERT_FALSE(context->pDiskAutostart->IsColdStartFinishPending()) << "the cold start never reached the command loop";
+        EXPECT_EQ(state.hw_turbo_ratio_applied, ratio) << "SYS_CONFIG clock " << int(clock) << " after the cold start";
+
+        context->pCore->Reset();
+        EXPECT_EQ(decoder->GetState().dos, 0) << "a real reset runs TS-BIOS again";
+        EXPECT_EQ(state.hw_turbo_ratio, 1) << "a real reset clears SYS_CONFIG";
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}
 
 /// The owner's disk end to end: BQ ATM from testdata/machines/atm/ballq_gr.scl runs through the autostart on the
 /// ATM710 and its title is in the EGA mode with all four planes in the video pages: RAM 1 / 3 carry its planes, RAM

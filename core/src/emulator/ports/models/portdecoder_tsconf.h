@@ -96,6 +96,16 @@ public:
     /// mode: window 0 is ROM page 0, whatever #7FFD says, and bits 7:6 of #7FFD add page bits
     void EnterSpectrum128Paging(uint16_t pc) override;
 
+    /// RM_DOS, the disk autostart's quick reset (Core::ResetKeepingClock): straight into TR-DOS, as TS-BIOS hands over
+    /// when "Reset to" names ROM #00 and the disk is booted from TR-DOS. Mapped mode, ROM128 = 1, PAGE0 = 0 and DOS on:
+    /// window 0 is ROM page 1, TR-DOS 5.04T of zxevo.rom. #7FFD decodes as on a 128K. Every other mode leaves the reset
+    /// as it is: the CPU starts in TS-BIOS (ROM page 0), which reads its settings and boots what they name
+    void ApplyBootROMDefaults(ROMModeEnum mode) override;
+    /// SYS_CONFIG[1:0], the CPU clock TS-BIOS (or the program) set: the quick reset skips TS-BIOS, so the clock it
+    /// chose is put back after the reset
+    uint16_t GetClockSelect() const override;
+    void RestoreClockSelect(uint16_t select) override;
+
     /// SYS_CONFIG selects 3.5, 7 or 14 MHz
     uint8_t TtdClockUnits() const override { return 4; }
 
