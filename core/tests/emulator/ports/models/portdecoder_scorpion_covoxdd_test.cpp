@@ -145,15 +145,18 @@ TEST_F(PortDecoder_Scorpion_CovoxDd_Test, TurboPlusDecodeIgnoresA2)
 TEST_F(PortDecoder_Scorpion_CovoxDd_Test, OffByDefault)
 {
     Make(MM_SCORP, false, true);
-    Covox covox(_context);
-    EXPECT_FALSE(covox.answersPrinterPort());
-    ASSERT_TRUE(_portDecoder->RegisterSelfDecodingDevice(&covox));
-    _portDecoder->DecodePortOut(0x00DD, 0x40, 0x0000);
-    EXPECT_EQ(MonoLatch(covox), 0x80);
-    EXPECT_EQ(covox.lastLeftAmplitude(), 0);
-    for (const PortMaskMatch& claim : covox.selfDecodingClaims())
-        EXPECT_NE((0x00DD & claim.mask), claim.match) << "no claim covers #DD without CovoxDD";
-    _portDecoder->UnregisterSelfDecodingDevice(&covox);
+    {
+        // Gone before its context: the TearDown below deletes it
+        Covox covox(_context);
+        EXPECT_FALSE(covox.answersPrinterPort());
+        ASSERT_TRUE(_portDecoder->RegisterSelfDecodingDevice(&covox));
+        _portDecoder->DecodePortOut(0x00DD, 0x40, 0x0000);
+        EXPECT_EQ(MonoLatch(covox), 0x80);
+        EXPECT_EQ(covox.lastLeftAmplitude(), 0);
+        for (const PortMaskMatch& claim : covox.selfDecodingClaims())
+            EXPECT_NE((0x00DD & claim.mask), claim.match) << "no claim covers #DD without CovoxDD";
+        _portDecoder->UnregisterSelfDecodingDevice(&covox);
+    }
 
     TearDown();
     Make(MM_PENTAGON, true);
