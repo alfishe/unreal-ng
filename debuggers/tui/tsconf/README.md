@@ -65,7 +65,5 @@ test decoder accounts for both formats.
 ## Next steps
 
 1. Same classic-band polish as `../classic/` (v0-approximate attrs).
-2. Serve `GetTsConf`/`GetPcHistory` from a TSConf-capable WebAPI machine
-   (server endpoints needed) so the board shows live data under `ws` / `rest`.
-3. Board selection beyond visual highlight (edit dialogs) once the modal
+2. Board selection beyond visual highlight (edit dialogs) once the modal
    subsystem lands.
