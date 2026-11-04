@@ -180,6 +180,8 @@ HttpReply HttpClient::Request(const std::string& method, const std::string& path
     request += "Accept: application/json\r\n";
     request += "Content-Type: application/json\r\n";
     request += "Content-Length: " + std::to_string(body.size()) + "\r\n";
+    // A debugger's: the user's own hands, no run-control session (the WebAPI gate, webapi-interface.md)
+    request += "X-Unreal-Source: debugger\r\n";
     request += "Connection: close\r\n\r\n";
     request += body;
     if (!net::SendAll(guard.Get(), request.data(), request.size(), deadline, &reply.error)) return reply;

@@ -73,7 +73,8 @@ WebApiBackend::WebApiBackend(std::unique_ptr<IApiTransport> transport) : http_(s
 WebApiBackend::~WebApiBackend() = default;
 
 std::string WebApiBackend::WaitingFor() const {
-    return endpoint_.empty() ? SuitableText() : SuitableText() + " at " + endpoint_;
+    const std::string what = wanted_.empty() ? SuitableText() : SuitableText() + " " + wanted_;
+    return endpoint_.empty() ? what : what + " at " + endpoint_;
 }
 
 void WebApiBackend::Lost() {
@@ -129,12 +130,15 @@ bool WebApiBackend::EnsureInstance() {
     const Json root = Json::Parse(list.body, nullptr);
     const Json* emulators = root.Find("emulators");
     if (emulators == nullptr || !emulators->IsArray()) return false;
-    // The first running instance this debugger suits; it outlives us
+    // The first running instance this debugger suits (the wanted one only, when named); it outlives us
     std::string id, model;
     for (size_t i = 0; i < emulators->Size(); ++i) {
+        std::string symbolic;
         emulators->At(i).Get("id", &id);
+        emulators->At(i).Get("symbolic_id", &symbolic);
         emulators->At(i).Get("model", &model);
-        if (!id.empty() && Suitable(model)) break;
+        const bool wanted = wanted_.empty() || wanted_ == id || (!symbolic.empty() && wanted_ == symbolic);
+        if (!id.empty() && wanted && Suitable(model)) break;
         id.clear();
     }
     if (id.empty()) return false;

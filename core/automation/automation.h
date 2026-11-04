@@ -70,6 +70,10 @@ public:
     
     std::string getEmulatorIdOrFirst(const std::string& providedId);
 
+    /// The port this process's WebAPI listens on: 0 when it is not up (not built, the port taken by another
+    /// emulator, stopped). What a client started from here connects to (unreal-qt's Debug > Debugger)
+    int GetWebAPIPort() const;
+
     /// The headless runner (unreal-qt --script): the Lua interpreter is up; run a file there, its exit code
     /// (AutomationLua::runFile). Without Lua automation: not ready, 1 with the reason
     bool IsLuaReady();

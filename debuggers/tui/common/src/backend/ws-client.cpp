@@ -133,7 +133,9 @@ bool WebSocketClient::Open(const net::Clock::time_point& deadline, std::string* 
     request += "Host: " + host_ + ":" + std::to_string(port_) + "\r\n";
     request += "Upgrade: websocket\r\nConnection: Upgrade\r\n";
     request += "Sec-WebSocket-Key: " + Base64(nonce, sizeof nonce) + "\r\n";
-    request += "Sec-WebSocket-Version: 13\r\n\r\n";
+    request += "Sec-WebSocket-Version: 13\r\n";
+    // Every call on the socket is a debugger's: the user's own hands, no run-control session (webapi-interface.md)
+    request += "X-Unreal-Source: debugger\r\n\r\n";
     if (!net::SendAll(fd_, request.data(), request.size(), deadline, error)) {
         Drop();
         return false;

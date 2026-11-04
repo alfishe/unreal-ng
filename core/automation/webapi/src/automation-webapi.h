@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <thread>
 
 class AutomationWebAPI
@@ -8,6 +9,7 @@ class AutomationWebAPI
 protected:
     std::thread* _thread = nullptr;
     volatile bool _stopThread = false;
+    std::atomic<int> _port{0};  // port(): the one the server listens on, 0 while it does not
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -37,6 +39,8 @@ public:
 public:
     void start();
     void stop();
+    /// The port the server listens on (8090 or UNREAL_WEBAPI_PORT); 0 when it did not start (the port taken) or ended
+    int port() const { return _port.load(); }
     /// endregion </Methods>
 
 protected:
