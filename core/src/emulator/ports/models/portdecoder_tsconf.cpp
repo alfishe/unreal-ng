@@ -859,6 +859,35 @@ void PortDecoder_TSConf::EnterSpectrum128Paging([[maybe_unused]] uint16_t pc)
     RefreshM1Hook();   // the DOS trap is armed in mapped mode with ROM128 = 1
 }
 
+void PortDecoder_TSConf::ApplyBootROMDefaults(ROMModeEnum mode)
+{
+    if (mode != RM_DOS)
+        return;
+
+    // Window 0 in mapped mode is the ROM group {service, TR-DOS, 128, 48} of PAGE0 (here 0: TS-BIOS, TR-DOS 5.04T,
+    // 128, 48) picked by ~DOS and ROM128. Memory::SetROMMode(RM_DOS) right after this sets #7FFD bit 4 to match
+    _state->p7FFD |= 0x10;
+    _ts.regs[TsConfReg::Page0] = 0x00;
+    _ts.regs[TsConfReg::MemConfig] =
+        static_cast<uint8_t>((static_cast<uint8_t>(TsConfLck128::Mode128K) << 6) | TsConfMemConfig::Rom128);
+    _ts.dos = 1;
+    UpdateBanks();
+    RefreshM1Hook();
+}
+
+uint16_t PortDecoder_TSConf::GetClockSelect() const
+{
+    return static_cast<uint16_t>(_ts.regs[TsConfReg::SysConfig] & 0x03);
+}
+
+void PortDecoder_TSConf::RestoreClockSelect(uint16_t select)
+{
+    const uint8_t sysConfig = _ts.regs[TsConfReg::SysConfig];
+    const uint8_t value = static_cast<uint8_t>((sysConfig & ~0x03) | (select & 0x03));
+    if (value != sysConfig)
+        WriteRegister(TsConfReg::SysConfig, value);
+}
+
 /// #7FFD (hardware-spec §2.3): ROM128 = D4, V_PAGE = D3 ? 7 : 5 immediately,
 /// PAGE3 per LCK128, lock48 = D5 outside 1024K mode; ignored while locked
 void PortDecoder_TSConf::Write7FFD(uint8_t value)

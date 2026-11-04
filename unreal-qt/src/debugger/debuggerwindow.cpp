@@ -1408,7 +1408,6 @@ void DebuggerWindow::showBreakpointManager()
     }
 
     BreakpointDialog dialog(_emulator, this);
-    connect(&dialog, &BreakpointDialog::hapticProbeRequested, this, &DebuggerWindow::hapticProbeRequested);
     dialog.exec();
 
     // Update debugger state after dialog closes

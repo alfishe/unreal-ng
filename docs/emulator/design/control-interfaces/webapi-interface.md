@@ -565,6 +565,7 @@ POST /api/v1/emulator/{id}/control/session     Open an automation session {clien
 GET  /api/v1/emulator/{id}/control/session     Who holds run control (surface, client, peer: where it connects from, implicit, lease_seconds_left, holder), since when, clients in a re-take cooldown; yours, and session (the id) only for the asker's own implicit session
 DELETE /api/v1/emulator/{id}/control/session   End the session in X-Unreal-Session; without it (or with one that holds nothing) the asker's own implicit session; released: false + message (who holds it) otherwise
      (a change refused by the automation gate: 409 held_by_other {message: who holds it and how to resolve it, holder: {surface, client, peer, implicit, lease_seconds_left}}; an implicit holder is taken over by an explicit take; a session header that does not hold the instance is no pass, the gate applies)
+     (a debugger client - X-Unreal-Source: debugger on every request, on a WebSocket at its upgrade: unreal-debugger --connect, unreal-tui-debugger[-tsconf] - is the user's own hands like the GUI: its changes open no session, block neither the GUI nor the other debuggers, every client sees them on the topics; while any session holds the instance they are refused 409 held_by_other, as the GUI is locked)
      (any request with X-Unreal-Session of a session the user took back at the GUI: 409 revoked_by_user, retry: false - stop, do not retry)
      Companion clients (a paired device acting as the user's hands, docs/inprogress/2026-10-16-companion-client/protocol.md):
      with Authorization: Bearer <token> a change opens no session (no remote control at the GUI, no lock); any action
@@ -1833,7 +1834,7 @@ POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options}
 GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
                                                          | probe | database | reports | aliases | match
 POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
-                                                         | light | haptics_probe | role | pin | identify | player
+                                                         | light | haptics_trial | role | pin | identify | player
                                                          | database_save | database_delete | database_import | learn
                                                          | unalias
 POST /api/v1/controllers/database/import                 {text, save?}: the database_import verb
@@ -1859,10 +1860,11 @@ called with the wrong method answers `405`. `GET /api/v1/controllers/haptics[?de
 `message`, `404` `unknown-device`, `400` `bad-request` for an effect the device lacks, `503` `unavailable` with the
 reason for a device without drivable motors or a process without the Qt client.
 
-`POST /api/v1/controllers/haptics_probe {"kind": "write", "address": "0x5C3A", "page": 5, "play": "life-lost"}` adds
-a haptic probe (`exec`, `read`, `write`, `port-in`, `port-out`; `port_mask` for a port) with its rule to the loaded
-game's user profile: `200` with `id`, `source`, `path`; `400` `bad-request` for a bad kind, address or effect; `503`
-`unavailable` without a program loaded from a file.
+`POST /api/v1/controllers/haptics_trial {"text": "events:\n  shot: {probe: exec, address: \"0x8366\"}\nhaptics:\n  rules:\n    - {on: shot, play: shot}\n"}`
+tries events and rules on the loaded game for this session: laid over its haptics in memory, armed at once, never
+written (`game.events` shows them). `{"clear": true}` drops the trial, `{}` reads it: `200` with `active`, `sources`,
+`trial`, `haptics_profile`, `haptics_reason`; `400` `bad-request` for a fragment a game profile would refuse; `503`
+`unavailable` without the Qt client.
 
 `POST /api/v1/controllers/output` drives a control surface's outputs (the Surface Dial): `{"device", "pattern":
 "tick|double|buzz"}` plays a pattern; `{"device", "steps": 36, "clicks": false}` sets its feel until its context or

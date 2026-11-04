@@ -41,9 +41,10 @@ Without hardware (testable through WebAPI / MCP and unit tests):
    time of `AccessWatchSeesTheKeyboardOnEveryMachine`. Done 2026-11-03: the Next's `#1F` decision on `next.left`
    (connectors by input role), the evidence as `devices.access` on every plane, board accesses with their card
    candidates (`#1F` on a bare 48K: a Kempston interface on `edge.1`, said as a notice).
-2. Haptics without pads: H3 `exec` / `read` / `port-in` / `port-out` probes (hot path, A/B benchmark) and "Add probe
-   from debugger"; H2 DSP filters on the sample streams and the Covox / GS / Next DAC sources, the frame-hash test;
-   H5 game profiles (Exolon, Chase H.Q., Manic Miner).
+2. Haptics without pads: read probes on the fast path (exec and write probes left the debug mode, read probes still
+   take it, [haptics.md §12](haptics.md#12-testing)). Done: the H3 probes with the A/B benchmark, the H2 DSP filters
+   and sources with the frame-hash test, the H5 game profiles; the session trial `haptics_trial` in place of "Add probe
+   from debugger" / `haptics_probe` (2026-11-03: games are studied by agents over WebAPI / MCP).
 3. C10: the `controllers.devices` topic (arrivals, battery, notices pushed; `devices` is a call now).
 4. C5: a dimmer, shape-following highlight on the pictures.
 5. C11: light guns (a beam-position query first); Timex waits for a Timex machine.

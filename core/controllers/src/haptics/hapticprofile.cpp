@@ -584,60 +584,32 @@ const char* HapticStreamName(HapticStream stream)
     return "mix";
 }
 
-bool AddHapticProbeSource(JsonValue& haptics, const HapticProbe& probe, const std::string& play, std::string& name,
-                          std::string& error)
+JsonValue OverlayHaptics(const JsonValue& base, const JsonValue& overlay)
 {
-    JsonValue section = haptics.IsObject() ? haptics : JsonValue::Object();
-    JsonValue sources = section.Find("sources") != nullptr ? *section.Find("sources") : JsonValue::Object();
-    JsonValue rules = section.Find("rules") != nullptr ? *section.Find("rules") : JsonValue::Array();
-    if (!sources.IsObject() || !rules.IsArray())
+    if (!overlay.IsObject())
+        return base;
+    JsonValue section = base.IsObject() ? base : JsonValue::Object();
+    for (const auto& [field, value] : overlay.GetMembers())
     {
-        error = "the haptics section's 'sources' is not an object or its 'rules' not a list";
-        return false;
-    }
-    for (unsigned index = 1;; index++)
-    {
-        name = "probe-" + std::to_string(index);
-        if (sources.Find(name) == nullptr)
-            break;
-    }
-    auto hex = [](unsigned value) {
-        char text[8];
-        std::snprintf(text, sizeof(text), "0x%04X", value & 0xFFFF);
-        return std::string(text);
-    };
-    JsonValue source = JsonValue::Object();
-    static const char* const kKinds[] = {"exec", "read", "write", "port-in", "port-out"};
-    source.Set("probe", JsonValue::String(kKinds[static_cast<size_t>(probe.kind)]));
-    if (probe.kind == HapticProbeKind::PortIn || probe.kind == HapticProbeKind::PortOut)
-    {
-        source.Set("port", JsonValue::String(hex(probe.address)));
-        if (probe.portMask != 0xFFFF)
-            source.Set("port_mask", JsonValue::String(hex(probe.portMask)));
-    }
-    else
-    {
-        source.Set("address", JsonValue::String(probe.page == 0xFFFF ? hex(probe.address)
-                                                                     : "page:" + std::to_string(probe.page) + ":" +
-                                                                           hex(probe.address & 0x3FFF)));
-        if (probe.kind == HapticProbeKind::Write)
+        const JsonValue* under = section.Find(field);
+        if (field == "sources" && value.IsObject() && under != nullptr && under->IsObject())
         {
-            source.Set("when", JsonValue::String("changed"));
-            source.Set("each_write", JsonValue::Bool(true));
+            JsonValue sources = *under;
+            for (const auto& [name, spec] : value.GetMembers())
+                sources.Set(name, spec);
+            section.Set(field, std::move(sources));
         }
+        else if (field == "rules" && value.IsArray() && under != nullptr && under->IsArray())
+        {
+            std::vector<JsonValue> items = under->Items();
+            for (const JsonValue& rule : value.Items())
+                items.push_back(rule);
+            section.Set(field, JsonValue::Array(std::move(items)));
+        }
+        else
+            section.Set(field, value);
     }
-    if (!probe.condition.empty())
-        source.Set("if", JsonValue::String(probe.condition));
-    sources.Set(name, std::move(source));
-    std::vector<JsonValue> items = rules.Items();
-    items.push_back(JsonValue::Object({{"on", JsonValue::String(name)}, {"play", JsonValue::String(play)}}));
-    section.Set("sources", std::move(sources));
-    section.Set("rules", JsonValue::Array(std::move(items)));
-    HapticProfile checked;
-    if (!ParseHapticProfile(section, checked, error))
-        return false;
-    haptics = std::move(section);
-    return true;
+    return section;
 }
 
 void SetHapticConditionCheck(HapticConditionCheck check)

@@ -295,6 +295,12 @@ Owner decisions, 2026-10-09:
   - **Code.** `EmulatorContext::EnterImplicitRunControl` / `ReleaseImplicitRunControl`; the classification in
     `core/src/emulator/execution/automationgate.h`; the WebAPI sync advice; `CLIProcessor::PassAutomationGate`;
     `execution::script::Check`.
+- **Debugger clients (owner, 2026-11-03).** The separate debuggers (unreal-debugger `--connect`, unreal-tui-debugger
+  and its TS-Conf fork) are the user, not automation: they say `X-Unreal-Source: debugger`, their changes open no
+  session (neither an implicit nor an explicit one), so opening one never locks the GUI or the other debuggers; the
+  changes are broadcast to every client (`debug.events`, `run.state`, the GUI's binding) and the arbiter's queue
+  orders the commands. While any session holds the machine their changes are refused `held_by_other`, as the GUI is
+  locked (`webapi_session::IsDebuggerClient`, the WebAPI gate).
 - **The GUI while a session is open.** Every control action is disabled: toolbar, menus, shortcuts, debugger
   buttons, speed control, TTD widget, media panel, file drops. Viewing works. The one active action is
   **Take back control**.

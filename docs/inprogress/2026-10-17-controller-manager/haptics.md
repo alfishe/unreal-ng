@@ -322,15 +322,13 @@ frame's fired events and watched values on every plane (REST, the WebSocket topi
 Python, MCP), with or without a haptic device; the rules are one consumer of them. Dizzy X's built-in profile uses
 `events:`.
 
-- **Authoring**: the Advanced dialog has a "Haptics" tab with a live meter per source and per actuator, and
-  "Add probe from debugger": a watch or breakpoint in the debugger can be turned into a probe with one click.
-  - Built (2026-10-23): the breakpoint list's context menu has **Add as Haptic Probe**. It turns an exec, read or
-    write breakpoint, or a port-in or port-out one, into a source of the loaded game's user profile
-    (`user/game-<sha16>`) with a rule that plays `hit`. A page breakpoint keeps its page.
-  - A write probe sees every write (`each_write`, `when: changed`).
-  - The first probe copies the haptics that play now into the user profile, so the probe adds to the game's profile
-    and does not replace it.
-  - The menu entry runs the `haptics_probe` host verb (§11): the surfaces and the menu write the same file.
+- **Authoring**: a game's events are found by an agent through WebAPI / MCP
+  ([the game-haptics recipe](../../../.recipe/input/game-haptics.md)), not by hand in the debugger (owner
+  2026-11-03); the Advanced dialog's "Haptics" tab shows a live meter per source and per actuator. The candidate events
+  are tried with the session trial (`haptics_trial`, §11): the `events:` / `haptics:` of the profile to be, laid over
+  the loaded game's haptics in memory, read back through `game.events`, then written as the profile file. The
+  debugger's **Add as Haptic Probe** and the `haptics_probe` verb that wrote `user/game-<sha16>` files are removed
+  (2026-11-03): a file left in the user folder shadowed the shipped profile.
 - **Sharing**: profiles in `data/controllers/profiles/` (built-in, reviewed) and the user folder; the same format for
   both.
 - **Device independence**: profiles name abstract targets; a device without trigger motors plays the fallback.
@@ -542,14 +540,19 @@ haptics` / `controllers rumble`, WebAPI `GET /api/v1/controllers/haptics`, `POST
 `controllers_haptics()` / `controllers_rumble()`. The effects are one table (`haptics/testeffects.h`) that the
 dialog's Test haptics also plays. Mode, strength, gate and stop are still to come.
 
-Built (2026-10-23): the host verb `haptics_probe` (`kind` exec / read / write / port-in / port-out, `address`, `page`,
-`port_mask`, `play`). It adds a probe with its rule to the loaded game's user profile and answers `id`, `source` and
-`path`; without a program loaded from a file it is `unavailable`. It is on every plane:
+Built (2026-11-03, in place of `haptics_probe`): the host verb `haptics_trial`, the session trial of game haptics.
 
-- CLI `controllers haptics_probe <kind> <address> [page= port_mask= play=]`;
-- WebAPI `POST /api/v1/controllers/haptics_probe`, in OpenAPI, and a socket `call` like every route;
-- MCP `controllers` action `haptics_probe`;
-- Python `controllers_haptics_probe(kind, address, ...)`.
+- `text` is a play profile's `events:` and `haptics:` (YAML, or JSON when it starts with `{`), the same fields a game
+  profile file has. It is checked as the profile it makes with the game's haptics would be (`ParseHapticTrial`): a
+  rule may name the game's sources, an event may replace one.
+- It lies over the haptics the profiles resolve for the loaded game (`OverlayHaptics`: its sources replace those of
+  the same name, its rules follow the game's) and is armed at once; `game.events` shows its events, the pads play its
+  rules. `context` / `match` say `<profile>+trial` and `session trial` in `haptics_reason`.
+- Memory only: never written to a profile file. `clear` drops it; loading another program drops it too.
+- Without options it answers the trial in effect: `active`, `sources`, `trial`, `haptics_profile`, `haptics_reason`.
+- On every plane: CLI `controllers haptics_trial [<file>|clear]`; WebAPI `POST /api/v1/controllers/haptics_trial`
+  (`{text}`, `{clear: true}`, `{}`), in OpenAPI, and a socket `call`; MCP `controllers` action `haptics_trial`;
+  Python `controllers_haptics_trial(text="", clear=False)`.
 
 Lua is excluded, as decided.
 
@@ -561,6 +564,7 @@ A companion client (Steam Deck, phone) may receive the effect stream and play it
 |:--|:--|
 | `Haptics_AyEnvelopeOnset` | R13 writes with shape 0 produce one `explosion` event per restart, none on repeated R13 with the same value if the game does not restart |
 | `Haptics_LowbandFilter` | a synthetic 60 Hz burst passes, a 2 kHz tone does not (built: `HapticFilters_Test`, with the envelope, onset, probe parse and evaluation, DSP defaults and Add-probe tests) |
+| `SessionTrialLaysOverTheGameHaptics` | `HapticFilters_Test`: a trial's events replace the game's sources of the same name, its rules follow the game's, what a profile would refuse it refuses; `HostInputControl_Test.HapticsTrialLaysOverAndClearsWithoutAFile`: applied at once, read back, cleared, nothing written |
 | `Haptics_ProbeWriteDecreased` | a test program decrementing a byte fires `died` once per decrement and never on increment |
 | `Haptics_GateOnSeek` | a seek closes the gate within the same frame; the fake driver records zero within 10 ms (built: `HapticFeed_Test`, the zero is written inside `SeekTo`) |
 | `Haptics_NotJournaled` | a recording with haptics active has no extra journal events; frame hashes equal with the feed on and off (built: `HapticFeed_Test`, every probe and three taps, ten frames) |
