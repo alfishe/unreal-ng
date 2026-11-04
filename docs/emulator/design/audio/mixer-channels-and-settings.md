@@ -22,7 +22,7 @@ A row is named by its source key; a channel by `<source>.<channel>`. Keys are ca
 | `ay1`, `ay2` | AY / TurboSound, the TSFM's SSG halves | `a`, `b`, `c` | `SoundChip_AY8910` channel mute / volume |
 | `fm1`, `fm2` | TurboSound FM, FM halves | `1`..`3` | `Ym2203Engine::setChannelGain` (Q15, per channel before the sum) |
 | `ay3` | Fuller Box AY | `a`, `b`, `c` | the card (`ICard::SetMixerChannel`): the chip |
-| `covox` | Covox / SounDrive | `la`, `lb`, `ra`, `rb` | `Covox::setChannelMute` / `setChannelGain` |
+| `covox` | Covox / SounDrive | `la`, `lb`, `ra`, `rb` (SounDrive); `mono` (a mono Covox: `#FB`, the Scorpion's `#DD`) | `Covox::setChannelMute` / `setChannelGain` |
 | `gs` | General Sound (classic, lightweight), NeoGS | `1`..`4` (NeoGS `1`..`8`) | `GeneralSoundCard::setHostChannelGain`: the channel's level in the card's own output |
 | `moonsound_fm` | MoonSound OPL3 | `1`..`18`, metered | the OPL4 tap path (`Opl4::SetChannelMute` / `SetChannelGain`) |
 | `moonsound_pcm` | MoonSound wave | `1`..`24`, metered | the same, PCM slots |
