@@ -30,7 +30,7 @@ One spec, checked at every **frame end** (`MainLoop::CompleteFrame`, after every
 |:--|:--|:--|
 | condition | `if` (Python `condition`) | the conditional-breakpoint expression (`M(x)`, `W(x)`, registers, `FRAME`, `FD`, `PG0..3`, `x@prev`, labels; no access operands) is true |
 | text | `text` | the ROM-font OCR of the screen (as `capture/ocr`; the text layer in text modes) contains it |
-| screen | `screen` = `changed` / `stable` (`stable_frames`, default 25) | the active screen's digest (as `state/screen/digest?mode=active`, border folded in) differs from the start / held N frame ends |
+| screen | `screen` = `changed` / `stable` (`stable_frames`, default 25) | the bytes the picture is read from (`Screen::DescribeDisplayedMemory`: 6,912 of a ZX page; a device's video memory as the active-surface digest), the border folded in, differ from the start / held N frame ends |
 | event | `event` | the profile's game event fired after the start |
 | combination | `match` = `any` (default) / `all` | any rule / every given rule at the same frame end |
 
@@ -71,14 +71,47 @@ time, and lands on the exact frame.
 
 ## 5. Measurement
 
-Script `scratch/run-until-watches/live_run_until.py` (in the worktree); results below.
+Script `scratch/run-until-watches/live_run_until.py` (in the worktree), unreal-qt launched on ports of its own,
+2026-11-03, Apple M-series. Calls, reply bytes (REST) or structured characters (MCP), MCP text characters, wall ms;
+"stop" = frame ends after the start where the loop or the call stopped.
 
-(filled in after the live run)
+| Case | Surface | Old loop: calls / bytes / text / ms / stop | run_until or watch: calls / bytes / text / ms / stop |
+|:--|:--|:--|:--|
+| 48K from reset, "Sinclair" on screen (old: run_frames 10 + OCR) | REST | 18 / 16299 / - / 38.7 / 90 | 1 / 460 / - / 30.4 / **87** |
+| | MCP | 18 / 20492 / 3249 / 54.9 / 90 | 1 / 508 / 99 / 30.3 / **87** |
+| booted 48K, FRAMES >= 400 (old: run_frames 10 + read) | REST | 80 / 6820 / - / 175.9 / 400 | 1 / 345 / - / 109.3 / 400 |
+| | MCP | 80 / 26081 / 7920 / 238.4 / 400 | 1 / 376 / 64 / 109.7 / 400 |
+| 48K from reset, the screen holds 25 frames (old: run_frames 5 + digest) | REST | 28 / 6560 / - / 41.9 / 70 | 1 / 397 / - / 17.2 / **57** |
+| | MCP | 28 / 12383 / 2464 / 64.8 / 70 | 1 / 430 / 82 / 17.1 / **57** |
+| Green Beret, `#A13C` changes (old: run_frames 1 + read, exact) | REST | 125 / 29768 / - / 111.3 / 62 | 1 / 336 / - / 18.1 / 63 |
+| | MCP | 127 / 42533 / 12449 / 209.4 / 63 | 1 / 367 / 61 / 18.7 / 63 |
+| the same, chunks of 10 | REST | 21 / 1741 / - / 45.5 / 100 | 1 / 336 / - / 18.7 / **63** |
+| | MCP | 21 / 6864 / 2071 / 60.7 / 100 | 1 / 367 / 61 / 18.8 / **63** |
+| running 48K from reset, "Sinclair" (old: OCR every 50 ms, then pause; new: watch_add + wait) | REST | 32 / 51718 / - / 1723.7 / 0 late | 6 / 764 / - / 1725.0 / 0 late, frame 87 |
+| | MCP | 33 / 55229 / 8309 / 1783.0 / 2 late | 6 / 1086 / 333 / 1722.2 / 0 late, frame 87 |
+
+Result: one call instead of 18-127 (5.5x fewer for the running case), 5-116x fewer bytes, 25-204x less MCP text,
+1.3-11x faster for a direct run (the running case takes the machine's own 1.7 s either way), and the stop is the exact
+frame end: the chunked loops stop up to a chunk late (90 vs 87, 100 vs 63), the running poll up to 2 frames late. The
+exact one-frame loop agrees with run_until (MCP 63 = 63; the REST loop's 62 is its start, a frame earlier after the
+MCP load: the same loop over MCP and run_until over both say 63). **Accepted.**
+
+Found by the live runs and fixed before landing:
+
+- the screen rule hashed the whole page 5 (as `state/screen/digest` does): FRAMES and the stack move under the ROM's
+  interrupt every frame, so a BASIC screen never held still. It now hashes the displayed memory
+  (`Screen::DescribeDisplayedMemory`); unit test `StableUnderTheRomInterrupt`;
+- `x@prev` took its first value at the first frame end, so a change within the first frame was missed; the start now
+  seeds it;
+- a refused spec still ran one frame (`RunFramesUntil`'s start hook can now end the run before a step);
+- the `watch_add` text did not name the label.
 
 ## 6. Limits
 
 - The text rule is the ROM font only (as `capture/ocr`): a game's own font is not read.
-- The screen rule hashes screen memory, not the rendered picture: a border-only change counts (the border is
-  folded in), FLASH does not.
+- The screen rule hashes the displayed memory, not the rendered picture: a border-only change counts (the border is
+  folded in), FLASH does not. Not `state/screen/digest`: that hashes the whole 16 KB page 5, where the ROM's
+  interrupt moves FRAMES and the stack every frame, so a poller waiting for its `combined` to repeat never sees a
+  BASIC screen hold still (found by the live test on a Pentagon).
 - An armed watch is not saved in a snapshot or a `.ttd`; it belongs to the session that armed it.
 - A game event rule needs a profile with `events:` set (a play profile); without one the spec is refused.

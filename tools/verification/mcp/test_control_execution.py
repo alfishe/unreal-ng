@@ -269,7 +269,8 @@ def test_a_host_script_and_mcp_share_one_machine(s):
 
 def counter_program(s):
     """ei; halt; inc (hl); jr back at 0x8000 with HL = 0x9000: the byte at 0x9000 counts frames (the ROM's RST 38 runs
-    in between and keeps HL)"""
+    in between and keeps HL). A fresh machine: the tests above leave breakpoints' features, paging and a pace behind"""
+    s.fresh_machine()
     s.call('control_execution', {'action': 'pause'})
     s.call('memory_access', {'action': 'write', 'address': '0x8000', 'hex': '21 00 90 FB 76 34 18 FC'})
     s.call('memory_access', {'action': 'write', 'address': '0x9000', 'hex': '00'})
@@ -286,10 +287,13 @@ def test_run_until_stops_at_the_frame_end(s):
     r = s.call('control_execution', {'action': 'run_until', 'condition': 'M(#9000) == 250d', 'max_frames': 5})
     expect(r.structured.get('met') is False and r.structured.get('outcome') == 'budget'
            and r.structured['frames'] == 5, 'not met: the budget', r.text)
+    s.call('memory_access', {'action': 'write', 'address': '0x8000', 'hex': 'FB 76 18 FD'})  # ei; halt; jr: the screen holds
+    s.call('invoke_api', {'method': 'PUT', 'path': '/api/v1/emulator/{id}/registers/pc', 'body': {'value': 0x8000}})
     r = s.call('control_execution', {'action': 'run_until', 'screen': 'stable', 'stable_frames': 5, 'max_frames': 50})
-    expect(r.structured.get('met') is True and 'screen' in r.text, 'the screen held 5 frame ends', r.text)
+    expect(r.structured.get('met') is True and 'screen' in r.text and r.structured['frames'] <= 6,
+           'the screen held 5 frame ends', r.text)
     r = s.call('control_execution', {'action': 'run_until'}, ok=False)
-    expect(r.is_error and 'rule' in r.text, 'no rule is refused', r.text)
+    expect(r.is_error and 'nothing to wait for' in r.text, 'no rule is refused', r.text)
     r = s.call('control_execution', {'action': 'run_until', 'condition': 'M(#9000) >'}, ok=False)
     expect(r.is_error, 'a condition that does not compile is refused', r.text)
 
@@ -301,8 +305,8 @@ def test_a_watch_pauses_the_running_machine(s):
     r = s.call('control_execution', {'action': 'watch_list'})
     expect('thirty' in r.text and r.structured.get('count') == 1, 'listed', r.text)
     since = s.call('control_execution', {'action': 'wait', 'timeout_ms': 0}).structured['seq']
-    s.call('control_execution', {'action': 'resume'})
-    r = None
+    r = s.call('control_execution', {'action': 'resume'})
+    expect(not r.is_error, 'resumed', r.text)
     for _ in range(6):
         r = s.call('control_execution', {'action': 'wait', 'since': since, 'timeout_ms': 5000})
         since = r.structured.get('seq', since)

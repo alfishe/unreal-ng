@@ -18,6 +18,8 @@
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/state/statenode.h"
+#include "emulator/memory/memory.h"
+#include "emulator/video/screen.h"
 #include "emulator/video/screendigest.h"
 
 namespace framewatch
@@ -146,10 +148,35 @@ std::unique_ptr<Probe> Probe::Create(EmulatorContext* context, const Spec& spec,
 
 uint64_t Probe::Digest() const
 {
-    // What the current video mode displays (ATM / Sprinter surfaces too), the border folded in: as the pollers' digest
-    ScreenDigestQuery query;
-    query.active = true;
-    return ScreenDigestCompute::Compute(_context, query, false).combined;
+    // The bytes the picture is read from now (Screen::DescribeDisplayedMemory: a ZX layout is the 6,912 bytes of its
+    // page, not the 16 KB page with the system variables and the stack that the ROM's interrupt changes every frame),
+    // the border folded in. A device's own video memory (Sprinter VRAM) is hashed as the active-surface digest
+    Screen* screen = _context->pScreen;
+    Memory* memory = _context->pMemory;
+    if (!screen || !memory)
+        return 0;
+    screen->DescribeDisplayedMemory(_spans);
+    uint64_t digest = ScreenDigest::kInitialValue;
+    bool device = _spans.empty();
+    const uint8_t* ram = memory->RAMBase();
+    const size_t ramBytes = MAX_RAM_SIZE;
+    for (const ScreenMemorySpan& span : _spans)
+    {
+        if (span.region || span.offset >= ramBytes)
+        {
+            device = true;
+            continue;
+        }
+        const size_t bytes = std::min<size_t>(span.bytes, ramBytes - span.offset);
+        digest = ScreenDigest::DigestBytes(ram + span.offset, bytes, digest);
+    }
+    if (device)
+    {
+        ScreenDigestQuery query;
+        query.active = true;
+        digest = ScreenDigest::MixDigest(digest, ScreenDigestCompute::Compute(_context, query, false).combined);
+    }
+    return ScreenDigest::MixValue(digest, screen->GetBorderColor());
 }
 
 uint64_t Probe::EventFires() const
@@ -170,6 +197,13 @@ void Probe::Prime()
     }
     if (!_spec.event.empty())
         _startFires = EventFires();
+    // x@prev takes its value at the start: a change within the first frame holds at its end (else the first check
+    // would compare x with itself and miss it)
+    if (_condition && _condition->UsesPrevious())
+    {
+        _condition->ResetPrevious();
+        _condition->Evaluate(ConditionContext(_context));
+    }
     _primed = true;
 }
 

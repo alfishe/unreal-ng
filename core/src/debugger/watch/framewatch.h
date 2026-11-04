@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "emulator/state/statenode.h"
+#include "emulator/video/screenmemoryspan.h"
 
 class EmulatorContext;
 class BreakpointConditionProgram;
@@ -96,6 +97,7 @@ private:
     uint64_t _lastDigest = 0;
     unsigned _sameFrames = 0;
     uint64_t _startFires = 0;
+    mutable std::vector<ScreenMemorySpan> _spans;  ///< reused: no allocation per frame
     std::string _failure;
 };
 

@@ -36,6 +36,8 @@ protected:
 
     void Create()
     {
+        if (_emulator)  // a second machine in one test: the first goes
+            EmulatorManager::GetInstance()->RemoveEmulator(_emulator->GetUUID());
         _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("framewatch", "48K", LoggerLevel::LogNone);
         ASSERT_TRUE(_emulator);
         _context = _emulator->GetContext();
@@ -113,11 +115,11 @@ TEST_F(FrameWatch_Test, BudgetAndPrevious)
     EXPECT_EQ(r.frames, 7u);
     EXPECT_NE(framewatch::RunResultText(r).find("not met in 7 frames"), std::string::npos);
 
-    // The byte went up since the previous frame end: holds at the first frame after the start (the start is the
-    // first check's own value, so not at once)
+    // The byte went up since the previous check: @prev takes its value at the start, so the first frame's increment
+    // holds at its end
     r = Run({{"if", "M(#A000) > M(#A000)@prev"}, {"max_frames", "10"}});
     ASSERT_EQ(r.stop, "met") << r.error;
-    EXPECT_EQ(r.frames, 2u) << "the first check primes @prev, the second sees the increment";
+    EXPECT_EQ(r.frames, 1u) << "the start primes @prev, the first frame end sees the increment";
 }
 
 /// W3: the screen changing (a counter in the screen's first byte) and holding still (a counter outside it)
@@ -138,6 +140,19 @@ TEST_F(FrameWatch_Test, ScreenChangedAndStable)
     ASSERT_EQ(r.stop, "met") << r.error;
     EXPECT_EQ(r.frames, 5u);
     EXPECT_EQ(r.hit.stableFor, 5u);
+}
+
+/// W3b: the booted 48K ROM's copyright screen holds still although its interrupt moves FRAMES and the stack in
+/// page 5 every frame: the rule hashes the displayed 6,912 bytes, not the page
+TEST_F(FrameWatch_Test, StableUnderTheRomInterrupt)
+{
+    ASSERT_NO_FATAL_FAILURE(Create());
+    _emulator->RunNFrames(150);  // booted: the copyright line, nothing moves on screen
+    const uint8_t frames = Peek(0x5C78);
+    const framewatch::RunResult r = Run({{"screen", "stable"}, {"stable_frames", "10"}, {"max_frames", "30"}});
+    ASSERT_EQ(r.stop, "met") << r.error;
+    EXPECT_EQ(r.frames, 10u);
+    EXPECT_NE(Peek(0x5C78), frames) << "FRAMES moved meanwhile";
 }
 
 /// W4: the ROM-font text on screen: found with its row, absent until the budget; all needs every rule

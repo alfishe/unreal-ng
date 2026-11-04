@@ -570,8 +570,9 @@ and `stop`.
 **Run until, and frame watches** (`core/src/debugger/watch/framewatch.h`,
 [design](../../../inprogress/2026-11-03-run-until-watches/README.md)). One spec, checked at every frame end: `if` (the
 conditional-breakpoint language without access operands: `M(x)`, `W(x)`, registers, `FRAME`, `x@prev`, labels), `text`
-(a substring of the ROM-font OCR of the screen, case-sensitive), `screen` (`changed`: the active screen's digest differs
-from the start; `stable`: it held `stable_frames` frame ends), `event` (a profile's game event fired), `match` (`any`
+(a substring of the ROM-font OCR of the screen, case-sensitive), `screen` (`changed`: the displayed screen memory and
+the border differ from the start - 6,912 bytes of a ZX screen, not the whole page; `stable`: they held `stable_frames`
+frame ends), `event` (a profile's game event fired), `match` (`any`
 by default, `all`: every rule at the same frame end).
 
 - `run_until` is a direct run that stops, paused, at the end of the first frame where the spec holds, or after
