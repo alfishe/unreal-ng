@@ -5,6 +5,7 @@
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runpacer.h"
 #include "emulator/execution/runcontrol.h"
+#include "debugger/watch/framewatch.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memorycounters.h"
@@ -430,6 +431,70 @@ inline void TtdKwargsPy(std::map<std::string, std::string>& options, const pybin
     for (const auto& [key, value] : kwargs)
         if (!value.is_none())
             options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+}
+
+/// Keyword arguments as frame watch options (docs/inprogress/2026-11-03-run-until-watches); `condition` stands for
+/// `if` (a Python keyword)
+inline std::vector<std::pair<std::string, std::string>> WatchKwargsPy(const pybind11::kwargs& kwargs)
+{
+    namespace py = pybind11;
+    std::vector<std::pair<std::string, std::string>> options;
+    for (const auto& [key, value] : kwargs)
+        if (!value.is_none())
+            options.emplace_back(py::str(key).cast<std::string>(), TtdOptionTextPy(value));
+    return options;
+}
+
+/// A watch verb's outcome as a dict: the body with ok and text (error on a refusal)
+inline pybind11::dict WatchOutcomePy(const framewatch::Outcome& outcome)
+{
+    namespace py = pybind11;
+    py::dict d = StateNodeToPy(outcome.body).cast<py::dict>();
+    d["ok"] = outcome.status < 400;
+    if (outcome.status >= 400)
+        d["error"] = outcome.text;
+    d["text"] = outcome.text;
+    return d;
+}
+
+/// run_until(**rules): whole frames until the rules hold at a frame end (RunControl::RunUntil); the GIL is free meanwhile
+inline pybind11::dict PythonRunUntil(Emulator& self, const pybind11::kwargs& kwargs)
+{
+    namespace py = pybind11;
+    py::dict d;
+    std::shared_ptr<Emulator> shared = EmulatorManager::GetInstance()->GetEmulator(self.GetId());
+    framewatch::Spec spec;
+    unsigned maxFrames = 0;
+    bool breakpoints = false;
+    std::string error;
+    if (!shared)
+        error = "no emulator";
+    else if (!framewatch::RunOptions(WatchKwargsPy(kwargs), spec, maxFrames, breakpoints, error) && error.empty())
+        error = "bad options";
+    if (!error.empty())
+    {
+        d["ok"] = false;
+        d["error"] = error;
+        return d;
+    }
+    execution::script::Check(self, execution::Origin::Python);
+    const execution::Requester requester = execution::script::RequesterOf(self, execution::Origin::Python);
+    execution::RunReply reply;
+    {
+        py::gil_scoped_release release;
+        reply = execution::RunControl(shared).RunUntil(requester, spec, maxFrames, breakpoints);
+    }
+    if (reply.status == execution::RunReply::Status::Revoked)
+        throw std::runtime_error(reply.message);
+    if (!reply.Ok())
+    {
+        d["ok"] = false;
+        d["error"] = reply.message;
+        return d;
+    }
+    d = StateNodeToPy(reply.body).cast<py::dict>();
+    d["ok"] = true;
+    return d;
 }
 
 /// One symbol verb through SymbolControl: keyword arguments as options (a list as a comma list), the reply's body; a
@@ -3113,6 +3178,20 @@ namespace PythonBindings
                 execution::script::Check(self, execution::Origin::Python);
                 self.RunNFrames(count, skipBreakpoints);
             }, "Execute N frames", py::arg("count"), py::arg("skip_breakpoints") = true)
+
+            // Frame watches (docs/inprogress/2026-11-03-run-until-watches): run_until(text="PRESS", max_frames=500)
+            // (condition= for if=), watch_add(condition="...", then="notify"), watches(), watch_remove(id | "all")
+            .def("run_until", [](Emulator& self, py::kwargs kwargs) { return PythonRunUntil(self, kwargs); },
+                 "Run whole frames until the rules hold at a frame end: condition / text / screen / stable_frames / "
+                 "event / match / max_frames / breakpoints; dict with met, outcome, frames, frame, hit, text")
+            .def("watch_add", [](Emulator& self, py::kwargs kwargs) {
+                return WatchOutcomePy(framewatch::AddWatch(self.GetContext(), WatchKwargsPy(kwargs)));
+            }, "Arm a frame watch on the running machine (the run_until rules plus label, then=pause|notify, once)")
+            .def("watches", [](Emulator& self) { return WatchOutcomePy(framewatch::ListWatches(self.GetContext())); },
+                 "The armed frame watches")
+            .def("watch_remove", [](Emulator& self, py::object id) {
+                return WatchOutcomePy(framewatch::RemoveWatch(self.GetContext(), TtdOptionTextPy(id)));
+            }, "Remove a frame watch by id, or \"all\"", py::arg("id"))
 
             // T-state and scanline stepping
             .def("run_tstates", [](Emulator& self, unsigned count, bool skipBreakpoints) {

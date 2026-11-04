@@ -564,6 +564,12 @@ public:
                   drogon::Put);
     // The scripts' callbacks (docs/features/script-callbacks.md): list and manage, never register (callbacks_api.cpp)
     ADD_METHOD_TO(EmulatorAPI::getCallbacks, "/api/v1/emulator/{id}/callbacks", drogon::Get);
+    // Frame watches (docs/inprogress/2026-11-03-run-until-watches, watch_api.cpp): run until a frame-end rule holds,
+    // and the armed watches of a running machine
+    ADD_METHOD_TO(EmulatorAPI::runUntil, "/api/v1/emulator/{id}/run_until", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getWatches, "/api/v1/emulator/{id}/watches", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::addWatch, "/api/v1/emulator/{id}/watches", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::removeWatch, "/api/v1/emulator/{id}/watches/{watch}", drogon::Delete);
     ADD_METHOD_TO(EmulatorAPI::resumeCallback, "/api/v1/emulator/{id}/callbacks/{cb_id}/resume", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::removeCallback, "/api/v1/emulator/{id}/callbacks/{cb_id}", drogon::Delete);
     ADD_METHOD_TO(EmulatorAPI::setCallbackPolicy, "/api/v1/emulator/{id}/callbacks/{cb_id}/policy", drogon::Put);
@@ -1901,6 +1907,15 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void setBreakpointCondition(const drogon::HttpRequestPtr& req,
                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
                                 const std::string& bpIdStr) const;
+    // Frame watches: run_until and the armed watches (watch_api.cpp)
+    void runUntil(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    void getWatches(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void addWatch(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    void removeWatch(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id, const std::string& watch) const;
     // The scripts' callbacks: list, resume, remove, policy (callbacks_api.cpp)
     void getCallbacks(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                       const std::string& id) const;

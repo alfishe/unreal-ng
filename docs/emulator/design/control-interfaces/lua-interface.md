@@ -1435,6 +1435,13 @@ emu.step_out()                       -- run until the current subroutine returns
 emu.skip_until(0x8000)               -- fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", 70000000)   -- optional explicit t-state budget
 
+-- Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end
+run_until{text = "PRESS", max_frames = 500}   -- {met, outcome, frames, frame, pc, ms, hit = {reasons, text_line}, text}
+run_until{["if"] = "M(#5C3A)==1", screen = "stable", stable_frames = 50, match = "all"}
+watch_add{text = "GAME OVER", label = "over"}  -- {id, watch, text}; a hit pauses at that frame end
+watches()                                       -- {count, watches = {...}, text}
+watch_remove(1)                                 -- or watch_remove("all")
+
 -- The paced run (core RunPacer, command-interface.md §2.1): a frame / lines / an instruction per interval,
 -- stops at a breakpoint. The reply: the body with `pace` and ok (false: error = the message)
 pace()                               -- {preset, label, unit, count, interval_ms, effective_ms, running, ticks,

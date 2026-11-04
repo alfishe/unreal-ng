@@ -96,7 +96,7 @@ Tool catalog (16: 14 smart tools + the 2 router tools):
 |:--|:--|
 | `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, `list_models`, `server` |
 | `load_software` | snapshots/tapes/disks, `play`, `autostart`, local-file upload |
-| `control_execution` | run/pause/resume/step/step_n/step_over/step_out, run_frame/run_frames/run_tstates/run_to_interrupt, breakpoints (bp_add/remove/enable/disable/clear/list) |
+| `control_execution` | run/pause/resume/step/step_n/step_over/step_out, run_frame/run_frames/run_tstates/run_to_interrupt, run_until (frame-end rules: condition, text, screen, event), watch_add/list/remove, wait, breakpoints (bp_add/remove/enable/disable/clear/list) |
 | `inspect_state` | aspects: machine (identity, `ram_kb`), registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, screen, screen_flash, screen_attributes, screen_ocr/image/digest, timing, video_layout, video_text, rom, audio_ay/fm/gs/covox/moonsound/opl4_fm/opl4_pcm, audio_mixer, fdc, ide, cdaudio, rtc, isa, network, mouse, ttd (TTD status + position), contention, tsconf, tsconf_tsu, sprinter, sprinter_ports/text/video/palette/sound_ring/bios/zx_mode/pld_journal, memory_region, video_changes |
 | `type_input` | type (`tokenized`: a BASIC line typed into the ROM editor, every key verified, no ENTER; BASIC commands with ENTER and a result: `basic/run` via `invoke_api`), tap/press/release, combo, macro, release_all, list_keys |
 | `mouse_input` | Kempston move/press/click/wheel |

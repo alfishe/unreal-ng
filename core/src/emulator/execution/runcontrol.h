@@ -23,6 +23,7 @@
 #include "emulator/state/statenode.h"
 
 class Emulator;
+namespace framewatch { struct Spec; }
 class EmulatorContext;
 enum EmulatorStateEnum : uint8_t;
 
@@ -94,6 +95,9 @@ public:
     /// 700000000). `breakpoints`: a breakpoint ends it first (run to the cursor); false skips them (skip_until).
     /// The body says whether it got there: `hit`
     RunReply RunUntilPc(const Requester& requester, uint16_t pc, uint64_t maxTStates, bool breakpoints);
+    /// Whole frames until a frame watch's spec holds at a frame end, at most `maxFrames` (0: the default)
+    /// (debugger/watch/framewatch.h): the body is framewatch::RunResultNode with `text`; a bad spec is BadRequest
+    RunReply RunUntil(const Requester& requester, const framewatch::Spec& spec, unsigned maxFrames, bool breakpoints);
     /// Source level (the loaded listing, POST /listing/step_line): until PC is on another listing line; at most
     /// `maxTStates` (0: 100 frames). Conflict "No listing loaded" without one
     RunReply StepLine(const Requester& requester, uint64_t maxTStates);

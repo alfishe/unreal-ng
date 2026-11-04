@@ -1738,6 +1738,7 @@ void Emulator::OnIntentEdgeGate(const execution::IntentEdge& edge, bool parked)
         std::lock_guard<std::mutex> lock(_prevStopMutex);
         _lastStop.reason = _pendingPauseCause.hit    ? DebugStop::Reason::Breakpoint
                            : _pendingPauseCause.step ? DebugStop::Reason::Step
+                           : edge.reason == "watch"  ? DebugStop::Reason::Watch
                                                      : DebugStop::Reason::Pause;
         _lastStop.breakpoint = _pendingPauseCause;
         {
@@ -3660,6 +3661,47 @@ void Emulator::RunUntilInterrupt(bool skipBreakpoints)
     // Notify debugger
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
+}
+
+unsigned Emulator::RunFramesUntil(unsigned maxFrames, const std::function<bool()>& atStart,
+                                  const std::function<bool()>& atFrameEnd, bool skipBreakpoints, bool& met)
+{
+    met = false;
+    DirectStepScope directStep(*this, "run_until");
+    CancelPendingStepOver();
+    _hasFrameStepTarget = false;
+    ResetLineStepAnchor();
+
+    // See RunNFrames: never race a park still in flight
+    if (IsRunning() && _mainloop)
+        WaitForPauseConfirmation(500);
+    if (RunHalted())
+        return 0;
+    if (atStart && !atStart())
+        return 0;
+
+    Z80& z80 = *_core->GetZ80();
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    // A halted CPU's idle cycles may run in one go up to the frame end, as RunNFrames lets them
+    Z80::IdleSkipScope idleSkip(z80, 0);
+
+    unsigned frames = 0;
+    while (frames < maxFrames && !RunHalted())
+    {
+        z80.idleSkipLimit = z80._frameLimit;
+        bool frameCompleted = false;
+        ExecuteStep(skipBreakpoints, &frameCompleted);
+        if (!frameCompleted)
+            continue;
+        frames++;
+        messageCenter.Post(NC_EXECUTION_CPU_STEP);
+        if (atFrameEnd && atFrameEnd())
+        {
+            met = true;
+            break;
+        }
+    }
+    return frames;
 }
 
 void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates,

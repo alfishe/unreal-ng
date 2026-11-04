@@ -267,6 +267,60 @@ def test_a_host_script_and_mcp_share_one_machine(s):
     s.call('control_execution', {'action': 'pause'})
 
 
+def counter_program(s):
+    """ei; halt; inc (hl); jr back at 0x8000 with HL = 0x9000: the byte at 0x9000 counts frames (the ROM's RST 38 runs
+    in between and keeps HL)"""
+    s.call('control_execution', {'action': 'pause'})
+    s.call('memory_access', {'action': 'write', 'address': '0x8000', 'hex': '21 00 90 FB 76 34 18 FC'})
+    s.call('memory_access', {'action': 'write', 'address': '0x9000', 'hex': '00'})
+    s.call('invoke_api', {'method': 'PUT', 'path': '/api/v1/emulator/{id}/registers/pc', 'body': {'value': 0x8000}})
+
+
+def test_run_until_stops_at_the_frame_end(s):
+    counter_program(s)
+    r = s.call('control_execution', {'action': 'run_until', 'condition': 'M(#9000) >= 10d', 'max_frames': 100})
+    expect(r.structured.get('met') is True and r.structured.get('outcome') == 'met', 'met', r.text)
+    expect(r.text.startswith('met at frame'), 'the one line', r.text)
+    value = s.call('memory_access', {'action': 'read', 'address': '0x9000', 'length': 1}).text
+    expect(re.search(r'\b0A\b', value), 'stopped at the frame end it held (10), not later', value)
+    r = s.call('control_execution', {'action': 'run_until', 'condition': 'M(#9000) == 250d', 'max_frames': 5})
+    expect(r.structured.get('met') is False and r.structured.get('outcome') == 'budget'
+           and r.structured['frames'] == 5, 'not met: the budget', r.text)
+    r = s.call('control_execution', {'action': 'run_until', 'screen': 'stable', 'stable_frames': 5, 'max_frames': 50})
+    expect(r.structured.get('met') is True and 'screen' in r.text, 'the screen held 5 frame ends', r.text)
+    r = s.call('control_execution', {'action': 'run_until'}, ok=False)
+    expect(r.is_error and 'rule' in r.text, 'no rule is refused', r.text)
+    r = s.call('control_execution', {'action': 'run_until', 'condition': 'M(#9000) >'}, ok=False)
+    expect(r.is_error, 'a condition that does not compile is refused', r.text)
+
+
+def test_a_watch_pauses_the_running_machine(s):
+    counter_program(s)
+    r = s.call('control_execution', {'action': 'watch_add', 'condition': 'M(#9000) >= 30d', 'label': 'thirty'})
+    expect(not r.is_error and 'thirty' in r.text, 'armed', r.text)
+    r = s.call('control_execution', {'action': 'watch_list'})
+    expect('thirty' in r.text and r.structured.get('count') == 1, 'listed', r.text)
+    since = s.call('control_execution', {'action': 'wait', 'timeout_ms': 0}).structured['seq']
+    s.call('control_execution', {'action': 'resume'})
+    r = None
+    for _ in range(6):
+        r = s.call('control_execution', {'action': 'wait', 'since': since, 'timeout_ms': 5000})
+        since = r.structured.get('seq', since)
+        if (r.structured.get('pause') or {}).get('reason') == 'watch':
+            break
+    expect('paused at watch' in r.text and 'thirty' in r.text, 'wait names the watch', r.text)
+    value = s.call('memory_access', {'action': 'read', 'address': '0x9000', 'length': 1}).text
+    expect(re.search(r'\b1E\b', value), 'paused at the frame end it held (30), not later', value)
+    r = s.call('control_execution', {'action': 'watch_list'})
+    expect(r.structured.get('count') == 0, 'a once watch goes with its hit', r.text)
+    s.call('control_execution', {'action': 'watch_add', 'condition': 'M(#9000) == 0', 'then': 'notify', 'once': False})
+    r = s.call('control_execution', {'action': 'watch_remove', 'watch_id': 'all'})
+    expect(not r.is_error and s.call('control_execution', {'action': 'watch_list'}).structured.get('count') == 0,
+           'removed all', r.text)
+    r = s.call('control_execution', {'action': 'watch_remove'}, ok=False)
+    expect(r.is_error and 'watch_id' in r.text, 'watch_remove needs watch_id', r.text)
+
+
 def test_unknown_action_is_an_error(s):
     r = s.call('control_execution', {'action': 'fly'}, ok=False)
     expect(r.is_error, 'refused', r.text)

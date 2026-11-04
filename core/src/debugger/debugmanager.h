@@ -11,6 +11,8 @@
 #include "emulator/emulatorcontext.h"
 #include <map>
 
+namespace framewatch { class Manager; }
+
 class DebugManager
 {
     /// region <ModuleLogger definitions for Module/Submodule>
@@ -45,6 +47,7 @@ protected:
     std::unique_ptr<class PcHistory> _pcHistory;
     std::unique_ptr<class AsmSyncService> _asmSync;
     std::unique_ptr<class ScriptCallbackManager> _scriptCallbacks;
+    std::unique_ptr<framewatch::Manager> _frameWatches;
     // The card CPU in the General Sound slot (gs-debugger design §3.2): its breakpoints and hooks
     std::unique_ptr<class GSCardTarget> _gsTarget;
     // The General Sound of a MultiSound slot card (the `ms` CPU)
@@ -78,6 +81,8 @@ public:
     AsmSyncService* GetAsmSyncService() { return _asmSync.get(); }
     /// Script callbacks (debugger/callbacks/scriptcallbacks.h)
     ScriptCallbackManager* GetScriptCallbacks() { return _scriptCallbacks.get(); }
+    /// Armed frame watches (debugger/watch/framewatch.h): checked at every frame end while any is armed
+    framewatch::Manager* GetFrameWatches() { return _frameWatches.get(); }
     /// The General Sound slot's card CPU (exists for the machine's lifetime; Available() while a card with a CPU is
     /// fitted)
     GSCardTarget* GetGSTarget() { return _gsTarget.get(); }

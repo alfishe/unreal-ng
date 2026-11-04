@@ -82,6 +82,9 @@ public:
     /// One frame (the emulation thread, at the frame end)
     void Record(const GameEventFrame& frame);
     Snapshot Read() const;
+    /// The fires of event `name` since the definition (no copy of the log: a frame watch asks every frame); false when
+    /// no event has that name. `names`, when given, gets the defined names on a miss
+    bool Fires(const std::string& name, uint64_t& fires, std::vector<std::string>* names = nullptr) const;
     /// Changes when the definition or a reported value changes (a frame with nothing new keeps it)
     uint64_t Revision() const;
 

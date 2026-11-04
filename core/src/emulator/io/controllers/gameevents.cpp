@@ -73,6 +73,26 @@ GameEventLog::Snapshot GameEventLog::Read() const
     return _state;
 }
 
+bool GameEventLog::Fires(const std::string& name, uint64_t& fires, std::vector<std::string>* names) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (const Event& event : _state.events)
+    {
+        if (event.name == name)
+        {
+            fires = event.fires;
+            return true;
+        }
+    }
+    if (names)
+    {
+        names->clear();
+        for (const Event& event : _state.events)
+            names->push_back(event.name);
+    }
+    return false;
+}
+
 uint64_t GameEventLog::Revision() const
 {
     std::lock_guard<std::mutex> lock(_mutex);
