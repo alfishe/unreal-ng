@@ -607,6 +607,12 @@ private:
             const int64_t wait0 = SteadyNs();
             WaitForSingleObjectEx(_waitable, 100, TRUE);
             const int64_t drawableWaitNs = SteadyNs() - wait0;
+            if (GiveWayToTheNext(item))
+            {
+                _freeCv.notify_all();
+                std::lock_guard<std::mutex> lock(_statsMutex);
+                _dropped++;
+            }
             const bool copied = CopyToBackBuffer(_slots[item.slot]);
             {
                 std::lock_guard<std::mutex> lock(_queueMutex);
@@ -654,6 +660,31 @@ private:
             }
         }
         SetThreadExecutionState(ES_CONTINUOUS);
+    }
+
+    /// Presenter thread, the back buffer held: a frame whose time is past by more than a third of its period (the
+    /// wait for the back buffer stalled 14-30 ms while the system moved the window between direct flip and composition
+    /// on a focus change, seen on .101) would be on screen for a moment, the next one right after it: a flash in the
+    /// motion. It gives way to the next frame (queued, or handed over within the period), shown at its own time; the
+    /// picture before holds once instead. @return the frame was replaced (its slot freed)
+    bool GiveWayToTheNext(Item& item)
+    {
+        const int64_t lastAtNs = _lastAtNs;  // the presenter thread's own
+        if (item.atNs <= 0 || lastAtNs <= 0 || item.atNs <= lastAtNs)
+            return false;
+        const int64_t periodNs = item.atNs - lastAtNs;
+        std::unique_lock<std::mutex> lock(_queueMutex);
+        if (SteadyNs() - item.atNs <= periodNs / 3)
+            return false;
+        _queueCv.wait_until(lock,
+                            std::chrono::steady_clock::time_point(std::chrono::nanoseconds(item.atNs + periodNs)),
+                            [&] { return _stop || !_queue.empty(); });
+        if (_stop || _queue.empty() || _queue.front().atNs <= item.atNs)
+            return false;
+        _slots[item.slot].queued = false;
+        item = _queue.front();
+        _queue.pop_front();
+        return true;
     }
 
     /// Presenter thread: do the vblanks follow the presents? On a fixed display they stay on the refresh grid whatever

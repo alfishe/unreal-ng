@@ -673,6 +673,11 @@ Each phase lands on its own with tests and docs.
      monitor and had no VRR in a window until restarted; the same window moved from full screen to a window keeps VRR
      (vblank interval p50 20.4 ms), so the window's layout (the presenter's HWND a child of the main window) is not
      what stops windowed G-Sync. G-Sync is the foreground window's: one in the background gets the grid.
+   - A focus change stalls the wait for a back buffer 14-30 ms (0.02 ms otherwise) while the system moves the
+     window between direct flip and composition: the frame due then was shown 16 ms late, held 35 ms, and the next
+     came 7 ms after it, a flash in the motion (trace on .101; no frame ever shown out of order). A frame whose time
+     is past by more than a third of its period now gives way to the next one (queued, or handed over within the
+     period), shown at its own time: the picture before holds once instead.
    - Found on the way: `refresh()` marks the texture on every latch, and a wake before the next frame was due uploaded
      the frame on screen again and presented it twice. Under VRR the copy started a refresh of its own, and the next
      frame came during its scan-out: 10 % of the frames off by up to a scan-out. A frame is new now by its serial.
