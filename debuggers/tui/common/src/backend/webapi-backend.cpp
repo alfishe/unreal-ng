@@ -321,6 +321,30 @@ namespace {
 constexpr const char* kRunToGroup = "tui-run-to";
 // The conditions (§10.2): breakpoints over the whole 64K with the condition, the emulator evaluates them
 constexpr const char* kConditionGroup = "tui-conditions";
+
+// A condition of the shared language in the emulator's words: its numbers are hex (UnrealSpeccy), the emulator reads
+// plain digits as decimal, so each number that starts an operand becomes #hex; 'c' constants and names (PG0) stay
+std::string ConditionForEmulator(const std::string& text) {
+    std::string out;
+    for (size_t i = 0; i < text.size();) {
+        const char c = text[i];
+        if (c == '\'' && i + 2 < text.size() && text[i + 2] == '\'') {
+            out.append(text, i, 3);
+            i += 3;
+            continue;
+        }
+        const bool afterName = i > 0 && (std::isalnum(static_cast<unsigned char>(text[i - 1])) || text[i - 1] == '_');
+        if (c >= '0' && c <= '9' && !afterName) {
+            out += '#';
+            while (i < text.size() && std::isxdigit(static_cast<unsigned char>(text[i])))
+                out += static_cast<char>(std::toupper(static_cast<unsigned char>(text[i++])));
+            continue;
+        }
+        out += c;
+        ++i;
+    }
+    return out;
+}
 }  // namespace
 
 void WebApiBackend::Continue(int) {
@@ -1092,9 +1116,9 @@ bool WebApiBackend::HasAnyBreakpoints() {
 
 ExprCompileResult WebApiBackend::AddCondition(int, const std::string& text) {
     // The emulator evaluates the condition at every instruction (an execution breakpoint over 0000-FFFF), or at every
-    // read or write when it asks for RD / WR (its trigger refuses the other kinds: the next one is tried). Its language
-    // is a superset of the shared compiler's (#hex, PG0-PG3, EFF7 ...): a text both refuse answers in UnrealSpeccy's
-    // words
+    // read or write when it asks for RD / WR (its trigger refuses the other kinds: the next one is tried). A text of the
+    // shared language goes with its hex numbers marked (ConditionForEmulator); any other is the emulator's language
+    // (#hex, decimal, PG0-PG3, EFF7 ...) and goes as typed; a text both refuse answers in UnrealSpeccy's words
     ExprCompileResult res;
     CompiledExpr expr;
     std::string localError;
@@ -1103,9 +1127,10 @@ ExprCompileResult WebApiBackend::AddCondition(int, const std::string& text) {
         res.error = compiles ? lastError_ : localError;
         return res;
     }
+    const std::string sent = compiles ? ConditionForEmulator(text) : text;
     for (const char* type : {"exec", "read", "write"}) {
         const std::string body = std::string("{\"type\":\"") + type +
-                                 "\",\"address\":0,\"address_end\":65535,\"condition\":\"" + JsonEscape(text) +
+                                 "\",\"address\":0,\"address_end\":65535,\"condition\":\"" + JsonEscape(sent) +
                                  "\",\"group\":\"" + kConditionGroup + "\",\"note\":\"condition\"}";
         const HttpReply added = Api("POST", "/breakpoints", body);
         int64_t id = 0;

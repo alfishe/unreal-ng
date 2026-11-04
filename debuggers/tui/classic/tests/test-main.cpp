@@ -595,6 +595,11 @@ void TestReadsTheEmulator() {
           "condition: over the whole 64K");
     be.DeleteCondition(0, 0);
     Check(server.Asked("DELETE /breakpoints/41") && be.ConditionCount(0) == 0, "condition: deleted there");
+    added = be.AddCondition(0, "A == 10 && PG0 == 0ff && C == 'x'");
+    Check(added.ok && server.Asked("POST /breakpoints {\"type\":\"read\",\"address\":0,\"address_end\":65535,"
+                                        "\"condition\":\"A == #10 && PG0 == #0FF && C == 'x'\""),
+          "condition: the shared language's hex numbers marked for the emulator");
+    be.DeleteCondition(0, 0);
     server.handler = [](const std::string& route, const std::string&) -> std::pair<int, std::string> {
         if (route != "POST /breakpoints") return {0, ""};
         return {400, "{\"message\":\"condition: an operand expected at column 5\"}"};
