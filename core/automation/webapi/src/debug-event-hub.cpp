@@ -74,6 +74,8 @@ void DebugEventHub::Start()
                             messageCenter.AddObserver(NC_SCRIPT_CALLBACKS_CHANGED, [this](int, Message* message) {
                                 OnScriptCallbacksChanged(message);
                             }));
+    _observers.emplace_back(NC_FRAME_WATCH,
+                            messageCenter.AddObserver(NC_FRAME_WATCH, [this](int, Message* message) { OnFrameWatch(message); }));
     _observers.emplace_back(NC_ASM_SYNC,
                             messageCenter.AddObserver(NC_ASM_SYNC, [this](int, Message* message) { OnAsmSync(message); }));
 }
@@ -301,6 +303,34 @@ void DebugEventHub::OnBreakpointsChanged(Message* message)
     event["ids"] = Json::Value(Json::arrayValue);
     for (uint16_t id : payload->ids)
         event["ids"].append(id);
+    Publish(payload->emulatorId.toString(), kTopicDebug, event);
+}
+
+void DebugEventHub::OnFrameWatch(Message* message)
+{
+    auto* payload = message ? dynamic_cast<FrameWatchPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    // watch_hit (a running machine got there: frame, reasons, paused), watch_added, watch_removed, watch_error
+    Json::Value event;
+    event["event"] = "watch_" + payload->event;
+    event["id"] = payload->id;
+    if (!payload->label.empty())
+        event["label"] = payload->label;
+    if (payload->event == "hit" || payload->event == "error")
+        event["frame"] = static_cast<Json::UInt64>(payload->frame);
+    if (payload->event == "hit")
+    {
+        event["reasons"] = Json::Value(Json::arrayValue);
+        for (const std::string& reason : payload->reasons)
+            event["reasons"].append(reason);
+        if (!payload->textLine.empty())
+            event["text_line"] = payload->textLine;
+        event["paused"] = payload->paused;
+        event["removed"] = payload->removed;
+    }
+    if (!payload->error.empty())
+        event["error"] = payload->error;
     Publish(payload->emulatorId.toString(), kTopicDebug, event);
 }
 

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "debugger/debugmanager.h"
+#include "debugger/watch/framewatch.h"
 #include "debugger/memory/memoryread.h"
 #include "debugger/pchistory/pchistory.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -219,6 +220,7 @@ const char* StopReason(Emulator::DebugStop::Reason reason)
         case Emulator::DebugStop::Reason::Pause: return "pause";
         case Emulator::DebugStop::Reason::Breakpoint: return "breakpoint";
         case Emulator::DebugStop::Reason::Step: return "step";
+        case Emulator::DebugStop::Reason::Watch: return "watch";
         default: return "none";
     }
 }
@@ -247,6 +249,27 @@ StateNode PauseNode(Emulator* emulator)
         pause["address"] = static_cast<int>(stop.breakpoint.address);
         if (stop.breakpoint.cpu != DebugCpuId::Main)
             pause["cpu_pc"] = static_cast<int>(stop.breakpoint.cpuPc);
+    }
+    else if (stop.reason == Emulator::DebugStop::Reason::Watch)
+    {
+        // The armed frame watch that held the machine: {id, label?, frame, reasons, text_line?}
+        EmulatorContext* context = emulator->GetContext();
+        framewatch::Manager* watches =
+            context && context->pDebugManager ? context->pDebugManager->GetFrameWatches() : nullptr;
+        framewatch::WatchInfo info;
+        if (watches && watches->LastPause(info))
+        {
+            pause["watch_id"] = static_cast<int>(info.id);
+            if (!info.spec.label.empty())
+                pause["watch_label"] = info.spec.label;
+            pause["frame"] = info.lastHit.frame;
+            StateNode reasons = StateNode::Array();
+            for (const std::string& reason : info.lastHit.reasons)
+                reasons.push(reason);
+            pause["reasons"] = reasons;
+            if (!info.lastHit.textLine.empty())
+                pause["text_line"] = info.lastHit.textLine;
+        }
     }
     else if (stop.reason == Emulator::DebugStop::Reason::Step && stop.breakpoint.step)
     {

@@ -51,6 +51,7 @@ constexpr char const* NC_SURFACE_TARGET = "SURFACE_TARGET";                     
 constexpr char const* NC_COMPANION_CHANGED = "COMPANION_CHANGED";                 // A companion client asked to pair, was paired, denied or revoked; a pairing expired or was cancelled - payload: CompanionChangedPayload (process-wide, no emulator id)
 constexpr char const* NC_BREAKPOINTS_CHANGED = "BREAKPOINTS_CHANGED";             // The breakpoint set changed — payload: BreakpointsChangedPayload (posted by BreakpointManager::RebuildFilters)
 constexpr char const* NC_SCRIPT_CALLBACKS_CHANGED = "SCRIPT_CALLBACKS_CHANGED";   // A script callback was added, removed, suspended, disabled, resumed or got a new policy - payload: ScriptCallbacksChangedPayload
+constexpr char const* NC_FRAME_WATCH = "FRAME_WATCH";   // An armed frame watch was added, removed, hit or failed - payload: FrameWatchPayload (debugger/watch/framewatch.h)
 constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered — payload: BreakpointTriggeredPayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               // Scanline boundary reached (debug stepping only)
 

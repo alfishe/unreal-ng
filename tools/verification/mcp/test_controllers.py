@@ -5,7 +5,6 @@ an unknown device, learn refused with the planes that offer it, and the session 
 loaded game in memory, seen by game.events, cleared)"""
 
 import sys
-import time
 
 from mcplib import expect, main
 
@@ -72,17 +71,13 @@ def test_haptics_trial_fires_and_clears(s):
     expect('haptics trial over' in r.text and '1 sources' in r.text, 'the trial in the text', r.text)
     r = s.call('controllers', {'action': 'context'})
     expect('session trial' in r.text, 'the haptics reason names the trial', r.text)
-    # game.events counts live frames (run_frames steps a paused machine): run it until the event has fired
-    s.call('control_execution', {'action': 'resume'})
-    fired = None
-    for _ in range(40):
-        r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/monitor/game.events'})
-        fired = (((r.structured or {}).get('body') or {}).get('events') or {}).get('irq', {}).get('fires', 0)
-        if fired:
-            break
-        time.sleep(0.05)
-    s.call('control_execution', {'action': 'pause'})
-    expect(fired, 'game.events counts the trial event', r.text)
+    # run_frames on the paused machine: the probe hears the frames it steps (its tap never stops, so the run that
+    # skips breakpoints still tells it); the feed arms the probe at the first frame boundary
+    s.call('control_execution', {'action': 'pause'}, ok=False)
+    s.call('control_execution', {'action': 'run_frames', 'frames': 10})
+    r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/monitor/game.events'})
+    fired = (((r.structured or {}).get('body') or {}).get('events') or {}).get('irq', {}).get('fires', 0)
+    expect(fired >= 5, 'game.events counts the trial event over run_frames (%s of 10 frames)' % fired, r.text)
     r = s.call('controllers', {'action': 'haptics_trial', 'text': 'haptics: {rules: [{on: nobody, play: hit}]}'},
                ok=False)
     expect(r.is_error and 'nobody' in r.text, 'a rule on an unknown source refused with the reason', r.text)

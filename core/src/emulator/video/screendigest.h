@@ -116,6 +116,7 @@ namespace ScreenDigestCompute
 /// empty = not given. False with `error` on a bad value
 bool QueryFromStrings(const std::string& mode, const std::string& banks, const std::string& start, const std::string& end,
                       const std::string& includeBorder, ScreenDigestQuery& query, std::string& error);
-/// Hash, compare with the previous poll and remember this one (EmulatorState::last_screen_digest)
-ScreenDigestResult Compute(EmulatorContext* context, const ScreenDigestQuery& query);
+/// Hash, compare with the previous poll and remember this one (EmulatorState::last_screen_digest). `remember` false:
+/// a watcher's look that leaves the pollers' previous digest alone (framewatch)
+ScreenDigestResult Compute(EmulatorContext* context, const ScreenDigestQuery& query, bool remember = true);
 }  // namespace ScreenDigestCompute

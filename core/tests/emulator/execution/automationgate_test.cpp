@@ -60,6 +60,7 @@ TEST(AutomationGate_Test, RunsWritesMediaInputAndBreakpointsChangeIt)
     // its debug scope for them, and review resolutions are debugger work
     EXPECT_TRUE(ChangesMachine("POST", "/analysis/review"));
     EXPECT_TRUE(ChangesMachine("POST", "/analysis/export"));
+    EXPECT_TRUE(ChangesMachine("POST", "/analysis/trace"));  // a replay on a clone, a host file by `path`
 }
 
 TEST(AutomationGate_Test, CliCommandsByTheirChangingForms)

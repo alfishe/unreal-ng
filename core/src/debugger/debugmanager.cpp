@@ -20,6 +20,7 @@
 #include "debugger/joystick/debugjoystickmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
+#include "debugger/watch/framewatch.h"
 
 /// region <Constructors / Destructors>
 
@@ -36,6 +37,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     _pcHistory = std::make_unique<PcHistory>(_context);
     _asmSync = std::make_unique<AsmSyncService>(_context);
     _scriptCallbacks = std::make_unique<ScriptCallbackManager>(_context);
+    _frameWatches = std::make_unique<framewatch::Manager>(_context);
     _gsTarget = std::make_unique<GSCardTarget>(_context);
     _msTarget = std::make_unique<GSCardTarget>(_context, DebugCpuId::MultiSoundGS, [context]() -> GeneralSoundCard* {
         SlotManager* slots = context->pSlotManager;
@@ -129,6 +131,7 @@ DebugManager::~DebugManager()
     // (as a unique_ptr member it would otherwise be destroyed after this body has run).
     _asmSync.reset();   // its worker publishes into _labels: stopped first
     _scriptCallbacks.reset();  // its taps go before the breakpoints
+    _frameWatches.reset();
     _msTarget.reset();
     _gsTarget.reset();         // its hooks leave the card (the sound manager outlives this one)
     _commandTyper.reset();

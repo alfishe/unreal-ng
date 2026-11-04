@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "3rdparty/message-center/eventqueue.h"
@@ -582,6 +583,30 @@ public:
     {
     }
     virtual ~ScriptCallbacksChangedPayload() = default;
+};
+
+/// Payload of NC_FRAME_WATCH (debugger/watch/framewatch.h): an armed frame watch of this emulator was added, removed or
+/// hit. `event`: "hit" (at `frame`, the rules in `reasons`; `paused`: the watch paused the machine there), "added",
+/// "removed", "error" (its condition failed at run time and it was disarmed: `error`)
+class FrameWatchPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string event;
+    uint32_t id = 0;
+    std::string label;
+    uint64_t frame = 0;
+    std::vector<std::string> reasons;
+    std::string textLine;
+    bool paused = false;
+    bool removed = false;  ///< hit: a `once` watch went with it
+    std::string error;
+
+    FrameWatchPayload(const std::string& emulator, std::string what, uint32_t watch)
+        : emulatorId(emulator.empty() ? unreal::UUID() : unreal::UUID(emulator)), event(std::move(what)), id(watch)
+    {
+    }
+    virtual ~FrameWatchPayload() = default;
 };
 
 /// Payload of NC_ASM_SYNC (asm-synchronizer, core/src/debugger/asm/sync/asmsyncservice.h)

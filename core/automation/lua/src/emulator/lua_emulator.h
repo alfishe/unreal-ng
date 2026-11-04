@@ -6,6 +6,7 @@
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runpacer.h"
 #include "emulator/execution/runcontrol.h"
+#include "debugger/watch/framewatch.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
@@ -520,6 +521,69 @@ protected:
         for (const auto& [key, value] : reply.body.members)
             result[key] = StateNodeToLua(lua.lua_state(), value);
         result["ok"] = true;
+        return result;
+    }
+
+    /// A table's members as frame watch options (docs/inprogress/2026-11-03-run-until-watches)
+    static std::vector<std::pair<std::string, std::string>> WatchOptions(const sol::optional<sol::table>& opts)
+    {
+        std::vector<std::pair<std::string, std::string>> options;
+        if (opts)
+            for (const auto& [key, value] : *opts)
+                if (key.get_type() == sol::type::string)
+                    options.emplace_back(key.as<std::string>(), TtdOptionText(value));
+        return options;
+    }
+
+    /// run_until{...}: whole frames until the rules hold at a frame end (RunControl::RunUntil); the reply's body with
+    /// ok, or ok = false and error
+    sol::table RunUntil(sol::state_view lua, const sol::optional<sol::table>& opts) const
+    {
+        sol::table result = lua.create_table();
+        Emulator* emulator = effectiveEmulator();
+        std::shared_ptr<Emulator> shared =
+            emulator ? EmulatorManager::GetInstance()->GetEmulator(emulator->GetId()) : nullptr;
+        framewatch::Spec spec;
+        unsigned maxFrames = 0;
+        bool breakpoints = false;
+        std::string error;
+        if (!shared)
+            error = "no emulator";
+        else if (!framewatch::RunOptions(WatchOptions(opts), spec, maxFrames, breakpoints, error))
+            error = error.empty() ? "bad options" : error;
+        if (!error.empty())
+        {
+            result["ok"] = false;
+            result["error"] = error;
+            return result;
+        }
+        execution::script::Check(*emulator, execution::Origin::Lua);
+        const execution::RunReply reply = execution::RunControl(shared).RunUntil(
+            execution::script::RequesterOf(*emulator, execution::Origin::Lua), spec, maxFrames, breakpoints);
+        if (reply.status == execution::RunReply::Status::Revoked)
+            throw std::runtime_error(reply.message);
+        if (!reply.Ok())
+        {
+            result["ok"] = false;
+            result["error"] = reply.message;
+            return result;
+        }
+        for (const auto& [key, value] : reply.body.members)
+            result[key] = StateNodeToLua(lua.lua_state(), value);
+        result["ok"] = true;
+        return result;
+    }
+
+    /// A watch verb's outcome as a table: the body with ok (and error on a refusal)
+    static sol::table WatchOutcome(sol::state_view lua, const framewatch::Outcome& outcome)
+    {
+        sol::table result = lua.create_table();
+        for (const auto& [key, value] : outcome.body.members)
+            result[key] = StateNodeToLua(lua.lua_state(), value);
+        result["ok"] = outcome.status < 400;
+        if (outcome.status >= 400)
+            result["error"] = outcome.text;
+        result["text"] = outcome.text;
         return result;
     }
 
@@ -2812,6 +2876,42 @@ public:
             if (!effectiveEmulator()) return;
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunNFrames(count, skipBP.value_or(true));
+        });
+
+        // Frame watches (docs/inprogress/2026-11-03-run-until-watches): run_until{text = "PRESS", max_frames = 500}
+        // -> {ok, met, outcome, frames, frame, hit = {reasons, text_line?}, text, ...}; watch_add{if = "...", then =
+        // "notify"} -> {ok, id, watch}; watches() -> {count, watches}; watch_remove(id | "all")
+        lua.set_function("run_until", [this](sol::this_state ts, sol::optional<sol::table> opts) {
+            return RunUntil(sol::state_view(ts), opts);
+        });
+        lua.set_function("watch_add", [this](sol::this_state ts, sol::optional<sol::table> opts) {
+            Emulator* emulator = effectiveEmulator();
+            framewatch::Outcome outcome;
+            if (emulator)
+                outcome = framewatch::AddWatch(emulator->GetContext(), WatchOptions(opts));
+            else
+            {
+                outcome.status = 503;
+                outcome.text = "no emulator";
+            }
+            return WatchOutcome(sol::state_view(ts), outcome);
+        });
+        lua.set_function("watches", [this](sol::this_state ts) {
+            Emulator* emulator = effectiveEmulator();
+            framewatch::Outcome outcome = emulator ? framewatch::ListWatches(emulator->GetContext()) : framewatch::Outcome{};
+            return WatchOutcome(sol::state_view(ts), outcome);
+        });
+        lua.set_function("watch_remove", [this](sol::this_state ts, sol::object id) {
+            Emulator* emulator = effectiveEmulator();
+            framewatch::Outcome outcome;
+            if (emulator)
+                outcome = framewatch::RemoveWatch(emulator->GetContext(), TtdOptionText(id));
+            else
+            {
+                outcome.status = 503;
+                outcome.text = "no emulator";
+            }
+            return WatchOutcome(sol::state_view(ts), outcome);
         });
 
         // Atomic stepping methods
@@ -7233,7 +7333,8 @@ public:
             return StateNodeToLua(ts, value);
         });
         // The analysis layers through analysis::Execute (analysiscontrol.h): analysis(action, opts) with action start |
-        // stop | status | build | cancel | explain | query | export | gallery | findings | review | experiment | cover; opts a table ({level=, mode=, record=} /
+        // stop | status | build | cancel | explain | query | export | gallery | findings | review | experiment | cover |
+        // trace; opts a table ({level=, mode=, record=} /
         // {frames=, from_frame=, from_tinframe=, to_frame=, path=, wait=} (from / to: a window, one stage) /
         // {address=, page=, what=} / {kind=, range=, limit=} / {format=, path=, ranges=,
         // width=} / {address=, kind=, scale=, path=, limit=}) or, for explain and gallery, the address, for start the
@@ -7241,7 +7342,8 @@ public:
         // text (gallery: the PNG base64 in png); a refusal: ok = false, error = why. L3: findings {op=, kind=, status=,
         // format=, path=}, review {op=, id=, verdict=, label=, title=, comment=, kind=, names=<JSON text>, reason=,
         // offset=, limit=, experiment=<JSON text>} (or the op), experiment {spec=<JSON text>, path=, finding=} (or the
-        // spec's JSON text), cover {budget=, frames=, ranges=} (or the budget)
+        // spec's JSON text), cover {budget=, frames=, ranges=} (or the budget), trace {path=, from_frame=, from_tinframe=,
+        // to_frame=, to_tinframe=, max_cycles=} (or the path: the CPU access trace of a window, accesstrace.h)
         lua.set_function("analysis", [this](sol::this_state ts, sol::optional<std::string> action,
                                             sol::optional<sol::object> opts) -> sol::object {
             const std::string verb = action.value_or("status");
@@ -7259,6 +7361,7 @@ public:
                                                              : verb == "findings" || verb == "review" ? "op"
                                                              : verb == "experiment" ? "spec"
                                                              : verb == "cover" ? "budget"
+                                                             : verb == "trace" ? "path"
                                                                                : "")
                                                : analysis::Options{});
             StateNode value = reply.ToValue();

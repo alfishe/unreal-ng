@@ -19,6 +19,8 @@ and the coverage queries. `memory-at` / `memory-diff` are WebAPI verbs: check `t
   emulator advances in wall-clock time between your API calls (screenshots included), so a scripted "walk 40 frames,
   jump" lands differently on every run. Paused + `run_frames` makes a script replay bit for bit.
 - Keys: `POST /keyboard/press {"key":"d"}`, `run_frames`, `/keyboard/release`. A held key across `run_frames` works.
+- Wait for a moment with one call, not a loop: `POST /run_until {"text":"PRESS"}`, `{"if":"M(#A13C) != M(#A13C)@prev"}`,
+  `{"screen":"stable"}`, `{"event":"died"}` stop paused at that frame end ([waiting-and-watching.md](waiting-and-watching.md)).
 - Close the loop on the screen, not on frame counts: `GET /capture/screen?format=png&area=screen`, then test a
   few pixels. ATV: "walk right until the rider's head pixels pass x = 90, then jump" mounts the quad every time;
   a fixed number of frames did not.

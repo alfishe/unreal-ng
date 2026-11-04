@@ -88,7 +88,8 @@ Things that bite:
 
 Try the candidates as the profile will hold them before writing it: `haptics_trial` lays the `events:` and
 `haptics:` over the loaded game for this session, in memory only (nothing lands in the user folder, where a file would
-shadow the shipped profile). Play the event, read `game.events`, adjust, and clear the trial when done:
+shadow the shipped profile). Play the event (resume, or `run_frames` on the paused machine: the probes hear the
+frames it steps), read `game.events`, adjust, and clear the trial when done:
 
 ```text
 controllers {"action":"haptics_trial","text":"events:\n  died: {probe: exec, address: \"0x8B80\"}\nhaptics:\n  rules:\n    - {on: died, play: life-lost}\n"}

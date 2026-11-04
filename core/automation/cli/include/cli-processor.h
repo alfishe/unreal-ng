@@ -101,6 +101,9 @@ private:
     void HandleStepOver(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStepOut(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSkipUntil(const ClientSession& session, const std::vector<std::string>& args);
+    /// Frame watches (cli-processor-watch.cpp): run_until key=value ..., watch add|list|del
+    void HandleRunUntil(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleWatch(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunTStates(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunToScanline(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunNScanlines(const ClientSession& session, const std::vector<std::string>& args);

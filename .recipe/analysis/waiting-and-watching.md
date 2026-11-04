@@ -10,14 +10,55 @@ either counted in emulated time or ends on an event the emulator reports. Works 
 | PC reaches an address | `POST /skip_until {"pc":"0x8000","max_tstates":N}` | Synchronous; breakpoints are skipped on the way. For a free-running machine: an `exec` breakpoint + [the wait loop](#the-wait-loop). |
 | a byte / range of memory is written | a `write` breakpoint (range, or a physical page) + [the wait loop](#the-wait-loop) | Needs the `breakpoints` feature. Stops at the write: see [who writes an address](#who-writes-an-address). |
 | a port is read or written (FDC command, `#7FFD`, ...) | a `port_in` / `port_out` breakpoint (`port_mask` for partial decoding) + the wait loop | |
-| the program waits for a key | an `exec` breakpoint on the program's own key-wait routine + the wait loop; or `run_frames` chunks + `capture/ocr` until the prompt is on screen | A `port_in #FE` breakpoint is no signal on its own: the 48K / 128K ROM interrupt handler and TR-DOS scan the keyboard every frame. Use it only for a program that runs with interrupts off or its own handler, or with `hits` to skip the ROM's reads. |
-| some text appears on screen | `run_frames` in chunks (e.g. 10) + `GET /capture/ocr` until the text is there, with a frame budget | |
-| the screen stops changing | `run_frames` chunks + `GET /state/screen/digest` until `.combined` repeats | Flashing attributes change the digest every 16 frames; compare over 32+ frames. |
+| the program waits for a key | an `exec` breakpoint on the program's own key-wait routine + the wait loop; or `run_until {"text": "<the prompt>"}` | A `port_in #FE` breakpoint is no signal on its own: the 48K / 128K ROM interrupt handler and TR-DOS scan the keyboard every frame. Use it only for a program that runs with interrupts off or its own handler, or with `hits` to skip the ROM's reads. |
+| some text appears on screen | `POST /run_until {"text":"PRESS","max_frames":3000}` ([run until](#run-until-one-call-instead-of-a-loop)) | Stops at the end of the first frame where the ROM-font OCR has it; the answer names the row. A running machine: [a watch](#watches-on-a-running-machine). |
+| the screen stops changing / changes | `POST /run_until {"screen":"stable","stable_frames":32}` (or `"changed"`) | The displayed bytes (6,912 of a ZX screen) and the border; FLASH does not count (memory, not the picture). `state/screen/digest` is no substitute: it hashes the whole page 5 with FRAMES and the stack, which change every frame under the ROM. |
+| a byte reaches a value at a frame end | `POST /run_until {"if":"M(#5C3A) == 1"}` (`W(x)`, registers, `x@prev`: `M(#A13C) != M(#A13C)@prev` = it changed) | Checked once a frame, no breakpoint feature needed. The exact write: a `write` breakpoint below. |
+| a game event (a profile's `died`) | `POST /run_until {"event":"died"}` | Needs a play profile with `events:` ([game events](../input/game-haptics.md)). |
 | a typed sequence is played out | `GET /keyboard/status` until `sequence_running` is false | |
 
 Run control in [execution-control-and-stepping.md](execution-control-and-stepping.md), breakpoint kinds in
 [breakpoints-and-events.md](breakpoints-and-events.md), the long-poll and the snapshot in
 [debugger-snapshot.md](debugger-snapshot.md).
+
+## Run until: one call instead of a loop
+
+`POST /run_until` runs whole frames on a paused machine and stops, paused, at the end of the first frame where its
+rules hold, or after `max_frames` (default 3000, at most 200000). Rules: `if` (a frame-end condition in the
+[conditional-breakpoint language](conditional-breakpoints.md), no access operands), `text` (case-sensitive substring of
+`capture/ocr`), `screen` (`changed` / `stable` + `stable_frames`, default 25), `event` (a game event); `match` `any`
+(default) or `all`. Breakpoints are skipped unless `"breakpoints": true`. Deterministic: the same frame on every host.
+
+```bash
+curl -s -X POST $BASE/emulator/$EMU/reset > /dev/null; curl -s -X POST $BASE/emulator/$EMU/pause > /dev/null
+curl -s -X POST $BASE/emulator/$EMU/run_until -H 'Content-Type: application/json' -d '{"text":"Sinclair"}' | jq -r .text
+# met at frame 87 after 87 frames (text, row "\x7f 1982 Sinclair Research Ltd"), PC #162C, 29 ms; paused
+# (a 48K from reset with a blank screen; `hit.text_line` is the row, `frames` the frame ends it took; the ROM font's
+# © is character #7F)
+```
+
+MCP `control_execution {"action":"run_until","text":"Sinclair"}` (`condition` for `if`) answers the one line; CLI
+`run_until text=Sinclair`, Lua `run_until{text = "Sinclair"}`, Python `emu.run_until(text="Sinclair")`. `outcome`
+`budget`: not met, the machine paused after `max_frames`; `breakpoint`: a breakpoint stopped it first.
+
+## Watches on a running machine
+
+`POST /watches` arms the same rules on a running machine (`label`, `then` `pause` (default) / `notify`, `once`
+default true; at most 16). At the end of the first frame where they hold, the machine pauses there (stop reason
+`watch`), `seq` moves and the WebSocket `debug.events` pushes `watch_hit`. So the wait loop below ends on the first
+answer: `pause.reason == "watch"` and `pause.watch_id`. `GET /watches` lists them (hits, the last hit),
+`DELETE /watches/{id|all}` removes them. A `then: notify` watch only reports: the game keeps running.
+
+```bash
+curl -s -X POST $BASE/emulator/$EMU/watches -H 'Content-Type: application/json' -d '{"text":"GAME OVER","label":"over"}'
+SEQ=$(curl -s "$BASE/emulator/$EMU/debug/wait?timeout_ms=0" | jq .seq)
+curl -s -X POST $BASE/emulator/$EMU/resume > /dev/null        # ... the agent plays ...
+curl -s "$BASE/emulator/$EMU/debug/wait?since=$SEQ&timeout_ms=60000" | jq -c '{state,pause}'
+# {"state":"paused","pause":{"reason":"watch","watch_id":1,"watch_label":"over","frame":4521,"reasons":["text"],"text_line":"GAME OVER"}}
+```
+
+MCP: `watch_add`, then `wait` ("Changed: seq N, paused at watch 1 over, frame F (text, row ...)"), `watch_list`,
+`watch_remove` (`watch_id` or `all`).
 
 ## The wait loop
 
@@ -85,9 +126,12 @@ Comparing two dumps on the host finds *what* changed; one of the three above fin
 
 ## Pitfalls
 
+- **Numbers in `if` are hex**: `M(#9000) >= 10` is `>= 16`. Write decimal as `10d`; the language: [conditional-breakpoints.md](conditional-breakpoints.md).
+- **A watch is checked at frame ends only**: it sees what a frame left, not a value that came and went inside one
+  (a write breakpoint does). It is not checked during a TTD seek, and it is not saved in a snapshot or `.ttd`.
 - **`changed: true` is not "my breakpoint"**: a `run_frames` from another client, a pause, or a memory write through
   the API also moves `seq`. Check `pause.breakpoint_id`.
-- **`run_frames`, `run_tstates`, `run_to_*`, `skip_until`, `listing/run_to_line` skip breakpoints** by default: a
+- **`run_frames`, `run_tstates`, `run_to_*`, `skip_until`, `run_until`, `listing/run_to_line` skip breakpoints** by default: a
   breakpoint wait needs a free-running machine (`resume`) or `steps`.
 - **Memory and port breakpoints need the `breakpoints` feature**: `PUT /feature/breakpoints {"enabled":true}`
   (it switches debug mode on too). `PUT /debugmode` alone does not: the breakpoint is accepted, listed as

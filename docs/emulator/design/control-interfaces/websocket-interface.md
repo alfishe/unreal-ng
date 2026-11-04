@@ -92,6 +92,7 @@ is a job whose progress and result are the topics `analysis.progress` and `analy
 → {"op":"call","rid":7,"method":"GET","path":"/api/v1/emulator/0/analysis/query?kind=records"}
 → {"op":"call","rid":8,"method":"POST","path":"/api/v1/emulator/0/analysis/export","body":{"format":"skool","path":"game.skool","ranges":"8000-FFFF"}}
 → {"op":"call","rid":9,"method":"POST","path":"/api/v1/emulator/0/analysis/gallery","body":{"address":"$8200","scale":4}}
+→ {"op":"call","rid":12,"method":"POST","path":"/api/v1/emulator/0/analysis/trace","body":{"path":"scratch/pass.uatr","from_frame":1001,"to_frame":1003}}
 → {"op":"call","rid":10,"method":"POST","path":"/api/v1/emulator/0/analysis/review","body":{"op":"next"}}
 → {"op":"call","rid":11,"method":"POST","path":"/api/v1/emulator/0/analysis/experiment","body":{"spec":{"poke":{"$8100":5},"frames":50,"expect":{"mem:$8101":"$AA"}}}}
 ```
@@ -128,7 +129,7 @@ when their runs are done, on their own analysis instances (the socket's other ca
 | `analysis.ready` | per instance the L1 the last build made `{ready, job, routines, blocks, loops, instructions, frames, checked, diverged, path}` | none | implemented (P2, 2026-10-26) |
 | `surface` | control surfaces: opened by `join` (not by `subscribe`): `action`, `result`, `ctx`, readouts, `target`, `revoked` ([below](#31-the-surface-topic)) | per action | implemented (S4); `activity`, `catalogue`, the readout vocabulary and views: Stream Deck SD4 |
 | `instances` | the companion's live view of the instances (`hello`, `emulator`, `emulator_gone`, `snapshot`): `/api/v1/companions/events` on this socket ([§3.2](#32-the-instances-topic)) | none (a companion's own view) | implemented |
-| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
+| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed`, `watch_hit` / `watch_added` / `watch_removed` / `watch_error` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
 | `host.stats` | the host process, once for the process (no `instance`): `{cpu_percent, cpu_percent_host, cores, rss_bytes, peak_rss_bytes, virtual_bytes, threads, cpu_time_s, uptime_s, …}`, sampled at most twice a second (`GET /api/v1/monitor/host.stats`, [command-interface.md §17](./command-interface.md#17-monitoring)) | none | implemented |
 | `host.clients` | the process: per plane (`rest`, `ws`, `events`, `debug_ws`, `mcp`, `cli`) `{connections, opened, requests}`, `companions`, `instances` (`GET /api/v1/monitor/host.clients`) | none | implemented |
 | `emulator.stats` | per instance the measured pace `{state, measuring, fps, nominal_fps, speed_percent, frame_time_us {avg, max}, frame_budget_percent, halted_percent, interrupts_per_frame, frame, t_states, turbo, cpu {mhz, base_mhz, multiplier, host_multiplier, hw_turbo_ratio}}`: a new value every 0.5 s while it runs (`GET /api/v1/monitor/emulator.stats`) | none | implemented |
@@ -257,6 +258,16 @@ DebugEventHub's events ([debugger protocol §5](../../../inprogress/2026-09-28-d
 
 ```json
 ← {"t":"debug.events","op":"event","event":"callbacks_changed","id":3,"callback":{"id":3,"on":"tap","owner":"lua","label":"slow","target":"tap write #5C78","state":"suspended","reason":"3 calls over 1000 us within 50 frames",…},"seq":40,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
+```
+
+- `watch_hit` (`{id, label?, frame, reasons, text_line?, paused, removed}`), `watch_added` / `watch_removed`
+  (`{id, label?}`) and `watch_error` (`{id, frame, error}`: the condition failed at run time, the watch is disarmed):
+  a [frame watch](command-interface.md) armed with `POST /watches` held at a frame end. A hit moves `seq` too
+  (`debug/wait` wakes); with `then: pause` the machine is paused at that frame end and a `paused` event with
+  `reason: "watch"` follows.
+
+```json
+← {"t":"debug.events","op":"event","event":"watch_hit","id":1,"label":"over","frame":4521,"reasons":["text"],"text_line":"GAME OVER","paused":true,"removed":true,"seq":51,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
 ```
 
 ## 4. Delivery and threads

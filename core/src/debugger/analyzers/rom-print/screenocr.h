@@ -21,6 +21,8 @@ public:
     /// @param emulatorId EmulatorManager emulator ID
     /// @return All text on screen (24 lines, newline-separated)
     static std::string ocrScreen(const std::string& emulatorId);
+    /// The same for an emulator at hand (a frame watch on the emulation thread: no manager lookup)
+    static std::string ocrScreen(Emulator* emulator);
 
     /// Fast search for text anywhere on screen (stops when found)
     /// @param emulatorId EmulatorManager emulator ID

@@ -831,6 +831,103 @@ TEST_F(McpTools_Test, ControlExecution_Wait_LongPolls)
     EXPECT_EQ(result.text, "Changed: seq 43, paused at breakpoint #3 (8000)");
 }
 
+/// Frame watches (docs/inprogress/2026-11-03-run-until-watches): run_until posts the rules (condition as `if`) and
+/// answers the server's text; watch_add / watch_list / watch_remove; wait names the watch that paused
+TEST_F(McpTools_Test, ControlExecution_RunUntil_PostsTheRulesAndAnswersTheText)
+{
+    Json::Value reply;
+    reply["met"] = true;
+    reply["outcome"] = "met";
+    reply["frames"] = 84;
+    reply["text"] = "met at frame 170 after 84 frames (text, row \"(c) 1982 Sinclair Research Ltd\"), PC #12A9, 31 ms; paused";
+    _caller->routes["POST /api/v1/emulator/emu-1/run_until"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "run_until";
+    args["text"] = "1982";
+    args["condition"] = "M(#5C3A) == 255";
+    args["match"] = "any";
+    args["max_frames"] = 500;
+    args["label"] = "ignored";  // a watch option: not sent to run_until
+    mcp::ToolResult result = RunTool(*_registry, "control_execution", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    ASSERT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/run_until"));
+    const Json::Value& body = _caller->calls.back().body;
+    EXPECT_EQ(body["text"].asString(), "1982");
+    EXPECT_EQ(body["if"].asString(), "M(#5C3A) == 255");
+    EXPECT_EQ(body["max_frames"].asUInt(), 500u);
+    EXPECT_FALSE(body.isMember("label"));
+    EXPECT_EQ(result.text, reply["text"].asString());
+
+    Json::Value refused;
+    refused["error"] = "Bad Request";
+    refused["message"] = "nothing to wait for: give if, text, screen or event";
+    _caller->routes["POST /api/v1/emulator/emu-1/run_until"] = {400, refused};
+    Json::Value empty;
+    empty["action"] = "run_until";
+    result = RunTool(*_registry, "control_execution", empty, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("nothing to wait for"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, ControlExecution_Watches_AddListRemoveAndWaitNamesTheWatch)
+{
+    Json::Value added;
+    added["id"] = 1;
+    added["text"] = "watch 1 armed: text \"GAME OVER\" -> pause, once";
+    _caller->routes["POST /api/v1/emulator/emu-1/watches"] = {201, added};
+    Json::Value args;
+    args["action"] = "watch_add";
+    args["text"] = "GAME OVER";
+    args["label"] = "over";
+    args["then"] = "pause";
+    args["max_frames"] = 9;  // a run_until option: not sent to a watch
+    mcp::ToolResult result = RunTool(*_registry, "control_execution", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(_caller->calls.back().body["label"].asString(), "over");
+    EXPECT_FALSE(_caller->calls.back().body.isMember("max_frames"));
+    EXPECT_EQ(result.text, added["text"].asString());
+
+    Json::Value listed;
+    listed["text"] = "1 watch(es)\n  1 over: text \"GAME OVER\" -> pause, once; armed at frame 10, 0 hit(s)";
+    _caller->routes["GET /api/v1/emulator/emu-1/watches"] = {200, listed};
+    Json::Value list;
+    list["action"] = "watch_list";
+    result = RunTool(*_registry, "control_execution", list, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.text, listed["text"].asString());
+
+    Json::Value removed;
+    removed["text"] = "1 watch(es) removed";
+    _caller->routes["DELETE /api/v1/emulator/emu-1/watches/all"] = {200, removed};
+    Json::Value remove;
+    remove["action"] = "watch_remove";
+    remove["watch_id"] = "all";
+    result = RunTool(*_registry, "control_execution", remove, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    Json::Value noId;
+    noId["action"] = "watch_remove";
+    EXPECT_TRUE(RunTool(*_registry, "control_execution", noId, *_caller).isError);
+
+    Json::Value reply;
+    reply["seq"] = 8;
+    reply["changed"] = true;
+    reply["state"] = "paused";
+    reply["pause"]["reason"] = "watch";
+    reply["pause"]["watch_id"] = 1;
+    reply["pause"]["watch_label"] = "over";
+    reply["pause"]["frame"] = 4521;
+    reply["pause"]["reasons"].append("text");
+    reply["pause"]["text_line"] = "GAME OVER";
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/wait?timeout_ms=10000&since=7"] = {200, reply};
+    Json::Value wait;
+    wait["action"] = "wait";
+    wait["since"] = 7;
+    result = RunTool(*_registry, "control_execution", wait, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.text, "Changed: seq 8, paused at watch 1 over, frame 4521 (text, row \"GAME OVER\")");
+}
+
 // ===========================================================================
 // emulator_manage: ZX-bus slots (SlotControl through the WebAPI /slots routes)
 // ===========================================================================

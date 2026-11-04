@@ -1885,6 +1885,14 @@ emu.step_out()                       # run until the current subroutine returns
 emu.skip_until(0x8000)               # fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", max_tstates=70000000)  # optional explicit t-state budget
 
+# Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end.
+# condition= is the `if` rule (a keyword in Python); the GIL is released while the machine runs
+emu.run_until(text="PRESS", max_frames=500)    # {'met', 'outcome', 'frames', 'frame', 'pc', 'ms', 'hit', 'text'}
+emu.run_until(condition="M(#5C3A)==1", screen="stable", stable_frames=50, match="all")
+emu.watch_add(text="GAME OVER", label="over")  # {'id', 'watch', 'text'}; a hit pauses at that frame end
+emu.watches()                                  # {'count', 'watches', 'text'}
+emu.watch_remove(1)                            # or "all"
+
 # The paced run (core RunPacer, command-interface.md §2.1): a frame / lines / an instruction per interval,
 # stops at a breakpoint. A refusal raises RuntimeError ("Run-control held: ...")
 emu.pace()                           # {'preset', 'label', 'unit', 'count', 'interval_ms', 'effective_ms',
@@ -2102,6 +2110,7 @@ emu.analysis("export", format="skool", path="game.skool", ranges="5900-59FF,8000
 g = emu.analysis("gallery", kind="sprite")             # the graphics found: {regions [...], count, truncated, text}
 png = emu.analysis("gallery", address=0x8200, scale=4)["png"]  # one drawn: base64 PNG; width, height, frames
 emu.analysis("gallery", address="$8200", path="sprite.png")    # or written to a file
+emu.analysis("trace", path="scratch/pass.uatr", from_frame=1001, to_frame=1003)  # the CPU access trace of a window
 
 # L3 (the review): findings register, review queue, experiments on muted clones, directed coverage
 emu.analysis("findings", kind="bug")                   # {count, total, by_kind, by_status, findings [...], text}

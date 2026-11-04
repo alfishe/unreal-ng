@@ -379,6 +379,10 @@ POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"cou
 POST /api/v1/emulator/{id}/stepover          Step over CALL instructions
 POST /api/v1/emulator/{id}/stepout            Step out of current subroutine (breakpoints skipped)
 POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N, "breakpoints": false}; true: a breakpoint stops it first, run to a cursor; answers hit, target, max_tstates, stop)
+POST /api/v1/emulator/{id}/run_until         Whole frames until frame-end rules hold (body: {"if"?, "text"?, "screen"?: "changed"|"stable", "stable_frames"?, "event"?, "match"?: "any"|"all", "max_frames"?: 1..200000 (3000), "breakpoints"?: false}; answers met, outcome (met|budget|breakpoint|aborted), frames, frame, pc, ttd_frame?, ms, hit {frame, reasons, text_line?, stable_for?, event_fires?}, text; long-call pool)
+GET  /api/v1/emulator/{id}/watches           Armed frame watches: {count, watches: [{id, label?, spec, then, once, armed_frame, hits, last_hit?, error?}], text}
+POST /api/v1/emulator/{id}/watches           Arm a frame watch (the run_until rules plus "label"?, "then"?: "pause"|"notify", "once"?: true): 201 {id, watch, text}; 400 a bad spec or 16 armed. A hit: watch_hit on debug.events, debug/wait wakes, then=pause pauses (stop reason "watch")
+DELETE /api/v1/emulator/{id}/watches/{watch} One watch by id, or "all": {removed: [ids], text}; 404 unknown
 POST /api/v1/emulator/{id}/run_tstates       Run N t-states (body: {"count": N})
 POST /api/v1/emulator/{id}/run_to_scanline   Run until scanline N (body: {"scanline": N})
 POST /api/v1/emulator/{id}/run_scanlines     Run N scanlines forward (body: {"count": N})
@@ -808,6 +812,10 @@ POST /api/v1/emulator/{id}/analysis/experiment  {spec: an object or an array (or
 POST /api/v1/emulator/{id}/analysis/cover      {budget?, per_branch?, frames?, parallel?, limit?, ranges?}: directed
                                                coverage {candidates, tried, flipped, attempts, new_code, branches [...],
                                                text}
+POST /api/v1/emulator/{id}/analysis/trace      {path, from_frame?, from_tinframe?, to_frame?, to_tinframe?,
+                                               max_cycles?}: the CPU access trace of a window, written to path
+                                               {path, from_frame, from_tinframe, to_frame, to_tinframe, instructions,
+                                               cycles, fetches, reads, writes, ports, bytes, truncated, text}
 ```
 
 ### Settings Management

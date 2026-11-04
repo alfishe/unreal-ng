@@ -212,6 +212,24 @@ TEST_F(BreakpointTaps_Test, HitPolicyDecidesWhichHitsAreTold)
     _breakpoints->UnregisterTapSink(id);
 }
 
+TEST_F(BreakpointTaps_Test, RunThatSkipsBreakpointsStillTellsTheExecTaps)
+{
+    // RunNFrames and the other direct runs skip breakpoints by default: the taps never stop, so they still hear the
+    // instructions (a haptic probe checked with run_frames on a paused machine), the breakpoints stay untouched
+    RecordingSink sink;
+    const uint8_t id = _breakpoints->RegisterTapSink(&sink);
+    AddTap(id, BRK_MEM_EXECUTE, 0x8002);
+    const uint16_t stop = _breakpoints->AddExecutionBreakpoint(0x8005);
+    ASSERT_NE(stop, BRK_INVALID);
+
+    EXPECT_EQ(_emulator->RunNCPUCycles(3 * kLoopInstructions, true), 3 * kLoopInstructions)
+        << "the skipped breakpoint does not stop";
+    EXPECT_EQ(sink.hits.size(), 3u);
+    EXPECT_EQ(_breakpoints->GetBreakpointById(stop)->hitCount, 0u) << "a skipped breakpoint is not counted";
+    _breakpoints->RemoveBreakpointByID(stop);
+    _breakpoints->UnregisterTapSink(id);
+}
+
 TEST_F(BreakpointTaps_Test, NoTapDuringAReplay)
 {
     RecordingSink sink;

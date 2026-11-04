@@ -1435,6 +1435,13 @@ emu.step_out()                       -- run until the current subroutine returns
 emu.skip_until(0x8000)               -- fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", 70000000)   -- optional explicit t-state budget
 
+-- Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end
+run_until{text = "PRESS", max_frames = 500}   -- {met, outcome, frames, frame, pc, ms, hit = {reasons, text_line}, text}
+run_until{["if"] = "M(#5C3A)==1", screen = "stable", stable_frames = 50, match = "all"}
+watch_add{text = "GAME OVER", label = "over"}  -- {id, watch, text}; a hit pauses at that frame end
+watches()                                       -- {count, watches = {...}, text}
+watch_remove(1)                                 -- or watch_remove("all")
+
 -- The paced run (core RunPacer, command-interface.md §2.1): a frame / lines / an instruction per interval,
 -- stops at a breakpoint. The reply: the body with `pace` and ok (false: error = the message)
 pace()                               -- {preset, label, unit, count, interval_ms, effective_ms, running, ticks,
@@ -1657,6 +1664,7 @@ emu.analysis("export", {format = "skool", path = "game.skool", ranges = "5900-59
 emu.analysis("gallery", {kind = "sprite"})           -- the graphics found: { regions, count, truncated, text }
 local g = emu.analysis("gallery", "$8200")           -- a string: the address; g.png is the PNG (base64)
 emu.analysis("gallery", {address = 0x8200, scale = 4, path = "sprite.png"})
+emu.analysis("trace", {path = "scratch/pass.uatr", from_frame = 1001, to_frame = 1003})  -- the CPU access trace
 
 -- L3 (the review): findings register, review queue, experiments on muted clones, directed coverage
 emu.analysis("findings", {kind = "bug"})             -- { count, total, by_kind, by_status, findings, text }

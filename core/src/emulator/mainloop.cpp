@@ -18,6 +18,7 @@
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/watch/framewatch.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -565,6 +566,14 @@ void MainLoop::CompleteFrame()
         _context->pCore->OnNetworkFrame();
     }
 
+    // Armed frame watches (debugger/watch/framewatch.h), last: they see the frame as every hook above left it. Not in
+    // a TTD silent replay (a seek re-runs frames that already happened). Off: one relaxed load
+    if (_context->pDebugManager && !_context->ttdReplayActive)
+    {
+        framewatch::Manager* watches = _context->pDebugManager->GetFrameWatches();
+        if (watches && watches->Armed())
+            watches->OnFrameEnd(_state->frame_counter);
+    }
 }
 
 void MainLoop::RestartFrame()
