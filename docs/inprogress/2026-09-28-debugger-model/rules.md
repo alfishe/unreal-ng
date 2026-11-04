@@ -262,9 +262,9 @@ The Unreal language (U §10.2), kept as it is and extended:
 | **new** `FRAME` | the frame number | new |
 | **new** `MPAG`, `GSCFG0` | card registers (on the card CPUs) | new |
 | **new** `CMD`, `DATA`, `STATUS` | the card mailbox latches (on any CPU) | new |
-| **new** `main.X`, `gs.X`, `neogs.X` | an operand of another CPU, e.g. `main.PC == 8123` on a card breakpoint | new |
-| numbers | hex, starting with a digit (`0DFFD`) | U |
-| **new** `#DFFD`, `$DFFD`, `0xDFFD`, `123d` | the other number forms | new |
+| **new** `main.X`, `gs.X`, `neogs.X` | an operand of another CPU, e.g. `main.PC == #8123` on a card breakpoint | new |
+| numbers | decimal (`123`); owner 2026-11-04, Unreal's bare hex (`0DFFD`) is refused with a hint | changed |
+| **new** `#DFFD`, `$DFFD`, `0xDFFD` | hex (`0DFFDh` and `123d` also read) | new |
 | `'c'` | a character constant | U |
 
 - **Classic parsing is kept:** the text is upper-cased except before `'`,

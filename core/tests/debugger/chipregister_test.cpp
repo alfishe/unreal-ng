@@ -89,7 +89,7 @@ TEST(ChipRegisterBreakpoint_Test, TheSpecIsCheckedAndTheHotPathAnswersByChipUnit
     BreakpointSpec loud = ChipSpec(SoundChipKind::Ay, 8);
     loud.hasEnd = true;
     loud.addressEnd = 10;
-    loud.condition = "(VAL & 0F) == 0F && PORT != 9";
+    loud.condition = "(VAL & #F) == #F && PORT != 9";
     const uint16_t volume = manager.AddBreakpoint(loud, error);
     ASSERT_NE(volume, BRK_INVALID) << error;
     EXPECT_EQ(manager.HandleChipRegister(SoundChipKind::Ay, 0, 8, 0x0F), volume);

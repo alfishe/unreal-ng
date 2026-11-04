@@ -279,12 +279,12 @@ def counter_program(s):
 
 def test_run_until_stops_at_the_frame_end(s):
     counter_program(s)
-    r = s.call('control_execution', {'action': 'run_until', 'condition': 'M(#9000) >= 10d', 'max_frames': 100})
+    r = s.call('control_execution', {'action': 'run_until', 'condition': 'M(#9000) >= 10', 'max_frames': 100})
     expect(r.structured.get('met') is True and r.structured.get('outcome') == 'met', 'met', r.text)
     expect(r.text.startswith('met at frame'), 'the one line', r.text)
     value = s.call('memory_access', {'action': 'read', 'address': '0x9000', 'length': 1}).text
     expect(re.search(r'\b0A\b', value), 'stopped at the frame end it held (10), not later', value)
-    r = s.call('control_execution', {'action': 'run_until', 'condition': 'M(#9000) == 250d', 'max_frames': 5})
+    r = s.call('control_execution', {'action': 'run_until', 'condition': 'M(#9000) == 250', 'max_frames': 5})
     expect(r.structured.get('met') is False and r.structured.get('outcome') == 'budget'
            and r.structured['frames'] == 5, 'not met: the budget', r.text)
     s.call('memory_access', {'action': 'write', 'address': '0x8000', 'hex': 'FB 76 18 FD'})  # ei; halt; jr: the screen holds
@@ -300,7 +300,7 @@ def test_run_until_stops_at_the_frame_end(s):
 
 def test_a_watch_pauses_the_running_machine(s):
     counter_program(s)
-    r = s.call('control_execution', {'action': 'watch_add', 'condition': 'M(#9000) >= 30d', 'label': 'thirty'})
+    r = s.call('control_execution', {'action': 'watch_add', 'condition': 'M(#9000) >= 30', 'label': 'thirty'})
     expect(not r.is_error and 'thirty' in r.text, 'armed', r.text)
     r = s.call('control_execution', {'action': 'watch_list'})
     expect('thirty' in r.text and r.structured.get('count') == 1, 'listed', r.text)

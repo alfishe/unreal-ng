@@ -514,7 +514,7 @@
     schemas["AddBreakpointRequest"]["properties"]["condition"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["condition"]["description"] =
         "Memory and port breakpoints: stop only when this expression holds (Unreal language: registers, flags, "
-        "M(addr), W(addr), access operands RD WR VAL PORT, FRAME, PG0-3, labels; numbers hex unless written 123d). "
+        "M(addr), W(addr), access operands RD WR VAL PORT, FRAME, PG0-3, labels; numbers decimal, hex as #FF, $FF or 0xFF). "
         "Compiled and checked against the trigger here: 400 with the reason and its column";
     schemas["AddBreakpointRequest"]["properties"]["condition_dialect"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["condition_dialect"]["description"] =

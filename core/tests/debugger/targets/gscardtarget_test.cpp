@@ -290,7 +290,7 @@ TEST(GSCardTarget_Test, AFalseConditionCountsMatchesWithoutStopping)
     spec.access = BRK_IO_IN;
     spec.address = 0x04;
     spec.portMask = 0x00FF;
-    spec.condition = "IN == 4 && M(026E) == 00";  // the ROM holds DB there
+    spec.condition = "IN == 4 && M(#026E) == 00";  // the ROM holds DB there
     const uint16_t id = card.add(spec);
     EXPECT_FALSE(card.runUntilStop(1));
     const BreakpointSnapshot held = card.bp().GetBreakpointById(id);

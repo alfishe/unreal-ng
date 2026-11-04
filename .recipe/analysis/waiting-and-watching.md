@@ -126,7 +126,8 @@ Comparing two dumps on the host finds *what* changed; one of the three above fin
 
 ## Pitfalls
 
-- **Numbers in `if` are hex**: `M(#9000) >= 10` is `>= 16`. Write decimal as `10d`; the language: [conditional-breakpoints.md](conditional-breakpoints.md).
+- **Numbers in `if` are decimal**: `M(#9000) >= 10` is ten; hex is `#0A`, `$0A` or `0x0A`. A bare hex number is
+  refused with a hint (`5C78`: write `#5C78`). The language: [conditional-breakpoints.md](conditional-breakpoints.md).
 - **A watch is checked at frame ends only**: it sees what a frame left, not a value that came and went inside one
   (a write breakpoint does). It is not checked during a TTD seek, and it is not saved in a snapshot or `.ttd`.
 - **`changed: true` is not "my breakpoint"**: a `run_frames` from another client, a pause, or a memory write through

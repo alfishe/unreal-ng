@@ -88,44 +88,50 @@ protected:
 };
 }  // namespace
 
-TEST_F(BreakpointCondition_Test, NumbersAreHexUnlessWrittenDecimal)
+TEST_F(BreakpointCondition_Test, NumbersAreDecimalHexHasAPrefix)
 {
     _cpu.hl = 0x4000;
-    EXPECT_TRUE(Holds("HL == 4000"));
+    EXPECT_TRUE(Holds("HL == 16384"));
     EXPECT_TRUE(Holds("HL == #4000"));
     EXPECT_TRUE(Holds("HL == $4000"));
     EXPECT_TRUE(Holds("HL == 0x4000"));
     EXPECT_TRUE(Holds("HL == 4000h"));
-    EXPECT_TRUE(Holds("HL == 16384d"));
+    EXPECT_TRUE(Holds("HL == 16384d")) << "the old decimal suffix still reads";
+    EXPECT_FALSE(Holds("HL == 4000")) << "plain digits are decimal";
     _cpu.a = 0xED;
-    EXPECT_TRUE(Holds("A == 0ED")) << "a hex number starts with a digit";
-    EXPECT_TRUE(Holds("A == 237d"));
+    EXPECT_TRUE(Holds("A == 237"));
+    EXPECT_TRUE(Holds("A == #ED"));
+    EXPECT_TRUE(Holds("A == 0EDh"));
     _cpu.a = 'x';
     EXPECT_TRUE(Holds("A == 'x'"));
-    // The C dialect reads plain digits as decimal
+    // The C dialect reads numbers the same way
     _cpu.hl = 4000;
     EXPECT_TRUE(Holds("HL == 4000", {}, BreakpointConditionDialect::C));
     EXPECT_TRUE(Holds("HL == 0xFA0", {}, BreakpointConditionDialect::C));
+    EXPECT_TRUE(Holds("HL == #FA0", {}, BreakpointConditionDialect::C));
+    // A bare hex number is refused with the way to write it
+    EXPECT_EQ(Refused("M(5C78) == 0"), "bad number '5C78' (numbers are decimal; write hex as #5C78) at column 3");
+    EXPECT_EQ(Refused("A == 0ED"), "bad number '0ED' (numbers are decimal; write hex as #0ED) at column 6");
 }
 
 TEST_F(BreakpointCondition_Test, UnrealPrecedenceComparisonsBindTighterThanBitwise)
 {
     // Unreal (rules.md §5.3): A & 0F == 3 is A & (0F == 3), i.e. A & 0 (0F == 3 is false)
     _cpu.a = 0x13;
-    EXPECT_FALSE(Holds("A & 0F == 3"));
-    EXPECT_TRUE(Holds("(A & 0F) == 3"));
+    EXPECT_FALSE(Holds("A & #F == 3"));
+    EXPECT_TRUE(Holds("(A & #F) == 3"));
     // C dialect: comparisons are looser than + but tighter than &, so the same text also reads A & (0F == 3)
     EXPECT_FALSE(Holds("A & 0xF == 3", {}, BreakpointConditionDialect::C));
     // && binds tighter than ||; arithmetic as usual
     _cpu.b = 1;
     EXPECT_TRUE(Holds("B == 1 || B == 2 && B == 3"));
     EXPECT_FALSE(Holds("(B == 1 || B == 2) && B == 3"));
-    EXPECT_TRUE(Holds("2 + 3 * 4 == 0E"));
-    EXPECT_TRUE(Holds("1 << 4 == 10"));
-    EXPECT_TRUE(Holds("10 - 4 - 2 == 0A")) << "left-associative";
+    EXPECT_TRUE(Holds("2 + 3 * 4 == #E"));
+    EXPECT_TRUE(Holds("1 << 4 == #10"));
+    EXPECT_TRUE(Holds("#10 - 4 - 2 == #A")) << "left-associative";
     EXPECT_TRUE(Holds("7 / 0 == 7 && 7 % 0 == 7")) << "division by zero leaves the left operand (Unreal)";
     EXPECT_TRUE(Holds("!0 && ~0 == -1 && -1 < 0"));
-    EXPECT_TRUE(Holds("A = 13 && A <> 14")) << "= and <> are aliases";
+    EXPECT_TRUE(Holds("A = #13 && A <> #14")) << "= and <> are aliases";
 }
 
 TEST_F(BreakpointCondition_Test, RegistersFlagsAndState)
@@ -141,11 +147,11 @@ TEST_F(BreakpointCondition_Test, RegistersFlagsAndState)
     _cpu.im = 2;
     _cpu.iff1 = 1;
     _cpu.memptr = 0x1111;
-    EXPECT_TRUE(Holds("A == 12 && F == 34 && B == 56 && C == 78 && BC == 5678"));
-    EXPECT_TRUE(Holds("IXH == 9A && IXL == 0BC && IX == 9ABC"));
-    EXPECT_TRUE(Holds("AF' == 0CAFE && A' == 0CA && H' == 0BE && L' == 0EF && hl' == 0BEEF"));
-    EXPECT_TRUE(Holds("I == 3F && R == 85 && IM == 2 && IFF1 && !IFF2 && WZ == 1111 && MEMPTR == WZ"));
-    EXPECT_TRUE(Holds("a == 12 && ix == 9abc")) << "case-insensitive";
+    EXPECT_TRUE(Holds("A == #12 && F == #34 && B == #56 && C == #78 && BC == #5678"));
+    EXPECT_TRUE(Holds("IXH == #9A && IXL == #BC && IX == #9ABC"));
+    EXPECT_TRUE(Holds("AF' == #CAFE && A' == #CA && H' == #BE && L' == #EF && hl' == #BEEF"));
+    EXPECT_TRUE(Holds("I == #3F && R == #85 && IM == 2 && IFF1 && !IFF2 && WZ == #1111 && MEMPTR == WZ"));
+    EXPECT_TRUE(Holds("a == #12 && ix == #9abc")) << "case-insensitive";
     // Flags: C stays the register, CY is the carry
     _cpu.f = 0x41;  // Z, C
     EXPECT_TRUE(Holds("Z && CY && !NZ && !NC && PO && FP"));
@@ -155,7 +161,7 @@ TEST_F(BreakpointCondition_Test, RegistersFlagsAndState)
     _state.frame_counter = 77;
     _state.p7FFD = 0x10;
     _state.flags = CF_TRDOS;
-    EXPECT_TRUE(Holds("T == 12345d && FRAME == 77d && FD == 10 && DOS"));
+    EXPECT_TRUE(Holds("T == 12345 && FRAME == 77 && FD == #10 && DOS"));
     _state.flags = 0;
     EXPECT_FALSE(Holds("DOS"));
 }
@@ -168,15 +174,14 @@ TEST_F(BreakpointCondition_Test, MemoryAndPages)
     _memory->DirectWriteToZ80Memory(0x8005, 0xC9);
     _cpu.hl = 0x8000;
     _cpu.ix = 0x8000;
-    EXPECT_TRUE(Holds("M(5C78) == #0D"));
-    EXPECT_TRUE(Holds("M(5C78) == 13d && M(5C78) == 0Dh"));
-    EXPECT_FALSE(Holds("M(5C78) == 0D")) << "digits then d are decimal: 0D is 0";
-    EXPECT_TRUE(Holds("W(HL) == 1000d")) << "a little-endian word";
-    EXPECT_TRUE(Holds("IX->5 == 0C9")) << "a->b is M(a+b)";
-    EXPECT_TRUE(Holds("M(IX + 5) == 0C9"));
-    EXPECT_TRUE(Holds("(A & 0F) == 0 && (B > 5 || M(IX+5) == 0C9) && SP < 8000"));
+    EXPECT_TRUE(Holds("M(#5C78) == #0D"));
+    EXPECT_TRUE(Holds("M(#5C78) == 13 && M(#5C78) == 0Dh"));
+    EXPECT_TRUE(Holds("W(HL) == 1000")) << "a little-endian word";
+    EXPECT_TRUE(Holds("IX->5 == #C9")) << "a->b is M(a+b)";
+    EXPECT_TRUE(Holds("M(IX + 5) == #C9"));
+    EXPECT_TRUE(Holds("(A & #F) == 0 && (B > 5 || M(IX+5) == #C9) && SP < #8000"));
     // 48K: ROM in window 0, RAM 5, 2, 0 in 1-3
-    EXPECT_TRUE(Holds("PG0 == 0FF && PG1 == 5 && PG2 == 2 && PG3 == 0 && ROMPG != 0FF"));
+    EXPECT_TRUE(Holds("PG0 == #FF && PG1 == 5 && PG2 == 2 && PG3 == 0 && ROMPG != #FF"));
 }
 
 TEST_F(BreakpointCondition_Test, AccessOperandsAndAliases)
@@ -184,13 +189,13 @@ TEST_F(BreakpointCondition_Test, AccessOperandsAndAliases)
     BreakpointConditionAccess write;
     write.writeAddress = 0x5C78;
     write.memoryValue = 0;
-    EXPECT_TRUE(Holds("WR == 5C78 && MDT == 0 && VAL == 0 && ADDR == 5C78", write));
-    EXPECT_TRUE(Holds("MWA == 5C78 && MWV == 0 && WADDR == 5C78 && VALUE == 0", write));
-    EXPECT_TRUE(Holds("RD == 0FFFFFFFF && IN == 0FFFFFFFF")) << "no such access: FFFFFFFF (Unreal)";
+    EXPECT_TRUE(Holds("WR == #5C78 && MDT == 0 && VAL == 0 && ADDR == #5C78", write));
+    EXPECT_TRUE(Holds("MWA == #5C78 && MWV == 0 && WADDR == #5C78 && VALUE == 0", write));
+    EXPECT_TRUE(Holds("RD == #FFFFFFFF && IN == #FFFFFFFF")) << "no such access: FFFFFFFF (Unreal)";
     BreakpointConditionAccess out;
     out.portOut = 0x00FE;
     out.portValue = 0x10;
-    EXPECT_TRUE(Holds("OUT == 0FE && VAL & 10 && PWV == 10 && PORT == 0FE && WPORT == 0FE", out));
+    EXPECT_TRUE(Holds("OUT == #FE && VAL & #10 && PWV == #10 && PORT == #FE && WPORT == #FE", out));
 }
 
 TEST_F(BreakpointCondition_Test, RefusalsNameTheProblemAndItsColumn)
@@ -205,13 +210,13 @@ TEST_F(BreakpointCondition_Test, RefusalsNameTheProblemAndItsColumn)
     EXPECT_EQ(Refused("A == #12345678901234567"), "bad hex number at column 6") << "17 digits do not fit 64 bits";
     EXPECT_TRUE(Compile("A == #1234567890123456"));
     // The trigger supplies the access operands: none of these can ever hold, so they are refused, not inert
-    EXPECT_EQ(Refused("RD == 4000", BRK_COND_EXEC), "RD is not supplied by this breakpoint's trigger at column 1");
+    EXPECT_EQ(Refused("RD == #4000", BRK_COND_EXEC), "RD is not supplied by this breakpoint's trigger at column 1");
     EXPECT_EQ(Refused("A == 0 && MWV == 0", BRK_COND_EXEC),
               "MWV is not supplied by this breakpoint's trigger at column 11");
     EXPECT_EQ(Refused("VAL == 1", BRK_COND_PORT_IN), "VAL is not supplied by this breakpoint's trigger at column 1")
         << "an IN breakpoint is checked before the port is read";
     EXPECT_TRUE(Compile("MWV == 0", BRK_COND_WRITE));
-    EXPECT_TRUE(Compile("RD == 4000 || WR == 4000", BRK_COND_READ | BRK_COND_WRITE));
+    EXPECT_TRUE(Compile("RD == #4000 || WR == #4000", BRK_COND_READ | BRK_COND_WRITE));
     // A program deeper than the stack
     std::string deep = "1";
     for (int i = 0; i < 40; i++)
@@ -226,7 +231,7 @@ TEST_F(BreakpointCondition_Test, LabelsResolveAndPrintByName)
     ASSERT_TRUE(labels.AddLabel("HL", 0x9000, UINT16_MAX, UINT16_MAX));
     _memory->DirectWriteToZ80Memory(0x8000, 0xE8);
     _memory->DirectWriteToZ80Memory(0x8001, 0x03);
-    BreakpointConditionPtr program = Compile("W(score) >= 1000d", BRK_COND_ANY, BreakpointConditionDialect::Unreal, &labels);
+    BreakpointConditionPtr program = Compile("W(score) >= 1000", BRK_COND_ANY, BreakpointConditionDialect::Unreal, &labels);
     ASSERT_TRUE(program);
     EXPECT_TRUE(program->UsesLabels());
     EXPECT_EQ(program->Canonical(), "W(score) >= #3E8");
@@ -240,8 +245,8 @@ TEST_F(BreakpointCondition_Test, LabelsResolveAndPrintByName)
 
 TEST_F(BreakpointCondition_Test, CanonicalFormIsUnrealAndParsesBack)
 {
-    const char* const texts[] = {"a&0f==3", "MWV==0", "Z", "hl >= 0x4000 && m(hl) != 255d", "(A & 0F) == 3 || B > 5",
-                                 "IX->5 == 0C9", "-1 < A", "!(A == 0)", "2 + 3 * 4 == 0E"};
+    const char* const texts[] = {"a&#f==3", "MWV==0", "Z", "hl >= 0x4000 && m(hl) != 255", "(A & #F) == 3 || B > 5",
+                                 "IX->5 == #C9", "-1 < A", "!(A == 0)", "2 + 3 * 4 == #E"};
     for (const char* text : texts)
     {
         BreakpointConditionPtr program = Compile(text);
@@ -250,8 +255,8 @@ TEST_F(BreakpointCondition_Test, CanonicalFormIsUnrealAndParsesBack)
         ASSERT_TRUE(again) << program->Canonical();
         EXPECT_EQ(again->Canonical(), program->Canonical()) << text;
     }
-    EXPECT_EQ(Compile("a&0f==3")->Canonical(), "A & (#F == 3)") << "constant folding keeps the shape";
-    EXPECT_EQ(Compile("hl >= 0x4000 && m(hl) != 255d")->Canonical(), "(HL >= #4000) && (M(HL) != #FF)");
+    EXPECT_EQ(Compile("a&#f==3")->Canonical(), "A & (#F == 3)") << "constant folding keeps the shape";
+    EXPECT_EQ(Compile("hl >= 0x4000 && m(hl) != 255")->Canonical(), "(HL >= #4000) && (M(HL) != #FF)");
     EXPECT_EQ(Compile("Z")->Canonical(), "(F & #40) != 0");
     // The C dialect prints in the Unreal form too
     EXPECT_EQ(Compile("A & 15 == 3", BRK_COND_ANY, BreakpointConditionDialect::C)->Canonical(), "A & (#F == 3)");
@@ -265,10 +270,10 @@ TEST_F(BreakpointCondition_Test, FastShapesMatchTheStackMachine)
         bool fast;
     };
     const Case cases[] = {
-        {"A == 0", true},       {"HL >= 4000", true},    {"0 == A", true},          {"4000 < HL", true},
-        {"(F & 40) != 0", true}, {"Z", true},            {"MWV == 0", true},        {"M(5C78) == #0D", true},
-        {"A", true},            {"A == 0 && B == 1", false}, {"M(HL) == 0FF", false}, {"W(8000) >= 1000d", false},
-        {"(A & 0F) == 3 && (B > 5 || M(IX+5) == 0C9) && SP < 8000", false},
+        {"A == 0", true},       {"HL >= #4000", true},    {"0 == A", true},          {"#4000 < HL", true},
+        {"(F & #40) != 0", true}, {"Z", true},            {"MWV == 0", true},        {"M(#5C78) == #0D", true},
+        {"A", true},            {"A == 0 && B == 1", false}, {"M(HL) == #FF", false}, {"W(#8000) >= 1000", false},
+        {"(A & #F) == 3 && (B > 5 || M(IX+5) == #C9) && SP < #8000", false},
     };
     std::mt19937 random(38);
     for (const Case& c : cases)
@@ -316,7 +321,7 @@ TEST_F(BreakpointCondition_Test, ShortCircuitAndErrors)
     EXPECT_EQ(error, "the condition does not evaluate here: no CPU");
     // Addresses wrap at 64K, as the CPU's own
     _memory->DirectWriteToZ80Memory(0x0000, 0xAA);
-    EXPECT_EQ(Compile("M(0FFFF + 1) == M(0)")->Evaluate(Context()), Result::True);
+    EXPECT_EQ(Compile("M(#FFFF + 1) == M(0)")->Evaluate(Context()), Result::True);
 }
 
 TEST_F(BreakpointCondition_Test, DialectNames)
@@ -363,7 +368,7 @@ TEST_F(BreakpointCondition_Test, PrevIsTheValueOfTheEvaluationBefore)
     _memory->DirectWriteToZ80Memory(0x5C78, 9);
     const BreakpointConditionContext dry = Context();
     BreakpointConditionPtr checked =
-        BreakpointConditionProgram::Compile("M(5C78) != M(5C78)@prev", BRK_COND_ANY, nullptr, error,
+        BreakpointConditionProgram::Compile("M(#5C78) != M(#5C78)@prev", BRK_COND_ANY, nullptr, error,
                                             BreakpointConditionDialect::Unreal, &dry);
     ASSERT_TRUE(checked) << error;
     _memory->DirectWriteToZ80Memory(0x5C78, 8);
@@ -409,14 +414,14 @@ TEST_F(BreakpointCondition_Test, TheExtendedMachinesLatchesSlotsAndSpeed)
     _state.pEFF7 = 0x08;
     _state.pFF77 = 0x41;
     _state.hw_turbo_ratio = 2;
-    EXPECT_TRUE(Holds("DFFD == 7 && P1FFD == 4 && EFF7 == 8 && FF77 == 41 && CPUSPEED == 2"));
+    EXPECT_TRUE(Holds("DFFD == 7 && P1FFD == 4 && EFF7 == 8 && FF77 == #41 && CPUSPEED == 2"));
     EXPECT_TRUE(Holds("PDFFD == DFFD && PEFF7 == EFF7 && PFF77 == FF77 && P7FFD == FD"));
     _state.hw_turbo_ratio = 0;
     EXPECT_TRUE(Holds("CPUSPEED == 1")) << "a state without a ratio runs at the base clock";
     // 48K: ROM in window 0, RAM 5, 2, 0 in 1-3: 8K pages #0A #0B, 4 5, 0 1
-    EXPECT_TRUE(Holds("MMU0 == 0FF && MMU1 == 0FF && MMU2 == 0A && MMU3 == 0B && MMU4 == 4 && MMU5 == 5 && "
+    EXPECT_TRUE(Holds("MMU0 == #FF && MMU1 == #FF && MMU2 == #A && MMU3 == #B && MMU4 == 4 && MMU5 == 5 && "
                       "MMU6 == 0 && MMU7 == 1"));
-    EXPECT_TRUE(Holds("ROMPG0 == ROMPG && ROMPG != 0FF && ROMPG1 == 0FF && ROMPG2 == 0FF && ROMPG3 == 0FF"));
+    EXPECT_TRUE(Holds("ROMPG0 == ROMPG && ROMPG != #FF && ROMPG1 == #FF && ROMPG2 == #FF && ROMPG3 == #FF"));
     EXPECT_EQ(Compile("nr(#57) == mmu7 && p1ffd")->Canonical(), "(NR(#57) == MMU7) && P1FFD");
 
     // No machine: NR(x), the beam and the copper are errors, which the dry run of a compile reports
@@ -441,7 +446,7 @@ TEST_F(BreakpointCondition_Test, TheExtendedMachinesLatchesSlotsAndSpeed)
     machine.hc = 300;
     machine.copperPc = 17;
     _machine = &machine;
-    EXPECT_TRUE(Holds("NR(57) == 21 && NR(50 + 7) == 21 && VC == 105 && HC == 300d && CPC == 17d"));
-    EXPECT_EQ(Compile("NR(100) == 0")->Evaluate(Context(), &why), Result::Error);
+    EXPECT_TRUE(Holds("NR(#57) == #21 && NR(#50 + 7) == #21 && VC == #105 && HC == 300 && CPC == 17"));
+    EXPECT_EQ(Compile("NR(#100) == 0")->Evaluate(Context(), &why), Result::Error);
     EXPECT_EQ(why, "NR register outside 0..#FF");
 }
