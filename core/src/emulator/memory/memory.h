@@ -196,6 +196,10 @@ protected:
     uint8_t _writeHooks = 0;
     bool _writeTapDemand = false;
     const BreakpointHotState* _tapFilter = nullptr;   // the breakpoint manager's filters (SetWriteTapDemand)
+    // Read taps (breakpoint-taps §5): Core selects Z80::ReadTapMemIf over the interface it chose, which reads
+    // through _readTapInner and tests the read filter's bit; nothing on the plain read
+    bool _readTapDemand = false;
+    const MemoryInterface* _readTapInner = nullptr;
     void RefreshWriteHooks();
     void MemoryWriteTapped(uint16_t addr, uint8_t value);
 
@@ -405,6 +409,9 @@ public:
 public:
     static MemoryInterface* GetFastMemoryInterface();
     static MemoryInterface* GetDebugMemoryInterface();
+    /// The read-tap interface (Z80::ReadTapMemIf): every access through the interface Core chose
+    /// (SetReadTapInner), the reads and opcode fetches then test the read filter's bit
+    static MemoryInterface* GetReadTapMemoryInterface();
     /// stockRead: the fast read inside is MemoryReadFastStock instead of the virtual MemoryReadFast - for a memory
     /// whose HasStockFastRead is true (the Z80 decides once, at its construction: the memory is created before it).
     /// The plain fast interface keeps the virtual read: it calls the read directly, with nothing to inline it into,
@@ -503,6 +510,26 @@ public:
     /// Write taps are armed (BreakpointManager::ApplyTapDemand): the fast write tests @p filter's write bit and tells
     /// the breakpoint manager of a marked address. Emulation thread or CPU held
     void SetWriteTapDemand(bool on, const BreakpointHotState* filter);
+    /// Read taps are armed (BreakpointManager::ApplyTapDemand): Core puts the read-tap interface over the fast one it
+    /// selects (Core::SelectMemoryInterface, called by the manager after this). Emulation thread or CPU held
+    void SetReadTapDemand(bool on, const BreakpointHotState* filter)
+    {
+        _readTapDemand = on && filter != nullptr;
+        if (filter != nullptr)
+            _tapFilter = filter;
+    }
+    bool ReadTapDemand() const { return _readTapDemand; }
+    /// The interface the read-tap interface reads and writes through (Core::SelectMemoryInterface, under its lock)
+    void SetReadTapInner(const MemoryInterface* inner) { _readTapInner = inner; }
+    const MemoryInterface* ReadTapInner() const { return _readTapInner; }
+    /// Whether this machine's CPU accesses go through the stock interfaces (a model with its own interface,
+    /// ModelMemoryInterface, answers false and its read taps take the debug path)
+    virtual bool SupportsReadTapHook() const { return true; }
+    /// The read-tap interface's accesses: the inner one's, then the read filter's bit; a marked address goes on to
+    /// the resolve with the byte the CPU gets
+    uint8_t MemoryReadTapped(uint16_t addr, bool isExecution);
+    uint8_t MemoryReadM1Tapped(uint16_t addr, bool isExecution);
+    void MemoryWriteTapPass(uint16_t addr, uint8_t value);
     /// Whether MemoryWriteFast is this machine's write (the hook lives there); a model with its own write interface
     /// answers false and its write taps take the debug path
     virtual bool SupportsWriteTapHook() const { return true; }

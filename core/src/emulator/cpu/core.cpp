@@ -772,6 +772,14 @@ void Core::SelectMemoryInterface()
             _z80->MemIf = own;
     }
 
+    // Read taps without the debug mode (breakpoint-taps §5): the read-tap interface over the one chosen, which it
+    // reads through. The debug interfaces tell the taps themselves
+    if (!debug && _memory->ReadTapDemand())
+    {
+        _memory->SetReadTapInner(_z80->MemIf);
+        _z80->MemIf = _z80->ReadTapMemIf;
+    }
+
     // The +2A/+3 gate array contends memory cycles only
     _z80->ioContention = (contended && !_ulaContention->IsGateArray()) ? _ulaContention : nullptr;
     _z80->idleContention = _z80->ioContention;  // the ULA contends internal cycles too, the gate array does not
@@ -871,6 +879,8 @@ const char* Core::GetMemoryInterfaceName() const
     if (!_z80)
         return "none";
     const MemoryInterface* m = _z80->MemIf;
+    if (m == _z80->ReadTapMemIf)
+        return "fast_read_tap";
     if (m == _z80->OverlayDbgContendedMemIf)
         return "debug_contended_overlay";
     if (m == _z80->OverlayFastContendedMemIf)

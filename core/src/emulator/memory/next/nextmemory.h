@@ -57,6 +57,7 @@ public:
     MemoryInterface* ModelMemoryInterface(bool debug, bool contended) override;
     /// Its own slot writes (SlotWriteFast), not MemoryWriteFast: its write taps take the debug path
     bool SupportsWriteTapHook() const override { return false; }
+    bool SupportsReadTapHook() const override { return false; }
     void RefreshSlotContention() override;
     uint8_t ToolReadRedirect(uint16_t addr, uint8_t normal) const override;
     /// A tool's write goes to the slot the address falls in (PokeSlot), as its read comes from it

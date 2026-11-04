@@ -37,12 +37,13 @@ The open work as of 2026-11-03, by what it needs.
 
 Without hardware (testable through WebAPI / MCP and unit tests):
 
-1. Device access watch follow-ups ([Known gaps](../2026-11-02-device-access-watch/README.md#known-gaps)): the test
-   time of `AccessWatchSeesTheKeyboardOnEveryMachine`. Done 2026-11-03: the Next's `#1F` decision on `next.left`
+1. Device access watch follow-ups ([Known gaps](../2026-11-02-device-access-watch/README.md#known-gaps)): done.
+   2026-11-04: the every-machine sweep is one test per model (the frames cost under 3 ms, the creation is the time).
+   2026-11-03: the Next's `#1F` decision on `next.left`
    (connectors by input role), the evidence as `devices.access` on every plane, board accesses with their card
    candidates (`#1F` on a bare 48K: a Kempston interface on `edge.1`, said as a notice).
-2. Haptics without pads: read probes on the fast path (exec and write probes left the debug mode, read probes still
-   take it, [haptics.md §12](haptics.md#12-testing)). Done: the H3 probes with the A/B benchmark, the H2 DSP filters
+2. Haptics without pads: done. Read probes left the debug mode too (2026-11-04: the read-tap interface,
+   [haptics.md §12](haptics.md#12-testing)); the H3 probes with the A/B benchmark, the H2 DSP filters
    and sources with the frame-hash test, the H5 game profiles; the session trial `haptics_trial` in place of "Add probe
    from debugger" / `haptics_probe` (2026-11-03: games are studied by agents over WebAPI / MCP).
 3. C10: the `controllers.devices` topic (arrivals, battery, notices pushed; `devices` is a call now).

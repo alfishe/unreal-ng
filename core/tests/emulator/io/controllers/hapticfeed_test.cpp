@@ -189,7 +189,10 @@ TEST_F(HapticFeed_Test, ProbesSeeEveryAccessAndNeverStop)
     BreakpointManager* breakpoints = _context->pDebugManager->GetBreakpointsManager();
     _emulator->RunNFrames(1, false);  // the first frame attaches the feed: the probes are armed from its end
     EXPECT_EQ(ProbeCount(breakpoints), 5u);
-    EXPECT_TRUE(_emulator->GetFeatureManager()->debugModeInEffect()) << "memory probes hold the debug path";
+    EXPECT_FALSE(_emulator->GetFeatureManager()->debugModeInEffect())
+        << "no probe holds the debug path (exec: the instruction start, write: the fast write's hook, read: the "
+           "read-tap interface)";
+    EXPECT_EQ(_context->pCore->GetZ80()->MemIf, _context->pCore->GetZ80()->ReadTapMemIf);
 
     _emulator->RunNFrames(4, false);
     EXPECT_FALSE(_emulator->IsPaused()) << "a probe never stops the CPU";
