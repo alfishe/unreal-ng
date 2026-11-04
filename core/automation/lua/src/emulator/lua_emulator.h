@@ -7198,7 +7198,7 @@ public:
             return StateNodeToLua(s, r.Ok() ? WindowDisplay::CrtParametersReport(r.parameters) : WindowDisplay::ErrorNode(r));
         });
         // The GUI window recording (the picture as drawn, CRT and all, the on-screen keyboard, the machine's sound):
-        // window_record(path, {keyboard = "default", codec = "h264", audio = true, scale = 2, picture_height = 1080,
+        // window_record(path, {keyboard = "default", codec = "h264", hardware = true, fit = true, audio = true, scale = 2, picture_height = 1080,
         // width = 3840, height = 2160, layout = "side"}) starts, window_record_frames(n) runs a paused machine n frames
         // with every one recorded, window_record_stop() finishes the file, window_record_status() reads. The
         // WindowRecording report every interface returns; refused: {ok = false, error, kind}

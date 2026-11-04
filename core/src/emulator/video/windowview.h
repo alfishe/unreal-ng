@@ -140,11 +140,13 @@ struct WindowRecordingRequest
 {
     std::string path;      ///< the file; the container is its extension (.mov for ProRes)
     std::string keyboard;  ///< "" = the picture only; "default" = the model's keyboard; else a keyboard picture id
-    std::string codec = "prores";  ///< "prores" (ProRes 4444, full colour) or "h264" (4:4:4)
+    std::string codec = "prores";  ///< "prores" (ProRes 4444, full colour), "h264" (4:4:4) or "h265" (4:4:4)
+    bool hardware = false;  ///< h264 / h265 on the GPU's encoder where there is one (4:2:0: a CRT mask loses colour)
     int fps = 0;       ///< 0: the machine's frame rate (3.5 MHz / t-states per frame: 48.83 on a Pentagon)
     bool audio = true; ///< the machine's sound, frame for frame with the picture (needs fps 0)
     int scale = 1;  ///< the window's pixels as scale x scale blocks (1..4); the keyboard drawn at the file's width
     int pictureHeight = 0;  ///< > 0: the CRT drawn at this height in device pixels, not the window's (GPU only)
+    bool fit = false;  ///< scale the picture to the frame (aspect kept, centred), up or down, instead of refusing a mismatch
     uint16_t frameWidth = 0;   ///< the file's frame; 0: the picture with the keyboard under it
     uint16_t frameHeight = 0;
     std::string layout = "below";  ///< the keyboard "below" the picture or "side" (right of it, for 16:9)
@@ -162,6 +164,9 @@ struct WindowRecordingStatus
     bool audio = false;    ///< a sound track
     uint32_t sampleRate = 0;
     uint64_t audioSamples = 0;  ///< sample pairs taken (frames x samples per frame)
+    uint64_t framesPending = 0;  ///< taken but not yet encoded (the encoder is behind real time)
+    bool finalizing = false;    ///< stopped, the file is being finished in the background (recording is false)
+    std::string error;          ///< why the last recording failed to finish ("" = it did not fail)
 };
 
 /// Implemented by a front end (unreal-qt). Called from any thread: the implementation moves to its UI thread itself

@@ -121,6 +121,12 @@ public:
     void refreshViewport();
     std::shared_ptr<Emulator> activeEmulator() const { return _emulator; }
 
+    /// The window recording (the picture as the window draws it: CRT shaders, temporal processing), for the recording
+    /// panel. Same recorder the automation planes use; the recorder is made on first use
+    class WindowRecorder* windowRecorder();
+    /// The screen the window recording draws (the window's current one: switching the GPU re-creates it)
+    class DeviceScreenWrapper* windowRecorderScreen() const { return _screenWrapper; }
+
     // region <Slots>
 private slots:
     void toggleEmulatorStartStop();

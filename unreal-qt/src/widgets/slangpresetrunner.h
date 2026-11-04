@@ -72,6 +72,9 @@ public:
     QImage outputImage();
 
     uint32_t frameCount() const { return _frameCount; }
+    /// The shaders' FrameCount: interlace presets alternate their lines by its parity. renderWindowImage sets its own
+    /// count for the picture it renders, then puts the window's back
+    void setFrameCount(uint32_t count) { _frameCount = count; }
 
 private:
     static std::vector<Parameter> parametersOf(const QJsonObject& manifest);

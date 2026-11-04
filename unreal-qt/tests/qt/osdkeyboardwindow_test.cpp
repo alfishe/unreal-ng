@@ -3,6 +3,7 @@
 // a ZX key posts its matrix key, a combination key its keys in order (up in reverse), a latched modifier stays down
 // until the next key goes up, a PC picture's key posts the PC key alone (the controller, not the matrix).
 
+#include <QCoreApplication>
 #include <QFile>
 #include <QKeyEvent>
 #include <QSettings>
@@ -124,11 +125,25 @@ class OsdKeyboardWindow_Test : public ::testing::Test
 protected:
     void SetUp() override
     {
+        // A default QSettings() needs an organization and application name to persist on Windows (the registry key is
+        // built from them); without them the choice "kept in the settings" is lost there. An ini file in the test's
+        // scratch folder keeps the registry untouched on every platform
+        _organization = QCoreApplication::organizationName();
+        _application = QCoreApplication::applicationName();
+        _format = QSettings::defaultFormat();
+        QCoreApplication::setOrganizationName("unreal-ng-tests");
+        QCoreApplication::setApplicationName("osdkeyboardwindow-test");
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                           QString::fromStdString(TestPathHelper::GetUniqueTestScratchPath("osdkeyboard-settings")));
         QSettings().remove("OsdKeyboard");
     }
     void TearDown() override
     {
         QSettings().remove("OsdKeyboard");
+        QSettings::setDefaultFormat(_format);
+        QCoreApplication::setOrganizationName(_organization);
+        QCoreApplication::setApplicationName(_application);
         _binding.unbind();
         for (const auto& id : EmulatorManager::GetInstance()->GetEmulatorIds())
             EmulatorManager::GetInstance()->RemoveEmulator(id);
@@ -143,6 +158,9 @@ protected:
         return emulator;
     }
     EmulatorBinding _binding;
+    QString _organization;
+    QString _application;
+    QSettings::Format _format = QSettings::NativeFormat;
 };
 }  // namespace
 

@@ -39,8 +39,8 @@ std::string Validate(const WindowRecordingRequest& request)
 {
     if (request.path.empty())
         return "path: the file to write (.mov for prores, .mp4 for h264), server side";
-    if (request.codec != "prores" && request.codec != "h264")
-        return "codec takes prores or h264";
+    if (request.codec != "prores" && request.codec != "h264" && request.codec != "h265")
+        return "codec takes prores, h264 or h265";
     if (request.layout != "below" && request.layout != "side")
         return "layout takes below or side";
     if (request.pictureHeight < 0 || request.pictureHeight > kMaxPictureHeight)
@@ -87,6 +87,11 @@ bool ApplyWord(WindowRecordingRequest& request, const std::string& key, const st
     }
     else if (key == "codec" || key == "layout")
         (key == "codec" ? request.codec : request.layout) = WindowDisplay::Lower(value);
+    else if (key == "hardware" || key == "fit")
+    {
+        if (!WindowDisplay::ParseBool(value, key == "hardware" ? request.hardware : request.fit))
+            error = key + " takes on or off";
+    }
     else if (key == "audio")
     {
         if (WindowDisplay::Lower(value) == "none")
@@ -197,6 +202,7 @@ StateNode Report(const WindowRecordingStatus& s)
     node["audio"] = s.audio;
     node["sample_rate"] = static_cast<uint64_t>(s.sampleRate);
     node["audio_samples"] = s.audioSamples;
+    node["frames_pending"] = s.framesPending;
     return node;
 }
 

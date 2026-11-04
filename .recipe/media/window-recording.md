@@ -22,6 +22,27 @@ Reference: `POST/GET /api/v1/emulator/{id}/video/window/record`, `.../record/fra
 | A still of the window as drawn | `screenshot source=window` ([crt-effects.md](crt-effects.md)) |
 | **The window as drawn + the on-screen keyboard + sound, every frame** | this recipe (`window_record_*`, `/video/window/record*`) |
 
+### From the GUI: the recording panel
+
+No automation needed for a plain "record what I see": open the recording panel (Tools > Recording) and set the
+**Raw / Window** list to **Window**, then press *Start Rec*. The file gets the window as drawn (CRT shader, temporal
+processing) and the machine's sound; the keyboard is not drawn (use `keyboard=` through the planes for that).
+
+- The list is active for the H.264 / H.265 formats in MP4 / MKV / MOV; GIF, WebP, VP9 and audio formats record the
+  raw frame buffer only. The profile list (1080p / 1440p / 4K) works: the CRT is drawn at the frame's height.
+- On a Mac with View > GPU acceleration on (and for ProRes 4444) the project's own VideoToolbox encoder
+  (`VideoToolboxEncoder`, AVAssetWriter) writes the file: no ffmpeg, picture and sound in one MP4 / MOV from the
+  start, the picture goes straight into the encoder's pixel buffer, and a picture is held until the next one's time,
+  so a lagging encoder drops frames instead of piling up work. H.265 and H.264 are 4:2:0 there (the hardware has no
+  4:4:4 H.26x); ProRes 4444 is 4:4:4. MKV, GPU acceleration off, and other systems use ffmpeg (x264 / x265 4:4:4:
+  a CRT mask keeps its colour, but 4K is slower than real time; the picture repeats while the encoder is behind).
+- With ffmpeg the sound goes into the same process through a FIFO (macOS / Linux): nothing to copy and mux at the
+  end. Stop returns at once;
+  A slow encoder is waited for, never killed.
+- Same folder and `unreal_<time>` name as the raw recording. The panel's capture region, quality and output profile
+  do not apply to it; there is no pause. The choice is remembered (`windowSource` in the `unreal-ng/recording`
+  settings). It is the same recorder as `video window record`: one window recording at a time.
+
 ## The clock is the machine's
 
 The file's time is emulated time, not the host's. Every emulated frame is one video frame at the machine's own rate

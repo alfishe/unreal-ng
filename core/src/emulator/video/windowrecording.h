@@ -21,7 +21,7 @@ class Emulator;
 namespace WindowRecording
 {
 /// The fields a start takes besides the file, in the order every surface lists them
-inline constexpr const char* kKeys = "keyboard, codec, audio, fps, scale, picture_height, width, height, layout";
+inline constexpr const char* kKeys = "keyboard, codec, hardware, fit, audio, fps, scale, picture_height, width, height, layout";
 
 inline constexpr int kMaxFps = 100;
 inline constexpr int kMinScale = 1;
