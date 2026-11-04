@@ -313,8 +313,9 @@ void ApiWebSocket::handleNewMessage(const drogon::WebSocketConnectionPtr& wsConn
         return;
     }
     connection->inFlight++;
-    drogon::app().forward(call, [weak, rid, connection](const drogon::HttpResponsePtr& resp) {
+    drogon::app().forward(call, [weak, rid, connection, call](const drogon::HttpResponsePtr& resp) {
         connection->inFlight--;
+        webapi_gate::FitAnswer(call, resp);  // ?max_chars (a forward may skip the post-handling advices)
         Send(weak, ResultOf(rid, resp));
     });
 }

@@ -1885,6 +1885,14 @@ emu.step_out()                       # run until the current subroutine returns
 emu.skip_until(0x8000)               # fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", max_tstates=70000000)  # optional explicit t-state budget
 
+# Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end.
+# condition= is the `if` rule (a keyword in Python); the GIL is released while the machine runs
+emu.run_until(text="PRESS", max_frames=500)    # {'met', 'outcome', 'frames', 'frame', 'pc', 'ms', 'hit', 'text'}
+emu.run_until(condition="M(#5C3A)==1", screen="stable", stable_frames=50, match="all")
+emu.watch_add(text="GAME OVER", label="over")  # {'id', 'watch', 'text'}; a hit pauses at that frame end
+emu.watches()                                  # {'count', 'watches', 'text'}
+emu.watch_remove(1)                            # or "all"
+
 # The paced run (core RunPacer, command-interface.md §2.1): a frame / lines / an instruction per interval,
 # stops at a breakpoint. A refusal raises RuntimeError ("Run-control held: ...")
 emu.pace()                           # {'preset', 'label', 'unit', 'count', 'interval_ms', 'effective_ms',

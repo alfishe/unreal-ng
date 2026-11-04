@@ -138,7 +138,7 @@ bool QueryFromStrings(const std::string& mode, const std::string& banks, const s
     return true;
 }
 
-ScreenDigestResult Compute(EmulatorContext* context, const ScreenDigestQuery& query)
+ScreenDigestResult Compute(EmulatorContext* context, const ScreenDigestQuery& query, bool remember)
 {
     ScreenDigestResult r;
     if (!context || !context->pMemory || !context->pScreen)
@@ -209,8 +209,11 @@ ScreenDigestResult Compute(EmulatorContext* context, const ScreenDigestQuery& qu
     }
     r.combined = combined;
     r.changed = combined != r.previousDigest;
-    state.last_screen_digest = combined;
-    state.last_screen_digest_frame = state.frame_counter;
+    if (remember)
+    {
+        state.last_screen_digest = combined;
+        state.last_screen_digest_frame = state.frame_counter;
+    }
     return r;
 }
 }  // namespace ScreenDigestCompute

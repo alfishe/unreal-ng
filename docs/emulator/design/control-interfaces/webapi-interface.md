@@ -49,6 +49,14 @@ Unlike CLI (stateful sessions), WebAPI is stateless:
 - Each request is independent
 - Suitable for load balancing and horizontal scaling
 
+### Answer budgets (`max_chars`)
+Any route takes `?max_chars=N` (500 .. 10,000,000): a JSON or `text/plain` reply longer than N characters is fitted.
+JSON loses the tail of its biggest arrays, then long strings are cut, until the compact text fits; an object reply gets
+`"truncated": {"max_chars": N, "chars": <full size>, "omitted": {"<path>": <items left out>}, "hint": ...}` and the
+reply the header `X-Unreal-Truncated: <full size>`. Text keeps its first lines and up to three last ones with an
+omission line between. A bad value is 400 `bad_max_chars` before the handler runs. Binary replies are not touched. A
+WebSocket `call` takes it in its path the same way. Design: [answer budgets](../../../inprogress/2026-11-04-answer-budgets/README.md).
+
 ### API Versioning
 - Version in URL path: `/api/v1/...`
 - Future versions: `/api/v2/...` without breaking existing clients
@@ -379,6 +387,10 @@ POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"cou
 POST /api/v1/emulator/{id}/stepover          Step over CALL instructions
 POST /api/v1/emulator/{id}/stepout            Step out of current subroutine (breakpoints skipped)
 POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N, "breakpoints": false}; true: a breakpoint stops it first, run to a cursor; answers hit, target, max_tstates, stop)
+POST /api/v1/emulator/{id}/run_until         Whole frames until frame-end rules hold (body: {"if"?, "text"?, "screen"?: "changed"|"stable", "stable_frames"?, "event"?, "match"?: "any"|"all", "max_frames"?: 1..200000 (3000), "breakpoints"?: false}; answers met, outcome (met|budget|breakpoint|aborted), frames, frame, pc, ttd_frame?, ms, hit {frame, reasons, text_line?, stable_for?, event_fires?}, text; long-call pool)
+GET  /api/v1/emulator/{id}/watches           Armed frame watches: {count, watches: [{id, label?, spec, then, once, armed_frame, hits, last_hit?, error?}], text}
+POST /api/v1/emulator/{id}/watches           Arm a frame watch (the run_until rules plus "label"?, "then"?: "pause"|"notify", "once"?: true): 201 {id, watch, text}; 400 a bad spec or 16 armed. A hit: watch_hit on debug.events, debug/wait wakes, then=pause pauses (stop reason "watch")
+DELETE /api/v1/emulator/{id}/watches/{watch} One watch by id, or "all": {removed: [ids], text}; 404 unknown
 POST /api/v1/emulator/{id}/run_tstates       Run N t-states (body: {"count": N})
 POST /api/v1/emulator/{id}/run_to_scanline   Run until scanline N (body: {"scanline": N})
 POST /api/v1/emulator/{id}/run_scanlines     Run N scanlines forward (body: {"count": N})
@@ -932,7 +944,7 @@ Everything but `type` and `address` is optional (the debugger protocol's Breakpo
 | `doors`, `value`, `value_mask` | ZX Next `nextreg*` only: `address` is the register (`address_end` a range); `doors` a comma separated list or array of `nextreg` (the NEXTREG instructions), `port` (OUT `#253B`), `copper` (a copper MOVE), default all (a read always comes through the port); `value` stops only on that byte, `value_mask` compares only those bits (default `255` with a value). The reply and the list carry `doors`, `value`, `value_mask`. |
 | `hc` | ZX Next `beam` only: `address` is the line of the copper's counter (NR #64 applied), `hc` the pixel clock in the row (0..511, default 0). A `copper` breakpoint takes `address` = list index (0..1023), `address_end` a range. |
 | `hits` | `"5"` stops on the 5th hit only, `">=5"` from the 5th on, `"%5"` every 5th. Every matching access is counted (`hit_count`). The same as `hit_mode` (`always` / `equal` / `at_least` / `multiple`) + `hit_target`. Stepping on from the breakpoint the machine stopped at is not counted again. |
-| `condition`, `condition_dialect` | Memory and port breakpoints: stop only when the expression holds (`"VAL == 0"`, `"(VAL & 7) == 2"`, `"A == 7 && M(#5C3A) != 0"`); the Unreal order and hex numbers, `condition_dialect` `"c"` for C's precedence and decimal numbers ([the language](../../../features/conditional-breakpoints.md)). A bad condition is 400 with the reason and the column, nothing is added. The reply and the list carry `condition` in the canonical form, `match_count` (every match; `hit_count` then counts the matches where it held, and `hits` works on them) and, after a run-time failure, `condition_error` (the breakpoint is skipped, never stops; enabling it or a new condition clears it). `PUT .../condition` changes it later (404 for an unknown id, 400 keeps the old one). |
+| `condition`, `condition_dialect` | Memory and port breakpoints: stop only when the expression holds (`"VAL == 0"`, `"(VAL & 7) == 2"`, `"A == 7 && M(#5C3A) != 0"`); the Unreal order and decimal numbers (hex `#FF`, `$FF`, `0xFF`), `condition_dialect` `"c"` for C's precedence ([the language](../../../features/conditional-breakpoints.md)). A bad condition is 400 with the reason and the column, nothing is added. The reply and the list carry `condition` in the canonical form, `match_count` (every match; `hit_count` then counts the matches where it held, and `hits` works on them) and, after a run-time failure, `condition_error` (the breakpoint is skipped, never stops; enabling it or a new condition clears it). `PUT .../condition` changes it later (404 for an unknown id, 400 keeps the old one). |
 
 Errors (400) name the problem: a range ending before it starts, a page range leaving its page, a missing
 page, a mask on a memory breakpoint, a hit policy without a target. The reply and the list carry

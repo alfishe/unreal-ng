@@ -122,9 +122,9 @@ The slot filter compares against the **Memory model's live slot→page table** (
 ### 4.2 Condition expression language
 
 > **Superseded 2026-10-26** (owner decision, [conditions-and-callbacks.md §8](../2026-10-26-breakpoint-taps/conditions-and-callbacks.md#8-decisions-for-the-owner)):
-> the Unreal order is canonical (comparisons bind tighter than `&` `^` `|`), numbers are hex by default (`123d` is
-> decimal), the operands are Unreal's (`M(x)`, `RD`/`WR`/`MDT`, `IN`/`OUT`/`VAL`) with the `MRA`/`MWA`/`MRV`/`MWV`
-> names below as aliases. A second dialect, `c`, reads C's precedence and decimal numbers; the order of this section
+> the Unreal order is canonical (comparisons bind tighter than `&` `^` `|`), numbers are decimal (hex `#FF`, `$FF`,
+> `0xFF`; owner 2026-11-04, was hex by default), the operands are Unreal's (`M(x)`, `RD`/`WR`/`MDT`, `IN`/`OUT`/`VAL`) with the `MRA`/`MWA`/`MRV`/`MWV`
+> names below as aliases. A second dialect, `c`, reads C's precedence; the order of this section
 > (bitwise tighter than comparisons) is not built. A failing
 > condition marks the breakpoint and never stops (§F6 changed). As built:
 > [docs/features/conditional-breakpoints.md](../../features/conditional-breakpoints.md).

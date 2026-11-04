@@ -103,7 +103,14 @@ The WebAPI backend (`common/src/backend/webapi-backend.*`) sends every request t
 
 Both sit on `net-socket.*` (connect with a timeout, send and receive against a deadline; POSIX and Winsock).
 
-The page titles come from `GET /state/paging` with every register read. The TS-Conf debugger's backend
+The page titles come from `GET /state/paging` with every register read, the beam (the absolute T for the time delta)
+from `GET /video/beam` and the port latches from `GET /ports`. The side panels read the emulator once per stop:
+Beta 128 (`/state/fdc`), the AY chips (`/state/audio/ay`), CMOS (`/rtc/cells`), the ZX-Evo EEPROM
+(`/memory/region/eeprom`), the disk editor's tracks (`/disk/...`, sector writes only), the screen preview (the screen
+page). Writes go to the emulator: OUT and the paging ports through `POST /ports/out`, IM / IFF through
+`PUT /registers`, the conditions as breakpoints over 0000-FFFF in the group `tui-conditions` (the emulator evaluates
+them, every client sees them), the ripper through the memory profiler. Left out: the ATM palette editor, raw track
+writes, the XAS / ALASM label import. The TS-Conf debugger's backend
 (`tsconf/src/backend/tsconf-webapi-backend.*`) adds the fork's band: the register board from `GET /state/tsconf` (the
 `#xxAF` register file and the DMA report) and the PC history from `GET /debug/pchist` (its first read starts the
 recording), each read once per stop.

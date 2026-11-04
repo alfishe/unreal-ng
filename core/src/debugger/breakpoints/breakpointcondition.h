@@ -23,15 +23,15 @@ struct EmulatorState;
 /// `x@prev` is the value x had at this condition's evaluation before (x itself the first time): `M(5C78) <
 /// M(5C78)@prev` on a write tap holds when the byte went down. A branch && / || skips does not update its @prev.
 ///
-/// Numbers are hex unless written as decimal (`123d`); `#FF`, `$FF`, `0xFF`, `FFh` are hex; `'c'` is a character.
+/// Numbers are decimal (`123`, `123d`); `#FF`, `$FF`, `0xFF`, `0FFh` are hex; `'c'` is a character.
 /// Names are case-insensitive. A false condition costs no store; an error is reported once and the breakpoint is
 /// marked, never stopped on.
 
 /// Which language a text is in. The printed (canonical) form is always Unreal
 enum class BreakpointConditionDialect : uint8_t
 {
-    Unreal = 0,  ///< comparisons bind tighter than & ^ |, numbers hex by default
-    C            ///< C precedence (& ^ | tighter than && ||, looser than comparisons), numbers decimal by default
+    Unreal = 0,  ///< comparisons bind tighter than & ^ |
+    C            ///< C precedence (& ^ | tighter than && ||, looser than comparisons)
 };
 
 /// The accesses a breakpoint can be triggered by (BRK_MEM_* and BRK_IO_* folded together): a condition may only

@@ -31,6 +31,8 @@
 #include "mcp-signature.h"
 #include "mcp-tool-utils.h"
 
+#include "../../common/answerbudget.h"  // max_chars, read by the dispatcher (header only)
+
 #include "../../../src/debugger/callbacks/callbacktext.h"  // the callback line every plane prints (header only)
 
 #include <algorithm>
@@ -60,6 +62,12 @@ void ToolRegistry::Register(const std::string& name, const std::string& descript
     format["default"] = "text";
     format["description"] = "Who the reply is for: text (default) = human-readable; json = also the full machine-readable "
                             "result as JSON text (use it when the text summary does not carry the data you need)";
+    Json::Value& budget = definition.inputSchema["properties"][answer_budget::kArg];
+    budget["type"] = "integer";
+    budget["minimum"] = static_cast<Json::UInt64>(answer_budget::kMinChars);
+    budget["description"] = "Fit the whole answer in this many characters (500 or more): the first lines and the last "
+                            "ones stay, a line says what was left out and how to get it; JSON loses the tail of its "
+                            "biggest arrays and says so in \"truncated\". Default: no limit";
     definition.handler = std::move(handler);
     _tools[name] = std::move(definition);
 }
@@ -1244,7 +1252,7 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "run_to_scanline", "run_scanlines", "run_to_pixel",
-                               "run_until_pc", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
+                               "run_until_pc", "run_until", "watch_add", "watch_list", "watch_remove", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
                                "bp_list", "bp_reset_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note", "bp_condition",
                                "callbacks", "callback_resume", "callback_remove", "callback_policy",
                                "set_register", "port_out", "wait", "take_control", "release_control"})
@@ -1255,7 +1263,10 @@ void RegisterControlExecution(ToolRegistry& registry)
         "Execution primitive. Stepping/running actions return the new register state. bp_* actions manage breakpoints "
         "(bp_add switches the breakpoints feature on). run_frame / run_frames / run_tstates / run_to_interrupt skip "
         "breakpoints: to stop at one, resume and then wait. run_to_scanline / run_scanlines / run_to_pixel skip them too; "
-        "run_until_pc skips them unless breakpoints=true (run to a cursor). pace: the paced run (pace_op). callbacks / "
+        "run_until_pc skips them unless breakpoints=true (run to a cursor). run_until: whole frames until a rule holds "
+        "at a frame end (condition, text, screen, event; max_frames) - one call instead of run_frames + a read per "
+        "chunk. watch_add arms the same rules on the running machine (then pause / notify): resume, then wait. "
+        "pace: the paced run (pace_op). callbacks / "
         "callback_resume / callback_remove / callback_policy list and manage the Lua / Python script callbacks "
         "(callback_id, policy); a callback is registered only from a script.";
     schema["properties"]["target"]["type"] = "string";
@@ -1329,7 +1340,7 @@ void RegisterControlExecution(ToolRegistry& registry)
         "CPU ends it first, none within 2 s (over / out 5 s) answers timeout";
     schema["properties"]["event"]["type"] = "string";
     schema["properties"]["event"]["description"] =
-        "For bp_add of event: int, nmi, reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, "
+        "For run_until / watch_add: a game event of the profile (events:) fires. For bp_add of event: int, nmi, reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, "
         "dma_start, dma_done, gscfg0 (cpu gs; the last five from the card's hardware, the DMA ones and gscfg0 NeoGS "
         "only), host_command, host_data, host_reply (cpu main: the host's access to #B3 / #BB), the ZX Next's machine "
         "events cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done, tsdma_start, tsdma_done, pld_read, pld_write, pld_event, fdc_command, fdc_done (cpu main); value / value_mask filter the byte (the DAC byte, GSCFG0, the DMA module "
@@ -1366,12 +1377,46 @@ void RegisterControlExecution(ToolRegistry& registry)
         "address)";
     schema["properties"]["condition"]["type"] = "string";
     schema["properties"]["condition"]["description"] =
-        "Optional for bp_add of execution / read / write / port_in / port_out, and for bp_condition ('' clears): stop "
+        "For run_until / watch_add: a frame-end condition (M(x), W(x), registers, FRAME, x@prev, labels: "
+        "'M(#5C3A) < M(#5C3A)@prev'). Optional for bp_add of execution / read / write / port_in / port_out, and for "
+        "bp_condition ('' clears): stop "
         "only when this holds. Unreal language: registers (A, HL, IX, SP, A', I, R, IFF1), flags (Z, NZ, CY), M(addr) "
         "byte, W(addr) word, the access (RD, WR, VAL, PORT, ADDR), FRAME, T, PG0-PG3, labels; == != < > <= >= && || "
-        "! & | ^ ~ + - * / % << >>; comparisons bind tighter than & | ^; numbers hex unless written 123d ('0D' is "
-        "decimal 0: write #0D). Refused with the reason and its column; hit policies count only the hits where it "
+        "! & | ^ ~ + - * / % << >>; comparisons bind tighter than & | ^; numbers decimal, hex written #FF, $FF or "
+        "0xFF. Refused with the reason and its column; hit policies count only the hits where it "
         "holds (bp_list: hits = condition true, matched = every match)";
+    schema["properties"]["text"]["type"] = "string";
+    schema["properties"]["text"]["description"] =
+        "For run_until / watch_add: wait until this text is on screen (ROM-font OCR, case-sensitive; the text layer in "
+        "text modes)";
+    schema["properties"]["screen"]["type"] = "string";
+    schema["properties"]["screen"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["screen"]["enum"].append("changed");
+    schema["properties"]["screen"]["enum"].append("stable");
+    schema["properties"]["screen"]["description"] =
+        "For run_until / watch_add: changed (differs from the start) or stable (unchanged for stable_frames frames)";
+    schema["properties"]["stable_frames"]["type"] = "integer";
+    schema["properties"]["stable_frames"]["description"] = "For screen=stable: frames without a change (default 25)";
+    schema["properties"]["match"]["type"] = "string";
+    schema["properties"]["match"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["match"]["enum"].append("any");
+    schema["properties"]["match"]["enum"].append("all");
+    schema["properties"]["match"]["description"] = "For run_until / watch_add: any rule (default) or all at the same frame end";
+    schema["properties"]["max_frames"]["type"] = "integer";
+    schema["properties"]["max_frames"]["description"] = "For run_until: the frame budget, 1..200000 (default 3000)";
+    schema["properties"]["then"]["type"] = "string";
+    schema["properties"]["then"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["then"]["enum"].append("pause");
+    schema["properties"]["then"]["enum"].append("notify");
+    schema["properties"]["then"]["description"] =
+        "For watch_add: pause (default) the machine at the hit's frame end, or only notify (watch_hit on the "
+        "WebSocket debug.events, wait wakes)";
+    schema["properties"]["once"]["type"] = "boolean";
+    schema["properties"]["once"]["description"] = "For watch_add: removed after its first hit (default true)";
+    schema["properties"]["label"]["type"] = "string";
+    schema["properties"]["label"]["description"] = "For watch_add: a name shown with its hits";
+    schema["properties"]["watch_id"]["type"] = "string";
+    schema["properties"]["watch_id"]["description"] = "For watch_remove: the id, or all";
     schema["properties"]["condition_dialect"]["type"] = "string";
     schema["properties"]["condition_dialect"]["description"] =
         "Optional with condition: unreal (default) or c (C precedence, decimal numbers)";
@@ -1432,7 +1477,11 @@ void RegisterControlExecution(ToolRegistry& registry)
         "value). "
         "port_out writes a port through the machine's decoder like a CPU OUT (paging, TS-Conf registers, AY, border), "
         "without breakpoints or device waits, as a TTD tool edit; it works paused or running. "
-        "wait blocks until something a debugger shows changes (a stop, a run start, a tool edit) or timeout_ms passes. "
+        "wait blocks until something a debugger shows changes (a stop, a run start, a tool edit, a watch hit) or "
+        "timeout_ms passes. run_until runs whole frames until a rule holds at a frame end (condition, text on screen, "
+        "screen changed / stable, a game event; max_frames) and answers where in one call. watch_add arms the same "
+        "rules on the running machine (then pause / notify, once, label), watch_list / watch_remove (watch_id) manage "
+        "them; a hit is pushed as watch_hit on the WebSocket debug.events and wakes wait. "
         "Stepping actions automatically include the new register snapshot. "
         "take_control opens an automation session (optional client: your name; lease_seconds, default 60): the user sees "
         "it in the GUI, its controls lock, and your calls run while other surfaces' runs are refused; release_control "
@@ -1688,6 +1737,57 @@ void RegisterControlExecution(ToolRegistry& registry)
                     });
                     return;
                 }
+                if (action == "run_until" || action == "watch_add")
+                {
+                    // The rules (and run_until's budget, watch_add's label / then / once) as the route's body
+                    Json::Value body(Json::objectValue);
+                    const bool run = action == "run_until";
+                    if (args.isMember("condition"))
+                        body["if"] = args["condition"];
+                    for (const char* key : {"text", "screen", "stable_frames", "event", "match"})
+                        if (args.isMember(key))
+                            body[key] = args[key];
+                    for (const char* key : run ? std::initializer_list<const char*>{"max_frames", "breakpoints"}
+                                               : std::initializer_list<const char*>{"label", "then", "once"})
+                        if (args.isMember(key))
+                            body[key] = args[key];
+                    const std::string path = Endpoint(id, run ? "/run_until" : "/watches");
+                    caller.Call("POST", path, &body, [done, run](int status, Json::Value response) {
+                        if (status < 200 || status >= 300)
+                        {
+                            done(ToolResult::Error(std::string(run ? "run_until" : "watch_add") + " failed (HTTP " +
+                                                   std::to_string(status) + "): " + DescribeErrorBody(response)));
+                            return;
+                        }
+                        std::string text = response.get("text", "").asString();
+                        done(ToolResult::Ok(text, std::move(response)));
+                    });
+                    return;
+                }
+                if (action == "watch_list" || action == "watch_remove")
+                {
+                    const bool list = action == "watch_list";
+                    if (!list && !args.isMember("watch_id"))
+                    {
+                        done(ToolResult::Error("watch_remove requires 'watch_id' (an id or all)"));
+                        return;
+                    }
+                    const std::string watch = list ? std::string() : args["watch_id"].isString()
+                                                                         ? args["watch_id"].asString()
+                                                                         : std::to_string(args["watch_id"].asUInt());
+                    const std::string path = Endpoint(id, list ? "/watches" : "/watches/" + watch);
+                    caller.Call(list ? "GET" : "DELETE", path, nullptr, [done, action](int status, Json::Value response) {
+                        if (status < 200 || status >= 300)
+                        {
+                            done(ToolResult::Error(action + " failed (HTTP " + std::to_string(status) + "): " +
+                                                   DescribeErrorBody(response)));
+                            return;
+                        }
+                        std::string text = response.get("text", "").asString();
+                        done(ToolResult::Ok(text, std::move(response)));
+                    });
+                    return;
+                }
                 if (action == "wait")
                 {
                     std::string path = Endpoint(id, "/debug/wait") + "?timeout_ms=" +
@@ -1718,6 +1818,21 @@ void RegisterControlExecution(ToolRegistry& registry)
                                               pause.get("cpu", "").asString().c_str(), pause["cpu_pc"].asUInt());
                                 text += where;
                             }
+                        }
+                        else if (pause.get("reason", "none").asString() == "watch")
+                        {
+                            // An armed frame watch held it: which one, where, and why
+                            text += " at watch " + std::to_string(pause.get("watch_id", 0).asUInt());
+                            if (pause.isMember("watch_label"))
+                                text += " " + pause["watch_label"].asString();
+                            text += ", frame " + std::to_string(pause.get("frame", 0).asUInt64()) + " (";
+                            std::string reasons;
+                            for (const Json::Value& reason : pause["reasons"])
+                                reasons += (reasons.empty() ? "" : "+") + reason.asString();
+                            text += reasons;
+                            if (pause.isMember("text_line"))
+                                text += ", row \"" + pause["text_line"].asString() + "\"";
+                            text += ")";
                         }
                         else if (pause.get("reason", "none").asString() != "none")
                             text += " (last stop: " + pause.get("reason", "").asString() + ")";

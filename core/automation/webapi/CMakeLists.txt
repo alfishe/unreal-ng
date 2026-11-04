@@ -177,6 +177,7 @@ set(COMMON_SOURCES
     src/api/operations_api.cpp
     src/api/session_api.cpp
     src/api/callbacks_api.cpp
+    src/api/watch_api.cpp
     src/api/companion_api.cpp
     src/api/settings_api.cpp
     src/api/features_api.cpp

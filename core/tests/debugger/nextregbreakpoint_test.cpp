@@ -660,11 +660,11 @@ TEST_F(NextRegBreakpointMachine_Test, AConditionReadsTheBoardsRegistersSlotsBeam
         EXPECT_NE(result, BreakpointConditionResult::Error) << text << ": " << why;
         return result == BreakpointConditionResult::True;
     };
-    EXPECT_TRUE(holds("MMU7 == 21 && NR(57) == 21 && MMU0 == 0FF && NR(50) == 0FF && MMU2 == 0A"))
+    EXPECT_TRUE(holds("MMU7 == #21 && NR(#57) == #21 && MMU0 == #FF && NR(#50) == #FF && MMU2 == #A"))
         << "slot 7 shows the upper half of page #10";
     EXPECT_TRUE(holds("CPUSPEED == 8"));
-    EXPECT_TRUE(holds("VC == 5 && HC == 100d"));
-    EXPECT_TRUE(holds("CPC == " + std::to_string(Board().Copper().Pc()) + "d"));
+    EXPECT_TRUE(holds("VC == 5 && HC == 100"));
+    EXPECT_TRUE(holds("CPC == " + std::to_string(Board().Copper().Pc())));
 }
 
 // A machine without a NEXTREG file refuses NR(x) when the breakpoint is set, with the reason

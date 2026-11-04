@@ -7,6 +7,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/listing/listingparser.h"
 #include "debugger/targets/gscardtarget.h"
+#include "debugger/watch/framewatch.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -539,6 +540,35 @@ RunReply RunControl::RunUntilPc(const Requester& requester, uint16_t pc, uint64_
     reply.body["hit"] = hit;
     reply.body["target"] = static_cast<int>(pc);
     reply.body["max_tstates"] = static_cast<int64_t>(budget);
+    AddStop(reply);
+    return reply;
+}
+
+RunReply RunControl::RunUntil(const Requester& requester, const framewatch::Spec& spec, unsigned maxFrames,
+                              bool breakpoints)
+{
+    if (!_emulator)
+        return Missing();
+    if (HeldByOther(_emulator->GetContext(), requester))
+        return HeldReply("step");
+    const framewatch::RunResult result = framewatch::RunUntil(_emulator->GetContext(), spec, maxFrames, breakpoints);
+    if (result.stop == "error")
+    {
+        RunReply refusal;
+        refusal.status = RunReply::Status::BadRequest;
+        refusal.error = "Bad Request";
+        refusal.message = result.error;
+        refusal.body["emulator_id"] = _emulator->GetId();
+        return refusal;
+    }
+    const std::string text = framewatch::RunResultText(result);
+    RunReply reply = Finish(text);
+    if (!reply.Ok())
+        return reply;
+    const StateNode node = framewatch::RunResultNode(result);
+    for (const auto& [key, value] : node.members)
+        reply.body[key] = value;
+    reply.body["text"] = text;
     AddStop(reply);
     return reply;
 }

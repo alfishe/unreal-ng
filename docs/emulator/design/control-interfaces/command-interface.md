@@ -246,6 +246,20 @@ class EmulatorManager {
 9. CLI Client displays: "Breakpoint set at 0x8000"
 ```
 
+### Answer budgets (`max_chars`)
+
+An agent pays for every character it reads, so the remote planes fit an answer on request
+([design](../../../inprogress/2026-11-04-answer-budgets/README.md)):
+
+| Plane | How | What it fits |
+|:--|:--|:--|
+| MCP | `max_chars` on every tool (500 .. 10,000,000) | `content[]` as a whole: text (first lines, an omission line, up to three last lines) and the `json` echo (`truncated` note); `structuredContent` on its own |
+| REST | `?max_chars=N` on every route | a JSON reply (`truncated` note, `X-Unreal-Truncated`) or a `text/plain` one; binary untouched |
+| WebSocket | `?max_chars=N` in a `call`'s path | the result's `body`, as REST |
+| CLI, Lua, Python | none | they run in the process and hand full values to a script; a character budget means nothing there |
+
+A bad value is refused before the command runs (MCP tool error, HTTP 400 `bad_max_chars`).
+
 ### Error Handling Strategy
 
 - **Invalid Command**: Unknown command returns help message suggestion
@@ -558,6 +572,7 @@ revoked answer, `pc`, `sp`, `state`), on every plane:
 | run to the first paper pixel | | `run_to_pixel` | `POST /run_to_pixel` | `run_to_pixel` | `run_to_pixel()` | `run.to_pixel` |
 | run until PC | `pc`, `max_tstates?` (0: 100 frames, at most 700000000), `breakpoints?` (false: skipped) | `skip_until <pc> [max]` | `POST /skip_until` `{pc, max_tstates?, breakpoints?}` | `run_until_pc` (`pc`, `max_tstates`, `breakpoints`) | `skip_until(pc, max)` | `run.until_pc` (`pc`, `max_tstates?`, `breakpoints?`) |
 | run to the cursor | `addr?` (else the Qt disassembly's cursor), `max_tstates?` (0: 500 frames); a breakpoint on the way stops it | `action run run.to_cursor addr=#8000` | `POST /skip_until` `{pc, breakpoints: true}` | `run_until_pc` with `breakpoints` true | `action("run.to_cursor", addr=...)` | `run.to_cursor`; Qt Debug menu "Run to Cursor" |
+| run until a frame-end rule holds | `if?` (a frame-end condition), `text?` (ROM-font OCR), `screen?` (`changed` / `stable`, `stable_frames?` 25), `event?` (a game event), `match?` (`any` / `all`), `max_frames?` (3000, at most 200000), `breakpoints?` (false) | `run_until [N] text="PRESS" if="M(#5C3A)==1"` | `POST /run_until` | `run_until` (`condition` for `if`) | `run_until(text=..., condition=...)` / `run_until{text=...}` | |
 | N instructions | `count` 1..100000 | `run_ncycles <N>`, `steps <N>` | `POST /steps` | `step_n` (`count`) | `steps(n)` | `run.steps` (`count`) |
 | step a source line | `max_tstates?` | `listing step_line` | `POST /listing/step_line` | `symbols` `step_line` | `listing_step_line()` | `run.step_line` |
 | run to a source line | `line`, `max_tstates?` | `listing run_to_line <N>` | `POST /listing/run_to_line` | `symbols` `run_to_line` | `listing_run_to_line(n)` | `run.to_line` (`line`) |
@@ -565,6 +580,34 @@ revoked answer, `pc`, `sp`, `state`), on every plane:
 The WebAPI's `skip_until`, `run_to_pixel` and the listing routes run on the long-call pool through `RunControl`
 since 2026-10-21 (the listing ones ran on an I/O thread before); `skip_until` answers `hit`, `target`, `max_tstates`
 and `stop`.
+
+**Run until, and frame watches** (`core/src/debugger/watch/framewatch.h`,
+[design](../../../inprogress/2026-11-03-run-until-watches/README.md)). One spec, checked at every frame end: `if` (the
+conditional-breakpoint language without access operands: `M(x)`, `W(x)`, registers, `FRAME`, `x@prev`, labels), `text`
+(a substring of the ROM-font OCR of the screen, case-sensitive), `screen` (`changed`: the displayed screen memory and
+the border differ from the start - 6,912 bytes of a ZX screen, not the whole page; `stable`: they held `stable_frames`
+frame ends), `event` (a profile's game event fired), `match` (`any`
+by default, `all`: every rule at the same frame end).
+
+- `run_until` is a direct run that stops, paused, at the end of the first frame where the spec holds, or after
+  `max_frames`. It answers `met`, `outcome` (`met` / `budget` / `breakpoint` / `aborted`), `frames`, `frame`, `pc`,
+  `ttd_frame` (with a recording), `ms`, `hit` (`reasons`, `text_line`, `stable_for`, `event_fires`) and a one-line
+  `text`. Breakpoints are skipped unless `breakpoints` is true. It replaces the `run_frames` chunks + a read loop.
+- A **watch** is the spec armed on the running machine (at most 16): `label?`, `then` (`pause`, the default, or
+  `notify`), `once` (default true). A hit is published as `watch_hit` on the WebSocket `debug.events` and moves the
+  debugger `seq` (`debug/wait` wakes); `then: pause` pauses at that frame end with the stop reason `watch` (the
+  snapshot's `pause` names `watch_id`, `watch_label`, `frame`, `reasons`). A direct run is not paused by a watch; a
+  TTD seek checks none. Nothing armed costs one relaxed load per frame.
+
+| Verb | CLI | WebAPI | MCP `control_execution` | Python | Lua |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| run until | `run_until [N] key=value ...` | `POST /run_until` | `run_until` | `emu.run_until(**rules)` | `run_until{...}` |
+| arm a watch | `watch add key=value ...` | `POST /watches` (201) | `watch_add` | `emu.watch_add(**rules)` | `watch_add{...}` |
+| list the watches | `watch list` | `GET /watches` | `watch_list` | `emu.watches()` | `watches()` |
+| remove one / all | `watch del <id\|all>` | `DELETE /watches/{id\|all}` | `watch_remove` (`watch_id`) | `emu.watch_remove(id)` | `watch_remove(id)` |
+
+Python takes `condition=` for `if` (a keyword); MCP takes `condition` too and sends it as `if`. CLI values with spaces
+are quoted (`text="GAME OVER"`); a bare number is `max_frames`.
 
 ### 3. State Inspection
 

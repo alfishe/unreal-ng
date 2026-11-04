@@ -1073,7 +1073,8 @@ public:
     int debug_stop_reason() const override
     {
         switch (m_emu->LastStop().reason) {
-        case ::Emulator::DebugStop::Reason::Pause: return DSTOP_PAUSE;
+        case ::Emulator::DebugStop::Reason::Pause:
+        case ::Emulator::DebugStop::Reason::Watch: return DSTOP_PAUSE;
         case ::Emulator::DebugStop::Reason::Breakpoint: return DSTOP_BREAKPOINT;
         case ::Emulator::DebugStop::Reason::Step: return DSTOP_STEP;
         default: return DSTOP_NONE;
