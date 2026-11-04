@@ -257,19 +257,28 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
 
     /// endregion  </Ports logic>
 
-    // Let debugger process step event
-    if ((cpu.isDebugMode || cpu.execTapHold) && skipBreakpoints == false && _context->pDebugManager != nullptr)
+    // Let debugger process step event. A run that skips breakpoints still tells the execution taps (haptic probes,
+    // analyzers, script callbacks): they never stop (breakpoint-taps §3)
+    if ((cpu.isDebugMode || cpu.execTapHold) && _context->pDebugManager != nullptr)
     {
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
-        // Taps (analyzers, haptic probes) are told inside and never stop: an id here is a breakpoint that stops
-        uint16_t breakpointID = brk.HandlePCChange(pc);
-        if (breakpointID != BRK_INVALID)
+        if (skipBreakpoints)
         {
-            // Pause and park, or during a direct run stop before this instruction
-            // A bare Core (tests) has no emulator to stop
-            Emulator* emulator = _context->pEmulator;
-            if (emulator && emulator->OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
-                return true;
+            if (cpu.execTapHold)
+                brk.HandlePCTaps(pc);
+        }
+        else
+        {
+            // Taps (analyzers, haptic probes) are told inside and never stop: an id here is a breakpoint that stops
+            uint16_t breakpointID = brk.HandlePCChange(pc);
+            if (breakpointID != BRK_INVALID)
+            {
+                // Pause and park, or during a direct run stop before this instruction
+                // A bare Core (tests) has no emulator to stop
+                Emulator* emulator = _context->pEmulator;
+                if (emulator && emulator->OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
+                    return true;
+            }
         }
     }
 

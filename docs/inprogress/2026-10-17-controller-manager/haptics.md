@@ -317,8 +317,8 @@ The addresses above are an illustration of the format, not verified values for t
 
 The sources are game facts, not haptic ones, so a play profile may write them as its top-level `events:` (the same
 fields; `haptics.sources` stays accepted, both are one list, a name in both is an error). Every source is a game
-event: the `game.events` monitor ([breakpoint taps §7](../2026-10-26-breakpoint-taps/README.md)) publishes each live
-frame's fired events and watched values on every plane (REST, the WebSocket topic, a deck key's `show:`, CLI, Lua,
+event: the `game.events` monitor ([breakpoint taps §7](../2026-10-26-breakpoint-taps/README.md)) publishes each
+frame's fired events (live, or stepped by `run_frames` on a paused machine: its probes hear those frames too) and watched values on every plane (REST, the WebSocket topic, a deck key's `show:`, CLI, Lua,
 Python, MCP), with or without a haptic device; the rules are one consumer of them. Dizzy X's built-in profile uses
 `events:`.
 

@@ -418,6 +418,7 @@ protected:
     uint8_t* _replace = nullptr;  // the byte of the read being resolved that a tap may replace (BreakpointTapHit::replace)
     uint8_t _replaySink = BRK_NO_TAP;  // SetReplayTapSink
     bool _replayWalk = false;          // the resolve under way is a TTD replay's: only _replaySink's taps are told
+    bool _tapsOnlyWalk = false;        // the resolve under way is HandlePCTaps': taps only, no breakpoint counted
 
     // Batch: mutations inside it repaint once, at the end
     int _batchDepth = 0;
@@ -709,6 +710,16 @@ public:
         if (!_hotState.hasExec || !_hotState.MemoryBit(BRK_KIND_EXEC, pc))
             return BRK_INVALID;
         return ResolveMemory(BRK_KIND_EXEC, pc);
+    }
+    /// An instruction start in a run that skips breakpoints (RunNFrames and the other direct runs by default): the
+    /// taps still hear it (haptic probes, analyzers, script callbacks never stop), no breakpoint is counted or stops
+    void HandlePCTaps(uint16_t pc)
+    {
+        if (!_hotState.hasExec || !_hotState.MemoryBit(BRK_KIND_EXEC, pc))
+            return;
+        _tapsOnlyWalk = true;
+        (void)ResolveMemory(BRK_KIND_EXEC, pc);
+        _tapsOnlyWalk = false;
     }
     /// A halted CPU's repeated idle fetch (Z80::RunHaltedIdle): no breakpoint or tap is told of an instruction start
     /// at `pc` / of a read at `fetch`, so fetches run as time are not missed by one

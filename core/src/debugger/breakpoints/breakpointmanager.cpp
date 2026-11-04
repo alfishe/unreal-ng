@@ -2435,8 +2435,9 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address, int value)
     if (Silenced())
         return BRK_INVALID;
 
-    // Stepping on from the execution breakpoint the emulator is stopped at: no hit, no count
-    if (kind == BRK_KIND_EXEC && !_replayWalk && _execPassArmed && address == _execPassAddress)
+    // Stepping on from the execution breakpoint the emulator is stopped at: no hit, no count (a taps-only walk
+    // stops nothing, so it leaves the pass to the breakpoint)
+    if (kind == BRK_KIND_EXEC && !_replayWalk && !_tapsOnlyWalk && _execPassArmed && address == _execPassAddress)
     {
         _execPassArmed = false;
         return BRK_INVALID;
@@ -2748,8 +2749,10 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slotShift, uint16_t
         return first;
     for (BreakpointDescriptor* bp : _candidateSets[set])
     {
-        // A replay query's walk: its own taps only, before anything is counted
+        // A replay query's walk: its own taps only, before anything is counted; a taps-only walk: no breakpoint
         if (_replayWalk && bp->tapSink != _replaySink) [[unlikely]]
+            continue;
+        if (_tapsOnlyWalk && bp->tapSink == BRK_NO_TAP) [[unlikely]]
             continue;
         // A slot-only physical breakpoint fires only through the slot it was set in
         if (bp->slotOnly && slotShift >= 0 && (address >> slotShift) != (bp->z80address >> slotShift))
