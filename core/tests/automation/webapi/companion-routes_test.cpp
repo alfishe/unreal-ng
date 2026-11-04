@@ -59,6 +59,7 @@ const std::set<std::string> kDebugRoutes = {
     "POST /analysis/review",
     "POST /analysis/start",
     "POST /analysis/stop",
+    "POST /analysis/trace",
     "POST /asm/sync/{action}",
     "POST /asm/{verb}",
     "POST /assemble",

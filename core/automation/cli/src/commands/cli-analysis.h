@@ -17,6 +17,8 @@
 ///                   [kind=<region kind>] [names=<json>] [experiment=<json>] [reason=<r>] [offset=<n>] [limit=<n>]
 ///   analysis experiment <spec.json | {json}> [finding=<id>] [parallel=<n>]   (L3 experiments, l3experiment.h)
 ///   analysis cover [<budget>] [frames=<n>] [ranges=<r,...>]                 (L3 directed coverage)
+///   analysis trace <path> [from_frame=<f>] [from_tinframe=<t>] [to_frame=<f>] [to_tinframe=<t>] [max_cycles=<n>]
+///                                                             (the CPU access trace of a window, accesstrace.h)
 
 #include <map>
 #include <string>
@@ -31,7 +33,8 @@ inline constexpr const char* kUsage =
     "[scale=N] [limit=N] | findings [list|add] [kind=K] [status=S] [format=table|markdown|jsonl] [path=F] | review "
     "[next|list|show|resolve] [id] [ok|wrong|skip] [label=L] [title=T] [comment=C] [kind=K] [names={json}] "
     "[reason=R] [offset=N] | experiment <spec.json|{json}> "
-    "[finding=ID] | cover [budget] [frames=N] [--json]";
+    "[finding=ID] | cover [budget] [frames=N] | trace <path> [from_frame=F] [from_tinframe=T] [to_frame=F] "
+    "[to_tinframe=T] [max_cycles=N] [--json]";
 
 /// False with the reason in error. The first word is the action (none: status); name=value words set an option by name
 inline bool ParseArgs(const std::vector<std::string>& args, std::string& action, std::map<std::string, std::string>& options,
@@ -116,6 +119,8 @@ inline bool ParseArgs(const std::vector<std::string>& args, std::string& action,
             options["path"] = word;
         else if (action == "cover" && !options.count("budget"))
             options["budget"] = word;
+        else if (action == "trace" && !options.count("path"))
+            options["path"] = word;
         else
         {
             error = action + ": unexpected '" + word + "'";

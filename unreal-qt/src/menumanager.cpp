@@ -1471,7 +1471,7 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         _ft812DebugAction->setVisible(emulatorExists && Ft812DebugWindow::Offered(activeEmulator->GetContext()));
     // Debug -> Debugger -> Unreal TUI, TS-Conf: it attaches to TS-Conf machines only
     if (_tuiTsConfDebuggerAction)
-        _tuiTsConfDebuggerAction->setVisible(emulatorExists && activeEmulator->GetContext()->config.mem_model == MM_TSL);
+        _tuiTsConfDebuggerAction->setVisible(emulatorExists && lease->config.mem_model == MM_TSL);
 
     // File menu - Save Snapshot requires active emulator
     _saveSnapshotMenu->setEnabled(emulatorExists);

@@ -92,6 +92,7 @@ is a job whose progress and result are the topics `analysis.progress` and `analy
 → {"op":"call","rid":7,"method":"GET","path":"/api/v1/emulator/0/analysis/query?kind=records"}
 → {"op":"call","rid":8,"method":"POST","path":"/api/v1/emulator/0/analysis/export","body":{"format":"skool","path":"game.skool","ranges":"8000-FFFF"}}
 → {"op":"call","rid":9,"method":"POST","path":"/api/v1/emulator/0/analysis/gallery","body":{"address":"$8200","scale":4}}
+→ {"op":"call","rid":12,"method":"POST","path":"/api/v1/emulator/0/analysis/trace","body":{"path":"scratch/pass.uatr","from_frame":1001,"to_frame":1003}}
 → {"op":"call","rid":10,"method":"POST","path":"/api/v1/emulator/0/analysis/review","body":{"op":"next"}}
 → {"op":"call","rid":11,"method":"POST","path":"/api/v1/emulator/0/analysis/experiment","body":{"spec":{"poke":{"$8100":5},"frames":50,"expect":{"mem:$8101":"$AA"}}}}
 ```

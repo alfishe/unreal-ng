@@ -62,8 +62,8 @@ context: their stack and block accesses are recorded as plain data accesses.
 
 ## L1 code behaviour
 
-Code: `core/src/debugger/analyzers/analysis/` (`replaytracer.h`, `l1builder.h`, `l1model.h`, `z80opinfo.h`,
-`analysisjobs.h`).
+Code: `core/src/debugger/analyzers/analysis/` (`replaytracer.h`, `replaywindow.h`, `l1builder.h`, `l1model.h`,
+`z80opinfo.h`, `analysisjobs.h`).
 
 ### How L1 is built
 
@@ -90,6 +90,25 @@ Code: `core/src/debugger/analyzers/analysis/` (`replaytracer.h`, `l1builder.h`, 
    both saturating, and `first_frame` / `last_frame` of any access, in frames since the replay's first: 0 with no
    access, and also for an access in that first frame), the input of a memory heatmap; executions are the
    instructions' (`instructions`).
+
+### Replays
+
+The L1 build and the access trace (`analysis trace`, below) are two consumers of one replay, `ReplayWindow`
+(`replaywindow.h`). Each step of it is TTD's or the CPU's; the class only puts them in order and keeps the hooks
+to the run:
+
+| Step | Done by |
+| --- | --- |
+| the analysis instance, the recording loaded into its TTD | `AnalysisInstance::Make` (the `TraceBundle`'s session file) |
+| the machine at the window's start, from the nearest keyframe | `TimeTravelController::SeekTo` (a start before the first keyframe starts there) |
+| the recorded inputs played, not new ones recorded | `TimeTravelController::ReplayModeScope` |
+| every instruction start, every bus cycle, every tool edit's write | `Z80::m1TraceHook`, `Z80::busTraceHook`, `TimeTravelController::SetEditWriteObserver`, set for the run only (`HookScope`: taken off on any exit) |
+| frame by frame to the window's end, a callback at each chunk's boundary | `Emulator::RunTStates`; the callback may stop the run (a cancelled build), a hook may call `Stop()` (the trace's end reached) |
+
+`RunTo` answers `Finished`, `Stopped` or `Stalled` (the clone stopped advancing). What a consumer adds is its own:
+L1 folds the hooks' calls into `L1Builder` and compares the CPU with each keyframe at the boundaries; the trace
+classifies the bus cycles (a read at the next byte of the instruction is a fetch) and writes them to its file. A new
+consumer (a per-device trace, a data-flow pass) takes the same class, so it replays exactly what L1 replays.
 
 A recording can be **loaded** instead of made: `time_travel dump` writes the session to a `.ttd` file, `time_travel
 load` reads it into another instance of the same model and card set, and `analysis build` replays it there as often
@@ -636,6 +655,7 @@ its fields and a `text` (the lines the CLI prints and the MCP tool's text). Ever
 | `review` | `op` (`next`, default, `list`, `show`, `resolve`), `id` (a finding `F12` or a naming batch `N3`), `verdict` (`ok`, `wrong`, `skip`), `label`, `title`, `comment`, `kind` (a region kind for the finding's range), `names` (a naming batch's names, JSON), `by`, `experiment` (a spec), `ranges`, `reason` (`all`, `bug`, `conflict`, `unnamed-hot`, `low-confidence`, `unknown`, `entry`, `name`), `offset` (0), `limit` (40) | next / show: `item` {id, reason, state, kind, start, end, claim, confidence; a batch also `subjects` [{at, label, code, entry}]}, `sheet`, `sheet_bytes`, `queue`; list: `items`, `queue` {open, shown, offset, resolved, summary, reason, by_reason, name_subjects, name_capped}; resolve: `finding`, `kind`, `experiments`; a batch: `batch`, `named` [{at, label, title}], `skipped` ([L3 review](#review-queue)) |
 | `experiment` | `spec` (an object or an array of up to 256, as JSON text on the CLI / Lua), `path` (a JSON file), `parallel` (1..8), `finding` | `results` [{id, finding, claim, verdict, error, checks [{key, expect, actual, pass}], hits, new_code, new_ranges, from_frame, frames_run, worker}], `observed`, `refuted`, `errors`, `workers`, `peak_concurrency`, `seeks`, `micros` ([experiment runner](#experiment-runner)) |
 | `cover` | `budget` (64), `per_branch` (8), `frames` (50), `parallel`, `limit` (200 branches), `ranges` | `candidates`, `tried`, `flipped`, `attempts`, `new_code`, `branches` [{pc, cond, want, tested, address, status, reason, how, attempts, from_frame, new_code, new_ranges}], `workers`, `peak_concurrency`, `micros` ([directed coverage](#directed-coverage)) |
+| `trace` | `path` (required), `from_frame`, `from_tinframe`, `to_frame`, `to_tinframe` (the window; default the frame `from_frame`, at most 3000 frames), `max_cycles` (default 8 000 000) | the window replayed on a muted analysis instance, the trace written to `path`: `path`, `from_frame`, `from_tinframe`, `to_frame`, `to_tinframe`, `instructions`, `cycles`, `fetches`, `reads`, `writes`, `ports`, `bytes`, `truncated` ([access trace](#access-trace)) |
 | `gallery` | `address` (as `explain`; none: the list), `kind` (`all`, default, `font`, `sprite`, `tile`, `screen`, `level_map`), `scale` (1..8, default 2), `path` (write the PNG there), `limit` (default 200) | the list: `regions` [...], `count`, `truncated`, the text one line per region (range, kind, shape, detector, confidence, title); one region: `region`, `width`, `height`, `frames`, `scale`, `bytes`, `mime_type`, `png` (base64; empty with `path`), `path` ([the gallery](#the-gallery)) |
 
 Refusals: an unknown action or option, a value that does not parse or is out of bounds (400; `build`: `frames` at
@@ -644,6 +664,7 @@ most 30 000); no such label, `what=routine` where no
 routine runs (404); `explain` of a byte at level `counters`, `what=routine` before a build, `build` with no recording
 or while one runs, `cancel` with none running, `query` / `export` / `gallery` before a build, a file `export` or
 `gallery` cannot write, a region the gallery cannot draw (409); no graphics region at the gallery's address (404);
+`trace` with no recording, a window outside it or over 3000 frames, a file it cannot write, or during a build,
 `findings` / `review` / `experiment` / `cover` before a build, a label another entry or name has (409); no such finding or
 naming batch (404);
 a bad spec, a resolve with no decision (400); no memory tracker, `record` without a time travel engine
@@ -666,22 +687,52 @@ $80BC (score) [RAM 2]: DataRead, DataWrite
   counters: 1210 reads, 403 writes, 0 executes
 ```
 
+### Access trace
+
+`trace` answers "what did the CPU touch, in what order, at which T-state" for a window of the recording, for the
+scripts that draw how a routine works (a routine animation), which instruction drew each byte of the screen, or a
+frame against the beam. The window is replayed on a muted analysis instance ([Replays](#replays): the source machine is not touched) and
+written as one binary file (`core/src/debugger/analyzers/analysis/accesstrace.h` has the layout): a 64-byte header
+(the window, TTD units per T-state, T-states per frame, the counts, truncated), the page in each bank and the Z80
+view at the window's start, then the records: an instruction (`X`: frame, T-state in TTD units, PC, SP, AF, BC, DE,
+HL, IX, IY, flags 1 = an interrupt's first instruction, 2 = halted) and after it its bus cycles (`F` an opcode or
+operand fetch, `R` a read, `W` a write, `I` / `O` a port read / write, `E` a tool edit's write such as the fast tape
+load: address, value, CPU T-states since the instruction's start). The start memory plus the writes gives the memory
+before any instruction, so no `memory_at` is needed per picture. The 64 KB start view, then about 36 bytes an
+instruction: the 40000 T window below is 272 KB, a whole 48K frame about 450 KB. `tools/verification/analysis/access_trace.py` reads it (`load(path)`, `memory_at(index)`, a listing on the
+command line).
+
+```text
+analysis {"action":"trace","path":"<repo>/scratch/pass.uatr","from_frame":1001,"from_tinframe":5336,"to_frame":1001,"to_tinframe":45336}
+# access trace 1001:5336 .. 1001:45336: 5936 instructions, 9738 bus cycles (6675 fetches, 2093 reads, 970 writes,
+#   0 port accesses), 278372 bytes written to <repo>/scratch/pass.uatr
+python3 tools/verification/analysis/access_trace.py scratch/pass.uatr --pc EAE3-EBA9 | head -4
+# 1001:20292 EAE3 af=FF6A bc=0000 de=6544 hl=FE84
+# 1001:20302 EAE6 af=FF6A bc=0000 de=6544 hl=FF00 WDD68=00 WDD69=FF
+# 1001:20318 EAE9 af=FF6A bc=0000 de=6544 hl=FF00 RDD68=00 RDD69=FF
+# 1001:20334 EAEC af=FF6A bc=0000 de=6544 hl=FF00 RFF00=03
+```
+
+The H.A.T.E. sprite drawer (`$EAE3`) in one pass of its recording: the registers are each instruction's inputs
+(`LD HL,$FF00` at `$EAE3` shows the old HL, the store after it the new one), the bus cycles follow their
+instruction (the fetches are left out of the listing).
+
 ### Planes
 
 Every POST of the tool goes through the automation gate (`core/src/emulator/execution/automationgate.cpp`) as a
 machine-changing request: `start`, `stop`, `build`, `cancel`, `experiment` and `cover` act on this machine or its
-replay and experiment instances, and `findings`, `export` and `gallery` write host files when given a `path`, so a
+replay and experiment instances, and `findings`, `export`, `gallery` and `trace` write host files when given a `path`, so a
 companion needs its `debug` scope for all of them. A client takes control once (`take_control`) before it reviews; the
 GET reads (`status`, `explain`, `query`, a `findings` or `review` listing) need no session.
 
 | Plane | Shape | Doc |
 |-------|-------|-----|
-| CLI | `analysis start [facts\|counters] [z80\|physical] [record]`, `analysis stop`, `analysis status`, `analysis build [frames] [from_frame=] [from_tinframe=] [to_frame=] [path=F] [wait=MS]`, `analysis cancel`, `analysis explain <addr> [page] [routine\|byte]`, `analysis query [kind] [range] [limit=N]`, `analysis export <format> [path] [ranges=] [width=]`, `analysis gallery [kind] [addr [path]] [scale=N] [limit=N]`, `analysis findings [list\|add] [kind=] [format=]`, `analysis review [next\|list\|show\|resolve] [id] [ok\|wrong\|skip] [label=] [title=] [comment=] [kind=] [names={json}] [reason=] [offset=]`, `analysis experiment <spec.json\|{json}> [finding=]`, `analysis cover [budget] [frames=]`, `--json` for the fields | [cli-interface.md](../design/control-interfaces/cli-interface.md#analysis-layers) |
-| REST | `POST /api/v1/emulator/{id}/analysis/start` {level?, mode?, record?}, `POST .../analysis/stop`, `POST .../analysis/build` {frames?, from_frame?, from_tinframe?, to_frame?, path?, wait?}, `POST .../analysis/cancel`, `GET .../analysis/status`, `GET .../analysis/explain?address=&page=&what=`, `GET .../analysis/query?kind=&range=&limit=`, `POST .../analysis/export` {format, path?, ranges?, width?}, `POST .../analysis/gallery` {address?, kind?, scale?, path?, limit?}, `GET\|POST .../analysis/findings`, `GET\|POST .../analysis/review` (options in the query or the body), `POST .../analysis/experiment` {spec (object or array), path?, parallel?, finding?}, `POST .../analysis/cover` {budget?, per_branch?, frames?, parallel?, limit?, ranges?} | [webapi-interface.md](../design/control-interfaces/webapi-interface.md#analysis-layers) |
+| CLI | `analysis start [facts\|counters] [z80\|physical] [record]`, `analysis stop`, `analysis status`, `analysis build [frames] [from_frame=] [from_tinframe=] [to_frame=] [path=F] [wait=MS]`, `analysis cancel`, `analysis explain <addr> [page] [routine\|byte]`, `analysis query [kind] [range] [limit=N]`, `analysis export <format> [path] [ranges=] [width=]`, `analysis gallery [kind] [addr [path]] [scale=N] [limit=N]`, `analysis findings [list\|add] [kind=] [format=]`, `analysis review [next\|list\|show\|resolve] [id] [ok\|wrong\|skip] [label=] [title=] [comment=] [kind=] [names={json}] [reason=] [offset=]`, `analysis experiment <spec.json\|{json}> [finding=]`, `analysis cover [budget] [frames=]`, `analysis trace <path> [from_frame=] [from_tinframe=] [to_frame=] [to_tinframe=] [max_cycles=]`, `--json` for the fields | [cli-interface.md](../design/control-interfaces/cli-interface.md#analysis-layers) |
+| REST | `POST /api/v1/emulator/{id}/analysis/start` {level?, mode?, record?}, `POST .../analysis/stop`, `POST .../analysis/build` {frames?, from_frame?, from_tinframe?, to_frame?, path?, wait?}, `POST .../analysis/cancel`, `GET .../analysis/status`, `GET .../analysis/explain?address=&page=&what=`, `GET .../analysis/query?kind=&range=&limit=`, `POST .../analysis/export` {format, path?, ranges?, width?}, `POST .../analysis/gallery` {address?, kind?, scale?, path?, limit?}, `GET\|POST .../analysis/findings`, `GET\|POST .../analysis/review` (options in the query or the body), `POST .../analysis/experiment` {spec (object or array), path?, parallel?, finding?}, `POST .../analysis/cover` {budget?, per_branch?, frames?, parallel?, limit?, ranges?}, `POST .../analysis/trace` {path, from_frame?, from_tinframe?, to_frame?, to_tinframe?, max_cycles?} | [webapi-interface.md](../design/control-interfaces/webapi-interface.md#analysis-layers) |
 | WebSocket | every route as a `call` on `/api/v1/ws`; state topics `analysis.progress`, `analysis.ready` | [websocket-interface.md](../design/control-interfaces/websocket-interface.md#analysis-layers) |
 | Python | `emu.analysis(action="status", **options)`: the answer as a dict (with `text`), or `{ok: False, error}` (error: the reason); `spec=` / `experiment=` take a dict or a list | [python-interface.md](../design/control-interfaces/python-interface.md#analysis-layers) |
-| Lua | `emu.analysis(action, opts)`: opts a table, or a string (the address for `explain` and `gallery`, the level for `start`, the frames for `build`, the kind for `query`, the format for `export`, the op for `findings` / `review`, the spec's JSON text for `experiment`, the budget for `cover`); a refusal `{ok = false, error}` | [lua-interface.md](../design/control-interfaces/lua-interface.md#analysis-layers) |
-| MCP | one tool `analysis` {action: start, stop, status, build, cancel, explain, query, export, gallery, findings, review, experiment, cover; level, mode, record, frames, from_frame, from_tinframe, to_frame, path, wait, address, page, what, kind, range, limit, format, ranges, width, scale, op, id, verdict, label, title, comment, kind, names, reason, offset, by, status, claim, evidence, spec, experiment, finding, parallel, budget, per_branch}; `build` waits 20 s by default so one call answers the result; `content[]` carries the text, `gallery` with an address also the PNG as an image block | [docs/features/mcp/README.md](../../features/mcp/README.md) |
+| Lua | `emu.analysis(action, opts)`: opts a table, or a string (the address for `explain` and `gallery`, the level for `start`, the frames for `build`, the kind for `query`, the format for `export`, the op for `findings` / `review`, the spec's JSON text for `experiment`, the budget for `cover`, the path for `trace`); a refusal `{ok = false, error}` | [lua-interface.md](../design/control-interfaces/lua-interface.md#analysis-layers) |
+| MCP | one tool `analysis` {action: start, stop, status, build, cancel, explain, query, export, gallery, findings, review, experiment, cover, trace; level, mode, record, frames, from_frame, from_tinframe, to_frame, path, wait, address, page, what, kind, range, limit, format, ranges, width, scale, op, id, verdict, label, title, comment, kind, names, reason, offset, by, status, claim, evidence, spec, experiment, finding, parallel, budget, per_branch, to_tinframe, max_cycles}; `build` waits 20 s by default so one call answers the result; `content[]` carries the text, `gallery` with an address also the PNG as an image block | [docs/features/mcp/README.md](../../features/mcp/README.md) |
 
 The MCP tool calls are counted per tool and action in `host.clients.mcp.tools` (`GET /api/v1/monitor/host.clients`):
 `{"analysis": {"calls": N, "actions": {"explain": n, ...}}}`, every tool alike (`(none)` for a call without an

@@ -4,7 +4,9 @@ Goal: from a game's own tape, disk or snapshot to a reviewed SkoolKit disassembl
 the game ran, with code, data, text and graphics told apart, routines and variables named, and every claim tied to
 what the emulator saw. The emulator does the mechanics (it runs, records, replays and classifies); the agent spends
 tokens only on what needs judgement: names, kinds the detectors could not tell, bugs, conflicts. Read nothing else
-first: this recipe is the whole workflow for an agent that has never seen the analysis code.
+first: this recipe is the whole workflow for an agent that has never seen the analysis code. For a game reversed into a
+full case (sources bit for bit, resources, documents, figures from access traces) see
+[game-reverse-case.md](../articles/game-reverse-case.md).
 
 ## Why this works in an emulator
 

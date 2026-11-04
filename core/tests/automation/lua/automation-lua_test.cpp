@@ -4,10 +4,12 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -89,6 +91,30 @@ TEST_F(AutomationLua_Test, AScriptErrorAnswersAnErrorAndTheInterpreterKeepsRunni
 }
 
 /// The headless runner's file (unreal-qt --script): the chunk's result is the exit code; an error is 1 with its message
+// unreal-qt's close stops the interpreter: a script still looping (a --script waiting with os.time) held it forever
+TEST_F(AutomationLua_Test, StopBreaksIntoARunningScriptEvenThroughPcall)
+{
+    std::atomic<bool> running = false;
+    _lua.dispatchSync([&running](sol::state& lua) { lua.set_function("mark_running", [&running] { running = true; }); });
+
+    std::atomic<bool> answered = false;
+    bool ok = true;
+    std::string message;
+    std::thread script([&] {
+        std::string output;
+        ok = _lua.executeCode("mark_running(); while true do pcall(function() while true do end end) end", message,
+                              output);
+        answered = true;
+    });
+    ASSERT_TRUE(TestWait::For([&running] { return running.load(); })) << "the script did not start";
+    EXPECT_FALSE(answered.load()) << "the script loops until stopped";
+
+    _lua.stop();
+    script.join();
+    EXPECT_FALSE(ok);
+    EXPECT_NE(message.find("stopped"), std::string::npos) << message;
+}
+
 TEST_F(AutomationLua_Test, RunFileAnswersTheScriptsExitCode)
 {
     const std::filesystem::path dir = TestPathHelper::GetUniqueTestScratchPath("runfile");
@@ -744,4 +770,44 @@ TEST_F(AutomationLua_Test, SnapshotLoadSwitchesTheModelOnlyWhenAsked)
     output.clear();
     ASSERT_TRUE(_lua.executeCode("print((snapshot_load([[" + path + "]], 'legacy')))", message, output)) << message;
     EXPECT_EQ(output, "true\n") << "a string is still the commit (on the 128K now selected)";
+}
+
+/// analysis('trace', ...) reaches analysis::Execute with the path as its positional option: without a path the
+/// refusal names it, with one the refusal is the machine's (no recording to replay), with a table the same
+TEST_F(AutomationLua_Test, AnalysisTraceTakesThePathAsItsPositionalOption)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    struct RemoveAll
+    {
+        EmulatorManager* manager;
+        ~RemoveAll()
+        {
+            for (const auto& emulatorId : manager->GetEmulatorIds())
+                manager->RemoveEmulator(emulatorId);
+        }
+    } removeAll{manager};
+    auto emulator = manager->CreateEmulatorWithModel("lua-trace", "48K", LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    manager->SetSelectedEmulatorId(emulator->GetId());
+
+    // A scratch file, should a recording ever be there by default
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("lua-pass.uatr");
+    std::string message;
+    std::string output;
+    ASSERT_TRUE(_lua.executeCode("local r = analysis('trace'); print(r.ok, r.error)", message, output)) << message;
+    EXPECT_EQ(output.rfind("false\t", 0), 0u) << output;
+    EXPECT_NE(output.find("path"), std::string::npos) << output;
+
+    output.clear();
+    ASSERT_TRUE(_lua.executeCode("local r = analysis('trace', [[" + path + "]]); print(r.ok, r.error)", message, output))
+        << message;
+    EXPECT_EQ(output.rfind("false\t", 0), 0u) << output;
+    EXPECT_NE(output.find("no recording"), std::string::npos) << "past the options: " << output;
+
+    output.clear();
+    ASSERT_TRUE(_lua.executeCode("local r = analysis('trace', {path = [[" + path + "]], from_frame = 1, to_frame = 2}); "
+                                 "print(r.ok, r.error)",
+                                 message, output))
+        << message;
+    EXPECT_NE(output.find("no recording"), std::string::npos) << output;
 }

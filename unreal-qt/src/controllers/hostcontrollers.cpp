@@ -908,6 +908,8 @@ void HostControllers::poll()
 connectorview::Led HostControllers::ConnectorLed() const
 {
 #ifdef ENABLE_CONTROLLERS
+    if (!_service || _binding == nullptr)
+        return {};
     EmulatorContext* context = _binding->context();
     ControllerManager* manager = context != nullptr ? context->pControllerManager : nullptr;
     if (manager == nullptr)
@@ -929,6 +931,8 @@ connectorview::Led HostControllers::ConnectorLed() const
 bool HostControllers::DebugLayerHeld() const
 {
 #ifdef ENABLE_CONTROLLERS
+    if (!_service)
+        return false;
     if (_playersFollow)
         return false;  // the context has the pads in the debugger: no key is held for it
     for (const HostDeviceInfo& device : _service->Router().Devices())
