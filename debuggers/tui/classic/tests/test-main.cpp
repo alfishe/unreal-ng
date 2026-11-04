@@ -1,7 +1,11 @@
 // test-main.cpp - micro test harness for classic debugger interactivity and navigation.
 #include <cstdio>
+#include <functional>
+#include <map>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "backend/api-transport.h"
 #include "backend/mock-backend.h"
@@ -470,6 +474,135 @@ void TestWaitsAndReconnects() {
     Check(!be.Online(), "the server stops: waiting");
 }
 
+// An emulator with canned replies by route (the instance part cut off); every request is kept
+class ScriptedServer : public dbg::IApiTransport {
+public:
+    std::map<std::string, std::pair<int, std::string>> routes;  // "GET /ports" -> status, body
+    std::vector<std::string> requests;                          // "POST /ports/out {...}"
+    // Asked before the routes: a status 0 passes the request on
+    std::function<std::pair<int, std::string>(const std::string& route, const std::string& body)> handler;
+
+    std::string Name() const override { return "scripted"; }
+    void SetTimeoutSeconds(int) override {}
+    dbg::HttpReply Request(const std::string& method, const std::string& path, const std::string& body) override {
+        dbg::HttpReply reply;
+        reply.ok = true;
+        reply.status = 200;
+        if (path == "/api/v1/emulator") {
+            reply.body = "{\"emulators\":[{\"id\":\"e1\",\"model\":\"PENTAGON\"}]}";
+            return reply;
+        }
+        const std::string prefix = "/api/v1/emulator/e1";
+        const std::string route = method + " " + (path.compare(0, prefix.size(), prefix) == 0 ? path.substr(prefix.size()) : path);
+        requests.push_back(route + (body.empty() ? "" : " " + body));
+        if (handler) {
+            const auto answer = handler(route, body);
+            if (answer.first != 0) {
+                reply.status = answer.first;
+                reply.body = answer.second;
+                return reply;
+            }
+        }
+        if (route.compare(0, 14, "GET /memory/0x") == 0) {
+            reply.body = "{\"data\":[";
+            for (int i = 0; i < 4096; ++i) reply.body += i == 0 ? "7" : ",7";
+            reply.body += "]}";
+            return reply;
+        }
+        const auto it = routes.find(route);
+        if (it != routes.end()) {
+            reply.status = it->second.first;
+            reply.body = it->second.second;
+        } else {
+            reply.body = "{}";
+        }
+        return reply;
+    }
+    bool Asked(const std::string& start) const {
+        for (const std::string& r : requests)
+            if (r.compare(0, start.size(), start) == 0) return true;
+        return false;
+    }
+};
+
+// The panels read the emulator: T and HALT, the port latches, Beta 128, the AY; the writes go to it (a port with its
+// effects, IM); a condition becomes the emulator's breakpoint, of the kind its operands need
+void TestReadsTheEmulator() {
+    auto owned = std::make_unique<ScriptedServer>();
+    ScriptedServer& server = *owned;
+    server.routes["GET /registers"] = {
+        200,
+        "{\"main\":{\"af\":0,\"bc\":0,\"de\":0,\"hl\":0},\"alternate\":{\"af_\":0,\"bc_\":0,\"de_\":0,\"hl_\":0},"
+        "\"index\":{\"ix\":0,\"iy\":0},\"special\":{\"pc\":32768,\"sp\":65000,\"i\":63,\"r\":0,\"t\":70000},"
+        "\"interrupt\":{\"iff1\":1,\"iff2\":1,\"im\":1,\"halted\":true}}"};
+    server.routes["GET /video/beam"] = {200, "{\"frame\":3,\"frame_timing\":{\"frame_tstates\":71680}}"};
+    server.routes["GET /ports"] = {
+        200, "{\"entries\":[{\"port\":\"0x00FE\",\"latch_value\":250},{\"port\":\"0xFFFD\"},"
+             "{\"port\":\"0x7FFD\",\"latch_value\":48},{\"port\":\"0x1FFD\",\"latch_value\":2}]}"};
+    server.routes["GET /state/paging"] = {200, "{\"trdos_active\":true,\"banks\":[]}"};
+    server.routes["GET /state/fdc"] = {
+        200, "{\"available\":true,\"registers\":{\"command\":136,\"data\":9,\"sector\":3,\"status\":129,\"track\":5},"
+             "\"beta128_register\":60,\"signals\":{\"intrq\":true,\"drq\":false},\"selected_drive\":1,"
+             "\"drives\":[{\"track\":0},{\"track\":6}]}"};
+    server.routes["GET /state/audio/ay"] = {200, "{\"available\":true,\"turbo_sound\":false,\"active_chip\":0}"};
+    server.routes["GET /state/audio/ay/0"] = {
+        200, "{\"latched_register\":13,\"registers\":{\" R7 - Mixer Control Enable\":56,"
+             "\"R10 - Channel A - Amplitude\":15,\"R15 - Envelope shape\":10}}"};
+    dbg::WebApiBackend be(std::move(owned));
+    Check(be.Attach(), "scripted: attached");
+
+    const dbg::Z80Regs regs = be.GetRegs(0);
+    Check(regs.t == 70000 && regs.halted, "registers: the T-state in the frame and HALT");
+    Check(be.GetAbsoluteT(0) == 3u * 71680u + 70000u, "time: the frame from the beam times its length, plus T");
+    be.SetDebugMark(0, 3u * 71680u);
+    Check(be.GetTimeDelta(0) == 70000, "time delta: from the mark");
+    Check(be.GetMachineInfo().frameLength == 71680, "frame length: the beam's");
+
+    const dbg::PortsState ports = be.GetPorts();
+    Check(ports.fe == 250 && ports.p7ffd == 48 && ports.lock48, "ports: #FE and #7FFD as latched");
+    Check(ports.hasExtPort && ports.extPort == 0x1FFD && ports.extValue == 2, "ports: the model's extended port");
+    Check(ports.dosPortsActive, "ports: the DOS ROM from the paging");
+
+    const dbg::Beta128State fdc = be.GetBeta128();
+    Check(fdc.present && fdc.cmd == 136 && fdc.statusRaw == 129 && fdc.track == 5 && fdc.sector == 3,
+          "beta128: the WD1793's registers");
+    Check(fdc.system == 60 && fdc.rqs == 0x80 && fdc.headTrack == 6, "beta128: system, INTRQ, the drive's head");
+
+    const dbg::AyState ay = be.GetAy();
+    Check(ay.scheme == dbg::AyScheme::Single && ay.latchedReg[0] == 13, "ay: one chip, its latched register");
+    Check(ay.regs[0][7] == 56 && ay.regs[0][8] == 15 && ay.regs[0][13] == 10, "ay: the registers (octal names)");
+
+    be.Out(0x7FFD, 0x17);
+    Check(server.Asked("POST /ports/out {\"port\":\"0x7FFD\",\"value\":\"0x17\"}"), "out: to the emulator's decoder");
+    be.SetExtPort(0x04);
+    Check(server.Asked("POST /ports/out {\"port\":\"0x1FFD\",\"value\":\"0x04\"}"), "ext port: the model's one");
+    be.WriteReg(0, dbg::IDebuggerBackend::RegField::Im, 2);
+    Check(server.Asked("PUT /registers/IM {\"value\":2}"), "IM: written");
+
+    // RD needs a read breakpoint: the execution one is refused, the read one taken
+    bool readTaken = false;
+    server.handler = [&readTaken](const std::string& route, const std::string& body) -> std::pair<int, std::string> {
+        if (route != "POST /breakpoints") return {0, ""};
+        if (readTaken && body.find("\"type\":\"read\"") != std::string::npos) return {200, "{\"id\":41}"};
+        return {400, "{\"message\":\"condition: RD is not supplied by this breakpoint's trigger at column 1\"}"};
+    };
+    dbg::ExprCompileResult added = be.AddCondition(0, "RD == #5C3A");
+    Check(!added.ok && added.error.find("not supplied") != std::string::npos, "condition: no kind supplies RD");
+    readTaken = true;
+    added = be.AddCondition(0, "RD == #5C3A");
+    Check(added.ok && be.ConditionCount(0) == 1, "condition: the emulator's breakpoint");
+    Check(server.Asked("POST /breakpoints {\"type\":\"exec\",\"address\":0,\"address_end\":65535,\"condition\":\"RD == #5C3A\""),
+          "condition: over the whole 64K");
+    be.DeleteCondition(0, 0);
+    Check(server.Asked("DELETE /breakpoints/41") && be.ConditionCount(0) == 0, "condition: deleted there");
+    server.handler = [](const std::string& route, const std::string&) -> std::pair<int, std::string> {
+        if (route != "POST /breakpoints") return {0, ""};
+        return {400, "{\"message\":\"condition: an operand expected at column 5\"}"};
+    };
+    added = be.AddCondition(0, "A ==");
+    Check(!added.ok && !added.error.empty(), "condition: a syntax error answered here");
+}
+
 // The waiting screen as the window draws it: at start (nothing read: no panels) and after a loss (the last state)
 void TestOfflineLook(const std::string& shots) {
     const auto check = [](bool ok, const std::string& what) { Check(ok, what); };
@@ -501,6 +634,7 @@ int main(int argc, char** argv) {
     TestUnrealKeys();
     TestTerminalKeys();
     TestWaitsAndReconnects();
+    TestReadsTheEmulator();
     TestOfflineLook(shots);
 
     if (failures == 0) {

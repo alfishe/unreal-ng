@@ -5,6 +5,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <thread>
 
@@ -44,6 +45,58 @@ bool StateIsRunning(const Json& root) {
     if (root.Get("state", &state)) return state == "running";
     bool isRunning = false;
     return root.Get("is_running", &isRunning) && isRunning;
+}
+
+// "0x7FFD", "#7FFD", "7FFD" or a number: the server writes ports and latch values either way
+bool HexOrNumber(const Json& value, int64_t* out) {
+    if (value.AsInt(out)) return true;
+    std::string text;
+    if (!value.AsString(&text)) return false;
+    size_t at = 0;
+    if (text.compare(0, 2, "0x") == 0 || text.compare(0, 2, "0X") == 0) at = 2;
+    else if (!text.empty() && text[0] == '#') at = 1;
+    if (at >= text.size()) return false;
+    char* end = nullptr;
+    const long long v = std::strtoll(text.c_str() + at, &end, 16);
+    if (end == nullptr || *end != '\0') return false;
+    *out = v;
+    return true;
+}
+
+bool Base64Decode(const std::string& text, std::vector<uint8_t>* out) {
+    out->clear();
+    out->reserve(text.size() / 4 * 3);
+    uint32_t acc = 0;
+    int bits = 0;
+    for (const char c : text) {
+        int v = 0;
+        if (c >= 'A' && c <= 'Z') v = c - 'A';
+        else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;
+        else if (c >= '0' && c <= '9') v = c - '0' + 52;
+        else if (c == '+') v = 62;
+        else if (c == '/') v = 63;
+        else if (c == '=' || c == '\r' || c == '\n') continue;
+        else return false;
+        acc = (acc << 6) | static_cast<uint32_t>(v);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out->push_back(static_cast<uint8_t>(acc >> bits));
+        }
+    }
+    return true;
+}
+
+// A dense byte array of a reply ("data": [..]) into @p out; false when absent or not bytes
+bool ByteArray(const Json* data, std::vector<uint8_t>* out) {
+    if (data == nullptr || !data->IsArray()) return false;
+    out->resize(data->Size());
+    for (size_t i = 0; i < data->Size(); ++i) {
+        int64_t v = 0;
+        if (!data->At(i).AsInt(&v)) return false;
+        (*out)[i] = static_cast<uint8_t>(v);
+    }
+    return true;
 }
 
 MemoryModelHint ModelFromName(const std::string& name) {
@@ -266,6 +319,8 @@ void WebApiBackend::RefreshAfterRun() {
 
 namespace {
 constexpr const char* kRunToGroup = "tui-run-to";
+// The conditions (§10.2): breakpoints over the whole 64K with the condition, the emulator evaluates them
+constexpr const char* kConditionGroup = "tui-conditions";
 }  // namespace
 
 void WebApiBackend::Continue(int) {
@@ -333,6 +388,8 @@ void WebApiBackend::SyncBreakpoints() {
     if (list == nullptr || !list->IsArray()) return;
     std::array<uint8_t, 0x10000> bits{};
     std::map<std::pair<uint16_t, int>, int> ids;
+    std::vector<std::string> conditions;
+    std::vector<int> conditionIds;
     for (size_t i = 0; i < list->Size(); ++i) {
         const Json& bp = list->At(i);
         int64_t id = 0, address = 0;
@@ -341,6 +398,13 @@ void WebApiBackend::SyncBreakpoints() {
         if (!active || !bp.Get("id", &id) || !bp.Get("address", &address)) continue;
         std::string group;
         if (bp.Get("group", &group) && group == kRunToGroup) continue;
+        if (group == kConditionGroup) {
+            std::string condition;
+            bp.Get("condition", &condition);
+            conditions.push_back(condition);
+            conditionIds.push_back(static_cast<int>(id));
+            continue;
+        }
         bp.Get("execute", &exec);
         bp.Get("read", &read);
         bp.Get("write", &write);
@@ -354,6 +418,8 @@ void WebApiBackend::SyncBreakpoints() {
     }
     bpBits_ = bits;
     serverBpIds_ = ids;
+    conditions_ = conditions;
+    conditionIds_ = conditionIds;
 }
 
 bool WebApiBackend::EnsurePaused() {
@@ -413,14 +479,58 @@ bool WebApiBackend::FetchRegs() {
         lastError_ = "registers reply missing fields";
         return false;
     }
-    // WebAPI serves no T-state counter / halt flag: both stay at defaults.
-    r.t = 0;
+    // The T-state in the frame and HALT; the frame number and length from the beam make the absolute T of the time delta
+    int64_t t = 0;
+    if (const Json* special = root.Find("special")) special->Get("t", &t);
+    r.t = static_cast<uint32_t>(t);
+    if (const Json* interrupt = root.Find("interrupt")) interrupt->Get("halted", &r.halted);
     r.lastBranch = 0;
+    const HttpReply beam = Api("GET", "/video/beam");
+    if (beam.IsSuccess()) {
+        const Json b = Json::Parse(beam.body, nullptr);
+        int64_t frame = 0, frameT = 0;
+        const Json* timing = b.Find("frame_timing");
+        if (b.Get("frame", &frame) && timing != nullptr && timing->Get("frame_tstates", &frameT) && frameT > 0) {
+            frameT_ = static_cast<uint32_t>(frameT);
+            absT_ = static_cast<uint64_t>(frame) * static_cast<uint64_t>(frameT) + r.t;
+        }
+    }
     regs_ = r;
     regsValid_ = true;
     ++snapshots_;
     FetchPaging();
+    FetchPorts();
     return true;
+}
+
+void WebApiBackend::FetchPorts() {
+    // GET /ports: the decoder's map, the latched value of each port that keeps one (#FE, #7FFD, #EFF7, the model's
+    // extended port: #1FFD, #DFFD, #77 ...)
+    const HttpReply reply = Api("GET", "/ports");
+    if (!reply.IsSuccess()) return;
+    const Json root = Json::Parse(reply.body, nullptr);
+    const Json* entries = root.Find("entries");
+    if (entries == nullptr || !entries->IsArray()) return;
+    PortsState p;
+    p.dosPortsActive = ports_.dosPortsActive;
+    for (const Json& e : entries->Items()) {
+        const Json* port = e.Find("port");
+        const Json* value = e.Find("latch_value");
+        int64_t number = 0, v = 0;
+        if (port == nullptr || value == nullptr || !HexOrNumber(*port, &number) || !HexOrNumber(*value, &v)) continue;
+        const uint8_t byte = static_cast<uint8_t>(v);
+        if (number == 0xFE) p.fe = byte;
+        else if (number == 0x7FFD) {
+            p.p7ffd = byte;
+            p.lock48 = (byte & 0x20) != 0;
+        } else if (number == 0xEFF7) p.eff7 = byte;
+        else if (!p.hasExtPort) {
+            p.hasExtPort = true;
+            p.extPort = static_cast<uint16_t>(number);
+            p.extValue = byte;
+        }
+    }
+    ports_ = p;
 }
 
 void WebApiBackend::FetchPaging() {
@@ -428,6 +538,7 @@ void WebApiBackend::FetchPaging() {
     const HttpReply reply = Api("GET", "/state/paging");
     if (!reply.IsSuccess()) return;
     const Json root = Json::Parse(reply.body, nullptr);
+    root.Get("trdos_active", &ports_.dosPortsActive);
     const Json* banks = root.Find("banks");
     if (banks == nullptr || !banks->IsArray()) return;
     for (size_t w = 0; w < banks->Size() && w < pages_.size(); ++w) {
@@ -491,14 +602,14 @@ void WebApiBackend::RefreshLabels() {
 MachineInfo WebApiBackend::GetMachineInfo() {
     MachineInfo info;
     info.model = ModelFromName(model_);
-    // Pentagon frame timing; standard models share the 69888/70908 split
-    // (only the timing-sensitive panels notice the difference).
-    info.frameLength = (info.model == MemoryModelHint::Pentagon) ? 69888 : 70908;
     info.intStart = 0;
     info.intLength = 32;
     info.ayScheme = AyScheme::Single;
     info.trdosPresent = true;
     if (EnsureInstance() && !regsValid_) FetchRegs();
+    // The frame's length from the beam (GET /video/beam with the registers); before the first read a 128K's
+    info.frameLength = frameT_ != 0 ? frameT_ : 70908;
+    if (ay_.scheme != AyScheme::None) info.ayScheme = ay_.scheme;
     info.pages = pages_;  // GET /state/paging at the last stop
     return info;
 }
@@ -516,9 +627,8 @@ BranchInfo WebApiBackend::GetBranchAtPc(int) {
 }
 
 int64_t WebApiBackend::GetTimeDelta(int) {
-    // WebAPI has no T-state counter endpoint; the "time delta" cell reads 0
-    // over REST until one lands (the mock shows the real figure).
-    return 0;
+    if (EnsureInstance() && !regsValid_) FetchRegs();
+    return static_cast<int64_t>(absT_) - static_cast<int64_t>(markT_);
 }
 
 // -- memory / disassembly --------------------------------------------------------
@@ -578,46 +688,200 @@ uint16_t WebApiBackend::PrevInstruction(int, uint16_t addr) {
 // -- peripherals -------------------------------------------------------------------
 
 PortsState WebApiBackend::GetPorts() {
-    // GET /ports serves the static port MAP, not latched values: the panel
-    // reflects writes made through this debugger (Set7ffd/SetExtPort/Out).
+    // The latches read with the registers (FetchPorts)
+    if (EnsureInstance() && !regsValid_) FetchRegs();
     return ports_;
 }
 
 Beta128State WebApiBackend::GetBeta128() {
-    // no WD1793 state endpoint yet: the beta128 column reads zeros
-    return Beta128State{};
+    // GET /state/fdc once per register snapshot: the WD1793's registers, the Beta 128 system register, INTRQ / DRQ
+    if (!EnsureInstance() || beta128At_ == snapshots_) return beta128_;
+    beta128At_ = snapshots_;
+    const HttpReply reply = Api("GET", "/state/fdc");
+    Beta128State b;
+    if (reply.IsSuccess()) {
+        const Json root = Json::Parse(reply.body, nullptr);
+        root.Get("available", &b.present);
+        int64_t v = 0;
+        if (const Json* regs = root.Find("registers")) {
+            if (regs->Get("command", &v)) b.cmd = static_cast<uint8_t>(v);
+            if (regs->Get("data", &v)) b.data = static_cast<uint8_t>(v);
+            if (regs->Get("sector", &v)) b.sector = static_cast<uint8_t>(v);
+            if (regs->Get("track", &v)) b.track = static_cast<uint8_t>(v);
+            if (regs->Get("status", &v)) b.statusRaw = b.statusRead = static_cast<uint8_t>(v);
+        }
+        if (root.Get("beta128_register", &v)) b.system = static_cast<uint8_t>(v);
+        if (const Json* signals = root.Find("signals")) {
+            bool intrq = false, drq = false;
+            signals->Get("intrq", &intrq);
+            signals->Get("drq", &drq);
+            b.rqs = static_cast<uint8_t>((intrq ? 0x80 : 0) | (drq ? 0x40 : 0));
+        }
+        int64_t selected = 0;
+        root.Get("selected_drive", &selected);
+        const Json* drives = root.Find("drives");
+        if (drives != nullptr && drives->IsArray() && selected >= 0 && static_cast<size_t>(selected) < drives->Size() &&
+            drives->At(static_cast<size_t>(selected)).Get("track", &v))
+            b.headTrack = static_cast<uint8_t>(v);
+    }
+    beta128_ = b;
+    return beta128_;
 }
 
 AyState WebApiBackend::GetAy() {
-    // GET /state/audio/ay exists but serves register arrays in a different
-    // shape; wiring it lands with the AY panel milestone.
+    // GET /state/audio/ay (the chips, the one #FFFD selects, each one's latched register), then each chip's registers
+    if (!EnsureInstance() || ayAt_ == snapshots_) return ay_;
+    ayAt_ = snapshots_;
+    const HttpReply reply = Api("GET", "/state/audio/ay");
+    if (!reply.IsSuccess()) return ay_;
+    const Json root = Json::Parse(reply.body, nullptr);
+    bool available = false, turbo = false;
+    root.Get("available", &available);
+    root.Get("turbo_sound", &turbo);
+    if (!available) {
+        ay_.scheme = AyScheme::None;
+        return ay_;
+    }
+    ay_.scheme = turbo ? AyScheme::TurboSound : AyScheme::Single;
+    int64_t active = 0;
+    if (!ayChosen_ && root.Get("active_chip", &active)) ay_.activeChip = static_cast<int>(active & 1);
+    const int chips = turbo ? 2 : 1;
+    for (int chip = 0; chip < chips; ++chip) {
+        const HttpReply one = Api("GET", "/state/audio/ay/" + std::to_string(chip));
+        if (!one.IsSuccess()) continue;
+        const Json c = Json::Parse(one.body, nullptr);
+        int64_t latched = 0;
+        if (c.Get("latched_register", &latched)) ay_.latchedReg[static_cast<size_t>(chip)] = static_cast<int>(latched & 0x0F);
+        // "R0 - Channel A - fine tune" ... "R17 - I/O Port B data store": the register numbers are octal
+        const Json* regs = c.Find("registers");
+        if (regs == nullptr || !regs->IsObject()) continue;
+        for (const auto& [name, value] : regs->Members()) {
+            const size_t r = name.find('R');
+            int64_t byte = 0;
+            if (r == std::string::npos || !value.AsInt(&byte)) continue;
+            const unsigned number = static_cast<unsigned>(std::strtoul(name.c_str() + r + 1, nullptr, 8));
+            if (number < 16) ay_.regs[static_cast<size_t>(chip)][number] = static_cast<uint8_t>(byte);
+        }
+    }
     return ay_;
 }
 
 void WebApiBackend::SelectAyChip(int chip) {
-    ay_.scheme = AyScheme::Single;
+    // The panel's chip (Alt+Y); the machine's own selection stays as the program set it
     ay_.activeChip = chip & 1;
+    ayChosen_ = true;
 }
 
-std::vector<uint8_t> WebApiBackend::ReadCmos() { return std::vector<uint8_t>(256, 0); }
-std::vector<uint8_t> WebApiBackend::ReadNvram() { return std::vector<uint8_t>(2048, 0); }
-std::vector<uint8_t> WebApiBackend::ReadCompPal() { return std::vector<uint8_t>(64, 0); }
-// CMOS/NVRAM/comppal dumps have no WebAPI surface; the editors open empty.
+std::vector<uint8_t> WebApiBackend::ReadCmos() {
+    // GET /rtc/cells: the machine's clock chip (the ZX-Evo AVR, a Gluk / Mr Gluk, the Profi's); zeros without one
+    std::vector<uint8_t> cells(256, 0);
+    if (!EnsureInstance()) return cells;
+    const HttpReply reply = Api("GET", "/rtc/cells?start=0&count=256");
+    std::vector<uint8_t> bytes;
+    if (reply.IsSuccess() && ByteArray(Json::Parse(reply.body, nullptr).Find("bytes"), &bytes))
+        std::copy_n(bytes.begin(), std::min(bytes.size(), cells.size()), cells.begin());
+    return cells;
+}
 
-DiskTrackData WebApiBackend::ReadDiskTrack(int, int) {
+std::vector<uint8_t> WebApiBackend::ReadNvram() {
+    // The ZX-Evo AVR's EEPROM, the region "eeprom" (4 KiB): its first 2048 bytes, the editor's size; zeros elsewhere
+    std::vector<uint8_t> cells(2048, 0);
+    if (!EnsureInstance()) return cells;
+    const HttpReply reply = Api("GET", "/memory/region/eeprom?offset=0&length=2048&format=data");
+    std::vector<uint8_t> bytes;
+    if (reply.IsSuccess() && ByteArray(Json::Parse(reply.body, nullptr).Find("data"), &bytes))
+        std::copy_n(bytes.begin(), std::min(bytes.size(), cells.size()), cells.begin());
+    return cells;
+}
+
+// The ATM's palette has no WebAPI region: the editor opens empty
+std::vector<uint8_t> WebApiBackend::ReadCompPal() { return std::vector<uint8_t>(64, 0); }
+
+DiskTrackData WebApiBackend::ReadDiskTrack(int drive, int track) {
+    // Track = cylinder * 2 + side, as UnrealSpeccy counts: the raw MFM bytes and each sector's data field
     DiskTrackData d;
-    d.present = false;  // no disk-sector dump endpoint: "track not found"
+    if (!EnsureInstance()) return d;
+    const std::string where = "/disk/" + std::to_string(drive) + "/track/" + std::to_string(track / 2) + "/" +
+                              std::to_string(track & 1);
+    const HttpReply raw = Api("GET", where + "/raw");
+    if (!raw.IsSuccess()) return d;  // no disk: "track not found"
+    std::string text;
+    if (!Json::Parse(raw.body, nullptr).Get("raw_base64", &text) || !Base64Decode(text, &d.physical)) return d;
+    d.present = true;
+    const HttpReply list = Api("GET", where);
+    if (!list.IsSuccess()) return d;
+    const Json root = Json::Parse(list.body, nullptr);
+    const Json* sectors = root.Find("sectors");
+    if (sectors == nullptr || !sectors->IsArray()) return d;
+    for (const Json& s : sectors->Items()) {
+        int64_t number = 0;
+        bool hasData = false;
+        s.Get("id_sector", &number);
+        s.Get("has_data", &hasData);
+        DiskSectorData sector;
+        sector.id = static_cast<uint8_t>(number);
+        if (hasData) {
+            const HttpReply one = Api("GET", "/disk/" + std::to_string(drive) + "/sector/" + std::to_string(track / 2) +
+                                                 "/" + std::to_string(track & 1) + "/" + std::to_string(number));
+            std::string data;
+            if (one.IsSuccess() && Json::Parse(one.body, nullptr).Get("data_base64", &data)) Base64Decode(data, &sector.data);
+        }
+        sector.length = static_cast<uint16_t>(sector.data.size());
+        d.sectors.push_back(std::move(sector));
+    }
     return d;
 }
 
-void WebApiBackend::WriteDiskByte(int, int, bool, int, uint8_t) {
-    // accepted and dropped (no disk-image write endpoint)
+void WebApiBackend::WriteDiskByte(int drive, int track, bool logical, int offset, uint8_t value) {
+    // The logical view writes the sector's data field (PUT, the CRC kept right); the raw track has no write route
+    if (!logical || !EnsureInstance()) return;
+    const DiskTrackData d = ReadDiskTrack(drive, track);
+    int at = offset;
+    for (const DiskSectorData& s : d.sectors) {
+        if (at < static_cast<int>(s.data.size())) {
+            char body[64];
+            std::snprintf(body, sizeof body, "{\"offset\":%d,\"data\":[%u]}", at, static_cast<unsigned>(value));
+            Api("PUT", "/disk/" + std::to_string(drive) + "/sector/" + std::to_string(track / 2) + "/" +
+                           std::to_string(track & 1) + "/" + std::to_string(s.id),
+                body);
+            return;
+        }
+        at -= static_cast<int>(s.data.size());
+    }
 }
 
-ScreenPixels WebApiBackend::GetScreenPreview(int) {
-    // no palette-index pixel endpoint (screen state is a digest); the
-    // preview window stays blank over REST for now.
-    return ScreenPixels{};
+ScreenPixels WebApiBackend::GetScreenPreview(int mode) {
+    // The ZX screen from its page (5, or 7 when #7FFD bit 3 shows the shadow one) and the border of #FE, painted as
+    // the mock paints it: a 320 x 224 frame cropped to 296 x 208; mode 2 only down to the beam's line
+    ScreenPixels px;
+    if (!EnsureInstance()) return px;
+    if (!regsValid_) FetchRegs();
+    const HttpReply reply =
+        Api("GET", std::string("/memory/page/ram/") + ((ports_.p7ffd & 0x08) ? "7" : "5") + "?length=6912");
+    std::vector<uint8_t> screen;
+    if (!reply.IsSuccess() || !ByteArray(Json::Parse(reply.body, nullptr).Find("data"), &screen) || screen.size() < 6912)
+        return px;
+    const int fh = 224, sx = 32, sy = 16;
+    const uint32_t frameT = frameT_ != 0 ? frameT_ : 70908;
+    const int beamLine = mode == 2 ? static_cast<int>(static_cast<uint64_t>(absT_ % frameT) * fh / frameT) : fh;
+    const bool flashPhase = ((absT_ / frameT) & 16) != 0;  // FLASH swaps every 16 frames
+    px.width = 296;
+    px.height = 208;
+    px.index.assign(static_cast<size_t>(px.width) * px.height, static_cast<uint8_t>(ports_.fe & 0x07));
+    for (int y = sy; y < sy + 192 && y < beamLine; ++y) {
+        const int ly = y - sy;
+        for (int x = sx; x < sx + 256; ++x) {
+            const int lx = x - sx;
+            const size_t pixel = static_cast<size_t>(((ly & 0xC0) << 5) | ((ly & 0x07) << 8) | ((ly & 0x38) << 2) | (lx >> 3));
+            const uint8_t attr = screen[static_cast<size_t>(0x1800 + ((ly >> 3) << 5) + (lx >> 3))];
+            const uint8_t bright = (attr & 0x40) ? 8 : 0;
+            const bool on = ((screen[pixel] >> (7 - (lx & 7))) & 1) != 0;
+            const bool ink = on != ((attr & 0x80) != 0 && flashPhase);
+            px.index[static_cast<size_t>(y - 8) * px.width + static_cast<size_t>(x - 12)] =
+                ink ? static_cast<uint8_t>(bright | (attr & 0x07)) : static_cast<uint8_t>(bright | ((attr >> 3) & 0x07));
+        }
+    }
+    return px;
 }
 
 // -- execution control --------------------------------------------------------------
@@ -630,9 +894,11 @@ std::optional<IDebuggerBackend::StopReason> WebApiBackend::Step(int) {
     memValid_ = false;
     FetchRegs();
     FetchMemory();
-    // the server steps without reporting breakpoint triggers; classify from
-    // the new PC against the local breakpoint bits
-    if ((bpBits_[regs_.pc] & 0x01) != 0) return StopReason::Breakpoint;
+    // The reply's stop: "breakpoint" when the step hit one (a memory, port or conditional one too); an execution
+    // breakpoint at the new PC stops the next run there
+    std::string why;
+    if (const Json* stop = Json::Parse(reply.body, nullptr).Find("stop")) stop->Get("reason", &why);
+    if (why == "breakpoint" || (bpBits_[regs_.pc] & 0x01) != 0) return StopReason::Breakpoint;
     return std::nullopt;
 }
 
@@ -641,10 +907,9 @@ IDebuggerBackend::StopReason WebApiBackend::RunUntilBreak(int, const StopRequest
     if (!regsValid_) FetchRegs();  // WriteReg & co. leave the cache stale
     if (regsValid_) prevRegs_ = regs_;  // §9.5 (b): snapshot at leave
 
-    // The server's per-PC exec hook needs the host's DebugOn, which no WebAPI
-    // route turns on - so instead of resume+poll we drive the machine with
-    // synchronous batched POST /steps: each reply carries the landing PC/SP,
-    // checked against the local stop conditions at every batch boundary.
+    // Synchronous batched POST /steps: each reply carries the landing PC/SP, checked against the local stop
+    // conditions at every batch boundary; a batch ends early at a breakpoint of the emulator's (a memory, port or
+    // conditional one: its "stop" reason).
     // Batch sizes alternate 128/129 so tight loops cannot phase-lock to the
     // boundary check, and once the run-to target is only a few instructions
     // away we single-step to land on it exactly.
@@ -711,6 +976,12 @@ IDebuggerBackend::StopReason WebApiBackend::RunUntilBreak(int, const StopRequest
         pc = static_cast<uint16_t>(rpc);
         int64_t rsp = sp;
         if (root.Get("sp", &rsp)) sp = static_cast<uint16_t>(rsp);
+        std::string why;
+        if (const Json* stop = root.Find("stop")) stop->Get("reason", &why);
+        if (why == "breakpoint") {
+            reason = StopReason::Breakpoint;
+            break;
+        }
         if (count >= request.maxInstructions) break;
         if (std::chrono::steady_clock::now() >= deadline) break;
     }
@@ -723,8 +994,8 @@ IDebuggerBackend::StopReason WebApiBackend::RunUntilBreak(int, const StopRequest
 }
 
 uint64_t WebApiBackend::GetAbsoluteT(int) {
-    // no T-state endpoint (same gap as GetTimeDelta)
-    return 0;
+    if (EnsureInstance() && !regsValid_) FetchRegs();
+    return absT_;
 }
 
 void WebApiBackend::SetDebugMark(int, uint64_t absT) { markT_ = absT; }
@@ -750,11 +1021,9 @@ void WebApiBackend::WriteReg(int, RegField field, unsigned value) {
     case RegField::Iy: name = "IY"; break;
     case RegField::I: name = "I"; break;
     case RegField::R: name = "R"; break;
-    case RegField::Im:
-    case RegField::Iff1:
-    case RegField::Iff2:
-        // server register table has no IM/IFF entries; nothing to send
-        return;
+    case RegField::Im: name = "IM"; break;
+    case RegField::Iff1: name = "IFF1"; break;
+    case RegField::Iff2: name = "IFF2"; break;
     }
     Api("PUT", std::string("/registers/") + name,
         "{\"value\":" + std::to_string(value & 0xFFFF) + "}");
@@ -762,24 +1031,23 @@ void WebApiBackend::WriteReg(int, RegField field, unsigned value) {
 }
 
 void WebApiBackend::Out(uint16_t port, uint8_t value) {
-    // no port-write endpoint; latch locally so the panels still react
-    switch (port) {
-    case 0xFE: ports_.fe = value; break;
-    case 0x7FFD:
-        ports_.p7ffd = value;
-        ports_.lock48 = (value & 0x20) != 0;
-        break;
-    case 0xEFF7: ports_.eff7 = value; break;
-    default: break;
-    }
+    // POST /ports/out: the machine's decoder takes the write with all its effects (paging, border, a TS-Conf
+    // register), recorded as a tool edit; the registers, pages, latches and memory are read again
+    if (!EnsureInstance()) return;
+    char body[64];
+    std::snprintf(body, sizeof body, "{\"port\":\"0x%04X\",\"value\":\"0x%02X\"}", static_cast<unsigned>(port),
+                  static_cast<unsigned>(value));
+    if (!Api("POST", "/ports/out", body).IsSuccess()) return;  // lastError_ tells why
+    regsValid_ = false;
+    memValid_ = false;
 }
 
 void WebApiBackend::Set7ffd(uint8_t value) { Out(0x7FFD, value); }
 
 void WebApiBackend::SetExtPort(uint8_t value) {
-    // generic extended port latch (model-specific meaning on the server)
-    ports_.hasExtPort = true;
-    ports_.extValue = value;
+    // The model's extended port as the port map names it (#1FFD, #DFFD, #77 ...); none: nothing to write
+    if (EnsureInstance() && !regsValid_) FetchRegs();
+    if (ports_.hasExtPort) Out(ports_.extPort, value);
 }
 
 // -- breakpoints / conditions -----------------------------------------------------------
@@ -823,24 +1091,42 @@ bool WebApiBackend::HasAnyBreakpoints() {
 }
 
 ExprCompileResult WebApiBackend::AddCondition(int, const std::string& text) {
-    // syntax is validated locally with the shared expression compiler;
-    // remote evaluation needs per-instruction push (WebSocket transport).
+    // The emulator evaluates the condition at every instruction (an execution breakpoint over 0000-FFFF), or at every
+    // read or write when it asks for RD / WR (its trigger refuses the other kinds: the next one is tried). Its language
+    // is a superset of the shared compiler's (#hex, PG0-PG3, EFF7 ...): a text both refuse answers in UnrealSpeccy's
+    // words
     ExprCompileResult res;
     CompiledExpr expr;
-    std::string error;
-    if (!CompiledExpr::Compile(text, &expr, &error)) {
-        res.error = error;
+    std::string localError;
+    const bool compiles = CompiledExpr::Compile(text, &expr, &localError);
+    if (!EnsureInstance()) {
+        res.error = compiles ? lastError_ : localError;
         return res;
     }
-    conditions_.push_back(text);
-    res.ok = true;
+    for (const char* type : {"exec", "read", "write"}) {
+        const std::string body = std::string("{\"type\":\"") + type +
+                                 "\",\"address\":0,\"address_end\":65535,\"condition\":\"" + JsonEscape(text) +
+                                 "\",\"group\":\"" + kConditionGroup + "\",\"note\":\"condition\"}";
+        const HttpReply added = Api("POST", "/breakpoints", body);
+        int64_t id = 0;
+        if (added.IsSuccess() && Json::Parse(added.body, nullptr).Get("id", &id)) {
+            conditions_.push_back(text);
+            conditionIds_.push_back(static_cast<int>(id));
+            res.ok = true;
+            return res;
+        }
+        res.error = lastError_;
+        if (lastError_.find("not supplied") == std::string::npos) break;  // a refusal of another kind
+    }
+    if (!compiles && res.error.find("not supplied") == std::string::npos) res.error = localError;
     return res;
 }
 
 void WebApiBackend::DeleteCondition(int, int index) {
-    if (index >= 0 && static_cast<size_t>(index) < conditions_.size()) {
-        conditions_.erase(conditions_.begin() + index);
-    }
+    if (index < 0 || static_cast<size_t>(index) >= conditions_.size()) return;
+    if (EnsureInstance()) Api("DELETE", "/breakpoints/" + std::to_string(conditionIds_[static_cast<size_t>(index)]));
+    conditions_.erase(conditions_.begin() + index);
+    conditionIds_.erase(conditionIds_.begin() + index);
 }
 
 std::vector<std::string> WebApiBackend::GetConditions(int) { return conditions_; }
@@ -977,18 +1263,40 @@ void WebApiBackend::ImportLabels(int) {
 
 // -- ripper (§6.3) -------------------------------------------------------------------------
 
-void WebApiBackend::ArmRipper(bool, bool) {
-    // read/write coverage needs per-access push (WebSocket transport);
-    // arming is remembered so the dialog round-trip still works
-    ripperArmed_ = true;
+void WebApiBackend::ArmRipper(bool traceReads, bool traceWrites) {
+    // The emulator's memory profiler counts every access from now on; the collection reads its counters
+    ripTraceReads_ = traceReads;
+    ripTraceWrites_ = traceWrites;
+    if (!EnsureInstance()) return;
+    Api("POST", "/profiler/memory/stop");  // a fresh count
+    ripperArmed_ = Api("POST", "/profiler/memory/start").IsSuccess();
 }
 
 bool WebApiBackend::RipperArmed() { return ripperArmed_; }
 
 std::vector<uint8_t> WebApiBackend::CollectRipper(uint8_t unrefByte) {
-    // no coverage stream over REST: every byte reads unreferenced
+    // A byte read or written (as armed) since ArmRipper keeps its value, the others read unrefByte
+    std::vector<uint8_t> out(0x10000, unrefByte);
+    if (!ripperArmed_ || !EnsureInstance()) {
+        ripperArmed_ = false;
+        return out;
+    }
     ripperArmed_ = false;
-    return std::vector<uint8_t>(0x10000, unrefByte);
+    const HttpReply reply = Api("GET", "/profiler/memory/counters?mode=z80");
+    Api("POST", "/profiler/memory/stop");
+    if (!reply.IsSuccess() || (!memValid_ && !FetchMemory())) return out;
+    const Json root = Json::Parse(reply.body, nullptr);
+    const Json* counters = root.Find("counters");
+    if (counters == nullptr) return out;
+    const Json* reads = counters->Find("reads");
+    const Json* writes = counters->Find("writes");
+    for (size_t a = 0; a < out.size(); ++a) {
+        int64_t r = 0, w = 0;
+        if (ripTraceReads_ && reads != nullptr && a < reads->Size()) reads->At(a).AsInt(&r);
+        if (ripTraceWrites_ && writes != nullptr && a < writes->Size()) writes->At(a).AsInt(&w);
+        if (r != 0 || w != 0) out[a] = mem_[a];
+    }
+    return out;
 }
 
 }  // namespace dbg
