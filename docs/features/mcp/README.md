@@ -103,7 +103,13 @@ content: `content[]` (human/LLM text summary) + `structuredContent`
 only `content[]`, so every tool takes `response_format`: `text` (default) keeps
 `content[]` human-readable; `json` adds `structuredContent` there as a second
 text block of compact JSON (MCP 2025-06-18, Structured Content), cut at 64 KB
-with a note. Any other value is a tool error. `capture_media screenshot` with
+with a note. Any other value is a tool error. Every tool also takes `max_chars` (500 .. 10,000,000): the whole
+answer fits in that many characters. A long text keeps its first lines and up to three last ones, with one line
+between them: `... 230 of 260 lines (17,412 chars) left out for max_chars=2000; narrow the call or raise max_chars`. `structuredContent` (and its `json` echo) loses the tail of its biggest
+arrays and gets `"truncated": {"max_chars", "chars", "omitted": {"<path>": <items>}}`. `content[]` fits as a whole (with
+`response_format: "json"` the text gets a third and the JSON the rest); `structuredContent`, which a client reads
+instead of the text, fits the budget on its own. A bad value is a tool error before the tool runs; without
+it nothing changes ([answer budgets](../../inprogress/2026-11-04-answer-budgets/README.md)). `capture_media screenshot` with
 `include_image: true` puts the pixels in an MCP `image` content block, so the
 model sees the picture (the JSON echo does not repeat the base64). The
 listings are in the text either way: `debug_code disassemble` writes the listing itself, one line per instruction

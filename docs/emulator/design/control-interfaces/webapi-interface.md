@@ -49,6 +49,14 @@ Unlike CLI (stateful sessions), WebAPI is stateless:
 - Each request is independent
 - Suitable for load balancing and horizontal scaling
 
+### Answer budgets (`max_chars`)
+Any route takes `?max_chars=N` (500 .. 10,000,000): a JSON or `text/plain` reply longer than N characters is fitted.
+JSON loses the tail of its biggest arrays, then long strings are cut, until the compact text fits; an object reply gets
+`"truncated": {"max_chars": N, "chars": <full size>, "omitted": {"<path>": <items left out>}, "hint": ...}` and the
+reply the header `X-Unreal-Truncated: <full size>`. Text keeps its first lines and up to three last ones with an
+omission line between. A bad value is 400 `bad_max_chars` before the handler runs. Binary replies are not touched. A
+WebSocket `call` takes it in its path the same way. Design: [answer budgets](../../../inprogress/2026-11-04-answer-budgets/README.md).
+
 ### API Versioning
 - Version in URL path: `/api/v1/...`
 - Future versions: `/api/v2/...` without breaking existing clients

@@ -31,6 +31,8 @@
 #include "mcp-signature.h"
 #include "mcp-tool-utils.h"
 
+#include "../../common/answerbudget.h"  // max_chars, read by the dispatcher (header only)
+
 #include "../../../src/debugger/callbacks/callbacktext.h"  // the callback line every plane prints (header only)
 
 #include <algorithm>
@@ -60,6 +62,12 @@ void ToolRegistry::Register(const std::string& name, const std::string& descript
     format["default"] = "text";
     format["description"] = "Who the reply is for: text (default) = human-readable; json = also the full machine-readable "
                             "result as JSON text (use it when the text summary does not carry the data you need)";
+    Json::Value& budget = definition.inputSchema["properties"][answer_budget::kArg];
+    budget["type"] = "integer";
+    budget["minimum"] = static_cast<Json::UInt64>(answer_budget::kMinChars);
+    budget["description"] = "Fit the whole answer in this many characters (500 or more): the first lines and the last "
+                            "ones stay, a line says what was left out and how to get it; JSON loses the tail of its "
+                            "biggest arrays and says so in \"truncated\". Default: no limit";
     definition.handler = std::move(handler);
     _tools[name] = std::move(definition);
 }

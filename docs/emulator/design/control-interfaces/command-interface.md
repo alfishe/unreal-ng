@@ -246,6 +246,20 @@ class EmulatorManager {
 9. CLI Client displays: "Breakpoint set at 0x8000"
 ```
 
+### Answer budgets (`max_chars`)
+
+An agent pays for every character it reads, so the remote planes fit an answer on request
+([design](../../../inprogress/2026-11-04-answer-budgets/README.md)):
+
+| Plane | How | What it fits |
+|:--|:--|:--|
+| MCP | `max_chars` on every tool (500 .. 10,000,000) | `content[]` as a whole: text (first lines, an omission line, up to three last lines) and the `json` echo (`truncated` note); `structuredContent` on its own |
+| REST | `?max_chars=N` on every route | a JSON reply (`truncated` note, `X-Unreal-Truncated`) or a `text/plain` one; binary untouched |
+| WebSocket | `?max_chars=N` in a `call`'s path | the result's `body`, as REST |
+| CLI, Lua, Python | none | they run in the process and hand full values to a script; a character budget means nothing there |
+
+A bad value is refused before the command runs (MCP tool error, HTTP 400 `bad_max_chars`).
+
 ### Error Handling Strategy
 
 - **Invalid Command**: Unknown command returns help message suggestion
