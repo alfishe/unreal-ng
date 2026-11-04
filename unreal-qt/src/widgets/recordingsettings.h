@@ -5,6 +5,8 @@
 
 #include <atomic>
 
+#include "recordingsettingsbus.h"
+
 /// The UI's View > GPU acceleration switch, mirrored here by MainWindow, so every recording UI follows it: on = the
 /// encoder may use the GPU (Auto), off = software encoding. Recording has no switch of its own
 inline std::atomic<bool>& UiGpuAcceleration()
@@ -61,6 +63,7 @@ struct RecordingSettings
     {
         QSettings settings(QStringLiteral("unreal-ng"), QStringLiteral("recording"));
         save(settings);
+        recordingsettingsbus::Notify();  // the other recording UIs show the new values
     }
 
     /// From / to a given store (the tests use a file of their own)

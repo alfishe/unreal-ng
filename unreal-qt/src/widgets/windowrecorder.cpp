@@ -486,6 +486,27 @@ struct WindowRecorder::Writer
     }
 };
 
+WindowRecordingRequest MakeWindowRecordingRequest(const QString& container, const QString& codec, bool audio,
+                                                  bool gpuAcceleration, const QString& profile,
+                                                  const QString& path)
+{
+    WindowRecordingRequest request;
+    request.codec = codec.toStdString();
+    request.hardware = gpuAcceleration && container.compare(QLatin1String("MKV"), Qt::CaseInsensitive) != 0;
+    request.audio = audio;
+    const struct { const char* id; int w, h; } profiles[] = {{"1080p", 1920, 1080}, {"1440p", 2560, 1440}, {"4k", 3840, 2160}};
+    for (const auto& fixed : profiles)
+        if (profile == QLatin1String(fixed.id))
+        {
+            request.frameWidth = static_cast<uint16_t>(fixed.w);
+            request.frameHeight = static_cast<uint16_t>(fixed.h);
+            request.pictureHeight = fixed.h;
+            request.fit = true;  // without a CRT shader the window's picture is its own size: fitted to the frame
+        }
+    request.path = path.toStdString();
+    return request;
+}
+
 WindowRecorder::WindowRecorder(OsdKeyboardWindow* keyboard, QObject* parent) : QObject(parent), _keyboard(keyboard)
 {
 }
@@ -530,6 +551,8 @@ bool WindowRecorder::start(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     const bool ok = begin(screen, emulator, request, out, error);
     if (!ok)
         restoreKeyboard();
+    else
+        emit stateChanged();
     return ok;
 }
 
@@ -836,6 +859,7 @@ void WindowRecorder::closeWriter()
     removeTap();
     restoreKeyboard();
     _writer->close(_frames);  // the writer finishes the file in the background
+    emit stateChanged();
 }
 
 void WindowRecorder::restoreKeyboard()

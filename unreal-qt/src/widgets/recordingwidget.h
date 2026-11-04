@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 
+#include "widgets/recordingplan.h"
 #include "widgets/recordingsettings.h"
 
 class MainWindow;
@@ -40,6 +41,9 @@ public:
     /// Reload settings from QSettings (e.g. after advanced dialog closes)
     void reloadSettings();
 
+    /// Show a window recording another recording UI (the full dialog, the WebAPI) started or finished
+    void syncWindowRecordingState();
+
     /// Check if currently actively recording
     bool isRecording() const { return _isRecording; }
 
@@ -48,6 +52,10 @@ signals:
     void visibilityChanged(bool visible);
     void advancedSettingsRequested();
     void recordingStateChanged(bool isRecording);
+
+private:
+    void saveSettings();
+    recordingplan::Environment detectEnvironment() const;
 
 private slots:
     void onRecordToggled();
@@ -100,5 +108,6 @@ private:
     QElapsedTimer _finishingTimer;  ///< since the window recording was stopped, while its file is finished
     QString _finishingPath;
     uint64_t _finishingStartPending = 0;  ///< frames the encoder owed when the recording stopped
+    bool _selfSave = false;  ///< this UI is saving the shared settings: it does not reload its own change
     bool _windowRecording = false;  ///< the running recording is the window's, not the recording manager's
 };

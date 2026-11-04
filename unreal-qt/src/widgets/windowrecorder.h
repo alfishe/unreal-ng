@@ -12,6 +12,7 @@
 #include <QImage>
 #include <QObject>
 #include <QPointer>
+#include <QString>
 
 #include <cstdint>
 #include <deque>
@@ -25,6 +26,14 @@
 class DeviceScreenWrapper;
 class Emulator;
 class OsdKeyboardWindow;
+
+/// The request the panel and the full Video Recording dialog both make for a window recording, so the same options
+/// give the same file: the format's own codec; the GPU's encoder when View > GPU acceleration is on (the Mac's
+/// hardware encoder writes MP4 / MOV, MKV goes through ffmpeg in software); a fixed profile frame draws the CRT at
+/// the frame's height (sharp, not scaled up afterwards) and centres it in it
+WindowRecordingRequest MakeWindowRecordingRequest(const QString& container, const QString& codec, bool audio,
+                                                  bool gpuAcceleration, const QString& profile,
+                                                  const QString& path);
 
 class WindowRecorder : public QObject
 {
@@ -42,6 +51,11 @@ public:
     bool recording() const;
     /// Never blocks: a stopped recording shows `finalizing` until its file is complete (then `error` if it failed)
     void status(WindowRecordingStatus& out);
+
+signals:
+    /// A recording started, or stopped taking pictures (stopped here or elsewhere, or the writer failed): every
+    /// recording UI shows the same state whichever one started it
+    void stateChanged();
 
 private:
     /// What the emulation thread hands over at each frame end: the frame's number and its samples
