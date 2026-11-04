@@ -112,6 +112,7 @@
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "ui_mainwindow.h"
+#include "debugger/externaldebuggers.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/mousecapturecontroller.h"
@@ -340,7 +341,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Instantiate Logger window
     logWindow = new LogWindow();
 
-    // Instantiate debugger window. Hidden at start: Debug -> Debugger Window shows it,
+    // Instantiate debugger window. Hidden at start: Debug -> Debugger -> Embedded shows it,
     // and debug instrumentation is enabled only while it is visible
     debuggerWindow = new DebuggerWindow();
     debuggerWindow->setBinding(m_binding);  // Connect to central binding
@@ -621,6 +622,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::showRegistersRequested, this, &MainWindow::handleShowRegisters);
     connect(_menuManager, &MenuManager::showMemoryRequested, this, &MainWindow::handleShowMemory);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
+    connect(_menuManager, &MenuManager::externalDebuggerRequested, this, &MainWindow::handleExternalDebuggerRequested);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
     // Keep the menu check state in sync when the window closes via its own close box
@@ -4028,6 +4030,22 @@ void MainWindow::handleDebuggerToggled(bool visible)
             debuggerWindow->activateWindow();
         }
     }
+}
+
+void MainWindow::handleExternalDebuggerRequested(const QString& program)
+{
+    // Over this window's instance, by its id: the debugger never picks another emulator of the same server
+    const std::shared_ptr<Emulator> emulator = activeEmulator();
+    QString error;
+    if (ExternalDebuggers::Launch(program, emulator ? QString::fromStdString(emulator->GetId()) : QString(), &error))
+    {
+        // It turns the debug mode on itself (PUT /debugmode) and runs with the emulator's breakpoints: closing the
+        // embedded window afterwards must not switch the mode off under it
+        _debugInstrumentationByUi = false;
+        statusBar()->showMessage(tr("%1 started").arg(program), 3000);
+    }
+    else
+        statusBar()->showMessage(tr("Debugger: %1").arg(error), 5000);
 }
 
 void MainWindow::handleDebuggerVisibilityChanged(bool visible)

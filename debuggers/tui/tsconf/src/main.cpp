@@ -3,10 +3,11 @@
 // Keys are UnrealSpeccy's (unreal.ini [SYSTEM.KEYS], ui/actions.h): F7 step, F8 step over, F11 exit subroutine,
 // F4 run to cursor, ` continue / pause, Space breakpoint, G go to, Home cursor to PC, Z PC to cursor, Tab next
 // window; F10 opens the system menu with every command and its key.
-//   --backend ws|rest|mock [--endpoint <url>]  (default: ws://localhost:8090)
+//   --backend ws|rest|mock [--endpoint <url> | --port <n>] [--emulator <id>]  (default: ws://localhost:8090)
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <thread>
@@ -97,6 +98,8 @@ struct TuiApp {
 int main(int argc, char** argv) {
     BackendKind kind = BackendKind::WebSocket;  // a running unreal-ng on this host
     std::string endpoint;
+    std::string emulator;
+    int port = 0;
     bool forceTui = false;
     float scale = 1.5f;
     for (int i = 1; i < argc; ++i) {
@@ -113,6 +116,14 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "--endpoint" && i + 1 < argc) {
             endpoint = argv[++i];
+        } else if (arg == "--port" && i + 1 < argc) {
+            port = std::atoi(argv[++i]);
+            if (port < 1 || port > 65535) {
+                std::fprintf(stderr, "bad port '%s': 1..65535\n", argv[i]);
+                return 2;
+            }
+        } else if (arg == "--emulator" && i + 1 < argc) {
+            emulator = argv[++i];
         } else if (arg == "--scale" && i + 1 < argc) {
             char* end = nullptr;
             const float val = std::strtof(argv[++i], &end);
@@ -122,10 +133,13 @@ int main(int argc, char** argv) {
         } else if (arg == "--tui" || arg == "--terminal") {
             forceTui = true;
         } else if (arg == "--help" || arg == "-h") {
-            std::printf("usage: %s [--backend ws|rest|mock] [--endpoint <url>] [--tui] [--scale <0.5..5>]\n"
+            std::printf("usage: %s [--backend ws|rest|mock] [--endpoint <url> | --port <n>] [--emulator <id>] [--tui]\n"
+                        "       [--scale <0.5..5>]\n"
                         "  --backend   ws: a running unreal-ng through its WebSocket (default, ws://localhost:8090)\n"
                         "              rest: the same through REST requests (http://localhost:8090)\n"
                         "              mock: the built-in Z80 machine of the tests\n"
+                        "  --port      ws, rest: the emulator on this host at that port (its UNREAL_WEBAPI_PORT)\n"
+                        "  --emulator  ws, rest: only this instance (its id or symbolic id), else the first\n"
                         "  --tui       the terminal even when the pixel window can open\n"
                         "pixel window: %s\n",
                         argv[0], dbg::SdlWindowInfo().c_str());
@@ -133,8 +147,11 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (port != 0 && endpoint.empty())
+        endpoint = (kind == BackendKind::Rest ? "http://localhost:" : "ws://localhost:") + std::to_string(port);
+
     TuiApp app;
-    app.be = dbg::CreateBackend(kind, endpoint);
+    app.be = dbg::CreateBackend(kind, endpoint, emulator);
     if (!app.be) {
         if (kind == BackendKind::Ipc)  // a remote backend that did not attach has said why
             std::fprintf(stderr, "no IPC transport: use --backend ws, rest or mock\n");

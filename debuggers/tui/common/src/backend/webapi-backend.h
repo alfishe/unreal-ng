@@ -129,6 +129,9 @@ public:
     bool Attach() { return EnsureInstance(); }
     // The server's address, for the waiting dialog
     void SetEndpoint(std::string endpoint) { endpoint_ = std::move(endpoint); }
+    // Only this instance (its id or symbolic id; --emulator): the emulator window that started the debugger.
+    // Empty: the first suitable one
+    void SetEmulator(std::string id) { wanted_ = std::move(id); }
     // Tests: the next look for an instance and the next liveness check happen at the next call, not a second later
     void RetryNow() {
         nextAttach_ = {};
@@ -173,6 +176,7 @@ private:
     std::string instanceId_;
     bool connected_ = false;
     std::string endpoint_;
+    std::string wanted_;  // SetEmulator
     bool attachedOnce_ = false;  // HasState
     // The instance went away (its emulator closed, the server stopped): wait for a suitable one again
     void Lost();
