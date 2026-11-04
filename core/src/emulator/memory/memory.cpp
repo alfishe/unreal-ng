@@ -231,6 +231,38 @@ MemoryInterface* Memory::GetDebugMemoryInterface()
     return result;
 }
 
+MemoryInterface* Memory::GetReadTapMemoryInterface()
+{
+    return new MemoryInterface(&Memory::MemoryReadTapped, &Memory::MemoryWriteTapPass, &Memory::MemoryReadM1Tapped);
+}
+
+/// A read through the read-tap interface: the chosen interface's read (contention, overlay, the model's own fast
+/// read), then the read filter's bit. As on the debug path a stopping breakpoint there is counted only: it stops on
+/// the debug path
+uint8_t Memory::MemoryReadTapped(uint16_t addr, bool isExecution)
+{
+    const uint8_t value = (this->*_readTapInner->MemoryRead)(addr, isExecution);
+    if (_tapFilter->MemoryBit(BRK_KIND_READ, addr)) [[unlikely]]
+        if (_context->pDebugManager != nullptr)
+            (void)_context->pDebugManager->GetBreakpointsManager()->HandleMemoryRead(addr, value);
+    return value;
+}
+
+/// The opcode fetch: the debug path tells the read taps of fetches too (ReadDebugEffects)
+uint8_t Memory::MemoryReadM1Tapped(uint16_t addr, bool isExecution)
+{
+    const uint8_t value = (this->*_readTapInner->MemoryReadM1)(addr, isExecution);
+    if (_tapFilter->MemoryBit(BRK_KIND_READ, addr)) [[unlikely]]
+        if (_context->pDebugManager != nullptr)
+            (void)_context->pDebugManager->GetBreakpointsManager()->HandleMemoryRead(addr, value);
+    return value;
+}
+
+void Memory::MemoryWriteTapPass(uint16_t addr, uint8_t value)
+{
+    (this->*_readTapInner->MemoryWrite)(addr, value);
+}
+
 /// Overlay read: the inner access first (Fast / Debug, contended or not), so
 /// the video logic's wait, model overrides (ScorpionMemory's ProfROM strobes,
 /// virtual), the access tracker, TTD coverage and probes and read breakpoints
@@ -377,7 +409,8 @@ void Memory::ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, t
     }
 
     /// region <Read breakpoint logic>
-    if (_feature_breakpoints_enabled && _context->pDebugManager != nullptr)
+    // Read taps armed on the read-tap interface still hear the debug path's reads (debug mode on for another reason)
+    if ((_feature_breakpoints_enabled || _readTapDemand) && _context->pDebugManager != nullptr)
     {
         Emulator& emulator = *_context->pEmulator;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
@@ -452,7 +485,8 @@ void Memory::MemoryWriteTapped(uint16_t addr, uint8_t value)
 void Memory::SetWriteTapDemand(bool on, const BreakpointHotState* filter)
 {
     _writeTapDemand = on && filter != nullptr;
-    _tapFilter = filter;
+    if (filter != nullptr)
+        _tapFilter = filter;
     RefreshWriteHooks();
 }
 

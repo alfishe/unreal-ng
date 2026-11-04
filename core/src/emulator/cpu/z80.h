@@ -505,6 +505,7 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
     const MemoryInterface* OverlayDbgMemIf;            // Debug + host bus overlay
     const MemoryInterface* OverlayFastContendedMemIf;  // Fast + contention + host bus overlay
     const MemoryInterface* OverlayDbgContendedMemIf;   // Debug + contention + host bus overlay
+    const MemoryInterface* ReadTapMemIf;               // Any fast one above + the read filter (only while read taps are armed)
     /// Currently selected memory interface. Written only by
     /// Core::SelectMemoryInterface (under its lock); read on every access
     const MemoryInterface* MemIf;

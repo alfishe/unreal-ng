@@ -3304,7 +3304,8 @@ void BreakpointManager::RebuildFilters()
 }
 
 /// The CPU checks the instruction start without the debug mode while exec taps are armed; the memory tests the write
-/// filter in its fast write while write taps are (a machine without that hook, and read taps, take the debug path)
+/// filter in its fast write while write taps are, and the read-tap interface tests the read filter while read taps are
+/// (a machine with its own memory interface takes the debug path for those)
 void BreakpointManager::ApplyTapDemand(const BreakpointTapDemand& demand)
 {
     if (demand == _tapDemand)
@@ -3321,11 +3322,18 @@ void BreakpointManager::ApplyTapDemand(const BreakpointTapDemand& demand)
     _context->pCore->GetZ80()->execTapHold = demand.exec;
     Memory* memory = _context->pCore->GetMemory();
     const bool hooked = demand.write && memory != nullptr && memory->SupportsWriteTapHook();
+    const bool readHooked = demand.read && memory != nullptr && memory->SupportsReadTapHook();
     if (memory != nullptr)
+    {
         memory->SetWriteTapDemand(hooked, &_hotState);
+        const bool readChanged = memory->ReadTapDemand() != readHooked;
+        memory->SetReadTapDemand(readHooked, &_hotState);
+        if (readChanged)
+            _context->pCore->SelectMemoryInterface();  // the read-tap interface on or off
+    }
     if (_context->pFeatureManager != nullptr)
     {
-        _context->pFeatureManager->setTapDebugHold(demand.read || (demand.write && !hooked));
+        _context->pFeatureManager->setTapDebugHold((demand.read && !readHooked) || (demand.write && !hooked));
         _context->pFeatureManager->setBreakpointDebugHold(demand.stop);
     }
 }

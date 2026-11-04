@@ -55,6 +55,7 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     OverlayDbgMemIf = Memory::GetOverlayMemoryInterface(true, false);
     OverlayFastContendedMemIf = Memory::GetOverlayMemoryInterface(false, true, stockRead);
     OverlayDbgContendedMemIf = Memory::GetOverlayMemoryInterface(true, true);
+    ReadTapMemIf = Memory::GetReadTapMemoryInterface();
     MemIf = FastMemIf;  // Use fast memory access interface by default (Core::SelectMemoryInterface decides)
 
     // Ensure register memory and unions do not contain garbage
@@ -120,6 +121,8 @@ Z80::~Z80()
     OverlayFastContendedMemIf = nullptr;
     delete OverlayDbgContendedMemIf;
     OverlayDbgContendedMemIf = nullptr;
+    delete ReadTapMemIf;
+    ReadTapMemIf = nullptr;
 
     if (_opcodeProfiler)
     {
@@ -571,7 +574,15 @@ bool Z80::RunHaltedIdle(bool skipBreakpoints)
 bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
 {
     period = 1;
-    const MemoryInterface* const memIf = MemIf;
+    const MemoryInterface* memIf = MemIf;
+    // The read-tap interface: no read tap may watch the fetch, then the interface it reads through decides
+    if (memIf == ReadTapMemIf)
+    {
+        DebugManager* debug = _context->pDebugManager;
+        if (debug && !debug->GetBreakpointsManager()->ReadIsInertAt(fetch))
+            return false;
+        memIf = _memory->ReadTapInner();
+    }
     // The debug interfaces add the read's bookkeeping (Memory::ReadDebugEffects): for a fetch, the access
     // tracker's execute count and the read breakpoints; neither may watch it
     const bool debugIf = memIf == DbgMemIf || memIf == DbgContendedMemIf || memIf == OverlayDbgMemIf ||
@@ -639,7 +650,8 @@ void Z80::NoteHaltedIdleRefused()
 
 uint32_t Z80::HaltedFetchPureUntil(uint16_t fetch) const
 {
-    if (MemIf != OverlayFastMemIf && MemIf != OverlayFastContendedMemIf)
+    const MemoryInterface* const memIf = MemIf == ReadTapMemIf ? _memory->ReadTapInner() : MemIf;
+    if (memIf != OverlayFastMemIf && memIf != OverlayFastContendedMemIf)
         return UINT32_MAX;
     const HostBusOverlay* bus = _memory->GetBusOverlay();
     if (!bus || !bus->observesReads || fetch < bus->windowStart || fetch >= bus->windowEnd)

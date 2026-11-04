@@ -210,8 +210,11 @@ Built (2026-10-23):
     screen's check, so the plain write still tests one byte). With a write tap armed every write tests the write
     filter bit; only a marked address goes on to the resolve. No debug mode. The Next writes through its own slot
     table: there write taps hold the debug path (`Memory::SupportsWriteTapHook`).
-  - Read probes need the debug memory path: `FeatureManager::setTapDebugHold` holds the debug mode on while they are
-    armed (with the CPU held, §8), and the memory's breakpoint cache follows it.
+  - Read probes: the read-tap interface (`Z80::ReadTapMemIf`, 2026-11-04). While read taps are armed
+    `Core::SelectMemoryInterface` puts it over the fast interface it chose (plain, contended, overlay): every access
+    goes through that one, then reads and opcode fetches test the read filter's bit, and a marked address goes on to
+    the resolve with the byte the CPU got. No debug mode; the plain fast read is untouched. The Next brings its own
+    memory interface (`SupportsReadTapHook` false): there read taps still hold the debug path.
   - How a frame's hits reach the feed: the tap's hit calls `HapticProbes::OnTap` on the emulation thread (a counter
     per probe, the write's bytes); the frame end hands the counters to the feed (`TakeFrame`) and clears them; the
     feed turns them into its rules' effects on the controllers' thread.
@@ -577,6 +580,7 @@ A companion client (Steam Deck, phone) may receive the effect stream and play it
 | `Haptics_NoCostWhenIdle` | no ring pushes when no device with actuators is bound |
 
 | `ExecProbesKeepTheFastMemoryPath` | an exec probe fires once a frame with no debug mode and the fast memory interface; detaching releases `Z80::execTapHold` |
+| `BreakpointTaps_Test.ReadTapSeesTheMarkedReadsOffTheDebugPath` / `ReadTapOnTheDebugPathIsToldOnce` / `BreakpointTapsNext_Test.ReadTapsTakeTheDebugPathOnTheNext` | a read tap hears data and operand reads with the byte read and no debug mode; with the debug mode on the debug read tells it once; the Next keeps the debug path |
 | `WriteProbesKeepTheFastMemoryPath` | a write-each probe sees both writes of a change undone in the frame, with the bytes before and after, with no debug mode and the fast memory interface |
 | `DizzyXJumpsAndLandsOnce` | the real Dizzy X (testdata): its profile found by the file's hash, one jump fires `jump` and `land` in one frame each and nothing else |
 
@@ -594,7 +598,13 @@ interleaved rounds of both binaries, the lower quartile (the machine was shared,
 | `BM_HapticProbeDizzy/4`: the profile's four exec probes | 720 µs (+13 %) | 613 µs | 634 µs (within noise) |
 
 A 20 ms frame keeps over 96 % of the core free in every case. With nothing armed the fast write tests one hook byte as
-before (the event-rule screen's check moved into it): no change measured. Read probes still take the debug path.
+before (the event-rule screen's check moved into it): no change measured.
+
+Read probes (2026-11-04), `BM_HapticReadProbeFrame` (48K, read probes from FRAMES, which the interrupt's `INC (HL)`
+reads every frame), 6 interleaved rounds of both binaries, medians on a loaded machine (the no-probe frame measured
+255 µs there): the debug hold 323 µs (`/1`) and 346 µs (`/16`), the read-tap interface 284 µs and 282 µs (about +11 %
+over no probe: one more indirect call per access and one filter bit per read). The other benchmarks within ±4 %
+(their paths unchanged).
 
 ## 13. Phases and open points
 

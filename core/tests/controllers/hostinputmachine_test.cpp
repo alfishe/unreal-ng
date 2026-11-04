@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cctype>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -363,27 +364,55 @@ TEST(HostInputMachine_Test, AccessWatchSeedsTheAySelection)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
-// Boot-bound (~0.4 s): every machine of the slot registry, three frames each. A half-row read reaches the watch
-// through each model's own decoder: the hook is the decoder's IN completion, which every model must call
-TEST(HostInputMachine_Test, AccessWatchSeesTheKeyboardOnEveryMachine)
+namespace
 {
+std::vector<std::string> RegistryMachines()
+{
+    std::vector<std::string> names;
     for (const slots::MachineDef& machine : slots::refdata::Machines())
-    {
-        SCOPED_TRACE(machine.name);
-        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(machine.name, LoggerLevel::LogError);
-        ASSERT_NE(emulator, nullptr);
-        EmulatorContext* context = emulator->GetContext();
-        // DI; loop: LD BC,#EFFE; IN A,(C); OUT (C),A; JR loop
-        RunAt8000(context, {0xF3, 0x01, 0xFE, 0xEF, 0xED, 0x78, 0xED, 0x79, 0x18, 0xF7});
-        ControllerManager* manager = context->pControllerManager;
-        manager->WatchPortReads(true);
-        emulator->RunNFrames(3);
-        const DeviceAccessEvidence evidence = manager->PortReads();
-        const DeviceAccessChannel* row = evidence.Find(slots::InputRole::KeyMatrix, 12);
-        ASSERT_NE(row, nullptr) << "IN #EFFE did not reach the watch";
-        EXPECT_EQ(row->frames, evidence.window);
-        EXPECT_NE(evidence.Find(slots::InputRole::KeyMatrix, DeviceAccessChannel::kNoIndex, true), nullptr)
-            << "OUT #EFFE did not reach the watch";
-        EmulatorTestHelper::CleanupEmulator(emulator);
-    }
+        names.emplace_back(machine.name);
+    return names;
 }
+
+/// A gtest name of a model name: its letters and digits ("+3" -> "Plus3")
+std::string MachineTestName(const ::testing::TestParamInfo<std::string>& info)
+{
+    std::string name;
+    for (char c : info.param)
+    {
+        if (c == '+')
+            name += "Plus";
+        else if (std::isalnum(static_cast<unsigned char>(c)))
+            name += c;
+    }
+    return name.empty() ? "Machine" + std::to_string(info.index) : name;
+}
+}  // namespace
+
+class HostInputMachineEvery_Test : public ::testing::TestWithParam<std::string>
+{
+};
+
+// Boot-bound (5-80 ms per machine, one test each: the model's creation): every machine of the slot registry. A
+// half-row read reaches the watch through each model's own decoder: the hook is the decoder's IN completion, which
+// every model must call
+TEST_P(HostInputMachineEvery_Test, AccessWatchSeesTheKeyboard)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(GetParam(), LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    // DI; loop: LD BC,#EFFE; IN A,(C); OUT (C),A; JR loop
+    RunAt8000(context, {0xF3, 0x01, 0xFE, 0xEF, 0xED, 0x78, 0xED, 0x79, 0x18, 0xF7});
+    ControllerManager* manager = context->pControllerManager;
+    manager->WatchPortReads(true);
+    emulator->RunNFrames(3);  // the frames cost under 3 ms on every model: the creation is the test's time
+    const DeviceAccessEvidence evidence = manager->PortReads();
+    const DeviceAccessChannel* row = evidence.Find(slots::InputRole::KeyMatrix, 12);
+    ASSERT_NE(row, nullptr) << "IN #EFFE did not reach the watch";
+    EXPECT_EQ(row->frames, evidence.window);
+    EXPECT_NE(evidence.Find(slots::InputRole::KeyMatrix, DeviceAccessChannel::kNoIndex, true), nullptr)
+        << "OUT #EFFE did not reach the watch";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+INSTANTIATE_TEST_SUITE_P(Registry, HostInputMachineEvery_Test, ::testing::ValuesIn(RegistryMachines()), MachineTestName);
