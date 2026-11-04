@@ -11,9 +11,12 @@
 #include <QLineEdit>
 #include <QPointer>
 #include <QRegularExpression>
+#include <QSplitter>
 #include <QTableWidget>
 #include <QTimer>
 #include <Qt>
+
+#include <initializer_list>
 
 #include "QHexView/model/buffer/qmemorybuffer.h"
 #include "debugger/breakpointdialog.h"
@@ -26,6 +29,9 @@
 #include "debugger/livesourcewindow.h"
 #include "debugger/panefocus.h"
 #include "debugger/pchistorydialog.h"
+#include "debugger/porteventsdialog.h"
+#include "debugger/portwatchdialog.h"
+#include "debugger/rtcdialog.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/labeleditor.h"
 #include "debugvisualizationwindow.h"
@@ -35,6 +41,14 @@
 
 /// region <Constructor / destructors>
 
+DebuggerWindow* DebuggerWindow::Of(QWidget* widget)
+{
+    for (QWidget* at = widget; at; at = at->parentWidget())
+        if (auto* window = qobject_cast<DebuggerWindow*>(at))
+            return window;
+    return nullptr;
+}
+
 DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* parent) : QWidget(parent), ui(new Ui::DebuggerWindow)
 {
     _emulator = emulator;
@@ -42,6 +56,36 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
 
     // Instantiate all child widgets (UI form auto-generated)
     ui->setupUi(this);
+
+    // Panels: one frame style for all of them (the speed control's), the panels' text in the window's monospace font
+    // (a group box's style sheet font would pass its small title size down to the contents)
+    const QFont panelFont = font();
+    for (QWidget* contents : std::initializer_list<QWidget*>{ui->registersWidget, ui->stackWidget,
+                                                              ui->memorypagesWidget, ui->hexView,
+                                                              ui->disassemblerWidget})
+        contents->setFont(panelFont);
+    setStyleSheet(QStringLiteral(R"(
+        QGroupBox#registersGroup, QGroupBox#stackGroup, QGroupBox#pagesGroup, QGroupBox#memoryGroup,
+        QGroupBox#disasmGroup {
+            font-family: "Consolas", "Monaco", "Courier New", monospace;
+            font-size: 11px;
+            border: 1px solid palette(mid);
+            border-radius: 4px;
+            margin-top: 8px;
+            padding: 8px 6px 4px 6px;
+        }
+        QGroupBox#registersGroup::title, QGroupBox#stackGroup::title, QGroupBox#pagesGroup::title,
+        QGroupBox#memoryGroup::title, QGroupBox#disasmGroup::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            left: 8px;
+            padding: 0 4px;
+            color: palette(text);
+        }
+    )"));
+    ui->mainSplitter->setStretchFactor(0, 0);
+    ui->mainSplitter->setStretchFactor(1, 1);
+    ui->mainSplitter->setSizes({400, 700});
 
     // Create floating toolbar
     // toolBar = new QToolBar("Debugger toolbar", this);
@@ -147,6 +191,22 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     pcHistoryAction = new QAction("PC history", this);
     pcHistoryAction->setToolTip("The newest instructions the CPU started, with their window's page (starts recording)");
     toolBar->addAction(pcHistoryAction);
+    QMenu* machineMenu = new QMenu(this);
+    QAction* portWatchAction = machineMenu->addAction("Ports");
+    portWatchAction->setToolTip("Every port the machine decodes, the latched ones with their values (changes lit)");
+    QAction* rtcAction = machineMenu->addAction("CMOS clock");
+    rtcAction->setToolTip("The clock chip: time, registers A-D and the alarm decoded, every cell edited in place");
+    QAction* portEventsAction = machineMenu->addAction("Port events");
+    portEventsAction->setToolTip("When did the program read a key, write an AY register, change the border... (time travel)");
+    machineMenu->setToolTipsVisible(true);
+    machineButton = new QToolButton(this);
+    machineButton->setText("Machine \u25BE");
+    machineButton->setMenu(machineMenu);
+    machineButton->setPopupMode(QToolButton::InstantPopup);
+    toolBar->addWidget(machineButton);
+    connect(portWatchAction, &QAction::triggered, this, &DebuggerWindow::showPortWatch);
+    connect(rtcAction, &QAction::triggered, this, &DebuggerWindow::showRtc);
+    connect(portEventsAction, &QAction::triggered, this, &DebuggerWindow::showPortEvents);
     breakpointsAction = new QAction("Breakpoints", this);
     labelsAction = new QAction("Labels", this);
     visualizationAction = new QAction("Visualization", this);
@@ -519,6 +579,24 @@ void DebuggerWindow::onBindingReady()
 
     // Dispatch to children via signal (widgets are connected to readyForChildren)
     emit readyForChildren();
+    showMemoryAtPc();
+}
+
+void DebuggerWindow::showMemoryAtPc()
+{
+    // The memory view follows PC: its 16 KB page read again (a step changes memory), the PC byte marked; a page
+    // picked by hand stays until the next stop
+    if (!_emulator || !_emulator->IsPaused() || !_emulator->GetZ80State())
+        return;
+    const uint16_t pc = _emulator->GetZ80State()->Z80Registers::pc;
+    changeMemoryViewZ80Address(pc);
+    if (QHexMetadata* metadata = ui->hexView->getMetadata())
+    {
+        const uint16_t pcInPage = pc & 0x3FFF;
+        metadata->clear();
+        metadata->setMetadata(pcInPage, pcInPage + 1, Qt::black, QColor(255, 255, 140), tr("PC"));
+    }
+    ui->hexView->update();
 }
 
 void DebuggerWindow::onBindingNotReady()
@@ -630,44 +708,7 @@ void DebuggerWindow::updateState()
         // Update stack widget
         ui->stackWidget->refresh();
 
-        // Update hex viewer widget
-        if (true)
-        {
-            // Getting address of current ROM page
-            Memory* memory = _emulator->GetMemory();
-            uint16_t pc = state->Z80Registers::pc;
-            uint8_t bank = memory->GetZ80BankFromAddress(pc);
-            uint16_t addressInBank = pc & 0b0011'1111'1111'1111;
-            size_t pageOffset = memory->GetPhysicalOffsetForZ80Bank(bank);
-            uint8_t* pagePhysicalAddress = memory->GetPhysicalAddressForZ80Page(bank);
-
-            QHexDocument* document;
-            if (pageOffset != _curPageOffset)
-            {
-                _curPageOffset = pageOffset;
-
-                QByteArray data((const char*)pagePhysicalAddress, 0x4000);
-                document = QHexDocument::fromMemory<QMemoryBuffer>(data);
-                ui->hexView->setDocument(document);
-
-                // Display 8 hex bytes per line
-                QHexOptions options = ui->hexView->options();
-                options.linelength = 8;
-                ui->hexView->setOptions(options);
-            }
-            else
-            {
-                document = ui->hexView->getDocument();
-            }
-
-            ui->hexView->gotoOffset(addressInBank);
-            QHexMetadata* hexmetadata = ui->hexView->getMetadata();
-            hexmetadata->clear();
-            hexmetadata->setMetadata(addressInBank, addressInBank + 1, Qt::black, Qt::blue, "JR Z,xx");
-            hexmetadata->setMetadata(addressInBank + 1, addressInBank + 2, Qt::black, Qt::green, "");
-        }
-
-        ui->hexView->update();
+        showMemoryAtPc();
     }
     else
     {
@@ -1327,6 +1368,37 @@ void DebuggerWindow::showPcHistory()
     dialog.exec();
 }
 
+void DebuggerWindow::showPortWatch()
+{
+    if (!_emulator) return;
+
+    PortWatchDialog dialog(_emulator, this);
+    dialog.exec();
+}
+
+void DebuggerWindow::showRtc()
+{
+    if (!_emulator) return;
+
+    RtcDialog dialog(_emulator, this);
+    dialog.exec();
+    updateState();
+}
+
+void DebuggerWindow::showPortEvents()
+{
+    if (!_emulator) return;
+
+    PortEventsDialog dialog(_emulator, this);
+    // A hit sought: the panes show the machine there, the disassembly the instruction that made the access
+    connect(&dialog, &PortEventsDialog::seekedTo, this, [this](uint16_t pc) {
+        updateState();
+        ui->disassemblerWidget->goToAddress(pc);
+    });
+    dialog.exec();
+    updateState();
+}
+
 void DebuggerWindow::runTStates()
 {
     if (!_emulator) return;
@@ -1501,11 +1573,15 @@ void DebuggerWindow::changeMemoryViewZ80Address(uint16_t addr)
 {
     qDebug("DebuggerWindow::changeMemoryViewZ80Address");
 
-    Memory* memory = _emulator->GetMemory();
+    Memory* memory = _emulator ? _emulator->GetMemory() : nullptr;
+    if (!memory)
+        return;
     uint8_t bank = memory->GetZ80BankFromAddress(addr);
+    uint8_t* pageAddress = memory->GetPhysicalAddressForZ80Page(bank);
+    if (!pageAddress)
+        return;
     _curPageOffset = memory->GetPhysicalOffsetForZ80Bank(bank);
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
-    uint8_t* pageAddress = memory->GetPhysicalAddressForZ80Page(bank);
     size_t size = 0x4000;
     uint16_t offset = bank * 0x4000;
 

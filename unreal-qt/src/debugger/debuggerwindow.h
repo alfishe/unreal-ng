@@ -35,6 +35,9 @@ class DebuggerWindow : public QWidget, public Observer
 public:
     explicit DebuggerWindow(std::shared_ptr<Emulator> emulator = nullptr, QWidget* parent = nullptr);
 
+    /// The debugger window a pane sits in, however deep (a pane's parent is its frame); null outside one
+    static DebuggerWindow* Of(QWidget* widget);
+
     /// The panes as control surface contexts (control surfaces architecture.md §6): disassembly `debug.disasm`,
     /// registers `debug.registers`, memory `debug.memory`, stack `debug.stack`
     std::vector<std::pair<QWidget*, std::string>> contextPanes() const;
@@ -66,6 +69,8 @@ public:
     /// region <Helper methods>
 protected:
     void updateState();
+    /// The memory view at PC's page (a paused machine)
+    void showMemoryAtPc();
     void loadState();
     void saveState();
     void updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset, bool canManageBreakpoints,
@@ -117,6 +122,9 @@ private slots:
     void showDiskFiles();
     void showLiveSource();
     void showPcHistory();
+    void showPortWatch();
+    void showRtc();
+    void showPortEvents();
     void showBreakpointManager();
     void showLabelManager();
     void showVisualizationWindow();
@@ -204,6 +212,7 @@ private:
     QAction* diskFilesAction;
     QAction* liveSourceAction;
     QAction* pcHistoryAction;
+    QToolButton* machineButton = nullptr;  ///< Machine: Ports, CMOS clock, Port events
     QAction* breakpointsAction;
     QAction* labelsAction;
     QAction* visualizationAction;
