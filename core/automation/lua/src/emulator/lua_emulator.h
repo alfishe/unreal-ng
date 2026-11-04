@@ -7333,7 +7333,8 @@ public:
             return StateNodeToLua(ts, value);
         });
         // The analysis layers through analysis::Execute (analysiscontrol.h): analysis(action, opts) with action start |
-        // stop | status | build | cancel | explain | query | export | gallery | findings | review | experiment | cover; opts a table ({level=, mode=, record=} /
+        // stop | status | build | cancel | explain | query | export | gallery | findings | review | experiment | cover |
+        // trace; opts a table ({level=, mode=, record=} /
         // {frames=, from_frame=, from_tinframe=, to_frame=, path=, wait=} (from / to: a window, one stage) /
         // {address=, page=, what=} / {kind=, range=, limit=} / {format=, path=, ranges=,
         // width=} / {address=, kind=, scale=, path=, limit=}) or, for explain and gallery, the address, for start the
@@ -7341,7 +7342,8 @@ public:
         // text (gallery: the PNG base64 in png); a refusal: ok = false, error = why. L3: findings {op=, kind=, status=,
         // format=, path=}, review {op=, id=, verdict=, label=, title=, comment=, kind=, names=<JSON text>, reason=,
         // offset=, limit=, experiment=<JSON text>} (or the op), experiment {spec=<JSON text>, path=, finding=} (or the
-        // spec's JSON text), cover {budget=, frames=, ranges=} (or the budget)
+        // spec's JSON text), cover {budget=, frames=, ranges=} (or the budget), trace {path=, from_frame=, from_tinframe=,
+        // to_frame=, to_tinframe=, max_cycles=} (or the path: the CPU access trace of a window, accesstrace.h)
         lua.set_function("analysis", [this](sol::this_state ts, sol::optional<std::string> action,
                                             sol::optional<sol::object> opts) -> sol::object {
             const std::string verb = action.value_or("status");
@@ -7359,6 +7361,7 @@ public:
                                                              : verb == "findings" || verb == "review" ? "op"
                                                              : verb == "experiment" ? "spec"
                                                              : verb == "cover" ? "budget"
+                                                             : verb == "trace" ? "path"
                                                                                : "")
                                                : analysis::Options{});
             StateNode value = reply.ToValue();

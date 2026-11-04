@@ -8,6 +8,7 @@
 #include "common/modulelogger.h"
 #include "debugger/analyzers/analysis/analysisinstance.h"
 #include "debugger/analyzers/analysis/l1builder.h"
+#include "debugger/analyzers/analysis/replaywindow.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/config.h"
 #include "emulator/cpu/core.h"
@@ -128,42 +129,28 @@ bool ReplayBuild(const TraceBundle& bundle, const ReplayOptions& options, L1Resu
         return false;
     }
     const auto started = std::chrono::steady_clock::now();
-    AnalysisInstance clone;
-    if (!clone.Make(bundle, "analysis-replay", true, error))
+    // The clone, seeked to the window's start (replaywindow.h: TTD does the restore and the replay)
+    ReplayWindow window;
+    if (!window.Open(bundle, "analysis-replay", ttd::TTDTimePoint{options.fromFrame, options.fromTInFrame}, error))
         return false;
 
-    EmulatorContext* context = clone.Context();
-    ttd::TimeTravelController* ttd = context->pTimeTravelController;
-    Z80* z80 = context->pCore->GetZ80();
-    Memory* memory = context->pMemory;
+    EmulatorContext* context = window.Context();
+    ttd::TimeTravelController* ttd = window.Ttd();
+    Z80* z80 = window.Cpu();
+    Memory* memory = window.Mem();
     const size_t checkpointCount = ttd->GetCheckpointCount();
-    if (checkpointCount == 0)
-    {
-        error = "the recording has no keyframe";
-        return false;
-    }
-    ttd::TTDTimePoint from = ttd->GetCheckpoint(0)->time;
-    uint64_t end = ttd->SessionEndPosition().frame;
-    if (options.fromFrame > from.frame || (options.fromFrame == from.frame && options.fromTInFrame > from.tInFrame))
-        from = ttd::TTDTimePoint{options.fromFrame, options.fromTInFrame};
-    const uint64_t first = from.frame;
+    const uint64_t first = window.Start().frame;
+    uint64_t end = window.SessionEnd().frame;
     if (options.toFrame != 0 && options.toFrame < end)
         end = options.toFrame;
     if (options.maxFrames != 0 && end > first + options.maxFrames)
         end = first + options.maxFrames;
     if (end <= first)
     {
-        const std::string frames = std::to_string(ttd->GetCheckpoint(0)->time.frame) + ".." +
-                                   std::to_string(ttd->SessionEndPosition().frame);
+        const std::string frames = std::to_string(window.First().frame) + ".." + std::to_string(window.SessionEnd().frame);
         error = options.fromFrame != 0 || options.toFrame != 0
                     ? "the window holds no frame of the recording (frames " + frames + ")"
                     : "the recording is shorter than one frame";
-        return false;
-    }
-    if (!ttd->SeekTo(from, nullptr))
-    {
-        error = "the analysis instance could not seek to frame " + std::to_string(from.frame) + " t " +
-                std::to_string(from.tInFrame);
         return false;
     }
 
@@ -195,77 +182,56 @@ bool ReplayBuild(const TraceBundle& bundle, const ReplayOptions& options, L1Resu
     ReplaySummary summary;
     summary.firstFrame = first;
     summary.lastFrame = end;
-    bool cancelled = false;
-    bool stalled = false;
-    {
-        ttd::TimeTravelController::ReplayModeScope replay(*ttd);
-        z80->m1TraceHook = [&tap](uint16_t pc) {
-            Z80& cpu = *tap.z80;
-            const bool interrupted = cpu.interruptsAccepted != tap.interrupts;
-            tap.interrupts = cpu.interruptsAccepted;
-            uint16_t returnAddress = 0;
-            if (interrupted)
-                returnAddress = static_cast<uint16_t>(tap.memory->DirectReadFromZ80Memory(cpu.sp) |
-                                                      (tap.memory->DirectReadFromZ80Memory(static_cast<uint16_t>(cpu.sp + 1)) << 8));
-            const uint16_t page = tap.memory->GetPageForBank(static_cast<uint8_t>(pc >> 14));
-            // The arrival's in-frame position in TTD units (a window's from_tinframe, memory_at's t), not CPU
-            // T-states: they differ on a machine whose TTD clock counts finer (a turbo, a fractional clock)
-            tap.builder->OnStart(pc, page, RegsOf(cpu, pc), tap.state->t_states + cpu.t, tap.state->frame_counter,
-                                 cpu.halted != 0, interrupted, false, returnAddress,
-                                 tap.state->TtdTInFrame(static_cast<uint32_t>(cpu.t)));
-        };
-        z80->busTraceHook = [&builder](char type, uint16_t address, uint8_t value) {
-            builder.OnBus(type, address, value);
-        };
-        // A tool edit the recording holds (the fast tape load: a whole block at the ROM loader's entry) writes memory
-        // past the bus: its bytes are the writes of the instruction it replaced
-        ttd->SetEditWriteObserver([&builder](uint16_t address, uint8_t value) { builder.OnEditWrite(address, value); });
-
-        const uint32_t frameT = context->emulatorState.BaseToCpuT(context->config.frame);
-        const uint32_t chunk = options.chunkFrames != 0 ? options.chunkFrames : 25;
-        size_t checkpointCursor = 0;
-        while (context->emulatorState.frame_counter < end)
+    ReplayHooks hooks;
+    hooks.instruction = [&tap](uint16_t pc) {
+        Z80& cpu = *tap.z80;
+        const bool interrupted = cpu.interruptsAccepted != tap.interrupts;
+        tap.interrupts = cpu.interruptsAccepted;
+        uint16_t returnAddress = 0;
+        if (interrupted)
+            returnAddress = static_cast<uint16_t>(tap.memory->DirectReadFromZ80Memory(cpu.sp) |
+                                                  (tap.memory->DirectReadFromZ80Memory(static_cast<uint16_t>(cpu.sp + 1)) << 8));
+        const uint16_t page = tap.memory->GetPageForBank(static_cast<uint8_t>(pc >> 14));
+        // The arrival's in-frame position in TTD units (a window's from_tinframe, memory_at's t), not CPU
+        // T-states: they differ on a machine whose TTD clock counts finer (a turbo, a fractional clock)
+        tap.builder->OnStart(pc, page, RegsOf(cpu, pc), tap.state->t_states + cpu.t, tap.state->frame_counter,
+                             cpu.halted != 0, interrupted, false, returnAddress,
+                             tap.state->TtdTInFrame(static_cast<uint32_t>(cpu.t)));
+    };
+    hooks.bus = [&builder](char type, uint16_t address, uint8_t value) { builder.OnBus(type, address, value); };
+    // A tool edit the recording holds (the fast tape load: a whole block at the ROM loader's entry) writes memory
+    // past the bus: its bytes are the writes of the instruction it replaced
+    hooks.editWrite = [&builder](uint16_t address, uint8_t value) { builder.OnEditWrite(address, value); };
+    // At each chunk's frame boundary: the replay against the recording (the CPU and the keyframe there), then
+    // the progress report, which may cancel
+    size_t checkpointCursor = 0;
+    hooks.chunk = [&](uint64_t frame) {
+        while (checkpointCursor < checkpointCount && ttd->GetCheckpoint(checkpointCursor)->time.frame < frame)
+            ++checkpointCursor;
+        if (checkpointCursor < checkpointCount)
         {
-            const uint64_t now = context->emulatorState.frame_counter;
-            const uint64_t target = std::min<uint64_t>(end, now + chunk);
-            while (context->emulatorState.frame_counter < target && !stalled)
+            const ttd::TTDCheckpoint* cp = ttd->GetCheckpoint(checkpointCursor);
+            if (cp->time.frame == frame && cp->time.tInFrame == 0)
             {
-                const uint64_t frames = target - context->emulatorState.frame_counter;
-                const uint64_t run = frames * frameT;
-                const uint64_t t = z80->t;
-                const uint64_t before = context->emulatorState.t_states + t;
-                clone.GetEmulator()->RunTStates(run > t ? run - t : 1, /*skipBreakpoints=*/true);
-                stalled = context->emulatorState.t_states + z80->t == before;
-            }
-            if (stalled)
-                break;
-            // The replay against the recording: the CPU at this frame boundary and the keyframe's
-            const uint64_t frame = context->emulatorState.frame_counter;
-            while (checkpointCursor < checkpointCount && ttd->GetCheckpoint(checkpointCursor)->time.frame < frame)
-                ++checkpointCursor;
-            if (checkpointCursor < checkpointCount)
-            {
-                const ttd::TTDCheckpoint* cp = ttd->GetCheckpoint(checkpointCursor);
-                if (cp->time.frame == frame && cp->time.tInFrame == 0)
+                ++summary.checked;
+                const ttd::TTDCpuState& c = cp->cpu;
+                const bool same = c.pc == z80->pc && c.sp == z80->sp && c.af == z80->af && c.bc == z80->bc &&
+                                  c.de == z80->de && c.hl == z80->hl && c.ix == z80->ix && c.iy == z80->iy;
+                if (!same)
                 {
-                    ++summary.checked;
-                    const ttd::TTDCpuState& c = cp->cpu;
-                    const bool same = c.pc == z80->pc && c.sp == z80->sp && c.af == z80->af && c.bc == z80->bc &&
-                                      c.de == z80->de && c.hl == z80->hl && c.ix == z80->ix && c.iy == z80->iy;
-                    if (!same)
-                    {
-                        if (summary.diverged == 0)
-                            summary.firstDivergence = frame;
-                        ++summary.diverged;
-                    }
+                    if (summary.diverged == 0)
+                        summary.firstDivergence = frame;
+                    ++summary.diverged;
                 }
             }
-            if (options.progress && !options.progress(frame - first, end - first))
-            {
-                cancelled = true;
-                break;
-            }
         }
+        return !options.progress || options.progress(frame - first, end - first);
+    };
+    const ReplayWindow::Run run = window.RunTo(end, options.chunkFrames != 0 ? options.chunkFrames : 25, hooks);
+    const bool cancelled = run == ReplayWindow::Run::Stopped;
+    const bool stalled = run == ReplayWindow::Run::Stalled;
+    if (!stalled && !cancelled)
+    {
         builder.Flush(RegsOf(*z80, z80->pc), context->emulatorState.t_states + z80->t);
         for (uint8_t bank = 0; bank < 4; ++bank)
         {
@@ -279,9 +245,6 @@ bool ReplayBuild(const TraceBundle& bundle, const ReplayOptions& options, L1Resu
             if (it->end.empty())
                 it->end = snap(bank);
         }
-        z80->m1TraceHook = nullptr;
-        z80->busTraceHook = nullptr;
-        ttd->SetEditWriteObserver(nullptr);
     }
     if (cancelled)
     {

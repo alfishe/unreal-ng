@@ -66,6 +66,12 @@ As implemented: `IBreakpointTapSink::OnTap(const BreakpointTapHit&)` with `{cook
 kind}` (`BRK_TAP_EXEC / READ / WRITE / PORT_IN / PORT_OUT`); `descriptor->tapSink` (0 = `BRK_NO_TAP`) and
 `tapCookie`. HapticProbes and the AnalyzerManager are the sinks; the old probe names are gone.
 
+A run that skips breakpoints (`RunNFrames` and the other direct runs by default, so `run_frames` on every plane) still
+tells the taps: `skipBreakpoints` cancels stops, not observation. Memory and port taps were never under it; the
+execution check calls `BreakpointManager::HandlePCTaps(pc)` there, a walk that passes over every non-tap candidate
+(nothing counted, nothing stops, the stepping-on pass left to the breakpoint). Nothing armed: the same `execTapHold`
+test as before, no cost.
+
 ## 4. Gates: demand from the armed set, not from one client
 
 Today a client flips global switches (`setProbeDebugHold`, `execProbeHold`). Instead the breakpoint manager derives
@@ -236,6 +242,8 @@ Each phase lands on its own with its tests; phases 1-2 hold the performance clai
 
 - Two sinks at once on the same address: both get the hit, neither stops, the user's list stays empty.
 - A tap and a stopping breakpoint on one address: the stop happens, the tap is told.
+- A run that skips breakpoints tells the exec taps and leaves the breakpoints uncounted
+  (`BreakpointTaps_Test.RunThatSkipsBreakpointsStillTellsTheExecTaps`).
 - Demand: arming / disarming each kind sets and clears exactly its gate; with nothing armed the memory interface is
   the fast one and `IdleStepsInert` holds.
 - Light write path: a tap in bank 2 does not route bank 1 writes through the hook; a bank switch moves the hook;

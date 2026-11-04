@@ -12,6 +12,8 @@
 ///                                                    symbols, map)
 ///   POST /analysis/gallery {address?, kind?, scale?, path?, limit?}  (P4: the graphics regions; with an address, its
 ///                                                    PNG preview, base64 in "png" or written to path)
+///   POST /analysis/trace   {path, from_frame?, from_tinframe?, to_frame?, to_tinframe?, max_cycles?}  (the CPU
+///                                                    access trace of a window of the recording, accesstrace.h)
 ///
 /// Every route turns its request into an analysis::Execute action (core/src/debugger/analyzers/analysis/
 /// analysiscontrol.h): the checks, the answer and its "text" are shared with the CLI, MCP, Lua and Python. A WebSocket
@@ -239,6 +241,15 @@ void EmulatorAPI::analysisCover(const HttpRequestPtr& req, std::function<void(co
     if (!OptionsFromJson(req, options, callback))
         return;
     RespondAnalysis(id, "cover", options, callback);
+}
+
+void EmulatorAPI::analysisTrace(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    analysis::Options options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    RespondAnalysis(id, "trace", options, callback);
 }
 
 }  // namespace v1

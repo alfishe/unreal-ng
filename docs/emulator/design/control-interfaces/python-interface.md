@@ -2110,6 +2110,7 @@ emu.analysis("export", format="skool", path="game.skool", ranges="5900-59FF,8000
 g = emu.analysis("gallery", kind="sprite")             # the graphics found: {regions [...], count, truncated, text}
 png = emu.analysis("gallery", address=0x8200, scale=4)["png"]  # one drawn: base64 PNG; width, height, frames
 emu.analysis("gallery", address="$8200", path="sprite.png")    # or written to a file
+emu.analysis("trace", path="scratch/pass.uatr", from_frame=1001, to_frame=1003)  # the CPU access trace of a window
 
 # L3 (the review): findings register, review queue, experiments on muted clones, directed coverage
 emu.analysis("findings", kind="bug")                   # {count, total, by_kind, by_status, findings [...], text}

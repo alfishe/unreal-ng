@@ -9,6 +9,7 @@
 
 #include "base/featuremanager.h"
 #include "common/base64.h"
+#include "debugger/analyzers/analysis/accesstrace.h"
 #include "debugger/analyzers/analysis/analysisjobs.h"
 #include "debugger/analyzers/analysis/l2export.h"
 #include "debugger/analyzers/analysis/l2gallery.h"
@@ -83,7 +84,7 @@ const std::vector<std::string>& Actions()
 {
     static const std::vector<std::string> actions = {"start",   "stop",     "status", "build",      "cancel",
                                                       "explain", "query",    "export", "gallery",    "findings",
-                                                      "review",  "experiment", "cover"};
+                                                      "review",  "experiment", "cover",  "trace"};
     return actions;
 }
 
@@ -102,6 +103,8 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
                                                     "comment", "kind",  "names",   "by",         "experiment",
                                                     "ranges", "reason", "offset",  "limit"};
     static const std::vector<std::string> experiment = {"spec", "path", "parallel", "finding"};
+    static const std::vector<std::string> trace = {"from_frame", "from_tinframe", "to_frame", "to_tinframe", "path",
+                                                   "max_cycles"};
     static const std::vector<std::string> cover = {"budget", "per_branch", "frames", "parallel", "limit", "ranges"};
     if (action == "start")
         return start;
@@ -123,6 +126,8 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
         return experiment;
     if (action == "cover")
         return cover;
+    if (action == "trace")
+        return trace;
     return none;
 }
 
@@ -540,6 +545,79 @@ Reply Build(Emulator& emulator, const Options& options)
                       ". Explain a routine's address for its fact sheet";
     else
         reply.text += "; " + view.state + (view.error.empty() ? "" : ": " + view.error);
+    return reply;
+}
+
+Reply Trace(Emulator& emulator, const Options& options)
+{
+    AccessTraceOptions trace;
+    uint64_t value = 0;
+    if (const auto it = options.find("from_frame");
+        it != options.end() && !ParseCount(it->second, 4000000000ull, trace.fromFrame))
+        return Refuse(Error::BadRequest, "from_frame: the frame the window starts in, an integer");
+    if (const auto it = options.find("from_tinframe"); it != options.end())
+    {
+        if (!ParseCount(it->second, 10000000, value))
+            return Refuse(Error::BadRequest, "from_tinframe: the point inside from_frame in TTD time units, an integer");
+        trace.fromTInFrame = static_cast<uint32_t>(value);
+    }
+    if (const auto it = options.find("to_frame"); it != options.end() && !ParseCount(it->second, 4000000000ull, trace.toFrame))
+        return Refuse(Error::BadRequest, "to_frame: the frame the window ends in, an integer (default from_frame + 1)");
+    if (const auto it = options.find("to_tinframe"); it != options.end())
+    {
+        if (!ParseCount(it->second, 10000000, value))
+            return Refuse(Error::BadRequest, "to_tinframe: the point inside to_frame the window ends before, TTD time units");
+        trace.toTInFrame = static_cast<uint32_t>(value);
+    }
+    if (const auto it = options.find("max_cycles"); it != options.end() && !ParseCount(it->second, 100000000, trace.maxCycles))
+        return Refuse(Error::BadRequest, "max_cycles: the most bus cycles to write, an integer up to 100000000");
+    const auto pathIt = options.find("path");
+    if (pathIt == options.end() || pathIt->second.empty())
+        return Refuse(Error::BadRequest, "trace: path, the file on the emulator's host to write the trace to, is required");
+    trace.path = pathIt->second;
+    if ((trace.toFrame != 0 || trace.toTInFrame != 0) &&
+        (trace.toFrame < trace.fromFrame || (trace.toFrame == trace.fromFrame && trace.toTInFrame <= trace.fromTInFrame)))
+        return Refuse(Error::BadRequest, "to_frame / to_tinframe: the window ends before it starts");
+
+    const std::string id = emulator.GetId();
+    L1Jobs& jobs = L1Jobs::Instance();
+    if (const JobView view = jobs.View(id); view.state == "running")
+        return Refuse(Error::Conflict, "a build is running (job " + std::to_string(view.id) + "): wait for it, or cancel it");
+    TraceBundle bundle;
+    std::string error;
+    bool captured = false;
+    {
+        Emulator::CpuHold hold(emulator, "analysis trace");
+        captured = TraceBundle::Capture(emulator, bundle, error);
+    }
+    if (!captured)
+        return Refuse(Error::Conflict, error);
+    jobs.NoteRecording(id, false);
+    AccessTraceSummary summary;
+    if (!ReplayAccessTrace(bundle, trace, summary, error))
+        return Refuse(Error::Conflict, error);
+
+    Reply reply;
+    reply.body["path"] = trace.path;
+    reply.body["from_frame"] = summary.fromFrame;
+    reply.body["from_tinframe"] = static_cast<uint64_t>(summary.fromTInFrame);
+    reply.body["to_frame"] = summary.toFrame;
+    reply.body["to_tinframe"] = static_cast<uint64_t>(summary.toTInFrame);
+    reply.body["instructions"] = summary.instructions;
+    reply.body["cycles"] = summary.cycles;
+    reply.body["fetches"] = summary.fetches;
+    reply.body["reads"] = summary.reads;
+    reply.body["writes"] = summary.writes;
+    reply.body["ports"] = summary.ports;
+    reply.body["bytes"] = summary.bytes;
+    reply.body["truncated"] = summary.truncated;
+    reply.text = "access trace " + std::to_string(summary.fromFrame) + ":" + std::to_string(summary.fromTInFrame) + " .. " +
+                 std::to_string(summary.toFrame) + ":" + std::to_string(summary.toTInFrame) + ": " +
+                 std::to_string(summary.instructions) + " instructions, " + std::to_string(summary.cycles) +
+                 " bus cycles (" + std::to_string(summary.fetches) + " fetches, " + std::to_string(summary.reads) +
+                 " reads, " + std::to_string(summary.writes) + " writes, " + std::to_string(summary.ports) +
+                 " port accesses), " + std::to_string(summary.bytes) + " bytes written to " + trace.path +
+                 (summary.truncated ? "; truncated at max_cycles" : "");
     return reply;
 }
 
@@ -1129,7 +1207,7 @@ Reply Execute(Emulator& emulator, const std::string& action, const Options& opti
     if (std::find(actions.begin(), actions.end(), action) == actions.end())
         return Refuse(Error::BadRequest, "unknown action '" + action +
                                               "' (start, stop, status, build, cancel, explain, query, export, gallery, findings, "
-                                              "review, experiment, cover)");
+                                              "review, experiment, cover, trace)");
     const std::vector<std::string>& known = OptionsFor(action);
     for (const auto& [name, value] : options)
     {
@@ -1164,6 +1242,8 @@ Reply Execute(Emulator& emulator, const std::string& action, const Options& opti
         return ExportDraft(emulator, options);
     if (action == "gallery")
         return Gallery(emulator, options);
+    if (action == "trace")
+        return Trace(emulator, options);
     if (action == "findings" || action == "review" || action == "experiment" || action == "cover")
         return ExecuteReview(emulator, action, options);
     return Explain(emulator, *tracker, options);

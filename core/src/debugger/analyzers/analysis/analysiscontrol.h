@@ -34,6 +34,10 @@
 ///                          maps; kind filters them) with their geometry; with an address (or a label), the region
 ///                          starting there (else covering it) drawn as a PNG (l2gallery.h) zoomed scale times (2,
 ///                          1..8): written to path, or answered base64 in "png"
+///   trace   path [from_frame from_tinframe to_frame to_tinframe max_cycles]  the CPU access trace of a window of
+///                          the recording (accesstrace.h): every instruction with its registers and every fetch, read,
+///                          write and port access with its T-state, and the memory the window starts from, written to
+///                          path; the window defaults to the frame from_frame, spans at most 3000 frames
 ///   findings, review, experiment, cover  L3 (P5): the findings register, the review queue and its decisions, the
 ///                          experiment runner on muted clones and directed coverage (l3session.h lists their options)
 ///
