@@ -37,7 +37,7 @@
 namespace
 {
 const QColor kBackground(24, 24, 24);
-constexpr int kMaxQueuedFrames = 4;  // ffmpeg behind by this many pictures: the next ones repeat (running) or wait (paused)
+constexpr int kMaxQueuedFrames = 10;  // ffmpeg behind by this many pictures: the next ones repeat (running) or wait (paused)
 
 QImage ToImage(const WindowViewGrab& grab)
 {
@@ -187,9 +187,67 @@ struct WindowRecorder::Writer
         return frame;
     }
 
+    /// The common case at full size: the window's picture (RGBA) is at most a few pixels off the frame's picture
+    /// area, so it is placed in the middle with no scaling and its red / blue swapped row by row into the frame
+    /// (ARGB32 = B,G,R,A bytes). Qt's smooth scaling and format conversion of a 4K picture took 25-50 ms, more than
+    /// a frame, and the frames owed were held (the interlace then jumps instead of flickering)
+    bool composeFast(QImage& frame, const Job& job) const
+    {
+        const QImage& picture = job.picture;
+        const bool swap = picture.format() == QImage::Format_RGBA8888;
+        const bool same = picture.format() == QImage::Format_ARGB32_Premultiplied ||
+                          picture.format() == QImage::Format_ARGB32 || picture.format() == QImage::Format_RGB32;
+        if (scale != 1 || frame.format() != QImage::Format_ARGB32 || (!swap && !same))
+            return false;
+        if (picture.width() > frame.width() || picture.height() > frame.height() ||
+            std::abs(picture.width() - screenRect.width()) > 4 || std::abs(picture.height() - screenRect.height()) > 4)
+            return false;
+        const int x0 = screenRect.x() + (screenRect.width() - picture.width()) / 2;
+        const int y0 = screenRect.y() + (screenRect.height() - picture.height()) / 2;
+        if (x0 < 0 || y0 < 0 || x0 + picture.width() > frame.width() || y0 + picture.height() > frame.height())
+            return false;
+        // Rows are independent: a few threads write them at once (the encoder's pixel buffer is shared memory, one
+        // thread does not fill its bandwidth)
+        const auto swapRows = [&](int first, int last)
+        {
+            for (int y = first; y < last; ++y)
+            {
+                const uint32_t* from = reinterpret_cast<const uint32_t*>(picture.constScanLine(y));
+                uint32_t* to = reinterpret_cast<uint32_t*>(frame.scanLine(y0 + y)) + x0;
+                for (int x = 0; x < picture.width(); ++x)
+                {
+                    const uint32_t p = from[x];
+                    // RGBA bytes = A,B,G,R as a little-endian word: red and blue swap. BGRA-ordered formats are the
+                    // frame's own order. The window is opaque: the alpha is set either way
+                    to[x] = (swap ? ((p & 0x0000FF00u) | ((p & 0xFFu) << 16) | ((p >> 16) & 0xFFu)) : (p & 0x00FFFFFFu)) |
+                            0xFF000000u;
+                }
+            }
+        };
+        constexpr int kParts = 4;
+        const int rows = picture.height();
+        std::thread helpers[kParts - 1];
+        for (int part = 1; part < kParts; ++part)
+            helpers[part - 1] = std::thread(swapRows, rows * part / kParts, rows * (part + 1) / kParts);
+        swapRows(0, rows / kParts);
+        for (std::thread& helper : helpers)
+            helper.join();
+        return true;
+    }
+
     void composeInto(QImage& frame, const Job& job) const
     {
         frame.fill(kBackground);
+        const bool fast = composeFast(frame, job);
+        if (fast)
+        {
+            if (!job.keyboard.isNull())
+            {
+                QPainter painter(&frame);
+                painter.drawImage(keyboardRect.topLeft(), job.keyboard);
+            }
+            return;
+        }
         QPainter painter(&frame);
         QImage picture = job.picture;
         if (scale > 1)  // blocks: the CRT mask stays sharp
@@ -216,6 +274,11 @@ struct WindowRecorder::Writer
         config.frameRate = static_cast<float>(fps);
         config.videoCodec = nativeCodec;
         config.qualityPreset = nativeQuality;
+        // The encoder's own default is sized for a 352x288 frame and grows with the area: about 550 Mbit/s at 4K, which
+        // the hardware encoder cannot deliver in real time on a flickering (interlaced) picture. 0.25 bit per pixel and
+        // frame: ~100 Mbit/s at 4K, ~25 at 1080p
+        config.videoBitrate = std::max<uint32_t>(
+            8000, static_cast<uint32_t>(static_cast<double>(size.width()) * size.height() * fps * 0.25 / 1000.0));
         config.audioSampleRate = audioRate;
         config.audioChannels = audio ? AUDIO_CHANNELS : 0;
         std::string failure;
@@ -860,13 +923,13 @@ void WindowRecorder::onRefreshed()
         while (_keyboardDelay.size() > 1 && _keyboardDelay[1].first + delay <= target)
             _keyboardDelay.pop_front();
     }
-    WindowViewGrab grab;
+    QImage picture;
     std::string error;
-    if (!_screen || !_screen->grabWindowView(grab, error, false, _request.pictureHeight))
+    if (!_screen || !_screen->grabWindowPicture(picture, error, _request.pictureHeight))
         return;
     // The frames the window did not draw (a busy GUI, turbo) repeat this picture: the time stays the machine's
     Writer::Job job;
-    job.picture = ToImage(grab);
+    job.picture = std::move(picture);
     if (!_keyboardDelay.empty())
         job.keyboard = _keyboardDelay.front().second;
     job.repeat = static_cast<uint32_t>(target - _frames);
