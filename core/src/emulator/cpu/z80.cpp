@@ -1617,14 +1617,31 @@ uint8_t Z80::in(uint16_t port)
         uint8_t value = inFromBus(port);
         if (rzx::RzxPlayer* player = _context->rzxPlayer) [[unlikely]]
             value = player->OnIn(port, value, pc);
-        return journal->OnRead(port, value, frame, tInFrame, pc);
+        value = journal->OnRead(port, value, frame, tInFrame, pc);
+        if (busTraceHook)
+            TraceIn(port, value);
+        return value;
     }
     // RZX playback: the CPU gets the recorded value (emulator/rzx/, design
     // §4); the devices still see the read. Below the TTD journal, so a TTD
     // recording during playback stores the RZX-fed values
+    uint8_t value = inFromBus(port);
     if (rzx::RzxPlayer* player = _context->rzxPlayer) [[unlikely]]
-        return player->OnIn(port, inFromBus(port), m1_pc);
-    return inFromBus(port);
+        value = player->OnIn(port, value, m1_pc);
+    if (busTraceHook)
+        TraceIn(port, value);
+    return value;
+}
+
+/// The trace hook's 'I' event: the byte the CPU takes (a replay's journal value, the floating bus, an RZX frame's),
+/// not the device's raw answer, so a replay's tools read the IN values the recording saw; at the T of the bus answer
+/// (inTraceT, kept by inFromBus), as the bus-phase consumers time it
+void Z80::TraceIn(uint16_t port, uint8_t value)
+{
+    const auto now = t;
+    t = inTraceT;
+    busTraceHook('I', port, value);
+    t = now;
 }
 
 /// The read as the bus answers it: interceptor, model decoder, observer cards,
@@ -1649,8 +1666,7 @@ uint8_t Z80::inFromBus(uint16_t port)
         uint8_t intercepted = 0xFF;
         if (portInterceptor->InterceptIn(port, intercepted))
         {
-            if (busTraceHook)
-                busTraceHook('I', port, intercepted);
+            inTraceT = t;
             if (ioContention)
                 IoWaitAfterIorq(port, ioWait);
             return intercepted;
@@ -1665,8 +1681,7 @@ uint8_t Z80::inFromBus(uint16_t port)
     bool cardDrove = false;
     uint8_t result = portDecoder.ReadCycle(port, m1_pc, cardDrove);
 
-    if (busTraceHook)
-        busTraceHook('I', port, result);
+    inTraceT = t;
 
     // Floating bus: if no hardware device decoded the port, the ULA returns
     // the video byte currently on the data bus.

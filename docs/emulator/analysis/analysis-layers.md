@@ -102,7 +102,7 @@ to the run:
 | the analysis instance, the recording loaded into its TTD | `AnalysisInstance::Make` (the `TraceBundle`'s session file) |
 | the machine at the window's start, from the nearest keyframe | `TimeTravelController::SeekTo` (a start before the first keyframe starts there) |
 | the recorded inputs played, not new ones recorded | `TimeTravelController::ReplayModeScope` |
-| every instruction start, every bus cycle, every tool edit's write | `Z80::m1TraceHook`, `Z80::busTraceHook`, `TimeTravelController::SetEditWriteObserver`, set for the run only (`HookScope`: taken off on any exit) |
+| every instruction start, every bus cycle, every tool edit's write | `Z80::m1TraceHook`, `Z80::busTraceHook`, `TimeTravelController::SetEditWriteObserver`, set for the run only (`HookScope`: taken off on any exit). A port read's value is the byte the CPU took - the recording's port journal value, the floating bus - not the replay's live device answer (a tape is not played in a replay) |
 | frame by frame to the window's end, a callback at each chunk's boundary | `Emulator::RunTStates`; the callback may stop the run (a cancelled build), a hook may call `Stop()` (the trace's end reached) |
 
 `RunTo` answers `Finished`, `Stopped` or `Stalled` (the clone stopped advancing). What a consumer adds is its own:
