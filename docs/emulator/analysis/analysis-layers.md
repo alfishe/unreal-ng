@@ -582,6 +582,23 @@ into the draft export like a resolve's label and title.
 - One **base** analysis instance holds the recording (`TraceBundle`, kept per build) and is seeked to each start point
   (`start`: the first keyframe, `end`, `frame:N`). Every experiment gets the base's state copied into an analysis
   instance of its own (`MachineStateTransfer`, the clone path) and runs there; the source instance is never touched.
+- The experiment's machine gets the recording's floppies and tape. The base replays disk and tape reads from the
+  port journal and needs no media, but a free machine reads its drives itself: with empty drives the first read after
+  the fork (TR-DOS waiting for a DRQ that never comes) leaves the recorded path. `TraceBundle::media` carries, per slot
+  (`fdd.a`..`fdd.d`, `tape`), an in-memory copy of the source's medium as at `Capture`
+  (`MachineStateTransfer::CopyMovingMedium`), or an image file a caller adds to a bundle built from a session file
+  (`TraceBundle::AddMediumFile("fdd.a", "game.trd")`, opened in session access: the file is never written). The base
+  inserts them before the session loads, so a seek finds the recording's medium (an untouched copy keeps its file's
+  identity: no `media_version_differs` issue), and `MachineStateTransfer` copies them into every experiment's machine.
+- Every analysis instance runs with fast disk off. A recording never has it (it compresses the WD1793's timing,
+  `FeatureManager::ttdLocksFastLoader`), but a free machine has no TTD to force it off: with it on, the first seek
+  after the fork stepped the head about four times faster than the recording did and the run left the recorded path
+  even with the disk in place. Fast tape and turbo tape are left as the instance is configured: a free machine with
+  fast tape traps the ROM loader where a recording made without it ran the loader in real time (not measured yet).
+- Known limit: the copy is the medium as at `Capture`, the guest's writes made during the recording included; the
+  media manager's undo log does not travel with it. A disk the program wrote while recording is therefore another
+  medium for the base (its identity is the copy's): a seek reports `media_version_differs` and keeps it, the replay
+  stays bit-exact (the journal feeds the reads), but a fork made before a write reads the written sectors.
 - A pool of workers (`parallel`, default min(4, cores / 4), at most 8) runs the experiments; two never share a
   machine. Every analysis instance is muted, sound off, logging off.
 - Pokes and registers go in once the state is copied; input events (keys, Kempston directions, release all) at their

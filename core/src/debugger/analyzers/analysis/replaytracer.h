@@ -22,15 +22,32 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "debugger/analyzers/analysis/l1model.h"
 
 class Emulator;
+class Medium;
 struct CONFIG;
 struct SlotConfig;
 
 namespace analysis
 {
+
+/// A medium the recording ran with, for one slot ("fdd.a", "tape"). The base replays the reads from the port
+/// journal, but a free machine forked from it reads the medium itself: without it, the first disk read after the
+/// fork leaves the recorded path. Either an in-memory copy as at Capture, or an image file opened on each instance
+struct BundleMedium
+{
+    std::string slot;
+    /// The source's medium as at Capture (MachineStateTransfer::CopyMovingMedium): read-only, shared by the
+    /// instances made from the bundle (each inserts its own copy of it)
+    std::shared_ptr<const Medium> medium;
+    /// Or an image file (TraceBundle::AddMediumFile), opened by each instance's media manager: the same identity
+    /// (the file's hash) as when the recording machine opened it
+    std::string path;
+    bool writeProtect = false;
+};
 
 /// Everything one recording session produced, under one handle: the TTD recording (journals and keyframes, as the
 /// session file's bytes), and what the source instance holds of the same session - the L0 access facts, the
@@ -51,10 +68,18 @@ struct TraceBundle
     std::string factsMode;                     ///< "z80" / "physical"
     bool coverage = false;
     bool callTrace = false;
+    /// The floppies and the tape in the source's slots at Capture (the kinds MachineStateTransfer moves)
+    std::vector<BundleMedium> media;
 
     /// Capture @p source's session. A recording in flight is stopped first (the bundle is one whole session).
     /// The caller holds the source's CPU. False with @p error when there is no recording
     static bool Capture(Emulator& source, TraceBundle& out, std::string& error);
+
+    /// Add the image file @p path ("game.trd", "game.tap") for @p slot ("fdd.a", "tape"), replacing what the
+    /// bundle holds for that slot: a bundle built from a session file gets the media the recording ran with.
+    /// False with @p error when the file does not exist
+    bool AddMediumFile(const std::string& slot, const std::string& path, std::string& error,
+                       bool writeProtect = false);
 
     StateNode ToStateNode() const;
 };

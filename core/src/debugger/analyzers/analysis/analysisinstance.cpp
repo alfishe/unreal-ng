@@ -12,6 +12,8 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/media/mediamanager.h"
+#include "emulator/media/medium.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
 #include "emulator/slots/slotmanager.h"
@@ -29,6 +31,47 @@ std::mutex& LifecycleMutex()
 {
     static std::mutex mutex;
     return mutex;
+}
+
+/// The bundle's floppies and tape into the same slots. The replay itself reads the port journal and needs none, but
+/// a free machine forked from this one gets its media from here (MachineStateTransfer): without them its first disk
+/// read after the fork finds an empty drive. Inserted before the session loads (an insert would end it), so every
+/// seek's SetMediaToCheckpoint finds them; an untouched medium has the recording's identity and is bit-exact there
+bool InsertBundleMedia(const TraceBundle& bundle, MediaManager& media, std::string& error)
+{
+    for (const BundleMedium& entry : bundle.media)
+    {
+        InsertOptions options;
+        options.immediate = true;  // no swap delay: the restored controller state expects the medium in place
+        options.writeProtect = entry.writeProtect;
+        options.journal = JournalChoice::Off;  // a throwaway machine: no session journal next to anybody's image
+        MediaResult inserted;
+        if (entry.medium)
+        {
+            std::unique_ptr<Medium> copy = MachineStateTransfer::CopyMovingMedium(*entry.medium, "analysis");
+            if (!copy)
+                continue;
+            inserted = media.Insert(entry.slot, std::move(copy), options);
+        }
+        else if (!entry.path.empty())
+        {
+            options.access = AccessMode::Session;  // the guest's writes stay in memory: the image file is never written
+            MediaSource source;
+            source.type = MediaSourceType::File;
+            source.path = entry.path;
+            inserted = media.Insert(entry.slot, source, options);
+        }
+        else
+            continue;
+        media.WaitApplied(entry.slot, 1000);
+        if (!inserted.Ok())
+        {
+            error = "the recording's medium in " + entry.slot + " did not go into the analysis instance: " +
+                    inserted.message;
+            return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace
@@ -101,6 +144,10 @@ bool AnalysisInstance::Make(const TraceBundle& bundle, const char* name, bool se
     {
         features->setFeature(Features::kSoundGeneration, false);
         features->setFeature(Features::kTimeTravel, session);
+        // A recording never runs with fast disk (FeatureManager::ttdLocksFastLoader: it compresses the WD1793's
+        // timing), and a free machine is the recording's continuation: with it on, the first seek after the fork
+        // steps the head several times faster than the recording did and the run leaves the recorded path
+        features->setFeature(Features::kFastDisk, false);
     }
     if (context->pSoundManager != nullptr)
         context->pSoundManager->mute();
@@ -115,6 +162,8 @@ bool AnalysisInstance::Make(const TraceBundle& bundle, const char* name, bool se
         error = "the analysis instance has no time travel engine";
         return false;
     }
+    if (context->pMediaManager != nullptr && !InsertBundleMedia(bundle, *context->pMediaManager, error))
+        return false;
     std::istringstream stream(*bundle.session, std::ios::binary);
     std::string why;
     if (!ttd->DeserializeSession(stream, why))
