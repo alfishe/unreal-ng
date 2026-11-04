@@ -158,7 +158,8 @@ StateNode TtdPosition(Emulator& emulator)
 /// `toggle.<stem>` or `toggle.<stem>.<param value>`: the action and its params; false when no toggle has that name
 bool ToggleOf(const std::string& name, std::string& id, StateNode& params)
 {
-    for (const ActionRegistry::ToggleReadout& toggle : ActionRegistry::Instance().ToggleReadouts())
+    const auto toggles = ActionRegistry::Instance().ToggleReadouts();
+    for (const ActionRegistry::ToggleReadout& toggle : *toggles)
     {
         if (toggle.param.empty())
         {
@@ -223,7 +224,8 @@ std::vector<std::string> ReadoutNames(Emulator& emulator)
 {
     std::vector<std::string> names = BaseReadoutNames();
     FeatureManager* features = emulator.GetFeatureManager();
-    for (const ActionRegistry::ToggleReadout& toggle : ActionRegistry::Instance().ToggleReadouts())
+    const auto toggles = ActionRegistry::Instance().ToggleReadouts();
+    for (const ActionRegistry::ToggleReadout& toggle : *toggles)
     {
         if (toggle.param.empty())
             names.push_back(toggle.stem);

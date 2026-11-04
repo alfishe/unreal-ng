@@ -52,4 +52,8 @@ public:
     /// Set from text. Bool settings accept on/off/true/false/1/0. Returns
     /// false with a message listing the accepted values on bad input
     static bool Set(SoundManager& sound, std::string_view name, std::string_view value, std::string& error);
+
+private:
+    /// Set without the notification
+    static bool Apply(SoundManager& sound, std::string_view name, std::string_view value, std::string& error);
 };

@@ -10,7 +10,9 @@
 //
 // That "something happened" is a long poll (GET /debug/wait) on a thread of its own with its own connection; it
 // calls the window's listener, as the core's events do in the in-process adapter. Everything else runs on the GUI
-// thread over one keep-alive connection. Changes go through a run-control session (X-Unreal-Session).
+// thread over one keep-alive connection. Every request says it is a debugger's (X-Unreal-Source: debugger): the
+// user's own hands like the GUI, no run-control session - other debuggers and the GUI go on, every client sees the
+// changes; while an automation session holds the machine its changes are refused, as the GUI is locked.
 
 #include "remotemachine.h"
 
@@ -53,7 +55,6 @@ class Http
 public:
     Http(const QString &host, uint16_t port) : m_host(host), m_port(port) {}
 
-    void set_session(const QByteArray &s) { m_session = s; }
     // While the gate is down every request answers 0 at once (the machine is offline: nothing to ask)
     void set_gate(const std::atomic<bool> * open) { m_gate = open; }
     uint64_t requests() const { return m_requests; }
@@ -87,7 +88,6 @@ public:
 private:
     QString m_host;
     uint16_t m_port;
-    QByteArray m_session;
     const std::atomic<bool> * m_gate = nullptr;
     std::unique_ptr<QTcpSocket> m_socket;
     QByteArray m_buffer;
@@ -108,7 +108,7 @@ private:
                           QByteArray::number(m_port) + "\r\nConnection: keep-alive\r\n";
         if (!body.isEmpty()) head += "Content-Type: application/json\r\n";
         head += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
-        if (!m_session.isEmpty()) head += "X-Unreal-Session: " + m_session + "\r\n";
+        head += "X-Unreal-Source: debugger\r\n";
         head += "\r\n";
         m_socket->write(head + body);
         m_requests++;
@@ -553,15 +553,13 @@ private:
 class RemoteMachine : public ecatshim::Emulator
 {
 public:
-    RemoteMachine(const RemoteOptions &o, const QString &id, const QByteArray &session)
+    RemoteMachine(const RemoteOptions &o, const QString &id)
         : m_http(QString::fromStdString(o.host), o.port), m_host(QString::fromStdString(o.host)), m_port(o.port),
-          m_want(QString::fromStdString(o.emulator)), m_base("/api/v1/emulator/" + id), m_session(session),
+          m_want(QString::fromStdString(o.emulator)), m_base("/api/v1/emulator/" + id),
           m_settings("unreal-ng", "unreal-debugger")
     {
-        m_http.set_session(session);
         m_http.set_gate(&m_online);
         m_wait_base = m_base;
-        m_wait_session = session;
     }
 
     ~RemoteMachine() override
@@ -577,7 +575,6 @@ public:
         // The histories the debugger turned on, off again
         for (const QString &device : m_histories_ours)
             m_http.json("POST", m_base + "/history/" + device + "/config", QJsonObject{{"mode", "off"}});
-        m_http.json("DELETE", m_base + "/control/session");
     }
 
     // The devices, as the in-process adapter makes them: the CPU, RAM, ROM, the device memories, state reports
@@ -759,23 +756,19 @@ public:
     // A change of ours: the next read takes a new snapshot
     void changed() { m_dirty = true; }
 
-    // A suitable emulator the waiter found and took a session on: this machine is its from now (the views' thread;
+    // A suitable emulator the waiter found: this machine is its from now (the views' thread;
     // the waiter never touches m_base / m_http)
     void adopt()
     {
         QString id;
-        QByteArray session;
         {
             std::lock_guard<std::mutex> lock(m_wait_mutex);
             if (m_pending_id.isEmpty()) return;
             id = m_pending_id;
-            session = m_pending_session;
             m_pending_id.clear();
             m_base = m_wait_base = "/api/v1/emulator/" + id;
-            m_session = session;
         }
         m_id = id;
-        m_http.set_session(session);
         m_run_to_armed = false;
         breakpoints_changed();
         {
@@ -991,7 +984,6 @@ private:
     QElapsedTimer m_histories_age;
     std::mutex m_catalog_mutex;
     QString m_id;
-    QByteArray m_session;
     QSettings m_settings;
     ecatshim::DeviceManager m_dm;
     std::shared_ptr<RemoteZ80> m_cpu;
@@ -1020,9 +1012,7 @@ private:
     std::atomic<bool> m_online{true};  // the gate of m_http too
     std::mutex m_wait_mutex;           // the waiter's view of the instance and a found one
     QString m_wait_base;
-    QByteArray m_wait_session;
     QString m_pending_id;
-    QByteArray m_pending_session;
     std::atomic<uint64_t> m_wait_requests{0};
     std::atomic<uint64_t> m_wait_bytes{0};
     std::mutex m_listener_mutex;
@@ -1064,7 +1054,6 @@ private:
                 std::lock_guard<std::mutex> lock(m_wait_mutex);
                 if (!m_pending_id.isEmpty()) base.clear();  // found: the views' thread takes it over (adopt)
                 else base = m_wait_base;
-                wait.set_session(m_wait_session);
             }
             if (base.isEmpty() || !m_online) {
                 if (base.isEmpty() || !look(wait)) pause_a_second();
@@ -1115,8 +1104,8 @@ private:
             if ("/api/v1/emulator/" + v.toObject().value("id").toString() == base) return true;
         return false;
     }
-    // Offline: a suitable emulator (the one asked for by id, else one of the same model: the views' devices fit it)
-    // with a run-control session of ours; the views' thread takes it over (adopt)
+    // Offline: a suitable emulator (the one asked for by id, else one of the same model: the views' devices fit it);
+    // the views' thread takes it over (adopt)
     bool look(Http &wait)
     {
         int status = 0;
@@ -1127,16 +1116,9 @@ private:
             const bool suits = m_want.isEmpty() ? e.value("model").toString() == m_model
                                                 : e.value("id").toString() == m_want || e.value("symbolic_id").toString() == m_want;
             if (!suits) continue;
-            const QString id = e.value("id").toString();
-            const QJsonObject s = wait.json("POST", "/api/v1/emulator/" + id + "/control/session",
-                                            QJsonObject{{"client", "ecat-debugger"}, {"surface", "webapi"}, {"lease_seconds", 120}},
-                                            &status);
-            if (status != 200) continue;
             {
                 std::lock_guard<std::mutex> lock(m_wait_mutex);
-                m_pending_id = id;
-                m_pending_session = s.value("session").toString().toUtf8();
-                m_wait_session = m_pending_session;
+                m_pending_id = e.value("id").toString();
             }
             m_seq = 0;
             notify();
@@ -1659,15 +1641,7 @@ std::unique_ptr<ecatshim::Emulator> CreateRemoteMachine(const RemoteOptions &opt
         error = options.emulator.empty() ? "the emulator runs no machine" : "no emulator " + options.emulator;
         return nullptr;
     }
-    // Run control for this debugger: its changes would otherwise take an implicit session another client may hold
-    const QJsonObject s = http.json("POST", "/api/v1/emulator/" + id + "/control/session",
-                                    QJsonObject{{"client", "ecat-debugger"}, {"surface", "webapi"}, {"lease_seconds", 120}},
-                                    &status);
-    if (status != 200) {
-        error = "no run-control session: " + QJsonDocument(s).toJson(QJsonDocument::Compact).toStdString();
-        return nullptr;
-    }
-    auto m = std::make_unique<RemoteMachine>(options, id, s.value("session").toString().toUtf8());
+    auto m = std::make_unique<RemoteMachine>(options, id);
     if (!m->build(error)) return nullptr;
     return m;
 }

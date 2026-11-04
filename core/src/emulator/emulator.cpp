@@ -1,4 +1,5 @@
 #include "emulator.h"
+#include "emulator/readoutschanged.h"
 
 #include <optional>
 
@@ -958,6 +959,8 @@ bool Emulator::SetRegisterFromTool(const char* source, const std::string& name, 
     const std::string refused = EditMemoryFromTool(source, [&]() { set = Z80::SetRegisterValue(z80, name, value); });
     if (refusal)
         *refusal = refused;
+    if (set)
+        NotifyReadoutsChanged(_context, "registers");  // a PC edit while paused: the breakpoint-at-PC toggle
     return set;
 }
 

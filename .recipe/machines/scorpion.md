@@ -47,10 +47,11 @@ inspect_state {"aspects":["fdc"]}
   that is the only decoder-level difference from `SCORPION`.
 - Beta128 disk interface is **built in** (`trdos_present`): TR-DOS boots
   without inserting anything, and `#FF` FDC ports are always decoded.
-- The shipped `[SLOTS]` fit `zxbus.1 = neogs` (NeoGS, as on every clone), a MoonSound, a SounDrive and the TSFM
-  (`inspect_state {"aspects":["slots"]}`).
-- The ZX-MultiSound card fits the `PROFSCORP` ZX-bus as on real hardware (not shipped; it replaces the TSFM, NeoGS
-  and SounDrive); the `SCORPION` board has +12 V only on the control port, so there it is an `unrealistic` fit that
+- The shipped `[SLOTS]` fit `zxbus.1 = neogs` (NeoGS, as on every clone), a MoonSound and the TSFM
+  (`inspect_state {"aspects":["slots"]}`); no SounDrive since 2026-11-03 - the board's Covox is `#DD`
+  (`slots plug zxbus.3 soundrive` fits one).
+- The ZX-MultiSound card fits the `PROFSCORP` ZX-bus as on real hardware (not shipped; it replaces the TSFM and
+  NeoGS); the `SCORPION` board has +12 V only on the control port, so there it is an `unrealistic` fit that
   needs the override: [multisound.md](../peripherals/multisound.md), [docs/features/multisound.md](../../docs/features/multisound.md).
 
 ## WebAPI
@@ -83,10 +84,10 @@ their quick reset skips the program that strobed it. A real reset clears it (3.5
 
 - **`SCORPION` vs `PROFSCORP` is a config-level choice, not RAM** — same
   RAM sizes; software probing for ProfROM behaves differently on the two.
-- **One Covox, two ports** — the printer port `#DD` (`CovoxDD=1`, slot
-  built-in `covox-dd`, on by default) and the Pentagon-style `#FB`
-  (`CovoxFB=1`) write the same mono latch, one mixer COVOX control;
-  `CovoxDD=0` takes `#DD` away — see
+- **The Scorpion Covox is `#DD` only** — the printer data latch
+  (`CovoxDD=1`, slot built-in `covox-dd`, on by default); the board has no
+  `#FB`. A `covox-fb` / `soundrive` card in a slot adds its ports to the
+  same Covox (one mixer COVOX control); `CovoxDD=0` takes `#DD` away — see
   [covox-sounddrive.md](../peripherals/covox-sounddrive.md).
 - **Shadow Monitor code disappears from normal memory views** — while
   `shadow_monitor_paged` is true, bank 0 is the monitor ROM; step out or

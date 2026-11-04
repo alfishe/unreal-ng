@@ -3110,7 +3110,9 @@ TEST_F(McpTools_Test, TimeTravel_BookmarkList_FormatsEntriesAndBarrierNote)
     body["count"] = 2;
     body["bookmarks"].append(bm1);
     body["bookmarks"].append(bm2);
-    _caller->routes["GET /api/v1/emulator/emu-1/ttd/bookmarks"] = {200, body};
+    // The lines are the server's (text=true): the MCP text passes them on with the advisory note
+    body["text"] = "2 bookmark(s):\n'boot' f5+0\n'umt entry' f9+300 [unpack]: PC #8000 di - the unpacker starts\n";
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/bookmarks?text=true"] = {200, body};
 
     Json::Value args;
     args["action"] = "bookmark_list";
@@ -3120,9 +3122,58 @@ TEST_F(McpTools_Test, TimeTravel_BookmarkList_FormatsEntriesAndBarrierNote)
     EXPECT_NE(result.text.find("2 bookmark(s)"), std::string::npos);
     EXPECT_NE(result.text.find("'boot'"), std::string::npos);
     EXPECT_NE(result.text.find("'umt entry'"), std::string::npos);
-    EXPECT_NE(result.text.find("t=300"), std::string::npos);
+    EXPECT_NE(result.text.find("the unpacker starts"), std::string::npos);
+    EXPECT_EQ(result.structured["bookmarks"].size(), 2u);
     // The advisory contract is part of the tool's own output.
     EXPECT_NE(result.text.find("never a replay barrier"), std::string::npos);
+}
+
+TEST_F(McpTools_Test, TimeTravel_BookmarkNote_PutsTheEditToTheLabel)
+{
+    Json::Value reply;
+    reply["updated"] = true;
+    reply["text"] = "Bookmark 'umt entry' f9+300 [unpack]: PC #8000 di - starts\nthen jumps";
+    _caller->routes["PUT /api/v1/emulator/emu-1/ttd/bookmarks/umt%20entry"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "bookmark_note";
+    args["label"] = "umt entry";
+    args["note"] = "then jumps";
+    args["append"] = true;
+    args["add_tags"].append("unpack");
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("then jumps"), std::string::npos);
+    ASSERT_FALSE(_caller->calls.empty());
+    EXPECT_EQ(_caller->calls.back().path, "/api/v1/emulator/emu-1/ttd/bookmarks/umt%20entry");
+    EXPECT_EQ(_caller->calls.back().body["note"].asString(), "then jumps");
+    EXPECT_TRUE(_caller->calls.back().body["append"].asBool());
+    EXPECT_EQ(_caller->calls.back().body["add_tags"][0].asString(), "unpack");
+    EXPECT_FALSE(_caller->calls.back().body.isMember("label")) << "the label is in the path";
+}
+
+TEST_F(McpTools_Test, TimeTravel_BookmarkExport_ReturnsTheTextAndTheFile)
+{
+    Json::Value reply;
+    reply["format"] = "markdown";
+    reply["count"] = 1;
+    reply["text"] = "## Game\n\n### boot (`f5+0`)\n";
+    reply["path"] = "/tmp/w.md";
+    reply["bytes"] = 30;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/export-bookmarks"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "bookmark_export";
+    args["format"] = "markdown";
+    args["title"] = "Game";
+    args["path"] = "/tmp/w.md";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("### boot"), std::string::npos);
+    EXPECT_NE(result.text.find("written to /tmp/w.md, 30 bytes"), std::string::npos);
+    EXPECT_EQ(_caller->calls.back().body["title"].asString(), "Game");
 }
 
 TEST_F(McpTools_Test, TimeTravel_BookmarkDelete_UrlEncodesLabelInPath)

@@ -1,5 +1,6 @@
 #include "autodecision.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <mutex>
 
@@ -75,10 +76,12 @@ AutoDecision DecideFromAccess(const DeviceAccessEvidence& evidence)
     const Reads reads{evidence};
     constexpr int kAny = DeviceAccessChannel::kNoIndex;
 
-    auto decide = [&decision](const char* device, const char* connector, const char* label, std::string reason) {
+    auto decide = [&decision, &reads](const char* device, InputRole input, const char* label, std::string reason) {
         decision.decisive = true;
         decision.device = device;
-        decision.connector = connector;
+        decision.input = input;
+        if (const DeviceAccessChannel* channel = input != InputRole::None ? reads.Of(input) : nullptr)
+            decision.source = channel->device;
         decision.label = label;
         decision.reason = std::move(reason);
     };
@@ -89,34 +92,39 @@ AutoDecision DecideFromAccess(const DeviceAccessEvidence& evidence)
     if (reads.Every(InputRole::NextReg, 0xB2))
     {
         const bool right = reads.Every(InputRole::KempstonJoystick2);
-        decide("md6-pad", right ? "next.right" : "next.left", right ? "MD 6-button pad (right)" : "MD 6-button pad",
+        decide("md6-pad", right ? InputRole::KempstonJoystick2 : InputRole::KempstonJoystick,
+               right ? "MD 6-button pad (right)" : "MD 6-button pad",
                reads.Reason(InputRole::NextReg, 0xB2, "NR #B2") +
                    (right ? ", " + reads.Reason(InputRole::KempstonJoystick2, kAny, "#37") : std::string()));
         return decision;
     }
     if (reads.Every(InputRole::KempstonJoystick2))
     {
-        decide("md6-pad", "next.right", "Kempston 2", reads.Reason(InputRole::KempstonJoystick2, kAny, "#37"));
+        decide("md6-pad", InputRole::KempstonJoystick2, "Kempston 2",
+               reads.Reason(InputRole::KempstonJoystick2, kAny, "#37"));
         return decision;
     }
     if (reads.Every(InputRole::KempstonJoystick))
     {
-        decide("kempston-joystick", "kempston", "Kempston", reads.Reason(InputRole::KempstonJoystick, kAny, "#1F"));
+        decide("kempston-joystick", InputRole::KempstonJoystick, "Kempston",
+               reads.Reason(InputRole::KempstonJoystick, kAny, "#1F"));
         return decision;
     }
     if (reads.Every(InputRole::FullerJoystick))
     {
-        decide("fuller-joystick", "fuller", "Fuller", reads.Reason(InputRole::FullerJoystick, kAny, "#7F"));
+        decide("fuller-joystick", InputRole::FullerJoystick, "Fuller",
+               reads.Reason(InputRole::FullerJoystick, kAny, "#7F"));
         return decision;
     }
     if (reads.Every(InputRole::KempstonMouse))
     {
-        decide("kempston-mouse", "", "Kempston mouse", reads.Reason(InputRole::KempstonMouse, kAny, "port"));
+        decide("kempston-mouse", InputRole::KempstonMouse, "Kempston mouse",
+               reads.Reason(InputRole::KempstonMouse, kAny, "port"));
         return decision;
     }
     if (reads.Every(InputRole::AmxMouse))
     {
-        decide("amx-mouse", "amx", "AMX mouse", reads.Reason(InputRole::AmxMouse, kAny, "PIO"));
+        decide("amx-mouse", InputRole::AmxMouse, "AMX mouse", reads.Reason(InputRole::AmxMouse, kAny, "PIO"));
         return decision;
     }
 
@@ -139,7 +147,7 @@ AutoDecision DecideFromAccess(const DeviceAccessEvidence& evidence)
     // ports (two players): the first one is player 1's. Without tested bits both rows mean Cursor
     if (row4 && row3 && (reads.Tested(3) & 0x0F) != 0)
     {
-        decide("sinclair-joystick", "", "Sinclair 1",
+        decide("sinclair-joystick", InputRole::None, "Sinclair 1",
                reads.RowReason(4, "#EFFE") + "; " + reads.RowReason(3, "#F7FE") + " (Sinclair 2 too: two players)");
         decision.option = "port";
         decision.optionValue = "1";
@@ -147,28 +155,53 @@ AutoDecision DecideFromAccess(const DeviceAccessEvidence& evidence)
     }
     if (row4 && row3)
     {
-        decide("cursor-joystick", "", "Cursor", reads.RowReason(4, "#EFFE") + ", " + reads.RowReason(3, "#F7FE"));
+        decide("cursor-joystick", InputRole::None, "Cursor",
+               reads.RowReason(4, "#EFFE") + ", " + reads.RowReason(3, "#F7FE"));
         return decision;
     }
     if (row4)
     {
-        decide("sinclair-joystick", "", "Sinclair 1", reads.RowReason(4, "#EFFE"));
+        decide("sinclair-joystick", InputRole::None, "Sinclair 1", reads.RowReason(4, "#EFFE"));
         decision.option = "port";
         decision.optionValue = "1";
         return decision;
     }
     if (row3)
     {
-        decide("sinclair-joystick", "", "Sinclair 2", reads.RowReason(3, "#F7FE"));
+        decide("sinclair-joystick", InputRole::None, "Sinclair 2", reads.RowReason(3, "#F7FE"));
         decision.option = "port";
         decision.optionValue = "2";
         return decision;
     }
     if (reads.Row(1) && reads.Row(2) && reads.Row(5) && reads.Row(7))
     {
-        decide("keys-joystick", "", "QAOP + Space", "#FBFE, #FDFE, #DFFE and #7FFE read in nearly every frame");
+        decide("keys-joystick", InputRole::None, "QAOP + Space",
+               "#FBFE, #FDFE, #DFFE and #7FFE read in nearly every frame");
         decision.option = "keys";
         decision.optionValue = "up:q,down:a,left:o,right:p,fire:space";
+        return decision;
+    }
+    // Reads every frame of a port nothing on the machine answers, which a catalog card's input claim would: the
+    // card to fit (a Kempston interface for #1F on a bare 48K). After the keyboard joysticks: a program that reads
+    // those rows too plays on them as the machine is
+    for (const DeviceAccessChannel& channel : evidence.channels)
+    {
+        if (channel.device != "board" || channel.out || channel.frames < kEveryFrame)
+            continue;
+        const auto candidate =
+            std::find_if(channel.candidates.begin(), channel.candidates.end(),
+                         [](const slots::CardCandidate& c) { return c.input != InputRole::None; });
+        if (candidate == channel.candidates.end())
+            continue;
+        char text[200];
+        std::snprintf(text, sizeof(text), "#%04X read in %u of %u frames (%.1f per frame) and nothing answers it",
+                      static_cast<unsigned>(channel.port), static_cast<unsigned>(channel.frames), evidence.window,
+                      static_cast<double>(channel.perFrame));
+        decision.hint = std::string(text) + ": a " + candidate->name + " (" + candidate->card + " on " +
+                        candidate->slot + ") would";
+        decision.input = candidate->input;
+        decision.card = candidate->card;
+        decision.cardSlot = candidate->slot;
         return decision;
     }
     // Port A of the AY: nothing to plug (no Timex machine, keypad or AY mouse yet), said so

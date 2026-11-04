@@ -2,7 +2,7 @@
     //
     // Phase 2 surface (10 endpoints) + Phase 4 reverse-search (3 endpoints)
     // + Phase 4 reverse-execution (2 endpoints) + session restore via load
-    // (1 endpoint) + TD-4 agent bookmarks (3 endpoints) = 19 endpoints total,
+    // (1 endpoint) + TD-4 agent bookmarks (5 endpoints) = 21 endpoints total,
     // all exposed by core/automation/webapi/src/api/ttd_api.cpp.
     // The status endpoint also serves as a capability probe: it returns 200
     // with state="idle" and ttd_available=false when the TTD engine is not
@@ -500,6 +500,61 @@
         "Duplicate label, no recorded history, or position beyond the session end";
     paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["responses"]["501"]["description"] =
         "TTD engine not available in this build";
+
+    // =====================================================================
+    // PUT /ttd/bookmarks/{label} — edit a bookmark's note, tags, label
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["summary"] = "Edit a TTD agent bookmark: note, tags, label";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["description"] =
+        "Only the fields given change: note (append: as a new line), tags (replace), add_tags, remove_tags, "
+        "rename. The bookmark's time and context stay.";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][1]["name"] = "label";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/TTDBookmarkNoteRequest";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["responses"]["200"]["description"] = "The bookmark as it is now (bookmark, text)";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["responses"]["400"]["description"] = "Nothing to change, or a bound broken";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["responses"]["404"]["description"] = "Emulator instance not found, or unknown bookmark label";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["responses"]["409"]["description"] = "rename onto an existing label";
+
+    // =====================================================================
+    // GET / POST /ttd/export-bookmarks — the bookmarks written up
+    // =====================================================================
+    for (const char* method : {"get", "post"})
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/export-bookmarks"][method];
+        op["summary"] = "Export the TTD agent bookmarks: WALKTHROUGH section, profile comment or JSON";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "format = markdown (default: a WALKTHROUGH section, one block per bookmark with its note, context, "
+            "watched bytes, tags and the seek call), profile (YAML comment lines of at most 120 columns for a game "
+            "profile's header) or json; tag (only those), title, path (written there too). GET takes them as the "
+            "query, POST as the body. The machine does not move.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["responses"]["200"]["description"] = "The export";
+        op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBookmarkExportResponse";
+        op["responses"]["400"]["description"] = "Unknown format";
+        op["responses"]["409"]["description"] = "The file could not be written";
+    }
+    for (const char* name : {"format", "tag", "title", "path"})
+    {
+        Json::Value p;
+        p["name"] = name;
+        p["in"] = "query";
+        p["schema"]["type"] = "string";
+        paths["/api/v1/emulator/{id}/ttd/export-bookmarks"]["get"]["parameters"].append(p);
+    }
 
     // =====================================================================
     // DELETE /ttd/bookmarks/{label} — remove an agent bookmark (TD-4)
@@ -1168,6 +1223,56 @@
             {"frame", "integer", "The frame (default: the current position's frame)"},
             {"sections", "string", "Comma list: time, routines, interrupt, paging, ports, memory, screen, input, markers (default all)"},
             {"limit", "integer", "Entries per list (routines, paging, ports, memory ranges, writers per range), 1..100 (default 8)"},
+            {"text", "boolean", "Also return the answer as text, one block per section (default false)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }
+
+    // =====================================================================
+    // GET /ttd/diff — what differs between two moments (TTD diff of two moments)
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/diff"]["get"];
+        op["summary"] = "What differs between two moments: registers, paging, memory with the last writes, screen, devices";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "The machine is replayed to each moment (any T inside a frame) and its whole state taken there. The answer "
+            "lists what differs: the registers, the port latches and the 8K slot mapping, the RAM changed in ranges "
+            "(the screen's pixels and attributes one range each, the rest per page with gaps of 16 bytes or less; "
+            "ranges of 8 bytes or less with their bytes at both moments) with the last CPU write in between (the "
+            "write journal: time, PC, instruction), the screen and border, the devices whose state differs, and what "
+            "happened in between (frames, T, keys held and pressed, markers, a replay barrier). The machine goes back "
+            "where it stood; a live recording pauses for browsing. Reply: from {frame, tinframe}, to, backwards, "
+            "registers[] {name, before, after}, latches[], slots[] {address, before, after, before_other_half, "
+            "after_other_half}, memory {changed, pages, ranges[] {region, page, offset, address, length, changed, "
+            "before[], after[], last_write {frame, tinframe, pc, address, text}, no_cpu_write}, more}, screen {bytes, "
+            "pixels_changed, attributes_changed, switched, border_before, border_after}, devices {changed[] {name, "
+            "bytes, changed}, more, same}, between {frames, t, keys_held[], keys[] {frame, tinframe, key, pressed}, "
+            "more_keys, markers[], barrier}, writer_searches, ms, text (text=true).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"from_frame", "integer", "The first moment's frame (required)"},
+            {"from_tinframe", "integer", "T inside it (default 0)"},
+            {"to_frame", "integer", "The second moment's frame (default: the current position)"},
+            {"to_tinframe", "integer", "T inside it (default 0)"},
+            {"sections", "string", "Comma list: cpu, paging, memory, screen, devices, between (default all)"},
+            {"limit", "integer", "Entries per list (memory ranges, devices, keys), 1..200 (default 16)"},
+            {"writers", "boolean", "The last write in between per memory range (default true)"},
             {"text", "boolean", "Also return the answer as text, one block per section (default false)"},
         };
         Json::ArrayIndex i = 1;

@@ -50,13 +50,28 @@ inline bool HoldsControl(const drogon::HttpRequestPtr& req, EmulatorContext* con
     return id && context && context->HasRunControl(*id);
 }
 
+/// Debugger clients (owner 2026-11-03): the separate debuggers (unreal-debugger --connect, unreal-tui-debugger[-tsconf])
+/// say `X-Unreal-Source: debugger` on every request (on a WebSocket, at its upgrade). They are the user's own hands,
+/// like the GUI: their changes open no session, so they block neither the GUI nor each other, and every client sees
+/// the changes (the topics). While a session holds the machine their changes are refused as the GUI is locked
+constexpr const char* kDebuggerSource = "debugger";
+/// Set by the gate on a debugger's changing request it let through (RequesterOf: Origin::Debugger)
+constexpr const char* kDebuggerAttribute = "unreal.debugger";
+
+inline bool IsDebuggerClient(const drogon::HttpRequestPtr& req)
+{
+    return req->getHeader("X-Unreal-Source") == kDebuggerSource;
+}
+
 /// Who asks, for the execution arbiter: the session (its surface and id) when the request carries the session that
-/// holds control, a companion client (companion_helper.h) as itself, otherwise the surface alone
+/// holds control, a companion client (companion_helper.h) or a debugger client as itself, otherwise the surface alone
 inline execution::Requester RequesterOf(const drogon::HttpRequestPtr& req, EmulatorContext* context,
                                         execution::Origin fallback = execution::Origin::WebApi)
 {
     if (req && req->attributes()->find("unreal.companion"))
         return execution::Requester{execution::Origin::Companion, {}};
+    if (req && req->attributes()->find(kDebuggerAttribute))
+        return execution::Requester{execution::Origin::Debugger, {}};
     const std::optional<unreal::UUID> id = SessionOf(req);
     if (id && context && context->HasRunControl(*id))
         return execution::Requester{execution::OriginFromName(context->GetRunControlState().surfaceLabel),

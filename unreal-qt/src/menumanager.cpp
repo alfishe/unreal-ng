@@ -8,6 +8,7 @@
 #include <set>
 #include <utility>
 
+#include "debugger/externaldebuggers.h"
 #include "debugger/vdac2/ft812debugwindow.h"
 #include "widgets/crtprofiles.h"
 #include "widgets/slangpresetrunner.h"
@@ -1132,13 +1133,42 @@ void MenuManager::createDebugMenu()
 {
     _debugMenu = _menuBar->addMenu(tr("&Debug"));
 
-    // Debugger window. Hidden at start; while hidden the emulator runs without
+    // Debugger: the embedded window, or a separate debugger over this window's emulator through the WebAPI
+    QMenu* debuggerMenu = _debugMenu->addMenu(tr("&Debugger"));
+
+    // The embedded window. Hidden at start; while hidden the emulator runs without
     // debug instrumentation (see MainWindow::handleDebuggerVisibilityChanged)
-    _debuggerAction = _debugMenu->addAction(tr("&Debugger Window"));
+    _debuggerAction = debuggerMenu->addAction(tr("&Embedded"));
     _debuggerAction->setStatusTip(tr("Show/hide the debugger window (debug features are active only while it is shown)"));
     _debuggerAction->setCheckable(true);
     _debuggerAction->setChecked(false);
     connect(_debuggerAction, &QAction::triggered, this, &MenuManager::debuggerToggled);
+
+    // The separate ones (debuggers/README.md), each a program of its own beside unreal-qt: grayed out when the build
+    // has no WebAPI or the program is not there
+    const auto addExternal = [this, debuggerMenu](const QString& text, const char* program, const QString& tip) {
+        QAction* action = debuggerMenu->addAction(text);
+        const QString name = QLatin1String(program);
+#ifdef ENABLE_WEBAPI_AUTOMATION
+        const bool available = !ExternalDebuggers::Binary(name).isEmpty();
+        action->setStatusTip(available ? tip : tr("%1 is not beside unreal-qt in this build").arg(name));
+#else
+        const bool available = false;
+        action->setStatusTip(tr("This build has no WebAPI: %1 has nothing to connect to").arg(name));
+#endif
+        action->setEnabled(available);
+        connect(action, &QAction::triggered, this, [this, name]() { emit externalDebuggerRequested(name); });
+        return action;
+    };
+    addExternal(tr("e&Cat"), ExternalDebuggers::kEcat,
+                tr("Start eCat3's debugger (unreal-debugger) over this emulator: a tab per processor, dumps, devices"));
+    addExternal(tr("Unreal &TUI"), ExternalDebuggers::kTui,
+                tr("Start the classic UnrealSpeccy debugger (unreal-tui-debugger) over this emulator"));
+    _tuiTsConfDebuggerAction =
+        addExternal(tr("Unreal TUI, TS-&Conf"), ExternalDebuggers::kTuiTsConf,
+                    tr("Start the TS-Conf debugger (unreal-tui-debugger-tsconf) over this emulator: PC history, the "
+                       "TS-Conf registers"));
+    _tuiTsConfDebuggerAction->setVisible(false);
 
     // FT812 line budget (line-budget-metrics.md §3.3): exists only while the active
     // machine has the VDAC2 card (TSL-VDAC2); hidden, not grayed out, otherwise
@@ -1439,6 +1469,9 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     // Debug -> FT812 Debug: only for a machine with the VDAC2 card
     if (_ft812DebugAction)
         _ft812DebugAction->setVisible(emulatorExists && Ft812DebugWindow::Offered(activeEmulator->GetContext()));
+    // Debug -> Debugger -> Unreal TUI, TS-Conf: it attaches to TS-Conf machines only
+    if (_tuiTsConfDebuggerAction)
+        _tuiTsConfDebuggerAction->setVisible(emulatorExists && activeEmulator->GetContext()->config.mem_model == MM_TSL);
 
     // File menu - Save Snapshot requires active emulator
     _saveSnapshotMenu->setEnabled(emulatorExists);

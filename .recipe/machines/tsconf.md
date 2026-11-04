@@ -42,6 +42,11 @@ load_software {"path":".../program.spg"}              # a TS-Conf SDK program
 #     switched to TSL first (media kept): the answer's emulator_id is the NEW
 #     instance - use it from then on (model_switched, previous_emulator_id)
 
+load_software {"path":".../game.trd","autostart":true}  # a TR-DOS disk (.trd / .scl / ...)
+#   → drive A, quick reset straight into TR-DOS 5.04T (ROM page 1 of zxevo.rom,
+#     mapped mode), RUN "boot". TS-BIOS and its "Reset to" are skipped; the CPU
+#     clock it set (SYS_CONFIG: 3.5 / 7 / 14 MHz) is kept
+
 capture_media {"action":"screenshot"}                # whole frame: 720x288 for every TS mode, the image 720x576 (each line twice, as the window shows it)
 capture_media {"action":"screenshot","area":"screen"} # only the graphics window (below)
 ```
@@ -228,6 +233,7 @@ The same writes with `MEM_CONFIG = #04` (no `W0_WE`) leave the ROM unchanged. TT
 | DMA: RAM copy, BLT1, fill, CRAM, SFILE, SPI, IDE; the per-line DRAM budget (video, TSU, CPU reads); TSU starvation | implemented (CPU writes are not counted in the budget) |
 | SD card (`#57` / `#77`, slot `sd.zc`), Nemo IDE (`[HDD] Scheme=NEMO-DIVIDE`, `IdeStall`), Gluk CMOS (a `#BFF7` access waits for the AVR like `#xxEF`, inside vdos too: [cmos-rtc.md](../peripherals/cmos-rtc.md)) | implemented |
 | ROM flash writes (`W0_WE` with ROM in window 0: program, sector / chip erase, ID, status polling) | implemented; saved per machine (`zxevo-flash-tsconf-<hash>.rom` in the settings folder), loaded at the next start; `romflash discard` |
+| Disk autostart (`autostart:true`, Qt drag-and-drop): quick reset into TR-DOS, the clock kept | implemented (test `DiskAutostart_TsConf`) |
 | SPG programs (`.spg` v1.0 / v1.1) | implemented (pager / resident fields not used); opening one on another model switches to TSL on every surface |
 | Sound: AY / TurboSound, one 8-bit DAC shared by Covox `#FB` and the `#FE` beeper bit | implemented |
 | ZX-MultiSound card in a ZX-bus slot (the socketed YM2149 comes out; not in the shipped config): [multisound.md](../peripherals/multisound.md), [docs/features/multisound.md](../../docs/features/multisound.md) | implemented (TSFM, SAA via VGMPLAY, MIDI via GSPLAYER checked) |

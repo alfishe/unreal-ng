@@ -164,6 +164,18 @@ public:
     {
         return _host.PlayerChoice(device);
     }
+    std::string SetHapticsTrial(const JsonValue& overlay, std::string& message) override
+    {
+        return _host.SetHapticsTrial(overlay, message);
+    }
+    JsonValue HapticsTrial() const override
+    {
+        return _host.HapticsTrial();
+    }
+    JsonValue HapticsUnderTrial() const override
+    {
+        return _host.HapticsUnderTrial();
+    }
     bool SignaturesOf(const std::string& path, ProfileContext& context, std::string& error) override
     {
         return ProgramSignatures(path, context, error);
@@ -953,6 +965,29 @@ void HostControllers::Reapply()
     context.debugLayer = _debugLayer || _playersFollow;
     assignPlayers(context.devices);
     _resolved = _profiles.Apply(_service->Router(), context);
+    // The session trial lies over the game haptics of its own program only: another one drops it
+    _hapticsUnderTrial = _resolved.haptics;
+    const std::string sha = context.fileSha256.empty() ? std::string() : context.fileSha256.front();
+    if (!_trial.IsNull() && sha != _trialSha)
+        _trial = JsonValue();
+    if (!_trial.IsNull())
+    {
+        JsonValue haptics = OverlayHaptics(_resolved.haptics, _trial);
+        HapticProfile check;
+        std::string error;
+        if (ParseHapticProfile(haptics, check, error))
+        {
+            _resolved.haptics = std::move(haptics);
+            _resolved.hapticsProfile = _resolved.hapticsProfile.empty() ? std::string("session/trial")
+                                                                        : _resolved.hapticsProfile + "+trial";
+            _resolved.hapticsReason += (_resolved.hapticsReason.empty() ? "" : "; ") + std::string("session trial");
+        }
+        else
+        {
+            _trialError = error;
+            _trial = JsonValue();
+        }
+    }
     // The user's drag and drop (the player verb) wins over the machine default and a profile's pin
     for (const HostDeviceInfo& device : context.devices)
         if (const auto choice = _playerChoice.find(device.id); choice != _playerChoice.end())
@@ -1242,27 +1277,26 @@ bool HostControllers::KeepAutoDecision(QString& error)
     return saveUserProfile(std::move(profile), error);
 }
 
-bool HostControllers::AddHapticProbe(const HapticProbe& probe, QString& name, QString& error)
+std::string HostControllers::SetHapticsTrial(const JsonValue& overlay, std::string& message)
 {
-    // The surfaces' haptics_probe verb, so the menu and an agent write the same profile
-    static const char* const kKinds[] = {"exec", "read", "write", "port-in", "port-out"};
-    HostRequest request;
-    request.verb = "haptics_probe";
-    request.options["kind"] = kKinds[static_cast<size_t>(probe.kind)];
-    request.options["address"] = std::to_string(probe.address);
-    if (probe.page != 0xFFFF)
-        request.options["page"] = std::to_string(probe.page);
-    if (probe.kind == HapticProbeKind::PortIn || probe.kind == HapticProbeKind::PortOut)
-        request.options["port_mask"] = std::to_string(probe.portMask);
-    const HostReply reply = Host(request);
-    if (!reply.Ok())
+    if (!_attached)
     {
-        error = QString::fromStdString(reply.message);
-        return false;
+        message = "no emulator instance to try the haptics on";
+        return "unavailable";
     }
-    const JsonValue* source = reply.body.Find("source");
-    name = source != nullptr ? QString::fromStdString(source->AsString()) : QString();
-    return true;
+    const JsonValue previous = _trial;
+    const std::string previousSha = _trialSha;
+    _trial = overlay;
+    _trialSha = _program.fileSha256.empty() ? std::string() : _program.fileSha256.front();
+    _trialError.clear();
+    Reapply();
+    if (_trialError.empty())
+        return {};
+    message = _trialError;
+    _trial = previous;
+    _trialSha = previousSha;
+    Reapply();
+    return "bad-request";
 }
 
 void HostControllers::updateHapticsGate()
@@ -1299,6 +1333,7 @@ void HostControllers::onFileLoaded(const QString& emulatorId, const QString& pat
         qWarning("controllers: signatures of %s: %s", qUtf8Printable(path), error.c_str());
     _autoDone = false;
     _keyboardNoticed = false;
+    _cardNoticed = false;
     _autoConnector.clear();
     _decision = {};
     Reapply();
@@ -1316,6 +1351,7 @@ void HostControllers::onGuestProgram(const QString& emulatorId, const QString& p
         qWarning("controllers: signatures of %s (read by the guest): %s", qUtf8Printable(path), error.c_str());
     _autoDone = false;
     _keyboardNoticed = false;
+    _cardNoticed = false;
     _autoConnector.clear();
     _decision = {};
     Reapply();
@@ -1374,7 +1410,16 @@ void HostControllers::checkAuto()
         return;
     }
     if (!decision.decisive)
+    {
+        // Reads of a port nothing on the machine answers (#1F on a bare 48K): name the card once, fit nothing (a
+        // card restarts the machine) and keep watching
+        if (!decision.card.empty() && !_cardNoticed)
+        {
+            _cardNoticed = true;
+            emit notice(QString::fromStdString(decision.hint));
+        }
         return;
+    }
     applyAuto(decision);
 }
 
@@ -1397,13 +1442,26 @@ void HostControllers::applyAuto(const AutoDecision& chosen)
         return;
     }
     std::string connector = decision.connector;
-    if (!connector.empty())
+    if (connector.empty())
     {
-        if (manager->Find(connector) < 0)
-            return;  // the machine has no such connector: the default stays
+        // The machine's connector for the reads the decision rests on: `kempston` on a Pentagon, `next.left` on a
+        // Next; a fixed one carries the board's device (the Next's MD pad), which the profile then binds
+        if (const int found = manager->FindForInput(decision.input, decision.source); found >= 0)
+        {
+            const Connector fitted = manager->At(static_cast<size_t>(found));
+            connector = fitted.id;
+            if (fitted.fixed)
+                decision.device = RetroDeviceKindName(fitted.device);
+        }
     }
-    else
+    else if (manager->Find(connector) < 0)
     {
+        return;  // the machine has no such connector: the default stays
+    }
+    if (connector.empty())
+    {
+        // No connector of the machine answers those reads: plug the device where one takes it (the refusal names
+        // what is missing, such as a Kempston card on a bare 48K)
         ControllerRequest request{"plug", "auto", decision.device, {{"async", ""}}};
         if (!decision.option.empty())
             request.options[decision.option] = decision.optionValue;

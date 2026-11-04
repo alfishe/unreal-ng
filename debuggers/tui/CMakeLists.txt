@@ -6,8 +6,9 @@
 # backend interface, the painters, the key map, main). Each app compiles common/ against its own headers: its src/
 # comes first on the include path.
 #
-# Vendored (lib/): z80ex 1.1.21 (Z80 CPU + disassembler, GPLv2: the mock machine), FTXUI 7.1.0 (MIT). SDL3 when it is
-# found: the pixel window the apps open first; without it they run in the terminal.
+# Vendored (lib/): z80ex 1.1.21 (Z80 CPU + disassembler, GPLv2: the mock machine), FTXUI 7.1.0 (MIT). SDL3 (zlib) from
+# the submodule lib/SDL, else an installed one: the pixel window the apps open first; without it they run in the
+# terminal. The packages carry only the SDL3 builds (UNREAL_TUI_SDL_REQUIRED).
 
 # z80ex.c #includes ptables.c and opcodes/*.c itself: only the two top-level units compile
 add_library(unreal-tui-z80ex STATIC lib/z80ex/z80ex.c lib/z80ex/z80ex_dasm.c)
@@ -21,9 +22,30 @@ set(FTXUI_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 add_subdirectory(lib/ftxui EXCLUDE_FROM_ALL)
 
 option(UNREAL_TUI_SDL "Open the terminal debuggers' pixel window through SDL3 when SDL3 is found" ON)
+# The packages ship only the pixel-window builds: a package configure without SDL3 fails instead of shipping the
+# terminal-only ones
+option(UNREAL_TUI_SDL_REQUIRED "Fail the configure when the terminal debuggers get no SDL3" OFF)
 set(UNREAL_TUI_HAVE_SDL OFF)
+if (UNREAL_TUI_SDL_REQUIRED AND NOT UNREAL_TUI_SDL)
+    message(FATAL_ERROR "UNREAL_TUI_SDL_REQUIRED needs UNREAL_TUI_SDL=ON")
+endif ()
 if (UNREAL_TUI_SDL)
-    find_package(SDL3 QUIET CONFIG)
+    # The submodule lib/SDL (pinned release), static: video and the 2D renderer only, nothing to bundle beside the
+    # apps. Linux builds its X11 / Wayland drivers from the dev headers present (it loads the libraries at run time)
+    if (NOT TARGET SDL3::SDL3 AND EXISTS "${CMAKE_SOURCE_DIR}/lib/SDL/CMakeLists.txt")
+        foreach (off SDL_SHARED SDL_TEST_LIBRARY SDL_TESTS SDL_EXAMPLES SDL_INSTALL SDL_AUDIO SDL_CAMERA SDL_JOYSTICK
+                     SDL_HAPTIC SDL_HIDAPI SDL_SENSOR SDL_POWER SDL_DIALOG SDL_GPU SDL_RENDER_GPU SDL_VULKAN
+                     SDL_RENDER_VULKAN SDL_TRAY)
+            set(${off} OFF CACHE BOOL "" FORCE)
+        endforeach ()
+        set(SDL_STATIC ON CACHE BOOL "" FORCE)
+        add_subdirectory(${CMAKE_SOURCE_DIR}/lib/SDL ${CMAKE_BINARY_DIR}/lib/SDL EXCLUDE_FROM_ALL)
+        # Its own code, its own warnings: the build log stays ours (zero warnings)
+        target_compile_options(SDL3-static PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/w,-w>)
+    endif ()
+    if (NOT TARGET SDL3::SDL3)
+        find_package(SDL3 QUIET CONFIG)
+    endif ()
     if (NOT TARGET SDL3::SDL3)
         find_package(PkgConfig QUIET)
         if (PkgConfig_FOUND)
@@ -36,6 +58,9 @@ if (UNREAL_TUI_SDL)
     if (TARGET SDL3::SDL3)
         set(UNREAL_TUI_HAVE_SDL ON)
     endif ()
+endif ()
+if (UNREAL_TUI_SDL_REQUIRED AND NOT UNREAL_TUI_HAVE_SDL)
+    message(FATAL_ERROR "terminal debuggers: no SDL3 (git submodule update --init lib/SDL, or an installed SDL3)")
 endif ()
 message(STATUS "    terminal debuggers: SDL3 pixel window ${UNREAL_TUI_HAVE_SDL}")
 
@@ -82,6 +107,7 @@ function(unreal_tui_debugger name app)
     target_link_libraries(${name}-core PUBLIC unreal-tui-z80ex ftxui::component)
     if (UNREAL_TUI_HAVE_SDL)
         target_link_libraries(${name}-core PUBLIC SDL3::SDL3)
+        target_compile_definitions(${name}-core PUBLIC UNREAL_TUI_HAVE_SDL=1)
     endif ()
     if (WIN32)
         target_link_libraries(${name}-core PUBLIC ws2_32)

@@ -130,8 +130,10 @@ library (D16) implements it later; a test fake proves the order now.
 The evidence is generic, so it is a device view, not a controllers one:
 
 - `ControllerControl` `auto` keeps its answer (the decision and its reason, now with device ids);
-- the whole evidence on every plane (`GET /api/v1/emulator/{id}/devices/access`, MCP, CLI, Lua, Python, WebSocket
-  topic on window change), started / stopped explicitly as well as by a media load;
+- the whole evidence on every plane, started / stopped explicitly as well as by a media load. Built as the
+  monitoring name `devices.access` instead of a route of its own: the monitoring module gives the REST route, the
+  WebSocket call, topic and readout, CLI, Python, Lua and MCP from one name; starting and stopping stay with
+  `controllers auto apply` and the feature `deviceaccess`;
 - the debugger's device tabs show a device's channels and reader sites from it.
 
 ## Cost
@@ -234,7 +236,33 @@ Default: stays off; the load window and the feature turn it on.
 - **Decision.** `controllers::DecideFromAccess` over input roles; `ISignatureMatcher` / `DecideAuto` (matcher
   first).
 - **Surfaces.** The `auto` evidence lists `channels[]` (device, channel, dir, port, input, frames,
-  reads_per_frame, tested_bits, sites).
+  reads_per_frame, tested_bits, sites). The whole evidence is the monitoring name `devices.access` (2026-11-03,
+  `deviceaccessnode.h`, one builder for both): `GET /api/v1/monitor/devices.access` (so the WebSocket `call`), the
+  WebSocket topic and readout of the same name (a new value per folded frame, by the watch's `Revision()`), CLI
+  `monitor devices.access`, Python / Lua `monitor("devices.access")`, MCP `inspect_state` aspect `monitor` (the
+  summary: `channel_count`; the channels through `controllers auto`). Started and stopped by what starts it already:
+  a media load, `controllers auto apply` (a window), the feature `deviceaccess` (continuous); no verb of its own.
+- **Connectors by input role (2026-11-03).** The decision names the input role of the reads it rests on and the
+  registry device that answered (`AutoDecision::input`, `source`), not a connector; each machine finds its own
+  (`ControllerManager::FindForInput`; `Connector::input`, `source`): `#1F` is `kempston` on a Pentagon and
+  `next.left` on a Next, `#37` `next.right`, an AMX card's PIO that card's `amx` socket. A fixed connector carries
+  the board's device (the Next's MD pad). No connector for the role: the auto plug of the device, whose refusal
+  names what is missing. `HostInputMachine_Test.AutoConnectorByInputRole`.
+- **Card candidates (2026-11-03).** A board access carries the catalog cards that would answer it on the machine
+  as it is (`slots::CardCandidates`, `slots/cardcandidates.h`): a card whose claims with the default options take the
+  port in that direction (not a DOS-only claim), not fitted already, which the planner would plug (dry run, at the
+  slot `SuggestSlot` gives) without a hard refusal. Several cards may answer one port (`#1F` is a Kempston
+  interface's and an AMX mouse's PIO data A), so `RankCardCandidates` orders them by the whole window, the same rule
+  for every card: input claims first, then the most board accesses the card answers, then the largest share of its
+  own claims they touch (a program that only reads `#1F` gets the one-port Kempston first; one that also writes the
+  PIO's `#5F` / `#7F` gets the AMX mouse). `ControllerManager::PortReads` fills them (the per-port lookup cached
+  until `Rebuild`, the ranking per call); the watch's own evidence and `devices.access` stay without them.
+  `controllers auto` lists them per channel (`candidates` [{`card`, `name`, `slot`, `input`,
+  `needs_confirmation`}]). A board read in nearly every frame with an input candidate, when nothing else decides,
+  is a hint naming the card (`AutoDecision::card`, `cardSlot`; `card`, `card_slot` in the `auto` decision): `#1F`
+  on a bare 48K is "a Kempston joystick interface (kempston on edge.1) would". The Qt host says it once as a notice;
+  fitting a card restarts the machine, so nothing is fitted. `CardCandidates_Test`,
+  `AutoDecision_Test.Decide_BoardReadsNameTheCard`, `HostInputMachine_Test.BoardReadsCarryTheCardCandidate`.
 - **Tests.** `DeviceAccessWatch_Test` (the mouse by each board's decode, the chip select keeping the register, the
   seeded selection), `AutoDecision_Test`, `HostInputMachine_Test.AccessWatch*`: a TurboSound Pentagon whose program
   selected R14 before the watch started; and every machine of the refdata running `IN A,(C)` / `OUT (C),A` on
@@ -243,15 +271,8 @@ Default: stays off; the load window and the feature turn it on.
 ## Known gaps
 
 - **Undeclared ports.** A port the registry does not declare goes to `board` by its exact address: a bare 48K /
-  128K has no Kempston joystick, it is a card there, so a `#1F` read with no card fitted is `board.001f`.
-
-  Follow-up: resolve a board access against the card catalog of the machine's slots (`SlotPlanner`), giving
-  "candidate: kempston card". The auto connector can then propose the card.
-- **Whole-evidence plane.** The evidence reaches the planes only through `controller auto`. A dedicated
-  `devices/access` route and a WebSocket topic (§6) are not built yet.
-- **Next connectors.** The Next's board ports are `next.left` / `next.right`: a `#1F` decision (`kempston`) names a
-  connector the Next lacks and the Qt client ignores it (`applyAuto`). Map `kempston` / `kempston-2` to
-  `next.left` / `next.right` there.
+  128K has no Kempston joystick, it is a card there, so a `#1F` read with no card fitted is `board.001f`, with the
+  `kempston` card as its candidate (Built: card candidates). A card is proposed, never fitted on its own.
 - **Test time.** `HostInputMachine_Test.AccessWatchSeesTheKeyboardOnEveryMachine` creates every machine of the
   refdata: 1.3-1.5 s under a machine load of about 150, over the 1 s integration budget; shorten it or move the
   full sweep behind `TestTier::Long()` if it stays there under normal load.

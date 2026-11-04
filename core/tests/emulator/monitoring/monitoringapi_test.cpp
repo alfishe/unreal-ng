@@ -12,6 +12,8 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/monitoring/clientstats.h"
 #include "emulator/monitoring/monitoringapi.h"
+#include "emulator/ports/deviceaccesswatch.h"
+#include "emulator/ports/portdecoder.h"
 
 #include <algorithm>
 #include <string>
@@ -89,6 +91,48 @@ TEST_F(MonitoringApi_Test, AnInstancesNameAnswersItsFieldsAndUnknownsAreNotFound
     byIndex["instance"] = "0";
     const monitoring::Reply indexed = monitoring::Call("debug.analyzers", byIndex);
     ASSERT_TRUE(indexed.Ok()) << "an index names the instance too";
+}
+
+// The device access watch on every plane: the name carries the channels with their sites, `all` only how many; the
+// value follows the watch's revision (a folded frame, a start, a stop)
+TEST_F(MonitoringApi_Test, DevicesAccessCarriesTheChannelsAndAllTheirCount)
+{
+    monitoring::Reply off = monitoring::Call("devices.access", Args());
+    ASSERT_TRUE(off.Ok());
+    EXPECT_TRUE(off.body.find("available")->b);
+    EXPECT_FALSE(off.body.find("active")->b);
+    EXPECT_FALSE(off.body.find("continuous")->b);
+
+    DeviceAccessWatch& watch = _emulator->GetContext()->pPortDecoder->GetAccessWatch();
+    watch.Start();
+    watch.Record(0x001F, 0xFF, false, false, 0x8000);  // IN #1F from 0x8000: the Pentagon's Kempston
+    watch.EndFrame();
+    const monitoring::Reply on = monitoring::Call("devices.access", Args());
+    ASSERT_TRUE(on.Ok());
+    EXPECT_TRUE(on.body.find("active")->b);
+    EXPECT_EQ(Int(on.body, "frames_observed"), 1);
+    const StateNode* channels = on.body.find("channels");
+    ASSERT_NE(channels, nullptr);
+    ASSERT_EQ(channels->items.size(), 1u);
+    const StateNode& kempston = channels->items[0];
+    EXPECT_EQ(kempston.find("device")->s, "kempston-joystick");
+    EXPECT_EQ(kempston.find("input")->s, "kempston-joystick");
+    EXPECT_EQ(kempston.find("dir")->s, "in");
+    EXPECT_EQ(Int(kempston, "frames"), 1);
+    const StateNode* sites = kempston.find("sites");
+    ASSERT_NE(sites, nullptr);
+    ASSERT_EQ(sites->items.size(), 1u);
+    EXPECT_EQ(Int(sites->items[0], "pc"), 0x8000);
+
+    const monitoring::Reply all = monitoring::Call("all", Args());
+    ASSERT_TRUE(all.Ok());
+    const StateNode* summary = all.body.find("instances")->items[0].find("devices.access");
+    ASSERT_NE(summary, nullptr);
+    EXPECT_EQ(Int(*summary, "channel_count"), 1);
+    EXPECT_EQ(summary->find("channels"), nullptr) << "the list stays with the name";
+
+    watch.Stop();
+    EXPECT_FALSE(monitoring::Call("devices.access", Args()).body.find("active")->b) << "a new revision";
 }
 
 TEST_F(MonitoringApi_Test, BreakpointGroupsListEachGroupWithItsIds)

@@ -2582,7 +2582,9 @@ void RegisterInspectState(ToolRegistry& registry)
         "clients per plane, and this instance's emulator.stats (measured fps, real-time speed %, frame time, CPU MHz, "
         "interrupts per frame), breakpoint counts by kind and groups, media slots with unsaved changes, recording, "
         "labels, TTD sizes, profiler states, controllers, the game's events (game.events: the play profile's events, "
-        "how often each fired, its last frame and watched value); the WebSocket topics of the same names push them. "
+        "how often each fired, its last frame and watched value), the device access watch's summary (devices.access: active, "
+        "frames, channel_count; the channels through the monitor name itself); the WebSocket topics of the same names "
+        "push them. "
         "Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
@@ -5440,9 +5442,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
     for (const char* action : {"status", "start", "stop", "invalidate", "position", "markers", "seek", "step_back_frame",
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
                                "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
-                               "bookmark_add", "bookmark_list",
+                               "bookmark_add", "bookmark_list", "bookmark_note", "bookmark_export",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
-                               "cause_chain", "find_event", "explain_frame", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
+                               "cause_chain", "find_event", "explain_frame", "diff", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
                                "memory_at", "memory_diff"})
     {
@@ -5486,7 +5488,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "fit before 'load'); 'export_clip' writes frames from_frame..to_frame as a lossless clip into the directory path "
         "(final picture, plane B when zxdlss is on, frame meta; chunk = frames per zstd chunk, default 500) in one "
         "call instead of a seek and a capture per frame (not while recording). "
-        "Bookmarks: 'bookmark_add'/'bookmark_list'/'bookmark_delete'/'seek_bookmark' (advisory labels, never barriers). "
+        "Bookmarks: 'bookmark_add'/'bookmark_list'/'bookmark_delete'/'seek_bookmark' (advisory labels, never barriers); "
+        "bookmark_add keeps a note, tags and the moment's context (PC, code page, instruction, registers, the "
+        "watched bytes) taken once, without moving the machine; 'bookmark_note' edits the note / tags / label; "
+        "'bookmark_export' writes them all up in one call (format markdown = a WALKTHROUGH section, profile = a game "
+        "profile's header comment, json; tag filters; path also writes a file) - instead of a seek + registers + "
+        "disassembly + memory read per bookmark. "
         "History limit: 'history_limit' sets (history_frames / history_bytes, 0 = none, a missing one is kept) or "
         "reports the bound on the recorded history - while recording, the oldest frames are released beyond it and "
         "the session start moves forward; a file saved afterwards replays its remaining frames exactly. 'start' "
@@ -5519,6 +5526,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "changed per range (screen pixels / attributes, stack, RAM) with its writers, the screen % changed and the "
         "border colours, keys held / pressed, markers; sections picks some ('routines,memory'), limit entries per "
         "list (default 8); one replay of the frame, the machine stays where it was). "
+        "'diff' (what differs between two moments: one call instead of seek + registers + memory reads at each end "
+        "+ memory_diff + find_last per range; from_frame (from_tinframe) and to_frame (to_tinframe; default: the "
+        "current position), any T inside a frame; the answer: the registers, latches and 8K slot mapping that "
+        "differ, the RAM changed in ranges (screen pixels / attributes, RAM per page) with the bytes of short ranges "
+        "and the last CPU write in between (time, PC, instruction), the screen % changed and the border, the devices "
+        "whose state differs, the frames / T / keys / markers in between; sections picks some ('cpu,memory'), limit "
+        "entries per list (default 16), writers=false skips the write search; the machine stays where it was). "
         "'cause_chain' (why does a byte or a register hold its value: one call instead of find_last + disassemble + "
         "reverse_step loops; addr (with phys_page) or reg (A, HL, IX, SP, E'...), at frame / tinframe (default: the "
         "current position); the answer is the chain back from the value, one line per link: the instruction that "
@@ -5558,7 +5572,44 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["reason"]["description"] = "invalidate: free-text reason echoed back and logged";
     schema["properties"]["label"]["type"] = "string";
     schema["properties"]["label"]["description"] =
-        "Bookmark label for bookmark_add / bookmark_delete / seek_bookmark (non-empty, at most 63 characters)";
+        "Bookmark label for bookmark_add / bookmark_note / bookmark_delete / seek_bookmark (non-empty, at most 63 "
+        "characters)";
+    schema["properties"]["note"]["type"] = "string";
+    schema["properties"]["note"]["description"] =
+        "bookmark_add / bookmark_note: what the agent learned at this moment (at most 4096 characters); bookmark_note "
+        "replaces it, or appends it as a new line with append=true";
+    schema["properties"]["append"]["type"] = "boolean";
+    schema["properties"]["append"]["description"] = "bookmark_note: add 'note' as a new line instead of replacing it";
+    schema["properties"]["tags"]["type"] = "array";
+    schema["properties"]["tags"]["items"]["type"] = "string";
+    schema["properties"]["tags"]["description"] =
+        "bookmark_add / bookmark_note: tags (at most 8, each 1..31 of A-Z a-z 0-9 _ . -); bookmark_note replaces them";
+    schema["properties"]["add_tags"]["type"] = "array";
+    schema["properties"]["add_tags"]["items"]["type"] = "string";
+    schema["properties"]["add_tags"]["description"] = "bookmark_note: tags to add";
+    schema["properties"]["remove_tags"]["type"] = "array";
+    schema["properties"]["remove_tags"]["items"]["type"] = "string";
+    schema["properties"]["remove_tags"]["description"] = "bookmark_note: tags to remove";
+    schema["properties"]["rename"]["type"] = "string";
+    schema["properties"]["rename"]["description"] = "bookmark_note: the bookmark's new label";
+    schema["properties"]["watch"]["type"] = "array";
+    schema["properties"]["watch"]["items"]["type"] = "string";
+    schema["properties"]["watch"]["description"] =
+        "bookmark_add: addresses whose bytes are kept with the bookmark, 'address[:length]' ('#A130', '0xA140:4'; "
+        "at most 8, length 1..16)";
+    schema["properties"]["tag"]["type"] = "string";
+    schema["properties"]["tag"]["description"] = "bookmark_list / bookmark_export: only the bookmarks with this tag";
+    schema["properties"]["title"]["type"] = "string";
+    schema["properties"]["title"]["description"] = "bookmark_export: the heading (the game or the task)";
+    schema["properties"]["format"]["type"] = "string";
+    schema["properties"]["format"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* format : {"markdown", "profile", "json"})
+    {
+        schema["properties"]["format"]["enum"].append(format);
+    }
+    schema["properties"]["format"]["description"] =
+        "bookmark_export: markdown (a WALKTHROUGH section, default), profile (comment lines for a game profile's "
+        "header) or json";
     schema["properties"]["frame"]["type"] = "integer";
     schema["properties"]["frame"]["description"] =
         "Frame number: target for seek (required), optional start point for resume (default: the current point), optional position for bookmark_add "
@@ -5608,7 +5659,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["sections"]["type"] = "string";
     schema["properties"]["sections"]["description"] =
         "explain_frame: comma list of time, routines, interrupt, paging, ports, memory, screen, input, markers "
-        "(default all)";
+        "(default all); diff: cpu, paging, memory, screen, devices, between (default all)";
+    schema["properties"]["from_tinframe"]["type"] = "integer";
+    schema["properties"]["from_tinframe"]["description"] = "diff: T inside from_frame (default 0)";
+    schema["properties"]["to_tinframe"]["type"] = "integer";
+    schema["properties"]["to_tinframe"]["description"] = "diff: T inside to_frame (default 0)";
+    schema["properties"]["writers"]["type"] = "boolean";
+    schema["properties"]["writers"]["description"] = "diff: the last write in between per memory range (default true)";
     schema["properties"]["find"]["type"] = "string";
     schema["properties"]["find"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* e : {"mem", "screen", "exec", "port", "border", "key"})
@@ -5646,8 +5703,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
         "dump / load / file_info: .ttd file path (load also takes a recording's folder under ~/.unreal-ng/ttd/, or "
-        "one of its segment files: the segments are joined); export_clip: the clip's directory (created if missing). Resolved by "
-        "the emulator process (its machine and working directory)";
+        "one of its segment files: the segments are joined); export_clip: the clip's directory (created if missing); "
+        "bookmark_export: the file the text is also written to. Resolved by the emulator process (its machine and "
+        "working directory)";
     schema["properties"]["addr"]["type"] = "string";
     schema["properties"]["addr"]["description"] =
         "find_last: single Z80 address (integer, '0x5800', '#5800' or '$5800'); with space vram / cache an offset in "
@@ -5708,7 +5766,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["context"]["type"] = "boolean";
     schema["properties"]["context"]["description"] =
         "port_events: each hit's registers and stack_top at its instruction (replayed; default on, off while a "
-        "recording runs - true pauses it; not with file)";
+        "recording runs - true pauses it; not with file). bookmark_add: take the moment's registers, instruction "
+        "and watched bytes (default true)";
     schema["properties"]["file"]["type"] = "string";
     schema["properties"]["file"]["description"] =
         "port_events: a .ttd file on the emulator's machine to search instead of the current session - it is not "
@@ -5726,10 +5785,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["from_frame"]["type"] = "integer";
     schema["properties"]["from_frame"]["description"] =
         "Starting frame for coverage_scan / coverage_rare / coverage_summary / port_events / probe_frames / journal_build / export_clip; the oldest "
-        "frame find_last / reverse_continue look at";
+        "frame find_last / reverse_continue look at; diff: the first moment";
     schema["properties"]["to_frame"]["type"] = "integer";
     schema["properties"]["to_frame"]["description"] =
-        "Ending frame for coverage_scan / coverage_rare / coverage_summary / port_events / probe_frames / journal_build / export_clip";
+        "Ending frame for coverage_scan / coverage_rare / coverage_summary / port_events / probe_frames / journal_build / export_clip; diff: the "
+        "second moment (default: the current position)";
     schema["properties"]["chunk"]["type"] = "integer";
     schema["properties"]["chunk"]["description"] = "export_clip: frames per zstd chunk (default 500)";
     schema["properties"]["kind"]["type"] = "string";
@@ -5751,7 +5811,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Max results for coverage_scan and blocks for coverage_rare (default 200, at most 10000), port_events (default 100), find_last / "
         "reverse_continue with all (default 100, at most 10000), frames per probe for probe_frames (default 1000, at most "
         "10000), or max buckets for coverage_summary (default 100), entries per list for explain_frame (default 8, at "
-        "most 100)";
+        "most 100) and diff (default 16, at most 200)";
     schema["properties"]["max_frames"]["type"] = "integer";
     schema["properties"]["max_frames"]["description"] =
         "coverage_rare: an address is rare when at most this many frames touched it (default 1, at most 1000); "
@@ -5811,7 +5871,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 return;
             }
 
-            if (action == "bookmark_add" || action == "bookmark_delete" || action == "seek_bookmark")
+            if (action == "bookmark_add" || action == "bookmark_note" || action == "bookmark_delete" ||
+                action == "seek_bookmark")
             {
                 const std::string label = args["label"].asString();
                 if (label.empty())
@@ -6511,41 +6572,60 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 else if (action == "bookmark_add")
                 {
                     Json::Value body;
-                    body["label"] = args["label"].asString();
-                    if (args.isMember("frame"))
+                    for (const char* key : {"label", "frame", "tinframe", "note", "tags", "watch", "context"})
                     {
-                        body["frame"] = args["frame"];
+                        if (args.isMember(key))
+                        {
+                            body[key] = args[key];
+                        }
                     }
-                    if (args.isMember("tinframe"))
-                    {
-                        body["tinframe"] = args["tinframe"];
-                    }
-                    ForwardCall("POST", Endpoint(id, "/ttd/bookmarks"), &body, caller,
-                                "Bookmark '" + args["label"].asString() + "' added on " + id, done);
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/bookmarks"), &body, caller,
+                                     [](const Json::Value& b) { return b["text"].asString(); }, done);
                 }
                 else if (action == "bookmark_list")
                 {
-                    caller.Call("GET", Endpoint(id, "/ttd/bookmarks"), nullptr, [done](int status, Json::Value body) {
-                        if (status != 200)
+                    std::string path = "/ttd/bookmarks?text=true";
+                    if (args.isMember("tag"))
+                    {
+                        path += "&tag=" + UrlEncodeSegment(args["tag"].asString());
+                    }
+                    CallAndSummarize("GET", Endpoint(id, path), nullptr, caller, [](const Json::Value& b) {
+                        return b["text"].asString() + "(advisory - never a replay barrier)";
+                    }, done);
+                }
+                else if (action == "bookmark_note")
+                {
+                    Json::Value body;
+                    for (const char* key : {"note", "append", "tags", "add_tags", "remove_tags", "rename"})
+                    {
+                        if (args.isMember(key))
                         {
-                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
-                            return;
+                            body[key] = args[key];
                         }
-                        const Json::Value& bookmarks = body["bookmarks"];
-                        std::ostringstream out;
-                        out << bookmarks.size() << " bookmark(s)";
-                        for (Json::ArrayIndex i = 0; i < bookmarks.size(); ++i)
+                    }
+                    CallAndSummarize("PUT", Endpoint(id, "/ttd/bookmarks/" + UrlEncodeSegment(args["label"].asString())),
+                                     &body, caller, [](const Json::Value& b) { return b["text"].asString(); }, done);
+                }
+                else if (action == "bookmark_export")
+                {
+                    Json::Value body;
+                    for (const char* key : {"format", "tag", "title", "path"})
+                    {
+                        if (args.isMember(key))
                         {
-                            out << "\n- '" << bookmarks[i]["label"].asString() << "' @ frame "
-                                << bookmarks[i]["frame"].asUInt64();
-                            if (bookmarks[i]["tinframe"].asUInt() != 0)
-                            {
-                                out << " t=" << bookmarks[i]["tinframe"].asUInt();
-                            }
+                            body[key] = args[key];
                         }
-                        out << "\n(advisory — never a replay barrier)";
-                        done(ToolResult::Ok(out.str(), std::move(body)));
-                    });
+                    }
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/export-bookmarks"), &body, caller,
+                                     [](const Json::Value& b) {
+                                         std::string text = b["text"].asString();
+                                         if (!b["path"].asString().empty())
+                                         {
+                                             text += "\n(written to " + b["path"].asString() + ", " +
+                                                     std::to_string(b["bytes"].asUInt64()) + " bytes)";
+                                         }
+                                         return text;
+                                     }, done);
                 }
                 else if (action == "bookmark_delete")
                 {
@@ -6761,6 +6841,33 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         if (body["hits"].empty())
                             out += "No hit: widen the window (from_frame / to_frame), loosen the condition, or check "
                                    "the address and phys_page.\n";
+                        body.removeMember("text");
+                        done(ToolResult::Ok(out, std::move(body)));
+                    });
+                }
+                else if (action == "diff")
+                {
+                    if (!args.isMember("from_frame"))
+                    {
+                        done(ToolResult::Error("Action 'diff' requires 'from_frame'"));
+                        return;
+                    }
+                    std::string query = "/ttd/diff?text=true";
+                    for (const char* field : {"from_frame", "from_tinframe", "to_frame", "to_tinframe", "limit"})
+                        if (args.isMember(field))
+                            query += std::string("&") + field + "=" + std::to_string(args[field].asUInt64());
+                    if (args.isMember("sections"))
+                        query += "&sections=" + UrlEncodeSegment(args["sections"].asString());
+                    if (args.isMember("writers"))
+                        query += std::string("&writers=") + (args["writers"].asBool() ? "true" : "false");
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        // One block per section: an agent may read only this
+                        std::string out = body["text"].asString();
                         body.removeMember("text");
                         done(ToolResult::Ok(out, std::move(body)));
                     });

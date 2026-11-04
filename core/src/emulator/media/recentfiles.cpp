@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "emulator/readoutschanged.h"
 
 #include "emulator/media/recentfiles.h"
 
@@ -77,6 +78,7 @@ void RecentFiles::Note(const std::string& kind, const std::string& path)
                    _entries.end());
     _revision++;
     SaveLocked();
+    NotifyReadoutsChanged(std::string(), "media.recent");  // of the process: every instance's media.recent
 }
 
 std::vector<RecentFiles::Entry> RecentFiles::List(const std::string& kind) const
@@ -101,6 +103,7 @@ void RecentFiles::Clear(const std::string& kind)
                        _entries.end());
     _revision++;
     SaveLocked();
+    NotifyReadoutsChanged(std::string(), "media.recent");  // of the process: every instance's media.recent
 }
 
 uint64_t RecentFiles::Revision() const

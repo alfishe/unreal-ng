@@ -185,12 +185,9 @@ const std::vector<std::string>& BuiltinHapticEffectIds();
 bool ParseHapticStream(const std::string& text, HapticStream& out);
 const char* HapticStreamName(HapticStream stream);
 
-/// "Add probe from debugger" (haptics.md §7): @p probe (a breakpoint's address or port) as a new source of the
-/// `haptics` section @p haptics (made an object when null) with a rule that plays @p play; a write probe sees every
-/// write (`each_write`, `when: changed`). The new source's name in @p name ("probe-1", "probe-2", ...); false with the
-/// reason when the result does not parse
-bool AddHapticProbeSource(JsonValue& haptics, const HapticProbe& probe, const std::string& play, std::string& name,
-                          std::string& error);
+/// @p overlay laid over the `haptics` section @p base: its sources replace those of the same name, its rules follow
+/// the base's, any other field replaces the base's (the session trial of haptics.md §11)
+JsonValue OverlayHaptics(const JsonValue& base, const JsonValue& overlay);
 
 /// Move @p levels to @p target: the loudest level goes to every target channel; `all` keeps each channel's own and
 /// gives the voice coils the loudest where the effect has none for them

@@ -1282,10 +1282,17 @@ end   -- kind: tape_control | disk_write | debugger_edit | other
 
 ttd_bookmark_add("before crash")            -- at the current position
 ttd_bookmark_add("umt entry", 4823, 14982)  -- at (frame, tinframe)
--- --> { added = true, label, frame, tinframe }  or  { added = false, error = "..." }
-for _, bm in ipairs(ttd_bookmarks()) do     -- time-sorted
-    print(bm.frame, bm.tinframe, bm.label)
+ttd_bookmark_add("lives", 212, 31540, {note = "the life counter drops", tags = {"lives"}, watch = {"#A13C"}})
+ttd_bookmark_add("here", {note = "...", context = false})  -- the options table may stand in for the frame
+-- --> { added = true, label, frame, tinframe, bookmark, text }  or  { added = false, error = "..." }
+-- bookmark.context = { pc, sp, af, ..., instruction, text } taken once (another moment: one silent seek)
+for _, bm in ipairs(ttd_bookmarks()) do     -- time-sorted; ttd_bookmarks("lives"): one tag
+    print(bm.frame, bm.tinframe, bm.label, bm.note)
 end
+ttd_bookmark_note("lives", {note = "only on contact", append = true, add_tags = {"enemy"}})
+-- also tags = {...}, remove_tags = {...}, rename = "..."; --> { updated = true, bookmark, text } or { updated = false, error }
+local e = ttd_bookmark_export{format = "markdown", tag = "lives", title = "Green Beret"}   -- or "profile", "json"
+print(e.text)                               -- path = "..." writes it too: e.path, e.bytes
 ttd_bookmark_delete("before crash")        --> bool
 ttd_seek_bookmark("umt entry")
 -- --> same table as ttd_seek (blocking_marker included when a marker stops it)
@@ -1395,6 +1402,15 @@ local f = ttd_explain_frame(1204, {sections = "time,routines,memory", limit = 4}
 --   routines = { {pc = 0x8A14, calls = 1, t = 31220, own_t = 2110, insns = 4812, caller = 0x8003}, ... },
 --   memory = { {region = "screen pixels", addr = 0x4800, changed = 1024, writers = { {pc = 0x9A12,
 --   text = "ld (hl),a", count = 1024} }}, ... }, more_memory = 2, frames_replayed = 1, ms = ... }
+
+-- What differs between two moments: from_frame (+ from_tinframe), to_frame (+ to_tinframe; default the current
+-- position), options sections ("cpu,paging,memory,screen,devices,between"), limit (16), writers (true), text
+local d = ttd_diff{from_frame = 1201, to_frame = 1204, sections = "cpu,memory"}
+-- { from = {frame = 1201, tinframe = 0}, to = {frame = 1204, tinframe = 0}, backwards = false,
+--   registers = { {name = "PC", before = 0x8008, after = 0x8009}, ... },
+--   memory = {changed = 2, pages = 1, ranges = { {region = "ram", page = 2, offset = 0x2000, address = 0xA000,
+--   length = 1, changed = 1, before = {3}, after = {6}, last_write = {frame = 1203, tinframe = 71, pc = 0x800C,
+--   address = 0xA000, text = "inc (hl)"}}, ... }, more = 0}, writer_searches = 2, ms = ... }
 
 local summary = ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50, limit = 100}
 -- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,

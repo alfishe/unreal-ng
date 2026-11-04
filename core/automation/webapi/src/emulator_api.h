@@ -743,7 +743,9 @@ public:
     // explicitly NOT replay barriers (unlike external-event markers).
     ADD_METHOD_TO(EmulatorAPI::getTTDBookmarks, "/api/v1/emulator/{id}/ttd/bookmarks", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postTTDBookmark, "/api/v1/emulator/{id}/ttd/bookmarks", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::exportTTDBookmarks, "/api/v1/emulator/{id}/ttd/export-bookmarks", drogon::Get, drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::deleteTTDBookmark, "/api/v1/emulator/{id}/ttd/bookmarks/{label}", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::putTTDBookmark, "/api/v1/emulator/{id}/ttd/bookmarks/{label}", drogon::Put);
     // TD-7 — coverage index queries
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageProbe, "/api/v1/emulator/{id}/ttd/coverage/probe", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageScan, "/api/v1/emulator/{id}/ttd/coverage/scan", drogon::Get);
@@ -753,6 +755,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getTTDCauseChain, "/api/v1/emulator/{id}/ttd/cause-chain", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDFindEvent, "/api/v1/emulator/{id}/ttd/find-event", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDExplainFrame, "/api/v1/emulator/{id}/ttd/explain-frame", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDDiffMoments, "/api/v1/emulator/{id}/ttd/diff", drogon::Get);
     // endregion TTD
 
     // region Labels/Symbols (implementation: api/debug_api.cpp)
@@ -2335,6 +2338,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void postTTDBookmark(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void putTTDBookmark(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id, const std::string& label) const;
+    void exportTTDBookmarks(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
     void deleteTTDBookmark(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
                            const std::string& label) const;
@@ -2355,6 +2364,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getTTDExplainFrame(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDDiffMoments(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion TTD Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)

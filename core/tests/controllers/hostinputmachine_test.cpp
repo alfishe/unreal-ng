@@ -7,6 +7,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <functional>
 #include <memory>
 #include <vector>
 #include <string>
@@ -25,6 +27,7 @@
 #include "fake/fakebackend.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/slots/refdata/refdata.h"
+#include "emulator/slots/slotcontrol.h"
 #include "emulator/slots/slottypes.h"
 #include "hostinputservice.h"
 #include "router/zxkeys.h"
@@ -261,6 +264,78 @@ TEST(HostInputMachine_Test, AccessWatchNextB2)
     const DeviceAccessChannel* b1 = evidence.Find(slots::InputRole::NextReg, 0xB1);
     ASSERT_NE(b1, nullptr) << "every register is its own channel";
     EXPECT_EQ(evidence.Find(slots::InputRole::AyIo, 14), nullptr);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+namespace
+{
+/// The id of the machine's connector for @p input (as the auto decision resolves it), "" when it has none
+std::string ConnectorFor(EmulatorContext* context, slots::InputRole input, const std::string& source = {})
+{
+    ControllerManager* manager = context->pControllerManager;
+    const int found = manager->FindForInput(input, source);
+    return found >= 0 ? manager->At(static_cast<size_t>(found)).id : std::string();
+}
+}  // namespace
+
+// Four machines, no frames run. The auto decision names the input role of the reads it rests on; each machine
+// finds its own connector for it: #1F is `kempston` on a Pentagon and `next.left` on a Next, #37 `next.right`, an
+// AMX card's PIO the card's socket, and a bare 48K has none (the plug then names the missing card)
+TEST(HostInputMachine_Test, AutoConnectorByInputRole)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EXPECT_EQ(ConnectorFor(emulator->GetContext(), slots::InputRole::KempstonJoystick), "kempston");
+    EXPECT_EQ(ConnectorFor(emulator->GetContext(), slots::InputRole::KempstonJoystick2), "");
+    EXPECT_EQ(ConnectorFor(emulator->GetContext(), slots::InputRole::KeyMatrix), "");
+    EmulatorTestHelper::CleanupEmulator(emulator);
+
+    emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EXPECT_EQ(ConnectorFor(emulator->GetContext(), slots::InputRole::KempstonJoystick, "kempston-joystick"),
+              "next.left");
+    EXPECT_EQ(ConnectorFor(emulator->GetContext(), slots::InputRole::KempstonJoystick2), "next.right");
+    EmulatorTestHelper::CleanupEmulator(emulator);
+
+    emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EXPECT_EQ(ConnectorFor(emulator->GetContext(), slots::InputRole::KempstonJoystick), "");
+    EXPECT_EQ(ConnectorFor(emulator->GetContext(), slots::InputRole::AmxMouse), "");
+    EmulatorTestHelper::CleanupEmulator(emulator);
+
+    std::function<void(CONFIG&)> slotSet;
+    std::string error;
+    ASSERT_TRUE(SlotControl::CreateOverride({{"edge.1", "amx-mouse"}}, slotSet, error)) << error;
+    emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError, RamPowerOn::Zero, slotSet);
+    ASSERT_NE(emulator, nullptr);
+    EXPECT_EQ(ConnectorFor(emulator->GetContext(), slots::InputRole::AmxMouse, "edge.1"), "amx");
+    const Connector amx = emulator->GetContext()->pControllerManager->At(
+        static_cast<size_t>(emulator->GetContext()->pControllerManager->Find("amx")));
+    EXPECT_EQ(amx.source, "edge.1");
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// Boot-bound (~20 ms): a bare 48K, three frames. #1F reads nothing on the machine answers carry the catalog card that
+// would: a Kempston interface on the edge
+TEST(HostInputMachine_Test, BoardReadsCarryTheCardCandidate)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    // DI; loop: IN A,(#1F); JR loop
+    RunAt8000(context, {0xF3, 0xDB, 0x1F, 0x18, 0xFC});
+    ControllerManager* manager = context->pControllerManager;
+    manager->WatchPortReads(true);
+    emulator->RunNFrames(3);
+    const DeviceAccessEvidence evidence = manager->PortReads();
+    const auto board = std::find_if(evidence.channels.begin(), evidence.channels.end(), [](const DeviceAccessChannel& c) {
+        return c.device == "board" && !c.out && (c.port & 0xFF) == 0x1F;
+    });
+    ASSERT_NE(board, evidence.channels.end()) << "#1F is unclaimed on a bare 48K";
+    ASSERT_FALSE(board->candidates.empty());
+    EXPECT_EQ(board->candidates.front().card, "kempston");
+    EXPECT_EQ(board->candidates.front().slot, "edge.1");
+    EXPECT_EQ(board->candidates.front().input, slots::InputRole::KempstonJoystick);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 

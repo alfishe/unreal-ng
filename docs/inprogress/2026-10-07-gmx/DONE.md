@@ -27,5 +27,5 @@
   [evidence/](evidence/).
 
 ## Follow-ups
-- None open. The Covox on the Scorpion printer port `#DD` (VPlayer's "DD" port) is emulated since 2026-11-03 (built-in
-  `covox-dd`, the same Covox as `#FB`).
+- None open. The Scorpion Covox on `#DD` (VPlayer's "DD" port, the board's only Covox port) is emulated since
+  2026-11-03 (built-in `covox-dd`).

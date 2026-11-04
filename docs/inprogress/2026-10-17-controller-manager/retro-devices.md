@@ -254,8 +254,14 @@ Output (`DeviceAccessEvidence`, read by `controllers::DecideFromAccess`):
 ```
 DeviceAccessEvidence { active, framesObserved, window: 50,
                        channels: [ { device, channel, input, port, index, out, frames, perFrame, tested,
-                                     sites: [ { pc, count, tested } ], otherSites } ] }
+                                     sites: [ { pc, count, tested } ], otherSites,
+                                     candidates: [ { card, name, slot, input, needsConfirmation } ] } ] }
 ```
+
+A port no claim answers is a `board` channel by its exact address. `ControllerManager::PortReads` gives it the
+catalog cards that would answer it on the machine as it is (`slots::CardCandidates`): `#1F` read on a bare 48K has
+the `kempston` card on `edge.1`. Read in nearly every frame with nothing else decisive, that is a hint naming the
+card; the Qt host says it once and fits nothing (a card restarts the machine).
 
 - **Tested bits.** For every read of an input claim, the watch reads the code after the `IN` without executing it
   (`TestedBitsAfterIn`) and follows the value:
@@ -285,9 +291,11 @@ DeviceAccessEvidence { active, framesObserved, window: 50,
     each board's decode; the chip select; the seeded selection; sites; the window; every machine's keyboard and AY);
   - `HostInputMachine_Test.AccessWatch*` on a running Pentagon and a Next, a TurboSound Pentagon that selected R14
     before the watch, and the keyboard through every machine's real decoder.
-- Not done: the Next's board ports are `next.left` / `next.right`, so a `#1F` decision (`kempston`) on a Next names a
-  connector the Next lacks and the Qt client ignores it (`applyAuto`); a mapping of `kempston` to `next.left` there is
-  left.
+- **Connectors by input role.** A decision names the input role of its reads and the registry device that answered
+  them (`AutoDecision::input`, `source`); the machine finds its connector for them (`ControllerManager::FindForInput`):
+  `#1F` is `kempston` on a Pentagon, `next.left` on a Next, `#37` `next.right`, an AMX card's PIO its `amx` socket.
+- **The whole evidence** is the monitoring name `devices.access` on every plane (WebAPI
+  `GET /api/v1/monitor/devices.access`, the WebSocket topic, CLI / Python / Lua `monitor`, MCP `inspect_state`).
 
 ## 7. What the core must add
 

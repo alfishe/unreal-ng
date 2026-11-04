@@ -165,7 +165,8 @@ TEST(ActionCatalogue_Test, RegisterFillsTheDescriptionTheToggleAndBumpsTheRevisi
     EXPECT_FALSE(registry.Find("t.plain")->toggle);
     EXPECT_EQ(registry.Find("t.plain")->description, "");
     std::vector<std::string> stems;
-    for (const ActionRegistry::ToggleReadout& toggle : registry.ToggleReadouts())
+    const auto toggles = registry.ToggleReadouts();
+    for (const ActionRegistry::ToggleReadout& toggle : *toggles)
         stems.push_back(toggle.stem + (toggle.param.empty() ? "" : "." + toggle.param));
     EXPECT_EQ(stems, (std::vector<std::string>{"toggle.mach.turbo_toggle", "toggle.feature.name"}));
     EXPECT_EQ(registry.ToggleState("mach.turbo_toggle", "nobody"), std::nullopt) << "no machine";

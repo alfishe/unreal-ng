@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """time_travel: record, stop, the history in status, seek back, the machine state follows, rare coverage,
 port events with their context, reverse-continue first per PC, memory-at the machine now, probe frames, the
-timeline, the cause chain, find event"""
+timeline, the cause chain, find event, explain frame, diff of two moments, bookmarks with notes and export"""
 
 import re
 import sys
@@ -227,6 +227,79 @@ def test_explain_frame_tells_what_the_frame_did(s):
            (before[:200], at_after))
     r = s.call('time_travel', {'action': 'explain_frame', 'sections': 'nosuch'}, ok=False)
     expect(r.is_error and 'section' in r.text, 'an unknown section named', r.text)
+
+def test_diff_tells_what_differs_between_two_moments(s):
+    # The history of test_record_stop_seek: FRAMES (#5C78) counts up once a frame, written by the ROM's IM 1 handler
+    before = s.call('time_travel', {'action': 'status'}).text
+    first = int(re.search(r'frames (\d+)\.\.', before).group(1))
+    r = s.call('time_travel', {'action': 'diff', 'from_frame': first + 2, 'to_frame': first + 7})
+    v = r.structured
+    expect(not r.is_error and v.get('from', {}).get('frame') == first + 2 and v.get('to', {}).get('frame') == first + 7,
+           'the two moments', r.text)
+    expect(v.get('between', {}).get('frames') == 5, 'five frames between', v.get('between'))
+    frames = [m for m in v.get('memory', {}).get('ranges', []) if m.get('address', 0) <= 0x5C78 < m.get('address', 0)
+              + m.get('length', 0)]
+    expect(len(frames) == 1 and frames[0].get('page') == 5, 'FRAMES in a range of RAM 5', v.get('memory'))
+    w = frames[0].get('last_write', {}) if frames else {}
+    expect(w.get('pc', 0x4000) < 0x4000 and w.get('text') and first + 2 <= w.get('frame', 0) <= first + 7,
+           'its last write: the ROM, between the moments', frames)
+    expect(all(x in r.text for x in ('diff f', '5 frame(s)', 'memory:', 'last write', 'devices:')),
+           'the sections in the text', r.text)
+    r = s.call('time_travel', {'action': 'diff', 'from_frame': first + 2, 'from_tinframe': 30000,
+                               'to_frame': first + 2, 'to_tinframe': 1000, 'sections': 'cpu'})
+    v = r.structured
+    expect(not r.is_error and v.get('backwards') and 'memory' not in v and v.get('registers'),
+           'inside one frame, backwards, the cpu section only', r.text)
+    expect(v.get('from', {}).get('tinframe', 0) >= 30000, 'the boundary at or after the T asked for', v.get('from'))
+    at_before = re.search(r'at frame (\d+)', before)
+    at_after = re.search(r'at frame (\d+)', s.call('time_travel', {'action': 'status'}).text)
+    expect((at_before and at_before.group(1)) == (at_after and at_after.group(1)), 'the position did not move',
+           (before[:200], at_after))
+    r = s.call('time_travel', {'action': 'diff'}, ok=False)
+    expect(r.is_error and 'from_frame' in r.text, 'no first moment named', r.text)
+    r = s.call('time_travel', {'action': 'diff', 'from_frame': first + 2, 'sections': 'nosuch'}, ok=False)
+    expect(r.is_error and 'section' in r.text, 'an unknown section named', r.text)
+
+
+def test_bookmarks_keep_notes_context_and_export(s):
+    # The history of test_record_stop_seek: FRAMES (#5C78) counts up once a frame
+    before = s.call('time_travel', {'action': 'status'}).text
+    first = int(re.search(r'frames (\d+)\.\.', before).group(1))
+    r = s.call('time_travel', {'action': 'bookmark_add', 'label': 'mcp-frames', 'frame': first + 3, 'tinframe': 1000,
+                               'note': 'FRAMES counts here', 'tags': ['rom', 'counter'], 'watch': ['#5C78:3']})
+    b = r.structured.get('bookmark', {})
+    ctx = b.get('context') or {}
+    expect(not r.is_error and b.get('note') == 'FRAMES counts here' and b.get('tags') == ['rom', 'counter'],
+           'the note and tags kept', r.text)
+    expect(ctx.get('instruction') and 'PC #' in r.text, 'the context taken: the instruction at PC', r.text)
+    watch = b.get('watch') or [{}]
+    expect(watch[0].get('address') == 0x5C78 and len(watch[0].get('bytes', [])) == 3, 'the watched bytes', watch)
+    at_after = re.search(r'at frame (\d+)', s.call('time_travel', {'action': 'status'}).text)
+    at_before = re.search(r'at frame (\d+)', before)
+    expect((at_before and at_before.group(1)) == (at_after and at_after.group(1)), 'the position did not move',
+           (before[:200], at_after))
+    r = s.call('time_travel', {'action': 'bookmark_note', 'label': 'mcp-frames', 'note': 'in the IM 1 handler',
+                               'append': True, 'remove_tags': ['counter']})
+    b = r.structured.get('bookmark', {})
+    expect(not r.is_error and b.get('note') == 'FRAMES counts here\nin the IM 1 handler' and b.get('tags') == ['rom'],
+           'the note appended, a tag removed', r.text)
+    r = s.call('time_travel', {'action': 'bookmark_list', 'tag': 'rom'})
+    expect(not r.is_error and 'mcp-frames' in r.text and 'FRAMES counts here' in r.text, 'the list shows the note',
+           r.text)
+    r = s.call('time_travel', {'action': 'bookmark_export', 'format': 'markdown', 'title': 'MCP test', 'tag': 'rom'})
+    expect(not r.is_error and r.structured.get('count') == 1 and '### mcp-frames' in r.text and '`#5C78' in r.text,
+           'the markdown section with the watched bytes in a code span', r.text)
+    r = s.call('time_travel', {'action': 'bookmark_export', 'format': 'profile', 'tag': 'rom'})
+    expect(not r.is_error and all(line.startswith('#') for line in r.structured.get('text', 'x').splitlines()),
+           'the profile comment lines', r.text)
+    r = s.call('time_travel', {'action': 'bookmark_export', 'format': 'nosuch'}, ok=False)
+    expect(r.is_error and 'format' in r.text, 'an unknown format named', r.text)
+    r = s.call('time_travel', {'action': 'bookmark_note', 'label': 'nosuch', 'note': 'x'}, ok=False)
+    expect(r.is_error, 'an unknown label refused', r.text)
+    r = s.call('time_travel', {'action': 'bookmark_add', 'label': 'mcp-bad', 'tags': ['a b']}, ok=False)
+    expect(r.is_error and 'tag' in r.text, 'a bad tag refused', r.text)
+    s.call('time_travel', {'action': 'bookmark_delete', 'label': 'mcp-frames'})
+
 
 if __name__ == '__main__':
     sys.exit(main(globals()))

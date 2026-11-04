@@ -25,9 +25,14 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "controllertypes.h"
+// Qt defines `slots` as a macro; this header reaches Qt translation units and names slots::InputRole
+#pragma push_macro("slots")
+#undef slots
+#include "emulator/slots/slottypes.h"
 #include "emulator/io/controllers/ihapticfeed.h"
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
 #include "debugger/ttd/ttdinputjournal.h"
@@ -72,6 +77,11 @@ struct Connector
     OverlayOptions options;
     uint16_t mask = 0;  ///< keyboard joysticks and card sockets: the controls held (the others read their device)
     const void* owner = nullptr;  ///< the card that brought the connector (ICard); null for the machine's own
+    /// The input role of the port its device answers (the slot registry's claim: KempstonJoystick for `kempston` and
+    /// `next.left`, KempstonJoystick2 for `next.right`, FullerJoystick, AmxMouse); None for the keyboard joysticks
+    slots::InputRole input = slots::InputRole::None;
+    /// The registry device whose claim that is: the card's slot ("edge.1") for a card's socket, "" for the board's
+    std::string source;
 };
 
 class ControllerManager : public ttd::TTDSerializable
@@ -90,6 +100,9 @@ public:
     std::vector<Connector> Connectors() const;
     /// id, alias or kind:index (kempston:0, next-db9:1, keyboard-joystick:0), case-insensitive; -1 when none
     int Find(const std::string& selector) const;
+    /// The connector whose device answers reads of @p input: the one @p source brought (a card's slot, the device
+    /// access evidence's registry id) first, else the first of that role; -1 when the machine has none
+    int FindForInput(slots::InputRole input, const std::string& source = {}) const;
     /// Bumped on every plug, unplug and rebuild
     uint64_t Revision() const;
     /// endregion </Connectors>
@@ -159,7 +172,8 @@ public:
     /// (PortDecoder::GetAccessWatch), applied at the next frame boundary. A media load opens it; it counts from the end
     /// of a tape's playing and closes itself after kPortReadWatchFrames (the feature `deviceaccess` keeps the watch on)
     void WatchPortReads(bool on);
-    /// What the watch saw over its last window (active false when it does not run)
+    /// What the watch saw over its last window (active false when it does not run); a board access carries the
+    /// catalog cards that would answer it on the machine as it is (slots::CardCandidates, kept until Rebuild)
     DeviceAccessEvidence PortReads() const;
     static constexpr uint32_t kPortReadWatchFrames = 1500;  ///< 30 s of play at 50 Hz
     /// endregion </Device access evidence>
@@ -217,6 +231,9 @@ private:
     mutable std::mutex _mutex;
     std::vector<Connector> _connectors;
     uint64_t _revision = 0;
+    /// The card candidates of board accesses by (out << 16 | port), for the slot set of the last Rebuild
+    mutable std::mutex _candidateMutex;
+    mutable std::unordered_map<uint32_t, std::vector<slots::CardCandidate>> _candidates;
     struct PendingPlug
     {
         std::string connector;
@@ -268,3 +285,5 @@ private:
 };
 
 }  // namespace controllers
+
+#pragma pop_macro("slots")

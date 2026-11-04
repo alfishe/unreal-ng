@@ -406,12 +406,20 @@ inline const StateNode& TtdBodyOrThrow(const ttd::TTDReply& reply)
     return reply.body;
 }
 
-/// A Python value as option text: True / False, an integer, a string
+/// A Python value as option text: True / False, an integer, a string; a list or tuple as its items joined by commas
+/// (tags, watched addresses)
 inline std::string TtdOptionTextPy(const pybind11::handle& o)
 {
     namespace py = pybind11;
     if (py::isinstance<py::bool_>(o))
         return o.cast<bool>() ? "true" : "false";
+    if (py::isinstance<py::list>(o) || py::isinstance<py::tuple>(o))
+    {
+        std::string text;
+        for (const auto& item : o)
+            text += (text.empty() ? "" : ",") + TtdOptionTextPy(item);
+        return text;
+    }
     return py::str(o).cast<std::string>();
 }
 
@@ -691,7 +699,8 @@ inline pybind11::object StreamDeckPy(const std::string& verb, const pybind11::kw
 }
 
 /// A monitoring verb (monitoring::Call: all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots,
-/// recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events) with its args as keywords
+/// recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events, devices.access) with its
+/// args as keywords
 /// (instance=
 /// an id or an index; default this emulator for an instance's name); the reply every plane returns
 inline pybind11::object MonitorPy(Emulator& self, const std::string& verb, const pybind11::kwargs& options)
@@ -2765,7 +2774,7 @@ namespace PythonBindings
             .def("controllers_host", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return HostControllerCallPy(verb, options);
                  }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
-                 "bindings, bind, unbind, scheme, haptics, rumble, output, light, haptics_probe, role, pin, identify, "
+                 "bindings, bind, unbind, scheme, haptics, rumble, output, light, haptics_trial, role, pin, identify, "
                  "player, probe, reports, database, database_save, database_delete, database_import, learn, aliases, "
                  "unalias, match) with its options as keywords")
             .def("streamdeck", [](Emulator&, const std::string& verb, const py::kwargs& options) {
@@ -2779,7 +2788,7 @@ namespace PythonBindings
                      return MonitorPy(self, verb, options);
                  }, py::arg("verb") = "all",
                  "Monitoring (all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots, "
-                 "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events): "
+                 "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events, devices.access): "
                  "monitor('emulator.stats') -> {ok, instance, fps, speed_percent, ...} as WebAPI /api/v1/monitor")
             .def("surfaces", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return SurfacesPy(verb, options);
@@ -2828,16 +2837,17 @@ namespace PythonBindings
                      return HostControllerCallPy("rumble", options);
                  }, py::arg("device"), py::arg("effect") = "identify",
                  "Play a test effect on a host device: identify, low, high, clicks, left-trigger, right-trigger, swell")
-            .def("controllers_haptics_probe", [](Emulator&, const std::string& kind, const std::string& address,
-                                                 const py::kwargs& options) {
-                     py::kwargs all = options;
-                     all["kind"] = kind;
-                     all["address"] = address;
-                     return HostControllerCallPy("haptics_probe", all);
-                 }, py::arg("kind"), py::arg("address"),
-                 "A haptic probe (exec, read, write, port-in, port-out: a breakpoint that never stops) at an address "
-                 "or port ('0x5C3A') as a source of the loaded game's user profile, with a rule: page=, port_mask=, "
-                 "play='hit'. {ok, id, source, path}")
+            .def("controllers_haptics_trial", [](Emulator&, const std::string& text, bool clear) {
+                     py::kwargs all;
+                     if (clear)
+                         all["clear"] = "true";
+                     else if (!text.empty())
+                         all["text"] = text;
+                     return HostControllerCallPy("haptics_trial", all);
+                 }, py::arg("text") = "", py::arg("clear") = false,
+                 "Try events and haptics rules on the loaded game for this session, never written: text = a play "
+                 "profile's events: / haptics: (YAML or JSON), laid over its haptics at once (game.events shows them); "
+                 "clear=True drops it; neither reads it. {ok, active, sources, trial, haptics_profile, haptics_reason}")
             .def("controllers_output", [](Emulator&, const std::string& device, const py::kwargs& options) {
                      py::kwargs all = options;
                      all["device"] = device;
@@ -6404,9 +6414,10 @@ namespace PythonBindings
             // -------------------------------------------------------------
 
             .def("ttd_bookmark_add", [](Emulator& self, const std::string& label,
-                                         py::object frameObj, uint32_t tInFrame) -> py::object {
-                // Position omitted: the current position (mark here)
+                                         py::object frameObj, uint32_t tInFrame, py::kwargs kwargs) -> py::object {
+                // Position omitted: the current position (mark here). Keywords: note, tags, watch, context
                 std::map<std::string, std::string> options{{"label", label}};
+                TtdKwargsPy(options, kwargs);
                 if (!frameObj.is_none())
                 {
                     options["frame"] = std::to_string(frameObj.cast<uint64_t>());
@@ -6420,13 +6431,48 @@ namespace PythonBindings
                     value["error"] = reply.message;
                 }
                 return StateNodeToPy(value);
-            }, "Add an agent bookmark (advisory, never a replay barrier); omit frame to mark the current position",
+            }, "Add an agent bookmark (advisory, never a replay barrier); omit frame to mark the current position. "
+               "Keywords: note='...', tags=['a', 'b'], watch=['#A130', '#A140:4'], context=True (the registers, the "
+               "instruction and the watched bytes at the moment)",
                py::arg("label"), py::arg("frame") = py::none(), py::arg("tinframe") = 0)
 
-            .def("ttd_bookmarks", [](Emulator& self) -> py::object {
-                const ttd::TTDReply reply = TtdRunPy(self, "bookmarks");
+            .def("ttd_bookmarks", [](Emulator& self, py::object tag) -> py::object {
+                std::map<std::string, std::string> options;
+                if (!tag.is_none())
+                    options["tag"] = py::str(tag).cast<std::string>();
+                const ttd::TTDReply reply = TtdRunPy(self, "bookmarks", options);
                 return StateNodeToPy(reply.Ok() ? *reply.body.find("bookmarks") : StateNode::Array());
-            }, "List agent bookmarks (time-sorted)")
+            }, "List agent bookmarks (time-sorted) with their notes, tags, context and watched bytes; tag: only those",
+               py::arg("tag") = py::none())
+
+            .def("ttd_bookmark_note", [](Emulator& self, const std::string& label, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options{{"label", label}};
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "bookmark-note", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                {
+                    value["updated"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Edit an agent bookmark: note='...' (append=True: as a new line), tags=[...], add_tags=[...], "
+               "remove_tags=[...], rename='...'", py::arg("label"))
+
+            .def("ttd_bookmark_export", [](Emulator& self, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "bookmark-export", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The agent bookmarks written up: format='markdown' (a WALKTHROUGH section) | 'profile' (a game "
+               "profile's header comment) | 'json', tag, title, path (written there too); the machine does not move")
 
             .def("ttd_bookmark_delete", [](Emulator& self, const std::string& label) -> bool {
                 return TtdRunPy(self, "bookmark-delete", {{"label", label}}).Ok();
@@ -6845,6 +6891,23 @@ namespace PythonBindings
                "interrupts, paging, ports per device, memory changed with its writers, screen and border, keys, "
                "markers. kwargs: sections ('routines,memory'), limit, text",
                 py::arg("frame") = py::none());
+
+        emulatorClass.def("ttd_diff", [](Emulator& self, uint64_t fromFrame, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                options["from_frame"] = std::to_string(fromFrame);
+                const ttd::TTDReply reply = TtdRunPy(self, "diff", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "What differs between two moments: from_frame (from_tinframe) and to_frame / to_tinframe (default: the "
+               "current position) - registers, latches, the slot mapping, memory ranges with the last write in "
+               "between, screen and border, devices, the time, keys and markers in between. kwargs: from_tinframe, "
+               "to_frame, to_tinframe, sections ('cpu,memory'), limit, writers, text",
+                py::arg("from_frame"));
 
         // ================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI/Lua:

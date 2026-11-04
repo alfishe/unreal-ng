@@ -797,8 +797,8 @@ emu.controllers_match(path="/games/elite.tzx")           # {matches: [{id, how}]
 ```
 
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
-**options)`, `controllers_light(device, color)`, `controllers_haptics_probe(kind, address, page=, port_mask=,
-play=)` (a haptic probe with its rule in the loaded game's user profile), `controllers_match(path=)`, `controllers_role(device, role)`, `controllers_pin(device, pin)`,
+**options)`, `controllers_light(device, color)`, `controllers_haptics_trial(text="",
+clear=False)` (events and rules tried on the loaded game for this session, never written), `controllers_match(path=)`, `controllers_role(device, role)`, `controllers_pin(device, pin)`,
 `controllers_identify(device)`, `controllers_player(device, connector=None)`, `controllers_probe(**options)`,
 `controllers_reports(device)`, `controllers_database(**lookup)`, `controllers_database_save(text)`,
 `controllers_database_delete(id)`, `controllers_database_import(text, save=True)`, `controllers_learn(device,
@@ -1737,10 +1737,14 @@ for m in emu.ttd_markers():                 # replay barriers
 
 emu.ttd_bookmark_add('before crash')                        # at the current position
 emu.ttd_bookmark_add('umt entry', frame=4823, tinframe=14982)
-# -> {'added': True, 'label': ..., 'frame': ..., 'tinframe': ...}
-#    or {'added': False, 'error': '...'}
-for bm in emu.ttd_bookmarks():              # time-sorted
-    print(bm['frame'], bm['tinframe'], bm['label'])
+emu.ttd_bookmark_add('lives', 212, 31540, note='the life counter drops', tags=['lives'], watch=['#A13C'])
+# -> {'added': True, 'label': ..., 'frame': ..., 'tinframe': ..., 'bookmark': {...}, 'text': ...}
+#    or {'added': False, 'error': '...'}; context=False skips the moment's registers / instruction / watched bytes
+for bm in emu.ttd_bookmarks():              # time-sorted; ttd_bookmarks(tag='lives'): one tag
+    print(bm['frame'], bm['tinframe'], bm['label'], bm['note'], bm['context'])
+emu.ttd_bookmark_note('lives', note='only on contact', append=True, add_tags=['enemy'])   # also tags, remove_tags, rename
+e = emu.ttd_bookmark_export(format='markdown', tag='lives', title='Green Beret')        # or 'profile', 'json'
+print(e['text'])                            # path='...' writes it too: e['path'], e['bytes']
 emu.ttd_bookmark_delete('before crash')     # -> bool
 emu.ttd_seek_bookmark('umt entry')          # same dict as ttd_seek (blocking_marker included) plus 'bookmark'
                                             # ('error' for an unknown label)
@@ -1848,6 +1852,15 @@ f = emu.ttd_explain_frame(1204, sections='time,routines,memory', limit=4)
 # {'frame': 1204, 'frame_t': 69888, 'instructions': 18312, 'time': {'isr': 6210, 'halt': 21700, 'code': ...},
 #  'routines': [{'pc': 35348, 'calls': 1, 't': 31220, 'own_t': 2110, 'insns': 4812, 'caller': 32771, ...}, ...],
 #  'memory': [{'region': 'screen pixels', 'addr': 18432, 'changed': 1024, 'writers': [...]}, ...], 'ms': ...}
+
+# What differs between two moments: from_frame, keyword from_tinframe, to_frame, to_tinframe (default: the current
+# position), sections='cpu,paging,memory,screen,devices,between' (default all), limit=16, writers=True, text=False
+d = emu.ttd_diff(1201, to_frame=1204, sections='cpu,memory')
+# {'from': {'frame': 1201, 'tinframe': 0}, 'to': {'frame': 1204, 'tinframe': 0}, 'backwards': False,
+#  'registers': [{'name': 'PC', 'before': 32776, 'after': 32777}, ...],
+#  'memory': {'changed': 2, 'pages': 1, 'ranges': [{'region': 'ram', 'page': 2, 'offset': 8192, 'address': 40960,
+#   'length': 1, 'before': [3], 'after': [6], 'last_write': {'frame': 1203, 'pc': 32780, 'text': 'inc (hl)', ...}}],
+#   'more': 0}, 'writer_searches': 2, 'ms': ...}
 
 summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50, limit=100)
 # {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,

@@ -100,10 +100,17 @@ public:
     /// Machine > Controllers > Reset bindings to default: every choice made by hand goes, the profiles and the
     /// machine's order decide again
     void ResetPlayerChoices();
-    /// "Add probe from debugger" (haptics.md §7): @p probe (a debugger breakpoint) as a source of the user game profile
-    /// of the loaded file (the haptics_probe verb: user/game-<sha>, made from the profile whose haptics play now), with
-    /// a `hit` rule; the source's name in @p name; false with the reason
-    bool AddHapticProbe(const controllers::HapticProbe& probe, QString& name, QString& error);
+    /// The session's haptics trial (the haptics_trial verb, haptics.md §11): @p overlay over the game haptics for the
+    /// loaded program, applied at once; null clears. Empty when done, else the error code with @p message
+    std::string SetHapticsTrial(const controllers::JsonValue& overlay, std::string& message);
+    const controllers::JsonValue& HapticsTrial() const
+    {
+        return _trial;
+    }
+    const controllers::JsonValue& HapticsUnderTrial() const
+    {
+        return _hapticsUnderTrial;
+    }
 #endif
     /// Advanced > Debug layer (debug-and-ttd.md §1.6): the debug profiles take part; kept in the settings
     bool DebugLayer() const
@@ -262,11 +269,18 @@ private:
     /// reads a joystick
     bool _autoDone = false;
     bool _keyboardNoticed = false;
+    bool _cardNoticed = false;  ///< the card a program's board reads want, said once
     std::string _autoConnector;  ///< the connector the decision chose: the first pad drives it
     controllers::AutoDecision _decision;
     std::unique_ptr<controllers::HostInputService> _service;
     controllers::ProfileStore _profiles;
     controllers::ResolvedProfiles _resolved;
+    /// The haptics trial (haptics.md §11): an overlay for the program of _trialSha, in memory only; the game haptics
+    /// the profiles resolve under it
+    controllers::JsonValue _trial;
+    std::string _trialSha;
+    std::string _trialError;  ///< why the last Reapply dropped the trial
+    controllers::JsonValue _hapticsUnderTrial;
     controllers::ProfileContext _context;
     /// HostInputControl's owner (the WebAPI / MCP / CLI / Python host verbs run on the GUI thread through it)
     std::unique_ptr<controllers::IHostInputOwner> _controlOwner;

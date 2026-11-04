@@ -287,6 +287,22 @@ drogon::HttpResponsePtr PassRequestGates(const drogon::HttpRequestPtr& req)
     // it was taken over, it is another machine's) is no pass: the request is un-sessioned here and meets the gate
     if (session && context->HasRunControl(*session))
         return {};
+    // A debugger client (session_helper.h): the user's hands, no session; refused while one holds the machine
+    if (webapi_session::IsDebuggerClient(req))
+    {
+        const EmulatorContext::RunControlState control = context->GetRunControlState();
+        if (!control.claimed)
+        {
+            req->attributes()->insert(webapi_session::kDebuggerAttribute, true);
+            return {};
+        }
+        Json::Value body = webapi_session::HeldByOtherBody(
+            control, EmulatorContext::DescribeHolder(control) +
+                         ": the debuggers look on and act again when it ends, or the user takes control back");
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(drogon::HttpStatusCode::k409Conflict);
+        return resp;
+    }
     const webapi_session::GateClient client = webapi_session::GateClientOf(req);
     const EmulatorContext::ImplicitControl gate = context->EnterImplicitRunControl(
         client.surface, client.identity, client.client,
@@ -570,16 +586,17 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     // time travel) posts no notification, so the views are compared once a second too; only changes are sent
     app.getLoop()->runEvery(1.0, [] { CompanionEventHub::Instance().Refresh(); });
 
-    // The /api/v1/ws hub runs on the main loop: producers post to it, one timer (armed while somebody subscribes)
-    // drives the readouts and topics. No thread of its own
+    // The /api/v1/ws hub runs on the main loop: producers post to it (the values they made stale), a one-shot timer
+    // holds a value back for its subscriber's interval. No thread of its own
     WsHub::Timer timer;
     timer.arm = [](double seconds, WsHub::Task tick) -> uint64_t {
-        return drogon::app().getLoop()->runEvery(seconds, std::move(tick));
+        return drogon::app().getLoop()->runAfter(seconds, std::move(tick));
     };
     timer.disarm = [](uint64_t id) { drogon::app().getLoop()->invalidateTimer(id); };
     WsHub::Instance().SetLoop([](WsHub::Task task) { drogon::app().getLoop()->queueInLoop(std::move(task)); },
                               std::move(timer));
 
+    webApi->_port = port;
     try
     {
         app.run();
@@ -590,4 +607,5 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
         LOG_ERROR << "Port " << port << " may already be in use. WebAPI will be disabled.";
         // Don't exit - just let the thread end gracefully
     }
+    webApi->_port = 0;
 }

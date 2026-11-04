@@ -1,5 +1,6 @@
 #include "emulator/io/joystick/joystick.h"
 #include "stdafx.h"
+#include "emulator/readoutschanged.h"
 
 #include "common/modulelogger.h"
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
@@ -263,6 +264,7 @@ bool PortDecoder_Profi::SetFrontPanelSwitch(FrontPanelSwitch sw, bool on)
         StoreSwitch(_state->profi.cpmSwitch, on);
         if (on && _state->pDFFD != 0)
             ApplyDffd(0);
+        NotifyReadoutsChanged(_context, "machine.switches");  // applied (a recording's at its frame boundary)
         return true;
     }
     if (sw != FrontPanelSwitch::Turbo)
@@ -270,6 +272,7 @@ bool PortDecoder_Profi::SetFrontPanelSwitch(FrontPanelSwitch sw, bool on)
     StoreSwitch(_state->profi.turboSwitch, on);
     SyncTurbo();
     SyncWaits();
+    NotifyReadoutsChanged(_context, "machine.switches");
     return true;
 }
 

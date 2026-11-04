@@ -245,6 +245,15 @@ bool Automation::startPython()
 }
 #endif
 
+int Automation::GetWebAPIPort() const
+{
+#if ENABLE_WEBAPI_AUTOMATION
+    return _webAPI ? _webAPI->port() : 0;
+#else
+    return 0;
+#endif
+}
+
 #if ENABLE_WEBAPI_AUTOMATION
 bool Automation::startWebAPI()
 {

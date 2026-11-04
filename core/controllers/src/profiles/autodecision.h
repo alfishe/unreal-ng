@@ -8,13 +8,18 @@
 /// joystick. Decisive only over a full window, on reads in nearly every frame; a program that polls every half-row
 /// (the ROM's key scan, text input) wants the keyboard instead. NR #B2 makes a Next pad a 6-button one; the tested
 /// bits tell Cursor from two Sinclair ports; AY R14 reads are a hint only (a Timex stick, the 128 keypad, an AY mouse
-/// are not built).
+/// are not built). Reads every frame of a port no device claims, which a catalog card with an input claim would answer
+/// (the evidence's candidates), are a hint naming the card.
 
 #include <functional>
 #include <memory>
 #include <string>
 
 #include "emulator/ports/deviceaccesswatch.h"
+
+// Qt defines `slots` as a macro; this header reaches Qt translation units and names slots::InputRole
+#pragma push_macro("slots")
+#undef slots
 
 namespace controllers
 {
@@ -25,7 +30,14 @@ struct AutoDecision
     bool keyboard = false;   ///< the program polls the whole keyboard: hint, not a plug
     std::string device;      ///< RetroDeviceKindName ("kempston-joystick", "sinclair-joystick", ...); "kempston-mouse",
                              ///< "amx-mouse" (a mouse: said, not plugged)
-    std::string connector;   ///< the connector it wants when it is a fixed one ("kempston", "next.right"); "" = auto
+    /// The input role of the decisive reads and the registry device that answered them ("kempston-joystick",
+    /// "zxbus.1"): the machine's connector for them is ControllerManager::FindForInput(input, source), so a #1F
+    /// decision lands on `kempston` on a Pentagon and on `next.left` on a Next. None for the keyboard joysticks
+    slots::InputRole input = slots::InputRole::None;
+    std::string source;
+    /// A connector named outright (a signature matcher may); "" = the machine's connector for `input`, else an
+    /// auto plug of `device`
+    std::string connector;
     std::string option;      ///< the plug option ("port"), with optionValue ("1")
     std::string optionValue;
     std::string label;       ///< "Kempston", "Sinclair 1"
@@ -33,6 +45,10 @@ struct AutoDecision
     /// Evidence for a device the emulator has not got (AY R14: a Timex joystick, the 128 keypad, an AY mouse); never
     /// decisive
     std::string hint;
+    /// The hint's card: reads no device of the machine answers, which this catalog card would (a Kempston interface
+    /// for #1F on a bare 48K), with the slot the planner fits it in. Fitting it restarts the machine: said, not done
+    std::string card;
+    std::string cardSlot;
 };
 
 /// Frames of the window a class must be read in to count as "every frame"
@@ -67,3 +83,5 @@ std::shared_ptr<const ISignatureMatcher> GetSignatureMatcher();
 AutoDecision DecideAuto(const DeviceAccessEvidence& evidence, SignatureQuery query = {});
 
 }  // namespace controllers
+
+#pragma pop_macro("slots")

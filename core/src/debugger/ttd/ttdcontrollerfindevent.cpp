@@ -380,6 +380,7 @@ TTDFindEventResult TimeTravelController::QueryFindEvent(const TTDFindEventQuery&
                 uint16_t address = 0;
                 PhysPage page = kPhysPageNone;
                 uint32_t offset = 0;   ///< in the RAM region
+                uint8_t flip = 0;      ///< Memory::TtdKeyOf
             };
             Byte bytes[2];
             for (uint8_t k = 0; k < size; ++k)
@@ -393,7 +394,8 @@ TTDFindEventResult TimeTravelController::QueryFindEvent(const TTDFindEventQuery&
                     result.error = "address " + Hex(a, 4) + " is ROM at the current position: give phys_page";
                     return finish();
                 }
-                bytes[k] = {a, page, static_cast<uint32_t>(page) * 0x4000u + inPage};
+                bytes[k] = {a, page, static_cast<uint32_t>(page) * 0x4000u + inPage,
+                            static_cast<uint8_t>(((inPage ^ a) >> 13) & 1u)};
                 if (bytes[k].offset >= static_cast<uint64_t>(regions[ramRegion].pieces) * kTTDPieceSize)
                 {
                     result.error = "page " + std::to_string(page) + " is not in the session's RAM";
@@ -450,6 +452,7 @@ TTDFindEventResult TimeTravelController::QueryFindEvent(const TTDFindEventQuery&
                     q.access = TTDAccessType::Write;
                     q.hasPhysPageFilter = true;
                     q.physPage = bytes[qi].page;
+                    q.flip = static_cast<int8_t>(bytes[qi].flip);
                     q.beforeGlobalT = endT == 0 ? 0 : endT - 1;
                     TTDFindOptions o;
                     o.all = true;
@@ -589,12 +592,15 @@ TTDFindEventResult TimeTravelController::QueryFindEvent(const TTDFindEventQuery&
                                    if (type != 'W' || found)
                                        return;
                                    for (uint8_t k = 0; k < size; ++k)
+                                   {
+                                       uint8_t flip = 0;
                                        if (address == bytes[k].address &&
-                                           memory->TtdPageOf(address, true) == bytes[k].page)
+                                           memory->TtdKeyOf(address, flip) == bytes[k].page && flip == bytes[k].flip)
                                        {
                                            v[k] = value;
                                            dirty = true;
                                        }
+                                   }
                                });
                 judge();
                 if (exactHit)

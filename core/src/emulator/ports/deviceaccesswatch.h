@@ -69,6 +69,9 @@ struct DeviceAccessChannel
     uint8_t tested = 0;    ///< reads of an input claim: the bits the code tested (union over its sites)
     std::vector<DeviceAccessSite> sites;  ///< up to kSites, most used first
     uint32_t otherSites = 0;              ///< accesses from sites past the first kSites
+    /// A board access: the catalog cards that would answer it, as the machine is now (ControllerManager::PortReads
+    /// fills them; the watch's own Evidence leaves them empty)
+    std::vector<slots::CardCandidate> candidates;
 };
 
 struct DeviceAccessEvidence
@@ -133,6 +136,16 @@ public:
 
     /// What the watch saw (any thread)
     DeviceAccessEvidence Evidence() const;
+    /// Bumped at every start, stop and folded frame (any thread): a reader's cache key (`devices.access`)
+    uint64_t Revision() const
+    {
+        return _revision.load(std::memory_order_acquire);
+    }
+    /// The continuous watch as last requested (feature `deviceaccess`; any thread)
+    bool Continuous() const
+    {
+        return _continuousRequest.load(std::memory_order_acquire);
+    }
 
 private:
     static constexpr uint16_t kValueSelect = 256;  ///< a select access (Channel::Select / SelectIndexed OUT)
@@ -185,6 +198,7 @@ private:
     std::vector<std::array<uint8_t, kSlots>> _ringTested;
     uint32_t _frames = 0;
     std::atomic<bool> _active{false};
+    std::atomic<uint64_t> _revision{0};
 
     std::atomic<uint32_t> _windowRequest{0};  ///< frames of a requested window; kCloseWindow ends it
     std::atomic<bool> _continuousRequest{false};

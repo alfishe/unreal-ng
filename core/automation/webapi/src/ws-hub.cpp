@@ -1,6 +1,7 @@
 #include "ws-hub.h"
 
 #include <algorithm>
+#include <optional>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "debug-event-hub.h"
@@ -21,6 +22,7 @@
 #include "emulator/monitoring/monitoringapi.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
+#include "emulator/readoutschanged.h"
 
 namespace
 {
@@ -36,6 +38,36 @@ std::string Compact(const Json::Value& value)
 std::chrono::duration<double> DueAfter(double hz)
 {
     return std::chrono::duration<double>(0.75 / std::max(hz, 0.1));
+}
+
+/// Besides kStaleEvent / kStaleFrame: the Meter values alone (read on time while subscribed)
+constexpr uint8_t kWantMeter = 4;
+
+/// `deadline` moved to `at` when that is earlier
+void Earliest(std::optional<std::chrono::steady_clock::time_point>& deadline, std::chrono::steady_clock::time_point at)
+{
+    if (!deadline || at < *deadline)
+        deadline = at;
+}
+
+/// What a subscription reads at `now` (kStaleEvent: every value; kStaleFrame: the Frames and Meter ones; kWantMeter:
+/// the Meter ones; 0: nothing): its marks, its meters, once its interval since the last read passed (a full send
+/// at once). Waiting for the interval: `deadline` moved to its end; read with meters: to the next meter read
+uint8_t Want(bool full, uint8_t stale, bool meters, std::chrono::steady_clock::time_point readAt, double hz,
+             std::chrono::steady_clock::time_point now, std::optional<std::chrono::steady_clock::time_point>& deadline)
+{
+    const auto interval = std::chrono::duration_cast<std::chrono::steady_clock::duration>(DueAfter(hz));
+    const uint8_t want = full ? WsHub::kStaleEvent : static_cast<uint8_t>(stale | (meters ? kWantMeter : 0));
+    if (want == 0)
+        return 0;
+    if (full || now - readAt >= interval)
+    {
+        if (meters)
+            Earliest(deadline, now + interval);
+        return want;
+    }
+    Earliest(deadline, readAt + interval);
+    return 0;
 }
 
 /// `max_hz` of a subscribe: a number, at most kMaxHz, at least 1; `current` when absent. False when not a number
@@ -57,8 +89,7 @@ const char* const kRefreshTriggers[] = {
     NC_COMPANION_CHANGED,          NC_EMULATOR_INSTANCE_CREATED, NC_EMULATOR_INSTANCE_DESTROYED,
     NC_EMULATOR_SELECTION_CHANGED, NC_SURFACE_TARGET,  // a view got focus or changed its active instance
 };
-/// What changes a state topic's value or an `instances` entry without a TTD frame: woken at once instead of waiting
-/// for the next tick
+/// What changes a state topic's value or an `instances` entry: the `instances` view is refreshed at once
 const char* const kWakeTriggers[] = {
     NC_EMULATOR_STATE_CHANGE,
     NC_FEATURE_CHANGED,
@@ -74,11 +105,19 @@ bool IsProcessTopic(const std::string& name)
     return name == kStreamDeck || monitoring::IsProcessName(name);
 }
 
-/// What changes a monitoring topic's value: a tick soon (coalesced) instead of the next one at the subscriber's rate
-const char* const kMonitorTriggers[] = {
-    NC_BREAKPOINTS_CHANGED, NC_EXECUTION_BREAKPOINT, NC_MEDIA_INSERTED,  NC_MEDIA_EJECTED,
-    NC_MEDIA_DIRTY,         NC_MEDIA_CLEAN,          NC_RECORDING_STATE, NC_LABEL_CHANGED,
-    NC_CONTROLLER_CONNECTOR_CHANGED, NC_SPEED_CHANGED,
+/// What can change a value without an emulated frame: every value of the instances is read again (a coalesced tick).
+/// Not here: the per-access ones (memory pages, the FDC's registers), which only change while frames run
+const char* const kChangeTriggers[] = {
+    NC_EMULATOR_STATE_CHANGE,  NC_FEATURE_CHANGED,      NC_RUN_CONTROL_CHANGED,   NC_RUN_PACE,
+    NC_SPEED_CHANGED,          NC_CPU_FREQ_CHANGED,     NC_SYSTEM_RESET,          NC_BREAKPOINTS_CHANGED,
+    NC_BREAKPOINT_CHANGED,     NC_EXECUTION_BREAKPOINT, NC_SCRIPT_CALLBACKS_CHANGED, NC_LABEL_CHANGED,
+    NC_MEDIA_INSERTED,         NC_MEDIA_EJECTED,        NC_MEDIA_DIRTY,           NC_MEDIA_CLEAN,
+    NC_MEDIA_SAVED,            NC_MEDIA_EXPORTED,       NC_FDD_DISK_INSERTED,     NC_FDD_DISK_EJECTED,
+    NC_FDD_DISK_PENDING_WRITE, NC_FDD_DISK_WRITTEN,     NC_FDD_MOTOR_STARTED,     NC_FDD_MOTOR_STOPPED,
+    NC_FILE_LOADED,            NC_RZX_PLAYBACK,         NC_RECORDING_STATE,       NC_CONTROLLER_CONNECTOR_CHANGED,
+    NC_VIDEO_MODE_CHANGED,     NC_VIDEO_VIEWPORT_CHANGED, NC_SURFACE_CONTEXT,     NC_SURFACE_TARGET,
+    NC_ACTION_CATALOGUE,       NC_EMULATOR_INSTANCE_CREATED, NC_EMULATOR_INSTANCE_DESTROYED,
+    NC_EMULATOR_SELECTION_CHANGED, NC_COMPANION_CHANGED,
 };
 
 std::string TopicList()
@@ -198,7 +237,7 @@ void WsHub::SetLoop(Post post, Timer timer)
         if (_armed && _timer.disarm)
             _timer.disarm(_timerId);
         _armed = false;
-        _timerHz = 0;
+        _timerDelay = 0;
         _timer = std::move(timer);
     }
     UpdateTimer();
@@ -260,15 +299,39 @@ void WsHub::Start()
                                 })));
     for (const char* topic : kWakeTriggers)
         _observers.emplace_back(topic, center.AddObserver(topic, ObserverCallbackFunc([this](int, Message*) {
-                                    if (_subscribed.load(std::memory_order_relaxed))
-                                        PostTask([this] { Tick(); });
                                     WakeInstances();
                                 })));
-    // Monitoring: many changes in a row (a symbol file's labels, a disk being written) wake one tick
-    for (const char* topic : kMonitorTriggers)
+    // Every value may have changed: many changes in a row (a symbol file's labels, a disk being written) are one tick
+    for (const char* topic : kChangeTriggers)
         _observers.emplace_back(topic, center.AddObserver(topic, ObserverCallbackFunc([this](int, Message*) {
-                                    WakeTick();
+                                    OnChange("");
                                 })));
+    // Published state no other notification tells (readoutschanged.h): its instance, or every one
+    _observers.emplace_back(NC_READOUTS_CHANGED,
+                            center.AddObserver(NC_READOUTS_CHANGED, ObserverCallbackFunc([this](int, Message* message) {
+                                auto* payload = message != nullptr
+                                                    ? dynamic_cast<ReadoutsChangedPayload*>(message->obj)
+                                                    : nullptr;
+                                OnChange(payload != nullptr ? payload->emulatorId : std::string());
+                            })));
+    // Emulated time moved (a frame, a TTD seek's frame, a step): the instance's Frames values
+    _observers.emplace_back(NC_VIDEO_FRAME_REFRESH,
+                            center.AddObserver(NC_VIDEO_FRAME_REFRESH, ObserverCallbackFunc([this](int, Message* message) {
+                                if (!_subscribed.load(std::memory_order_relaxed))
+                                    return;
+                                auto* payload = message != nullptr
+                                                    ? dynamic_cast<EmulatorFramePayload*>(message->obj)
+                                                    : nullptr;
+                                OnFrame(payload != nullptr ? payload->_emulatorId.toString() : std::string());
+                            })));
+    _observers.emplace_back(NC_EXECUTION_CPU_STEP,
+                            center.AddObserver(NC_EXECUTION_CPU_STEP, ObserverCallbackFunc([this](int, Message* message) {
+                                if (!_subscribed.load(std::memory_order_relaxed))
+                                    return;
+                                auto* payload = message != nullptr ? dynamic_cast<CpuStepPayload*>(message->obj)
+                                                                   : nullptr;
+                                OnFrame(payload != nullptr ? payload->emulatorId.toString() : std::string());
+                            })));
     _observers.emplace_back(
         NC_ACTION_CATALOGUE,
         center.AddObserver(NC_ACTION_CATALOGUE, ObserverCallbackFunc([this](int, Message* message) {
@@ -283,7 +346,9 @@ void WsHub::Start()
     _debugSink = DebugEventHub::Instance().AddSink(
         [this](const std::string& topic, const Json::Value& event) { OnDebugEvent(topic, event); });
     // `activity` of the surfaces: called on the actions worker after each job; only a copy and a post
+    // An action ran: what it changed is read again (its instance; "" when it named none)
     _activityListener = actions::ActivityFeed::Instance().AddListener([this](const actions::ActivityEntry& entry) {
+        OnChange(entry.instance);
         if (_activitySubscribed.load(std::memory_order_relaxed))
             PostTask([this, entry] { OnActivity(entry); });
     });
@@ -701,10 +766,13 @@ void WsHub::Tick()
     WsOutbox out;
     bool refreshInstances = false;
     bool drained = false;
+    std::optional<std::chrono::steady_clock::time_point> deadline;
+    std::chrono::steady_clock::time_point now;
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        const auto now = Now();
-        std::vector<WsConnection*> topicDue;
+        now = Now();
+        ApplyStale();
+        TopicDue topicDue;
         SurfaceDue surfaceDue;
         std::set<std::string> topicNames;
         for (auto& [client, connection] : _connections)
@@ -730,6 +798,9 @@ void WsHub::Tick()
                 }
                 if (connection->probe)
                     out.after.push_back(connection->probe);
+                // Measured again soon: it drains (its values then) or stays (a slow consumer)
+                Earliest(deadline, now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                             DueAfter(std::max(connection->topicHz, kDefaultHz))));
                 continue;
             }
             if (connection->congestedAt)
@@ -740,29 +811,146 @@ void WsHub::Tick()
             }
             FlushEvents(*connection, out);
             const bool states = std::any_of(connection->topics.begin(), connection->topics.end(), IsStateTopic);
-            if (states && (connection->topicFull || now - connection->topicSentAt >= DueAfter(connection->topicHz)))
+            if (states)
             {
-                topicDue.push_back(connection.get());
-                for (const std::string& name : connection->topics)
-                    if (IsStateTopic(name))
-                        topicNames.insert(name);
+                const bool meters = std::any_of(connection->topics.begin(), connection->topics.end(),
+                                                [](const std::string& name) {
+                                                    return IsStateTopic(name) && Cadence(name) == ReadoutCadence::Meter;
+                                                });
+                const uint8_t want = Want(connection->topicFull, connection->topicStale, meters,
+                                          connection->topicSentAt, connection->topicHz, now, deadline);
+                if (want != 0)
+                {
+                    topicDue.emplace_back(connection.get(), want);
+                    for (const std::string& name : connection->topics)
+                        if (IsStateTopic(name) && WsHub::Reads(want, name))
+                            topicNames.insert(name);
+                }
             }
             for (auto& [id, session] : connection->surfaces)
-                if (SurfaceHub::Due(*session, now))
-                    surfaceDue.emplace_back(connection.get(), session.get());
+            {
+                if (session->readouts.empty())
+                {
+                    session->stale = 0;
+                    continue;
+                }
+                const bool meters = std::any_of(session->readouts.begin(), session->readouts.end(),
+                                                [](const std::string& name) {
+                                                    return Cadence(name) == ReadoutCadence::Meter;
+                                                });
+                const uint8_t want =
+                    Want(session->full, session->stale, meters, session->sentAt, session->hz, now, deadline);
+                if (want != 0)
+                    surfaceDue.push_back({connection.get(), session.get(), want});
+            }
         }
-        // `instances`: what changes with time alone (a re-take cooldown, the first recorded frame) once a second
-        refreshInstances = _instancesSubscribed.load(std::memory_order_relaxed) &&
-                           (drained || now - _instancesAt >= DueAfter(1));
+        // `instances`: what changes with time alone (a re-take cooldown) once a second while subscribed
+        if (_instancesSubscribed.load(std::memory_order_relaxed))
+        {
+            refreshInstances = drained || now - _instancesAt >= DueAfter(1);
+            Earliest(deadline, (refreshInstances ? now : _instancesAt) + std::chrono::seconds(1));
+        }
         if (!topicDue.empty() || !surfaceDue.empty())
             DeliverValues(topicDue, topicNames, surfaceDue, now, out);
     }
     out.Flush();
     if (refreshInstances)
         RefreshInstances();
+    ArmFor(deadline, now);
 }
 
-void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std::set<std::string>& topicNames,
+void WsHub::OnChange(const std::string& instanceId)
+{
+    if (!_subscribed.load(std::memory_order_relaxed))
+        return;
+    {
+        std::lock_guard<std::mutex> lock(_staleMutex);
+        _stale[instanceId] |= kStaleEvent;
+    }
+    WakeTick();
+}
+
+void WsHub::OnFrame(const std::string& instanceId)
+{
+    if (!_subscribed.load(std::memory_order_relaxed))
+        return;
+    {
+        std::lock_guard<std::mutex> lock(_staleMutex);
+        // Nobody reads a value of this instance that moves with its frames: nothing to do (the common case of a
+        // deck of toggles and names, of a running machine nobody watches)
+        if (!_frameWatchAll && (instanceId.empty() ? _frameWatch.empty() : _frameWatch.count(instanceId) == 0))
+            return;
+        _stale[instanceId] |= kStaleFrame;
+    }
+    WakeTick();
+}
+
+void WsHub::ApplyStale()
+{
+    std::map<std::string, uint8_t> stale;
+    {
+        std::lock_guard<std::mutex> lock(_staleMutex);
+        stale.swap(_stale);
+    }
+    if (stale.empty())
+        return;
+    uint8_t any = 0;
+    for (const auto& [id, bits] : stale)
+    {
+        any |= bits;
+        // An event: what the monitoring values keep for their polled readers is not what is true now
+        if ((bits & kStaleEvent) != 0)
+            monitoring::ForgetCached(id);
+    }
+    const auto every = stale.find("");
+    const uint8_t everyone = every != stale.end() ? every->second : 0;
+    for (auto& [client, connection] : _connections)
+    {
+        // A state topic carries every instance
+        if (!connection->topics.empty())
+            connection->topicStale |= any;
+        for (auto& [id, session] : connection->surfaces)
+        {
+            uint8_t bits = everyone;
+            if (!session->instance.empty())
+                if (auto it = stale.find(session->instance); it != stale.end())
+                    bits |= it->second;
+            session->stale |= bits;
+        }
+    }
+}
+
+void WsHub::ArmFor(std::optional<std::chrono::steady_clock::time_point> deadline,
+                   std::chrono::steady_clock::time_point now)
+{
+    std::lock_guard<std::mutex> lock(_timerMutex);
+    if (deadline && _armed && _timerAt <= *deadline)
+        return;  // an earlier tick comes first: it arms for this one
+    if (_armed && _timer.disarm)
+        _timer.disarm(_timerId);
+    _armed = false;
+    _timerDelay = 0;
+    if (!deadline || !_timer.arm)
+        return;
+    const double seconds = std::max(0.0, std::chrono::duration<double>(*deadline - now).count());
+    const uint64_t generation = ++_timerGeneration;
+    _timerAt = *deadline;
+    _timerDelay = seconds;
+    _timerId = _timer.arm(seconds, [this, generation] {
+        {
+            std::lock_guard<std::mutex> fired(_timerMutex);
+            if (_timerGeneration == generation)
+            {
+                _armed = false;
+                _timerDelay = 0;
+            }
+        }
+        Tick();
+    });
+    _armed = true;
+}
+
+void WsHub::DeliverValues(const TopicDue& topicDue, const std::set<std::string>& topicNames,
                           const SurfaceDue& surfaceDue, std::chrono::steady_clock::time_point now, WsOutbox& out)
 {
     // Read each value once: published state only
@@ -778,6 +966,7 @@ void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std:
             it = emulators.emplace(id, manager->GetEmulator(id)).first;
         if (!it->second)
             return;
+        _valuesRead.fetch_add(1, std::memory_order_relaxed);
         // The state topics' own reads (the surface's ttd.position / run.state are the same bytes); the rest of the
         // readout vocabulary from readouts.h
         const std::vector<std::string>& own = StateTopicNames();
@@ -797,20 +986,23 @@ void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std:
                     read(id, name);
         for (const std::string& name : topicNames)
             if (IsProcessTopic(name))
+            {
+                _valuesRead.fetch_add(1, std::memory_order_relaxed);
                 processValues[name] =
                     Compact(StateNodeToJson(name == kStreamDeck ? companion::streamdeck::Supervisor::Instance().Summary()
                                                                 : monitoring::ReadProcess(name)));
+            }
     }
-    for (const auto& [connection, session] : surfaceDue)
-        if (!session->instance.empty())
-            for (const std::string& name : session->readouts)
-                read(session->instance, name);
+    for (const SurfaceWant& due : surfaceDue)
+        if (!due.session->instance.empty())
+            for (const std::string& name : due.session->readouts)
+                if (WsHub::Reads(due.want, name))
+                    read(due.session->instance, name);
 
     // A topic's message of one instance is the same bytes for every subscriber: built once
     std::map<std::string, std::string> built;
-    for (WsConnection* connection : topicDue)
+    for (const auto& [connection, want] : topicDue)
     {
-        bool sent = false;
         std::set<std::string> present;
         for (const std::string& id : all)
         {
@@ -819,7 +1011,7 @@ void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std:
                 continue;
             for (const std::string& topic : connection->topics)
             {
-                if (!IsStateTopic(topic))
+                if (!IsStateTopic(topic) || !WsHub::Reads(want, topic))
                     continue;
                 auto value = values->second.find(topic);
                 if (value == values->second.end())
@@ -837,13 +1029,12 @@ void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std:
                                                  "\",\"value\":" + value->second + "}")
                                .first;
                 out.Message(*connection, text->second);
-                sent = true;
             }
         }
         for (const std::string& topic : connection->topics)
         {
             auto value = processValues.find(topic);
-            if (value == processValues.end())
+            if (value == processValues.end() || !WsHub::Reads(want, topic))
                 continue;
             present.insert(topic);
             std::string& last = connection->topicSent[topic];
@@ -851,30 +1042,30 @@ void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std:
                 continue;
             last = value->second;
             out.Message(*connection, "{\"t\":\"" + topic + "\",\"op\":\"state\",\"value\":" + value->second + "}");
-            sent = true;
         }
-        for (auto it = connection->topicSent.begin(); it != connection->topicSent.end();)
-        {
-            if (present.count(it->first) != 0)
+        // An instance that went: only a read of every value tells (its going is an event)
+        if ((want & kStaleEvent) != 0)
+            for (auto it = connection->topicSent.begin(); it != connection->topicSent.end();)
             {
-                ++it;
-                continue;
+                if (present.count(it->first) != 0)
+                {
+                    ++it;
+                    continue;
+                }
+                const size_t bar = it->first.find('|');
+                Json::Value gone;
+                gone["t"] = it->first.substr(0, bar);
+                gone["op"] = "gone";
+                gone["instance"] = it->first.substr(bar + 1);
+                out.Message(*connection, gone);
+                it = connection->topicSent.erase(it);
             }
-            const size_t bar = it->first.find('|');
-            Json::Value gone;
-            gone["t"] = it->first.substr(0, bar);
-            gone["op"] = "gone";
-            gone["instance"] = it->first.substr(bar + 1);
-            out.Message(*connection, gone);
-            sent = true;
-            it = connection->topicSent.erase(it);
-        }
         connection->topicFull = false;
-        if (sent)
-            connection->topicSentAt = now;
+        connection->topicStale = 0;
+        connection->topicSentAt = now;
     }
-    for (const auto& [connection, session] : surfaceDue)
-        _surface.Deliver(*connection, *session, readings, now, out);
+    for (const SurfaceWant& due : surfaceDue)
+        _surface.Deliver(*due.connection, *due.session, readings, due.want, now, out);
 }
 
 void WsHub::Refresh()
@@ -901,6 +1092,7 @@ void WsHub::Refresh()
         }
     }
     out.Flush();
+    UpdateTimer();  // a rebind moved a surface to another instance: whose frames matter
     if (_instancesSubscribed.load(std::memory_order_relaxed))
         RefreshInstances();
     if (_subscribed.load(std::memory_order_relaxed))
@@ -1151,18 +1343,59 @@ size_t WsHub::Connections() const
     return _connections.size();
 }
 
-double WsHub::TimerHz() const
+double WsHub::TimerDelay() const
 {
     std::lock_guard<std::mutex> lock(_timerMutex);
-    return _armed ? _timerHz : 0;
+    return _armed ? _timerDelay : 0;
+}
+
+bool WsHub::Reads(uint8_t want, const std::string& name)
+{
+    if ((want & kStaleEvent) != 0)
+        return true;
+    switch (Cadence(name))
+    {
+        case ReadoutCadence::Meter:
+            return want != 0;
+        case ReadoutCadence::Frames:
+            return (want & kStaleFrame) != 0;
+        case ReadoutCadence::Events:
+            break;
+    }
+    return false;
+}
+
+WsHub::ReadoutCadence WsHub::Cadence(const std::string& name)
+{
+    // Changed by a notification (kChangeTriggers, NC_READOUTS_CHANGED) or an action alone: every producer of these
+    // posts one, paused or not (readoutschanged.h)
+    static const std::set<std::string> events = {
+        "run.state",         "machine",          "audio.mute",       "debug.mode",      "debug.breakpoints",
+        "debug.labels",      "debug.analyzers",  "surfaces.context", "media.recent",    "machine.previous",
+        "machine.switches",  "input.connectors", "video.window",     "video.crt_params", "video.viewport",
+        "video.temporal",    "actions.unavailable", "analysis.progress", "analysis.ready",
+    };
+    // With wall time: read on time while subscribed
+    static const std::set<std::string> meters = {"host.stats", "host.clients", kStreamDeck};
+    if (events.count(name) != 0 || name.compare(0, 7, "toggle.") == 0)
+        return ReadoutCadence::Events;
+    if (meters.count(name) != 0)
+        return ReadoutCadence::Meter;
+    // The rest moves with emulated time too (the TTD cursor and status, the tape's block, a disk's motor and dirty
+    // flag, the mixer's levels, the stats, the buffers, the watches, the RZX frame), and any name not listed: a new
+    // value is never left stale
+    return ReadoutCadence::Frames;
 }
 
 void WsHub::UpdateTimer()
 {
-    double hz = 0;
+    bool subscribed = false;
     bool instances = false;
     bool events = false;
     bool activity = false;
+    bool frameAll = false;
+    std::set<std::string> frames;
+    auto moves = [](const std::string& name) { return Cadence(name) != ReadoutCadence::Events; };
     {
         std::lock_guard<std::mutex> lock(_mutex);
         for (const auto& [client, connection] : _connections)
@@ -1171,32 +1404,34 @@ void WsHub::UpdateTimer()
                 continue;
             instances = instances || connection->topics.count(kInstances) != 0;
             events = events || std::any_of(connection->topics.begin(), connection->topics.end(), IsEventTopic);
-            if (!connection->topics.empty())
-                hz = std::max(hz, connection->topicHz);
+            // The state topics (the event topics and `instances` have their own producers)
+            if (std::any_of(connection->topics.begin(), connection->topics.end(), IsStateTopic))
+                subscribed = true;
+            frameAll = frameAll || std::any_of(connection->topics.begin(), connection->topics.end(),
+                                               [&](const std::string& name) { return IsStateTopic(name) && moves(name); });
             for (const auto& [id, session] : connection->surfaces)
             {
                 if (!session->readouts.empty())
-                    hz = std::max(hz, session->hz);
+                    subscribed = true;
+                if (!session->instance.empty() &&
+                    std::any_of(session->readouts.begin(), session->readouts.end(), moves))
+                    frames.insert(session->instance);
                 activity = activity || session->activity;
             }
         }
     }
-    _subscribed.store(hz > 0, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(_staleMutex);
+        _frameWatch = std::move(frames);
+        _frameWatchAll = frameAll;
+    }
+    _subscribed.store(subscribed, std::memory_order_relaxed);
     _instancesSubscribed.store(instances, std::memory_order_relaxed);
     _eventsSubscribed.store(events, std::memory_order_relaxed);
     _activitySubscribed.store(activity, std::memory_order_relaxed);
-    std::lock_guard<std::mutex> lock(_timerMutex);
-    if (hz == _timerHz && _armed == (hz > 0))
-        return;
-    if (_armed && _timer.disarm)
-        _timer.disarm(_timerId);
-    _armed = false;
-    _timerHz = hz;
-    if (hz > 0 && _timer.arm)
-    {
-        _timerId = _timer.arm(1.0 / hz, [this] { Tick(); });
-        _armed = true;
-    }
+    // Nobody left to wait for: no timer (a subscription's own tick arms it again)
+    if (!subscribed && !instances)
+        ArmFor(std::nullopt, Now());
 }
 
 void WsHub::PostTask(Task task)

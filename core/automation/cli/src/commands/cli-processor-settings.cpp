@@ -13,6 +13,7 @@
 #include <sstream>
 #include <thread>
 
+#include "emulator/readoutschanged.h"
 #include "cli-processor.h"
 
 namespace
@@ -497,6 +498,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         ss << "Use 'setting' to see all available settings" << NEWLINE;
     }
 
+    NotifyReadoutsChanged(emulator->GetId(), "settings");  // the set.* toggles a deck shows
     session.SendResponse(ss.str());
 }
 

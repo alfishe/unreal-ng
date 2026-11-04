@@ -107,6 +107,7 @@ const std::set<std::string> kDebugRoutes = {
     "POST /tape/render",
     "POST /ttd/bookmarks",
     "POST /ttd/dump",
+    "POST /ttd/export-bookmarks",
     "POST /ttd/find-last",
     "POST /ttd/history-limit",
     "POST /ttd/journal",
@@ -133,6 +134,7 @@ const std::set<std::string> kDebugRoutes = {
     "PUT /memory/{addr}",
     "PUT /memory/{type}/{page}/{offset}",
     "PUT /registers/{name}",
+    "PUT /ttd/bookmarks/{label}",
 };
 }  // namespace
 

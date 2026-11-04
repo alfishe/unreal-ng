@@ -2,8 +2,8 @@
 // integration protocol.md §0), driven without a network: each "connection" is a send and a close function, the hub's
 // loop runs tasks at once, its clock is the test's and its timer is recorded. The conformance of the protocol at the
 // unit level: auth and its errors, join, actions with rid / without, coalescing, ctx (a setter and the default
-// following the history), readouts and topics (full, then changed only, at the subscriber's rate), the timer armed
-// only while somebody subscribes, follow and pin, revoked, bye; the `instances` topic (the events socket's view), the
+// following the history), readouts and topics (full, then read again only when an event or a frame made them stale,
+// changed ones sent, at most at the subscriber's rate; a one-shot timer for a value held back), follow and pin, revoked, bye; the `instances` topic (the events socket's view), the
 // debug.* topics (DebugEventHub's events), the monitoring topics (host.stats, emulator.stats, debug.breakpoints, ...)
 // and backpressure (a congested connection gets control messages only, then
 // the latest values and the events with `dropped`; too long congested: slow_consumer)
@@ -200,11 +200,9 @@ protected:
         _hub->SetRegistry(_registry.get());
         _hub->SetClock([this] { return _now; });
         WsHub::Timer timer;
-        timer.arm = [this](double seconds, WsHub::Task) -> uint64_t {
-            _armedHz = 1.0 / seconds;
-            return ++_timerIds;
-        };
-        timer.disarm = [this](uint64_t) { _armedHz = 0; };
+        // Recorded only (TimerDelay): a test's Tick() is the timer firing
+        timer.arm = [this](double, WsHub::Task) -> uint64_t { return ++_timerIds; };
+        timer.disarm = [](uint64_t) {};
         _hub->SetLoop([](WsHub::Task task) { task(); }, std::move(timer));
     }
 
@@ -283,7 +281,6 @@ protected:
     std::unique_ptr<WsHub> _hub;
     // The hub's injected clock: a fixed origin, moved only by Advance() (the host clock is never read)
     std::chrono::steady_clock::time_point _now = std::chrono::steady_clock::time_point(std::chrono::hours(1));
-    double _armedHz = 0;
     uint64_t _timerIds = 0;
     std::atomic<bool> _slow{false};
     Gate _gate;
@@ -679,9 +676,8 @@ TEST_F(WsHub_Test, ReadoutsComeInFullOnSubscribeThenOnlyWhatChangedAtTheSubscrib
 {
     Inbox inbox;
     Join(inbox);
-    EXPECT_EQ(_hub->TimerHz(), 0) << "nobody subscribes: no timer";
     Send(inbox, R"({"op":"subscribe","readouts":["run.state","ttd.*","bogus"],"max_hz":50})");
-    EXPECT_EQ(_armedHz, 50);
+    EXPECT_EQ(_hub->TimerDelay(), 0) << "nothing waits: no timer (values are read on events, not on a beat)";
     const std::vector<Json::Value> errors = inbox.Ops("error");
     ASSERT_EQ(errors.size(), 1u);
     EXPECT_EQ(errors[0]["error"].asString(), "Not Found");
@@ -696,31 +692,37 @@ TEST_F(WsHub_Test, ReadoutsComeInFullOnSubscribeThenOnlyWhatChangedAtTheSubscrib
     EXPECT_FALSE(values["ttd.position"]["history"].asBool());
     EXPECT_NEAR(values["ttd.position"]["fps"].asDouble(), 48.83, 0.01);
 
-    // Nothing changed: nothing sent
+    // Nothing made stale: ticks read nothing, send nothing
     inbox.Clear();
-    Advance(20);
-    _hub->Tick();
+    const uint64_t reads = _hub->ValuesRead();
+    for (int i = 0; i < 5; i++)
+    {
+        Advance(20);
+        _hub->Tick();
+    }
     EXPECT_TRUE(inbox.Messages().empty());
+    EXPECT_EQ(_hub->ValuesRead(), reads) << "a machine nobody touches costs nothing";
 
-    // Turbo: run.state changed, alone - but not before the subscriber's interval (20 ms at 50 Hz)
+    // Turbo (NC_SPEED_CHANGED: OnChange, which wakes a tick at once): run.state changed, alone
     _emulator->EnableTurboMode();
-    Advance(20);
-    _hub->Tick();
+    _hub->OnChange(_id);
     ASSERT_EQ(inbox.Ops("readout").size(), 1u);
     EXPECT_TRUE(inbox.Last()["values"]["run.state"]["turbo"].asBool());
     EXPECT_FALSE(inbox.Last()["values"].isMember("ttd.position"));
+    // ...the next change within the subscriber's interval (15 ms at 50 Hz, the rate's room): held back on the timer
     _emulator->DisableTurboMode();
     Advance(5);
-    _hub->Tick();
-    EXPECT_EQ(inbox.Ops("readout").size(), 1u) << "within 20 ms of the last: held back";
-    Advance(15);
-    _hub->Tick();
+    _hub->OnChange(_id);
+    EXPECT_EQ(inbox.Ops("readout").size(), 1u) << "within the interval of the last read: held back";
+    EXPECT_NEAR(_hub->TimerDelay(), 0.010, 1e-6) << "armed for the rest of the interval";
+    Advance(10);
+    _hub->Tick();  // the timer
     ASSERT_EQ(inbox.Ops("readout").size(), 2u);
     EXPECT_FALSE(inbox.Last()["values"]["run.state"]["turbo"].asBool());
+    EXPECT_EQ(_hub->TimerDelay(), 0) << "nothing waits any more";
 
     Send(inbox, R"({"op":"unsubscribe","readouts":["*"]})");
-    EXPECT_EQ(_hub->TimerHz(), 0) << "the last subscriber left: the timer is disarmed";
-    EXPECT_EQ(_armedHz, 0);
+    EXPECT_EQ(_hub->TimerDelay(), 0);
 }
 
 TEST_F(WsHub_Test, SurfaceReadoutsAreTheWholeVocabulary)
@@ -739,31 +741,102 @@ TEST_F(WsHub_Test, SurfaceReadoutsAreTheWholeVocabulary)
     EXPECT_TRUE(values.isMember("toggle.set.x")) << "a toggle by name: read as it is";
 }
 
-TEST_F(WsHub_Test, TheTimerRunsAtTheHighestRateAnyoneAskedFor)
+TEST_F(WsHub_Test, AFrameReadsOnlyTheValuesThatMoveWithEmulatedTimeOfThatInstance)
 {
-    Inbox slow;
-    Join(slow);
-    Send(slow, R"({"op":"subscribe","readouts":["run.state"],"max_hz":10})");
-    EXPECT_EQ(_hub->TimerHz(), 10);
-    Inbox fast;
-    Connect(fast);
-    Send(fast, R"({"op":"subscribe","topics":["ttd.position"],"max_hz":500})");
-    EXPECT_EQ(_hub->TimerHz(), 50) << "max_hz is capped at 50";
-    _hub->Remove(&fast);
-    EXPECT_EQ(_hub->TimerHz(), 10);
+    Inbox inbox;
+    Join(inbox);
+    Send(inbox, R"({"op":"subscribe","readouts":["ttd.position","debug.mode","audio.mute"],"max_hz":10})");
+    ASSERT_EQ(inbox.Ops("readout").size(), 1u);
+    inbox.Clear();
 
-    // At 10 Hz a change waits for the subscriber's 100 ms
-    slow.Clear();
+    // A frame of another instance: nobody watches its frames, nothing is read
+    const uint64_t reads = _hub->ValuesRead();
+    _hub->OnFrame("another-instance");
+    Advance(100);
+    _hub->Tick();
+    EXPECT_EQ(_hub->ValuesRead(), reads);
+
+    // A frame of the bound one (a tick at once): the TTD cursor only, the toggles and names wait for their events
+    _hub->OnFrame(_id);
+    EXPECT_EQ(_hub->ValuesRead(), reads + 1) << "ttd.position alone";
+    EXPECT_TRUE(inbox.Ops("readout").empty()) << "unchanged: not sent";
+
+    // A burst of frames within the interval: one read at its end
+    Advance(10);
+    _hub->OnFrame(_id);
+    _hub->OnFrame(_id);
+    EXPECT_EQ(_hub->ValuesRead(), reads + 1) << "held back";
+    EXPECT_NEAR(_hub->TimerDelay(), 0.065, 1e-6) << "75 ms at 10 Hz, 10 ms gone";
+    Advance(65);
+    _hub->Tick();
+    EXPECT_EQ(_hub->ValuesRead(), reads + 2) << "the frames coalesced";
+
+    // An event: every value
+    Advance(100);
+    _hub->OnChange(_id);
+    EXPECT_EQ(_hub->ValuesRead(), reads + 5);
+
+    // A surface of toggles and names alone does not watch the frames at all
+    Send(inbox, R"({"op":"unsubscribe","readouts":["ttd.position"]})");
+    Advance(100);
+    _hub->OnFrame(_id);
+    _hub->Tick();
+    EXPECT_EQ(_hub->ValuesRead(), reads + 5);
+}
+
+TEST_F(WsHub_Test, AChangeWithoutFramesReachesTheSurfaceThroughItsProducersNotification)
+{
+    // The real notifications, a stopped machine (no frame ever comes) and the host clock: a value arrives only when
+    // its producer told the hub; the test's Tick() stands in for the hub's timer
+    _hub->SetClock({});
+    _hub->Start();
+    Inbox inbox;
+    Join(inbox);
+    Send(inbox, R"({"op":"subscribe","readouts":["audio.mute","run.state","media.recent"],"max_hz":50})");
+    ASSERT_EQ(inbox.Ops("readout").size(), 1u);
+    auto arrives = [&](const std::string& name) {
+        return TestWait::For(
+            [&] {
+                _hub->Tick();
+                for (const Json::Value& message : inbox.Ops("readout"))
+                    if (message["values"].isMember(name))
+                        return true;
+                return false;
+            },
+            std::chrono::seconds(5));
+    };
+
+    inbox.Clear();
+    _emulator->GetContext()->pSoundManager->mute();  // the status bar's speaker, a script: no action, no frame
+    EXPECT_TRUE(arrives("audio.mute")) << "SoundManager posts NC_READOUTS_CHANGED";
+    _emulator->GetContext()->pSoundManager->unmute();
+
+    inbox.Clear();
     _emulator->EnableTurboMode();
-    Advance(20);
-    _hub->Tick();
-    EXPECT_TRUE(slow.Ops("readout").empty());
-    Advance(80);
-    _hub->Tick();
-    EXPECT_EQ(slow.Ops("readout").size(), 1u);
+    EXPECT_TRUE(arrives("run.state")) << "NC_SPEED_CHANGED";
     _emulator->DisableTurboMode();
-    _hub->Remove(&slow);
-    EXPECT_EQ(_hub->TimerHz(), 0);
+
+    inbox.Clear();
+    RecentFiles::Instance().Note("tape", "/games/elite.tzx");
+    EXPECT_TRUE(arrives("media.recent")) << "RecentFiles posts NC_READOUTS_CHANGED (of the process)";
+    RecentFiles::Instance().Clear();
+    _hub->Stop();
+}
+
+TEST_F(WsHub_Test, TheHostsMetersAreReadOnTimeAtTheSubscribersRate)
+{
+    Inbox inbox;
+    Connect(inbox);
+    Send(inbox, R"({"op":"subscribe","topics":["host.stats"],"max_hz":10})");
+    ASSERT_EQ(InTopic(inbox, "host.stats").size(), 1u);
+    EXPECT_NEAR(_hub->TimerDelay(), 0.075, 1e-6) << "a meter: the next read at the subscriber's rate";
+    const uint64_t reads = _hub->ValuesRead();
+    Advance(75);
+    _hub->Tick();
+    EXPECT_EQ(_hub->ValuesRead(), reads + 1);
+    EXPECT_NEAR(_hub->TimerDelay(), 0.075, 1e-6);
+    Send(inbox, R"({"op":"unsubscribe","topics":["host.stats"]})");
+    EXPECT_EQ(_hub->TimerDelay(), 0) << "the last meter left: the timer is disarmed";
 }
 
 TEST_F(WsHub_Test, TopicsNeedATokenAndPushEachInstancesStateOnceThenChanges)
@@ -772,7 +845,6 @@ TEST_F(WsHub_Test, TopicsNeedATokenAndPushEachInstancesStateOnceThenChanges)
     Connect(anonymous, "");
     Send(anonymous, R"({"op":"subscribe","topics":["run.state"]})");
     EXPECT_EQ(anonymous.Last()["error"].asString(), "companion_required");
-    EXPECT_EQ(_hub->TimerHz(), 0);
 
     Inbox inbox;
     Connect(inbox);
@@ -787,7 +859,6 @@ TEST_F(WsHub_Test, TopicsNeedATokenAndPushEachInstancesStateOnceThenChanges)
     ASSERT_EQ(acks.size(), 1u);
     EXPECT_EQ(acks[0]["topics"].size(), 2u);
     EXPECT_EQ(acks[0]["max_hz"].asDouble(), 20);
-    EXPECT_EQ(_hub->TimerHz(), 20);
 
     auto states = [&](const std::string& topic) {
         std::vector<Json::Value> out;
@@ -803,6 +874,7 @@ TEST_F(WsHub_Test, TopicsNeedATokenAndPushEachInstancesStateOnceThenChanges)
 
     std::string error;
     ASSERT_TRUE(ContextState::Instance().Set(_id, _emulator, "debug.disasm", "gui", error));
+    _hub->OnChange(_id);  // NC_SURFACE_CONTEXT
     Advance(50);
     _hub->Tick();
     ASSERT_EQ(states("surfaces.context").size(), 2u);
@@ -813,7 +885,7 @@ TEST_F(WsHub_Test, TopicsNeedATokenAndPushEachInstancesStateOnceThenChanges)
     Send(inbox, R"({"op":"unsubscribe","topics":["run.state","surfaces.context"]})");
     EXPECT_EQ(inbox.Last()["op"].asString(), "unsubscribed");
     EXPECT_EQ(inbox.Last()["topics"].size(), 0u);
-    EXPECT_EQ(_hub->TimerHz(), 0);
+    EXPECT_EQ(_hub->TimerDelay(), 0);
 }
 
 TEST_F(WsHub_Test, AudioMixerPushesTheLevelsAndMuteOfEveryRowOnceThenOnChange)
@@ -848,6 +920,7 @@ TEST_F(WsHub_Test, AudioMixerPushesTheLevelsAndMuteOfEveryRowOnceThenOnChange)
     change.muted = 1;
     std::string error;
     ASSERT_TRUE(AudioMixer::Apply(_emulator->GetContext(), "beeper", change, error)) << error;
+    _hub->OnChange(_id);  // NC_AUDIO_MIXER_CHANGED
     Advance(50);
     _hub->Tick();
     ASSERT_EQ(states().size(), 2u);
@@ -880,6 +953,7 @@ TEST_F(WsHub_Test, RunStateCarriesThePaceAndItsChangeIsPushed)
     ASSERT_TRUE(execution::RunPacer::PresetIndex("1op", index));
     const auto pacer = execution::RunPacer::For(EmulatorManager::GetInstance()->GetEmulator(_id));
     ASSERT_TRUE(pacer->Set(execution::Requester{execution::Origin::Gui, {}}, index, 300).Ok());
+    _hub->OnChange(_id);  // NC_RUN_PACE
     Advance(50);
     _hub->Tick();
     ASSERT_EQ(states("run.state").size(), 2u);
@@ -967,7 +1041,7 @@ TEST_F(WsHub_Test, InstancesSendsTheViewOnceThenEachChangedEntryAndGoneAsTheEven
     Send(inbox, R"({"op":"unsubscribe","topics":["instances"]})");
     Send(inbox, R"({"op":"snapshot"})");
     EXPECT_EQ(inbox.Last()["error"].asString(), "bad_request") << "snapshot needs the topic";
-    EXPECT_EQ(_hub->TimerHz(), 0);
+    EXPECT_EQ(_hub->TimerDelay(), 0);
 }
 
 TEST_F(WsHub_Test, DebugTopicsCarryDebugEventHubsEventsAndNeedNoTokenFromThisHost)
@@ -1008,14 +1082,14 @@ TEST_F(WsHub_Test, DebugTopicsCarryDebugEventHubsEventsAndNeedNoTokenFromThisHos
     EXPECT_FALSE(events[0].isMember("dropped"));
     EXPECT_EQ(events[1]["t"].asString(), "debug.asm_sync");
     ASSERT_EQ(companionOnly.Ops("event").size(), 1u) << "only the topics it subscribed";
-    EXPECT_EQ(_hub->TimerHz(), WsHub::kDefaultHz);
+    EXPECT_EQ(_hub->TimerDelay(), 0) << "events go as they come: no timer";
 
     Send(local, R"({"op":"unsubscribe","topics":["debug.*"]})");
     Send(companionOnly, R"({"op":"unsubscribe","topics":["*"]})");
     local.Clear();
     _hub->OnDebugEvent("debug", DebugEvent(_id, 9, "resumed"));
     EXPECT_TRUE(local.Messages().empty());
-    EXPECT_EQ(_hub->TimerHz(), 0);
+    EXPECT_EQ(_hub->TimerDelay(), 0);
 }
 
 /// endregion </instances and debug.*>
@@ -1037,6 +1111,7 @@ TEST_F(WsHub_Test, ACongestedConnectionGetsControlMessagesOnlyThenTheLatestValue
     flow->congested = true;
     inbox.Clear();
     _emulator->EnableTurboMode(false);
+    _hub->OnChange(_id);
     for (uint64_t seq = 1; seq <= WsHub::kEventQueue + 44; ++seq)
         _hub->OnDebugEvent("debug", DebugEvent(_id, seq, "step_done"));
     Advance(20);
@@ -1044,12 +1119,12 @@ TEST_F(WsHub_Test, ACongestedConnectionGetsControlMessagesOnlyThenTheLatestValue
     Advance(20);
     _hub->Tick();
     EXPECT_TRUE(inbox.Messages().empty()) << "nothing but control messages";
-    EXPECT_EQ(probes, 2) << "one measure per tick while congested";
+    EXPECT_EQ(probes, 3) << "one measure per tick while congested (the change's own tick, then the two)";
     // ...control messages still go at once (the tick a subscribe wakes measures again)
     Send(inbox, R"({"op":"subscribe","topics":["surfaces.context"]})");
     ASSERT_EQ(inbox.Messages().size(), 1u);
     EXPECT_EQ(inbox.Last()["op"].asString(), "subscribed");
-    EXPECT_EQ(probes, 3);
+    EXPECT_EQ(probes, 4);
 
     // Drained: the latest values once, the events kept with how many were lost
     flow->congested = false;
@@ -1065,7 +1140,7 @@ TEST_F(WsHub_Test, ACongestedConnectionGetsControlMessagesOnlyThenTheLatestValue
     EXPECT_EQ(events.front()["seq"].asUInt64(), 45u) << "the oldest were dropped";
     EXPECT_FALSE(events[1].isMember("dropped"));
     EXPECT_EQ(events.back()["seq"].asUInt64(), WsHub::kEventQueue + 44);
-    EXPECT_EQ(probes, 3) << "not measured once below the mark";
+    EXPECT_EQ(probes, 4) << "not measured once below the mark";
     _emulator->DisableTurboMode();
 }
 
@@ -1265,6 +1340,8 @@ TEST_F(WsHub_Test, MonitoringTopicsPushOnSubscribeThenOneCoalescedValueAfterABur
     breakpoints->AddMemWriteBreakpoint(0x4000);
     breakpoints->AddPortOutBreakpoint(0x00FE);
     ASSERT_TRUE(breakpoints->DeactivateBreakpoint(a));
+    _hub->OnChange(_id);  // NC_BREAKPOINTS_CHANGED, once per change
+    _hub->OnChange(_id);
     Advance(40);
     _hub->Tick();
     EXPECT_EQ(states("debug.breakpoints").size(), 1u) << "within the subscriber's 100 ms: held back";
@@ -1369,6 +1446,7 @@ TEST_F(WsHub_Test, TheMachineAreaTopicsPushTheirReadoutsAndAChange)
     EXPECT_TRUE(states("input.connectors")[0]["value"]["connectors"].isArray());
 
     RecentFiles::Instance().Note("tape", "/games/elite.tzx");
+    _hub->OnChange("");  // NC_RECENT_FILES (of the process)
     Advance(100);
     _hub->Tick();
     ASSERT_EQ(states("media.recent").size(), 2u) << "the change is pushed";

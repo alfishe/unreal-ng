@@ -70,7 +70,9 @@ TEST(AutoDecision_Test, Decide_RolesRowsAndTheKeyboard)
         Evidence({ { .input = InputRole::KempstonJoystick, .device = "kempston-joystick" }, Row(4) }));
     ASSERT_TRUE(decision.decisive);
     EXPECT_EQ(decision.device, "kempston-joystick") << "the dedicated device beats the half-row";
-    EXPECT_EQ(decision.connector, "kempston");
+    EXPECT_EQ(decision.input, InputRole::KempstonJoystick) << "the machine's connector for #1F, not a name";
+    EXPECT_EQ(decision.source, "kempston-joystick");
+    EXPECT_TRUE(decision.connector.empty());
     EXPECT_NE(decision.reason.find("kempston-joystick #1F read in 50 of 50"), std::string::npos) << decision.reason;
 
     // A read no input role claims (a TR-DOS #1F, a DAC) is nothing
@@ -84,12 +86,13 @@ TEST(AutoDecision_Test, Decide_RolesRowsAndTheKeyboard)
     decision = DecideFromAccess(Evidence({ Row(1), Row(2), Row(5), Row(7) }));
     EXPECT_EQ(decision.device, "keys-joystick");
     EXPECT_EQ(decision.optionValue, "up:q,down:a,left:o,right:p,fire:space");
-    EXPECT_EQ(DecideFromAccess(Evidence({ { .input = InputRole::KempstonJoystick2 } })).connector, "next.right");
+    EXPECT_EQ(DecideFromAccess(Evidence({ { .input = InputRole::KempstonJoystick2 } })).input,
+              InputRole::KempstonJoystick2);
     EXPECT_EQ(DecideFromAccess(Evidence({ { .input = InputRole::FullerJoystick } })).device, "fuller-joystick");
     EXPECT_EQ(DecideFromAccess(Evidence({ { .input = InputRole::KempstonMouse } })).device, "kempston-mouse");
     decision = DecideFromAccess(Evidence({ { .input = InputRole::AmxMouse } }));
     EXPECT_EQ(decision.device, "amx-mouse");
-    EXPECT_EQ(decision.connector, "amx");
+    EXPECT_EQ(decision.input, InputRole::AmxMouse);
 
     // The ROM's key scan: every half-row, a hint and no plug
     decision = DecideFromAccess(Evidence({ Row(0), Row(1), Row(2), Row(3), Row(4), Row(5), Row(6), Row(7) }));
@@ -104,10 +107,10 @@ TEST(AutoDecision_Test, Decide_NextB2RowBitsAndAyR14)
     AutoDecision decision = DecideFromAccess(Evidence({ b2, { .input = InputRole::KempstonJoystick } }));
     ASSERT_TRUE(decision.decisive);
     EXPECT_EQ(decision.device, "md6-pad");
-    EXPECT_EQ(decision.connector, "next.left") << "NR #B2 beats #1F: a 6-button pad on the left";
+    EXPECT_EQ(decision.input, InputRole::KempstonJoystick) << "NR #B2 beats #1F: a 6-button pad on the left";
     EXPECT_NE(decision.reason.find("nextreg NR #B2 read in 50 of 50"), std::string::npos) << decision.reason;
     decision = DecideFromAccess(Evidence({ b2, { .input = InputRole::KempstonJoystick2 } }));
-    EXPECT_EQ(decision.connector, "next.right");
+    EXPECT_EQ(decision.input, InputRole::KempstonJoystick2);
     EXPECT_FALSE(DecideFromAccess(Evidence({ { .input = InputRole::NextReg, .index = 0xB1 } })).decisive)
         << "another NextREG decides nothing";
 
@@ -229,4 +232,35 @@ TEST(AutoDecision_Test, RowBits_StopWhereTheValueIsGone)
     EXPECT_EQ((Code{{0xED, 0x58, 0x58, 0xCB, 0x43}}.Tested()), 0);
     // IN A,(#FE); CP #FF; AND #01: a compare leaves A
     EXPECT_EQ((Code{{0xDB, 0xFE, 0xFE, 0xFF, 0xE6, 0x01}}.Tested()), 0x01);
+}
+
+// A port nothing on the machine answers, read every frame: the card that would, as a hint (a card restarts the
+// machine); a candidate without an input claim, a write or half a window says nothing
+TEST(AutoDecision_Test, Decide_BoardReadsNameTheCard)
+{
+    auto board = [](uint16_t frames, bool out, InputRole input) {
+        DeviceAccessEvidence evidence = Evidence({ { .frames = frames, .device = "board" } });
+        DeviceAccessChannel& channel = evidence.channels.front();
+        channel.port = 0x001F;
+        channel.out = out;
+        channel.candidates.push_back({ .card = "covox", .name = "Covox", .slot = "edge.1" });
+        channel.candidates.push_back(
+            { .card = "kempston", .name = "Kempston joystick interface", .slot = "edge.1", .input = input });
+        return evidence;
+    };
+    AutoDecision decision = DecideFromAccess(board(kWindow, false, InputRole::KempstonJoystick));
+    EXPECT_FALSE(decision.decisive);
+    EXPECT_EQ(decision.card, "kempston");
+    EXPECT_EQ(decision.cardSlot, "edge.1");
+    EXPECT_EQ(decision.input, InputRole::KempstonJoystick);
+    EXPECT_NE(decision.hint.find("#001F"), std::string::npos) << decision.hint;
+    EXPECT_NE(decision.hint.find("Kempston joystick interface"), std::string::npos) << decision.hint;
+
+    EXPECT_TRUE(DecideFromAccess(board(kWindow, false, InputRole::None)).card.empty()) << "no input claim";
+    EXPECT_TRUE(DecideFromAccess(board(kWindow, true, InputRole::KempstonJoystick)).card.empty()) << "a write";
+    EXPECT_TRUE(DecideFromAccess(board(20, false, InputRole::KempstonJoystick)).card.empty()) << "20 frames";
+    // The keyboard joystick the program reads as well plays as the machine is
+    DeviceAccessEvidence both = board(kWindow, false, InputRole::KempstonJoystick);
+    both.channels.push_back(Evidence({ Row(4) }).channels.front());
+    EXPECT_EQ(DecideFromAccess(both).device, "sinclair-joystick");
 }

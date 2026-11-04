@@ -17,6 +17,7 @@
 #include "haptics/profilehaptics.h"
 #include "haptics/soundhaptics.h"
 #include "profiles/json.h"
+#include "profiles/profile.h"
 
 using namespace controllers;
 
@@ -295,34 +296,39 @@ TEST(HapticFilters_Test, SoundHapticsDspDefaults)
     EXPECT_EQ(mixer.Written("pad"), RumbleLevels{});
 }
 
-TEST(HapticFilters_Test, AddProbeFromDebugger)
+// The session trial (haptics.md §11): a game profile's events: / haptics: laid over the game's haptics, checked as the
+// profile it makes would be
+TEST(HapticFilters_Test, SessionTrialLaysOverTheGameHaptics)
 {
-    JsonValue haptics;  // a profile without haptics
-    std::string name, error;
-    HapticProbe write;
-    write.kind = HapticProbeKind::Write;
-    write.address = write.end = 0x5C3A;
-    write.page = 5;
-    ASSERT_TRUE(AddHapticProbeSource(haptics, write, "hit", name, error)) << error;
-    EXPECT_EQ(name, "probe-1");
-    HapticProbe out;
-    out.kind = HapticProbeKind::PortOut;
-    out.address = out.end = 0x00FE;
-    out.portMask = 0x00FF;
-    ASSERT_TRUE(AddHapticProbeSource(haptics, out, "tick", name, error)) << error;
-    EXPECT_EQ(name, "probe-2");
-
+    JsonValue base;
+    std::string error;
+    ASSERT_TRUE(ParseJson(R"({"sources": {"died": {"probe": "exec", "address": "0x8B80"}},
+                              "rules": [{"on": "died", "play": "life-lost"}]})",
+                          base, error))
+        << error;
+    JsonValue overlay;
+    ASSERT_TRUE(ParseHapticTrial("events:\n"
+                                 "  shot: { probe: exec, address: \"0x8366\" }\n"
+                                 "  died: { probe: exec, address: \"0x8B90\" }\n"
+                                 "haptics:\n"
+                                 "  rules:\n"
+                                 "    - { on: shot, play: shot, target: handle.high }\n",
+                                 base, overlay, error))
+        << error;
     HapticProfile parsed;
-    ASSERT_TRUE(ParseHapticProfile(haptics, parsed, error)) << error;
+    ASSERT_TRUE(ParseHapticProfile(OverlayHaptics(base, overlay), parsed, error)) << error;
     ASSERT_EQ(parsed.sources.size(), 2u);
-    ASSERT_EQ(parsed.rules.size(), 2u);
-    const HapticSource& first = parsed.sources[0].name == "probe-1" ? parsed.sources[0] : parsed.sources[1];
-    EXPECT_TRUE(first.eachWrite);
-    EXPECT_EQ(first.page, 5);
-    EXPECT_EQ(first.address, 0x1C3A) << "the offset in the page";
-    EXPECT_EQ(parsed.rules[1].on, "probe-2");
-    EXPECT_FALSE(AddHapticProbeSource(haptics, out, "boing", name, error)) << "an unknown effect is refused";
-    EXPECT_EQ(haptics.Find("rules")->Items().size(), 2u) << "and nothing changed";
+    ASSERT_NE(parsed.Find("died"), nullptr);
+    EXPECT_EQ(parsed.Find("died")->address, 0x8B90) << "an event of the trial replaces the game's";
+    ASSERT_EQ(parsed.rules.size(), 2u) << "the trial's rules follow the game's";
+    EXPECT_EQ(parsed.rules[1].on, "shot");
+
+    // A rule may name the game's sources; what the profile would refuse the trial refuses
+    EXPECT_TRUE(ParseHapticTrial("haptics: { rules: [ { on: died, play: hit } ] }", base, overlay, error)) << error;
+    EXPECT_FALSE(ParseHapticTrial("haptics: { rules: [ { on: nobody, play: hit } ] }", base, overlay, error));
+    EXPECT_FALSE(ParseHapticTrial("match: { machines: [PENTAGON] }", base, overlay, error)) << "events and haptics only";
+    EXPECT_FALSE(ParseHapticTrial("events: { x: { probe: exec } }", base, overlay, error)) << "no address";
+    EXPECT_FALSE(ParseHapticTrial("", base, overlay, error));
 }
 
 TEST(HapticFilters_Test, EveryStreamNameRoundTrips)
