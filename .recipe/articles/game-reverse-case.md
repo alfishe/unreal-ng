@@ -86,7 +86,7 @@ python3 tools/verification/analysis/re_session.py call --work $C/work/p2 explain
 # one pass of it, access by access, then its animation: the kit traces the window itself and keeps the file in
 # $C/work/p2/traces/ (a trace by hand: the `trace` action with a path, then access_trace.py PATH --summary)
 python3 <reverse-cases>/kit/routine_anim.py --work $C/work/p2 --window 1001:5336-1001:45336 \
-    --listing $C/build/game.lst --view buffer:8000:32x256 --pc EAE3-EBA9 \
+    --listing $C/build/game.lst --view buffer:8000:128x128:columns-up --pc EAE3-EBA9 --range 8000-FFFF \
     --out $C/docs/img/routines/DrawSprites.gif
 python3 tools/verification/analysis/re_session.py stop --work $C/work/p2
 ```
