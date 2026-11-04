@@ -28,7 +28,7 @@ Task recipe: [.recipe/analysis/conditional-breakpoints.md](../../.recipe/analysi
 The language is Unreal Speccy's (the canonical one). A second dialect, `c`, reads the same names with C's operator
 precedence and decimal numbers. The emulator always prints a condition back in the Unreal form, with the brackets
 that show how it was read and numbers from 10 up with `#`: `a==7&&b>3` is shown as `(A == 7) && (B > 3)`,
-`val&7==2` as `VAL & (7 == 2)`, `wr==5800` as `WR == #5800`.
+`val&7==2` as `VAL & (7 == 2)`, `wr==#5800` as `WR == #5800`.
 
 **Precedence** (highest first):
 
@@ -50,21 +50,20 @@ In the Unreal order, comparisons bind **tighter** than `&`, `^` and `|`. So `A &
 always 0. To test bits, write the brackets: `(A & 7) == 2`. In the `c` dialect `A & 7 == 2` reads the same way (C's
 own trap), so the brackets are the safe habit in both.
 
-`&&` and `||` stop as soon as the answer is known: in `HL == 4000 && M(HL) == 0` the memory is not read when HL is
+`&&` and `||` stop as soon as the answer is known: in `HL == #4000 && M(HL) == 0` the memory is not read when HL is
 something else. Arithmetic is 64-bit. Division and modulo by 0 give the left operand (as in Unreal). `M(x)` and
 `W(x)` addresses wrap at 64K.
 
-**Numbers** are hex unless written as decimal:
+**Numbers** are decimal; hex has a prefix:
 
 | Written | Value |
 |:--|:--|
-| `FF`, `0FF`, `#FF`, `$FF`, `0xFF`, `FFh` | 255 |
-| `255d` | 255 (decimal) |
+| `255` | 255 |
+| `#FF`, `$FF`, `0xFF` | 255 (hex) |
 | `'A'` | 65 (a character) |
 
-A hex number that starts with a letter must start with `0` or `#`: `C000` is a name, `#C000` and `0C000` are numbers.
-The `d` suffix means decimal, so `0D` is decimal 0 and `13d` is 13. Write the hex value 13 as `#0D` or `0Dh`. In the
-`c` dialect plain digits are decimal and hex needs `0x`, `#`, `$` or `h`.
+Both dialects read numbers the same way. A bare hex number is refused with a hint (`5C78`: "numbers are decimal;
+write hex as #5C78"), and `C000` is a name (a label). Also accepted: the suffixes `0FFh` (hex) and `255d` (decimal).
 
 Names are case-insensitive. A name that is not a register or a variable is looked up as a label. A leading `.` forces
 the label: `.PC` is the label `PC`, not the register.
@@ -142,7 +141,7 @@ condition is refused with the reason and its column:
 | Text | Refused because |
 |:--|:--|
 | `A ==` | `condition: operand expected at column 5` |
-| `RD == 9000` on an execution breakpoint | `RD is not supplied by this breakpoint's trigger` |
+| `RD == #9000` on an execution breakpoint | `RD is not supplied by this breakpoint's trigger` |
 | `VAL == 1` on a port-in breakpoint | the same: the value of an IN is not known when the check runs |
 | `NOSUCH == 1` | `unknown name 'NOSUCH'` (not a register, a variable or a loaded label) |
 | a condition on a keyboard or an event breakpoint | `a condition applies to memory, port, NextREG, copper, beam, magic and chip register breakpoints` |
@@ -168,7 +167,7 @@ With the checks above, this happens only when the state a condition needs is mis
 
 | Plane | Set with the breakpoint | Change later | Shown |
 |:--|:--|:--|:--|
-| CLI | `bp 0x8000 if A == 7`, `wp 0x4000-0x57FF w if VAL != 0`, `bport 0xFE o --mask 0xFF if (VAL & 7) == 2`; `--dialect c` before `if` (the CLI reads a plain address as decimal, the condition reads plain numbers as hex) | `bpcond <id> [--dialect c] [--cpu gs] [condition]` (none: clear) | `bplist`: `if …`, `(matched Nx)`, `[condition failed: …]` |
+| CLI | `bp 0x8000 if A == 7`, `wp 0x4000-0x57FF w if VAL != 0`, `bport 0xFE o --mask 0xFF if (VAL & 7) == 2`; `--dialect c` before `if` (the CLI reads a plain address as decimal, and so does the condition) | `bpcond <id> [--dialect c] [--cpu gs] [condition]` (none: clear) | `bplist`: `if …`, `(matched Nx)`, `[condition failed: …]` |
 | Lua | `bp(0x8000, {condition = "A == 7", dialect = "c"})`, also `bp_read`, `bp_write`, `bp_port_in`, `bp_port_out`; `-1, reason` when refused | `bp_condition(id, text [, dialect [, cpu]])`: `true` or `false, reason` | `bp_status()`: `condition`, `match_count`, `condition_error` |
 | Python | `emu.bp(0x8000, condition="A == 7", dialect="c")`, the same kinds; `ValueError` with the reason when the condition does not compile | `emu.bp_condition(id, text, dialect="", cpu="")`: `True`, `False` for an unknown id, `ValueError` for a bad text | `emu.bp_status()`: the same keys |
 | MCP | `control_execution` `bp_add` with `condition`, `condition_dialect`; the text answers `#id if <canonical>` | `bp_condition` with `bp_id`, `condition` (`''` clears), `cpu` | `bp_list`: `hits N matched M if …` |

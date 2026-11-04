@@ -216,7 +216,8 @@ rather than a topic of their own; hits are not pushed to remote clients yet. One
 ## 8. Decisions for the owner
 
 1. **Dialect: decided 2026-10-26, the Unreal order is canonical** (rules.md §5.3, the TUI prototype): comparisons
-   bind tighter than `&`, `^`, `|`; `&&` above `||`; numbers are hex by default, `123d` is decimal. F1's form and
+   bind tighter than `&`, `^`, `|`; `&&` above `||`; numbers are hex by default, `123d` is decimal (owner 2026-11-04: numbers are decimal, hex `#FF`, `$FF`, `0xFF`, in
+   both dialects). F1's form and
    C are accepted as parse dialects; conditions print in the canonical form. design.md §4.2 follows this.
 2. **Callback thread model: decided 2026-10-26, as §3 describes**: a Lua hook state per emulator for sync and frame
    modes (callbacks registered as source, not closures; frame is Lua's default), and deferred on the script's thread

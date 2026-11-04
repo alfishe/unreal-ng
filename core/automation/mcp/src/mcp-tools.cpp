@@ -1374,8 +1374,8 @@ void RegisterControlExecution(ToolRegistry& registry)
         "bp_condition ('' clears): stop "
         "only when this holds. Unreal language: registers (A, HL, IX, SP, A', I, R, IFF1), flags (Z, NZ, CY), M(addr) "
         "byte, W(addr) word, the access (RD, WR, VAL, PORT, ADDR), FRAME, T, PG0-PG3, labels; == != < > <= >= && || "
-        "! & | ^ ~ + - * / % << >>; comparisons bind tighter than & | ^; numbers hex unless written 123d ('0D' is "
-        "decimal 0: write #0D). Refused with the reason and its column; hit policies count only the hits where it "
+        "! & | ^ ~ + - * / % << >>; comparisons bind tighter than & | ^; numbers decimal, hex written #FF, $FF or "
+        "0xFF. Refused with the reason and its column; hit policies count only the hits where it "
         "holds (bp_list: hits = condition true, matched = every match)";
     schema["properties"]["text"]["type"] = "string";
     schema["properties"]["text"]["description"] =

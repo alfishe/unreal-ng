@@ -134,16 +134,16 @@ TEST_F(BreakpointConditional_Test, HitPolicyCountsConditionTrueHitsOnly)
 
 TEST_F(BreakpointConditional_Test, AccessOperandsComeFromTheAccess)
 {
-    const uint16_t write = Add(Spec(BRK_MEMORY, BRK_MEM_WRITE, 0x9000, "MWV == 42 && WR == 9000"));
+    const uint16_t write = Add(Spec(BRK_MEMORY, BRK_MEM_WRITE, 0x9000, "MWV == #42 && WR == #9000"));
     EXPECT_EQ(_bpm->HandleMemoryWrite(0x9000, 0x41), BRK_INVALID);
     EXPECT_EQ(_bpm->HandleMemoryWrite(0x9000, 0x42), write);
     EXPECT_EQ(_bpm->HandleMemoryWrite(0x9000), BRK_INVALID) << "a value not known is FFFFFFFF";
 
-    const uint16_t read = Add(Spec(BRK_MEMORY, BRK_MEM_READ, 0x9100, "VAL == 0FF"));
+    const uint16_t read = Add(Spec(BRK_MEMORY, BRK_MEM_READ, 0x9100, "VAL == #FF"));
     EXPECT_EQ(_bpm->HandleMemoryRead(0x9100, 0xFF), read);
     EXPECT_EQ(_bpm->HandleMemoryRead(0x9100, 0x00), BRK_INVALID);
 
-    const uint16_t out = Add(Spec(BRK_IO, BRK_IO_OUT, 0x00FE, "OUT == 0FE && (VAL & 7) == 2"));
+    const uint16_t out = Add(Spec(BRK_IO, BRK_IO_OUT, 0x00FE, "OUT == #FE && (VAL & 7) == 2"));
     EXPECT_EQ(_bpm->HandlePortOut(0x00FE, 0x12), out);
     EXPECT_EQ(_bpm->HandlePortOut(0x00FE, 0x13), BRK_INVALID);
     _bpm->RemoveBreakpointByID(out);
@@ -239,7 +239,7 @@ TEST_F(BreakpointConditional_Test, TapConditionsSeeTheValuesOfTheRun)
     };
     const uint16_t five = addTap(BRK_MEM_WRITE, 0x9001, "MWV == 5");
     const uint16_t six = addTap(BRK_MEM_WRITE, 0x9000, "MWV == 6");
-    const uint16_t read = addTap(BRK_MEM_READ, 0x9000, "MRV == 5 && RD == 9000");
+    const uint16_t read = addTap(BRK_MEM_READ, 0x9000, "MRV == 5 && RD == #9000");
 
     EXPECT_EQ(_emulator->RunNCPUCycles(3 * kLoopInstructions, false), 3 * kLoopInstructions);
     EXPECT_EQ(Bp(five).hitCount, 3u) << "the fast write's hook passes the value";

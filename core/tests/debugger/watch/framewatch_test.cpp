@@ -235,7 +235,7 @@ TEST_F(FrameWatch_Test, ArmedWatchPausesTheRunningMachine)
     _emulator->StartAsync();
     ASSERT_TRUE(TestWait::For([&] { return _emulator->IsRunning(); }));
     // The 48K ROM counts FRAMES (#5C78) at every interrupt once it has booted (power-on RAM before that: == not >=)
-    const framewatch::Outcome added = framewatch::AddWatch(_context, {{"if", "W(#5C78) == 60d"}, {"label", "boot"}});
+    const framewatch::Outcome added = framewatch::AddWatch(_context, {{"if", "W(#5C78) == 60"}, {"label", "boot"}});
     ASSERT_EQ(added.status, 201) << added.text;
     ASSERT_TRUE(TestWait::For([&] { return _emulator->IsPaused(); })) << "the watch pauses the machine";
     EXPECT_EQ(_emulator->LastStop().reason, Emulator::DebugStop::Reason::Watch);
