@@ -180,15 +180,15 @@
             "finish {name?, save?} maps and saves (map, gamecontrollerdb, saved, family, path); cancel. Each answers "
             "learning, index, count, control, prompt, waiting_for_release, map. unalias {id}: forget a device alias "
             "(id = the old id; unknown-alias when there is none), saved and applied at once; answers from and to. "
-            "haptics_probe "
-            "{kind, address, page?, port_mask?, play?}: a probe (exec, read, write, port-in, port-out: a breakpoint that "
-            "never stops, haptics.md §5) at an address or port as a source of the loaded game's user profile "
-            "(user/game-<sha>, started from the haptics that play now), with a rule that plays the effect (hit by "
-            "default); answers id, source and path; unavailable without a program loaded from a file.";
+            "haptics_trial "
+            "{text?, clear?}: the session trial of game haptics (haptics.md §11): text is a play profile's events: and "
+            "haptics: (YAML or JSON, as in a game profile file), laid over the loaded game's haptics at once and never "
+            "written (game.events shows its events); clear drops it, another program drops it too; neither reads it. "
+            "Answers active, sources, trial, haptics_profile, haptics_reason.";
         post["tags"].append("Controllers");
         verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output", "light", "role",
                              "pin", "identify", "player", "database_save", "database_delete", "database_import",
-                             "learn", "haptics_probe", "unalias"});
+                             "learn", "haptics_trial", "unalias"});
         replies(post);
 
         Json::Value& import = paths["/api/v1/controllers/database/import"]["post"];
