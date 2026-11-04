@@ -590,11 +590,11 @@ into the draft export like a resolve's label and title.
   (`TraceBundle::AddMediumFile("fdd.a", "game.trd")`, opened in session access: the file is never written). The base
   inserts them before the session loads, so a seek finds the recording's medium (an untouched copy keeps its file's
   identity: no `media_version_differs` issue), and `MachineStateTransfer` copies them into every experiment's machine.
-- Every analysis instance runs with fast disk off. A recording never has it (it compresses the WD1793's timing,
-  `FeatureManager::ttdLocksFastLoader`), but a free machine has no TTD to force it off: with it on, the first seek
-  after the fork stepped the head about four times faster than the recording did and the run left the recorded path
-  even with the disk in place. Fast tape and turbo tape are left as the instance is configured: a free machine with
-  fast tape traps the ROM loader where a recording made without it ran the loader in real time (not measured yet).
+- Every analysis instance runs with the fast loaders off (`fastdisk`, `fasttape`, `turbotape`). A recording never
+  has them (`FeatureManager::ttdLocksFastLoader`: fast disk compresses the WD1793's timing, fast and turbo tape trap
+  the ROM loader), but a free machine has no TTD to force them off: with fast disk on, a start inside a disk command
+  ended it at the compressed timing, and the first seek after the fork stepped the head about four times faster
+  than the recording did; the run left the recorded path even with the disk in place.
 - Known limit: the copy is the medium as at `Capture`, the guest's writes made during the recording included; the
   media manager's undo log does not travel with it. A disk the program wrote while recording is therefore another
   medium for the base (its identity is the copy's): a seek reports `media_version_differs` and keeps it, the replay

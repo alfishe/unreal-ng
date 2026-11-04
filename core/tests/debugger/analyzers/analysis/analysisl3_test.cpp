@@ -23,6 +23,7 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "debugger/analyzers/analysis/analysisinstance.h"
 #include "debugger/analyzers/analysis/analysisjobs.h"
 #include "debugger/analyzers/analysis/detectors/detectors.h"
 #include "debugger/analyzers/analysis/l3coverage.h"
@@ -529,6 +530,27 @@ TEST_F(AnalysisL3_Test, ExperimentObservedAndRefuted)
     EXPECT_GT(batch.results[0].newCode, 0u) << "the rare code never ran in the session";
     EXPECT_EQ(batch.results[1].verdict, "refuted") << ExperimentResultLine(batch.results[1]);
     EXPECT_EQ(batch.results[1].checks.at(0).actual, "0 hits");
+}
+
+TEST_F(AnalysisL3_Test, ExperimentMachineRunsTheRecordedLoaderTiming)
+{
+    // The fast loaders are never in effect under a recording (fast disk compresses the WD1793's timing, fast and
+    // turbo tape trap the ROM loader): the free machine an experiment gets a recording's state into must not have
+    // them either (a fork taken while a disk command ran ended the command 21000 T early and left the recorded path,
+    // POC 043)
+    const Built& b = Fixture("poke-flip.asm");
+    std::string error;
+    AnalysisInstance free;
+    ASSERT_TRUE(free.Make(*b.bundle, "analysis-test-free", false, error)) << error;
+    FeatureManager* features = free.GetEmulator()->GetFeatureManager();
+    for (const char* loader : {Features::kFastDisk, Features::kFastTape, Features::kTurboTape})
+    {
+        ASSERT_TRUE(features->hasFeature(loader)) << loader;
+        EXPECT_FALSE(features->isEnabled(loader)) << loader << " is on, the recording ran without it";
+        // What it overrides: a new machine may have it on
+        ASSERT_TRUE(features->setFeature(loader, true)) << loader;
+        EXPECT_TRUE(features->isEnabled(loader)) << loader;
+    }
 }
 
 TEST_F(AnalysisL3_Test, ExperimentSpecRefusals)

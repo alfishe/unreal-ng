@@ -144,10 +144,14 @@ bool AnalysisInstance::Make(const TraceBundle& bundle, const char* name, bool se
     {
         features->setFeature(Features::kSoundGeneration, false);
         features->setFeature(Features::kTimeTravel, session);
-        // A recording never runs with fast disk (FeatureManager::ttdLocksFastLoader: it compresses the WD1793's
-        // timing), and a free machine is the recording's continuation: with it on, the first seek after the fork
-        // steps the head several times faster than the recording did and the run leaves the recorded path
-        features->setFeature(Features::kFastDisk, false);
+        // A recording never runs with a fast loader (FeatureManager::ttdLocksFastLoader: fast disk compresses the
+        // WD1793's timing, fast / turbo tape trap the ROM loader; no edit records either), and a free machine is
+        // the recording's continuation: with fast disk on, a fork taken while a disk command runs ends the command
+        // at the compressed timing and the first seek after the fork steps the head several times faster than the
+        // recording did; with a fast tape the next load would skip the real-time loader. Either way the run leaves
+        // the recorded path at once
+        for (const char* loader : {Features::kFastDisk, Features::kFastTape, Features::kTurboTape})
+            features->setFeature(loader, false);
     }
     if (context->pSoundManager != nullptr)
         context->pSoundManager->mute();
