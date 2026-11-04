@@ -31,6 +31,11 @@ protected:
     std::mutex _initMutex;
     std::condition_variable _initCV;
     bool _initialized = false;
+
+    /// The thread is in its task loop: a stop may break into the script running there (InterruptHook). Off before
+    /// the loop's first and after its last task, so the unprotected onStart / onFinish never see the hook
+    std::mutex _interruptMutex;
+    bool _interruptible = false;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -102,6 +107,7 @@ public:
     /// region <Handlers>
 protected:
     static void threadFunc(AutomationLua* lua);
+    static void InterruptHook(lua_State* L, lua_Debug* ar);
 
     void onStart()
     {

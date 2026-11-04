@@ -47,7 +47,17 @@ void AutomationLua::stop()
         _stopThread = true;
     }
     _queueCV.notify_one();
-    
+
+    // A script that never returns to the queue (a busy loop, `--script` waiting for minutes) would hold the join and
+    // the window's close with it: break into it at its next instruction. lua_sethook is the one Lua call allowed from
+    // another thread (lua.c's Ctrl+C sets it from a signal handler)
+    {
+        std::lock_guard<std::mutex> lock(_interruptMutex);
+        if (_interruptible)
+            lua_sethook(_lua->lua_state(), &AutomationLua::InterruptHook,
+                        LUA_MASKCALL | LUA_MASKRET | LUA_MASKLINE | LUA_MASKCOUNT, 1);
+    }
+
     // CRITICAL: Join thread FIRST before deleting objects it references
     // The thread may still be executing and using _lua/_luaEmulator
     _thread->join();
@@ -298,6 +308,11 @@ void AutomationLua::threadFunc(AutomationLua* lua)
 
     lua->onStart();
 
+    {
+        std::lock_guard<std::mutex> lock(lua->_interruptMutex);
+        lua->_interruptible = true;
+    }
+
     // The wait blocks until a task or the stop arrives: no sleep after a task, a script waits for nothing
     while (!lua->_stopThread)
     {
@@ -335,6 +350,18 @@ void AutomationLua::threadFunc(AutomationLua* lua)
         }
     }
 
+    {
+        std::lock_guard<std::mutex> lock(lua->_interruptMutex);
+        lua->_interruptible = false;
+        lua_sethook(lua->_lua->lua_state(), nullptr, 0, 0);
+    }
+
     lua->_luaEmulator->ForgetCallbacks();
     lua->onFinish();
+}
+
+void AutomationLua::InterruptHook(lua_State* L, lua_Debug*)
+{
+    // Stays set: a pcall in the script catches this one, its next instruction raises it again
+    luaL_error(L, "the script was stopped: the Lua interpreter is shutting down");
 }
