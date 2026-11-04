@@ -583,7 +583,9 @@ into the draft export like a resolve's label and title.
   (`start`: the first keyframe, `end`, `frame:N`). Every experiment gets the base's state copied into an analysis
   instance of its own (`MachineStateTransfer`, the clone path) and runs there; the source instance is never touched.
 - A pool of workers (`parallel`, default min(4, cores / 4), at most 8) runs the experiments; two never share a
-  machine. Every analysis instance is muted, sound off, logging off.
+  machine. Every analysis instance is muted, sound off, logging off. An experiment's machine runs the program as the
+  recording did: `fastdisk` is off on it (never in effect under a recording: it compresses the WD1793's timing), so a
+  start inside a disk command keeps the recorded timing.
 - Pokes and registers go in once the state is copied; input events (keys, Kempston directions, release all) at their
   frame; watches count executions (pc), writes and reads. Checks: a watch reached / not reached / a count; a byte's
   value or change; the screen changed; instructions L1 never saw run.

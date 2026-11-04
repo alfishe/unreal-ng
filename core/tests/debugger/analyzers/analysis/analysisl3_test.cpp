@@ -23,6 +23,7 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "debugger/analyzers/analysis/analysisinstance.h"
 #include "debugger/analyzers/analysis/analysisjobs.h"
 #include "debugger/analyzers/analysis/detectors/detectors.h"
 #include "debugger/analyzers/analysis/l3coverage.h"
@@ -529,6 +530,23 @@ TEST_F(AnalysisL3_Test, ExperimentObservedAndRefuted)
     EXPECT_GT(batch.results[0].newCode, 0u) << "the rare code never ran in the session";
     EXPECT_EQ(batch.results[1].verdict, "refuted") << ExperimentResultLine(batch.results[1]);
     EXPECT_EQ(batch.results[1].checks.at(0).actual, "0 hits");
+}
+
+TEST_F(AnalysisL3_Test, ExperimentMachineRunsTheRecordedDiskTiming)
+{
+    // Fast disk compresses the WD1793's timing and is never in effect under a recording: the free machine an
+    // experiment gets a recording's state into must not have it either (a fork taken while a disk command ran ended
+    // the command 21000 T early and left the recorded path, POC 043)
+    const Built& b = Fixture("poke-flip.asm");
+    std::string error;
+    AnalysisInstance free;
+    ASSERT_TRUE(free.Make(*b.bundle, "analysis-test-free", false, error)) << error;
+    FeatureManager* features = free.GetEmulator()->GetFeatureManager();
+    ASSERT_TRUE(features->hasFeature(Features::kFastDisk));
+    EXPECT_FALSE(features->isEnabled(Features::kFastDisk)) << "fast disk is on, the recording ran without it";
+    // The default it overrides: on, as for any new machine
+    ASSERT_TRUE(features->setFeature(Features::kFastDisk, true));
+    EXPECT_TRUE(features->isEnabled(Features::kFastDisk));
 }
 
 TEST_F(AnalysisL3_Test, ExperimentSpecRefusals)
