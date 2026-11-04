@@ -21,6 +21,7 @@ const char* const kMonitorUsage =
     "monitor debug.breakpoints [instance=]  - Breakpoints: total, active, by kind, groups, last hit\n"
     "monitor media.slots | recording.state | debug.labels | ttd.status | debug.analyzers | controllers.state\n"
     "monitor game.events [instance=]        - The game's events (its play profile's events:): fires, values, recent\n"
+    "monitor devices.access [instance=]     - Device access watch: per device and channel the accesses, sites, bits\n"
     "Flags: --json (the reply every surface returns); instance= an id or an index (default the followed one)\n";
 
 std::string Lines(const std::string& text, const char* newline)

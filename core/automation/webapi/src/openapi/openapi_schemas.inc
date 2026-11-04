@@ -514,7 +514,7 @@
     schemas["AddBreakpointRequest"]["properties"]["condition"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["condition"]["description"] =
         "Memory and port breakpoints: stop only when this expression holds (Unreal language: registers, flags, "
-        "M(addr), W(addr), access operands RD WR VAL PORT, FRAME, PG0-3, labels; numbers hex unless written 123d). "
+        "M(addr), W(addr), access operands RD WR VAL PORT, FRAME, PG0-3, labels; numbers decimal, hex as #FF, $FF or 0xFF). "
         "Compiled and checked against the trigger here: 400 with the reason and its column";
     schemas["AddBreakpointRequest"]["properties"]["condition_dialect"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["condition_dialect"]["description"] =
@@ -1235,6 +1235,19 @@
     schemas["TTDBmk"]["properties"]["label"]["type"] = "string";
     schemas["TTDBmk"]["properties"]["label"]["description"] =
             "Unique session key: non-empty, at most 63 characters.";
+    schemas["TTDBmk"]["properties"]["note"]["type"] = "string";
+    schemas["TTDBmk"]["properties"]["note"]["description"] = "The agent's or human's note, at most 4096 characters.";
+    schemas["TTDBmk"]["properties"]["tags"]["type"] = "array";
+    schemas["TTDBmk"]["properties"]["tags"]["items"]["type"] = "string";
+    schemas["TTDBmk"]["properties"]["context"]["type"] = "object";
+    schemas["TTDBmk"]["properties"]["context"]["nullable"] = true;
+    schemas["TTDBmk"]["properties"]["context"]["description"] =
+            "The machine at the bookmark's moment, taken when it was added (null: not taken): pc, sp, af, bc, de, "
+            "hl, ix, iy, iff1, im, p7ffd, code_page, code_kind (rom / ram / cache), instruction, text.";
+    schemas["TTDBmk"]["properties"]["watch"]["type"] = "array";
+    schemas["TTDBmk"]["properties"]["watch"]["description"] =
+            "Watched Z80 ranges and their bytes at the moment: {address, length, bytes[]}.";
+    schemas["TTDBmk"]["properties"]["watch"]["items"]["type"] = "object";
 
     schemas["TTDBookmarkAddRequest"]["type"] = "object";
     schemas["TTDBookmarkAddRequest"]["description"] =
@@ -1249,6 +1262,37 @@
     schemas["TTDBookmarkAddRequest"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDBookmarkAddRequest"]["properties"]["tinframe"]["format"] = "uint32";
     schemas["TTDBookmarkAddRequest"]["properties"]["tinframe"]["default"] = 0;
+    schemas["TTDBookmarkAddRequest"]["properties"]["note"]["type"] = "string";
+    schemas["TTDBookmarkAddRequest"]["properties"]["note"]["maxLength"] = 4096;
+    schemas["TTDBookmarkAddRequest"]["properties"]["tags"]["description"] =
+        "Up to 8 tags of 1..31 characters (letters, digits, _ - .): a list or a comma-separated string.";
+    schemas["TTDBookmarkAddRequest"]["properties"]["watch"]["description"] =
+        "Up to 8 Z80 ranges address[:length] (length 1..16, hex as 0x / # / $): a list or a comma-separated string.";
+    schemas["TTDBookmarkAddRequest"]["properties"]["context"]["type"] = "boolean";
+    schemas["TTDBookmarkAddRequest"]["properties"]["context"]["default"] = true;
+    schemas["TTDBookmarkAddRequest"]["properties"]["context"]["description"] =
+        "Take the registers, the instruction and the watched bytes at the moment (another moment: one silent seek).";
+
+    schemas["TTDBookmarkNoteRequest"]["type"] = "object";
+    schemas["TTDBookmarkNoteRequest"]["description"] =
+        "Request body for PUT /ttd/bookmarks/{label}: only the fields given change.";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["note"]["type"] = "string";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["append"]["type"] = "boolean";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["append"]["description"] = "Add the note as a new line.";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["tags"]["description"] = "Replace the tags.";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["add_tags"]["description"] = "Tags to add.";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["remove_tags"]["description"] = "Tags to remove.";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["rename"]["type"] = "string";
+
+    schemas["TTDBookmarkExportResponse"]["type"] = "object";
+    schemas["TTDBookmarkExportResponse"]["description"] =
+        "Response from /ttd/export-bookmarks: the bookmarks as a WALKTHROUGH section (markdown), YAML comment lines "
+        "for a game profile's header (profile) or JSON.";
+    schemas["TTDBookmarkExportResponse"]["properties"]["format"]["type"] = "string";
+    schemas["TTDBookmarkExportResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDBookmarkExportResponse"]["properties"]["text"]["type"] = "string";
+    schemas["TTDBookmarkExportResponse"]["properties"]["path"]["type"] = "string";
+    schemas["TTDBookmarkExportResponse"]["properties"]["bytes"]["type"] = "integer";
 
     schemas["TTDBookmarksResponse"]["type"] = "object";
     schemas["TTDBookmarksResponse"]["description"] =

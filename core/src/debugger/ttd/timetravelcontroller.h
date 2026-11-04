@@ -86,6 +86,8 @@
 #include "ttdprobe.h"
 #include "ttdcausechain.h"
 #include "ttdfindevent.h"
+#include "ttdexplainframe.h"
+#include "ttddiffmoments.h"
 #include "ttdcoverageindex.h"
 #include "ttdtimeline.h"
 #include "ttdperipheralregistry.h"
@@ -560,6 +562,12 @@ public:
     /// Defined out-of-line (EmulatorContext is only forward-declared here).
     bool IsReplayActive() const override;
 
+    /// The bytes a tool edit changes in memory the CPU sees, as a replay applies the edit: a fast tape load or a
+    /// script's poke reaches memory past the bus, so the analysis replay (replaytracer.cpp) folds these as the
+    /// writes of the instruction that made the edit. Only bytes whose value changes are reported for a page image
+    using EditWriteObserver = std::function<void(uint16_t z80, uint8_t value)>;
+    void SetEditWriteObserver(EditWriteObserver observer) { _editWriteObserver = std::move(observer); }
+
     // -----------------------------------------------------------------------
     // Input journal (Phase 2 Item 3; parent TDD §5 row #1)
     // -----------------------------------------------------------------------
@@ -947,6 +955,17 @@ public:
     bool AddBookmark(const TTDTimePoint& time, const std::string& label,
                      std::string* err = nullptr);
 
+    /// @brief Add a bookmark with its note, tags and watched ranges (agent notes, 2026-11-03). With
+    /// @p captureContext the context (registers, the instruction at PC, its page, the paging latch) and the watched
+    /// bytes are taken at the bookmark's moment: the current position as the machine stands, another moment by one
+    /// silent seek with the machine put back (a live recording pauses for browsing then). A moment the replay cannot
+    /// reach leaves the context invalid and the bytes empty; the bookmark is still added. The same position checks
+    /// as above, and the bounds of ValidateBookmark.
+    bool AddAgentBookmark(TTDBookmark bookmark, bool captureContext, std::string* err);
+
+    /// @brief Change a bookmark's note, tags or label under the journal's lock (TTDBookmarkJournal::Edit).
+    bool EditBookmark(const std::string& label, const std::function<void(TTDBookmark&)>& edit, std::string* err);
+
     /// @brief All bookmarks, time-sorted (thread-safe snapshot copy).
     std::vector<TTDBookmark> GetBookmarks() const;
 
@@ -1138,6 +1157,10 @@ private:
     /// inside a 16 KB page. A range spanning a page boundary, or wider than a
     /// page, could match any offset, so it is left unpruned rather than
     /// approximated.
+    /// May frame `frame` hold an access q matches (CanPruneByCoverage first): the coverage keys name the byte's true
+    /// offset in its page (Memory::TtdKeyOf), so on 8K slots a query with no known half asks both halves
+    bool CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDSearchQuery& q) const;
+
     inline bool CanPruneByCoverage(const TTDSearchQuery& q) const
     {
         if (!_enableCoverageIndex)
@@ -1157,7 +1180,7 @@ private:
 public:
 
     void RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
-                           uint16_t m1pc, PhysPage physPage) override;
+                           uint16_t m1pc, PhysPage physPage, uint8_t flip = 0) override;
     
     /// @brief Hot-path capture: record a port OUT (used for IO probe).
     ///
@@ -1285,6 +1308,18 @@ public:
     /// ran, a port access, a border change, a key. Frames are filtered from what the session stores; only the hit
     /// frames are replayed. The machine is put back where it stood; a live recording pauses for browsing
     TTDFindEventResult QueryFindEvent(const TTDFindEventQuery& query);
+
+    /// @brief Explain frame (docs/inprogress/2026-11-02-ttd-explain-frame): what one frame did - its time split, the
+    /// routines by time, the interrupts, paging, ports per device, the memory changed with its writers, the screen,
+    /// the border, the keys and the markers - from one replay of the frame with the instruction and bus hooks. The
+    /// machine is put back where it stood; a live recording pauses for browsing
+    TTDExplainFrameResult QueryExplainFrame(const TTDExplainFrameQuery& query);
+
+    /// @brief What differs between two moments (docs/inprogress/2026-11-03-ttd-diff-moments/design.md): the
+    /// registers, the latches and the slot mapping, the RAM in ranges per region with the last write in between, the
+    /// screen and border, the devices, and the time, keys and markers in between. Replays to each moment and puts the
+    /// machine back where it stood.
+    TTDDiffMomentsResult QueryDiffMoments(const TTDDiffMomentsQuery& query);
     
     /// @brief Step back one instruction (TDD §10.2 + §16 row 2).
     ///
@@ -1702,6 +1737,9 @@ private:
     /// (_pausedEnd), browsable; execution reaching that point again, or a
     /// resume there, continues it. A stop ends it
     void PauseRecordingForBrowsing();
+
+    /// The context and watched bytes of @p bookmark at its moment (AddBookmark); false when it cannot be reached
+    bool CaptureBookmarkMoment(TTDBookmark& bookmark);
     /// @brief Continue recording from the machine's present (at or after
     /// @p from), dropping what was recorded after it: the second half of
     /// ResumeRecordingFrom, after its seek; called without one at a paused end
@@ -1764,6 +1802,11 @@ private:
         std::vector<std::vector<uint8_t>> deviceStates;
         size_t inputCursor = 0;            ///< journal playback cursor (ServiceInput)
         bool   inputPlaybackArmed = false;
+        size_t engineEventCursor = 0;      ///< the engine's event log: a replay in between delivers its events
+        uint64_t cardEditFrame = UINT64_MAX;
+        uint64_t inputStartFrame = UINT64_MAX;
+        TTDMachineTime inputFrameStart = 0;
+        bool inputFrameKnown = false;
         /// The replay engine's journals as the machine plays them (a machine on the recorded history after a seek
         /// runs from them; a throwaway replay starts them elsewhere) and the hooks the CPU and the media read through
         TTDPortJournal::Mode busReadMode = TTDPortJournal::Mode::Off;
@@ -1956,8 +1999,11 @@ private:
     std::unordered_map<size_t, std::vector<uint8_t>> _toolEditPayloads;   ///< marker index -> edit bytes
     /// Apply a tool edit's bytes (a replay crossing it)
     void ApplyToolEdit(const std::vector<uint8_t>& payload);
-    /// The replay's card edits of frame @p frame to the card targets (those of an earlier frame leave)
-    void DeliverCardEdits(uint64_t frame);
+    EditWriteObserver _editWriteObserver;   ///< see SetEditWriteObserver
+    /// The replay's card edits of frame @p frame to the card targets (those of an earlier frame leave). The scan
+    /// starts at the event cursor; @p fromFrameStart scans from the frame's first event instead (a restore mid-frame,
+    /// where the cursor is already past some of the frame's edits)
+    void DeliverCardEdits(uint64_t frame, bool fromFrameStart = false);
     /// The live machine's memory regions as the engine sees them: machine RAM, then each region source's
     std::vector<TTDRegionDesc> LiveRegions() const;
     uint64_t _shadowLastStart = 0;         ///< the last captured frame's start in machine time

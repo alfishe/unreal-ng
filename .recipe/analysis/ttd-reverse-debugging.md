@@ -15,6 +15,19 @@ These are the "answer the question backwards" primitives:
 - *When did it happen?* (a counter went down, the scene changed, a routine first ran, fire was pressed, the border
   turned red) → `find-event` (MCP `find_event`: the first or last hits in a window, each with frame+t, PC, the
   instruction and before -> after, in one call; no `memory_at` / screen diff / `coverage_scan` + step loop)
+- *What did this frame do?* (where its time went, what it wrote, which ports it used) → `explain-frame` (MCP
+  `explain_frame`: the time split, the routines by time, the interrupt, paging, ports per device, memory changed with
+  its writers, screen, border, input and markers from one replay; no `seek` + `memory_diff` + `find_last` per range +
+  `port_events` + stepping loop)
+- *What differs between these two moments?* (before and after the player died, the title and the first level, either
+  side of an OUT) → `diff` (MCP `diff`: the registers, latches and 8K slots that differ, the memory ranges with their
+  bytes and last writers, screen, border, the devices changed, the keys and markers in between; any T inside a frame;
+  no `seek` + `inspect_state` at each moment + `memory_diff` + `memory_at` / `find_last` per range + seek back)
+- *Keep what I found and write it up* (a WALKTHROUGH step, a game profile's header) → `bookmark_add` with `note`,
+  `tags` and `watch` at each finding (the moment's PC, instruction, registers and watched bytes are taken once), then
+  one `bookmark_export` (`format` markdown / profile / json, `tag`, `path`); the notes live in the session and its
+  `.ttd` file, not in the agent's context. No `seek_bookmark` + `inspect_state` + `disassemble` + memory reads per
+  bookmark
 - *What ran just before the crash?* → `reverse-step` / `reverse-continue`
 - *What happened in this recording, and where?* → `timeline` first (MCP `timeline`: the phases with their tags and
   busiest frames, one call, no replay), then the queries below on a phase
@@ -69,9 +82,32 @@ time_travel {"action":"find_event","find":"border","value":2}                   
 #   one line per hit: f<frame>+<t> PC instruction  why (before -> after); "more from frame N": from_frame=N goes on
 #   a value changed and back within one frame: "exact":true; a mem hit marked device: no CPU write explains it
 
+# what one frame did (one replay; the machine stays):
+time_travel {"action":"explain_frame"}                                   # the current position's frame
+time_travel {"action":"explain_frame","frame":1204,"sections":"routines,memory","limit":4}
+#   frame N (T, instructions): ISR x %, HALT y %, code z %; routines by time (isr / start marked), the interrupt,
+#   paging, ports per device (keys down on ULA reads), memory ranges with writers, screen %, border, input, markers
+#   a typical chain: find_event names the frame -> explain_frame says what ran in it -> cause_chain on one byte
+
+# what differs between two moments (two silent seeks; the machine stays):
+time_travel {"action":"diff","from_frame":1201}                          # moment 1201 -> the current position
+time_travel {"action":"diff","from_frame":1201,"from_tinframe":20000,"to_frame":1204,"sections":"cpu,memory"}
+#   diff f1201+20000 -> f1204+0: frames and T between; cpu: the registers that changed; latches and 8K slots;
+#   memory ranges (screen pixels / attributes / RAM page + address) with bytes and "last write f+t pc instruction";
+#   screen, border, devices changed, keys and markers between. writers=false skips the write search
+
 # follow-ups once find-last names a writer PC:
 debug_code  {"action":"disassemble","address":"0x8174","count":12}   # pc-16 window (= /disasm)
 time_travel {"action":"bookmark_add","label":"writer"}               # pin the finding
+
+# keep the finding with the bookmark, then write all of them up in one call (the machine stays):
+time_travel {"action":"bookmark_add","label":"lives-dec","frame":212,"tinframe":31540,
+             "note":"the life counter drops on contact","tags":["lives"],"watch":["#A13C","#A140:4"]}
+#   Bookmark 'lives-dec' f212+31540 [lives]: PC #A1F3 dec (hl); #A13C=03, #A140..#A143=.. - the life counter ...
+time_travel {"action":"bookmark_note","label":"lives-dec","note":"also on a bullet","append":true}
+time_travel {"action":"bookmark_export","format":"markdown","title":"Green Beret"}   # a WALKTHROUGH section
+time_travel {"action":"bookmark_export","format":"profile","tag":"lives"}            # a game profile's header comment
+#   path = a file on the emulator's machine: written there too
 ```
 
 ## WebAPI

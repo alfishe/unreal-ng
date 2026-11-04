@@ -112,6 +112,7 @@
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "ui_mainwindow.h"
+#include "debugger/externaldebuggers.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/mousecapturecontroller.h"
@@ -340,7 +341,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Instantiate Logger window
     logWindow = new LogWindow();
 
-    // Instantiate debugger window. Hidden at start: Debug -> Debugger Window shows it,
+    // Instantiate debugger window. Hidden at start: Debug -> Debugger -> Embedded shows it,
     // and debug instrumentation is enabled only while it is visible
     debuggerWindow = new DebuggerWindow();
     debuggerWindow->setBinding(m_binding);  // Connect to central binding
@@ -409,24 +410,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             [this](const HostActionEvent& event) { _guiActions->Trigger(event); });
     // The debugger closed: a debug.* context the GUI set returns to the default
     connect(debuggerWindow, &DebuggerWindow::visibilityChanged, _hostControllers, &HostControllers::OnDebuggerVisible);
-    // The breakpoint list's "Add as Haptic Probe": a source of the loaded game's user profile (haptics.md §7)
-    connect(debuggerWindow, &DebuggerWindow::hapticProbeRequested, this,
-            [this](int kind, int address, int page, int portMask) {
-#ifdef ENABLE_CONTROLLERS
-                controllers::HapticProbe probe;
-                probe.kind = static_cast<controllers::HapticProbeKind>(kind);
-                probe.address = probe.end = static_cast<uint16_t>(address);
-                probe.page = page < 0 ? 0xFFFF : static_cast<uint16_t>(page);
-                probe.portMask = static_cast<uint16_t>(portMask);
-                QString name, error;
-                statusBar()->showMessage(_hostControllers->AddHapticProbe(probe, name, error)
-                                             ? tr("Haptic probe %1 added to this game's profile (rule: hit)").arg(name)
-                                             : error,
-                                         5000);
-#else
-                (void)kind, (void)address, (void)page, (void)portMask;
-#endif
-            });
     _controllerToast = new ControllerToast(this);
     connect(_hostControllers, &HostControllers::autoDecided, this, [this](const QString& text) {
         _controllerToast->showText(text, QRect(mapToGlobal(QPoint(0, 0)), size()));
@@ -621,6 +604,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::showRegistersRequested, this, &MainWindow::handleShowRegisters);
     connect(_menuManager, &MenuManager::showMemoryRequested, this, &MainWindow::handleShowMemory);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
+    connect(_menuManager, &MenuManager::externalDebuggerRequested, this, &MainWindow::handleExternalDebuggerRequested);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
     // Keep the menu check state in sync when the window closes via its own close box
@@ -4027,6 +4011,22 @@ void MainWindow::handleDebuggerToggled(bool visible)
             debuggerWindow->activateWindow();
         }
     }
+}
+
+void MainWindow::handleExternalDebuggerRequested(const QString& program)
+{
+    // Over this window's instance, by its id: the debugger never picks another emulator of the same server
+    const std::shared_ptr<Emulator> emulator = activeEmulator();
+    QString error;
+    if (ExternalDebuggers::Launch(program, emulator ? QString::fromStdString(emulator->GetId()) : QString(), &error))
+    {
+        // It turns the debug mode on itself (PUT /debugmode) and runs with the emulator's breakpoints: closing the
+        // embedded window afterwards must not switch the mode off under it
+        _debugInstrumentationByUi = false;
+        statusBar()->showMessage(tr("%1 started").arg(program), 3000);
+    }
+    else
+        statusBar()->showMessage(tr("Debugger: %1").arg(error), 5000);
 }
 
 void MainWindow::handleDebuggerVisibilityChanged(bool visible)

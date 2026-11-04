@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <emulator/emulator.h>
 #include "emulator/execution/executionarbiter.h"
 #include "common/uuid.h"
@@ -99,6 +101,9 @@ private:
     void HandleStepOver(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStepOut(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSkipUntil(const ClientSession& session, const std::vector<std::string>& args);
+    /// Frame watches (cli-processor-watch.cpp): run_until key=value ..., watch add|list|del
+    void HandleRunUntil(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleWatch(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunTStates(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunToScanline(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunNScanlines(const ClientSession& session, const std::vector<std::string>& args);
@@ -355,6 +360,11 @@ private:
     bool TakeCpuOption(const ClientSession& session, std::vector<std::string>& args, DebugCpuId& cpu) const;
     // The breakpoints of that CPU (a card's: gs-debugger design §3.1)
     static BreakpointManager* BreakpointsOf(Emulator& emulator, DebugCpuId cpu);
+    // `--cpu gs|ms` on registers / memory / disasm (gs-debugger design §7.1): the sound card CPU's answer, true when
+    // this replied (a card CPU, a bad name, a card that is not there). `--cpu main` runs `again` without the option
+    bool HandleCardCpuCommand(const ClientSession& session, Emulator& emulator, const char* command,
+                              const std::vector<std::string>& args,
+                              const std::function<void(const std::vector<std::string>&)>& again);
     // Adds the breakpoint and says what was set ("Breakpoint #3 set at 0x8000 ...") or why not
     std::string AddBreakpointAndDescribe(BreakpointManager& manager, const BreakpointSpec& spec, const char* what);
 
@@ -495,6 +505,8 @@ private:
     void HandleTTDTimeline(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDCauseChain(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDFindEvent(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDExplainFrame(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDDiffMoments(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDCoverage(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
     void HandleTTDMemoryAt(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);

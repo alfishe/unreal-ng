@@ -1,7 +1,7 @@
 /// @file breakpointtaps_test.cpp
 /// @brief Taps (docs/inprogress/2026-10-26-breakpoint-taps): breakpoints that tell a registered sink instead of
-/// stopping. Several sinks at once, the demand the armed set derives (the exec check, the fast write's hook, the debug
-/// path for reads), the hook seeing only marked addresses, the hit policy, and no tap during a TTD replay.
+/// stopping. Several sinks at once, the demand the armed set derives (the exec check, the fast write's hook, the
+/// read-tap interface; the debug path on the Next), the hook seeing only marked addresses, the hit policy, and no tap during a TTD replay.
 
 #include <gtest/gtest.h>
 
@@ -139,11 +139,15 @@ TEST_F(BreakpointTaps_Test, DemandFollowsTheArmedSet)
     EXPECT_TRUE(FastMemoryPath());
 
     const uint16_t read = AddTap(id, BRK_MEM_READ, 0x9000);
-    EXPECT_TRUE(features->tapDebugHold()) << "a read tap takes the debug path";
-    EXPECT_TRUE(_z80->isDebugMode);
+    EXPECT_FALSE(features->tapDebugHold()) << "a read tap takes the read-tap interface";
+    EXPECT_FALSE(_z80->isDebugMode);
+    EXPECT_EQ(_z80->MemIf, _z80->ReadTapMemIf);
+    const MemoryInterface* inner = _context->pMemory->ReadTapInner();
+    EXPECT_TRUE(inner == _z80->FastMemIf || inner == _z80->FastContendedMemIf) << "over the fast interface";
     _breakpoints->RemoveBreakpointByID(read);
     EXPECT_FALSE(features->tapDebugHold());
     EXPECT_FALSE(_z80->isDebugMode);
+    EXPECT_TRUE(FastMemoryPath()) << "the plain fast interface back";
 
     _breakpoints->RemoveBreakpointByID(exec);
     EXPECT_FALSE(_z80->execTapHold);
@@ -193,6 +197,56 @@ TEST_F(BreakpointTaps_Test, WriteTapOnTheDebugPathIsToldOnce)
     _breakpoints->UnregisterTapSink(id);
 }
 
+TEST_F(BreakpointTaps_Test, ReadTapSeesTheMarkedReadsOffTheDebugPath)
+{
+    RecordingSink sink;
+    const uint8_t id = _breakpoints->RegisterTapSink(&sink);
+    AddTap(id, BRK_MEM_READ, 0x9000, 9);
+    AddTap(id, BRK_MEM_READ, 0x8003, 3);  // the operand of LD (#9000),A: an operand read of the instruction stream
+    ASSERT_FALSE(_z80->isDebugMode);
+
+    RunPasses(4);
+    unsigned data = 0, operand = 0;
+    for (const BreakpointTapHit& hit : sink.hits)
+    {
+        EXPECT_EQ(hit.kind, BRK_TAP_READ);
+        if (hit.address == 0x9000)
+        {
+            EXPECT_EQ(hit.cookie, 9u);
+            EXPECT_EQ(hit.value, 5) << "the byte the CPU read";
+            data++;
+        }
+        else if (hit.address == 0x8003)
+            operand++;
+    }
+    EXPECT_EQ(data, 4u) << "one read of #9000 a pass; the writes to it are not told";
+    EXPECT_EQ(operand, 4u);
+    EXPECT_EQ(sink.hits.size(), 8u);
+    _breakpoints->UnregisterTapSink(id);
+    EXPECT_TRUE(FastMemoryPath());
+}
+
+TEST_F(BreakpointTaps_Test, ReadTapOnTheDebugPathIsToldOnce)
+{
+    // The debug mode on for another reason: the debug read tells the tap (with 'breakpoints' off), never twice
+    FeatureManager* features = _emulator->GetFeatureManager();
+    features->setFeature("debugmode", true);
+    features->setFeature("breakpoints", false);
+    ASSERT_TRUE(_z80->isDebugMode);
+    RecordingSink sink;
+    const uint8_t id = _breakpoints->RegisterTapSink(&sink);
+    AddTap(id, BRK_MEM_READ, 0x9000);
+    EXPECT_NE(_z80->MemIf, _z80->ReadTapMemIf) << "the debug interface tells the taps itself";
+
+    RunPasses(3);
+    EXPECT_EQ(sink.hits.size(), 3u);
+    features->setFeature("debugmode", false);
+    EXPECT_EQ(_z80->MemIf, _z80->ReadTapMemIf) << "the debug mode off: the read-tap interface";
+    RunPasses(2);
+    EXPECT_EQ(sink.hits.size(), 5u);
+    _breakpoints->UnregisterTapSink(id);
+}
+
 TEST_F(BreakpointTaps_Test, HitPolicyDecidesWhichHitsAreTold)
 {
     RecordingSink sink;
@@ -209,6 +263,24 @@ TEST_F(BreakpointTaps_Test, HitPolicyDecidesWhichHitsAreTold)
 
     RunPasses(6);
     EXPECT_EQ(sink.hits.size(), 3u) << "every second pass";
+    _breakpoints->UnregisterTapSink(id);
+}
+
+TEST_F(BreakpointTaps_Test, RunThatSkipsBreakpointsStillTellsTheExecTaps)
+{
+    // RunNFrames and the other direct runs skip breakpoints by default: the taps never stop, so they still hear the
+    // instructions (a haptic probe checked with run_frames on a paused machine), the breakpoints stay untouched
+    RecordingSink sink;
+    const uint8_t id = _breakpoints->RegisterTapSink(&sink);
+    AddTap(id, BRK_MEM_EXECUTE, 0x8002);
+    const uint16_t stop = _breakpoints->AddExecutionBreakpoint(0x8005);
+    ASSERT_NE(stop, BRK_INVALID);
+
+    EXPECT_EQ(_emulator->RunNCPUCycles(3 * kLoopInstructions, true), 3 * kLoopInstructions)
+        << "the skipped breakpoint does not stop";
+    EXPECT_EQ(sink.hits.size(), 3u);
+    EXPECT_EQ(_breakpoints->GetBreakpointById(stop)->hitCount, 0u) << "a skipped breakpoint is not counted";
+    _breakpoints->RemoveBreakpointByID(stop);
     _breakpoints->UnregisterTapSink(id);
 }
 
@@ -247,6 +319,30 @@ TEST(BreakpointTapsNext_Test, WriteTapsTakeTheDebugPathOnTheNext)
     breakpoints->AddBreakpoint(descriptor);
     EXPECT_FALSE(context->pMemory->SupportsWriteTapHook());
     EXPECT_TRUE(emulator->GetFeatureManager()->tapDebugHold());
+    breakpoints->UnregisterTapSink(id);
+    EXPECT_FALSE(emulator->GetFeatureManager()->tapDebugHold());
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(BreakpointTapsNext_Test, ReadTapsTakeTheDebugPathOnTheNext)
+{
+    // The Next brings its own memory interface (ModelMemoryInterface): the read-tap interface does not wrap it
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    BreakpointManager* breakpoints = context->pDebugManager->GetBreakpointsManager();
+    RecordingSink sink;
+    const uint8_t id = breakpoints->RegisterTapSink(&sink);
+    auto* descriptor = new BreakpointDescriptor();
+    descriptor->type = BRK_MEMORY;
+    descriptor->memoryType = BRK_MEM_READ;
+    descriptor->z80address = 0x9000;
+    descriptor->hidden = true;
+    descriptor->tapSink = id;
+    breakpoints->AddBreakpoint(descriptor);
+    EXPECT_FALSE(context->pMemory->SupportsReadTapHook());
+    EXPECT_TRUE(emulator->GetFeatureManager()->tapDebugHold());
+    EXPECT_NE(context->pCore->GetZ80()->MemIf, context->pCore->GetZ80()->ReadTapMemIf);
     breakpoints->UnregisterTapSink(id);
     EXPECT_FALSE(emulator->GetFeatureManager()->tapDebugHold());
     EmulatorTestHelper::CleanupEmulator(emulator);

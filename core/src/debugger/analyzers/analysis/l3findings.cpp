@@ -137,7 +137,8 @@ std::string Finding::Key() const
 bool IsFallbackClaim(const Region& region)
 {
     return region.kind == RegionKind::Untouched ||
-           (region.detector == DetectorId::CodeMap && region.kind != RegionKind::Code);
+           (region.detector == DetectorId::CodeMap && region.kind != RegionKind::Code &&
+            region.kind != RegionKind::Unused);
 }
 
 std::vector<uint8_t> ClaimLevels(const L2Result& l2)
@@ -188,11 +189,34 @@ std::vector<Finding> BaseFindings(const L1Result& l1, const L2Result& l2)
         out.push_back(std::move(f));
     }
 
-    // Conflicts
+    // Conflicts. Code and what was laid over it later are both true, one after the other: when every byte of the
+    // overlap that ran is overlaid (L1: written after it ran, never run again), the code-overwritten bug reports it.
+    // The overlap by the regions' own physical keys: a bank the start's paging did not map holds its own bytes
+    const auto overlay = [&](const Region& a, const Region& b) {
+        if ((a.kind == RegionKind::Code) == (b.kind == RegionKind::Code))
+            return false;
+        const PhysKey lo = std::max(a.lo, b.lo);
+        const PhysKey hi = std::min(a.hi, b.hi);
+        if (KeyPage(lo) != KeyPage(hi))
+            return false;
+        uint32_t ran = 0;
+        for (PhysKey key = lo; key <= hi; ++key)
+        {
+            const ByteUse* u = l1.UseAt(key);
+            if (u == nullptr || (u->flags & (use::kOpcode | use::kOperand)) == 0)
+                continue;
+            if (!u->overlaid)
+                return false;
+            ++ran;
+        }
+        return ran != 0;
+    };
     for (const RegionStore::Conflict& c : l2.store.Conflicts())
     {
         const Region& a = regions[c.a];
         const Region& b = regions[c.b];
+        if (overlay(a, b))
+            continue;
         Finding f;
         f.kind = FindingKind::Conflict;
         f.status = FindingStatus::Inferred;
@@ -270,25 +294,34 @@ std::vector<Finding> BaseFindings(const L1Result& l1, const L2Result& l2)
             ++b;
         if (b - a + 1 >= kUnknownMinBytes)
         {
-            uint64_t reads = 0, writes = 0, touched = 0;
+            // Plain data (a read, a write or a fetch) apart from the stack (PUSH / CALL / RST, POP / RET only)
+            constexpr uint16_t kStack = use::kStackRead | use::kStackWrite;
+            uint64_t reads = 0, writes = 0, touched = 0, stacked = 0;
             for (uint32_t i = a; i <= b; ++i)
                 if (const ByteUse* u = l1.UseAt(l1.StartKey(static_cast<uint16_t>(i))))
                 {
                     reads += u->reads;
                     writes += u->writes;
-                    touched += (u->flags != 0) ? 1 : 0;
+                    if ((u->flags & ~(kStack | use::kSmc)) != 0)
+                        ++touched;
+                    else if ((u->flags & kStack) != 0)
+                        ++stacked;
                 }
+            std::string accessed;
+            if (touched != 0)
+                accessed += ", " + std::to_string(touched) + " bytes accessed as plain data";
+            if (stacked != 0)
+                accessed += ", " + std::to_string(stacked) + " bytes accessed only by the stack";
             Finding f;
             f.kind = FindingKind::Unknown;
             f.status = FindingStatus::Inferred;
             f.start = static_cast<uint16_t>(a);
             f.end = static_cast<uint16_t>(b);
-            f.subject = touched == 0 ? "untouched" : "data";
+            f.subject = touched != 0 ? "data" : stacked != 0 ? "stack" : "untouched";
             f.source = "code_map";
-            f.confidence = touched == 0 ? 100 : 300;
+            f.confidence = touched + stacked == 0 ? 100 : 300;
             f.claim = Range(f.start, f.end) + " (" + std::to_string(b - a + 1) + " bytes): no detector explains it" +
-                      (touched == 0 ? ", nothing accessed it in the session"
-                                    : ", " + std::to_string(touched) + " bytes accessed as plain data");
+                      (accessed.empty() ? ", nothing accessed it in the session" : accessed);
             f.evidence.push_back(std::to_string(reads) + " reads, " + std::to_string(writes) + " writes");
             out.push_back(std::move(f));
         }

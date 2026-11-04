@@ -235,7 +235,7 @@ struct BaseOffsetPattern
     std::vector<int16_t> offsets;  ///< sorted
     std::vector<uint16_t> bases;   ///< distinct base values seen, sorted (at most 64)
     uint32_t basesSeen = 0;        ///< distinct bases counted (may exceed bases.size())
-    int32_t step = 0;              ///< the most common distance between consecutive bases (0: one base)
+    int32_t step = 0;              ///< the lattice period: the distance most bases repeat at (0: one base)
     bool reads = false;
     bool writes = false;
     std::vector<uint16_t> instructions;  ///< Z80 addresses of the accesses (sorted, at most 16)
@@ -266,7 +266,7 @@ constexpr uint16_t kIndexed = 1u << 11;     ///< accessed through a register: (H
 constexpr uint16_t kAbsolute = 1u << 12;    ///< accessed through (nn)
 constexpr uint16_t kIncDec = 1u << 13;      ///< written by INC / DEC
 constexpr uint16_t kOtherWrite = 1u << 14;  ///< written by anything but INC / DEC and a block instruction
-constexpr uint16_t kSmc = 1u << 15;         ///< written after it was executed: self-modifying code
+constexpr uint16_t kSmc = 1u << 15;         ///< written after it was executed (ByteUse::overlaid: and never run again)
 }  // namespace use
 
 struct ByteUse
@@ -285,6 +285,9 @@ struct ByteUse
     uint32_t lastFrame = 0;
     uint32_t reads = 0;              ///< saturating
     uint32_t writes = 0;
+    /// Written after it ran (kSmc) and never run after any such write: code another stage laid data or code over (an
+    /// overlay, a buffer over code that ran once), not a patch (code that ran again after a write into it)
+    bool overlaid = false;
 };
 
 /// One physical page's ByteUse (16 K entries)
@@ -459,6 +462,26 @@ struct BranchCondition
     uint32_t lastFrame = 0;
 };
 
+/// Execution entering bytes the replay saw written before they first ran: code loaded from tape or disk, unpacked,
+/// copied into place or generated. One per writer and run: running on through code the same routine wrote, or
+/// coming back into it from a call elsewhere, is the same arrival, so a loader block, a depacked game or a copied
+/// overlay is one each (a stage of the program)
+struct CodeArrival
+{
+    PhysKey key = 0;            ///< the first instruction run there
+    uint16_t z80 = 0;
+    uint64_t frame = 0;         ///< the emulator frame it first ran in
+    uint64_t tstate = 0;        ///< the machine's t-state counter then
+    uint32_t tInFrame = 0;      ///< t-states into that frame (a build from here: from_frame, from_tinframe)
+    PhysKey writer = kNoKey;    ///< the instruction that last wrote its opcode (kNoKey: a write with no instruction)
+    uint16_t writerZ80 = 0;
+    PhysKey from = kNoKey;      ///< the instruction run just before (kNoKey: the replay's first)
+    uint16_t fromZ80 = 0;
+    uint16_t writtenStart = 0;  ///< the Z80 run of bytes its writer last wrote around it, when it first ran
+    uint16_t writtenEnd = 0;    ///< inclusive
+};
+constexpr size_t kMaxArrivals = 1024;
+
 struct ReplaySummary
 {
     uint64_t firstFrame = 0;
@@ -488,10 +511,14 @@ struct L1Result
     std::vector<PageTable> pageTables;
     std::vector<BranchCondition> branches;
     std::vector<PointerUse> pointers;       ///< sorted by (form, origin)
-    std::vector<BlockCopy> copies;          ///< sorted by (instruction, src, dst, length); at most 65536
+    /// Sorted by (instruction, src, dst, length). Distinct runs kept: one copier at most 32768, all at most 131072
+    /// plus the first 1024 of each copier that comes after the list is full (L1Builder's kMaxCopies, kMaxCopiesOne,
+    /// kCopyReserve)
+    std::vector<BlockCopy> copies;
     std::vector<IndexUse> indexes;          ///< sorted by (selector, instruction); at most 65536
     std::vector<DrawnByte> drawn;           ///< sorted by key
     std::vector<DrawnFrame> drawnFrames;    ///< sorted by base, then shape
+    std::vector<CodeArrival> arrivals;      ///< in time order; at most kMaxArrivals
     /// Per physical byte: what the code did with it (pages with a data access or code, sorted by page). Not in ToJson
     std::vector<BytePage> bytePages;
     /// The mapped pages' contents at the start and the end of the replay (sorted by page). Not in ToJson

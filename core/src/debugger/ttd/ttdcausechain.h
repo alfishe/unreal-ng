@@ -46,10 +46,11 @@ struct TTDCauseName
     TTDCauseReg reg = TTDCauseReg::A;
     uint16_t address = 0;
     PhysPage page = kPhysPageNone;
+    uint8_t flip = 0;   ///< Memory::TtdKeyOf: the byte is at (address & #3FFF) ^ (flip << 13) of the page
 
     bool operator==(const TTDCauseName& o) const
     {
-        return memory == o.memory && (memory ? (address == o.address && page == o.page) : reg == o.reg);
+        return memory == o.memory && (memory ? (address == o.address && page == o.page && flip == o.flip) : reg == o.reg);
     }
     static TTDCauseName Reg(TTDCauseReg r)
     {
@@ -57,12 +58,13 @@ struct TTDCauseName
         n.reg = r;
         return n;
     }
-    static TTDCauseName Mem(uint16_t address, PhysPage page)
+    static TTDCauseName Mem(uint16_t address, PhysPage page, uint8_t flip = 0)
     {
         TTDCauseName n;
         n.memory = true;
         n.address = address;
         n.page = page;
+        n.flip = flip;
         return n;
     }
 };
@@ -81,6 +83,10 @@ struct TTDTraceEvent
     uint8_t value = 0;
     uint16_t address = 0;
     PhysPage page = kPhysPageNone;   ///< memory: the physical page behind the address at the access
+    uint16_t offset = 0;             ///< memory: the byte's offset in `page` (Memory::TtdLocate)
+
+    /// Memory::TtdKeyOf's flip of the byte
+    uint8_t Flip() const { return static_cast<uint8_t>(((offset ^ address) >> 13) & 1u); }
     uint32_t tInFrame = 0;           ///< TTD time units, as the access probe records them
 };
 
@@ -105,6 +111,10 @@ struct TTDFrameTrace
     std::vector<TTDTraceInsn> insns;
     std::vector<TTDTraceEvent> events;
     uint8_t finalRegs[static_cast<size_t>(TTDCauseReg::Count)] = {};
+    /// At the frame start (read after the checkpoint restore): the word at SP and the IM 2 vector word at
+    /// I * 256 + #FF, so a frame that starts inside an interrupt routine acknowledged at the frame before's end is seen
+    uint16_t startStackWord = 0;
+    uint16_t startIm2Entry = 0;
 
     /// The registers after instruction @p index (the next one's start, or finalRegs)
     const uint8_t* RegsAfter(size_t index) const

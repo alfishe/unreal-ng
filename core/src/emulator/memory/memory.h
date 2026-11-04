@@ -158,6 +158,13 @@ protected:
     /// Value is ttd::kPhysPageNone when bank is not RAM (ROM/Cache mode) - a
     /// value outside 0..255, so RAM page 255 of a 4 MB machine stays a page.
     /// Avoids expensive GetRAMPageForBank() pointer arithmetic on every write.
+    /// TtdKeyOf per 8K slot: set by a memory that maps 8K slots (the Next), else none
+    struct TtdSlotKey
+    {
+        ttd::PhysPage page = ttd::kPhysPageNone;
+        uint8_t flip = 0;
+    };
+    const TtdSlotKey* _ttdSlots8k = nullptr;
     ttd::PhysPage _bank_ram_page_cache[4] = {ttd::kPhysPageNone, ttd::kPhysPageNone,
                                              ttd::kPhysPageNone, ttd::kPhysPageNone};
 
@@ -189,6 +196,10 @@ protected:
     uint8_t _writeHooks = 0;
     bool _writeTapDemand = false;
     const BreakpointHotState* _tapFilter = nullptr;   // the breakpoint manager's filters (SetWriteTapDemand)
+    // Read taps (breakpoint-taps §5): Core selects Z80::ReadTapMemIf over the interface it chose, which reads
+    // through _readTapInner and tests the read filter's bit; nothing on the plain read
+    bool _readTapDemand = false;
+    const MemoryInterface* _readTapInner = nullptr;
     void RefreshWriteHooks();
     void MemoryWriteTapped(uint16_t addr, uint8_t value);
 
@@ -267,6 +278,23 @@ public:
     /// @brief Physical RAM page currently mapped behind a Z80 address.
     /// Returns ttd::kPhysPageNone when that bank holds ROM or cache.
     /// Cheap: reads the per-bank cache maintained by SetRAMPageToBank*.
+    /// @brief TTD's name of the byte at `addr`: its page and the flip bit (1: the byte is in the other 8K half of
+    /// the page than addr's bit 13 says - the Next's MMU may show an odd 8K page in an even slot). The byte's offset in
+    /// the page is (addr & #3FFF) ^ (flip << 13). 16K windows: the window's page, flip 0
+    inline ttd::PhysPage TtdKeyOf(uint16_t addr, uint8_t& flip) const
+    {
+        if (_ttdSlots8k) [[unlikely]]
+        {
+            const TtdSlotKey& k = _ttdSlots8k[addr >> 13];
+            flip = k.flip;
+            return k.page;
+        }
+        flip = 0;
+        return _bank_ram_page_cache[(addr >> 14) & 0b11];
+    }
+    /// A machine whose TTD keys come per 8K slot (TtdKeyOf)
+    bool HasTtdSlots8k() const { return _ttdSlots8k != nullptr; }
+
     inline ttd::PhysPage GetPhysPageForZ80Address(uint16_t addr) const
     {
         return _bank_ram_page_cache[(addr >> 14) & 0b11];
@@ -281,6 +309,21 @@ public:
     }
     /// The fast RAM's virtual page behind window `bank`, or kPhysPageNone (out of line: ROM and cache windows only)
     ttd::PhysPage TtdSpacePageOfBank(uint8_t bank) const;
+    /// @brief The page time travel names the byte at CPU address `addr` by now and the byte's offset in that page, as a
+    /// read (`write` false) or a write reaches it: TtdPageOfBank and addr & #3FFF on 16K windows. The Next's 8K slots
+    /// may show either half of a page, or a Layer 2 write mapping, so it answers per slot. Not on the hot path (the
+    /// traces of explain frame, cause chain and find event)
+    virtual ttd::PhysPage TtdLocate(uint16_t addr, [[maybe_unused]] bool write, uint16_t& offsetInPage) const
+    {
+        offsetInPage = static_cast<uint16_t>(addr & 0x3FFF);
+        return TtdPageOfBank(static_cast<uint8_t>(addr >> 14));
+    }
+    /// The page alone (TtdLocate)
+    ttd::PhysPage TtdPageOf(uint16_t addr, bool write = false) const
+    {
+        uint16_t offsetInPage = 0;
+        return TtdLocate(addr, write, offsetInPage);
+    }
 
     /// @brief A write or a data read of a byte the RAM-page hooks do not see - another memory space's virtual page
     /// and the offset in it, or a RAM page an engine writes outside the CPU's bus (the Sprinter's accelerator) and
@@ -366,6 +409,9 @@ public:
 public:
     static MemoryInterface* GetFastMemoryInterface();
     static MemoryInterface* GetDebugMemoryInterface();
+    /// The read-tap interface (Z80::ReadTapMemIf): every access through the interface Core chose
+    /// (SetReadTapInner), the reads and opcode fetches then test the read filter's bit
+    static MemoryInterface* GetReadTapMemoryInterface();
     /// stockRead: the fast read inside is MemoryReadFastStock instead of the virtual MemoryReadFast - for a memory
     /// whose HasStockFastRead is true (the Z80 decides once, at its construction: the memory is created before it).
     /// The plain fast interface keeps the virtual read: it calls the read directly, with nothing to inline it into,
@@ -435,8 +481,9 @@ public:
 protected:
     /// The debug access bookkeeping that follows the byte (tracking, TTD, breakpoints): MemoryReadDebug /
     /// MemoryWriteDebug call these, and so does a derivative with its own mapping
-    void ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, ttd::PhysPage physPage);
-    void WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physPage);
+    /// `flip`: TtdKeyOf's bit for the byte (0 on 16K windows)
+    void ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, ttd::PhysPage physPage, uint8_t flip = 0);
+    void WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physPage, uint8_t flip = 0);
 
 public:
 
@@ -463,6 +510,26 @@ public:
     /// Write taps are armed (BreakpointManager::ApplyTapDemand): the fast write tests @p filter's write bit and tells
     /// the breakpoint manager of a marked address. Emulation thread or CPU held
     void SetWriteTapDemand(bool on, const BreakpointHotState* filter);
+    /// Read taps are armed (BreakpointManager::ApplyTapDemand): Core puts the read-tap interface over the fast one it
+    /// selects (Core::SelectMemoryInterface, called by the manager after this). Emulation thread or CPU held
+    void SetReadTapDemand(bool on, const BreakpointHotState* filter)
+    {
+        _readTapDemand = on && filter != nullptr;
+        if (filter != nullptr)
+            _tapFilter = filter;
+    }
+    bool ReadTapDemand() const { return _readTapDemand; }
+    /// The interface the read-tap interface reads and writes through (Core::SelectMemoryInterface, under its lock)
+    void SetReadTapInner(const MemoryInterface* inner) { _readTapInner = inner; }
+    const MemoryInterface* ReadTapInner() const { return _readTapInner; }
+    /// Whether this machine's CPU accesses go through the stock interfaces (a model with its own interface,
+    /// ModelMemoryInterface, answers false and its read taps take the debug path)
+    virtual bool SupportsReadTapHook() const { return true; }
+    /// The read-tap interface's accesses: the inner one's, then the read filter's bit; a marked address goes on to
+    /// the resolve with the byte the CPU gets
+    uint8_t MemoryReadTapped(uint16_t addr, bool isExecution);
+    uint8_t MemoryReadM1Tapped(uint16_t addr, bool isExecution);
+    void MemoryWriteTapPass(uint16_t addr, uint8_t value);
     /// Whether MemoryWriteFast is this machine's write (the hook lives there); a model with its own write interface
     /// answers false and its write taps take the debug path
     virtual bool SupportsWriteTapHook() const { return true; }
@@ -477,6 +544,12 @@ public:
     void SetROMMode(ROMModeEnum mode);
 
     void UpdateZ80Banks();
+
+    /// The mapping after a restore that put back every latch and device image (TTD checkpoints, live state, tool
+    /// edits): the base derives it from the port latches (UpdateZ80Banks). A model whose mapping registers live in
+    /// its own image overrides it - the Next's MMU (NR #50-#57) is not a function of #7FFD / #1FFD, deriving it from
+    /// them maps the wrong pages into slots 0, 1, 6 and 7
+    virtual void RestorePaging() { UpdateZ80Banks(); }
 
 protected:
     /// Model-specific latch-to-bank translation. A derivative that owns the

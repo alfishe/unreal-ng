@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "debugger/analyzers/analysis/l1model.h"
 
@@ -51,11 +52,15 @@ public:
 
     /// An instruction starts at @p pc (page: mapped now). @p halted: the CPU repeats a HALT (an idle fetch, not an
     /// instruction). @p interrupted: an interrupt was accepted since the last start; @p returnAddress is what it
-    /// pushed (the pending instruction's successor) and the stack pointer in @p regs is after that push
+    /// pushed (the pending instruction's successor) and the stack pointer in @p regs is after that push.
+    /// @p tInFrame: the in-frame position in TTD time units (EmulatorState::TtdTInFrame, as a window's from_tinframe
+    /// and memory_at take it), where a CodeArrival is, for a build from that moment
     void OnStart(uint16_t pc, uint16_t page, const Regs& regs, uint64_t now, uint64_t frame, bool halted,
-                 bool interrupted, bool nmi, uint16_t returnAddress);
+                 bool interrupted, bool nmi, uint16_t returnAddress, uint32_t tInFrame = 0);
 
-    /// A bus cycle of the pending instruction: 'R' / 'W' memory, 'I' / 'O' port (others are ignored)
+    /// A bus cycle of the pending instruction: 'R' / 'W' memory, 'I' / 'O' port (others are ignored). An
+    /// instruction has at most kMaxEvents; more come only from a host trap that runs as one instruction (the fast
+    /// tape load writes a whole block at the ROM loader's entry), kept up to kMaxSpill in a buffer that grows once
     void OnBus(char type, uint16_t address, uint8_t value)
     {
         if (type == 'N')
@@ -66,8 +71,21 @@ public:
             _events[_eventCount].value = value;
             _events[_eventCount].address = address;
             ++_eventCount;
+            return;
         }
+        if (_eventCount >= kMaxSpill)
+            return;
+        if (_eventCount == kMaxEvents)
+            _spill.assign(_events, _events + kMaxEvents);
+        _spill.push_back({type, value, address});
+        ++_eventCount;
     }
+
+    /// A byte a tool edit of the recording changed (the fast tape load, a script's poke): a plain data write of the
+    /// pending instruction, not one of its bus cycles (a CALL into a trapped loader would take it for a push). The
+    /// fast tape trap runs the whole loader at its entry's fetch and returns, so the loader's entry never starts:
+    /// the pending instruction is the CALL into it
+    void OnEditWrite(uint16_t address, uint8_t value);
 
     /// Complete the pending instruction (the end of the replay); @p regs: the state after it
     void Flush(const Regs& regs, uint64_t now);
@@ -86,11 +104,15 @@ public:
         uint16_t address;
     };
     static constexpr int kMaxEvents = 64;
+    static constexpr int kMaxSpill = 0x20000;  ///< 64 K writes and their reads
 
 private:
     struct Impl;
     std::unique_ptr<Impl> _impl;
+    const BusEvent* Events() const { return _eventCount > kMaxEvents ? _spill.data() : _events; }
+
     BusEvent _events[kMaxEvents] = {};
+    std::vector<BusEvent> _spill;  ///< all events of an instruction with more than kMaxEvents
     int _eventCount = 0;
 };
 

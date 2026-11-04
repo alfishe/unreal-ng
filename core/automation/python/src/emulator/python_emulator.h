@@ -4,6 +4,8 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runpacer.h"
+#include "emulator/execution/runcontrol.h"
+#include "debugger/watch/framewatch.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memorycounters.h"
@@ -14,6 +16,7 @@
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
+#include "debugger/targets/cpuview.h"
 #include "emulator/state/statenodejson.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
@@ -179,6 +182,56 @@ inline BreakpointManager* PythonBreakpoints(Emulator& self, const std::string& c
         throw py::value_error("cpu must be 'main', 'gs' or 'ms'");
     EmulatorContext* ctx = self.GetContext();
     return ctx && ctx->pDebugManager ? ctx->pDebugManager->GetBreakpointsManager(cpu) : nullptr;
+}
+
+/// The CPU a register, memory or disassembly call names ("" or "main": the main CPU; "gs" / "ms": a sound card's,
+/// cpuview.h): ValueError for an unknown name, RuntimeError for a card CPU that is not there
+inline DebugCpuId PythonCpu(Emulator& self, const std::string& name)
+{
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (name.empty())
+        return cpu;
+    if (!DebugManager::ParseCpuName(name, cpu))
+        throw py::value_error("cpu must be 'main', 'gs' or 'ms'");
+    const std::string error = CpuView::Select(self.GetContext(), name, cpu);
+    if (!error.empty())
+        throw std::runtime_error(error);
+    return cpu;
+}
+
+inline pybind11::object StateNodeToPy(const StateNode& node);
+
+/// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out): the reply's body and ok = True, or
+/// ok = False and error. The machine runs until the card ends it, then is paused; the GIL is free meanwhile
+inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind, unsigned count)
+{
+    py::dict d;
+    std::shared_ptr<Emulator> shared = EmulatorManager::GetInstance()->GetEmulator(self.GetId());
+    if (!shared)
+    {
+        d["ok"] = false;
+        d["error"] = "no emulator";
+        return d;
+    }
+    // The automation gate as every step of a script: its session, or an implicit one
+    execution::script::Check(self, execution::Origin::Python);
+    const execution::Requester requester = execution::script::RequesterOf(self, execution::Origin::Python);
+    execution::RunReply reply;
+    {
+        py::gil_scoped_release release;  // the card runs until its step ends (up to 5 s)
+        reply = execution::RunControl(shared).CardStep(requester, cpu, kind, count);
+    }
+    if (reply.status == execution::RunReply::Status::Revoked)
+        throw std::runtime_error(reply.message);
+    if (!reply.Ok())
+    {
+        d["ok"] = false;
+        d["error"] = reply.message;
+        return d;
+    }
+    d = StateNodeToPy(reply.body).cast<py::dict>();
+    d["ok"] = true;
+    return d;
 }
 
 /// bp / bp_read / bp_write / bp_port_in / bp_port_out: the options as keyword arguments (BreakpointManager::
@@ -354,12 +407,20 @@ inline const StateNode& TtdBodyOrThrow(const ttd::TTDReply& reply)
     return reply.body;
 }
 
-/// A Python value as option text: True / False, an integer, a string
+/// A Python value as option text: True / False, an integer, a string; a list or tuple as its items joined by commas
+/// (tags, watched addresses)
 inline std::string TtdOptionTextPy(const pybind11::handle& o)
 {
     namespace py = pybind11;
     if (py::isinstance<py::bool_>(o))
         return o.cast<bool>() ? "true" : "false";
+    if (py::isinstance<py::list>(o) || py::isinstance<py::tuple>(o))
+    {
+        std::string text;
+        for (const auto& item : o)
+            text += (text.empty() ? "" : ",") + TtdOptionTextPy(item);
+        return text;
+    }
     return py::str(o).cast<std::string>();
 }
 
@@ -370,6 +431,70 @@ inline void TtdKwargsPy(std::map<std::string, std::string>& options, const pybin
     for (const auto& [key, value] : kwargs)
         if (!value.is_none())
             options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+}
+
+/// Keyword arguments as frame watch options (docs/inprogress/2026-11-03-run-until-watches); `condition` stands for
+/// `if` (a Python keyword)
+inline std::vector<std::pair<std::string, std::string>> WatchKwargsPy(const pybind11::kwargs& kwargs)
+{
+    namespace py = pybind11;
+    std::vector<std::pair<std::string, std::string>> options;
+    for (const auto& [key, value] : kwargs)
+        if (!value.is_none())
+            options.emplace_back(py::str(key).cast<std::string>(), TtdOptionTextPy(value));
+    return options;
+}
+
+/// A watch verb's outcome as a dict: the body with ok and text (error on a refusal)
+inline pybind11::dict WatchOutcomePy(const framewatch::Outcome& outcome)
+{
+    namespace py = pybind11;
+    py::dict d = StateNodeToPy(outcome.body).cast<py::dict>();
+    d["ok"] = outcome.status < 400;
+    if (outcome.status >= 400)
+        d["error"] = outcome.text;
+    d["text"] = outcome.text;
+    return d;
+}
+
+/// run_until(**rules): whole frames until the rules hold at a frame end (RunControl::RunUntil); the GIL is free meanwhile
+inline pybind11::dict PythonRunUntil(Emulator& self, const pybind11::kwargs& kwargs)
+{
+    namespace py = pybind11;
+    py::dict d;
+    std::shared_ptr<Emulator> shared = EmulatorManager::GetInstance()->GetEmulator(self.GetId());
+    framewatch::Spec spec;
+    unsigned maxFrames = 0;
+    bool breakpoints = false;
+    std::string error;
+    if (!shared)
+        error = "no emulator";
+    else if (!framewatch::RunOptions(WatchKwargsPy(kwargs), spec, maxFrames, breakpoints, error) && error.empty())
+        error = "bad options";
+    if (!error.empty())
+    {
+        d["ok"] = false;
+        d["error"] = error;
+        return d;
+    }
+    execution::script::Check(self, execution::Origin::Python);
+    const execution::Requester requester = execution::script::RequesterOf(self, execution::Origin::Python);
+    execution::RunReply reply;
+    {
+        py::gil_scoped_release release;
+        reply = execution::RunControl(shared).RunUntil(requester, spec, maxFrames, breakpoints);
+    }
+    if (reply.status == execution::RunReply::Status::Revoked)
+        throw std::runtime_error(reply.message);
+    if (!reply.Ok())
+    {
+        d["ok"] = false;
+        d["error"] = reply.message;
+        return d;
+    }
+    d = StateNodeToPy(reply.body).cast<py::dict>();
+    d["ok"] = true;
+    return d;
 }
 
 /// One symbol verb through SymbolControl: keyword arguments as options (a list as a comma list), the reply's body; a
@@ -639,7 +764,8 @@ inline pybind11::object StreamDeckPy(const std::string& verb, const pybind11::kw
 }
 
 /// A monitoring verb (monitoring::Call: all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots,
-/// recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events) with its args as keywords
+/// recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events, devices.access) with its
+/// args as keywords
 /// (instance=
 /// an id or an index; default this emulator for an instance's name); the reply every plane returns
 inline pybind11::object MonitorPy(Emulator& self, const std::string& verb, const pybind11::kwargs& options)
@@ -2048,7 +2174,10 @@ namespace PythonBindings
                 Z80State* z80 = self.GetZ80State();
                 return z80 ? z80->iy : 0;
             }, "Get IY register")
-            .def("get_registers", [](Emulator& self) -> py::dict {
+            // cpu "gs" / "ms": the sound card CPU's, the same keys with card_time for t (cpuview.h)
+            .def("get_registers", [](Emulator& self, const std::string& cpu) -> py::dict {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return StateNodeToPy(CpuView::FlatRegisters(self.GetContext(), card)).cast<py::dict>();
                 py::dict regs;
                 Z80State* z80 = self.GetZ80State();
                 if (z80) {
@@ -2076,8 +2205,13 @@ namespace PythonBindings
                     regs["t"] = static_cast<uint32_t>(z80->t);  // CPU T-states since the frame's start
                 }
                 return regs;
-            }, "Get all registers as dictionary")
-            .def("get_register", [](Emulator& self, const std::string& name) -> py::object {
+            }, "Get all registers as dictionary (cpu: 'main', 'gs', 'ms')", py::arg("cpu") = "")
+            .def("get_register", [](Emulator& self, const std::string& name, const std::string& cpu) -> py::object {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    uint16_t value = 0;
+                    return CpuView::GetRegister(self.GetContext(), card, name, value) ? py::cast(value) : py::none();
+                }
                 Z80State* z80 = self.GetZ80State();
                 if (!z80)
                     return py::none();
@@ -2086,27 +2220,51 @@ namespace PythonBindings
                 if (!Z80::GetRegisterValue(z80, name, value, is16bit))
                     return py::none();
                 return py::cast(value);
-            }, "Get register value by name", py::arg("name"))
-            .def("set_register", [](Emulator& self, const std::string& name, uint16_t value) -> bool {
+            }, "Get register value by name", py::arg("name"), py::arg("cpu") = "")
+            .def("set_register", [](Emulator& self, const std::string& name, uint16_t value, const std::string& cpu) -> bool {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    // An unknown register or a value out of range is false, as for the main CPU; the past refuses
+                    const std::string refused = CpuView::SetRegister(&self, card, "python register", name, value);
+                    if (refused.rfind("unknown register", 0) == 0)
+                        return false;
+                    if (!refused.empty())
+                        throw std::runtime_error(refused);
+                    return true;
+                }
                 // A tool edit (TTD records it); refused in the recorded past: a script error
                 std::string refused;
                 const bool set = self.SetRegisterFromTool("python register", name, value, &refused);
                 if (!refused.empty())
                     throw std::runtime_error(refused);
                 return set;
-            }, "Set register value by name", py::arg("name"), py::arg("value"))
+            }, "Set register value by name", py::arg("name"), py::arg("value"), py::arg("cpu") = "")
 
             // Memory access: direct (non-mutating) reads so inspecting
             // memory never drives the ProfROM quadrant machine
-            .def("mem_read", [](Emulator& self, uint16_t addr) -> uint8_t {
+            // cpu "gs" / "ms": the sound card CPU's view (cpuview.h)
+            .def("mem_read", [](Emulator& self, uint16_t addr, const std::string& cpu) -> uint8_t {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    std::vector<uint8_t> byte;
+                    CpuView::Read(self.GetContext(), card, addr, 1, byte);
+                    return byte.empty() ? 0xFF : byte[0];
+                }
                 Memory* mem = self.GetMemory();
                 return mem ? mem->DirectReadFromZ80Memory(addr) : 0;
-            }, "Read byte from memory")
-            .def("mem_write", [](Emulator& self, uint16_t addr, uint8_t value) {
+            }, "Read byte from memory", py::arg("addr"), py::arg("cpu") = "")
+            .def("mem_write", [](Emulator& self, uint16_t addr, uint8_t value, const std::string& cpu) {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    const std::string refused = CpuView::Write(&self, card, "Python memory write", addr, {value});
+                    if (!refused.empty())
+                        throw std::runtime_error(refused);
+                    return;
+                }
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
                 self.EditMemoryFromToolOrThrow("Python memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
-            }, "Write byte to memory")
+            }, "Write byte to memory", py::arg("addr"), py::arg("value"), py::arg("cpu") = "")
             .def("mem_read_word", [](Emulator& self, uint16_t addr) -> uint16_t {
                 Memory* mem = self.GetMemory();
                 if (!mem) return 0;
@@ -2349,6 +2507,10 @@ namespace PythonBindings
             // TD-3 Phase 1: sparse non-zero block overview (same core source
             // as GET /memory/map and MCP inspect_state 'memory_map')
             .def("memory_map", [](Emulator& self, const std::string& viewName, int minRun, int maxBlocks) -> py::dict {
+                // view "gs" / "ms": the sound card CPU's four windows {cpu, windows: [{start, size, kind, page,
+                // offset}]} (cpuview.h)
+                if (viewName == "gs" || viewName == "ms")
+                    return StateNodeToPy(CpuView::Windows(self.GetContext(), PythonCpu(self, viewName))).cast<py::dict>();
                 Memory* mem = self.GetMemory();
                 EmulatorContext* ctx = self.GetContext();
                 py::dict result;
@@ -2385,7 +2547,7 @@ namespace PythonBindings
                 }
                 result["blocks"] = blocks;
                 return result;
-            }, "Sparse non-zero memory block overview (view: 'address'|'ram')",
+            }, "Sparse non-zero memory block overview (view: 'address'|'ram'; 'gs'|'ms': a sound card CPU's windows)",
                py::arg("view") = "address", py::arg("min_run") = 64, py::arg("max_blocks") = 48)
             .def("mem_hexdump", [](Emulator& self, uint16_t addr, int len) -> std::string {
                 Memory* mem = self.GetMemory();
@@ -2677,7 +2839,7 @@ namespace PythonBindings
             .def("controllers_host", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return HostControllerCallPy(verb, options);
                  }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
-                 "bindings, bind, unbind, scheme, haptics, rumble, output, light, haptics_probe, role, pin, identify, "
+                 "bindings, bind, unbind, scheme, haptics, rumble, output, light, haptics_trial, role, pin, identify, "
                  "player, probe, reports, database, database_save, database_delete, database_import, learn, aliases, "
                  "unalias, match) with its options as keywords")
             .def("streamdeck", [](Emulator&, const std::string& verb, const py::kwargs& options) {
@@ -2691,7 +2853,7 @@ namespace PythonBindings
                      return MonitorPy(self, verb, options);
                  }, py::arg("verb") = "all",
                  "Monitoring (all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots, "
-                 "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events): "
+                 "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events, devices.access): "
                  "monitor('emulator.stats') -> {ok, instance, fps, speed_percent, ...} as WebAPI /api/v1/monitor")
             .def("surfaces", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return SurfacesPy(verb, options);
@@ -2740,16 +2902,17 @@ namespace PythonBindings
                      return HostControllerCallPy("rumble", options);
                  }, py::arg("device"), py::arg("effect") = "identify",
                  "Play a test effect on a host device: identify, low, high, clicks, left-trigger, right-trigger, swell")
-            .def("controllers_haptics_probe", [](Emulator&, const std::string& kind, const std::string& address,
-                                                 const py::kwargs& options) {
-                     py::kwargs all = options;
-                     all["kind"] = kind;
-                     all["address"] = address;
-                     return HostControllerCallPy("haptics_probe", all);
-                 }, py::arg("kind"), py::arg("address"),
-                 "A haptic probe (exec, read, write, port-in, port-out: a breakpoint that never stops) at an address "
-                 "or port ('0x5C3A') as a source of the loaded game's user profile, with a rule: page=, port_mask=, "
-                 "play='hit'. {ok, id, source, path}")
+            .def("controllers_haptics_trial", [](Emulator&, const std::string& text, bool clear) {
+                     py::kwargs all;
+                     if (clear)
+                         all["clear"] = "true";
+                     else if (!text.empty())
+                         all["text"] = text;
+                     return HostControllerCallPy("haptics_trial", all);
+                 }, py::arg("text") = "", py::arg("clear") = false,
+                 "Try events and haptics rules on the loaded game for this session, never written: text = a play "
+                 "profile's events: / haptics: (YAML or JSON), laid over its haptics at once (game.events shows them); "
+                 "clear=True drops it; neither reads it. {ok, active, sources, trial, haptics_profile, haptics_reason}")
             .def("controllers_output", [](Emulator&, const std::string& device, const py::kwargs& options) {
                      py::kwargs all = options;
                      all["device"] = device;
@@ -2979,22 +3142,33 @@ namespace PythonBindings
             // Execution control
             // step / steps return how the run ended: {executed, stopped, breakpoint_id, address, access}
             // (stopped: a breakpoint ended it - an execution one before its instruction)
-            .def("step", [](Emulator& self, bool skipBreakpoints) {
+            // cpu="gs" / "ms": the sound card CPU's step (PythonCardStep): the machine runs until the card ends it
+            .def("step", [](Emulator& self, bool skipBreakpoints, const std::string& cpu) {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return PythonCardStep(self, card, "in", 1);
                 execution::script::Check(self, execution::Origin::Python);
                 self.RunSingleCPUCycle(skipBreakpoints);
                 const Emulator::BreakpointStop& stop = self.LastDirectStop();
                 return StepOutcome(self, (stop.hit && stop.kind == BreakpointHitKind::Execute) ? 0u : 1u);
-            }, "Execute single CPU instruction; returns {executed, stopped, breakpoint_id, address, access}",
-               py::arg("skip_breakpoints") = true)
-            .def("steps", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+            }, "Execute single CPU instruction; returns {executed, stopped, breakpoint_id, address, access}. cpu='gs' / "
+               "'ms': one instruction of the sound card CPU; returns {ok, stop, pc, sp, main_pc, main_sp, state}",
+               py::arg("skip_breakpoints") = true, py::arg("cpu") = "")
+            .def("steps", [](Emulator& self, unsigned count, bool skipBreakpoints, const std::string& cpu) {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return PythonCardStep(self, card, "in", count);
                 execution::script::Check(self, execution::Origin::Python);
                 return StepOutcome(self, self.RunNCPUCycles(count, skipBreakpoints));
-            }, "Execute N CPU instructions; returns {executed, stopped, breakpoint_id, address, access}",
-               py::arg("count"), py::arg("skip_breakpoints") = false)
-            .def("stepover", [](Emulator& self) {
+            }, "Execute N CPU instructions; returns {executed, stopped, breakpoint_id, address, access}. cpu='gs' / "
+               "'ms': N (1-10000) instructions of the sound card CPU",
+               py::arg("count"), py::arg("skip_breakpoints") = false, py::arg("cpu") = "")
+            .def("stepover", [](Emulator& self, const std::string& cpu) -> py::object {
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                    return PythonCardStep(self, card, "over", 1);
                 execution::script::Check(self, execution::Origin::Python);
                 self.StepOver();
-            }, "Step over call instructions")
+                return py::none();
+            }, "Step over call instructions; cpu='gs' / 'ms': the sound card CPU's (returns its step's reply)",
+               py::arg("cpu") = "")
 
             // Frame stepping
             .def("run_frame", [](Emulator& self, bool skipBreakpoints) {
@@ -3005,6 +3179,20 @@ namespace PythonBindings
                 execution::script::Check(self, execution::Origin::Python);
                 self.RunNFrames(count, skipBreakpoints);
             }, "Execute N frames", py::arg("count"), py::arg("skip_breakpoints") = true)
+
+            // Frame watches (docs/inprogress/2026-11-03-run-until-watches): run_until(text="PRESS", max_frames=500)
+            // (condition= for if=), watch_add(condition="...", then="notify"), watches(), watch_remove(id | "all")
+            .def("run_until", [](Emulator& self, py::kwargs kwargs) { return PythonRunUntil(self, kwargs); },
+                 "Run whole frames until the rules hold at a frame end: condition / text / screen / stable_frames / "
+                 "event / match / max_frames / breakpoints; dict with met, outcome, frames, frame, hit, text")
+            .def("watch_add", [](Emulator& self, py::kwargs kwargs) {
+                return WatchOutcomePy(framewatch::AddWatch(self.GetContext(), WatchKwargsPy(kwargs)));
+            }, "Arm a frame watch on the running machine (the run_until rules plus label, then=pause|notify, once)")
+            .def("watches", [](Emulator& self) { return WatchOutcomePy(framewatch::ListWatches(self.GetContext())); },
+                 "The armed frame watches")
+            .def("watch_remove", [](Emulator& self, py::object id) {
+                return WatchOutcomePy(framewatch::RemoveWatch(self.GetContext(), TtdOptionTextPy(id)));
+            }, "Remove a frame watch by id, or \"all\"", py::arg("id"))
 
             // T-state and scanline stepping
             .def("run_tstates", [](Emulator& self, unsigned count, bool skipBreakpoints) {
@@ -3628,7 +3816,8 @@ namespace PythonBindings
                 }
                 return StateNodeToPy(value);
             }, "Analysis layers (analysiscontrol.h): action start (level='facts' | 'counters', mode='z80' | 'physical', "
-               "record=True for L1) | stop | status | build (frames=N, path='l1.json', wait=ms: replay the recording "
+               "record=True for L1) | stop | status | build (frames=N, from_frame=F, from_tinframe=T, to_frame=E, path='l1.json', "
+               "wait=ms: replay the recording, or the window F/T..E of it, "
                "into L1) | cancel | explain (address='$80BC' or a label, page='ram:3', what='auto' | 'routine' | "
                "'byte': a routine's fact sheet or a byte's facts) | query (kind='all' | 'conflicts' | 'records' | ..., "
                "range='8000-83FF', limit=200: L2 claims) | export (format='ctl' | 'skool' | 'fields' | 'geometry' | "
@@ -3642,7 +3831,8 @@ namespace PythonBindings
                "limit=N: the review queue) | experiment (spec=a "
                "dict or a list of dicts, or path='e.json', finding='F12', parallel=N: poke / regs / input, N frames, "
                "checks on a muted clone) | cover (budget=64, per_branch=8, frames=50, ranges=: flip one-sided "
-               "branches). "
+               "branches) | trace (path='pass.uatr', from_frame=F, from_tinframe=T, to_frame=E, "
+               "to_tinframe=U, max_cycles=N: the CPU access trace of a window, written to path). "
                "The reply's fields plus text (the readable answer); "
                "a refusal: ok = False, error = why",
                py::arg("action") = "status")
@@ -3896,10 +4086,23 @@ namespace PythonBindings
                  "Read a label table from RAM into a set (scanner=, page=, offset=, set=, policy=)")
 
             // Disassembly
-            .def("disasm", [](Emulator& self, int address, int count) -> py::list {
+            .def("disasm", [](Emulator& self, int address, int count, const std::string& cpu) -> py::list {
                 py::list result;
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) {
+                    return result;
+                }
+                // cpu "gs" / "ms": the sound card CPU's code, from its PC by default (cpuview.h)
+                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                {
+                    uint16_t at = 0;
+                    CpuView::GetRegister(ctx, card, "pc", at);
+                    if (address >= 0)
+                        at = static_cast<uint16_t>(address);
+                    const StateNode listing = CpuView::Disasm(ctx, card, at, static_cast<size_t>(std::clamp(count < 1 ? 10 : count, 1, 100)));
+                    if (const StateNode* instructions = listing.find("instructions"))
+                        for (const StateNode& line : instructions->items)
+                            result.append(StateNodeToPy(line));
                     return result;
                 }
                 Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
@@ -3974,7 +4177,8 @@ namespace PythonBindings
                     addr += cmdLen;
                 }
                 return result;
-            }, py::arg("address") = -1, py::arg("count") = 10, "Disassemble code at address (default: PC)")
+            }, py::arg("address") = -1, py::arg("count") = 10, py::arg("cpu") = "",
+               "Disassemble code at address (default: PC; cpu 'gs' / 'ms': a sound card CPU's)")
             
             // Physical page disassembly
             .def("disasm_page", [](Emulator& self, const std::string& type, int page, int offset, int count) -> py::list {
@@ -6290,9 +6494,10 @@ namespace PythonBindings
             // -------------------------------------------------------------
 
             .def("ttd_bookmark_add", [](Emulator& self, const std::string& label,
-                                         py::object frameObj, uint32_t tInFrame) -> py::object {
-                // Position omitted: the current position (mark here)
+                                         py::object frameObj, uint32_t tInFrame, py::kwargs kwargs) -> py::object {
+                // Position omitted: the current position (mark here). Keywords: note, tags, watch, context
                 std::map<std::string, std::string> options{{"label", label}};
+                TtdKwargsPy(options, kwargs);
                 if (!frameObj.is_none())
                 {
                     options["frame"] = std::to_string(frameObj.cast<uint64_t>());
@@ -6306,13 +6511,48 @@ namespace PythonBindings
                     value["error"] = reply.message;
                 }
                 return StateNodeToPy(value);
-            }, "Add an agent bookmark (advisory, never a replay barrier); omit frame to mark the current position",
+            }, "Add an agent bookmark (advisory, never a replay barrier); omit frame to mark the current position. "
+               "Keywords: note='...', tags=['a', 'b'], watch=['#A130', '#A140:4'], context=True (the registers, the "
+               "instruction and the watched bytes at the moment)",
                py::arg("label"), py::arg("frame") = py::none(), py::arg("tinframe") = 0)
 
-            .def("ttd_bookmarks", [](Emulator& self) -> py::object {
-                const ttd::TTDReply reply = TtdRunPy(self, "bookmarks");
+            .def("ttd_bookmarks", [](Emulator& self, py::object tag) -> py::object {
+                std::map<std::string, std::string> options;
+                if (!tag.is_none())
+                    options["tag"] = py::str(tag).cast<std::string>();
+                const ttd::TTDReply reply = TtdRunPy(self, "bookmarks", options);
                 return StateNodeToPy(reply.Ok() ? *reply.body.find("bookmarks") : StateNode::Array());
-            }, "List agent bookmarks (time-sorted)")
+            }, "List agent bookmarks (time-sorted) with their notes, tags, context and watched bytes; tag: only those",
+               py::arg("tag") = py::none())
+
+            .def("ttd_bookmark_note", [](Emulator& self, const std::string& label, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options{{"label", label}};
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "bookmark-note", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                {
+                    value["updated"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Edit an agent bookmark: note='...' (append=True: as a new line), tags=[...], add_tags=[...], "
+               "remove_tags=[...], rename='...'", py::arg("label"))
+
+            .def("ttd_bookmark_export", [](Emulator& self, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "bookmark-export", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The agent bookmarks written up: format='markdown' (a WALKTHROUGH section) | 'profile' (a game "
+               "profile's header comment) | 'json', tag, title, path (written there too); the machine does not move")
 
             .def("ttd_bookmark_delete", [](Emulator& self, const std::string& label) -> bool {
                 return TtdRunPy(self, "bookmark-delete", {{"label", label}}).Ok();
@@ -6715,6 +6955,40 @@ namespace PythonBindings
                "(value), key (key, pressed); order first / last, from_frame, to_frame, limit, text",
                 py::arg("kind"));
 
+        emulatorClass.def("ttd_explain_frame", [](Emulator& self, py::object frame, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                if (!frame.is_none())
+                    options["frame"] = std::to_string(frame.cast<uint64_t>());
+                const ttd::TTDReply reply = TtdRunPy(self, "explain-frame", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "What one frame did (default: the current one): time split (isr / halt / code), routines by time, "
+               "interrupts, paging, ports per device, memory changed with its writers, screen and border, keys, "
+               "markers. kwargs: sections ('routines,memory'), limit, text",
+                py::arg("frame") = py::none());
+
+        emulatorClass.def("ttd_diff", [](Emulator& self, uint64_t fromFrame, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                options["from_frame"] = std::to_string(fromFrame);
+                const ttd::TTDReply reply = TtdRunPy(self, "diff", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "What differs between two moments: from_frame (from_tinframe) and to_frame / to_tinframe (default: the "
+               "current position) - registers, latches, the slot mapping, memory ranges with the last write in "
+               "between, screen and border, devices, the time, keys and markers in between. kwargs: from_tinframe, "
+               "to_frame, to_tinframe, sections ('cpu,memory'), limit, writers, text",
+                py::arg("from_frame"));
+
         // ================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI/Lua:
         // step out, skip until, memory find, screen digest, beam, frame cost,
@@ -6776,7 +7050,9 @@ namespace PythonBindings
                py::arg("role") = "view", py::arg("cpu") = "gs");
         }
 
-        emulatorClass.def("step_out", [](Emulator& self) -> py::dict {
+        emulatorClass.def("step_out", [](Emulator& self, const std::string& cpu) -> py::dict {
+            if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                return PythonCardStep(self, card, "out", 1);
             py::dict d;
             try
             {
@@ -6795,7 +7071,8 @@ namespace PythonBindings
                 d["error"] = e.what();
             }
             return d;
-        }, "Step out of the current subroutine (emulation ends paused)")
+        }, "Step out of the current subroutine (emulation ends paused); cpu='gs' / 'ms': the sound card CPU's",
+           py::arg("cpu") = "")
 
         .def("skip_until", [](Emulator& self, py::object pcValue, unsigned maxTStates) -> py::dict {
             py::dict d;
@@ -7129,10 +7406,11 @@ namespace PythonBindings
                         if (pagePtr)
                         {
                             std::string sig = rom->CalculateSignature(pagePtr, 0x4000);
-                            // GetROMTitle carries the "Unknown ROM, <digest>"
-                            // fallback; role = core layout table (§5.2) - a
-                            // role/name mismatch is the wrong-ROM signal
-                            bank["name"] = rom->GetROMTitle(sig);
+                            // GetROMPageTitle carries the "Unknown ROM, <digest>"
+                            // fallback and names blank pages and copies; role =
+                            // core layout table (§5.2) - a role/name mismatch is
+                            // the wrong-ROM signal
+                            bank["name"] = rom->GetROMPageTitle(romPage);
                             bank["signature"] = sig;
                         }
                         bank["role"] = rom->GetROMPageRole(romPage);

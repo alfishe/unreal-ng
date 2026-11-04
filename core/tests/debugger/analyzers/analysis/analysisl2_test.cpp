@@ -29,6 +29,7 @@
 #include "debugger/analyzers/analysis/l2export.h"
 #include "debugger/analyzers/analysis/l2gallery.h"
 #include "debugger/analyzers/analysis/l2model.h"
+#include "debugger/analyzers/analysis/l3findings.h"
 #include "debugger/analyzers/analysis/replaytracer.h"
 #include "debugger/assembler/z80textassembler.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -478,6 +479,86 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorRecords_HlWalkWithAWord)
     EXPECT_TRUE(NoStrongClaim(At("bytes"), static_cast<uint16_t>(At("bytes") + 16), RegionKind::RecordArray));
 }
 
+/// ROM bytes only written are a sink: the writes are lost, the claim says nothing of the bytes and the ROM's
+/// signatures over them hold without a conflict
+TEST_F(AnalysisL2_Test, AnalysisDetectorCodeMap_RomWriteSink)
+{
+    Run("rom-write-sink.asm");
+    ASSERT_FALSE(HasFailure());
+    for (const uint16_t z80 : {uint16_t{0x0000}, uint16_t{0x0400}})
+    {
+        const std::vector<const Region*> data = Claims(z80, RegionKind::Data);
+        ASSERT_EQ(data.size(), 1u) << z80;
+        EXPECT_EQ(data.front()->title, kRomWriteSink) << z80;
+        EXPECT_FALSE(Claims(z80, RegionKind::Code).empty()) << "the ROM signature at " << z80;
+    }
+    const RegionStore& store = _built->l2.store;
+    for (const RegionStore::Conflict& c : store.Conflicts())
+    {
+        const Region& a = store.Regions()[c.a];
+        const Region& b = store.Regions()[c.b];
+        EXPECT_FALSE(a.title == kRomWriteSink || b.title == kRomWriteSink)
+            << RegionTitle(a) << " / " << RegionTitle(b);
+    }
+    // Negative: a ROM byte read and a RAM byte only written are plain data
+    for (const uint16_t z80 : {uint16_t{0x0010}, At("sink")})
+    {
+        const std::vector<const Region*> data = Claims(z80, RegionKind::Data);
+        ASSERT_FALSE(data.empty()) << z80;
+        for (const Region* r : data)
+            EXPECT_NE(r->title, kRomWriteSink) << z80;
+    }
+}
+
+/// A record walk by HL that also restarts inside each record (ADD HL to a field, as a hit test does): its bases sit
+/// at 16k and 16k + 2, gaps 2 and 14 as often as each other. One array of 16-byte records with the restart's fields
+/// shifted into it, not records of 2 bytes
+TEST_F(AnalysisL2_Test, AnalysisDetectorRecords_WalkRestartsInsideRecords)
+{
+    Run("records-hl-restart.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* recs = StartsAt(At("recs"), RegionKind::RecordArray);
+    ASSERT_NE(recs, nullptr);
+    EXPECT_EQ(recs->geometry.stride, 16u);
+    EXPECT_EQ(recs->geometry.count, 6u);
+    // An HL walk keeps no offsets per base: every restart's offsets land at every residue, so the field at +0 may
+    // read as a word too (a known limit); the word read after ADD HL,BC is at its place in the record
+    EXPECT_TRUE(std::any_of(recs->geometry.fields.begin(), recs->geometry.fields.end(),
+                            [](const Field& f) { return f.offset == 0; }));
+    EXPECT_TRUE(HasField(*recs, 2, 2)) << "the word read after ADD HL,BC, at its place in the record";
+    for (const Region* r : Claims(At("recs"), RegionKind::RecordArray))
+        EXPECT_EQ(r->geometry.stride, 16u) << "no array of the restarts' spacing";
+}
+
+/// A list SP walks (LD SP,list / POP HL / LD (HL),A): its words are the addresses written, a pointer table; the
+/// stack's own PUSH / POP leaves none
+TEST_F(AnalysisL2_Test, AnalysisDetectorPointerTables_ListPoppedBySp)
+{
+    Run("pop-list.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* table = StartsAt(At("list"), RegionKind::PointerTable);
+    ASSERT_NE(table, nullptr) << "the words POP HL took and LD (HL),A wrote through";
+    EXPECT_EQ(table->geometry.count, 6u);
+    // Negative: the stack below $9F00 holds no table
+    for (uint16_t z80 = 0x9EF0; z80 < 0x9F00; ++z80)
+    {
+        EXPECT_TRUE(Claims(z80, RegionKind::PointerTable).empty()) << z80;
+        EXPECT_TRUE(Claims(z80, RegionKind::HandlerTable).empty()) << z80;
+    }
+}
+
+/// Lists of words with a hole between them: the bases' period (8) has three of its four word slots taken. Records of
+/// 2 bytes, as the walk reads them; no fold into 8-byte records
+TEST_F(AnalysisL2_Test, AnalysisDetectorRecords_WordListsAreNoRestarts)
+{
+    Run("records-word-lists.asm");
+    ASSERT_FALSE(HasFailure());
+    const std::vector<const Region*> recs = Claims(At("lists"), RegionKind::RecordArray);
+    ASSERT_FALSE(recs.empty());
+    for (const Region* r : recs)
+        EXPECT_EQ(r->geometry.stride, 2u) << RegionTitle(*r);
+}
+
 /// A buffer with text: one more source on the step of the sources the replay copied, where the text is printable
 /// too (inferred); the lattice stops at code (below) and at a slot whose text offsets hold no text (above)
 TEST_F(AnalysisL2_Test, AnalysisDetectorRecords_LatticeSources)
@@ -696,6 +777,48 @@ TEST(AnalysisRegionStore_Test, RegionStoreKeepsConflicts)
     EXPECT_FALSE(store.ClaimedAs(MakeKey(2, 0x8001), RegionKind::Text));
 }
 
+/// Untouched says no access reached the bytes, not what they are: a claim from their content holds over it. Text
+/// is data: a data claim may hold it. Code over data or text still conflicts
+TEST(AnalysisRegionStore_Test, UntouchedAndDataHoldContentClaims)
+{
+    const auto claim = [](uint16_t lo, uint16_t hi, RegionKind kind, DetectorId detector) {
+        Region r;
+        r.lo = MakeKey(2, lo);
+        r.hi = MakeKey(2, hi);
+        r.z80 = lo;
+        r.kind = kind;
+        r.detector = detector;
+        r.confidence = 800;
+        r.evidence.push_back(Evidence{"test", lo, 1, ""});
+        return r;
+    };
+    const auto conflicts = [](std::initializer_list<Region> regions) {
+        RegionStore store;
+        for (const Region& r : regions)
+            EXPECT_TRUE(store.Add(r));
+        store.Finish();
+        return store.Conflicts().size();
+    };
+    EXPECT_EQ(conflicts({claim(0x8000, 0x80FF, RegionKind::Untouched, DetectorId::CodeMap),
+                         claim(0x8010, 0x8017, RegionKind::Code, DetectorId::Signatures)}),
+              0u)
+        << "a signature over bytes the replay never reached";
+    EXPECT_EQ(conflicts({claim(0x8000, 0x80FF, RegionKind::Untouched, DetectorId::CodeMap),
+                         claim(0x8010, 0x8017, RegionKind::Text, DetectorId::Text)}),
+              0u);
+    EXPECT_EQ(conflicts({claim(0x8000, 0x8073, RegionKind::Data, DetectorId::CodeMap),
+                         claim(0x8010, 0x801C, RegionKind::Text, DetectorId::Text)}),
+              0u)
+        << "strings inside a block read as data";
+    // Negative: code over data and code over text stay conflicts
+    EXPECT_EQ(conflicts({claim(0x8000, 0x8073, RegionKind::Data, DetectorId::CodeMap),
+                         claim(0x8010, 0x8017, RegionKind::Code, DetectorId::Signatures)}),
+              1u);
+    EXPECT_EQ(conflicts({claim(0x8000, 0x8073, RegionKind::Text, DetectorId::Text),
+                         claim(0x8010, 0x8017, RegionKind::Code, DetectorId::Signatures)}),
+              1u);
+}
+
 TEST_F(AnalysisL2_Test, DetectorOrderStable)
 {
     const Built& b = Run("jump-table.asm", 3);
@@ -779,6 +902,65 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_Test)
     // Negative: the same bytes only summed
     EXPECT_TRUE(NoStrongClaim(At("plain"), static_cast<uint16_t>(At("plain") + 63), RegionKind::Sprite))
         << MediaClaims(b.l2);
+}
+
+/// The same sprites masked into a back buffer the code puts on the screen with plain loads and stores: the copy carries
+/// the mask ANDed into each buffer byte with the graphic byte, so the screen shows a masked 16 x 16 sprite
+TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_MaskCarriedThroughBackBuffer)
+{
+    const Built& b = Run("sprite-drawn-buffer.asm", kSpriteFrames);
+    ASSERT_FALSE(HasFailure());
+    const Region* sprite = StartsAt(At("sprites"), RegionKind::Sprite, DetectorId::Graphics);
+    ASSERT_NE(sprite, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(sprite->geometry.width, 16u) << MediaClaims(b.l2);
+    EXPECT_EQ(sprite->geometry.height, 16u);
+    EXPECT_TRUE(sprite->geometry.mask);
+    EXPECT_EQ(sprite->geometry.stride, 64u);
+    const Region* buffer = StartsAt(At("buffer"), RegionKind::Screen, DetectorId::Screens);
+    ASSERT_NE(buffer, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(buffer->geometry.layout, "drawn");
+}
+
+/// The same sprites stored bottom line first and drawn up the screen: one claim from the frames' first byte, 16 x 16
+/// with the mask, marked bottom up (the gallery and the skool picture flip it)
+TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_StoredBottomUp)
+{
+    const Built& b = Run("sprite-bottom-up.asm", kSpriteFrames);
+    ASSERT_FALSE(HasFailure());
+    const Region* sprite = StartsAt(At("sprites"), RegionKind::Sprite, DetectorId::Graphics);
+    ASSERT_NE(sprite, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(sprite->geometry.width, 16u) << MediaClaims(b.l2);
+    EXPECT_EQ(sprite->geometry.height, 16u);
+    EXPECT_TRUE(sprite->geometry.mask);
+    EXPECT_EQ(sprite->geometry.stride, 64u);
+    EXPECT_EQ(sprite->geometry.frames, 4u);
+    EXPECT_TRUE(sprite->geometry.bottomUp);
+}
+
+/// A message printed by a glyph loop, and its bytes also copied down a screen column: text, no sprite
+TEST_F(AnalysisL2_Test, AnalysisDetectorGraphics_TextIsNoPicture)
+{
+    const Built& b = Run("text-as-pixels.asm", kSpriteFrames);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_FALSE(Claims(At("message"), RegionKind::Text).empty()) << MediaClaims(b.l2);
+    for (const RegionKind kind : {RegionKind::Sprite, RegionKind::Tile})
+        for (const Region* r : Claims(At("message"), kind))
+            EXPECT_NE(r->detector, DetectorId::Graphics) << "the message's bytes drawn as pixels: " << r->title;
+}
+
+/// Five sprite blocks named by one table, block c never drawn: inferred as its drawn neighbours' sprite
+TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_PointerTableBlockNeverDrawn)
+{
+    const Built& b = Run("sprite-pointer-blocks.asm", kSpriteFrames);
+    ASSERT_FALSE(HasFailure());
+    ASSERT_NE(StartsAt(At("block_b"), RegionKind::Sprite, DetectorId::Graphics), nullptr) << MediaClaims(b.l2);
+    const Region* c = StartsAt(At("block_c"), RegionKind::Sprite, DetectorId::Graphics);
+    ASSERT_NE(c, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(c->status, RegionStatus::Inferred);
+    EXPECT_EQ(c->geometry.width, 16u);
+    EXPECT_EQ(c->geometry.height, 16u);
+    EXPECT_TRUE(c->geometry.mask);
+    EXPECT_EQ(c->Z80End(), At("block_d") - 1u);
 }
 
 /// The mutation the geometry has to catch: the object loop around the blit runs 3 times; a width (or height) taken
@@ -1010,6 +1192,106 @@ TEST_F(AnalysisL2_Test, AnalysisDetectorFonts_OwnFontThroughTheGlyphBlit)
     EXPECT_LE(font->Z80End(), At("font") + 767u);
     EXPECT_EQ(font->geometry.stride, 8u);
     EXPECT_TRUE(NoStrongClaim(At("font"), static_cast<uint16_t>(At("font") + 767), RegionKind::Text)) << MediaClaims(b.l2);
+}
+
+/// A back buffer put on the screen with plain loads and stores (no block copy): the bytes a screen writer reads and the
+/// code rewrites are one back buffer; a picture drawn the same way but never written is none
+TEST_F(AnalysisL2_Test, AnalysisDetectorScreens_DrawnBackBuffer)
+{
+    const Built& b = Run("drawn-back-buffer.asm", 20);
+    ASSERT_FALSE(HasFailure());
+    const Region* buffer = StartsAt(At("buffer"), RegionKind::Screen, DetectorId::Screens);
+    ASSERT_NE(buffer, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(buffer->Z80End(), At("buffer") + 2047u);
+    EXPECT_EQ(buffer->geometry.layout, "drawn");
+    for (const Region* r : Claims(At("picture"), RegionKind::Screen))
+        EXPECT_NE(r->detector, DetectorId::Screens) << "a picture never written is no back buffer: " << r->title;
+}
+
+/// Tiles block-copied into a column back buffer (one LDI chain a tile) that plain loads put on the screen: the tile set
+/// is one claim of 8 tiles one byte wide and 8 lines high, the never-copied tile 4 inside it, the data after it out
+TEST_F(AnalysisL2_Test, AnalysisDetectorTiles_CopiedToADrawnBuffer)
+{
+    // The value flow follows the copy to the screen, or ends in the buffer (a scroll rewrites its bytes); a tile never
+    // copied but read by other code still joins the set
+    for (const char* fixture : {"tiles-copied.asm", "tiles-copied-shifted.asm", "tiles-copied-read.asm"})
+    {
+        SCOPED_TRACE(fixture);
+        const Built& b = Run(fixture, 30);
+        ASSERT_FALSE(HasFailure());
+        const Region* tiles = StartsAt(At("tiles"), RegionKind::Tile, DetectorId::Graphics);
+        ASSERT_NE(tiles, nullptr) << MediaClaims(b.l2);
+        EXPECT_EQ(tiles->Z80End(), At("tiles") + 63u) << MediaClaims(b.l2);
+        EXPECT_EQ(tiles->geometry.width, 8u);
+        EXPECT_EQ(tiles->geometry.height, 8u);
+        EXPECT_EQ(tiles->geometry.frames, 8u);
+        EXPECT_FALSE(tiles->geometry.bottomUp);
+        for (const Region* r : Claims(At("after"), RegionKind::Tile))
+            EXPECT_NE(r->detector, DetectorId::Graphics) << "the data after the set is no tile: " << r->title;
+        for (const Region* r : Claims(At("tiles"), RegionKind::Sprite))
+            EXPECT_NE(r->detector, DetectorId::Graphics) << "a tile is no sprite: " << r->title;
+    }
+}
+
+/// The map whose bytes pick the copied tiles (each byte's value times 8 is where the LDI chain read its tile): L1 records
+/// the map bytes as the index of the block reads, and the level map detector claims the map, 24 cells (a buffer column) a
+/// row
+TEST_F(AnalysisL2_Test, AnalysisDataFlow_IndexOfABlockRead)
+{
+    const Built& b = Run("tiles-copied-map.asm", 30);
+    ASSERT_FALSE(HasFailure());
+    const uint16_t map = At("map");
+    const uint16_t tiles = At("tiles");
+    size_t selectors = 0;
+    for (const IndexUse& x : b.l1.indexes)
+        if (x.selectorZ80 >= map && x.selectorZ80 < map + 264 && x.lo >= tiles && x.hi < tiles + 64)
+            ++selectors;
+    EXPECT_GE(selectors, 200u) << "the map's bytes index the tile reads";
+    const Region* m = StartsAt(map, RegionKind::LevelMap, DetectorId::LevelMaps);
+    ASSERT_NE(m, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(m->Z80End(), map + 263u) << MediaClaims(b.l2);
+    EXPECT_EQ(m->geometry.width, 24u) << "a column of the buffer, the copying loop's 24 trips";
+    EXPECT_EQ(m->geometry.height, 11u);
+    for (const Region* r : Claims(At("after"), RegionKind::LevelMap))
+        EXPECT_NE(r->detector, DetectorId::LevelMaps) << "the data after the map is none of it: " << r->title;
+}
+
+/// A string kept in the slot of a character no text prints: read by the print loop, never drawn as a glyph. The font
+/// claim leaves that slot out, so the text claim there meets no font (no conflict); the glyphs around it stay the font
+TEST_F(AnalysisL2_Test, AnalysisDetectorFonts_StringInAnUnusedSlot)
+{
+    const Built& b = Run("font-slot-text.asm");
+    ASSERT_FALSE(HasFailure());
+    const auto glyph = [&](char c) { return static_cast<uint16_t>(At("font") + (c - 32) * 8); };
+    const Region* text = StartsAt(At("slot_text"), RegionKind::Text);
+    ASSERT_NE(text, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(text->geometry.text, "AUTO");
+    bool below = false, above = false;
+    for (const char c : {'E', 'S'})
+        for (const Region* r : Claims(glyph(c), RegionKind::Font))
+            if (r->detector == DetectorId::Graphics)
+                (c == 'E' ? below : above) = true;
+    EXPECT_TRUE(below && above) << "the glyphs on both sides of the slot are the font: " << MediaClaims(b.l2);
+    for (uint16_t at = glyph('K'); at < glyph('L'); ++at)
+        for (const Region* r : Claims(at, RegionKind::Font))
+            EXPECT_NE(r->detector, DetectorId::Graphics) << "the slot holds a string: " << r->title;
+    bool mark = false;
+    for (const Region* r : Claims(glyph('M'), RegionKind::Font))
+        mark |= r->detector == DetectorId::Graphics;
+    EXPECT_TRUE(mark) << "a slot another loop drew is a glyph: " << MediaClaims(b.l2);
+    // The glyphs after the last one printed, never read nor drawn, are the font too, up to 8 slots on (the object's
+    // frames run to 'U': the font ends at ']', '_' is past it)
+    bool z = false, past = false;
+    for (const Region* r : Claims(glyph('Z'), RegionKind::Font))
+        z |= r->detector == DetectorId::Graphics;
+    for (const Region* r : Claims(glyph('_'), RegionKind::Font))
+        past |= r->detector == DetectorId::Graphics;
+    EXPECT_TRUE(z) << "'Z', never printed, is the next glyph of the font: " << MediaClaims(b.l2);
+    std::string fonts;
+    for (const Region& r : b.l2.store.Regions())
+        if (r.kind == RegionKind::Font)
+            fonts += std::to_string(r.z80) + "-" + std::to_string(r.Z80End()) + " " + r.title + "\n";
+    EXPECT_FALSE(past) << "no more than 8 unprinted glyphs: " << fonts;
 }
 
 /// The ROM's character set printed by the game's own glyph loop from codes that are no text (each plus $60): the font is
@@ -1487,6 +1769,33 @@ TEST_F(AnalysisL2_Test, SkoolDraftOrgAfterAnInstruction)
     EXPECT_NE(Find(lines, "@isub=+ORG #8100"), std::string::npos) << skool.text;
 }
 
+/// An entry that ends inside an instruction (a range end here; in a game, code later overwritten by a buffer that
+/// starts at the instruction's last byte) writes only its own bytes: the instruction's head as DEFB, so the next
+/// entry's bytes are not written twice and the rebuild does not shift
+TEST_F(AnalysisL2_Test, SkoolDraftInstructionCutByTheEntryEnd)
+{
+    Run("page-table.asm");
+    ASSERT_FALSE(HasFailure());
+    // $8000 LD SP,$9F00 is 3 bytes: the first range ends after 2 of them
+    const ExportResult skool = ExportDraft("skool", 8, {{0x8000, 0x8001}, {0x8002, 0x9FFF}});
+    ASSERT_TRUE(skool.ok) << skool.error;
+    const std::vector<std::string> lines = Lines(skool.text);
+    // The line of an address: the entry's control character or a space, then the address
+    const auto lineOf = [&lines](const char* address) {
+        for (size_t i = 0; i < lines.size(); ++i)
+            if (lines[i].size() > 6 && lines[i].compare(1, 5, address) == 0)
+                return i;
+        return std::string::npos;
+    };
+    const size_t head = lineOf("$8000");
+    ASSERT_NE(head, std::string::npos) << skool.text;
+    const std::string operation = lines[head].substr(0, lines[head].find(';'));
+    EXPECT_NE(operation.find("DEFB $31,$00"), std::string::npos) << lines[head];
+    EXPECT_EQ(operation.find("LD SP"), std::string::npos) << lines[head];
+    EXPECT_NE(lines[head].find("in the next entry"), std::string::npos) << "the comment names the cut instruction";
+    EXPECT_NE(lineOf("$8002"), std::string::npos) << skool.text;
+}
+
 /// A page-aligned table first in the range has no line before it for its ALIGN 256: it stays, the moved region
 /// starts after it with an ORG
 TEST_F(AnalysisL2_Test, LayoutRegionStartsAfterAnAlignedTable)
@@ -1590,6 +1899,29 @@ TEST_F(AnalysisL2_Test, PointerThroughTheAlternateSet)
     EXPECT_EQ(lines[bc - 1], "@keep") << skool.text;
 }
 
+/// A pointer word loaded from a table, passed through the stack and stored into a draw list, then used from the list:
+/// the table's words are pointers too (L1 follows the bytes through memory), and the table is a pointer table
+TEST_F(AnalysisL2_Test, AnalysisDataFlow_PointerThroughAList)
+{
+    const Built& b = Run("pointer-through-list.asm", 20);
+    ASSERT_FALSE(HasFailure());
+    const uint16_t table = At("table");
+    for (uint16_t slot = 0; slot < 4; ++slot)
+        EXPECT_TRUE(std::any_of(b.l1.pointers.begin(), b.l1.pointers.end(), [&](const PointerUse& p) {
+            return p.form == PointerForm::Word && p.z80 == table + 2 * slot && p.uses > 0;
+        })) << "slot " << slot;
+    EXPECT_TRUE(std::any_of(b.l1.pointers.begin(), b.l1.pointers.end(), [&](const PointerUse& p) {
+        return p.form == PointerForm::Word && p.z80 == At("list") && p.uses > 0;
+    })) << "the list's word stays a pointer as well";
+    const Region* t = StartsAt(table, RegionKind::PointerTable);
+    ASSERT_NE(t, nullptr);
+    EXPECT_GE(t->geometry.count, 4u);
+    // Negative: a byte only copied into the list, never an address
+    EXPECT_FALSE(std::any_of(b.l1.pointers.begin(), b.l1.pointers.end(), [&](const PointerUse& p) {
+        return p.form == PointerForm::Word && p.z80 == At("bytes");
+    }));
+}
+
 TEST(AnalysisExport_Test, CommentAddressesToRefs)
 {
     const std::vector<uint16_t> entries = {0x8000, 0x8123};
@@ -1648,4 +1980,493 @@ TEST_F(AnalysisL2_Test, ReplayKeepsAPluggedCard)
     ASSERT_FALSE(HasFailure());
     EXPECT_EQ(b.l1.replay.diverged, 0u);
     EXPECT_FALSE(b.l1.routines.empty());
+}
+
+/// One table read by two routines, one from each entry's start and one from the byte after it: one array of six
+/// 5-byte records at the table, the second reader's offsets shifted into it; no record runs into the byte after
+TEST_F(AnalysisL2_Test, AnalysisDetectorRecords_ShiftedReadersAreOneArray)
+{
+    const Built& b = Run("records-shifted-readers.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* table = StartsAt(At("table"), RegionKind::RecordArray, DetectorId::Records);
+    ASSERT_NE(table, nullptr);
+    EXPECT_EQ(table->geometry.stride, 5u);
+    EXPECT_EQ(table->geometry.count, 6u);
+    EXPECT_EQ(table->Z80End(), At("after") - 1u);
+    size_t read = 0;
+    for (const Field& f : table->geometry.fields)
+        read += f.name != "unread" ? f.size : 0;
+    EXPECT_EQ(read, 5u) << "the byte the first reader takes and the four the second does";
+    for (const Region& r : b.l2.store.Regions())
+        if (r.kind == RegionKind::RecordArray && r.z80 >= At("table") && r.z80 <= At("after"))
+            EXPECT_EQ(r.z80, At("table")) << RegionTitle(r);
+    EXPECT_TRUE(Claims(At("after"), RegionKind::RecordArray).empty());
+}
+
+/// Records copied 8 bytes at a time into the 16-byte slots of a record array: the blocks copied are records of 8
+/// bytes with the slots' fields (observed), the blocks only the pointer table names inferred
+TEST_F(AnalysisL2_Test, AnalysisDetectorRecords_GatheredByShortCopies)
+{
+    Run("records-gathered-blocks.asm");
+    ASSERT_FALSE(HasFailure());
+    for (const char* block : {"block1", "block2", "block3", "block4"})
+    {
+        const Region* r = StartsAt(At(block), RegionKind::RecordArray, DetectorId::Records);
+        ASSERT_NE(r, nullptr) << block;
+        EXPECT_EQ(r->geometry.stride, 8u) << block;
+        EXPECT_EQ(r->geometry.count, 4u) << block;
+        EXPECT_EQ(r->Z80End(), At(block) + 31u) << block;
+        bool field1 = false, field3 = false;
+        for (const Field& f : r->geometry.fields)
+        {
+            field1 = field1 || (f.offset == 1 && f.name != "unread");
+            field3 = field3 || (f.offset == 3 && f.name != "unread");
+        }
+        EXPECT_TRUE(field1 && field3) << block << ": the slots' fields at +1 and +3";
+        const bool played = std::string(block) == "block1" || std::string(block) == "block2";
+        EXPECT_EQ(r->status, played ? RegionStatus::Observed : RegionStatus::Inferred) << block;
+    }
+}
+
+/// Strips saved into an area through a moving pointer and copied back with the same lengths: the area is a save
+/// area (a buffer titled with what it saves) over every slot seen, and the slots written only twice at its end are
+/// no table one routine built
+TEST_F(AnalysisL2_Test, AnalysisDetectorSaveAreas_SavedAndRestoredStrips)
+{
+    const Built& b = Run("save-area.asm", 20);
+    ASSERT_FALSE(HasFailure());
+    const uint16_t save = At("save");
+    EXPECT_TRUE(NoStrongClaim(save, static_cast<uint16_t>(save + 71), RegionKind::InitTable));
+    const Region* area = StartsAt(save, RegionKind::Buffer, DetectorId::Records);
+    ASSERT_NE(area, nullptr);
+    EXPECT_EQ(area->Z80End(), save + 71u);
+    EXPECT_EQ(area->title.rfind("Save area of $9000-$930B", 0), 0u) << area->title;
+}
+
+/// Copies both ways between a score and the rows of a table: the rows, read only to put the score back, are a save
+/// area; the score, which the game reads too, is the data saved, no save area
+TEST_F(AnalysisL2_Test, AnalysisDetectorSaveAreas_LiveDataIsNoSave)
+{
+    const Built& b = Run("save-live-score.asm", 6);
+    ASSERT_FALSE(HasFailure());
+    const uint16_t score = At("score");
+    const uint16_t rows = At("rows");
+    const Region* live = StartsAt(score, RegionKind::Buffer, DetectorId::Records);
+    EXPECT_EQ(live, nullptr) << live->title;
+    const Region* area = StartsAt(rows, RegionKind::Buffer, DetectorId::Records);
+    ASSERT_NE(area, nullptr);
+    EXPECT_EQ(area->Z80End(), rows + 14u);
+    EXPECT_EQ(area->title.rfind("Save area of $9000-$9004", 0), 0u) << area->title;
+}
+
+// ---------------------------------------------------------------------------------------------------- unused
+
+/// Untouched bytes no detector explains: a fill of one value is Unused; a routine that never ran (its calls and jumps
+/// land on its own instructions and in the ROM) is code the session did not reach, inferred Code with its instructions
+/// in the code map, not Unused; a small picture nothing read is not code
+TEST_F(AnalysisL2_Test, AnalysisDetectorCodeMap_FillIsUnusedLeftoverIsCode)
+{
+    const Built& b = Run("unused-areas.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* fill = StartsAt(At("fill"), RegionKind::Unused, DetectorId::CodeMap);
+    ASSERT_NE(fill, nullptr);
+    EXPECT_EQ(fill->Z80End(), At("fill") + 63u);
+    EXPECT_NE(fill->title.find("Fill"), std::string::npos) << fill->title;
+    const Region* code = StartsAt(At("leftover"), RegionKind::Code, DetectorId::CodeMap);
+    ASSERT_NE(code, nullptr);
+    EXPECT_EQ(code->status, RegionStatus::Inferred);
+    EXPECT_GE(code->Z80End(), At("leftover_end") - 1u);
+    EXPECT_NE(code->title.find("never ran"), std::string::npos) << code->title;
+    EXPECT_TRUE(Claims(At("leftover"), RegionKind::Unused).empty()) << "code not yet run is no unused byte";
+    bool line = false;
+    for (const CodeLine& l : b.l2.code)
+        line |= l.z80 == At("leftover");
+    EXPECT_TRUE(line) << "its instructions are in the code map: the export disassembles them";
+    for (const Region* r : Claims(At("picture"), RegionKind::Unused))
+        ADD_FAILURE() << "a picture with no calls or jumps is no leftover code: " << r->title;
+    for (const Region* r : Claims(At("picture"), RegionKind::Code))
+        if (r->detector == DetectorId::CodeMap && r->status == RegionStatus::Inferred)
+            ADD_FAILURE() << "a picture with no calls or jumps is no code: " << r->title;
+    for (const Region* r : Claims(At("handler"), RegionKind::Unused))
+        ADD_FAILURE() << "a routine a handler table points at did not run, it is no leftover: " << r->title;
+    // The fill and the code explain the bytes: no unknown finding over them
+    for (const Finding& f : BaseFindings(b.l1, b.l2))
+        if (f.kind == FindingKind::Unknown)
+            EXPECT_TRUE(f.end < At("fill") || f.start > At("leftover_end")) << f.claim;
+}
+
+// ---------------------------------------------------------------------------------------------------- printer arguments
+
+/// A printer's argument: LD HL,gauge / CALL print_str passes a string of control records and cells the code fills
+/// before each print to the routine that prints two plain strings. It is text from its address up to and including
+/// the $FF the printer stops at after its other strings, the filled cells a field of it; the bytes after it are no
+/// text
+TEST_F(AnalysisL2_Test, AnalysisDetectorText_PrinterArgument)
+{
+    const Built& b = Run("print-argument.asm");
+    ASSERT_FALSE(HasFailure());
+    ASSERT_NE(StartsAt(At("score"), RegionKind::Text, DetectorId::Text), nullptr) << "the plain strings are text";
+    ASSERT_NE(StartsAt(At("lives"), RegionKind::Text, DetectorId::Text), nullptr);
+    const Region* gauge = StartsAt(At("gauge"), RegionKind::Text, DetectorId::Text);
+    std::string texts;
+    for (const Region& r : b.l2.store.Regions())
+        if (r.kind == RegionKind::Text)
+            texts += std::to_string(r.z80) + "-" + std::to_string(r.Z80End()) + " " + r.geometry.text + "\n";
+    ASSERT_NE(gauge, nullptr) << texts;
+    EXPECT_EQ(gauge->Z80End(), At("gauge_end")) << texts;
+    EXPECT_EQ(gauge->geometry.terminator, "$FF");
+    EXPECT_EQ(gauge->geometry.width, static_cast<uint16_t>(At("gauge_end") - At("gauge")));
+    EXPECT_TRUE(std::any_of(gauge->evidence.begin(), gauge->evidence.end(),
+                            [](const Evidence& e) { return e.what == "argument"; }));
+    EXPECT_TRUE(std::any_of(gauge->geometry.fields.begin(), gauge->geometry.fields.end(), [this](const Field& f) {
+        return f.offset == At("gauge_cells") - At("gauge") && f.size == 3 && f.name == "filled";
+    })) << "the cells the code fills are a field";
+    for (uint16_t a = At("after"); a < At("after") + 3; ++a)
+        EXPECT_TRUE(Claims(a, RegionKind::Text).empty()) << "past the terminator: " << a << "\n" << texts;
+}
+
+// ---------------------------------------------------------------------------------------------------- blank strips
+
+/// Masked sprite frames of three 8 x 16 strips, every strip drawn through its own word of a pointer table (each word
+/// names one strip alone, so every strip is an object of its own). The last strip of the last frame is $FF,$00 on every
+/// line: one value, no picture alone, but the same blit drew it with the same shape right after the strip before it.
+/// It is part of that sprite's claim, not left unknown
+TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_BlankStripJoinsItsNeighbour)
+{
+    const Built& b = Run("sprite-blank-strip.asm", kSpriteFrames);
+    ASSERT_FALSE(HasFailure());
+    ASSERT_NE(StartsAt(At("frame0"), RegionKind::Sprite, DetectorId::Graphics), nullptr) << MediaClaims(b.l2);
+    const Region* sprite = nullptr;
+    for (const Region* r : Claims(At("blank"), RegionKind::Sprite))
+        if (r->detector == DetectorId::Graphics)
+            sprite = r;
+    ASSERT_NE(sprite, nullptr) << "the transparent strip is no sprite\n" << MediaClaims(b.l2);
+    EXPECT_GE(sprite->Z80End(), At("blank") + 31u) << MediaClaims(b.l2);
+    EXPECT_LT(sprite->z80, At("blank")) << "joined to the strip before it\n" << MediaClaims(b.l2);
+    EXPECT_EQ(sprite->geometry.width, 8u);
+    EXPECT_EQ(sprite->geometry.height, 16u);
+    EXPECT_TRUE(sprite->geometry.mask);
+    EXPECT_EQ(sprite->geometry.stride, 32u);
+}
+
+// ---------------------------------------------------------------------------------------------------- frame lattice
+
+/// Four masked frames of three 8 x 8 strips stored in columns, named by a table of words 48 bytes apart, drawn in
+/// windows that clip whole strips: frames 0 and 2 whole, frame 1 as strip 0 and as strips 1-2, frame 3 as strips 0-1
+/// and as its fully transparent strip 2 alone. Without the table the claims follow the column groups (and leave the
+/// transparent strip out); the table's stride, the columns tiling its blocks and a frame drawn three columns wide
+/// re-cut them: one sprite from frame 0 to the end of frame 3, four frames of 24 x 8, 48 bytes apart
+TEST_F(AnalysisL2_Test, AnalysisDetectorSprites_PointerTableFrameLattice)
+{
+    const Built& b = Run("sprite-frame-lattice.asm", kSpriteFrames);
+    ASSERT_FALSE(HasFailure());
+    constexpr uint32_t kFrames = 4;
+    constexpr uint32_t kFrameBytes = 48;
+    const uint16_t first = At("frame0");
+    const uint16_t end = At("frames_end");
+    ASSERT_EQ(first + kFrames * kFrameBytes, end);
+    const Region* sprite = StartsAt(first, RegionKind::Sprite, DetectorId::Graphics);
+    ASSERT_NE(sprite, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(sprite->Z80End(), end - 1u) << MediaClaims(b.l2);
+    EXPECT_EQ(sprite->geometry.frames, kFrames) << MediaClaims(b.l2);
+    EXPECT_EQ(sprite->geometry.stride, kFrameBytes);
+    EXPECT_EQ(sprite->geometry.width, 24u);
+    EXPECT_EQ(sprite->geometry.height, 8u);
+    EXPECT_TRUE(sprite->geometry.mask);
+    EXPECT_EQ(sprite->geometry.layout, "columns");
+    EXPECT_TRUE(std::any_of(sprite->evidence.begin(), sprite->evidence.end(),
+                            [](const Evidence& e) { return e.what == "frame-lattice"; }));
+    // No claim of a column group is left inside, the transparent strip included
+    std::set<const Region*> others;
+    for (uint16_t a = first; a < end; ++a)
+        for (const RegionKind kind : {RegionKind::Sprite, RegionKind::Tile})
+            for (const Region* r : Claims(a, kind))
+                if (r->detector == DetectorId::Graphics && r != sprite)
+                    others.insert(r);
+    EXPECT_TRUE(others.empty()) << MediaClaims(b.l2);
+}
+
+// ---------------------------------------------------------------------------------------------------- review fixes
+
+/// The save of save-area.asm seen the other way round: the restore copies the area back over the strips, and the save
+/// copies the strips into the area again, so each strip also looks saved by the restore. The strips are the live
+/// background (code draws into them between the copies): no save area on them
+TEST_F(AnalysisL2_Test, AnalysisDetectorSaveAreas_SourceIsNoSaveArea)
+{
+    Run("save-area.asm", 20);
+    ASSERT_FALSE(HasFailure());
+    for (const uint16_t strip : {uint16_t{0x9000}, uint16_t{0x9100}, uint16_t{0x9200}, uint16_t{0x9300}})
+        for (uint16_t a = strip; a < strip + 12; ++a)
+            for (const Region* r : Claims(a, RegionKind::Buffer))
+                EXPECT_FALSE(r->detector == DetectorId::Records && r->title.rfind("Save area", 0) == 0)
+                    << "a strip the save copies from is no save area: " << r->title;
+    ASSERT_NE(StartsAt(At("save"), RegionKind::Buffer, DetectorId::Records), nullptr) << "the area itself still is";
+}
+
+/// Three bases 2 bytes apart and a fourth far above them, one routine reading two bytes through IX at each: no record
+/// array of 2-byte records over everything between them
+TEST_F(AnalysisL2_Test, AnalysisDetectorRecords_SparseBasesAreNoArray)
+{
+    Run("records-sparse-bases.asm");
+    ASSERT_FALSE(HasFailure());
+    for (const uint16_t a : {At("between"), static_cast<uint16_t>(At("between") + 0x100), At("distant")})
+        for (const Region* r : Claims(a, RegionKind::RecordArray))
+            EXPECT_NE(r->detector, DetectorId::Records)
+                << "four bases make no array of " << r->geometry.count << " records: " << RegionTitle(*r);
+}
+
+/// A working copy of an object the code updates every pass and copies into the records of an array is no template:
+/// no record array of 9-byte records at it
+TEST_F(AnalysisL2_Test, AnalysisDetectorRecords_WorkingCopyIsNoTemplate)
+{
+    Run("record-working-copy.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* records = StartsAt(At("records"), RegionKind::RecordArray, DetectorId::Records);
+    ASSERT_NE(records, nullptr) << "the records walked through IX";
+    EXPECT_EQ(records->geometry.stride, 16u);
+    for (const Region* r : Claims(At("current"), RegionKind::RecordArray))
+        EXPECT_NE(r->detector, DetectorId::Records) << "a working copy code writes: " << RegionTitle(*r);
+}
+
+/// An HL walk that restarts at +2 of each record and tests the byte there for the end: the last base is that restart,
+/// the terminator is the byte it tested (+2 of the seventh record), the array is the six records before it
+TEST_F(AnalysisL2_Test, AnalysisDetectorRecords_RestartTerminator)
+{
+    Run("records-hl-restart-end.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* recs = StartsAt(At("recs"), RegionKind::RecordArray, DetectorId::Records);
+    ASSERT_NE(recs, nullptr);
+    EXPECT_EQ(recs->geometry.stride, 16u);
+    EXPECT_EQ(recs->geometry.count, 6u);
+    EXPECT_EQ(recs->Z80End(), At("last") - 1u);
+    EXPECT_EQ(recs->geometry.terminator, "$FF");
+    const Region* end = StartsAt(static_cast<uint16_t>(At("last") + 2), RegionKind::Data, DetectorId::Records);
+    ASSERT_NE(end, nullptr) << "the terminator at the restart's place";
+    EXPECT_EQ(end->title, "terminator");
+    EXPECT_EQ(end->Size(), 1u);
+}
+
+/// Entries of 9 bytes in 16-byte slots: seven bytes of padding after each entry stay inside one table
+TEST_F(AnalysisL2_Test, AnalysisDetectorInitTables_SevenBytesOfPadding)
+{
+    const Built& b = Run("init-padded-wide.asm", 3);
+    ASSERT_FALSE(HasFailure());
+    const uint16_t table = At("table");
+    std::string all;
+    for (const Region& r : b.l2.store.Regions())
+        if (r.kind == RegionKind::InitTable)
+            all += "table " + std::to_string(r.z80) + "-" + std::to_string(r.Z80End()) + "\n";
+    const Region* found = StartsAt(table, RegionKind::InitTable);
+    ASSERT_NE(found, nullptr) << all;
+    EXPECT_EQ(found->Z80End(), table + 7u * 16u + 8u) << "to the last entry's last read byte: " << all;
+    EXPECT_LT(found->Z80End(), At("tail")) << all;
+}
+
+/// tiles-copied-map.asm with its map across the $C000 page boundary: the cells are claimed as two maps, one each side
+/// of the boundary, not dropped as one claim across pages
+TEST_F(AnalysisL2_Test, AnalysisDetectorLevelMaps_CopiedMapSplitsAtAPage)
+{
+    std::string source = ReadFixture("tiles-copied-map.asm");
+    const std::string from = "        org $9100\nmap:";
+    const size_t at = source.find(from);
+    ASSERT_NE(at, std::string::npos);
+    source.replace(at, from.size(), "        org $BF80\nmap:");
+    const Built& b = Run("tiles-copied-map.asm#page", 30, false, source);
+    ASSERT_FALSE(HasFailure());
+    const uint16_t map = At("map");
+    ASSERT_EQ(map, 0xBF80);
+    const Region* low = StartsAt(map, RegionKind::LevelMap, DetectorId::LevelMaps);
+    ASSERT_NE(low, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(low->Z80End(), 0xBFFFu) << MediaClaims(b.l2);
+    const Region* high = StartsAt(0xC000, RegionKind::LevelMap, DetectorId::LevelMaps);
+    ASSERT_NE(high, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(high->Z80End(), map + 263u) << MediaClaims(b.l2);
+}
+
+// ---------------------------------------------------------------------------------------------------- review fixes
+
+/// A printer's argument is read where the printer reads its strings: a table of cell colours the caller hands to the
+/// printer (LD BC,shade), read by an instruction of its own, ending on the printer's $FF, is no text; the gauge the
+/// printer reads as a string stays text
+TEST_F(AnalysisL2_Test, AnalysisDetectorText_PrinterArgumentTableIsNoText)
+{
+    const Built& b = Run("print-argument-table.asm");
+    ASSERT_FALSE(HasFailure());
+    std::string texts;
+    for (const Region& r : b.l2.store.Regions())
+        if (r.kind == RegionKind::Text)
+            texts += std::to_string(r.z80) + "-" + std::to_string(r.Z80End()) + " " + r.geometry.text + "\n";
+    ASSERT_NE(StartsAt(At("score"), RegionKind::Text, DetectorId::Text), nullptr) << texts;
+    const Region* gauge = StartsAt(At("gauge"), RegionKind::Text, DetectorId::Text);
+    ASSERT_NE(gauge, nullptr) << "the string argument is still text\n" << texts;
+    EXPECT_EQ(gauge->Z80End(), At("gauge_end")) << texts;
+    for (uint16_t a = At("shade"); a <= At("shade_end"); ++a)
+        EXPECT_TRUE(Claims(a, RegionKind::Text).empty()) << "a table handed to the printer: " << a << "\n" << texts;
+}
+
+/// A room map unpacked again every pass and read by the room-draw routine (which writes the screen) only to pick the
+/// tile bytes it draws is no back buffer: its own values never reach the screen
+TEST_F(AnalysisL2_Test, AnalysisDetectorScreens_UnpackedRoomMapIsNoBackBuffer)
+{
+    const Built& b = Run("room-map-unpacked.asm", 30);
+    ASSERT_FALSE(HasFailure());
+    const uint16_t map = At("map");
+    size_t selectors = 0;
+    for (const IndexUse& x : b.l1.indexes)
+        if (x.selectorZ80 >= map && x.selectorZ80 < map + 2048u)
+            ++selectors;
+    EXPECT_GE(selectors, 1024u) << "the map's cells index the tile bytes";
+    for (uint32_t a = map; a < map + 2048u; a += 64)
+        for (const Region* r : Claims(static_cast<uint16_t>(a), RegionKind::Screen))
+            EXPECT_NE(r->detector, DetectorId::Screens) << "a map is no back buffer: " << r->title << "\n"
+                                                        << MediaClaims(b.l2);
+}
+
+/// A drawn back buffer across a 16 K page boundary ($BC00-$C3FF): one claim a page, both halves claimed
+TEST_F(AnalysisL2_Test, AnalysisDetectorScreens_DrawnBackBufferAcrossPages)
+{
+    std::string mutated = ReadFixture("drawn-back-buffer.asm");
+    const std::string from = "        org $9000\nbuffer:";
+    const size_t at = mutated.find(from);
+    ASSERT_NE(at, std::string::npos);
+    mutated.replace(at, from.size(), "        org $BC00\nbuffer:");
+    const Built& b = Run("drawn-back-buffer.asm#pages", 20, false, mutated);
+    ASSERT_FALSE(HasFailure());
+    ASSERT_EQ(At("buffer"), 0xBC00);
+    const Region* low = StartsAt(At("buffer"), RegionKind::Screen, DetectorId::Screens);
+    ASSERT_NE(low, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(low->Z80End(), 0xBFFFu) << MediaClaims(b.l2);
+    EXPECT_EQ(low->geometry.layout, "drawn");
+    const Region* high = StartsAt(0xC000, RegionKind::Screen, DetectorId::Screens);
+    ASSERT_NE(high, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(high->Z80End(), At("buffer") + 2047u) << MediaClaims(b.l2);
+}
+
+/// One LDIR copies a 192-byte strip into the drawn buffer in pieces of 40 and 36 bytes: their common divisor (4) is no
+/// tile size when no copy took 4 bytes alone, so the strip is no set of 48 copied tiles
+TEST_F(AnalysisL2_Test, AnalysisDetectorTiles_CopiedTilesNeedTheUnitAlone)
+{
+    const Built& b = Run("tiles-copied-unit.asm", 30);
+    ASSERT_FALSE(HasFailure());
+    EXPECT_FALSE(Claims(At("buffer"), RegionKind::Screen).empty()) << "the buffer is drawn\n" << MediaClaims(b.l2);
+    for (uint16_t a = At("strip"); a < At("strip") + 192; a = static_cast<uint16_t>(a + 4))
+        for (const Region* r : Claims(a, RegionKind::Tile))
+            EXPECT_FALSE(r->detector == DetectorId::Graphics &&
+                         std::any_of(r->evidence.begin(), r->evidence.end(),
+                                     [](const Evidence& e) { return e.what == "copy"; }))
+                << "pieces of 40 and 36 bytes are no 4-byte tiles: " << r->title << "\n"
+                << MediaClaims(b.l2);
+}
+
+/// Tiles copied from two sets 2 K apart are two tile sets, not one claim over the bytes between them
+TEST_F(AnalysisL2_Test, AnalysisDetectorTiles_CopiedTilesFarSetsApart)
+{
+    const Built& b = Run("tiles-copied-far.asm", 30);
+    ASSERT_FALSE(HasFailure());
+    const Region* low = StartsAt(At("tiles"), RegionKind::Tile, DetectorId::Graphics);
+    ASSERT_NE(low, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(low->Z80End(), At("tiles") + 31u) << MediaClaims(b.l2);
+    EXPECT_EQ(low->geometry.frames, 4u);
+    const Region* high = StartsAt(At("far"), RegionKind::Tile, DetectorId::Graphics);
+    ASSERT_NE(high, nullptr) << MediaClaims(b.l2);
+    EXPECT_EQ(high->Z80End(), At("far") + 31u) << MediaClaims(b.l2);
+    EXPECT_EQ(high->geometry.frames, 4u);
+    for (uint32_t a = At("tiles") + 32u; a < At("far"); a += 64)
+        for (const Region* r : Claims(static_cast<uint16_t>(a), RegionKind::Tile))
+            EXPECT_NE(r->detector, DetectorId::Graphics) << "the bytes between the sets: " << r->title;
+}
+
+/// The font goes on over unprinted glyph slots only while nothing but the glyph readers touched them: a slot the code
+/// writes into (a variable kept in the place of 'Y') ends it
+TEST_F(AnalysisL2_Test, AnalysisDetectorFonts_WrittenSlotEndsTheFont)
+{
+    std::string mutated = ReadFixture("font-slot-text.asm");
+    const std::string from = "        jr main\nprint:";
+    const size_t at = mutated.find(from);
+    ASSERT_NE(at, std::string::npos);
+    mutated.replace(at, from.size(), "        ld (font+('Y'-32)*8+3),a\n        jr main\nprint:");
+    const Built& b = Run("font-slot-text.asm#written", 3, false, mutated);
+    ASSERT_FALSE(HasFailure());
+    const auto glyph = [&](char c) { return static_cast<uint16_t>(At("font") + (c - 32) * 8); };
+    bool w = false;
+    for (const Region* r : Claims(glyph('W'), RegionKind::Font))
+        w |= r->detector == DetectorId::Graphics;
+    EXPECT_TRUE(w) << "'W', never printed, untouched, is the font: " << MediaClaims(b.l2);
+    for (uint16_t a = glyph('Y'); a < glyph('Z'); ++a)
+        for (const Region* r : Claims(a, RegionKind::Font))
+            EXPECT_NE(r->detector, DetectorId::Graphics) << "a slot the code writes is no glyph: " << r->title;
+}
+
+// ---------------------------------------------------------------------------------------------------- stack review
+
+/// A recording that begins inside a routine: POP DE / POP HL take the slots pushed before it (nothing in the replay
+/// pushed them, no LD SP began a walk) and the code reads and writes through them. No word pointer, no pointer table
+/// on the stack
+TEST_F(AnalysisL2_Test, AnalysisDetectorPointerTables_PopBeforeRecordingIsNoTable)
+{
+    const Built& b = Run("pop-before-recording.asm");
+    ASSERT_FALSE(HasFailure());
+    const ByteUse* read = b.l1.UseAt(b.l1.StartKey(0xC100));
+    ASSERT_NE(read, nullptr);
+    ASSERT_NE(read->flags & use::kRead, 0) << "HL came from the slots";
+    for (const PointerUse& p : b.l1.pointers)
+        if (p.form == PointerForm::Word)
+            EXPECT_TRUE(p.origin != b.l1.StartKey(0x9F00) && p.origin != b.l1.StartKey(0x9F02)) << p.z80;
+    for (uint16_t z80 = 0x9F00; z80 < 0x9F04; ++z80)
+    {
+        EXPECT_TRUE(Claims(z80, RegionKind::PointerTable).empty()) << z80;
+        EXPECT_TRUE(Claims(z80, RegionKind::HandlerTable).empty()) << z80;
+    }
+}
+
+/// Rows an SP walk reads (LD SP,rows / POP DE) and nothing else touches: only popped, never pushed, no stack. The
+/// CALL's slots are the stack
+TEST_F(AnalysisL2_Test, AnalysisDetectorCodeMap_PoppedRowsAreNoStack)
+{
+    Run("pop-rows.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* stack = StartsAt(0x9EFE, RegionKind::Unused, DetectorId::CodeMap);
+    ASSERT_NE(stack, nullptr) << "the CALL's return slots";
+    EXPECT_EQ(stack->title.rfind("Stack", 0), 0u) << stack->title;
+    for (uint16_t a = At("rows"); a < At("rows_end"); ++a)
+        for (const Region* r : Claims(a, RegionKind::Unused))
+            EXPECT_NE(r->title.rfind("Stack", 0), 0u) << "popped, never pushed: " << r->title << " at " << a;
+}
+
+/// The word after a handler table lies inside the targets jumped to, but points at the operand of an executed JP:
+/// no entry, the table ends before it
+TEST_F(AnalysisL2_Test, AnalysisDetectorPointerTables_HullWordIntoAnOperandIsNoEntry)
+{
+    Run("hull-operand.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* table = StartsAt(At("table"), RegionKind::HandlerTable);
+    ASSERT_NE(table, nullptr);
+    EXPECT_EQ(table->Z80End(), At("after") - 1u);
+    EXPECT_EQ(table->geometry.count, 12u);
+}
+
+/// A handler a table entry points at that never ran ends at its first JP no branch before it goes past: the bytes
+/// after it decode and end in a RET, but are no part of it
+TEST_F(AnalysisL2_Test, AnalysisDetectorCodeMap_UnrunHandlerEndsAtItsFirstStop)
+{
+    Run("hull-operand.asm");
+    ASSERT_FALSE(HasFailure());
+    const Region* handler = StartsAt(At("unrun_a"), RegionKind::Code, DetectorId::CodeMap);
+    ASSERT_NE(handler, nullptr);
+    EXPECT_EQ(handler->status, RegionStatus::Inferred);
+    EXPECT_EQ(handler->Z80End(), At("trailer") - 1u);
+    EXPECT_TRUE(IsEntry(At("unrun_a")));
+    EXPECT_TRUE(Claims(At("trailer"), RegionKind::Code).empty());
+}
+
+/// A routine that never ran whose best decode starts one byte into the stretch, and a table entry pointing at that
+/// start: a routine the session did not reach, no leftover
+TEST_F(AnalysisL2_Test, AnalysisDetectorCodeMap_TableEntryAtTheDecodedStart)
+{
+    Run("leftover-offset-entry.asm");
+    ASSERT_FALSE(HasFailure());
+    EXPECT_FALSE(Claims(At("fill"), RegionKind::Unused).empty()) << "the fill before it";
+    for (const uint16_t a : {At("junk"), At("routine"), At("routine_loop")})
+        for (const Region* r : Claims(a, RegionKind::Unused))
+            ADD_FAILURE() << "a table entry points at the routine's start: " << r->title << " at " << a;
 }

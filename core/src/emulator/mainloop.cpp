@@ -18,10 +18,13 @@
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/watch/framewatch.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/tape/tape.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/media/mediamanager.h"
 #include "stdafx.h"
 
@@ -546,6 +549,12 @@ void MainLoop::CompleteFrame()
         _context->pDebugManager->GetJoystickManager()->OnFrame();
     }
 
+    // The device access watch: the frame's counts into its window (nothing while it is off). A tape still playing
+    // is the program still loading
+    if (_context->pPortDecoder)
+        _context->pPortDecoder->GetAccessWatch().OnFrameBoundary(_context->pTape != nullptr &&
+                                                                 _context->pTape->IsPlaying());
+
     // Host controllers: the frame's sample of every connector the host drives (journaled input, after the checkpoint)
     if (_context->pControllerManager)
         _context->pControllerManager->OnFrame(_state->frame_counter);
@@ -557,6 +566,14 @@ void MainLoop::CompleteFrame()
         _context->pCore->OnNetworkFrame();
     }
 
+    // Armed frame watches (debugger/watch/framewatch.h), last: they see the frame as every hook above left it. Not in
+    // a TTD silent replay (a seek re-runs frames that already happened). Off: one relaxed load
+    if (_context->pDebugManager && !_context->ttdReplayActive)
+    {
+        framewatch::Manager* watches = _context->pDebugManager->GetFrameWatches();
+        if (watches && watches->Armed())
+            watches->OnFrameEnd(_state->frame_counter);
+    }
 }
 
 void MainLoop::RestartFrame()

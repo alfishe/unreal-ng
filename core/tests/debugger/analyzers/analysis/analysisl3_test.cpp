@@ -8,6 +8,7 @@
 
 #include "pch.h"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <fstream>
@@ -22,6 +23,7 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "debugger/analyzers/analysis/analysisinstance.h"
 #include "debugger/analyzers/analysis/analysisjobs.h"
 #include "debugger/analyzers/analysis/detectors/detectors.h"
 #include "debugger/analyzers/analysis/l3coverage.h"
@@ -143,6 +145,7 @@ ExperimentSpec Spec(const std::string& json)
 class AnalysisL3_Test : public ::testing::Test
 {
 protected:
+    void Templates(const Built& b);
     /// One recording per fixture (the source is released once captured): the tests reading one fixture share it
     const Built& Fixture(const std::string& name, unsigned frames = 3)
     {
@@ -230,6 +233,222 @@ TEST_F(AnalysisL3_Test, ReadUnwrittenFlagsABufferNotAStaticTable)
     EXPECT_TRUE(bufferFound) << "an area read and never written, all zeros, is a candidate";
 }
 
+TEST_F(AnalysisL3_Test, OverlayIsOneFinding)
+{
+    const Built& b = Fixture("stages.asm", 5);
+    std::vector<const Finding*> overlays;
+    const std::vector<Finding> findings = BaseFindings(b.l1, b.l2);
+    for (const Finding& f : findings)
+        if (f.kind == FindingKind::Bug && f.subject == "code-overwritten")
+            overlays.push_back(&f);
+    ASSERT_EQ(overlays.size(), 1u) << "one copy over code that ran: one finding, not one per instruction";
+    EXPECT_EQ(overlays[0]->start, 0xA000);
+    EXPECT_EQ(overlays[0]->end, 0xA00F);
+    for (const Finding& f : findings)
+        EXPECT_FALSE(f.kind == FindingKind::Bug && f.subject == "code-overwritten" && f.start >= 0xB000)
+            << "stage 2 was copied before it ran: " << f.title;
+}
+
+TEST_F(AnalysisL3_Test, BufferOverCodeIsAnOverlayPatchIsNot)
+{
+    const Built& b = Fixture("patch-overlay.asm", 2);
+    const uint16_t once = b.symbols.at("once");
+    const uint16_t patched = b.symbols.at("patched");
+    bool overlay = false;
+    for (const Finding& f : BaseFindings(b.l1, b.l2))
+    {
+        if (f.kind != FindingKind::Bug || f.subject != "code-overwritten")
+            continue;
+        if (f.start <= once && f.end >= once)
+            overlay = true;
+        EXPECT_FALSE(f.start <= patched + 1 && f.end >= patched + 1) << "an operand patch is no overlay: " << f.title;
+    }
+    EXPECT_TRUE(overlay) << "code that ran once, then a buffer written over it (not a block copy): an overlay";
+}
+
+TEST_F(AnalysisL3_Test, OverlayIsNoConflict)
+{
+    const Built& b = Fixture("drawn-back-buffer.asm", 20);
+    const uint16_t init = b.symbols.at("init");
+    bool claimed = false;
+    for (const Region& r : b.l2.store.Regions())
+        claimed |= r.kind == RegionKind::Screen && r.z80 <= init && r.Z80End() >= init;
+    ASSERT_TRUE(claimed) << "the back buffer covers the code that ran once";
+    for (const Finding& f : BaseFindings(b.l1, b.l2))
+        EXPECT_FALSE(f.kind == FindingKind::Conflict && f.start <= init + 5 && f.end >= init)
+            << "the overlay is the code-overwritten bug, not a conflict too: " << f.claim;
+}
+
+TEST_F(AnalysisL3_Test, IndexPastTableNeedsAnIndex)
+{
+    const Built& b = Fixture("index-past-table.asm", 3);
+    const uint16_t tableA = b.symbols.at("table_a");
+    const uint16_t tableB = b.symbols.at("table_b");
+    bool pastA = false;
+    std::string all;
+    for (const Finding& f : BaseFindings(b.l1, b.l2))
+    {
+        if (f.kind != FindingKind::Bug || f.subject != "index-past-table")
+            continue;
+        all += f.claim + "\n";
+        pastA |= f.start >= tableA + 8 && f.start < tableA + 16;
+        EXPECT_FALSE(f.start + 16 >= tableB && f.end <= tableB + 24)
+            << "a walk through the bytes around table B is no index past it: " << f.claim;
+    }
+    for (const Region& r : b.l2.store.Regions())
+        if (r.kind == RegionKind::PointerTable || r.kind == RegionKind::HandlerTable || r.kind == RegionKind::InitTable)
+            all += "table " + std::to_string(r.z80) + "-" + std::to_string(r.Z80End()) + " " + r.title + "\n";
+    EXPECT_TRUE(pastA) << "the index 4 read past table A's four entries: " << all;
+}
+
+TEST_F(AnalysisL3_Test, IndexAroundTableIsALargerStructure)
+{
+    // index-around-table-two: the reader also reads inside the table through another selector; over all its indexes
+    // it still reads on both sides. index-around-table-fields: two instructions of one routine read a record's fields,
+    // neither alone on both sides; the routine's connected reads are
+    for (const char* name : {"index-around-table.asm", "index-around-table-two.asm", "index-around-table-fields.asm"})
+    {
+        SCOPED_TRACE(name);
+        const Built& b = Fixture(name, 3);
+        const uint16_t table = b.symbols.at("table");
+        bool found = false;
+        std::string all;
+        for (const Region& r : b.l2.store.Regions())
+            if (r.kind == RegionKind::PointerTable || r.kind == RegionKind::HandlerTable ||
+                r.kind == RegionKind::InitTable)
+            {
+                all += "table " + std::to_string(r.z80) + "-" + std::to_string(r.Z80End()) + " " + r.title + "\n";
+                found |= r.z80 <= table && r.Z80End() >= table + 7;
+            }
+        ASSERT_TRUE(found) << "the four pointers are a table: " << all;
+        for (const Finding& f : BaseFindings(b.l1, b.l2))
+            EXPECT_FALSE(f.kind == FindingKind::Bug && f.subject == "index-past-table")
+                << "an index that reads on both sides of the table addresses a larger structure: " << f.claim << "\n"
+                << all;
+    }
+}
+
+TEST_F(AnalysisL3_Test, AnalysisDetectorRecords_Templates)
+{
+    for (const auto& [name, frames] : {std::pair<const char*, unsigned>{"record-templates.asm", 3},
+                                       std::pair<const char*, unsigned>{"record-templates-busy.asm", 60},
+                                       std::pair<const char*, unsigned>{"record-templates-patched.asm", 3}})
+    {
+        SCOPED_TRACE(name);
+        // the busy variant: a blitter fills L1's copy list before the template copier runs
+        Templates(Fixture(name, frames));
+    }
+}
+
+void AnalysisL3_Test::Templates(const Built& b)
+{
+    const uint16_t templates = b.symbols.at("templates");
+    const uint16_t after = b.symbols.at("after");
+    const Region* found = nullptr;
+    std::string all;
+    for (const Region& r : b.l2.store.Regions())
+    {
+        if (r.kind != RegionKind::RecordArray)
+            continue;
+        all += "records " + std::to_string(r.z80) + "-" + std::to_string(r.Z80End()) + " stride " +
+               std::to_string(r.geometry.stride) + "\n";
+        if (r.z80 == templates && r.detector == DetectorId::Records)
+            found = &r;
+    }
+    ASSERT_NE(found, nullptr) << "the templates copied into the records are a table: " << all;
+    EXPECT_EQ(found->geometry.stride, 9u) << all;
+    EXPECT_EQ(found->geometry.count, 3u) << all;
+    EXPECT_LT(found->Z80End(), after) << "the data after them is not in it";
+}
+
+TEST_F(AnalysisL3_Test, AnalysisDetectorRecords_ReadThroughAnIndex)
+{
+    const Built& b = Fixture("records-indexed.asm", 3);
+    const uint16_t table = b.symbols.at("table");
+    const uint16_t after = b.symbols.at("after");
+    const Region* found = nullptr;
+    std::string all;
+    for (const Region& r : b.l2.store.Regions())
+    {
+        all += std::string(RegionKindName(r.kind)) + " " + std::to_string(r.z80) + "-" + std::to_string(r.Z80End()) +
+               " stride " + std::to_string(r.geometry.stride) + "\n";
+        if (r.kind == RegionKind::RecordArray && r.z80 == table && r.detector == DetectorId::Records)
+            found = &r;
+    }
+    ASSERT_NE(found, nullptr) << "the table read through the kind is records: " << all;
+    EXPECT_EQ(found->geometry.stride, 4u) << all;
+    EXPECT_EQ(found->geometry.count, 8u) << all;
+    EXPECT_LT(found->Z80End(), after) << "the data after it is not in it";
+}
+
+TEST_F(AnalysisL3_Test, AnalysisDetectorInitTables_PaddedEntries)
+{
+    const Built& b = Fixture("init-padded.asm", 3);
+    const uint16_t table = b.symbols.at("table");
+    const uint16_t tail = b.symbols.at("tail");
+    const Region* found = nullptr;
+    std::string all;
+    for (const Region& r : b.l2.store.Regions())
+    {
+        if (r.kind != RegionKind::InitTable)
+            continue;
+        all += "table " + std::to_string(r.z80) + "-" + std::to_string(r.Z80End()) + "\n";
+        if (r.z80 == table)
+            found = &r;
+    }
+    ASSERT_NE(found, nullptr) << "the table starts at its first entry, the padding after it inside: " << all;
+    EXPECT_EQ(found->Z80End(), table + 59) << "it ends at the last entry's last read byte: " << all;
+    EXPECT_LT(found->Z80End(), tail) << "the tail nothing reads is not in it";
+    for (const Finding& f : BaseFindings(b.l1, b.l2))
+        EXPECT_FALSE(f.kind == FindingKind::Bug && f.subject == "index-past-table" && f.start < tail &&
+                     f.end >= table)
+            << "the reads stay inside the table: " << f.claim;
+}
+
+TEST_F(AnalysisL3_Test, AnalysisDetectorPointerTables_UnrunHandlers)
+{
+    const Built& b = Fixture("unrun-handlers.asm", 3);
+    const uint16_t table = b.symbols.at("table");
+    const uint16_t after = b.symbols.at("after");
+    std::string all;
+    const Region* found = nullptr;
+    uint32_t tables = 0;
+    for (const Region& r : b.l2.store.Regions())
+    {
+        all += std::string(RegionKindName(r.kind)) + " " + std::to_string(r.z80) + "-" + std::to_string(r.Z80End()) +
+               "\n";
+        if (r.kind == RegionKind::HandlerTable && r.Z80End() >= table && r.z80 < after)
+        {
+            ++tables;
+            found = &r;
+        }
+    }
+    ASSERT_EQ(tables, 1u) << "the words between the used entries point inside the targets jumped to: " << all;
+    EXPECT_EQ(found->z80, table) << all;
+    EXPECT_EQ(found->Z80End(), after - 1) << "all twelve words, the guard after them not: " << all;
+    EXPECT_EQ(found->geometry.count, 12u) << all;
+    for (const char* name : {"unrun_a", "unrun_b"})
+    {
+        SCOPED_TRACE(name);
+        const uint16_t entry = b.symbols.at(name);
+        const Region* code = nullptr;
+        for (const Region& r : b.l2.store.Regions())
+            if (r.kind == RegionKind::Code && r.z80 <= entry && r.Z80End() >= entry)
+                code = &r;
+        ASSERT_NE(code, nullptr) << "a table entry points at the handler that never ran: " << all;
+        EXPECT_EQ(code->z80, entry) << all;
+        EXPECT_EQ(code->Z80End(), entry + 16) << "up to its JP back: " << all;
+        EXPECT_EQ(code->status, RegionStatus::Inferred);
+        EXPECT_TRUE(std::any_of(b.l2.entries.begin(), b.l2.entries.end(),
+                                [&](const auto& e) { return e.first == entry; }))
+            << "the table target is a routine entry";
+        const CodeLine* line = b.l2.CodeAt(b.l1.StartKey(entry));
+        ASSERT_NE(line, nullptr) << "its instructions are in the code map";
+        EXPECT_FALSE(line->executed);
+        EXPECT_TRUE(line->entry);
+    }
+}
+
 TEST_F(AnalysisL3_Test, ReviewQueueSelectsDecisionsCapsAndDropsResolved)
 {
     const Built& b = Fixture("poke-flip.asm");
@@ -311,6 +530,23 @@ TEST_F(AnalysisL3_Test, ExperimentObservedAndRefuted)
     EXPECT_GT(batch.results[0].newCode, 0u) << "the rare code never ran in the session";
     EXPECT_EQ(batch.results[1].verdict, "refuted") << ExperimentResultLine(batch.results[1]);
     EXPECT_EQ(batch.results[1].checks.at(0).actual, "0 hits");
+}
+
+TEST_F(AnalysisL3_Test, ExperimentMachineRunsTheRecordedDiskTiming)
+{
+    // Fast disk compresses the WD1793's timing and is never in effect under a recording: the free machine an
+    // experiment gets a recording's state into must not have it either (a fork taken while a disk command ran ended
+    // the command 21000 T early and left the recorded path, POC 043)
+    const Built& b = Fixture("poke-flip.asm");
+    std::string error;
+    AnalysisInstance free;
+    ASSERT_TRUE(free.Make(*b.bundle, "analysis-test-free", false, error)) << error;
+    FeatureManager* features = free.GetEmulator()->GetFeatureManager();
+    ASSERT_TRUE(features->hasFeature(Features::kFastDisk));
+    EXPECT_FALSE(features->isEnabled(Features::kFastDisk)) << "fast disk is on, the recording ran without it";
+    // The default it overrides: on, as for any new machine
+    ASSERT_TRUE(features->setFeature(Features::kFastDisk, true));
+    EXPECT_TRUE(features->isEnabled(Features::kFastDisk));
 }
 
 TEST_F(AnalysisL3_Test, ExperimentSpecRefusals)
@@ -802,4 +1038,226 @@ TEST_F(AnalysisL3_Test, ReviewEntryCandidatesAndKindChangesReachTheDraft)
     ASSERT_EQ(p.size() + 1, a.size());
     EXPECT_EQ(Member(p.front(), "id").s, Member(a[1], "id").s);
     EXPECT_EQ(Execute(emulator, "review", {{"op", "list"}, {"reason", "nonsense"}}).error, Error::BadRequest);
+}
+
+// ---------------------------------------------------------------------------------------------------- stack, ROM copy
+
+/// FinishUnused: the bytes only the stack touched are the stack, an untouched copy of the ROM's bytes (the letters
+/// BASIC's user-defined graphics leave in RAM) is a ROM copy; both are Unused and neither is an unknown area. An
+/// unknown area over stack bytes names the stack, not plain data
+TEST_F(AnalysisL3_Test, AnalysisDetectorCodeMap_StackAndRomCopyAreUnused)
+{
+    const Built& b = Fixture("stack-rom-copy.asm", 3);
+    ASSERT_FALSE(HasFailure());
+    const uint16_t stackLow = b.symbols.at("stack");
+    const uint16_t top = b.symbols.at("stack_top");
+    const uint16_t copy = b.symbols.at("font_copy");
+    const uint16_t copyEnd = b.symbols.at("font_copy_end");
+    const auto evidence = [](const Region& r, const std::string& what) -> const Evidence* {
+        for (const Evidence& e : r.evidence)
+            if (e.what == what)
+                return &e;
+        return nullptr;
+    };
+    std::string all;
+    const Region* stack = nullptr;
+    const Region* rom = nullptr;
+    for (const Region& r : b.l2.store.Regions())
+    {
+        all += std::string(RegionKindName(r.kind)) + " " + Hex4Text(r.z80) + "-" + Hex4Text(r.Z80End()) + " " +
+               r.title + "\n";
+        if (r.kind != RegionKind::Unused || r.detector != DetectorId::CodeMap)
+            continue;
+        if (evidence(r, "stack") != nullptr && r.z80 < top && r.Z80End() >= top - 1)
+            stack = &r;
+        if (evidence(r, "rom-copy") != nullptr && r.z80 <= copy && r.Z80End() >= copy)
+            rom = &r;
+    }
+    ASSERT_NE(stack, nullptr) << "the bytes CALL and PUSH touched are the stack: " << all;
+    EXPECT_EQ(stack->z80, top - 4) << "a return address and HL: " << all;
+    EXPECT_EQ(stack->Z80End(), top - 1) << all;
+    EXPECT_EQ(evidence(*stack, "stack")->count, 4u);
+    ASSERT_NE(rom, nullptr) << "the untouched copy of the ROM's letters is a ROM copy: " << all;
+    EXPECT_EQ(rom->z80, copy) << all;
+    EXPECT_EQ(rom->Z80End(), copyEnd - 1) << "the 64 bytes, the guard after them not: " << all;
+    EXPECT_EQ(evidence(*rom, "rom-copy")->z80, 0x3E08) << "the ROM's letter A";
+    EXPECT_NE(rom->title.find("$3E08-$3E47"), std::string::npos) << rom->title;
+    // Unused explains the bytes: no unknown finding over them
+    for (const Finding& f : BaseFindings(b.l1, b.l2))
+        if (f.kind == FindingKind::Unknown)
+            EXPECT_TRUE(f.end < top - 4 || f.start >= copyEnd) << f.claim;
+
+    // Only the fallback over the stack area (its guard byte, the 12 bytes never pushed, the 4 pushed): the unknown
+    // area names the stack, not plain data
+    L2Result fallback;
+    Region area;
+    area.lo = b.l1.StartKey(static_cast<uint16_t>(stackLow - 1));
+    area.hi = b.l1.StartKey(static_cast<uint16_t>(top - 1));
+    area.z80 = static_cast<uint16_t>(stackLow - 1);
+    area.kind = RegionKind::Untouched;
+    area.detector = DetectorId::CodeMap;
+    area.confidence = 100;
+    area.evidence.push_back(Evidence{"untouched", area.z80, area.Size(), "no access in the replay"});
+    ASSERT_TRUE(fallback.store.Add(area));
+    fallback.store.Finish();
+    uint32_t unknown = 0;
+    for (const Finding& f : BaseFindings(b.l1, fallback))
+    {
+        if (f.kind != FindingKind::Unknown)
+            continue;
+        ++unknown;
+        EXPECT_EQ(f.subject, "stack") << f.claim;
+        EXPECT_NE(f.claim.find("4 bytes accessed only by the stack"), std::string::npos) << f.claim;
+        EXPECT_EQ(f.claim.find("plain data"), std::string::npos) << f.claim;
+    }
+    EXPECT_EQ(unknown, 1u);
+}
+
+/// FinishUnused: an untouched copy of a ROM routine (LD-BYTES, as a program leaves it to patch and call later) is code
+/// the session did not run: inferred Code with its instructions in the code map, the ROM range named, never Unused
+TEST_F(AnalysisL3_Test, AnalysisDetectorCodeMap_RomCopyOfCodeIsCode)
+{
+    const Built& b = Fixture("rom-copy-code.asm", 3);
+    ASSERT_FALSE(HasFailure());
+    const uint16_t copy = b.symbols.at("loader");
+    const uint16_t copyEnd = b.symbols.at("loader_end");
+    std::string all;
+    const Region* code = nullptr;
+    for (const Region& r : b.l2.store.Regions())
+    {
+        all += std::string(RegionKindName(r.kind)) + " " + Hex4Text(r.z80) + "-" + Hex4Text(r.Z80End()) + " " +
+               r.title + "\n";
+        if (r.z80 <= copy && r.Z80End() >= copy)
+        {
+            EXPECT_NE(r.kind, RegionKind::Unused) << "a ROM routine's copy is no leftover: " << all;
+            if (r.kind == RegionKind::Code && r.detector == DetectorId::CodeMap)
+                code = &r;
+        }
+    }
+    ASSERT_NE(code, nullptr) << all;
+    EXPECT_EQ(code->status, RegionStatus::Inferred);
+    EXPECT_EQ(code->z80, copy) << all;
+    EXPECT_EQ(code->Z80End(), copyEnd - 1) << "the 49 bytes, the guard after them not: " << all;
+    EXPECT_NE(code->title.find("ROM copy, code"), std::string::npos) << code->title;
+    EXPECT_NE(code->title.find("$0556-$0586"), std::string::npos) << code->title;
+    bool rom = false;
+    for (const Evidence& e : code->evidence)
+        rom = rom || (e.what == "rom-copy" && e.z80 == 0x0556);
+    EXPECT_TRUE(rom) << "the ROM's LD-BYTES named";
+    EXPECT_NE(b.l2.CodeAt(b.l1.StartKey(copy)), nullptr) << "its first instruction in the code map";
+    EXPECT_NE(b.l2.CodeAt(b.l1.StartKey(static_cast<uint16_t>(copy + 0x16))), nullptr) << "CALL $05E7";
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Records: an array a fill completes (records.cpp, ArraysCompletedByFills)
+// ---------------------------------------------------------------------------------------------------------------------
+
+TEST_F(AnalysisL3_Test, AnalysisDetectorRecords_FillCompletesIndexedArray)
+{
+    const Built& b = Fixture("records-fill-completes.asm", 3);
+    const uint16_t table = b.symbols.at("table");
+    const uint16_t after = b.symbols.at("after");
+    const Region* found = nullptr;
+    std::string all;
+    for (const Region& r : b.l2.store.Regions())
+    {
+        if (r.kind != RegionKind::RecordArray)
+            continue;
+        all += "records " + std::to_string(r.z80) + "-" + std::to_string(r.Z80End()) + " stride " +
+               std::to_string(r.geometry.stride) + " count " + std::to_string(r.geometry.count) + "\n";
+        if (r.z80 == table && r.detector == DetectorId::Records && r.geometry.stride == 6 && r.geometry.count == 8)
+            found = &r;
+    }
+    ASSERT_NE(found, nullptr) << "rows 0-2 read through base + 6 x round, rows 1-7 cleared by one fill: 8 rows of 6 "
+                                 "from the base\n"
+                              << all;
+    EXPECT_LT(found->Z80End(), after) << "the data after the table is not in it";
+    EXPECT_EQ(found->status, RegionStatus::Inferred) << "rows 3-7 only the fill reached";
+    bool fill = false;
+    for (const Evidence& e : found->evidence)
+        fill |= e.what == "fill";
+    EXPECT_TRUE(fill) << "the fill is the evidence for the rows no access reached";
+    // The fields of the rows read: the lives byte at +0, the score the LDIR copied at +1..+5
+    ASSERT_GE(found->geometry.fields.size(), 2u);
+    EXPECT_EQ(found->geometry.fields[0].offset, 0u);
+    EXPECT_EQ(found->geometry.fields[0].size, 1u);
+    EXPECT_EQ(found->geometry.fields[1].offset, 1u);
+    EXPECT_EQ(found->geometry.fields[1].size, 5u);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Review fixes: an index past the middle one of three tables one selector indexes; overlays by physical keys
+// ---------------------------------------------------------------------------------------------------------------------
+
+TEST_F(AnalysisL3_Test, IndexPastTableSharedSelector)
+{
+    const Built& b = Fixture("index-shared-selector.asm", 3);
+    const uint16_t tableA = b.symbols.at("table_a");
+    const uint16_t tableB = b.symbols.at("table_b");
+    const uint16_t tableC = b.symbols.at("table_c");
+    bool pastB = false;
+    std::string all;
+    for (const Finding& f : BaseFindings(b.l1, b.l2))
+    {
+        if (f.kind != FindingKind::Bug || f.subject != "index-past-table")
+            continue;
+        all += f.claim + "\n";
+        pastB |= f.start >= tableB + 8 && f.start < tableB + 16;
+        for (const uint16_t inside : {tableA, tableC})
+            EXPECT_FALSE(f.start + 16 >= inside && f.end <= inside + 24)
+                << "the index of this table stays inside it: " << f.claim;
+    }
+    for (const Region& r : b.l2.store.Regions())
+        if (r.kind == RegionKind::PointerTable || r.kind == RegionKind::HandlerTable || r.kind == RegionKind::InitTable)
+            all += "table " + std::to_string(r.z80) + "-" + std::to_string(r.Z80End()) + " " + r.title + "\n";
+    EXPECT_TRUE(pastB) << "the level number indexes three tables; index 4 reads past table B: " << all;
+}
+
+/// Code and data laid over it in a page the start's paging did not map: the overlap is checked in the regions' own
+/// page, where the code ran and was overlaid, not in the page the start mapped at those addresses
+TEST_F(AnalysisL3_Test, OverlayConflictByPhysicalKeys)
+{
+    const Built& b = Fixture("patch-overlay.asm", 2);
+    L1Result l1 = b.l1;
+    uint16_t page = 0;
+    for (const BytePage& p : l1.bytePages)
+        page = std::max<uint16_t>(page, static_cast<uint16_t>(p.page + 1));
+    while (std::find(std::begin(l1.startBanks), std::end(l1.startBanks), page) != std::end(l1.startBanks))
+        ++page;
+    BytePage extra;
+    extra.page = page;
+    extra.bytes.resize(0x4000);
+    for (uint16_t offset = 0x100; offset <= 0x10F; ++offset)
+    {
+        ByteUse& u = extra.bytes[offset];
+        u.flags = use::kOpcode | use::kWrite | use::kOtherWrite | use::kSmc;
+        u.writes = 1;
+        u.overlaid = true;
+    }
+    l1.bytePages.push_back(std::move(extra));
+    ASSERT_NE(KeyPage(l1.StartKey(0xC108)), page);
+
+    L2Result l2;
+    Region code;
+    code.lo = MakeKey(page, 0x100);
+    code.hi = MakeKey(page, 0x10F);
+    code.z80 = 0xC100;
+    code.kind = RegionKind::Code;
+    code.detector = DetectorId::CodeMap;
+    code.confidence = 900;
+    code.evidence.push_back(Evidence{"executed", code.z80, 16, "ran, then laid over"});
+    Region text;
+    text.lo = MakeKey(page, 0x108);
+    text.hi = MakeKey(page, 0x11F);
+    text.z80 = 0xC108;
+    text.kind = RegionKind::Text;
+    text.detector = DetectorId::Text;
+    text.confidence = 800;
+    text.evidence.push_back(Evidence{"reader", text.z80, 1, "printed"});
+    ASSERT_TRUE(l2.store.Add(code));
+    ASSERT_TRUE(l2.store.Add(text));
+    l2.store.Finish();
+    ASSERT_EQ(l2.store.Conflicts().size(), 1u);
+    for (const Finding& f : BaseFindings(l1, l2))
+        EXPECT_NE(f.kind, FindingKind::Conflict) << "the text laid over code that ran is no conflict: " << f.claim;
 }

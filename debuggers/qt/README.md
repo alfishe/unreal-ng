@@ -1,7 +1,8 @@
 # unreal-debugger - the Qt debugger
 
 eCat3's debugger window (Mikhail Revzin, <https://github.com/Ptr314/ecat3>, GPL-3.0) over unreal-ng: one window for
-the machine, a tab per processor (the main Z80, a General Sound card's Z80), dumps of every address space and memory
+the machine, a tab per processor (the main Z80, a General Sound card's Z80: its step buttons step the card's CPU, in
+this process and over the WebAPI's `?cpu=gs`), dumps of every address space and memory
 page, stack, breakpoints, history and a Devices tab with every report the machine has (the device catalog,
 `GET /state/devices`). Ported and measured in [POC 041](../../tools/poc/041-ecat-debugger/README.md); the port is ours
 and is adapted freely.

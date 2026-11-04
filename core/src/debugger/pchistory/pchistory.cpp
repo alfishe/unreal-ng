@@ -1,4 +1,5 @@
 #include "pchistory.h"
+#include "emulator/readoutschanged.h"
 
 #include <algorithm>
 
@@ -23,8 +24,11 @@ void PcHistory::Arm(bool on)
 {
     if (on && !_armed)
         Clear();
+    const bool changed = _armed != on;
     _armed = on;
     _context->SetStepWork(EmulatorContext::kStepWorkPcHistory, on);
+    if (changed)
+        NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers: pchist armed
 }
 
 void PcHistory::Clear()

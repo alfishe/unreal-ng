@@ -766,19 +766,23 @@ std::optional<bool> ActionRegistry::ToggleState(std::string_view id, const std::
     }
 }
 
-std::vector<ActionRegistry::ToggleReadout> ActionRegistry::ToggleReadouts() const
+std::shared_ptr<const std::vector<ActionRegistry::ToggleReadout>> ActionRegistry::ToggleReadouts() const
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    std::vector<ToggleReadout> out;
+    if (_toggles && _togglesRevision == _revision)
+        return _toggles;
+    auto out = std::make_shared<std::vector<ToggleReadout>>();
     for (const std::string& id : _order)
     {
         const Entry& entry = *_entries.find(id)->second;
         if (!entry.rules.state)
             continue;
         const std::string stem = entry.rules.toggleStem.empty() ? id : entry.rules.toggleStem;
-        out.push_back({"toggle." + stem, id, entry.rules.toggleParam});
+        out->push_back({"toggle." + stem, id, entry.rules.toggleParam});
     }
-    return out;
+    _toggles = std::move(out);
+    _togglesRevision = _revision;
+    return _toggles;
 }
 
 void ActionRegistry::SetActivityFeed(ActivityFeed* feed)

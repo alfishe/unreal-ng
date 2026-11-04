@@ -247,7 +247,8 @@ public:
         std::string id;
         std::string param;
     };
-    std::vector<ToggleReadout> ToggleReadouts() const;
+    /// Built once per catalogue revision (the readouts ask on every read of a `toggle.*`)
+    std::shared_ptr<const std::vector<ToggleReadout>> ToggleReadouts() const;
     /// Every action with its availability on `instanceId` for `origin` (a dry run of the gates: no session is
     /// opened). Reads published state only. Without the instance every row is unavailable "no machine"
     std::vector<ActionStatus> Statuses(const std::string& instanceId, const ActionOrigin& origin) const;
@@ -294,6 +295,8 @@ private:
     bool _shutDown = false;
     std::vector<RegistrationHandle> _builtin;  ///< the core actions of Instance()
     uint64_t _revision = 0;
+    mutable std::shared_ptr<const std::vector<ToggleReadout>> _toggles;  ///< ToggleReadouts of `_togglesRevision`
+    mutable uint64_t _togglesRevision = 0;
     ActivityFeed* _feed = nullptr;
     bool _post = false;  ///< Instance(): a catalogue change posts NC_ACTION_CATALOGUE
 };

@@ -400,6 +400,82 @@ TEST_F(McpDispatcher_Test, ToolsList_EveryToolTakesResponseFormat)
         EXPECT_TRUE(tool["inputSchema"]["properties"].isMember("response_format")) << tool["name"].asString();
 }
 
+// Answer budgets: every tool takes max_chars; a long answer fits, says what it left out, and its JSON says so too
+TEST_F(McpDispatcher_Test, ToolsCall_MaxCharsFitsTheWholeAnswer)
+{
+    Json::Value emulators(Json::arrayValue);
+    for (int i = 0; i < 300; i++)
+    {
+        Json::Value emulator;
+        emulator["id"] = "emu-" + std::to_string(i);
+        emulator["state"] = "paused";
+        emulator["model"] = "ZX-Spectrum 128K";
+        emulators.append(emulator);
+    }
+    Json::Value listBody;
+    listBody["emulators"] = emulators;
+    _caller->routes["GET /api/v1/emulator"] = {200, listBody};
+
+    Json::Value params;
+    params["name"] = "emulator_manage";
+    params["arguments"]["action"] = "list";
+    const Json::Value whole = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    const std::string wholeText = whole["result"]["content"][0]["text"].asString();
+    ASSERT_GT(wholeText.size(), 2000u) << "the fixture must not fit";
+
+    params["arguments"]["max_chars"] = 1000;
+    params["arguments"]["response_format"] = "json";
+    const Json::Value fitted = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    ASSERT_FALSE(fitted["result"]["isError"].asBool()) << fitted.toStyledString();
+    const Json::Value& content = fitted["result"]["content"];
+    ASSERT_EQ(content.size(), 2u);
+    size_t chars = 0;
+    for (const Json::Value& block : content)
+        chars += block["text"].asString().size();
+    EXPECT_LE(chars, 1000u) << "text and JSON together";
+    const std::string text = content[0]["text"].asString();
+    EXPECT_EQ(text.substr(0, 40), wholeText.substr(0, 40)) << "the first line stays";
+    EXPECT_NE(text.find("left out for max_chars=1000; narrow the call"), std::string::npos) << text;
+    const Json::Value& structured = fitted["result"]["structuredContent"];
+    EXPECT_LT(structured["emulators"].size(), 300u);
+    EXPECT_GT(structured["emulators"].size(), 0u);
+    EXPECT_EQ(structured["truncated"]["omitted"]["emulators"].asUInt(), 300u - structured["emulators"].size());
+    EXPECT_EQ(structured["truncated"]["max_chars"].asUInt(), 1000u) << "the note names the budget asked for";
+
+    // Text only: content[] gets the whole budget, and structuredContent (read instead of it) the whole budget too
+    params["arguments"].removeMember("response_format");
+    const Json::Value textOnly = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    ASSERT_EQ(textOnly["result"]["content"].size(), 1u);
+    EXPECT_LE(textOnly["result"]["content"][0]["text"].asString().size(), 1000u);
+    EXPECT_GT(textOnly["result"]["content"][0]["text"].asString().size(), text.size()) << "more than a third";
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    const std::string json = Json::writeString(writer, textOnly["result"]["structuredContent"]);
+    EXPECT_LE(json.size(), 1000u);
+    EXPECT_GT(json.size(), 700u) << "not just what the text left over";
+}
+
+TEST_F(McpDispatcher_Test, ToolsCall_BadMaxCharsIsAToolErrorBeforeTheToolRuns)
+{
+    for (const Json::Value& bad : {Json::Value(10), Json::Value("lots"), Json::Value(-5)})
+    {
+        Json::Value params;
+        params["name"] = "emulator_manage";
+        params["arguments"]["action"] = "list";
+        params["arguments"]["max_chars"] = bad;
+        const Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+        ASSERT_TRUE(response["result"]["isError"].asBool()) << bad.toStyledString();
+        EXPECT_NE(response["result"]["content"][0]["text"].asString().find("max_chars must be"), std::string::npos);
+    }
+}
+
+TEST_F(McpDispatcher_Test, ToolsList_EveryToolTakesMaxChars)
+{
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/list"));
+    for (const Json::Value& tool : response["result"]["tools"])
+        EXPECT_TRUE(tool["inputSchema"]["properties"].isMember("max_chars")) << tool["name"].asString();
+}
+
 // A screenshot with include_image comes as an MCP image block (the model sees the picture); the JSON echo does not
 // repeat the base64
 TEST_F(McpDispatcher_Test, CaptureMediaScreenshot_PixelsAreAnImageBlock)

@@ -5,6 +5,8 @@
 #include "emulator/memory/devicememory.h"
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runpacer.h"
+#include "emulator/execution/runcontrol.h"
+#include "debugger/watch/framewatch.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
@@ -23,6 +25,7 @@
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
+#include "debugger/targets/cpuview.h"
 #include <algorithm>
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
@@ -294,6 +297,15 @@ protected:
             return o.as<bool>() ? "true" : "false";
         if (o.get_type() == sol::type::number)
             return std::to_string(static_cast<long long>(o.as<double>()));
+        if (o.get_type() == sol::type::table)
+        {
+            // A list (tags, watched addresses) as its items joined by commas, in order
+            const sol::table t = o.as<sol::table>();
+            std::string text;
+            for (size_t i = 1; i <= t.size(); ++i)
+                text += (i > 1 ? "," : "") + TtdOptionText(t[i]);
+            return text;
+        }
         return o.is<std::string>() ? o.as<std::string>() : std::string();
     }
 
@@ -465,6 +477,115 @@ protected:
         std::optional<Emulator::CpuHold> _hold;
     };
     /// endregion </Fields>
+
+    /// The CPU a register, memory or disassembly call names (none or "main": the main CPU; "gs" / "ms": a sound card's,
+    /// cpuview.h): a script error for an unknown name or a card CPU that is not there
+    DebugCpuId ScriptCpu(const sol::optional<std::string>& name) const
+    {
+        DebugCpuId cpu = DebugCpuId::Main;
+        Emulator* emulator = effectiveEmulator();
+        if (!name || !emulator)
+            return cpu;
+        const std::string error = CpuView::Select(emulator->GetContext(), *name, cpu);
+        if (!error.empty())
+            throw std::runtime_error(error);
+        return cpu;
+    }
+
+    /// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out): the reply's body and ok = true, or
+    /// ok = false and error. The machine runs until the card ends it, then is paused
+    sol::table CardStep(sol::state_view lua, DebugCpuId cpu, const char* kind, unsigned count) const
+    {
+        sol::table result = lua.create_table();
+        Emulator* emulator = effectiveEmulator();
+        std::shared_ptr<Emulator> shared =
+            emulator ? EmulatorManager::GetInstance()->GetEmulator(emulator->GetId()) : nullptr;
+        if (!shared)
+        {
+            result["ok"] = false;
+            result["error"] = "no emulator";
+            return result;
+        }
+        // The automation gate as every step of a script: its session, or an implicit one
+        execution::script::Check(*emulator, execution::Origin::Lua);
+        const execution::RunReply reply = execution::RunControl(shared).CardStep(
+            execution::script::RequesterOf(*emulator, execution::Origin::Lua), cpu, kind, count);
+        if (reply.status == execution::RunReply::Status::Revoked)
+            throw std::runtime_error(reply.message);
+        if (!reply.Ok())
+        {
+            result["ok"] = false;
+            result["error"] = reply.message;
+            return result;
+        }
+        for (const auto& [key, value] : reply.body.members)
+            result[key] = StateNodeToLua(lua.lua_state(), value);
+        result["ok"] = true;
+        return result;
+    }
+
+    /// A table's members as frame watch options (docs/inprogress/2026-11-03-run-until-watches)
+    static std::vector<std::pair<std::string, std::string>> WatchOptions(const sol::optional<sol::table>& opts)
+    {
+        std::vector<std::pair<std::string, std::string>> options;
+        if (opts)
+            for (const auto& [key, value] : *opts)
+                if (key.get_type() == sol::type::string)
+                    options.emplace_back(key.as<std::string>(), TtdOptionText(value));
+        return options;
+    }
+
+    /// run_until{...}: whole frames until the rules hold at a frame end (RunControl::RunUntil); the reply's body with
+    /// ok, or ok = false and error
+    sol::table RunUntil(sol::state_view lua, const sol::optional<sol::table>& opts) const
+    {
+        sol::table result = lua.create_table();
+        Emulator* emulator = effectiveEmulator();
+        std::shared_ptr<Emulator> shared =
+            emulator ? EmulatorManager::GetInstance()->GetEmulator(emulator->GetId()) : nullptr;
+        framewatch::Spec spec;
+        unsigned maxFrames = 0;
+        bool breakpoints = false;
+        std::string error;
+        if (!shared)
+            error = "no emulator";
+        else if (!framewatch::RunOptions(WatchOptions(opts), spec, maxFrames, breakpoints, error))
+            error = error.empty() ? "bad options" : error;
+        if (!error.empty())
+        {
+            result["ok"] = false;
+            result["error"] = error;
+            return result;
+        }
+        execution::script::Check(*emulator, execution::Origin::Lua);
+        const execution::RunReply reply = execution::RunControl(shared).RunUntil(
+            execution::script::RequesterOf(*emulator, execution::Origin::Lua), spec, maxFrames, breakpoints);
+        if (reply.status == execution::RunReply::Status::Revoked)
+            throw std::runtime_error(reply.message);
+        if (!reply.Ok())
+        {
+            result["ok"] = false;
+            result["error"] = reply.message;
+            return result;
+        }
+        for (const auto& [key, value] : reply.body.members)
+            result[key] = StateNodeToLua(lua.lua_state(), value);
+        result["ok"] = true;
+        return result;
+    }
+
+    /// A watch verb's outcome as a table: the body with ok (and error on a refusal)
+    static sol::table WatchOutcome(sol::state_view lua, const framewatch::Outcome& outcome)
+    {
+        sol::table result = lua.create_table();
+        for (const auto& [key, value] : outcome.body.members)
+            result[key] = StateNodeToLua(lua.lua_state(), value);
+        result["ok"] = outcome.status < 400;
+        if (outcome.status >= 400)
+            result["error"] = outcome.text;
+        result["text"] = outcome.text;
+        return result;
+    }
 
     /// The breakpoints of a CPU by its name ("main" or none, "gs": the sound card's CPU); null when there is none
     BreakpointManager* ScriptBreakpoints(const std::string& cpuName) const
@@ -1097,11 +1218,18 @@ public:
             return z80 ? z80->iy : 0;
         });
 
-        lua.set_function("get_registers", [this](sol::this_state s) -> sol::table {
+        // get_registers([cpu]): "gs" / "ms" the sound card CPU's, the same keys with card_time for t (cpuview.h)
+        lua.set_function("get_registers", [this](sol::this_state s, sol::optional<std::string> cpuName) -> sol::table {
             // Use the calling Lua state directly (safe even if _lua was never wired)
             sol::state_view lua_view(s);
             sol::table regs = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+            {
+                for (const auto& [key, value] : CpuView::FlatRegisters(emulator->GetContext(), cpu).members)
+                    regs[key] = StateNodeToLua(s, value);
+                return regs;
+            }
             if (emulator) {
                 Z80State* z80 = emulator->GetZ80State();
                 if (z80) {
@@ -1132,11 +1260,18 @@ public:
             return regs;
         });
 
-        lua.set_function("get_register", [this](sol::this_state s, const std::string& name) -> sol::object {
+        lua.set_function("get_register", [this](sol::this_state s, const std::string& name,
+                                                sol::optional<std::string> cpuName) -> sol::object {
             sol::state_view lua_view(s);
             Emulator* emulator = effectiveEmulator();
             if (!emulator)
                 return sol::make_object(lua_view, sol::lua_nil);
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+            {
+                uint16_t value = 0;
+                return CpuView::GetRegister(emulator->GetContext(), cpu, name, value) ? sol::make_object(lua_view, value)
+                                                                                     : sol::make_object(lua_view, sol::lua_nil);
+            }
             Z80State* z80 = emulator->GetZ80State();
             if (!z80)
                 return sol::make_object(lua_view, sol::lua_nil);
@@ -1147,10 +1282,21 @@ public:
             return sol::make_object(lua_view, value);
         });
 
-        lua.set_function("set_register", [this](const std::string& name, uint16_t value) -> bool {
+        lua.set_function("set_register", [this](const std::string& name, uint16_t value,
+                                                sol::optional<std::string> cpuName) -> bool {
             Emulator* emulator = effectiveEmulator();
             if (!emulator)
                 return false;
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+            {
+                // An unknown register or a value out of range is false, as for the main CPU; the past refuses
+                const std::string refused = CpuView::SetRegister(emulator, cpu, "lua register", name, value);
+                if (refused.rfind("unknown register", 0) == 0)
+                    return false;
+                if (!refused.empty())
+                    throw std::runtime_error(refused);
+                return true;
+            }
             // A tool edit (TTD records it); refused in the recorded past: a script error
             std::string refused;
             const bool set = emulator->SetRegisterFromTool("lua register", name, value, &refused);
@@ -1161,14 +1307,28 @@ public:
 
         // Memory access: direct (non-mutating) reads so inspecting memory
         // never drives the ProfROM quadrant machine
-        lua.set_function("mem_read", [this](uint16_t addr) -> uint8_t {
+        // mem_read(addr [, cpu]) / mem_write(addr, value [, cpu]): "gs" / "ms" the sound card CPU's view (cpuview.h)
+        lua.set_function("mem_read", [this](uint16_t addr, sol::optional<std::string> cpuName) -> uint8_t {
             if (!effectiveEmulator()) return 0;
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+            {
+                std::vector<uint8_t> byte;
+                CpuView::Read(effectiveEmulator()->GetContext(), cpu, addr, 1, byte);
+                return byte.empty() ? 0xFF : byte[0];
+            }
             Memory* mem = effectiveEmulator()->GetMemory();
             return mem ? mem->DirectReadFromZ80Memory(addr) : 0;
         });
 
-        lua.set_function("mem_write", [this](uint16_t addr, uint8_t value) {
+        lua.set_function("mem_write", [this](uint16_t addr, uint8_t value, sol::optional<std::string> cpuName) {
             if (!effectiveEmulator()) return;
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+            {
+                const std::string refused = CpuView::Write(effectiveEmulator(), cpu, "Lua memory write", addr, {value});
+                if (!refused.empty())
+                    throw std::runtime_error(refused);
+                return;
+            }
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
             effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
@@ -1441,11 +1601,18 @@ public:
         // TD-3 Phase 1: sparse non-zero block overview (same core source as
         // GET /memory/map and MCP inspect_state 'memory_map').
         // memory_map() | memory_map("ram") | memory_map("address", 64, 48)
-        lua.set_function("memory_map", [this](sol::optional<std::string> viewName, sol::optional<int> minRunOpt,
+        lua.set_function("memory_map", [this](sol::this_state s, sol::optional<std::string> viewName, sol::optional<int> minRunOpt,
                                               sol::optional<int> maxBlocksOpt) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             if (!effectiveEmulator()) return result;
+            // memory_map("gs") / ("ms"): the sound card CPU's four windows {cpu, windows = {{start, size, kind, page,
+            // offset}, ...}} (cpuview.h)
+            if (viewName && (*viewName == "gs" || *viewName == "ms"))
+            {
+                const DebugCpuId cpu = ScriptCpu(viewName);
+                return StateNodeToLua(s, CpuView::Windows(effectiveEmulator()->GetContext(), cpu)).as<sol::table>();
+            }
             Memory* mem = effectiveEmulator()->GetMemory();
             EmulatorContext* ctx = effectiveEmulator()->GetContext();
             if (!mem || !ctx) return result;
@@ -2274,7 +2441,7 @@ public:
         });
         // monitor(name, {instance = }) -> the reply table of a monitoring verb (monitoring::Call: all, host.stats,
         // host.clients, emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status,
-        // debug.analyzers, controllers.state, game.events; an instance's name defaults to this emulator), as WebAPI
+        // debug.analyzers, controllers.state, game.events, devices.access; an instance's name defaults to this emulator), as WebAPI
         // /api/v1/monitor[/{name}], the CLI `monitor`, MCP inspect_state aspect `monitor` and Python monitor()
         lua.set_function("monitor", [this](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
             Emulator* emulator = effectiveEmulator();
@@ -2655,8 +2822,17 @@ public:
         lua.set_function("companion_revoke", [](const std::string& idOrName) -> size_t {
             return companion::CompanionRegistry::Instance().Revoke(idOrName);
         });
-        lua.set_function("step", [this, stepOutcome](sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+        // step([skip_bp], [cpu]), steps(count, [skip_bp], [cpu]), stepover([cpu]), step_out([cpu]): "gs" / "ms" steps
+        // the sound card CPU (CardStep; step("gs") too)
+        lua.set_function("step", [this, stepOutcome](sol::object first, sol::optional<std::string> cpuName,
+                                                     sol::this_state ts) -> sol::object {
             if (!effectiveEmulator()) return sol::lua_nil;
+            if (first.is<std::string>() && !cpuName)
+                cpuName = first.as<std::string>();
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+                return CardStep(sol::state_view(ts), cpu, "in", 1);
+            const sol::optional<bool> skipBP =
+                first.is<bool>() ? sol::optional<bool>(first.as<bool>()) : sol::optional<bool>();
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             Emulator& emulator = *effectiveEmulator();
             emulator.RunSingleCPUCycle(skipBP.value_or(true));
@@ -2665,18 +2841,28 @@ public:
             return stepOutcome(sol::state_view(ts), emulator, executed);
         });
 
-        lua.set_function("steps", [this, stepOutcome](unsigned count, sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+        lua.set_function("steps", [this, stepOutcome](unsigned count, sol::object second,
+                                                      sol::optional<std::string> cpuName, sol::this_state ts) -> sol::object {
             if (!effectiveEmulator()) return sol::lua_nil;
+            if (second.is<std::string>() && !cpuName)
+                cpuName = second.as<std::string>();
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+                return CardStep(sol::state_view(ts), cpu, "in", count);
+            const sol::optional<bool> skipBP =
+                second.is<bool>() ? sol::optional<bool>(second.as<bool>()) : sol::optional<bool>();
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             Emulator& emulator = *effectiveEmulator();
             const unsigned executed = emulator.RunNCPUCycles(count, skipBP.value_or(false));
             return stepOutcome(sol::state_view(ts), emulator, executed);
         });
 
-        lua.set_function("stepover", [this]() {
-            if (!effectiveEmulator()) return;
+        lua.set_function("stepover", [this](sol::optional<std::string> cpuName, sol::this_state ts) -> sol::object {
+            if (!effectiveEmulator()) return sol::lua_nil;
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+                return CardStep(sol::state_view(ts), cpu, "over", 1);
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->StepOver();
+            return sol::lua_nil;
         });
 
         // Frame stepping methods
@@ -2690,6 +2876,42 @@ public:
             if (!effectiveEmulator()) return;
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunNFrames(count, skipBP.value_or(true));
+        });
+
+        // Frame watches (docs/inprogress/2026-11-03-run-until-watches): run_until{text = "PRESS", max_frames = 500}
+        // -> {ok, met, outcome, frames, frame, hit = {reasons, text_line?}, text, ...}; watch_add{if = "...", then =
+        // "notify"} -> {ok, id, watch}; watches() -> {count, watches}; watch_remove(id | "all")
+        lua.set_function("run_until", [this](sol::this_state ts, sol::optional<sol::table> opts) {
+            return RunUntil(sol::state_view(ts), opts);
+        });
+        lua.set_function("watch_add", [this](sol::this_state ts, sol::optional<sol::table> opts) {
+            Emulator* emulator = effectiveEmulator();
+            framewatch::Outcome outcome;
+            if (emulator)
+                outcome = framewatch::AddWatch(emulator->GetContext(), WatchOptions(opts));
+            else
+            {
+                outcome.status = 503;
+                outcome.text = "no emulator";
+            }
+            return WatchOutcome(sol::state_view(ts), outcome);
+        });
+        lua.set_function("watches", [this](sol::this_state ts) {
+            Emulator* emulator = effectiveEmulator();
+            framewatch::Outcome outcome = emulator ? framewatch::ListWatches(emulator->GetContext()) : framewatch::Outcome{};
+            return WatchOutcome(sol::state_view(ts), outcome);
+        });
+        lua.set_function("watch_remove", [this](sol::this_state ts, sol::object id) {
+            Emulator* emulator = effectiveEmulator();
+            framewatch::Outcome outcome;
+            if (emulator)
+                outcome = framewatch::RemoveWatch(emulator->GetContext(), TtdOptionText(id));
+            else
+            {
+                outcome.status = 503;
+                outcome.text = "no emulator";
+            }
+            return WatchOutcome(sol::state_view(ts), outcome);
         });
 
         // Atomic stepping methods
@@ -4188,10 +4410,26 @@ public:
         });
 
         // Disassembly
-        lua.set_function("disasm", [this](sol::optional<int> address, sol::optional<int> count) -> sol::table {
+        // disasm([address [, count [, cpu]]]): "gs" / "ms" the sound card CPU's code, from its PC (cpuview.h)
+        lua.set_function("disasm", [this](sol::this_state s, sol::optional<int> address, sol::optional<int> count,
+                                          sol::optional<std::string> cpuName) -> sol::table {
             sol::table result = _lua->create_table();
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return result;
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+            {
+                uint16_t at = 0;
+                CpuView::GetRegister(emulator->GetContext(), cpu, "pc", at);
+                if (address && *address >= 0)
+                    at = static_cast<uint16_t>(*address);
+                const int lines = std::clamp(count.value_or(10), 1, 100);
+                const StateNode listing = CpuView::Disasm(emulator->GetContext(), cpu, at, static_cast<size_t>(lines));
+                int index = 1;
+                if (const StateNode* instructions = listing.find("instructions"))
+                    for (const StateNode& line : instructions->items)
+                        result[index++] = StateNodeToLua(s, line);
+                return result;
+            }
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) return result;
             
@@ -5974,16 +6212,25 @@ public:
         // Labels are keys: non-empty, at most 63 chars, unique per session.
         // -----------------------------------------------------------------
 
-        lua.set_function("ttd_bookmark_add", [this](sol::this_state ts, const std::string& label,
-                                                     sol::optional<uint64_t> frameOpt,
-                                                     sol::optional<uint32_t> tInFrameOpt) -> sol::object {
+        // ttd_bookmark_add(label [, frame [, tinframe]] [, {note = "...", tags = {"a", "b"}, watch = {"#A130",
+        // "#A140:4"}, context = true}]): the options table may stand in for the frame
+        lua.set_function("ttd_bookmark_add", [this](sol::this_state ts, const std::string& label, sol::object a,
+                                                     sol::object b, sol::object c) -> sol::object {
             // Position omitted: the current position (mark here)
             std::map<std::string, std::string> options{{"label", label}};
-            if (frameOpt)
+            sol::object table;
+            if (a.get_type() == sol::type::number)
             {
-                options["frame"] = std::to_string(*frameOpt);
-                options["tinframe"] = std::to_string(tInFrameOpt.value_or(0));
+                options["frame"] = TtdOptionText(a);
+                options["tinframe"] = b.get_type() == sol::type::number ? TtdOptionText(b) : "0";
+                table = b.get_type() == sol::type::table ? b : c;
             }
+            else
+                table = a;
+            if (table.get_type() == sol::type::table)
+                for (const auto& [key, value] : table.as<sol::table>())
+                    if (key.is<std::string>())
+                        options[key.as<std::string>()] = TtdOptionText(value);
             const ttd::TTDReply reply = TtdRun("bookmark-add", options);
             StateNode value = reply.body;
             if (!reply.Ok())
@@ -5994,9 +6241,42 @@ public:
             return StateNodeToLua(ts, value);
         });
 
-        lua.set_function("ttd_bookmarks", [this](sol::this_state ts) -> sol::object {
-            const ttd::TTDReply reply = TtdRun("bookmarks");
+        lua.set_function("ttd_bookmarks", [this](sol::this_state ts, sol::optional<std::string> tag) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (tag)
+                options["tag"] = *tag;
+            const ttd::TTDReply reply = TtdRun("bookmarks", options);
             return StateNodeToLua(ts, reply.Ok() ? *reply.body.find("bookmarks") : StateNode::Array());
+        });
+
+        // ttd_bookmark_note(label, {note = "...", append = true, tags = {...}, add_tags = {...}, remove_tags = {...},
+        // rename = "..."}): the bookmark as it is now, or {updated = false, error = ...}
+        lua.set_function("ttd_bookmark_note", [this](sol::this_state ts, const std::string& label,
+                                                      sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options{{"label", label}};
+            for (const auto& [key, value] : argsTable)
+                if (key.is<std::string>())
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            const ttd::TTDReply reply = TtdRun("bookmark-note", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["updated"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+
+        // ttd_bookmark_export{format = "markdown" | "profile" | "json", tag = "...", title = "...", path = "..."}:
+        // {format, count, text, path, bytes}
+        lua.set_function("ttd_bookmark_export", [this](sol::this_state ts, sol::optional<sol::table> argsTable)
+                                                    -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    if (key.is<std::string>())
+                        options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("bookmark-export", options)));
         });
 
         lua.set_function("ttd_bookmark_delete", [this](const std::string& label) -> bool {
@@ -6260,6 +6540,32 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("find-event", options)));
         });
 
+        // ttd_explain_frame([frame], {sections = "routines,memory", limit = N, text = true}): what one frame did -
+        // time split, routines by time, interrupts, paging, ports, memory changed with its writers, screen, keys
+        lua.set_function("ttd_explain_frame", [this](sol::this_state ts, sol::optional<sol::object> frame,
+                                                     sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            sol::optional<sol::table> table = argsTable;
+            if (frame && frame->get_type() == sol::type::table)
+                table = frame->as<sol::table>();
+            else if (frame && frame->get_type() != sol::type::lua_nil)
+                options["frame"] = TtdOptionText(*frame);
+            if (table)
+                for (const auto& [key, value] : *table)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("explain-frame", options)));
+        });
+
+        // ttd_diff{from_frame = F, from_tinframe = T, to_frame = G, to_tinframe = T, sections = "cpu,memory", limit = N,
+        // writers = false, text = true}: what differs between two moments (the second defaults to the current one) -
+        // registers, latches, mapping, memory with the last writes, screen, devices, the keys and markers in between
+        lua.set_function("ttd_diff", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("diff", options)));
+        });
+
         // A memory at a past checkpoint and what changed between two, from the store (no seek):
         // ttd_memory_at{space = "vram", frame = F, offset = 0x4805, length = 16}
         // ttd_memory_diff{space = "ram5", from_frame = F1, to_frame = F2, limit = 100}
@@ -6281,11 +6587,13 @@ public:
         // ====================================================================
 
         // Step out of the current subroutine (emulation ends paused)
-        lua.set_function("step_out", [this]() -> sol::table {
-            sol::state_view lua_view(*_lua);
+        lua.set_function("step_out", [this](sol::optional<std::string> cpuName, sol::this_state ts) -> sol::table {
+            sol::state_view lua_view(ts);
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
             if (!emulator) { result["error"] = "no emulator"; return result; }
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+                return CardStep(lua_view, cpu, "out", 1);
 
             try
             {
@@ -6683,10 +6991,11 @@ public:
                         if (pagePtr)
                         {
                             std::string sig = rom->CalculateSignature(pagePtr, 0x4000);
-                            // GetROMTitle carries the "Unknown ROM, <digest>"
-                            // fallback; role = core layout table (§5.2) - a
-                            // role/name mismatch is the wrong-ROM signal
-                            bank["name"] = rom->GetROMTitle(sig);
+                            // GetROMPageTitle carries the "Unknown ROM, <digest>"
+                            // fallback and names blank pages and copies; role =
+                            // core layout table (§5.2) - a role/name mismatch is
+                            // the wrong-ROM signal
+                            bank["name"] = rom->GetROMPageTitle(romPage);
                             bank["signature"] = sig;
                         }
                         bank["role"] = rom->GetROMPageRole(romPage);
@@ -7024,14 +7333,17 @@ public:
             return StateNodeToLua(ts, value);
         });
         // The analysis layers through analysis::Execute (analysiscontrol.h): analysis(action, opts) with action start |
-        // stop | status | build | cancel | explain | query | export | gallery | findings | review | experiment | cover; opts a table ({level=, mode=, record=} /
-        // {frames=, path=, wait=} / {address=, page=, what=} / {kind=, range=, limit=} / {format=, path=, ranges=,
+        // stop | status | build | cancel | explain | query | export | gallery | findings | review | experiment | cover |
+        // trace; opts a table ({level=, mode=, record=} /
+        // {frames=, from_frame=, from_tinframe=, to_frame=, path=, wait=} (from / to: a window, one stage) /
+        // {address=, page=, what=} / {kind=, range=, limit=} / {format=, path=, ranges=,
         // width=} / {address=, kind=, scale=, path=, limit=}) or, for explain and gallery, the address, for start the
         // level, for build the frames, for query the kind, for export the format. The answer: the reply's fields plus
         // text (gallery: the PNG base64 in png); a refusal: ok = false, error = why. L3: findings {op=, kind=, status=,
         // format=, path=}, review {op=, id=, verdict=, label=, title=, comment=, kind=, names=<JSON text>, reason=,
         // offset=, limit=, experiment=<JSON text>} (or the op), experiment {spec=<JSON text>, path=, finding=} (or the
-        // spec's JSON text), cover {budget=, frames=, ranges=} (or the budget)
+        // spec's JSON text), cover {budget=, frames=, ranges=} (or the budget), trace {path=, from_frame=, from_tinframe=,
+        // to_frame=, to_tinframe=, max_cycles=} (or the path: the CPU access trace of a window, accesstrace.h)
         lua.set_function("analysis", [this](sol::this_state ts, sol::optional<std::string> action,
                                             sol::optional<sol::object> opts) -> sol::object {
             const std::string verb = action.value_or("status");
@@ -7049,6 +7361,7 @@ public:
                                                              : verb == "findings" || verb == "review" ? "op"
                                                              : verb == "experiment" ? "spec"
                                                              : verb == "cover" ? "budget"
+                                                             : verb == "trace" ? "path"
                                                                                : "")
                                                : analysis::Options{});
             StateNode value = reply.ToValue();

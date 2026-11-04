@@ -193,6 +193,133 @@ DisplayInfo FindDisplay(const DetectorContext& context)
     return d;
 }
 
+namespace
+{
+
+/// Per Z80 address of [@p lo, @p hi] (the start's paging; index 0 is @p lo): 1 when the byte's value was drawn to the
+/// screen's pixels (L1 drawn), or a block copy brought it from a byte whose value was
+std::vector<uint8_t> ReachesScreen(const DetectorContext& context, uint32_t lo, uint32_t hi)
+{
+    const std::vector<DrawnByte>& drawn = context.l1.drawn;
+    const auto isDrawn = [&](PhysKey key) {
+        const auto it = std::lower_bound(drawn.begin(), drawn.end(), key,
+                                         [](const DrawnByte& d, PhysKey k) { return d.key < k; });
+        return it != drawn.end() && it->key == key;
+    };
+    std::vector<uint8_t> out(hi - lo + 1, 0);
+    for (uint32_t z80 = lo; z80 <= hi; ++z80)
+        out[z80 - lo] = isDrawn(context.Key(static_cast<uint16_t>(z80))) ? 1 : 0;
+    for (const BlockCopy& c : context.l1.copies)
+    {
+        // The copy's destination bytes (LDD runs walk down from dst), clipped to [lo, hi]
+        const int64_t first = c.dir < 0 ? static_cast<int64_t>(c.dst) - c.length + 1 : c.dst;
+        const int64_t last = first + c.length - 1;
+        if (c.length == 0 || last < lo || first > hi)
+            continue;
+        for (int64_t dst = std::max<int64_t>(first, lo); dst <= std::min<int64_t>(last, hi); ++dst)
+        {
+            const int64_t offset = static_cast<int64_t>(KeyOffset(c.srcKey)) + (dst - c.dst);
+            if (out[static_cast<size_t>(dst - lo)] == 0 && offset >= 0 && offset <= 0x3FFF &&
+                isDrawn(MakeKey(KeyPage(c.srcKey), static_cast<uint16_t>(offset))))
+                out[static_cast<size_t>(dst - lo)] = 1;
+        }
+    }
+    return out;
+}
+
+/// The byte at @p key was an index: its value picked an address another instruction read (L1 indexes)
+bool IsSelector(const L1Result& l1, PhysKey key)
+{
+    const auto it = std::lower_bound(l1.indexes.begin(), l1.indexes.end(), key,
+                                     [](const IndexUse& x, PhysKey k) { return x.selector < k; });
+    return it != l1.indexes.end() && it->selector == key;
+}
+
+}  // namespace
+
+std::vector<DrawnBuffer> FindDrawnBuffers(const DetectorContext& context)
+{
+    constexpr uint32_t kMinDrawnBuffer = 2048;
+    constexpr uint32_t kMaxDrawnGap = 32;
+    constexpr uint32_t kMinRewrites = kDrawnMinRewrites;            // drawn into again and again, not unpacked once
+    constexpr uint64_t kMaxReadsPerWrite = kDrawnMaxReadsPerWrite;  // a scrolled buffer redraws a strip a pass
+    std::vector<DrawnBuffer> out;
+    std::vector<uint32_t> readBy(0x10000, 0xFFFFFFFFu);  // the screen-writing routine that read the byte
+    for (uint32_t i = 0; i < context.l1.routines.size(); ++i)
+    {
+        const Routine& routine = context.l1.routines[i];
+        bool screen = false;
+        for (const Interval& w : routine.profile.writes)
+            screen = screen || (w.z80 <= 0x57FF && w.z80 + (w.hi - w.lo) >= 0x4000);
+        if (!screen)
+            continue;
+        for (const Interval& rd : routine.profile.reads)
+            for (uint32_t at = rd.z80; at <= rd.z80 + (rd.hi - rd.lo) && at <= 0xFFFF; ++at)
+                readBy[at] = i;
+    }
+    // 1: read by a screen writer and rewritten; 2: read by one, not rewritten; 0: not read by one
+    const auto classOf = [&](uint32_t z80) -> int {
+        if (z80 < 0x5B00 || !context.InScope(static_cast<uint16_t>(z80)))
+            return 2;
+        if (readBy[z80] == 0xFFFFFFFFu)
+            return 0;
+        const ByteUse* u = context.l1.UseAt(context.Key(static_cast<uint16_t>(z80)));
+        if (u == nullptr || u->writes < kMinRewrites)
+            return 2;
+        return static_cast<uint64_t>(u->writes) * kMaxReadsPerWrite >= u->reads ? 1 : 2;
+    };
+    uint32_t z80 = 0x5B00;
+    while (z80 <= 0xFFFF)
+    {
+        if (classOf(z80) != 1)
+        {
+            ++z80;
+            continue;
+        }
+        DrawnBuffer b;
+        b.lo = static_cast<uint16_t>(z80);
+        uint32_t hi = z80;
+        uint32_t gap = 0;
+        for (uint32_t at = z80; at <= 0xFFFF; ++at)
+        {
+            const int c = classOf(at);
+            if (c == 2 || (c == 0 && ++gap > kMaxDrawnGap))
+                break;
+            if (c == 1)
+            {
+                hi = at;
+                gap = 0;
+                ++b.count;
+            }
+        }
+        z80 = hi + 1;
+        if (hi - b.lo + 1 < kMinDrawnBuffer)
+            continue;
+        b.hi = static_cast<uint16_t>(hi);
+        // Its values reach the screen. A room map unpacked per room and read by the routine that draws the room only
+        // selects the pictures: most of its rewritten bytes are indexes (L1 indexes: the value picked an address) and
+        // few were drawn (L1 drawn) or block-copied from bytes that were. A buffer's bytes are drawn as their own
+        // sources when the code computed them, as the sprite's or the tile's when it merged or copied one in: the
+        // index test is what tells a map
+        const std::vector<uint8_t> reaches = ReachesScreen(context, b.lo, hi);
+        uint32_t reaching = 0;
+        uint32_t selectors = 0;
+        for (uint32_t at = b.lo; at <= hi; ++at)
+            if (classOf(at) == 1)
+            {
+                reaching += reaches[at - b.lo] != 0 ? 1u : 0u;
+                selectors += IsSelector(context.l1, context.Key(static_cast<uint16_t>(at))) ? 1u : 0u;
+            }
+        if (reaching * 2 <= b.count && selectors * 2 > b.count)
+            continue;
+        for (uint32_t at = b.lo; at <= hi; ++at)
+            if (readBy[at] != 0xFFFFFFFFu)
+                ++b.readers[readBy[at]];
+        out.push_back(std::move(b));
+    }
+    return out;
+}
+
 Coverage Cover(const DetectorContext& context, const DisplayInfo& display, const Stride& s, uint8_t type)
 {
     Coverage c;

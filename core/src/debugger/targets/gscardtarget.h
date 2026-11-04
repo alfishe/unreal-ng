@@ -9,6 +9,7 @@
 /// lightweight player) and fire again after a switch back. The hooks are on the card only while an active
 /// breakpoint asks for them; otherwise the card runs its fast loop.
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -60,12 +61,35 @@ public:
         int64_t cardTime = 0;     ///< in the card's unit (GeneralSoundCard::cardTime)
         uint8_t master = 0;       ///< DmaWrite: the bus master (NeoGS DMA module: 0 ZX-DMA, 1 SD)
         uint8_t page = 0;         ///< DmaWrite: the RAM page written (`address` the offset in it)
+        bool step = false;        ///< no breakpoint: a step ended at `boundaryPc`
     };
     Stop LastStop() const { return _lastStop; }
     /// Stops since creation (tests, diagnosis)
     uint64_t StopCount() const { return _stopCount; }
     /// The card runs its debug loop now
     bool HooksAttached() const { return _attached != nullptr; }
+
+    /// region <Steps (gs-debugger design §5.3): a one-shot park at a card instruction boundary>
+    enum class StepKind : uint8_t
+    {
+        None,
+        In,    ///< after `count` instructions
+        Over,  ///< CALL, RST, DJNZ, a block instruction: at the next instruction with SP at or above the entry SP;
+               ///< another instruction: as In
+        Out    ///< after a return (RET, RET cc, RETI, RETN) run with SP at or above the entry SP
+    };
+    /// Arm a step of the card CPU (the machine paused; the caller resumes it then): the next card run parks the
+    /// machine there with the reason step (Emulator::OnTargetStep). A breakpoint on the way ends it first. "" or why
+    /// not (no card CPU, a step already armed). The card runs only as the main CPU's run takes it along (at a host
+    /// port access or the frame end), so the main CPU moves on to that point
+    std::string ArmStep(StepKind kind, uint32_t count = 1);
+    /// Disarm a step that did not end (a timeout, a pause of another cause)
+    void CancelStep();
+    bool StepArmed() const { return _stepKind.load(std::memory_order_acquire) != StepKind::None; }
+    /// The machine is parked inside the card's run (a card breakpoint or step): the next instruction is the
+    /// boundary's
+    bool ParkedInside() const { return _parkedInside.load(std::memory_order_acquire); }
+    /// endregion </Steps>
 
     // IDebugTarget
     DebugCpuId Id() const override { return _id; }
@@ -112,6 +136,10 @@ private:
     void Note(uint16_t id, uint16_t address, uint8_t value, BreakpointHitKind kind, uint16_t pc);
     /// Stop the machine with the card at `boundaryPc`
     void Park(Stop stop, uint16_t boundaryPc);
+    /// An armed step at this boundary: true when it parked
+    bool StepBoundary(uint16_t pc);
+    /// The instruction at `pc` of the card CPU is a return (RET, RET cc, RETI, RETN and their aliases)
+    bool IsReturnAt(GeneralSoundCard* card, uint16_t pc) const;
     /// The waiting edits due at this boundary
     void ApplyEdits(GeneralSoundCard* card);
     /// The ZX frame the card is in (its frame-end catch-up runs after the frame counter moved on)
@@ -136,6 +164,14 @@ private:
     Stop _pending;                           // a bus or event hit waiting for the boundary
     Stop _lastStop;
     uint64_t _stopCount = 0;
+    // An armed step: set by the caller with the machine paused, read by the emulation thread after the resume
+    std::atomic<StepKind> _stepKind{StepKind::None};
+    uint32_t _stepSkip = 0;                  // boundaries passed before the step may park (In: count - 1, ...)
+    uint16_t _stepTarget = 0;                // Over: the next instruction's address
+    uint16_t _stepSp = 0;                    // Over / Out: SP when armed
+    bool _stepReturning = false;             // Out: the instruction now running is a return
+    uint16_t _stepReturnSp = 0;              // Out: SP before that return
+    std::atomic<bool> _parkedInside{false};  // inside Park's call: the machine waits in the card's run
 };
 
 /// The host side of the mailbox (the main CPU's access to #B3 / #BB, inside its instruction): a host-side event

@@ -1,4 +1,5 @@
 #include "tape.h"
+#include "emulator/readoutschanged.h"
 
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
@@ -51,6 +52,7 @@ void Tape::startTape()
     _lastTapeBit = false;
     _framesNotListened = 0;
     MLOGINFO("Tape started");
+    NotifyReadoutsChanged(_context, "tape");  // the transport: a deck shows it, paused too
 }
 
 void Tape::stopTape()
@@ -82,6 +84,7 @@ void Tape::stopTape()
 
     _currentClockCount = 0;
     _lastTapeBit = false;
+    NotifyReadoutsChanged(_context, "tape");  // the transport: a deck shows it, paused too
 }
 
 void Tape::stopPlayback()
@@ -110,6 +113,7 @@ void Tape::stopPlayback()
     _currentPulseIdxInBlock = 0;
     _currentOffsetWithinPulse = 0;
     _lastTapeBit = false;
+    NotifyReadoutsChanged(_context, "tape");  // the transport: a deck shows it, paused too
 }
 
 void Tape::pausePlayback()
@@ -147,6 +151,7 @@ void Tape::pausePlayback()
     // be consumed as one giant pulse. 0 is the "re-seed on next read" marker
     // honored by getTapeStreamBit().
     _currentClockCount = 0;
+    NotifyReadoutsChanged(_context, "tape");  // the transport: a deck shows it, paused too
 }
 
 void Tape::ResumePlaybackAfterPoll()
@@ -508,6 +513,7 @@ bool Tape::SeekToBlock(size_t index)
     _currentTapeBlockIndex = index;
 
     MLOGINFO("Tape seek: block %zu of %zu", index, _tapeBlocks.size());
+    NotifyReadoutsChanged(_context, "tape");
     return true;
 }
 
@@ -558,6 +564,7 @@ void Tape::ResumePlaybackFromPause()
 
     MLOGINFO("Tape resumed at block %zu, pulse %zu (manual)",
              _currentTapeBlockIndex, _currentOffsetWithinPulse);
+    NotifyReadoutsChanged(_context, "tape");  // the transport: a deck shows it, paused too
 }
 
 /// endregion </Playback state, position and seek>

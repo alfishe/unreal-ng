@@ -208,6 +208,7 @@ private slots:
     static int crtProfileIndex(CRTProfile profile);  ///< the entry of View > CRT Profile
     void handleTemporalBlendingToggled(bool enabled);
     void handleDebuggerToggled(bool visible);
+    void handleExternalDebuggerRequested(const QString& program);
     void handleDebuggerVisibilityChanged(bool visible);
     void handleLogWindowToggled(bool visible);
     void handleTapeManagerToggled(bool visible);

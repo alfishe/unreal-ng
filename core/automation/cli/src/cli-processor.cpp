@@ -99,6 +99,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"stepover", &CLIProcessor::HandleStepOver},  // Execute instruction, skip calls
                         {"stepout", &CLIProcessor::HandleStepOut},      // Run until current subroutine returns
                         {"skip_until", &CLIProcessor::HandleSkipUntil},  // Fast-forward until PC reaches target
+                        {"run_until", &CLIProcessor::HandleRunUntil},    // Whole frames until a frame watch's rules hold
+                        {"watch", &CLIProcessor::HandleWatch},           // Armed frame watches: add, list, del
+                        {"watches", &CLIProcessor::HandleWatch},         // Alias for watch (list by default)
                         {"run_tstates", &CLIProcessor::HandleRunTStates},        // Run N t-states
                         {"run_to_scanline", &CLIProcessor::HandleRunToScanline}, // Run to scanline N
                         {"run_scanlines", &CLIProcessor::HandleRunNScanlines},   // Run N scanlines
@@ -695,7 +698,11 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  steps <count> - Execute 1 to N CPU instructions" << NEWLINE;
     oss << "  stepover      - Execute instruction, skip calls and subroutines" << NEWLINE;
     oss << "  stepout       - Run until the current subroutine returns" << NEWLINE;
+    oss << "  ... --cpu gs|ms - step [count] / steps / stepover / stepout of the sound card CPU: the machine runs" << NEWLINE;
+    oss << "                  until the card's step ends (the main CPU moves on to the card's catch-up point)" << NEWLINE;
     oss << "  skip_until <pc> [max_tstates] - Fast-forward until PC reaches target" << NEWLINE;
+    oss << "  run_until key=value ...       - Frames until if= / text= / screen= / event= holds ('run_until help')" << NEWLINE;
+    oss << "  watch add|list|del            - Armed frame watches: a hit pauses and is pushed as watch_hit" << NEWLINE;
     oss << "  pace [show|presets|set <preset> [ms]|interval <ms>|next|prev|start|stop|toggle|step] - Run at a pace (25 / 5 / 1 fps, a frame, lines, an instruction per interval); stops at a breakpoint" << NEWLINE;
     oss << "  memory <addr> - View memory at address" << NEWLINE;
     oss << "  find <hex-pattern, ?? = any> [--space S] [--mask HEX] [--from N] [--to N] [--align 1|2] [--max N] - Search memory" << NEWLINE;

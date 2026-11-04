@@ -13,6 +13,12 @@
 // debugger is ecat's DebuggerWindow as it is, over the adapter of adapter/unrealmachine.cpp (the core in this
 // process) or adapter/remotemachine.cpp (--connect; the emulator shows its own screen).
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX  // windows.h below must not turn std::min / std::max into macros
+#endif
+#endif
+
 #include <QAbstractButton>
 #include <QApplication>
 #include <QCheckBox>
@@ -41,6 +47,12 @@
 #include <QToolButton>
 #include <QWidget>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/resource.h>
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -64,8 +76,8 @@
 
 namespace {
 
-// SIGINT / SIGTERM end the event loop, so the machine is destroyed: over the WebAPI that releases the run-control
-// session and debug mode (killed outright, the session stays held until its lease runs out)
+// SIGINT / SIGTERM end the event loop, so the machine is destroyed: over the WebAPI that restores the debug mode and
+// turns off the histories the debugger started (killed outright, they stay as they are)
 std::atomic<bool> g_quit{false};
 // The first signal asks the event loop to end; a second one (a GUI thread stuck in a request) ends the process
 void on_quit_signal(int sig)
@@ -176,6 +188,30 @@ private:
     QWidget * m_screen;
 };
 
+#ifdef _WIN32
+static double fileTimeSeconds(const FILETIME &f)
+{
+    ULARGE_INTEGER v;
+    v.LowPart = f.dwLowDateTime;
+    v.HighPart = f.dwHighDateTime;
+    return static_cast<double>(v.QuadPart) / 1e7;  // 100 ns units
+}
+
+double process_cpu_seconds()
+{
+    FILETIME created, exited, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) return 0.0;
+    return fileTimeSeconds(kernel) + fileTimeSeconds(user);
+}
+
+// CPU time of the calling thread
+double thread_cpu_seconds()
+{
+    FILETIME created, exited, kernel, user;
+    if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user)) return 0.0;
+    return fileTimeSeconds(kernel) + fileTimeSeconds(user);
+}
+#else
 double process_cpu_seconds()
 {
     rusage u{};
@@ -190,6 +226,7 @@ double thread_cpu_seconds()
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
     return t.tv_sec + t.tv_nsec / 1e9;
 }
+#endif
 
 // Processes events until the condition holds or the time is out
 bool wait_for(const std::function<bool()> &done, int ms)
@@ -239,6 +276,12 @@ public:
             // Answered from the event loop, not from here: an answer may open a dialog of its own (a file that
             // exists), which this timer has to reach
             if (auto * f = qobject_cast<QFileDialog *>(w)) {
+                // A dialog that stays open after 20 answers (a file that is not there, a folder that cannot be written)
+                // is closed: the check fails on its result instead of waiting for ever
+                if (ticks >= 400) {
+                    QMetaObject::invokeMethod(f, "reject", Qt::QueuedConnection);
+                    return;
+                }
                 // The name typed in, as a user does (selectFile does not replace the suggested name here)
                 if (auto * name = f->findChild<QLineEdit *>("fileNameEdit")) name->setText(path);
                 QMetaObject::invokeMethod(f, "accept", Qt::QueuedConnection);
@@ -264,10 +307,16 @@ void send_mouse(QWidget * w, QEvent::Type type, const QPoint &at)
 // running at once must not meet each other's files
 QString scratch_dir()
 {
+    // No scratch/ above the binary (a CI checkout has none): the system temp folder, not a path from the root of the
+    // file system, which macOS does not let a user create
     QDir d(QCoreApplication::applicationDirPath());
     while (!d.exists("scratch") && d.cdUp()) {}
-    const QString path = d.filePath("scratch/debugger-self-check/" + QString::number(QCoreApplication::applicationPid()));
-    QDir().mkpath(path);
+    const QString leaf = "debugger-self-check/" + QString::number(QCoreApplication::applicationPid());
+    QString path = d.exists("scratch") ? d.filePath("scratch/" + leaf) : QDir::temp().filePath(leaf);
+    if (!QDir().mkpath(path)) {
+        path = QDir::temp().filePath(leaf);
+        QDir().mkpath(path);
+    }
     return path;
 }
 
@@ -293,6 +342,9 @@ void window_check(QWidget * window, ecatshim::CPU * cpu, const std::function<voi
             saved[i] = cpu->peek_mem(0xC000 + i);
             cpu->poke_mem(0xC000 + i, 0x00);
         }
+        // Over the WebAPI the edits' events come through the long poll: let them land (a stop's refresh brings the
+        // listing back to PC) before the row is looked for
+        wait_for([]() { return false; }, 600);
         code->refresh_memory();
         code->go_to(0xC000);
         QApplication::processEvents();
@@ -319,8 +371,10 @@ void window_check(QWidget * window, ecatshim::CPU * cpu, const std::function<voi
                   code->describe(0xC000).contains("42"),
               "listing: instruction bytes typed over (LD A,#42)");
         if (editor == nullptr || cpu->peek_mem(0xC000) != 0x3E || cpu->peek_mem(0xC001) != 0x42)
-            printf("  (row y %d, editor %s, #C000 = %02X %02X, listing \"%s\")\n", y, editor ? "opened" : "none",
-                   cpu->peek_mem(0xC000), cpu->peek_mem(0xC001), code->describe(0xC000).toUtf8().constData());
+            printf("  (row y %d, editor %s, #C000 = %02X %02X, listing \"%s\", tab %d, listing %s %dx%d)\n", y,
+                   editor ? "opened" : "none", cpu->peek_mem(0xC000), cpu->peek_mem(0xC001),
+                   code->describe(0xC000).toUtf8().constData(), cpu_tabs->currentIndex(),
+                   code->isVisible() ? "shown" : "hidden", vp->width(), vp->height());
         for (unsigned int i = 0; i < 4; i++) cpu->poke_mem(0xC000 + i, saved[i]);
         code->refresh_memory();
     }
@@ -619,11 +673,58 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         }
         check(gsame, "gs windows: each listed page holds its bytes");
 
-        gs->add_breakpoint(gpc);
+        // An address the card's Z80 comes back to: the one it has been at most often (a loop's), else where it stands.
+        // Its own PC alone may be an address it visits once in several seconds (a timer routine), which a slow host misses
+        const std::vector<unsigned int> ghistory = gs->get_history();
+        std::map<unsigned int, int> gseen;
+        unsigned int gbp = gpc;
+        if (!ghistory.empty()) {
+            gbp = ghistory.front();
+            for (unsigned int h : ghistory)
+                if (++gseen[h] > gseen[gbp]) gbp = h;
+        }
+        gs->add_breakpoint(gbp);
         m->debug_run(true);
-        const bool ghit = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 3000);
-        check(ghit && m->debug_stop_cpu() == gs && gs->get_pc() == gpc, "gs breakpoint stops the machine, gs in front");
-        gs->remove_breakpoint(gpc);
+        // The run resumes asynchronously: a bare "paused" may still be the earlier pause. Wait for the stop the card's
+        // breakpoint makes (its reason and its CPU), then read the state once
+        const bool ghit = wait_for(
+            [m, gs]() {
+                return m->debug_paused() && !m->debug_stepping() && m->debug_stop_reason() == ecatshim::Emulator::DSTOP_BREAKPOINT &&
+                       m->debug_stop_cpu() == gs;
+            },
+            5000);
+        const unsigned int gstopPc = gs->get_pc();
+        const int greason = m->debug_stop_reason();
+        const bool gpaused = m->debug_paused(), gstepping = m->debug_stepping(), gcardStop = m->debug_stop_cpu() == gs;
+        check(ghit && gstopPc == gbp, "gs breakpoint stops the machine, gs in front");
+        if (!ghit || gstopPc != gbp)
+            printf("  (gs breakpoint #%04X, %u times in %zu of history: %s, gs PC #%04X, stop cpu %s, paused %d stepping %d,"
+                   " reason %d, frames %llu)\n",
+                   gbp, (unsigned)gseen[gbp], ghistory.size(), ghit ? "stopped" : "not stopped in 5 s", gstopPc,
+                   gcardStop ? "gs" : "other", gpaused, gstepping, greason, (unsigned long long)machine_frames(m));
+        gs->remove_breakpoint(gbp);
+        if (!ghit) {
+            m->debug_pause();
+            wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+        }
+
+        // A step of the card's tab is the card's step: the machine stops after one card instruction, gs in front
+        const unsigned int gr = reg(gs, "R");
+        m->debug_step(gs);
+        const bool gstep = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 3000);
+        check(gstep && m->debug_stop_cpu() == gs && m->debug_stop_reason() == ecatshim::Emulator::DSTOP_STEP &&
+                  reg(gs, "R") != gr,
+              "gs step (the card's own, gs in front)");
+        m->debug_step_over(gs);
+        const bool gover = wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 6000);
+        check(gover && m->debug_stop_cpu() == gs, "gs step over");
+
+        // A step of the main CPU's tab brings it to the front again (the window checks below type into its listing;
+        // over the WebAPI the card's stop event may come late, so wait for the main CPU's stop to be the last)
+        m->debug_step(cpu);
+        const bool back = wait_for([m, cpu]() { return m->debug_paused() && !m->debug_stepping() && m->debug_stop_cpu() == cpu; }, 3000);
+        wait_for([]() { return false; }, 600);  // the event of that stop, past one long poll
+        check(back, "main step after the card's: main in front");
     }
 
     size_t fields = 0;
@@ -653,7 +754,10 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         const double z0 = w->zoom();
         w->set_zoom(1.0);
         QApplication::processEvents();
-        DisasmView * code = window->findChild<DisasmView *>();
+        // The listing in sight (each processor's tab has one)
+        DisasmView * code = nullptr;
+        for (DisasmView * v : window->findChildren<DisasmView *>())
+            if (code == nullptr && v->isVisible()) code = v;
         QToolBar * tb = window->findChild<QToolBar *>();
         const int rows1 = code ? code->viewport()->height() / QFontMetrics(code->font()).height() : 0;
         const int h1 = code ? QFontMetrics(code->font()).height() : 0;

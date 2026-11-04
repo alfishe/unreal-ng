@@ -5,6 +5,7 @@
 /// frame probes of §5) and the rules that play an effect of the built-in library (§6.2) when a source fires.
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -121,7 +122,9 @@ enum HapticTarget : uint8_t
     kHandleHigh = kRumbleHigh,
     kTriggerLeft = kRumbleLeftTrigger,
     kTriggerRight = kRumbleRightTrigger,
-    kTargetAll = 15,
+    kHdLeft = kRumbleHdLeft,
+    kHdRight = kRumbleHdRight,
+    kTargetAll = kHandleLow | kHandleHigh | kTriggerLeft | kTriggerRight | kHdLeft | kHdRight,
 };
 
 struct HapticRule
@@ -138,10 +141,13 @@ struct HapticRule
     /// frame the event fires (the direction of a blow); empty: always
     std::string gate;
     uint8_t gateValue = 0;
-    /// `hd: {frequency_hz, low_hz, high_hz}`: the HD frequency of each band over the effect's own (0: the effect's);
-    /// `frequency_hz` sets both bands, `low_hz` / `high_hz` one each
+    /// `hd: {frequency_hz, low_hz, high_hz, waveform}`: the HD frequency of each band over the effect's own (0: the
+    /// effect's); `frequency_hz` sets both bands and the voice coils' tone, `low_hz` / `high_hz` one band each,
+    /// `waveform` (sine, square, noise) the coils' wave
     uint16_t lowHz = 0;
     uint16_t highHz = 0;
+    uint16_t hdFrequency = 0;      ///< the voice coils' tone
+    std::optional<HdWave> hdWave;  ///< the voice coils' wave
 
     /// The target for a device with @p actuators: the first alternative it has all of, else the last one
     uint8_t TargetFor(uint8_t actuators) const;
@@ -179,14 +185,12 @@ const std::vector<std::string>& BuiltinHapticEffectIds();
 bool ParseHapticStream(const std::string& text, HapticStream& out);
 const char* HapticStreamName(HapticStream stream);
 
-/// "Add probe from debugger" (haptics.md §7): @p probe (a breakpoint's address or port) as a new source of the
-/// `haptics` section @p haptics (made an object when null) with a rule that plays @p play; a write probe sees every
-/// write (`each_write`, `when: changed`). The new source's name in @p name ("probe-1", "probe-2", ...); false with the
-/// reason when the result does not parse
-bool AddHapticProbeSource(JsonValue& haptics, const HapticProbe& probe, const std::string& play, std::string& name,
-                          std::string& error);
+/// @p overlay laid over the `haptics` section @p base: its sources replace those of the same name, its rules follow
+/// the base's, any other field replaces the base's (the session trial of haptics.md §11)
+JsonValue OverlayHaptics(const JsonValue& base, const JsonValue& overlay);
 
-/// Move @p levels to @p target: the loudest handle level goes to every target channel
+/// Move @p levels to @p target: the loudest level goes to every target channel; `all` keeps each channel's own and
+/// gives the voice coils the loudest where the effect has none for them
 RumbleLevels RetargetLevels(const RumbleLevels& levels, uint8_t target);
 
 }  // namespace controllers

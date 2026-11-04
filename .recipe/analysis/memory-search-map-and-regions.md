@@ -196,7 +196,11 @@ writes go through the *device's own write path* (`write_path` says which).
   `#EFF7` flags; Profi `#DFFD` flags). On the Sprinter a `sprinter` block
   replaces the 128K-style paging.
 - `state/memory/rom`: `active_rom_page`, `total_rom_pages`, `mapping`
-  (`bank0_type`, `bank0_rom_title`, `bank0_rom_signature`).
+  (`bank0_type`, `bank0_rom_title`, `bank0_rom_signature`), `pages[]` (`page`, `description` = the layout role,
+  `title`, `signature`). A `title` is the known ROM's name or `Unknown ROM, <digest>`; a blank page is
+  `Empty (all #FF)` (erased flash) or `Empty (all #00)`, and a page byte for byte equal to a lower one ends in
+  `(= ROM page N)` (ZX-Evo: pages 10 and 30 hold the same 128K + TR-DOS ROM). The same title is `bank0_rom_title`,
+  the bank `name` of `state/paging` (CLI `paging`, Lua, Python), and the Qt debugger's pages tab.
 - `state/paging`: `latches[] {port, device, latch, value, decoded}` taken
   from the machine's tagged port registry, the same truth the decoder uses.
 - `memory/info`: page counts (`pages.ram/rom/cache/misc`) and

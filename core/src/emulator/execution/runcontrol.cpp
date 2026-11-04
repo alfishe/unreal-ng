@@ -6,6 +6,8 @@
 #include "common/uuid.h"
 #include "debugger/debugmanager.h"
 #include "debugger/listing/listingparser.h"
+#include "debugger/targets/gscardtarget.h"
+#include "debugger/watch/framewatch.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -225,6 +227,127 @@ RunReply RunControl::StepOut(const Requester& requester)
     return Finish("Step out completed");
 }
 
+RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const std::string& kind, unsigned count)
+{
+    if (!_emulator)
+        return Missing();
+    EmulatorContext* context = _emulator->GetContext();
+    if (HeldByOther(context, requester))
+        return HeldReply("step");
+    RunReply reply;
+    auto refuse = [&reply](RunReply::Status status, const std::string& message) {
+        reply.status = status;
+        reply.error = status == RunReply::Status::BadRequest ? "Bad Request" : "Conflict";
+        reply.message = message;
+        reply.body["status"] = "error";
+        reply.body["message"] = message;
+        return reply;
+    };
+    GSCardTarget::StepKind step = GSCardTarget::StepKind::None;
+    if (kind == "in")
+        step = GSCardTarget::StepKind::In;
+    else if (kind == "over")
+        step = GSCardTarget::StepKind::Over;
+    else if (kind == "out")
+        step = GSCardTarget::StepKind::Out;
+    else
+        return refuse(RunReply::Status::BadRequest, "Unknown step '" + kind + "' (in, over, out)");
+    if (count < 1 || count > 10000)
+        return refuse(RunReply::Status::BadRequest, "count must be 1-10000");
+    GSCardTarget* target =
+        context && context->pDebugManager ? context->pDebugManager->GetCardTarget(cpu) : nullptr;
+    if (!target)
+        return refuse(RunReply::Status::Refused, std::string("cpu ") + DebugCpuName(cpu) + " not available");
+    if (!_emulator->IsPaused())
+        return refuse(RunReply::Status::Refused, "Emulator is not paused: pause it before a step");
+    if (const std::string error = target->ArmStep(step, count); !error.empty())
+        return refuse(RunReply::Status::Refused, error);
+
+    const uint64_t stopsBefore = target->StopCount();
+    const std::string id = _emulator->GetId();
+    if (!EmulatorManager::GetInstance()->ResumeEmulator(id, requester))
+    {
+        target->CancelStep();
+        return refuse(RunReply::Status::Failed, "The machine did not resume for the step");
+    }
+    // Until the machine pauses again: the step's park, a breakpoint (any CPU's) or somebody's pause
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(step == GSCardTarget::StepKind::In ? 2000 : 5000);
+    bool timedOut = false;
+    uint64_t seq = _emulator->DebugSeq();
+    while (!_emulator->IsPaused())
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+        {
+            timedOut = true;
+            break;
+        }
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+        seq = _emulator->WaitDebugChange(seq, static_cast<uint32_t>(std::min<int64_t>(left, 50) + 1));
+    }
+    if (timedOut)
+    {
+        target->CancelStep();
+        EmulatorManager::GetInstance()->PauseEmulatorWithResult(id, requester, std::chrono::milliseconds(1000));
+    }
+    const bool stepEnded = target->StopCount() > stopsBefore && target->LastStop().step;
+    target->CancelStep();  // another cause paused it first: the step is over too
+
+    reply = Finish(timedOut    ? std::string("The step of cpu ") + DebugCpuName(cpu) + " did not end in time; paused"
+                   : stepEnded ? std::string("Step ") + kind + " of cpu " + DebugCpuName(cpu) + " completed"
+                               : std::string("Stopped before the step of cpu ") + DebugCpuName(cpu) + " ended");
+    if (!reply.Ok())
+        return reply;
+    StateNode body = StateNode::Object();
+    body["status"] = "success";
+    body["message"] = reply.message;
+    StateNode stopNode = StateNode::Object();
+    const Emulator::DebugStop last = _emulator->LastStop();
+    const Emulator::BreakpointStop& cause = last.breakpoint;
+    if (timedOut)
+    {
+        stopNode["cpu"] = DebugCpuName(cpu);
+        stopNode["reason"] = "timeout";
+    }
+    else if (stepEnded)
+    {
+        stopNode["cpu"] = DebugCpuName(cpu);
+        stopNode["reason"] = "step";
+        stopNode["cpu_pc"] = static_cast<int>(target->LastStop().boundaryPc);
+    }
+    else if (last.reason == Emulator::DebugStop::Reason::Breakpoint && cause.hit)
+    {
+        stopNode["cpu"] = DebugCpuName(cause.cpu);
+        stopNode["reason"] = "breakpoint";
+        stopNode["breakpoint_id"] = static_cast<int>(cause.breakpointId);
+        stopNode["address"] = static_cast<int>(cause.address);
+        stopNode["access"] = BreakpointHitKindName(cause.kind);
+        if (cause.cpu != DebugCpuId::Main)
+            stopNode["cpu_pc"] = static_cast<int>(cause.cpuPc);
+    }
+    else
+    {
+        stopNode["cpu"] = "main";
+        stopNode["reason"] = "pause";
+    }
+    body["stop"] = std::move(stopNode);
+    body["cpu"] = DebugCpuName(cpu);
+    if (const StateNode* pc = reply.body.find("pc"))
+        body["main_pc"] = *pc;
+    if (const StateNode* sp = reply.body.find("sp"))
+        body["main_sp"] = *sp;
+    Z80Registers card{};
+    if (target->Registers(card))
+    {
+        body["pc"] = static_cast<int>(card.pc);
+        body["sp"] = static_cast<int>(card.sp);
+    }
+    if (const StateNode* state = reply.body.find("state"))
+        body["state"] = *state;
+    reply.body = std::move(body);
+    return reply;
+}
+
 RunReply RunControl::FrameStep(const Requester& requester)
 {
     if (!_emulator)
@@ -417,6 +540,35 @@ RunReply RunControl::RunUntilPc(const Requester& requester, uint16_t pc, uint64_
     reply.body["hit"] = hit;
     reply.body["target"] = static_cast<int>(pc);
     reply.body["max_tstates"] = static_cast<int64_t>(budget);
+    AddStop(reply);
+    return reply;
+}
+
+RunReply RunControl::RunUntil(const Requester& requester, const framewatch::Spec& spec, unsigned maxFrames,
+                              bool breakpoints)
+{
+    if (!_emulator)
+        return Missing();
+    if (HeldByOther(_emulator->GetContext(), requester))
+        return HeldReply("step");
+    const framewatch::RunResult result = framewatch::RunUntil(_emulator->GetContext(), spec, maxFrames, breakpoints);
+    if (result.stop == "error")
+    {
+        RunReply refusal;
+        refusal.status = RunReply::Status::BadRequest;
+        refusal.error = "Bad Request";
+        refusal.message = result.error;
+        refusal.body["emulator_id"] = _emulator->GetId();
+        return refusal;
+    }
+    const std::string text = framewatch::RunResultText(result);
+    RunReply reply = Finish(text);
+    if (!reply.Ok())
+        return reply;
+    const StateNode node = framewatch::RunResultNode(result);
+    for (const auto& [key, value] : node.members)
+        reply.body[key] = value;
+    reply.body["text"] = text;
     AddStop(reply);
     return reply;
 }

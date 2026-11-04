@@ -58,9 +58,17 @@
             schema["properties"]["path"]["description"] = "Write the L1 JSON to this file when the build is done";
             schema["properties"]["wait"]["type"] = "integer";
             schema["properties"]["wait"]["description"] = "Milliseconds (<= 30000) to wait for the build before answering";
+            schema["properties"]["from_frame"]["type"] = "integer";
+            schema["properties"]["from_frame"]["description"] =
+                "Replay a window from this frame: one stage of the program (an L1 arrival's frame); the start image "
+                "is the memory there";
+            schema["properties"]["from_tinframe"]["type"] = "integer";
+            schema["properties"]["from_tinframe"]["description"] = "The point inside from_frame in TTD time units, as time_travel's tinframe (an arrival's tinframe)";
+            schema["properties"]["to_frame"]["type"] = "integer";
+            schema["properties"]["to_frame"]["description"] = "The window ends before this frame (default: the end)";
         }
         build["responses"]["200"]["description"] = "job, state, bundle, progress, ready, text";
-        build["responses"]["400"]["description"] = "A bad frames / wait value or an unknown option";
+        build["responses"]["400"]["description"] = "A bad frames / wait / window value or an unknown option";
         build["responses"]["409"]["description"] = "No recording, or a build is running";
 
         Json::Value& cancel = paths["/api/v1/emulator/{id}/analysis/cancel"]["post"];
@@ -361,5 +369,26 @@
             op["responses"]["200"]["description"] = "candidates, tried, flipped, attempts, new_code, branches, text";
             op["responses"]["400"]["description"] = "A bad budget, frames or range";
             op["responses"]["409"]["description"] = "No L2 yet (build first)";
+        }
+        {
+            Json::Value& op = paths["/api/v1/emulator/{id}/analysis/trace"]["post"];
+            op["summary"] = "CPU access trace of a window of the recording";
+            op["tags"].append("Analyzers");
+            op["description"] =
+                "Replays a window of the recording on a muted analysis instance and writes every instruction (its "
+                "registers, frame and T-state) and every fetch, read, write and port access (its address, value and "
+                "T-state) to a file, with the memory the window starts from (the format: accesstrace.h). For routine "
+                "animations, which-instruction-drew-this-pixel maps and beam timelines.";
+            idParameter(op);
+            bodyOf(op, {{"path", "The file to write on the emulator's host (required)"},
+                        {"from_frame", "The frame the window starts in"},
+                        {"from_tinframe", "The point inside from_frame, TTD time units"},
+                        {"to_frame", "The frame the window ends in (default from_frame + 1)"},
+                        {"to_tinframe", "The point inside to_frame the window ends before"},
+                        {"max_cycles", "The most bus cycles written (default 8000000)"}});
+            op["responses"]["200"]["description"] =
+                "path, from_frame, from_tinframe, to_frame, to_tinframe, instructions, cycles, fetches, reads, writes, ports, bytes, truncated, text";
+            op["responses"]["400"]["description"] = "No path, or a window that ends before it starts";
+            op["responses"]["409"]["description"] = "No recording, a window outside it or over 3000 frames, a build running";
         }
     }

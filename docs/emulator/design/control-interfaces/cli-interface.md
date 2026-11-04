@@ -164,6 +164,12 @@ Available commands:
   ...
 ```
 
+**The sound card CPU**: `--cpu gs` (`ms`: the MultiSound's) on `registers`, `memory`, `memory info` and `disasm`
+works on the General Sound / NeoGS card's Z80 (`registers a 0x10 --cpu gs`, `memory 0x4000 32 --cpu gs`,
+`disasm --cpu gs`; [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)), and on
+`step [count]`, `steps <count>`, `stepover` and `stepout` steps it: the machine runs until the card's step ends
+(`stepover --cpu gs`).
+
 **Command Aliases**:
 The CLI supports command aliases for convenience:
 - `?` → `help`
@@ -265,6 +271,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd step-forward` | `ttd sf`, `forward` | One frame forward. | ✅ Implemented |
 | `ttd resume [frame [tinframe]] [media=ask\|empty\|keep]` | — | Truncate future at the current (detached) position, or the given one, and record again; the machine runs. Every medium goes back there when it can; one that cannot (another medium in the slot, a write beyond its undo log): `empty` (default) takes it out, `keep` leaves it, `ask` lists them and resumes nothing. | ✅ Implemented |
 | `ttd position` | `ttd pos` | Current time point (frame/tstate), session bounds, the history's first frame, state, paused, frame rate. Never parks the machine (the TTD's published cursor). | ✅ Implemented |
+| `ttd bookmark list [--tag T]`, `add <label> [frame] [tinframe] [--note TEXT] [--tags a,b] [--watch A[:N],...] [--no-context]`, `note <label> [--note TEXT \| --append TEXT] [--tags ..] [--add-tags ..] [--remove-tags ..] [--rename NEW]`, `export [--format markdown\|profile\|json] [--tag T] [--title TEXT] [--path FILE]`, `del <label>` | `ttd bm` | Agent bookmarks with notes, tags and the moment's context (PC, instruction, registers, watched bytes, taken once at `add`); `export` writes them up as a WALKTHROUGH section, a game profile's header comment or JSON in one call. | ✅ Implemented |
 | `ttd markers` | `ttd barriers` | List external-event markers in the timeline. | ✅ Implemented |
 | `ttd dump <path>` | `ttd save` | Serialize the session to a `.ttd` file. | ✅ Implemented |
 | `ttd load <path>` | `ttd open` | Restore a dumped session (model must match the recording). | ✅ Implemented |
@@ -279,6 +286,8 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd timeline` | `ttd tl` | The recording cut into phases of the same activity, each with its facts (no replay). | ✅ Implemented |
 | `ttd cause <addr>[:page] \| <reg>` | `ttd cause-chain` | Where a byte or a register got its value: the chain back to constants, port reads and the initial memory, one line per link (`--frame F [--tin T]`, `--depth N`, `--links N`, `--frames N`, `--flags`). | ✅ Implemented |
 | `ttd event <kind> ...` | `ttd find-event` | When did it happen: `mem <addr>[:page] [cond [V\|B]] [--size 2] [--exact]`, `screen [PERCENT\|cleared]`, `exec <addr>[-<to>][:page]`, `port <in\|out> <port> [value V] [--mask M]`, `border [COLOUR]`, `key [KEY] [--released]`; `--last`, `--from F`, `--to F`, `--limit N`. One line per hit: frame+t, PC, instruction, before -> after, why; then a summary. | ✅ Implemented |
+| `ttd explain [F] [--sections a,b] [--limit N]` | `ttd explain-frame` | What frame F (default: the current one) did: the time split, the routines by time, the interrupt, paging, ports per device, memory changed with its writers, the screen and border, input, markers. Sections: `time`, `routines`, `interrupt`, `paging`, `ports`, `memory`, `screen`, `input`, `markers`, `all`; `--limit` 1..100 (default 8) per list. Prints the text; the machine stays where it was. | ✅ Implemented |
+| `ttd diff F[+T] [G[+T]] [--sections a,b] [--limit N] [--no-writers]` | — | What differs between moment F (+T inside the frame; `F:T` also works) and G (default: the current position): the registers, the latches and the 8K slot mapping, the RAM changed in ranges (screen pixels, attributes, RAM per page) with the bytes of short ranges and the last CPU write in between, the screen and border, the devices whose state differs, and the frames, T, keys and markers in between. Sections: `cpu`, `paging`, `memory`, `screen`, `devices`, `between`, `all`; `--limit` 1..200 (default 16) per list; `--no-writers` skips the write search. Prints the text; the machine stays where it was. | ✅ Implemented |
 
 **Interactive session example** (post-mortem crash forensics):
 
@@ -426,7 +435,7 @@ surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers
 | `controllers haptics [device]` | Whether the emulator drives each device's motors (or why not) and its test effects |
 | `controllers rumble <device> [effect]` | Play a test effect: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz` |
 | `controllers output <device> <tick\|double\|buzz>`, `output <device> steps=N clicks=on\|off`, `output <device> marks=a,b` | A control surface's outputs (the Surface Dial): a haptic pattern; its steps per turn and clicks (until its context changes); a seek's marks as its top layer plays them |
-| `controllers haptics_probe <kind> <address> [page=N port_mask=M play=hit]` | A haptic probe (`exec`, `read`, `write`, `port-in`, `port-out`) as a source of the loaded game's user profile, with a rule |
+| `controllers haptics_trial [<file>\|clear]` | Try a play profile's `events:` / `haptics:` (a YAML or JSON file) on the loaded game for this session, never written; `clear` drops it, no argument shows it |
 | `controllers light <device> <#RRGGBB\|r,g,b\|off>` | A pad's light colour (a DualSense / DualShock 4 light bar), where the OS lets the emulator set it |
 | `controllers role <device> <player\|debugger-remote\|disabled>`, `pin <device> <follow-focus\|all\|pinned:<id>>`, `identify <device>` | What a host device is for, which instance it drives; rumble and blink it to tell two pads apart |
 | `controllers player <device> [connector\|auto\|none]` | The connector a pad's `auto:` targets drive: read, choose, back to automatic, none |
@@ -540,7 +549,7 @@ Monitoring ([command-interface.md §17](./command-interface.md#17-monitoring)), 
 | `monitor [all] [instance=]` | Host, clients, every instance's pace and breakpoints |
 | `monitor host.stats` / `host.clients` | The process: CPU %, resident / peak memory, threads; connections and requests per plane |
 | `monitor emulator.stats [instance]` | fps, real-time speed %, frame time, halted %, CPU MHz and multipliers, interrupts per frame |
-| `monitor debug.breakpoints` / `breakpoint_groups` / `media.slots` / `recording.state` / `debug.labels` / `ttd.status` / `debug.analyzers` / `controllers.state` / `game.events` | The summaries (JSON) |
+| `monitor debug.breakpoints` / `breakpoint_groups` / `media.slots` / `recording.state` / `debug.labels` / `ttd.status` / `debug.analyzers` / `controllers.state` / `game.events` / `devices.access` | The summaries (JSON) |
 | `monitor <name> --json` | The reply every plane returns |
 
 ```
@@ -565,6 +574,8 @@ reference: [command-interface.md](./command-interface.md).
 | :--- | :--- |
 | `stepout` | Run until the current subroutine returns to its caller. |
 | `skip_until <pc>` | Fast-forward until PC reaches the target (breakpoints skipped, bounded budget). |
+| `run_until [N] key=value ...` | Whole frames until the rules hold at a frame end: `if="M(#5C3A)==1"`, `text="GAME OVER"`, `screen=changed\|stable`, `stable_frames=25`, `event=died`, `match=any\|all`, `breakpoints=true`; a bare N is `max_frames` (3000, at most 200000). One line: "met at frame 4521 after 312 frames (text, row \"GAME OVER\"), PC #0038, 41 ms; paused" or "not met after 3000 frames ...". |
+| `watch add key=value ...` / `watch list` / `watch del <id\|all>` | Frame watches on the running machine (the `run_until` rules plus `label=`, `then=pause\|notify`, `once=true\|false`; at most 16): a hit pauses at that frame end (stop reason `watch`) and is pushed as `watch_hit` on `debug.events`. `watches` = `watch list`. |
 | `pace [show\|presets\|set <preset> [ms]\|interval <ms>\|next\|prev\|start\|stop\|toggle\|step] [--json]` | The paced run ([command-interface.md §2.1](./command-interface.md#21-paced-run-and-runs-to-a-place-stream-deck-d1-d2)): `full`, `25fps`, `5fps`, `1fps`, `frame`, `100lines`, `10lines`, `1line`, `1op`; a frame, lines or an instruction per interval (1..5000 ms), stopping at a breakpoint. `pace` alone shows it. |
 | `ttd reverse-step --scanlines L`, `ttd journal build-cancel` | Back L scanlines of the machine; stop a write-journal build that runs. |
 | (run control) | `step`, `steps`, `stepover`, `stepout`, `skip_until` and every `run_*` answer "Error: Run-control held by <surface>" while another surface (a GDB client) holds the run-control claim. |
@@ -619,7 +630,7 @@ as every other plane (`analysis::Execute`), so the lines below are also the `tex
 | :--- | :--- |
 | `analysis start [facts\|counters] [z80\|physical] [record]` | Switch on memory tracking at level `facts` (default) or `counters`, mode `z80` (default) or `physical`, and start a fresh session (`level=`, `mode=` work too); `record` (`record=true`) also starts a TTD recording for the L1 build. |
 | `analysis stop` | Stop the session (and the recording `record` started); the facts stay readable. |
-| `analysis build [frames] [path=F] [wait=MS]` | L1: capture the recording, replay it on a muted analysis instance and build routines, CFG, call graph, loops, patterns, data flow, branches, paging. A job: the answer has its id and state; `frames` caps the replay, `path` writes the L1 JSON, `wait` (at most 30000 ms) waits for the end. Progress: topics `analysis.progress`, `analysis.ready`. |
+| `analysis build [frames] [from_frame=] [from_tinframe=] [to_frame=] [path=F] [wait=MS]` | L1: capture the recording, replay it on a muted analysis instance and build routines, CFG, call graph, loops, patterns, data flow, branches, paging. A job: the answer has its id and state; `frames` caps the replay; `from_frame` / `from_tinframe` (an arrival's frame and t-states into it) and `to_frame` (exclusive) build one window, one stage ([stages and windows](../../analysis/analysis-layers.md#stages-and-windows)); `path` writes the L1 JSON, `wait` (at most 30000 ms) waits for the end. Progress: topics `analysis.progress`, `analysis.ready`. |
 | `analysis cancel` | Cancel the running build (409 when none runs). |
 | `analysis status` (`analysis`) | State, level, mode, frame, what the facts hold. |
 | `analysis explain <addr> [page] [routine\|byte]` | With an L1 build, the fact sheet of the routine holding the address (at most 1 KB, 24 disassembly lines); `byte` (or no L1): what L0 knows of one byte: kinds, last writer and the values, last reader, frames, counters, labels. `<addr>`: `$80BC`, `#80BC`, `0x80BC`, `80BCh`, decimal or a label; `[page]` in physical mode: index, `ram:N`, `rom:N`. |
@@ -629,6 +640,7 @@ as every other plane (`analysis::Execute`), so the lines below are also the `tex
 | `analysis findings [list\|add]` | L3: the findings register of the last build, every L2 claim, conflict, candidate bug, unnamed hot routine and unknown area plus the notes, coverage flips and experiments added since, ids `F1..` in a fixed order ([findings](../../analysis/analysis-layers.md#findings-register)). `kind=`, `status=`, `range=`, `limit=` filter; `format=markdown` (zx-reaper's `re/findings.md`) or `jsonl`, `path=` writes it. `add`: a note (`claim=`, `range=`, `status=`, `evidence=` `;`-separated, `by=`). 409 before an L1 build. |
 | `analysis review [next\|list\|show\|resolve] [id] [ok\|wrong\|skip]` | L3: the review queue (bugs, conflicts, unnamed hot routines, low-confidence claims, unknown areas over 16 bytes; at most `limit=` 40 plus a summary). `next` (default): the next open item and its fact sheet (at most 1 KB); `list`; `show <id>`; `resolve <id>` with a verdict and `label=`, `title=`, `comment=` that the draft export carries, `experiment=<json>` to decide with a run. 404 for an unknown id, 409 for a label already used. |
 | `analysis experiment <spec.json\|{json}> [finding=<id>] [parallel=<n>]` | L3: experiments on muted clones from the recording: `poke`, `regs`, `input` (keys, joystick), `frames`, `watch`, `expect`; one spec or an array ([experiment runner](../../analysis/analysis-layers.md#experiment-runner)). Each result is observed or refuted and marks `finding=`. The source machine is never touched. |
+| `analysis trace <path> [from_frame=] [from_tinframe=] [to_frame=] [to_tinframe=] [max_cycles=]` | the CPU access trace of a window of the recording: every instruction (frame, T-state, registers) and every fetch, read, write and port access (address, value, T-state) after it, with the memory the window starts from, written to `path` for scripts (format: [access trace](../../analysis/analysis-layers.md#access-trace)); the window defaults to one frame, at most 3000; 409 with no recording or outside it. |
 | `analysis cover [budget] [frames=<n>] [per_branch=<n>] [ranges=<r,...>]` | L3: directed coverage: the branches the session took one way only, flipped by holding the byte they test or pressing the keys / joystick of the port they read; flips become coverage findings and draft notes. |
 
 `--json` prints the fields instead of the lines. Example:

@@ -8,6 +8,7 @@
 #include <cctype>
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/ports/deviceaccessnode.h"
 #include "emulator/state/statenodejson.h"
 
 namespace controllers
@@ -381,50 +382,36 @@ ControllerReply ControllerControl::Auto(const ControllerRequest& request)
 {
     if (request.options.count("apply") != 0)
         _manager->WatchPortReads(true);
-    const PortReadEvidence evidence = _manager->PortReads();
+    const DeviceAccessEvidence evidence = _manager->PortReads();
     ControllerReply reply;
-    StateNode watch = StateNode::Object();
-    watch["active"] = evidence.active;
-    watch["frames_observed"] = static_cast<uint64_t>(evidence.framesObserved);
-    watch["window"] = static_cast<uint64_t>(evidence.window);
-    StateNode classes = StateNode::Object();
-    for (size_t index = 0; index < kPortReadClasses; ++index)
-    {
-        if (evidence.framesWithReads[index] == 0)
-            continue;
-        StateNode entry = StateNode::Object();
-        entry["frames"] = static_cast<uint64_t>(evidence.framesWithReads[index]);
-        entry["reads_per_frame"] = static_cast<double>(evidence.readsPerFrame[index]);
-        classes[PortReadClassName(static_cast<PortReadClass>(index))] = entry;
-    }
-    watch["classes"] = classes;
-    // row-bits.<half-row>: the bits the code tested after its reads (the sampled AND n / BIT b / shift into carry)
-    StateNode rowBits = StateNode::Object();
-    for (unsigned row = 0; row < evidence.rowBits.size(); ++row)
-    {
-        const auto cls = static_cast<PortReadClass>(static_cast<unsigned>(PortReadClass::Row0) + row);
-        if (evidence.RowBits(cls) == 0)
-            continue;
-        StateNode bits = StateNode::Array();
-        for (unsigned bit = 0; bit < 8; ++bit)
-            if ((evidence.RowBits(cls) >> bit) & 1u)
-                bits.push(static_cast<uint64_t>(bit));
-        rowBits[PortReadClassName(cls)] = bits;
-    }
-    watch["row_bits"] = rowBits;
-    reply.body["evidence"] = watch;
+    reply.body["evidence"] = DeviceAccessEvidenceNode(evidence);
 #ifdef ENABLE_CONTROLLERS
     // The library's heuristic (mapping-and-profiles.md §6.1 step 2): what the Qt host would plug
-    const controllers::AutoDecision decision = controllers::DecideFromPortReads(evidence);
+    const controllers::AutoDecision decision = controllers::DecideAuto(evidence);
     StateNode value = StateNode::Object();
     value["decisive"] = decision.decisive;
     value["keyboard"] = decision.keyboard;
     value["device"] = decision.device.empty() ? StateNode() : StateNode(decision.device);
-    value["connector"] = decision.connector.empty() ? StateNode() : StateNode(decision.connector);
+    // The machine's connector for the decisive reads (`kempston` on a Pentagon, `next.left` on a Next); a device
+    // with none (a Kempston mouse, the keyboard joysticks) is plugged on `auto`
+    std::string connector = decision.connector;
+    if (const int found = connector.empty() ? _manager->FindForInput(decision.input, decision.source) : -1; found >= 0)
+        connector = _manager->At(static_cast<size_t>(found)).id;
+    value["connector"] = connector.empty() ? StateNode() : StateNode(connector);
+    if (decision.input != slots::InputRole::None)
+        value["input"] = InputRoleName(decision.input);
     value["label"] = decision.label;
     value["reason"] = decision.reason;
     if (!decision.hint.empty())
         value["hint"] = decision.hint;
+    if (!decision.card.empty())
+    {
+        // Reads no device of the machine answers: the catalog card that would, where the planner fits it
+        // (`slots plug <card_slot> <card>` fits it, with a restart)
+        value["card"] = decision.card;
+        value["card_slot"] = decision.cardSlot;
+        value["input"] = InputRoleName(decision.input);
+    }
     reply.body["decision"] = value;
 #endif
     return reply;

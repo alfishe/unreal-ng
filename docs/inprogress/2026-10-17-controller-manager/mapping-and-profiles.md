@@ -229,8 +229,9 @@ flowchart TB
    Qt client computes the signatures from them as for a file it loaded, so the game profile applies by its hash with
    no manual choice. The same file read again within 3 s is one load; a write to the card makes the file map built
    again at the next run.
-2. **Port-read heuristic.** The core's `PortReadWatch` ([architecture.md §13](architecture.md#13-code-placement))
-   counts the guest's reads per frame, smoothed, from the end of loading for up to 30 s of play:
+2. **Port-read heuristic.** The core's device access watch ([retro-devices.md §6](retro-devices.md#6-port-read-evidence))
+   counts the guest's reads per frame for the input roles that the machine's slot claims declare. It runs from the
+   end of loading for up to 30 s of play, or all the time with the feature `deviceaccess`:
 
    | Evidence | Decision |
    |:--|:--|

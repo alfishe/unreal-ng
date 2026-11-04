@@ -26,6 +26,19 @@
 /// expressions of a BASIC line (`n)=`, `f(i)`) select glyphs as well, but say nothing a word does. What the glyph reader
 /// reads is pixels.
 ///
+/// A printer's argument: an address an immediate load put in a register pair (L1 `immediateAddresses`, LD rr,nn
+/// pointers) that a routine already printing claimed text read through (the printer) is a string too, whatever its
+/// bytes: control records (a colour code, a row and a column) and cells code fills before each print leave too few
+/// printable characters for the rules above. Its terminator is the byte value the printer stops at after its other
+/// strings (the last byte of the run it read past each of them; a zero terminator counts as zero), when that is no
+/// printable character. The string runs from the address over bytes the printer (or a routine it calls) read, up to
+/// and including the first one of that value no code wrote; at another claim, at code, at a byte the printer did not
+/// read or after kMaxArgument bytes it is none. The printer reads it as a string: its first byte, its terminator and at
+/// least half of its bytes were read by an instruction that read the printer's other strings (a font or a table the
+/// printer looks up is read by other instructions). It needs a control code (a byte no code wrote that is no character)
+/// or the shape of a word: a score's digits passed to the printer alone are no text. Bytes code wrote are fields of
+/// the text (`filled`), control codes show as {XX} in its characters.
+///
 /// Source remnant: a run of bytes no code touched (the stack aside) that parses as tokenized assembler source - at
 /// least four lines of [line number lo, hi][length][text] with rising line numbers - is Unused, with the decoded
 /// lines as its text.
@@ -56,11 +69,19 @@ constexpr uint32_t kGlyphPrintablePct = 95;  ///< of its selectors, printable (b
 constexpr uint32_t kGlyphLetterPct = 75;     ///< of its selectors, letters or spaces
 constexpr uint32_t kDisplayStart = 0x4000;
 constexpr uint32_t kDisplayEnd = 0x5B00;
+constexpr uint32_t kMaxArgument = 255;  ///< bytes a printer's argument (or the run past a printed string) may span
 
 std::string Hex4(uint16_t v)
 {
     char text[8];
     std::snprintf(text, sizeof(text), "$%04X", v);
+    return text;
+}
+
+std::string Hex2(uint8_t v)
+{
+    char text[4];
+    std::snprintf(text, sizeof(text), "%02X", v);
     return text;
 }
 
@@ -471,6 +492,221 @@ void PrintedText(DetectorContext& context)
     }
 }
 
+/// The strings a printer's immediate argument names (see the file comment), after PrintedText's claims
+void PrinterArguments(DetectorContext& context)
+{
+    const L1Result& l1 = context.l1;
+    constexpr uint32_t kNone = 0xFFFFFFFFu;
+
+    // Per Z80 address: 0 free, 1 a text claim, 2 another claim (the code map's fallbacks do not count)
+    std::vector<uint8_t> owner(0x10000, 0);
+    // Per printer (the Z80 entry of the routine that read claimed text): its strings in the start's paging
+    struct Printed
+    {
+        uint16_t lo = 0;
+        uint16_t hi = 0;
+        bool zero = false;  ///< its claim holds its zero terminator
+    };
+    std::map<uint16_t, std::vector<Printed>> stringsOf;
+    for (const Region& r : context.out.store.Regions())
+    {
+        if (r.kind == RegionKind::Untouched ||
+            (r.detector == DetectorId::CodeMap && r.kind != RegionKind::Code && r.kind != RegionKind::Unused))
+            continue;
+        uint16_t z80 = 0;
+        if (!context.Z80Of(r.lo, z80))
+            continue;
+        const bool text = r.kind == RegionKind::Text && r.detector == DetectorId::Text;
+        for (uint32_t i = 0; i < r.Size() && z80 + i <= 0xFFFF; ++i)
+            owner[z80 + i] = std::max(owner[z80 + i], static_cast<uint8_t>(text ? 1 : 2));
+        if (!text || r.lo != context.Key(r.z80))
+            continue;
+        for (const uint16_t user : r.users)
+            stringsOf[user].push_back(Printed{r.z80, r.Z80End(), r.geometry.terminator == "zero"});
+    }
+    if (stringsOf.empty())
+        return;
+
+    // A byte in the bank of @p bank, in scope, no code, read by one of @p family, no other claim than text
+    const auto readByFamily = [&](uint32_t a, uint32_t bank, const std::set<uint16_t>& family) {
+        if (a > 0xFFFF || (a >> 14) != bank || owner[a] > 1)
+            return false;
+        const auto z80 = static_cast<uint16_t>(a);
+        const ByteUse& u = context.Use(z80);
+        return context.InScope(z80) && !DetectorContext::Code(u) && (u.flags & use::kRead) != 0 &&
+               ReadBy(context, z80, family);
+    };
+
+    // Each printer's family (itself and the routines it calls) and terminator: the value most of its strings end on
+    struct Printer
+    {
+        std::set<uint16_t> family;
+        std::set<PhysKey> readers;  ///< the instructions (of the family) that read its other strings
+        uint8_t terminator = 0;
+        size_t strings = 0;
+    };
+    std::map<uint16_t, Printer> printers;
+    const auto printable = [](uint8_t c) { return Printable(c) || Printable(static_cast<uint8_t>(c & 0x7F)); };
+    for (const auto& [entry, strings] : stringsOf)
+    {
+        const Routine* routine = l1.RoutineAtZ80(entry);
+        if (routine == nullptr || routine->z80 != entry)
+            continue;
+        const uint32_t index = l1.IndexOf(*routine);
+        Printer p;
+        p.family.insert(entry);
+        for (const CallEdge& c : l1.calls)
+            if (c.caller == index && (c.kind == CallKind::Call || c.kind == CallKind::Rst ||
+                                      c.kind == CallKind::Tail || c.kind == CallKind::FallsInto))
+                p.family.insert(l1.routines[c.callee].z80);
+        for (const Printed& s : strings)
+            for (uint32_t a = s.lo; a <= s.hi; ++a)
+            {
+                const ByteUse& u = context.Use(static_cast<uint16_t>(a));
+                for (const PhysKey reader : {u.firstReader, u.lastReader})
+                    if (const Routine* r = reader != kNoKey ? l1.RoutineOf(reader) : nullptr)
+                        if (p.family.count(r->z80) != 0)
+                            p.readers.insert(reader);
+            }
+        std::map<uint8_t, uint32_t> votes;
+        for (const Printed& s : strings)
+        {
+            if (s.zero)
+            {
+                ++votes[0];
+                continue;
+            }
+            // The printer read on past the string (control records, the next string) until it stopped
+            const auto bank = static_cast<uint32_t>(s.hi >> 14);
+            uint32_t stop = kNone;
+            for (uint32_t a = s.hi + 1u; a <= s.hi + kMaxArgument && readByFamily(a, bank, p.family); ++a)
+                stop = a;
+            if (stop != kNone)
+                ++votes[context.Start(static_cast<uint16_t>(stop))];
+        }
+        uint32_t best = 0;
+        for (const auto& [value, count] : votes)
+            if (count > best)
+            {
+                best = count;
+                p.terminator = value;
+            }
+        if (best == 0 || printable(p.terminator) || p.readers.empty())
+            continue;
+        p.strings = strings.size();
+        printers.emplace(entry, std::move(p));
+    }
+    if (printers.empty())
+        return;
+
+    // The immediate arguments: address -> (the load, its first use, the uses), the first fact for an address wins
+    struct Argument
+    {
+        uint16_t load = 0;
+        uint16_t use = 0;
+        uint64_t uses = 0;
+    };
+    std::map<uint16_t, Argument> arguments;
+    for (const ImmediateAddress& i : l1.immediateAddresses)
+        arguments.emplace(i.value, Argument{i.z80, i.useZ80, i.uses});
+    for (const PointerUse& p : l1.pointers)
+        if (p.form == PointerForm::Immediate && p.uses != 0)
+            arguments.emplace(p.value, Argument{p.z80, p.useZ80, p.uses});
+
+    for (const auto& [address, argument] : arguments)
+    {
+        const Routine* reader = l1.RoutineAtZ80(argument.use);
+        const auto printer = reader != nullptr ? printers.find(reader->z80) : printers.end();
+        if (printer == printers.end() || owner[address] != 0)
+            continue;
+        const Printer& p = printer->second;
+        const auto bank = static_cast<uint32_t>(address >> 14);
+        uint32_t end = kNone;
+        for (uint32_t a = address; a < address + kMaxArgument && owner[a & 0xFFFF] == 0 &&
+                                   readByFamily(a, bank, p.family);
+             ++a)
+        {
+            const ByteUse& u = context.Use(static_cast<uint16_t>(a));
+            const bool written = (u.flags & use::kWrite) != 0;
+            if (context.Start(static_cast<uint16_t>(a)) == p.terminator &&
+                (!written || (u.minWritten == p.terminator && u.maxWritten == p.terminator)))
+            {
+                end = a;
+                break;
+            }
+        }
+        if (end == kNone || end == address)
+            continue;
+        // Read where the printer reads its other strings: the first byte, the terminator and at least half of the
+        // bytes (a record's row and column may go through other instructions). A font, a table the printer looks up
+        // through the same family is read elsewhere
+        const auto readAsString = [&](uint32_t a) {
+            const ByteUse& u = context.Use(static_cast<uint16_t>(a));
+            return p.readers.count(u.firstReader) != 0 || p.readers.count(u.lastReader) != 0;
+        };
+        uint32_t asString = 0;
+        for (uint32_t a = address; a <= end; ++a)
+            asString += readAsString(a) ? 1u : 0u;
+        if (!readAsString(address) || !readAsString(end) || asString * 2 < end - address + 1)
+            continue;
+        // A string by its layout (a control code the printer read) or by its words: digits and blanks alone (a score,
+        // a filler) say nothing a word does
+        bool control = false;
+        std::string plain;
+        for (uint32_t a = address; a < end; ++a)
+        {
+            const auto z80 = static_cast<uint16_t>(a);
+            if ((context.Use(z80).flags & use::kWrite) != 0)
+                continue;
+            const uint8_t v = context.Start(z80);
+            if (Printable(v))
+                plain += static_cast<char>(v);
+            else
+                control = true;
+        }
+        if (!control && !WordShaped(plain))
+            continue;
+
+        Region r;
+        r.kind = RegionKind::Text;
+        r.detector = DetectorId::Text;
+        r.status = RegionStatus::Observed;
+        r.confidence = 850;
+        r.geometry.width = static_cast<uint16_t>(end - address);
+        r.geometry.terminator = p.terminator == 0 ? "zero" : "$" + Hex2(p.terminator);
+        for (uint32_t a = address; a < end; ++a)
+        {
+            const auto z80 = static_cast<uint16_t>(a);
+            const uint8_t v = context.Start(z80);
+            r.geometry.text += Printable(v) ? std::string(1, static_cast<char>(v)) : "{" + Hex2(v) + "}";
+            const ByteUse& u = context.Use(z80);
+            if ((u.flags & use::kWrite) == 0)
+                continue;
+            // A cell code fills: one field a run of written bytes
+            const auto offset = static_cast<uint16_t>(a - address);
+            const uint8_t lo = std::min(v, u.minWritten);
+            const uint8_t hi = std::max(v, u.maxWritten);
+            Field* last = r.geometry.fields.empty() ? nullptr : &r.geometry.fields.back();
+            if (last != nullptr && last->offset + last->size == offset)
+                ++last->size;
+            else
+                r.geometry.fields.push_back(Field{offset, 1, "filled", lo, hi, false});
+        }
+        r.evidence.push_back(Evidence{"argument", argument.load, argument.uses,
+                                      "an immediate load passes it to the printer " + Hex4(printer->first)});
+        r.evidence.push_back(Evidence{"reader", printer->first, p.strings,
+                                      "prints " + std::to_string(p.strings) +
+                                          (p.strings == 1 ? " other string" : " other strings") + ", each ended by " +
+                                          r.geometry.terminator});
+        for (const Field& f : r.geometry.fields)
+            r.evidence.push_back(Evidence{"field", static_cast<uint16_t>(address + f.offset), f.size,
+                                          "written by code before it is printed"});
+        r.users.push_back(printer->first);
+        if (context.Claim(std::move(r), address, static_cast<uint16_t>(end)))
+            std::fill(owner.begin() + address, owner.begin() + end + 1, uint8_t{1});
+    }
+}
+
 /// [lo, hi][length][text] lines from @p at; the number of good lines and the decoded text
 int ParseSource(DetectorContext& context, uint32_t at, uint32_t end, std::string* text, uint32_t* stop)
 {
@@ -567,6 +803,7 @@ void SourceRemnants(DetectorContext& context)
 void DetectText(DetectorContext& context)
 {
     PrintedText(context);
+    PrinterArguments(context);
     SourceRemnants(context);
 }
 

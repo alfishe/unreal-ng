@@ -73,6 +73,11 @@ Code sent to the interpreter (`POST /api/v1/python/exec`, the CLI `python` comma
 and callbacks see its top-level names, and the names stay for the next call, as in the Lua console. Its `print`
 output comes back with the answer.
 
+Code sent by `POST /api/v1/python/exec` or `/python/file` acts in the sender's automation session on a machine the
+sender holds (its `X-Unreal-Session`, or its implicit session, an MCP agent's too): its control calls pass without a
+`take_control()`, and `release_control()` leaves the sender's session in place
+([execution arbiter design §6a](../../../inprogress/2026-10-09-execution-arbiter/design.md#6a-automation-sessions-visible-remote-control-x7)).
+
 ### Machine Identity and Lifecycle
 The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
@@ -565,6 +570,14 @@ def companion_revoke(id: str) -> int:
     def set_register(self, name: str, value: int) -> bool:
         """False for an unknown name or a value im (0-2) / iff1, iff2 (0-1) cannot hold;
         8-bit registers take the low byte"""
+
+    # cpu="gs" ("ms": the MultiSound's) on get_registers, get_register, set_register, mem_read, mem_write and
+    # disasm reads and writes the sound card CPU (card_time instead of t; disasm from its PC, no labels);
+    # memory_map("gs") is its four windows {cpu, windows: [{start, size, kind, page, offset}]}. ValueError for
+    # another name, RuntimeError when no card with a CPU is in the slot or for an edit in the recorded past.
+    # cpu="gs" on step, steps, stepover and step_out steps the card CPU: the machine runs until the card's step
+    # ends, then is paused; the answer {ok, stop: {cpu, reason, cpu_pc, ...}, pc, sp, main_pc, main_sp, state}
+    # or {ok: False, error}
         
     def run_frame(self):
         """Run exactly one video frame (config.frame t-states)"""
@@ -784,8 +797,8 @@ emu.controllers_match(path="/games/elite.tzx")           # {matches: [{id, how}]
 ```
 
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
-**options)`, `controllers_light(device, color)`, `controllers_haptics_probe(kind, address, page=, port_mask=,
-play=)` (a haptic probe with its rule in the loaded game's user profile), `controllers_match(path=)`, `controllers_role(device, role)`, `controllers_pin(device, pin)`,
+**options)`, `controllers_light(device, color)`, `controllers_haptics_trial(text="",
+clear=False)` (events and rules tried on the loaded game for this session, never written), `controllers_match(path=)`, `controllers_role(device, role)`, `controllers_pin(device, pin)`,
 `controllers_identify(device)`, `controllers_player(device, connector=None)`, `controllers_probe(**options)`,
 `controllers_reports(device)`, `controllers_database(**lookup)`, `controllers_database_save(text)`,
 `controllers_database_delete(id)`, `controllers_database_import(text, save=True)`, `controllers_learn(device,
@@ -1724,10 +1737,14 @@ for m in emu.ttd_markers():                 # replay barriers
 
 emu.ttd_bookmark_add('before crash')                        # at the current position
 emu.ttd_bookmark_add('umt entry', frame=4823, tinframe=14982)
-# -> {'added': True, 'label': ..., 'frame': ..., 'tinframe': ...}
-#    or {'added': False, 'error': '...'}
-for bm in emu.ttd_bookmarks():              # time-sorted
-    print(bm['frame'], bm['tinframe'], bm['label'])
+emu.ttd_bookmark_add('lives', 212, 31540, note='the life counter drops', tags=['lives'], watch=['#A13C'])
+# -> {'added': True, 'label': ..., 'frame': ..., 'tinframe': ..., 'bookmark': {...}, 'text': ...}
+#    or {'added': False, 'error': '...'}; context=False skips the moment's registers / instruction / watched bytes
+for bm in emu.ttd_bookmarks():              # time-sorted; ttd_bookmarks(tag='lives'): one tag
+    print(bm['frame'], bm['tinframe'], bm['label'], bm['note'], bm['context'])
+emu.ttd_bookmark_note('lives', note='only on contact', append=True, add_tags=['enemy'])   # also tags, remove_tags, rename
+e = emu.ttd_bookmark_export(format='markdown', tag='lives', title='Green Beret')        # or 'profile', 'json'
+print(e['text'])                            # path='...' writes it too: e['path'], e['bytes']
 emu.ttd_bookmark_delete('before crash')     # -> bool
 emu.ttd_seek_bookmark('umt entry')          # same dict as ttd_seek (blocking_marker included) plus 'bookmark'
                                             # ('error' for an unknown label)
@@ -1829,6 +1846,22 @@ down = emu.ttd_find_event('mem', addr=0xA130, cond='decreased', limit=3)
 #  'more': True, 'next_from_frame': ..., 'frames_scanned': ..., 'frames_replayed': 3, 'ms': ...}
 first_run = emu.ttd_find_event('exec', addr=0x8A14, text=True)
 
+# What one frame did: frame=None (the current one), sections='time,routines,interrupt,paging,ports,memory,screen,
+# input,markers' (default all), limit=8, text=False
+f = emu.ttd_explain_frame(1204, sections='time,routines,memory', limit=4)
+# {'frame': 1204, 'frame_t': 69888, 'instructions': 18312, 'time': {'isr': 6210, 'halt': 21700, 'code': ...},
+#  'routines': [{'pc': 35348, 'calls': 1, 't': 31220, 'own_t': 2110, 'insns': 4812, 'caller': 32771, ...}, ...],
+#  'memory': [{'region': 'screen pixels', 'addr': 18432, 'changed': 1024, 'writers': [...]}, ...], 'ms': ...}
+
+# What differs between two moments: from_frame, keyword from_tinframe, to_frame, to_tinframe (default: the current
+# position), sections='cpu,paging,memory,screen,devices,between' (default all), limit=16, writers=True, text=False
+d = emu.ttd_diff(1201, to_frame=1204, sections='cpu,memory')
+# {'from': {'frame': 1201, 'tinframe': 0}, 'to': {'frame': 1204, 'tinframe': 0}, 'backwards': False,
+#  'registers': [{'name': 'PC', 'before': 32776, 'after': 32777}, ...],
+#  'memory': {'changed': 2, 'pages': 1, 'ranges': [{'region': 'ram', 'page': 2, 'offset': 8192, 'address': 40960,
+#   'length': 1, 'before': [3], 'after': [6], 'last_write': {'frame': 1203, 'pc': 32780, 'text': 'inc (hl)', ...}}],
+#   'more': 0}, 'writer_searches': 2, 'ms': ...}
+
 summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50, limit=100)
 # {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,
 #  'bucket_size': 50, 'bucket_count': 10, 'index_available': True,
@@ -1851,6 +1884,14 @@ return a dict; on failure the dict carries an `error` string.
 emu.step_out()                       # run until the current subroutine returns
 emu.skip_until(0x8000)               # fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", max_tstates=70000000)  # optional explicit t-state budget
+
+# Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end.
+# condition= is the `if` rule (a keyword in Python); the GIL is released while the machine runs
+emu.run_until(text="PRESS", max_frames=500)    # {'met', 'outcome', 'frames', 'frame', 'pc', 'ms', 'hit', 'text'}
+emu.run_until(condition="M(#5C3A)==1", screen="stable", stable_frames=50, match="all")
+emu.watch_add(text="GAME OVER", label="over")  # {'id', 'watch', 'text'}; a hit pauses at that frame end
+emu.watches()                                  # {'count', 'watches', 'text'}
+emu.watch_remove(1)                            # or "all"
 
 # The paced run (core RunPacer, command-interface.md §2.1): a frame / lines / an instruction per interval,
 # stops at a breakpoint. A refusal raises RuntimeError ("Run-control held: ...")
@@ -2056,6 +2097,7 @@ emu.analysis("stop")                                   # the facts stay readable
 emu.analysis("start", record=True)                     # also a TTD recording
 emu.run_frames(500)
 job = emu.analysis("build", wait=20000)                # {job, state, bundle, progress, ready, text}; frames=, path=
+emu.analysis("build", from_frame=1200, from_tinframe=3500, to_frame=4000)  # a window: one stage (analysis-layers.md#stages-and-windows)
 sheet = emu.analysis("explain", address=0x0038)        # L1 ready: {what: "routine", routine {...}, text: the sheet}
 emu.analysis("explain", address=0x0038, what="byte")   # the L0 byte facts as before
 emu.analysis("cancel")                                 # a running build; refused when none runs
@@ -2068,6 +2110,7 @@ emu.analysis("export", format="skool", path="game.skool", ranges="5900-59FF,8000
 g = emu.analysis("gallery", kind="sprite")             # the graphics found: {regions [...], count, truncated, text}
 png = emu.analysis("gallery", address=0x8200, scale=4)["png"]  # one drawn: base64 PNG; width, height, frames
 emu.analysis("gallery", address="$8200", path="sprite.png")    # or written to a file
+emu.analysis("trace", path="scratch/pass.uatr", from_frame=1001, to_frame=1003)  # the CPU access trace of a window
 
 # L3 (the review): findings register, review queue, experiments on muted clones, directed coverage
 emu.analysis("findings", kind="bug")                   # {count, total, by_kind, by_status, findings [...], text}

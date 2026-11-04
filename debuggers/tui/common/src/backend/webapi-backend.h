@@ -12,10 +12,17 @@
 //   PUT    /api/v1/emulator/{id}/registers/{name} {"value":N}
 //   GET    /api/v1/emulator/{id}/memory/{addr}?len=&format=full
 //   PUT    /api/v1/emulator/{id}/memory/{addr}    {"data":[...]}
-//   POST   /api/v1/emulator/{id}/step             one instruction
-//   POST   /api/v1/emulator/{id}/breakpoints      {"type","address"} -> id
+//   POST   /api/v1/emulator/{id}/step             one instruction, its "stop" reason
+//   POST   /api/v1/emulator/{id}/breakpoints      {"type","address"[,"address_end","condition"]} -> id
 //   DELETE /api/v1/emulator/{id}/breakpoints/{id}
 //   GET/POST /api/v1/emulator/{id}/labels ...
+//   GET    .../video/beam, /ports, /state/paging  the frame and its length, the port latches, the pages
+//   POST   .../ports/out {"port","value"}         a port write with the decoder's effects
+//   GET    .../state/fdc, /state/audio/ay[/{n}]   Beta 128 (WD1793), the AY chips and their latched registers
+//   GET    .../rtc/cells, /memory/region/eeprom   CMOS, NVRAM (the ZX-Evo AVR's EEPROM)
+//   GET    .../disk/{d}/track/{c}/{s}[/raw], PUT .../disk/{d}/sector/{c}/{s}/{n}   the disk editor
+//   GET    .../memory/page/ram/{5|7}              the screen preview
+//   POST   .../profiler/memory/start|stop, GET .../profiler/memory/counters   the ripper
 //
 // Policy (§9.3 of the TDD applies unchanged): the backend keeps a full 64K
 // memory image + register snapshot cached locally and invalidates both after
@@ -24,10 +31,9 @@
 // the mock uses (disasm-unreal / asm-subset), so a debugger session behaves
 // identically over either transport and the wire only has to serve bytes.
 //
-// WebAPI gaps that are intentionally approximated (each marked in the .cpp):
-// no T-state counter (time delta reads 0), no port write, no latched
-// port/beta128/AY values, no conditional-breakpoint push evaluation. Those
-// need the WebSocket transport and/or new server endpoints; the seam stays.
+// The conditions (§10.2) are breakpoints of the emulator over the whole 64K: it evaluates them, every client sees
+// them. Left out (each marked in the .cpp): the ATM palette editor (no region), the raw track editor's writes (no raw
+// track write route), the XAS / ALASM label import scans.
 #pragma once
 
 #include <array>
@@ -129,6 +135,9 @@ public:
     bool Attach() { return EnsureInstance(); }
     // The server's address, for the waiting dialog
     void SetEndpoint(std::string endpoint) { endpoint_ = std::move(endpoint); }
+    // Only this instance (its id or symbolic id; --emulator): the emulator window that started the debugger.
+    // Empty: the first suitable one
+    void SetEmulator(std::string id) { wanted_ = std::move(id); }
     // Tests: the next look for an instance and the next liveness check happen at the next call, not a second later
     void RetryNow() {
         nextAttach_ = {};
@@ -147,6 +156,7 @@ protected:
     // "an emulator", "a TS-Conf emulator": the dialog's words for Suitable
     virtual std::string SuitableText() const { return "an emulator"; }
     bool EnsurePaused();
+    // The registers, then the beam (absolute T), the pages and the port latches: one snapshot (Snapshots counts them)
     bool FetchRegs();
     bool FetchMemory();
     void RefreshLabels();
@@ -160,6 +170,8 @@ protected:
 private:
     // The four windows' page titles (GET /state/paging), asked with the registers
     void FetchPaging();
+    // The ports' latched values (GET /ports), asked with the registers
+    void FetchPorts();
     // The emulator's breakpoints (GET /breakpoints) as the local bits: another client may have set or removed some
     void SyncBreakpoints();
     // The machine again after a change of others: the registers, and when they moved, the memory and the labels
@@ -173,6 +185,7 @@ private:
     std::string instanceId_;
     bool connected_ = false;
     std::string endpoint_;
+    std::string wanted_;  // SetEmulator
     bool attachedOnce_ = false;  // HasState
     // The instance went away (its emulator closed, the server stopped): wait for a suitable one again
     void Lost();
@@ -188,7 +201,9 @@ private:
     Z80Regs regs_;
     bool regsValid_ = false;
     Z80Regs prevRegs_;            // §9.5 change highlighting across stops
-    uint64_t markT_ = 0;          // SetDebugMark storage (no T source yet)
+    uint64_t markT_ = 0;          // SetDebugMark
+    uint64_t absT_ = 0;           // frame x frame length + T in the frame, at the last register read
+    uint32_t frameT_ = 0;         // the frame's length in T-states (GET /video/beam); 0 before the first read
 
     std::array<uint8_t, 0x10000> bpBits_{};  // bit0 X, 1 R, 2 W (local truth)
     std::map<std::pair<uint16_t, int>, int> serverBpIds_;  // (addr, bit) -> id
@@ -199,11 +214,18 @@ private:
     bool running_ = false;        // the instance runs (run.state; Continue; RunTo)
     bool runToArmed_ = false;     // RunTo's breakpoint is set
     std::chrono::steady_clock::time_point nextPoll_{};  // polling without topics
-    PortsState ports_;            // local latches (Set7ffd/SetExtPort/Out)
+    PortsState ports_;            // FetchPorts, FetchPaging (the DOS ROM)
     AyState ay_;
+    uint64_t ayAt_ = UINT64_MAX;  // the snapshot ay_ was read at (GetAy reads once per snapshot)
+    bool ayChosen_ = false;       // the panel's chip was chosen (SelectAyChip): the machine's selection no longer shows
+    Beta128State beta128_;
+    uint64_t beta128At_ = UINT64_MAX;
     std::vector<std::pair<uint16_t, std::string>> labels_;
-    std::vector<std::string> conditions_;  // compiled-ok sources (no remote eval)
-    bool ripperArmed_ = false;
+    std::vector<std::string> conditions_;  // the conditions' texts, as the emulator lists them
+    std::vector<int> conditionIds_;        // their breakpoints' ids
+    bool ripperArmed_ = false;    // the memory profiler counts for the ripper
+    bool ripTraceReads_ = false;
+    bool ripTraceWrites_ = false;
 };
 
 }  // namespace dbg

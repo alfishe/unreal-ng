@@ -2435,8 +2435,9 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address, int value)
     if (Silenced())
         return BRK_INVALID;
 
-    // Stepping on from the execution breakpoint the emulator is stopped at: no hit, no count
-    if (kind == BRK_KIND_EXEC && !_replayWalk && _execPassArmed && address == _execPassAddress)
+    // Stepping on from the execution breakpoint the emulator is stopped at: no hit, no count (a taps-only walk
+    // stops nothing, so it leaves the pass to the breakpoint)
+    if (kind == BRK_KIND_EXEC && !_replayWalk && !_tapsOnlyWalk && _execPassArmed && address == _execPassAddress)
     {
         _execPassArmed = false;
         return BRK_INVALID;
@@ -2748,8 +2749,10 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slotShift, uint16_t
         return first;
     for (BreakpointDescriptor* bp : _candidateSets[set])
     {
-        // A replay query's walk: its own taps only, before anything is counted
+        // A replay query's walk: its own taps only, before anything is counted; a taps-only walk: no breakpoint
         if (_replayWalk && bp->tapSink != _replaySink) [[unlikely]]
+            continue;
+        if (_tapsOnlyWalk && bp->tapSink == BRK_NO_TAP) [[unlikely]]
             continue;
         // A slot-only physical breakpoint fires only through the slot it was set in
         if (bp->slotOnly && slotShift >= 0 && (address >> slotShift) != (bp->z80address >> slotShift))
@@ -3301,7 +3304,8 @@ void BreakpointManager::RebuildFilters()
 }
 
 /// The CPU checks the instruction start without the debug mode while exec taps are armed; the memory tests the write
-/// filter in its fast write while write taps are (a machine without that hook, and read taps, take the debug path)
+/// filter in its fast write while write taps are, and the read-tap interface tests the read filter while read taps are
+/// (a machine with its own memory interface takes the debug path for those)
 void BreakpointManager::ApplyTapDemand(const BreakpointTapDemand& demand)
 {
     if (demand == _tapDemand)
@@ -3318,11 +3322,18 @@ void BreakpointManager::ApplyTapDemand(const BreakpointTapDemand& demand)
     _context->pCore->GetZ80()->execTapHold = demand.exec;
     Memory* memory = _context->pCore->GetMemory();
     const bool hooked = demand.write && memory != nullptr && memory->SupportsWriteTapHook();
+    const bool readHooked = demand.read && memory != nullptr && memory->SupportsReadTapHook();
     if (memory != nullptr)
+    {
         memory->SetWriteTapDemand(hooked, &_hotState);
+        const bool readChanged = memory->ReadTapDemand() != readHooked;
+        memory->SetReadTapDemand(readHooked, &_hotState);
+        if (readChanged)
+            _context->pCore->SelectMemoryInterface();  // the read-tap interface on or off
+    }
     if (_context->pFeatureManager != nullptr)
     {
-        _context->pFeatureManager->setTapDebugHold(demand.read || (demand.write && !hooked));
+        _context->pFeatureManager->setTapDebugHold((demand.read && !readHooked) || (demand.write && !hooked));
         _context->pFeatureManager->setBreakpointDebugHold(demand.stop);
     }
 }

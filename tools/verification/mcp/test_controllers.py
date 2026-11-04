@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """controllers: the host-side verbs of the controller manager as an agent sees them - devices, probe, the device
 database and an import (save=false: the user's devices.user.json stays as it is), role / pin / identify refusals for
-an unknown device, and learn refused with the planes that offer it"""
+an unknown device, learn refused with the planes that offer it, and the session haptics trial (events laid over the
+loaded game in memory, seen by game.events, cleared)"""
 
 import sys
 
@@ -59,6 +60,31 @@ def test_learn_points_elsewhere(s):
     r = s.call('controllers', {'action': 'learn', 'device': 'kbd'}, ok=False)
     expect(r.is_error and 'controllers_learn' in r.text and '/api/v1/controllers/learn' in r.text,
            'learn refused with the planes that run it', r.text)
+
+
+def test_haptics_trial_fires_and_clears(s):
+    r = s.call('controllers', {'action': 'haptics_trial'})
+    expect('no haptics trial' in r.text, 'no trial at the start', r.text)
+    # The IM 1 handler runs once a frame on a running Pentagon: an event that fires in every frame
+    trial = 'events:\n  irq: {probe: exec, address: "0x0038"}\nhaptics:\n  rules:\n    - {on: irq, play: tick}\n'
+    r = s.call('controllers', {'action': 'haptics_trial', 'text': trial})
+    expect('haptics trial over' in r.text and '1 sources' in r.text, 'the trial in the text', r.text)
+    r = s.call('controllers', {'action': 'context'})
+    expect('session trial' in r.text, 'the haptics reason names the trial', r.text)
+    # run_frames on the paused machine: the probe hears the frames it steps (its tap never stops, so the run that
+    # skips breakpoints still tells it); the feed arms the probe at the first frame boundary
+    s.call('control_execution', {'action': 'pause'}, ok=False)
+    s.call('control_execution', {'action': 'run_frames', 'frames': 10})
+    r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/monitor/game.events'})
+    fired = (((r.structured or {}).get('body') or {}).get('events') or {}).get('irq', {}).get('fires', 0)
+    expect(fired >= 5, 'game.events counts the trial event over run_frames (%s of 10 frames)' % fired, r.text)
+    r = s.call('controllers', {'action': 'haptics_trial', 'text': 'haptics: {rules: [{on: nobody, play: hit}]}'},
+               ok=False)
+    expect(r.is_error and 'nobody' in r.text, 'a rule on an unknown source refused with the reason', r.text)
+    r = s.call('controllers', {'action': 'haptics_trial', 'clear': True})
+    expect('no haptics trial' in r.text, 'clear drops it', r.text)
+    r = s.call('controllers', {'action': 'context'})
+    expect('session trial' not in r.text, 'the haptics reason without the trial', r.text)
 
 
 if __name__ == '__main__':

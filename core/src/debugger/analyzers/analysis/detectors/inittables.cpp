@@ -1,6 +1,7 @@
 /// The init table detector.
 ///
-/// Built tables: a run of bytes one routine wrote at most twice each and other code then read, its content checked
+/// Built tables: a run of bytes one routine wrote at most twice each and other code then read (unread padding of up to
+/// seven bytes between read ones included), its content checked
 /// against the generators (MatchGenerator); a match raises the confidence and names the generator.
 /// Loaded tables: a page table (LD H,n / LD L,A / LD A,(HL), L1's DataFlow) or a run read through a pointer whose
 /// content follows a generator is a table as well, as loaded. All integer arithmetic: the sine check is on the shape
@@ -167,16 +168,36 @@ void DetectInitTables(DetectorContext& context)
             continue;
         }
         const uint32_t writer = context.RoutineEntry(u.firstWriter);
+        // A byte the writer wrote; read too, unless it is padding between entries (see below)
+        const auto written = [&](uint32_t at, bool read) {
+            const auto z = static_cast<uint16_t>(at);
+            const ByteUse& v = context.Use(z);
+            return at <= 0xFFFF && (at >> 14) == (a >> 14) && context.InScope(z) && claimed[at] == 0 &&
+                   (v.flags & use::kWrite) != 0 && (!read || (v.flags & use::kRead) != 0) && v.writes <= 2 &&
+                   !v.multiWriter && context.RoutineEntry(v.firstWriter) == writer;
+        };
         uint32_t b = a;
-        while (b + 1 <= 0xFFFF && ((b + 1) >> 14) == (a >> 14))
+        uint32_t piece = a;  // where the read bytes before a gap began
+        while (true)
         {
-            const auto next = static_cast<uint16_t>(b + 1);
-            const ByteUse& v = context.Use(next);
-            if (!context.InScope(next) || claimed[b + 1] != 0 || (v.flags & use::kWrite) == 0 ||
-                (v.flags & use::kRead) == 0 || v.writes > 2 || v.multiWriter ||
-                context.RoutineEntry(v.firstWriter) != writer)
+            if (written(b + 1, true))
+            {
+                ++b;
+                continue;
+            }
+            // Padding: up to kMinTable - 1 (seven) bytes the same routine wrote but nothing read, inside the table
+            // (entries of 4 bytes in 8-byte slots, of 9 bytes in 16-byte slots): the run goes on when a read byte of
+            // the same writer follows and the entry before the gap is at least 4 bytes and no shorter than the gap
+            // (single bytes read here and there in a copied area are variables, not a table). gap - 1 padding bytes
+            // lie between b and the next read byte at b + gap
+            uint32_t gap = 1;
+            while (gap <= kMinTable && written(b + gap, false) && !written(b + gap, true))
+                ++gap;
+            const uint32_t entry = b - piece + 1;
+            if (gap == 1 || gap > kMinTable || entry < 4 || entry < gap - 1 || !written(b + gap, true))
                 break;
-            ++b;
+            b += gap;
+            piece = b;
         }
         const size_t n = b - a + 1;
         if (n >= kMinTable && writer != 0xFFFFFFFFu)

@@ -62,6 +62,11 @@ struct TraceBundle
 struct ReplayOptions
 {
     uint64_t maxFrames = 0;     ///< 0: to the end of the recording
+    /// The window: from this moment (0, 0: the first keyframe) to this frame (0: the end). A stage of the program
+    /// (a CodeArrival: a loader, the depacked game) is one window; the start image is the memory at its start
+    uint64_t fromFrame = 0;
+    uint32_t fromTInFrame = 0;
+    uint64_t toFrame = 0;
     uint32_t chunkFrames = 25;  ///< frames per run between progress reports and checkpoint comparisons
     uint64_t salt = 0;          ///< L1Builder's hash salt (0: random)
     /// Called after every chunk with the frames done and the frames to do; false cancels the build

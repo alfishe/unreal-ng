@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -140,6 +141,33 @@ TEST(MixerChannelChips_Test, CovoxChannelGainScalesTheDacLevelAndMuteSilencesIt)
     covox->setChannelGain(Covox::Channel::RightB, 32768);
     covox->portDeviceOutMethod(0x00FB, 0xC0);
     EXPECT_EQ(covox->lastLeftAmplitude(), full) << "unity: the hardware level again";
+}
+
+// A mono Covox has one DAC: one mixer channel, `covox.mono`, on its latch - the Pentagon's #FB and the Scorpion's #DD
+TEST(MixerChannelChips_Test, MonoCovoxHasOneMixerChannel)
+{
+    for (const auto& [model, fb, dd] : { std::tuple{ MM_PENTAGON, 1, 0 }, std::tuple{ MM_SCORP, 0, 1 } })
+    {
+        EmulatorContext context(LoggerLevel::LogError);
+        context.config.mem_model = model;
+        context.config.sound.covoxFB = fb;
+        context.config.sound.covoxDD = dd;
+        SoundManager sound(&context);
+        sound.reset();
+        Covox* covox = sound.getCovox();
+        ASSERT_NE(covox, nullptr);
+        const std::vector<SoundManager::MixerChannelState> channels = sound.mixerChannels(AudioSourceType::COVOX);
+        ASSERT_EQ(channels.size(), 1u) << model;
+        EXPECT_EQ(channels[0].desc.key, "mono");
+
+        std::string error;
+        ASSERT_TRUE(sound.setMixerChannel(AudioSourceType::COVOX, "mono", 1, -1, 0.5f, error)) << error;
+        sound.handleFrameStart();  // the mixer's channel state reaches the device at the frame start
+        EXPECT_TRUE(covox->isChannelMuted(Covox::Channel::RightB));
+        EXPECT_EQ(covox->channelGain(Covox::Channel::RightB), 16384);
+        EXPECT_FALSE(covox->isChannelMuted(Covox::Channel::LeftA)) << "the other latches are not the mono DAC's";
+        EXPECT_FALSE(sound.setMixerChannel(AudioSourceType::COVOX, "rb", 1, -1, -1.0f, error));
+    }
 }
 
 namespace

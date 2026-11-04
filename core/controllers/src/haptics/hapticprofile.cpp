@@ -86,6 +86,32 @@ const Library& TheLibrary()
             l.effects[entry.id].levels.lowHz = entry.lowHz;
             l.effects[entry.id].levels.highHz = entry.highHz;
         }
+        // The voice coils (hd.left, hd.right): a tone per effect, low and rough for impacts, high for small events.
+        // A whip lands on the side it flies to
+        const struct
+        {
+            const char* id;
+            float left;
+            float right;
+            uint16_t hz;
+            HdWave wave;
+        } coils[] = {{"tick", 0.5f, 0.5f, 250, HdWave::Sine},       {"knock", 0.6f, 0.6f, 120, HdWave::Sine},
+                     {"thump", 0.8f, 0.8f, 60, HdWave::Sine},       {"explosion", 1.0f, 1.0f, 50, HdWave::Noise},
+                     {"engine", 0.3f, 0.3f, 45, HdWave::Square},    {"heartbeat", 0.6f, 0.6f, 60, HdWave::Sine},
+                     {"hit", 0.8f, 0.8f, 90, HdWave::Noise},        {"impact", 1.0f, 1.0f, 90, HdWave::Noise},
+                     {"life-lost", 1.0f, 1.0f, 70, HdWave::Square}, {"whip", 0.0f, 0.7f, 140, HdWave::Noise},
+                     {"whip-left", 0.7f, 0.0f, 140, HdWave::Noise}, {"whip-drag", 0.0f, 0.4f, 80, HdWave::Square},
+                     {"whip-drag-left", 0.4f, 0.0f, 80, HdWave::Square},
+                     {"pickup", 0.5f, 0.5f, 320, HdWave::Sine},     {"shot", 0.7f, 0.7f, 180, HdWave::Noise},
+                     {"rumble-strip", 0.4f, 0.4f, 30, HdWave::Square}};
+        for (const auto& entry : coils)
+        {
+            RumbleLevels& levels = l.effects[entry.id].levels;
+            levels.hdLeft = entry.left;
+            levels.hdRight = entry.right;
+            levels.hdFrequency = entry.hz;
+            levels.hdWave = entry.wave;
+        }
         return l;
     }();
     return library;
@@ -463,6 +489,8 @@ bool ParseOneTarget(const std::string& first, uint8_t& out)
                                                                {"handle.high", kHandleHigh},
                                                                {"trigger.left", kTriggerLeft},
                                                                {"trigger.right", kTriggerRight},
+                                                               {"hd.left", kHdLeft},
+                                                               {"hd.right", kHdRight},
                                                                {"all", kTargetAll}};
     for (const auto& [name, bit] : kTargets)
     {
@@ -556,60 +584,32 @@ const char* HapticStreamName(HapticStream stream)
     return "mix";
 }
 
-bool AddHapticProbeSource(JsonValue& haptics, const HapticProbe& probe, const std::string& play, std::string& name,
-                          std::string& error)
+JsonValue OverlayHaptics(const JsonValue& base, const JsonValue& overlay)
 {
-    JsonValue section = haptics.IsObject() ? haptics : JsonValue::Object();
-    JsonValue sources = section.Find("sources") != nullptr ? *section.Find("sources") : JsonValue::Object();
-    JsonValue rules = section.Find("rules") != nullptr ? *section.Find("rules") : JsonValue::Array();
-    if (!sources.IsObject() || !rules.IsArray())
+    if (!overlay.IsObject())
+        return base;
+    JsonValue section = base.IsObject() ? base : JsonValue::Object();
+    for (const auto& [field, value] : overlay.GetMembers())
     {
-        error = "the haptics section's 'sources' is not an object or its 'rules' not a list";
-        return false;
-    }
-    for (unsigned index = 1;; index++)
-    {
-        name = "probe-" + std::to_string(index);
-        if (sources.Find(name) == nullptr)
-            break;
-    }
-    auto hex = [](unsigned value) {
-        char text[8];
-        std::snprintf(text, sizeof(text), "0x%04X", value & 0xFFFF);
-        return std::string(text);
-    };
-    JsonValue source = JsonValue::Object();
-    static const char* const kKinds[] = {"exec", "read", "write", "port-in", "port-out"};
-    source.Set("probe", JsonValue::String(kKinds[static_cast<size_t>(probe.kind)]));
-    if (probe.kind == HapticProbeKind::PortIn || probe.kind == HapticProbeKind::PortOut)
-    {
-        source.Set("port", JsonValue::String(hex(probe.address)));
-        if (probe.portMask != 0xFFFF)
-            source.Set("port_mask", JsonValue::String(hex(probe.portMask)));
-    }
-    else
-    {
-        source.Set("address", JsonValue::String(probe.page == 0xFFFF ? hex(probe.address)
-                                                                     : "page:" + std::to_string(probe.page) + ":" +
-                                                                           hex(probe.address & 0x3FFF)));
-        if (probe.kind == HapticProbeKind::Write)
+        const JsonValue* under = section.Find(field);
+        if (field == "sources" && value.IsObject() && under != nullptr && under->IsObject())
         {
-            source.Set("when", JsonValue::String("changed"));
-            source.Set("each_write", JsonValue::Bool(true));
+            JsonValue sources = *under;
+            for (const auto& [name, spec] : value.GetMembers())
+                sources.Set(name, spec);
+            section.Set(field, std::move(sources));
         }
+        else if (field == "rules" && value.IsArray() && under != nullptr && under->IsArray())
+        {
+            std::vector<JsonValue> items = under->Items();
+            for (const JsonValue& rule : value.Items())
+                items.push_back(rule);
+            section.Set(field, JsonValue::Array(std::move(items)));
+        }
+        else
+            section.Set(field, value);
     }
-    if (!probe.condition.empty())
-        source.Set("if", JsonValue::String(probe.condition));
-    sources.Set(name, std::move(source));
-    std::vector<JsonValue> items = rules.Items();
-    items.push_back(JsonValue::Object({{"on", JsonValue::String(name)}, {"play", JsonValue::String(play)}}));
-    section.Set("sources", std::move(sources));
-    section.Set("rules", JsonValue::Array(std::move(items)));
-    HapticProfile checked;
-    if (!ParseHapticProfile(section, checked, error))
-        return false;
-    haptics = std::move(section);
-    return true;
+    return section;
 }
 
 void SetHapticConditionCheck(HapticConditionCheck check)
@@ -779,16 +779,19 @@ bool ParseHapticProfile(const JsonValue& section, HapticProfile& out, std::strin
             {
                 if (!hd->IsObject())
                 {
-                    error = where + ": 'hd' is an object ({frequency_hz, low_hz, high_hz})";
+                    error = where + ": 'hd' is an object ({frequency_hz, low_hz, high_hz, waveform})";
                     return false;
                 }
                 for (const auto& [field, value] : hd->GetMembers())
                 {
-                    if (field != "frequency_hz" && field != "low_hz" && field != "high_hz")
+                    if (field != "frequency_hz" && field != "low_hz" && field != "high_hz" && field != "waveform")
                     {
-                        error = where + ".hd: unknown field '" + field + "' (frequency_hz, low_hz, high_hz)";
+                        error = where + ".hd: unknown field '" + field +
+                                "' (frequency_hz, low_hz, high_hz, waveform)";
                         return false;
                     }
+                    if (field == "waveform")
+                        continue;
                     if (!value.IsNumber() || value.AsNumber() < 1 || value.AsNumber() > 2000)
                     {
                         error = where + ".hd." + field + ": 1..2000 Hz";
@@ -803,6 +806,21 @@ bool ParseHapticProfile(const JsonValue& section, HapticProfile& out, std::strin
                 Number(*hd, "high_hz", highHz, error, where);
                 rule.lowHz = static_cast<uint16_t>(lowHz != 0 ? lowHz : frequency);
                 rule.highHz = static_cast<uint16_t>(highHz != 0 ? highHz : frequency);
+                rule.hdFrequency = static_cast<uint16_t>(frequency);
+                std::string wave;
+                if (!Text(*hd, "waveform", wave, error, where + ".hd"))
+                    return false;
+                if (wave == "sine")
+                    rule.hdWave = HdWave::Sine;
+                else if (wave == "square")
+                    rule.hdWave = HdWave::Square;
+                else if (wave == "noise")
+                    rule.hdWave = HdWave::Noise;
+                else if (!wave.empty())
+                {
+                    error = where + ".hd.waveform: sine, square or noise";
+                    return false;
+                }
             }
             if (profile.Find(rule.on) == nullptr)
             {
@@ -856,11 +874,18 @@ RumbleLevels RetargetLevels(const RumbleLevels& levels, uint8_t target)
     if (target == 0)
         return levels;
     const float peak = std::max(levels.low, levels.high);
+    const float coilPeak = std::max({peak, levels.hdLeft, levels.hdRight});
+    const bool all = target == kTargetAll;
     RumbleLevels out;
-    out.low = (target & kHandleLow) ? (target == kTargetAll ? levels.low : peak) : 0.0f;
-    out.high = (target & kHandleHigh) ? (target == kTargetAll ? levels.high : peak) : 0.0f;
+    out.low = (target & kHandleLow) ? (all ? levels.low : peak) : 0.0f;
+    out.high = (target & kHandleHigh) ? (all ? levels.high : peak) : 0.0f;
     out.leftTrigger = (target & kTriggerLeft) ? peak : 0.0f;
     out.rightTrigger = (target & kTriggerRight) ? peak : 0.0f;
+    // `all` keeps a coil's own level and gives the loudest to a coil the effect has none for
+    out.hdLeft = (target & kHdLeft) ? (all && levels.hdLeft > 0 ? levels.hdLeft : coilPeak) : 0.0f;
+    out.hdRight = (target & kHdRight) ? (all && levels.hdRight > 0 ? levels.hdRight : coilPeak) : 0.0f;
+    out.hdFrequency = levels.hdFrequency;
+    out.hdWave = levels.hdWave;
     // A band that takes over the other's level takes its frequency too when it has none of its own
     out.lowHz = out.low > 0 ? (levels.lowHz != 0 ? levels.lowHz : levels.highHz) : 0;
     out.highHz = out.high > 0 ? (levels.highHz != 0 ? levels.highHz : levels.lowHz) : 0;

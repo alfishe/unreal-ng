@@ -684,7 +684,8 @@ bool MockBackend::GetTsConf(TsConfState& out) {
 
 // -- factory -------------------------------------------------------------------------------------
 
-std::unique_ptr<IDebuggerBackend> CreateBackend(BackendKind kind, const std::string& endpoint) {
+std::unique_ptr<IDebuggerBackend> CreateBackend(BackendKind kind, const std::string& endpoint,
+                                                const std::string& emulator) {
     switch (kind) {
     case BackendKind::Mock:
         return std::make_unique<MockBackend>(CreateTestSetByName("golden-sample"));
@@ -699,6 +700,7 @@ std::unique_ptr<IDebuggerBackend> CreateBackend(BackendKind kind, const std::str
             transport = std::make_unique<HttpClient>(url);
         auto backend = std::make_unique<TsConfWebApiBackend>(std::move(transport));
         backend->SetEndpoint(url);
+        backend->SetEmulator(emulator);
         backend->Attach();  // no suitable emulator yet: the UI waits for one (IDebuggerBackend::Online)
         return backend;
     }

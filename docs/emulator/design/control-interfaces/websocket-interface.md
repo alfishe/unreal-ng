@@ -33,7 +33,12 @@ socket, and the socket also pushes state changes, so clients never poll.
 ```
 
 The same handler as the REST route: same scopes, body and errors. Calls with different `rid` may be answered out of
-order.
+order. The sound card CPU's registers, memory and code are the REST routes with `?cpu=gs`
+(`{"op":"call","method":"GET","path":"/api/v1/emulator/{id}/registers?cpu=gs"}`;
+[the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)), its steps `POST /step?cpu=gs`
+and the others; the `debug` topic's `paused` event after one has `reason` `step`, `cpu` and `cpu_pc`.
+An answer budget works the same way: `?max_chars=2000` in the path fits the result's `body` (a JSON object gets
+`truncated`; [answer budgets](webapi-interface.md#answer-budgets-max_chars)).
 
 As implemented:
 
@@ -89,6 +94,7 @@ is a job whose progress and result are the topics `analysis.progress` and `analy
 → {"op":"call","rid":7,"method":"GET","path":"/api/v1/emulator/0/analysis/query?kind=records"}
 → {"op":"call","rid":8,"method":"POST","path":"/api/v1/emulator/0/analysis/export","body":{"format":"skool","path":"game.skool","ranges":"8000-FFFF"}}
 → {"op":"call","rid":9,"method":"POST","path":"/api/v1/emulator/0/analysis/gallery","body":{"address":"$8200","scale":4}}
+→ {"op":"call","rid":12,"method":"POST","path":"/api/v1/emulator/0/analysis/trace","body":{"path":"scratch/pass.uatr","from_frame":1001,"to_frame":1003}}
 → {"op":"call","rid":10,"method":"POST","path":"/api/v1/emulator/0/analysis/review","body":{"op":"next"}}
 → {"op":"call","rid":11,"method":"POST","path":"/api/v1/emulator/0/analysis/experiment","body":{"spec":{"poke":{"$8100":5},"frames":50,"expect":{"mem:$8101":"$AA"}}}}
 ```
@@ -125,7 +131,7 @@ when their runs are done, on their own analysis instances (the socket's other ca
 | `analysis.ready` | per instance the L1 the last build made `{ready, job, routines, blocks, loops, instructions, frames, checked, diverged, path}` | none | implemented (P2, 2026-10-26) |
 | `surface` | control surfaces: opened by `join` (not by `subscribe`): `action`, `result`, `ctx`, readouts, `target`, `revoked` ([below](#31-the-surface-topic)) | per action | implemented (S4); `activity`, `catalogue`, the readout vocabulary and views: Stream Deck SD4 |
 | `instances` | the companion's live view of the instances (`hello`, `emulator`, `emulator_gone`, `snapshot`): `/api/v1/companions/events` on this socket ([§3.2](#32-the-instances-topic)) | none (a companion's own view) | implemented |
-| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
+| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed`, `watch_hit` / `watch_added` / `watch_removed` / `watch_error` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
 | `host.stats` | the host process, once for the process (no `instance`): `{cpu_percent, cpu_percent_host, cores, rss_bytes, peak_rss_bytes, virtual_bytes, threads, cpu_time_s, uptime_s, …}`, sampled at most twice a second (`GET /api/v1/monitor/host.stats`, [command-interface.md §17](./command-interface.md#17-monitoring)) | none | implemented |
 | `host.clients` | the process: per plane (`rest`, `ws`, `events`, `debug_ws`, `mcp`, `cli`) `{connections, opened, requests}`, `companions`, `instances` (`GET /api/v1/monitor/host.clients`) | none | implemented |
 | `emulator.stats` | per instance the measured pace `{state, measuring, fps, nominal_fps, speed_percent, frame_time_us {avg, max}, frame_budget_percent, halted_percent, interrupts_per_frame, frame, t_states, turbo, cpu {mhz, base_mhz, multiplier, host_multiplier, hw_turbo_ratio}}`: a new value every 0.5 s while it runs (`GET /api/v1/monitor/emulator.stats`) | none | implemented |
@@ -138,6 +144,7 @@ when their runs are done, on their own analysis instances (the socket's other ca
 | `controllers.state` | per instance `{connectors [{id, kind, device, plugged, fixed}], plugged}` (`GET /api/v1/monitor/controllers.state`) | none | implemented |
 | `game.events` | per instance the game's events `{available, profile, frame, seq, events {<name>: {kind, fires, last_frame, level, value, condition?, condition_error?}}, recent [{seq, frame, name}]}` (`GET /api/v1/monitor/game.events`); a new value when an event fires or a watched value changes, coalesced at `max_hz`: `recent` holds the fired ones between two messages | none | implemented |
 | `debug.watches` | per instance the memory watches' totals `{available, session, revision, watches [{name, kind (region / port), start + length or port + mask, reads, writes, executes (regions)}]}` (`GET /api/v1/monitor/debug.watches`); published at every frame's end and on every watch change; the callers and values are in `GET .../profiler/memory/watches` | none | implemented |
+| `devices.access` | per instance the [device access watch](../../../inprogress/2026-11-02-device-access-watch/README.md) `{available, active, continuous, frames_observed, window, dropped_channels, channels [{device, channel, dir, port, input, frames, reads_per_frame, tested_bits, sites [{pc, count, tested_bits}], other_sites}]}` (`GET /api/v1/monitor/devices.access`); a new value at every folded frame while the watch counts (a media load, `controllers auto apply`, the feature `deviceaccess`), coalesced at `max_hz` | none | implemented (2026-11-03) |
 | `debug.asm_sync` | the asm synchroniser's watch: `asm_sync_*` (the `asm_sync` topic of `/api/v1/websocket`) | none; no token needed from this host | implemented |
 
 - `subscribe` takes names or prefixes (`ttd.*`, `*`) and adds to what the connection has; `unsubscribe` removes.
@@ -255,6 +262,16 @@ DebugEventHub's events ([debugger protocol §5](../../../inprogress/2026-09-28-d
 ← {"t":"debug.events","op":"event","event":"callbacks_changed","id":3,"callback":{"id":3,"on":"tap","owner":"lua","label":"slow","target":"tap write #5C78","state":"suspended","reason":"3 calls over 1000 us within 50 frames",…},"seq":40,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
 ```
 
+- `watch_hit` (`{id, label?, frame, reasons, text_line?, paused, removed}`), `watch_added` / `watch_removed`
+  (`{id, label?}`) and `watch_error` (`{id, frame, error}`: the condition failed at run time, the watch is disarmed):
+  a [frame watch](command-interface.md) armed with `POST /watches` held at a frame end. A hit moves `seq` too
+  (`debug/wait` wakes); with `then: pause` the machine is paused at that frame end and a `paused` event with
+  `reason: "watch"` follows.
+
+```json
+← {"t":"debug.events","op":"event","event":"watch_hit","id":1,"label":"over","frame":4521,"reasons":["text"],"text_line":"GAME OVER","paused":true,"removed":true,"seq":51,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
+```
+
 ## 4. Delivery and threads
 
 - State topics, `instances` and readouts keep the latest value, coalesced at `max_hz` (≤ 50 Hz). Event topics
@@ -262,11 +279,10 @@ DebugEventHub's events ([debugger protocol §5](../../../inprogress/2026-09-28-d
   next event says how many (`dropped`).
 - Served on the WebAPI's event loops with asynchronous I/O: no thread per connection, per topic or for the hub.
   Producers (the message centre, the actions workers, DebugEventHub) post a task to the WebAPI's main loop (a
-  debugger event is queued, at most 1024 waiting, and serialised once on the loop); one timer on it, armed
-  only while somebody subscribes and at the highest `max_hz` asked for, reads published state only (the TTD cursor's
-  seqlock, the run state, the context: never a read that holds the emulation thread), builds each value's JSON once
-  per tick, and sends each connection what changed when its own interval passed. A state topic's message of one
-  instance is the same bytes for every subscriber.
+  debugger event is queued, at most 1024 waiting, and serialised once on the loop). Values are read on events,
+  never on a beat (§4.2); the hub reads published state only (the TTD cursor's seqlock, the run state, the context:
+  never a read that holds the emulation thread), builds each value's JSON once per read, and sends each connection
+  what changed. A state topic's message of one instance is the same bytes for every subscriber.
 - `result`, `ctx`, `target` and `error` are sent as they happen, never behind a readout tick.
 
 ### 4.1 Backpressure
@@ -288,6 +304,24 @@ Per connection, on the bytes its socket has queued (the TCP connection's own buf
   fire the callback the queue is below the mark and the connection drains. The measure runs on the connection's
   I/O loop; the hub reads two atomics (`WsFlow`).
 - `max_hz` bounds the rate before that; the hub keeps one value per topic and instance, not a queue.
+
+### 4.2 Event-driven reads
+
+A paused or idle instance costs the hub nothing: no value is read, compared or serialised until something marks it
+stale. Every readout and state topic has a cadence (`ReadoutCadence`, `ws-hub.cpp`):
+
+| Cadence | Read when | Names |
+|---------|-----------|-------|
+| Events | the instance's state changed: a notification (`NC_EMULATOR_STATE_CHANGE`, `NC_SPEED_CHANGED`, `NC_BREAKPOINT_CHANGED`, the media, TTD and surface ones, ...), `NC_READOUTS_CHANGED` (state with no notification of its own: the mixer, TTD bookmarks, the tape transport, write protect, the profilers, the analysis jobs, the GUI's window settings, a setting set from the CLI, ...), or an action run on it (the activity feed) | `run.state`, `machine`, `audio.mute`, `debug.*` state, `media.recent`, `machine.*`, `input.connectors`, `video.*`, `surfaces.context`, `actions.unavailable`, `analysis.*`, `toggle.*` |
+| Frames | the events above, and every emulated frame or CPU step of that instance (`NC_VIDEO_FRAME_REFRESH`, `NC_EXECUTION_CPU_STEP`) | everything that moves with emulated time: `ttd.position`, `emulator.stats`, `audio.mixer`, `media.tape`, `game.events`, ... (the default) |
+| Meter | on time, at the subscriber's `max_hz` | `host.stats`, `host.clients`, `streamdeck.status` |
+
+- Frames of an instance are only taken while somebody subscribes to one of its Frames values: a deck that shows
+  toggles and names ignores the emulated frames entirely.
+- A burst of changes within one interval (`1 / max_hz`) is read once: a one-shot timer fires for the values held
+  back, and is not armed when nothing waits. `instances` refreshes once a second while subscribed.
+- A producer of new state with no notification calls `NotifyReadoutsChanged(context, area)`
+  (`emulator/readoutschanged.h`); a value cached by monitoring (`CachedValue`) is dropped on that mark.
 
 ## 5. The older sockets
 

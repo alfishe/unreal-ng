@@ -15,6 +15,7 @@
 #include "emulator/io/iiobusdevice.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
+#include "emulator/sound/covox.h"
 #include "emulator/video/ulacontention.h"
 
 #include <cstdint>
@@ -144,6 +145,28 @@ void PortDecoder_Scorpion256::reset()
 
     SyncTurboWaits();
 }
+
+/// region <Clock select>
+
+uint16_t PortDecoder_Scorpion256::GetClockSelect() const
+{
+    return _turboPlusHost ? static_cast<uint16_t>(_state->scorpion.turbo ? 1 : 0) : 0;
+}
+
+void PortDecoder_Scorpion256::RestoreClockSelect(uint16_t select)
+{
+    // The reset cleared the flip-flop; the quick reset skips the program that would strobe IN #7FFD again, so the
+    // latch comes back as that strobe leaves it (DecodePortIn): 7 MHz now, the Turbo+ waits with it
+    if (!_turboPlusHost || !select || _state->scorpion.turbo)
+        return;
+    _state->scorpion.turbo = 1;
+    _state->hw_turbo_ratio = 2;
+    if (_context->pCore && _context->pCore->GetZ80())
+        _context->pCore->GetZ80()->ApplyHardwareTurboNow();
+    SyncTurboWaits();
+}
+
+/// endregion </Clock select>
 
 /// region <Turbo+ wait states>
 
@@ -580,6 +603,14 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
         disp.wasHandledInline = true;
     }
 
+    // The Scorpion Covox (#DD, the printer data latch; CovoxDD=1): the board's printer latch decode (A5 = 0) is apart from the AY's (A5 = 1),
+    // but the AY masks below ignore A5, and OUT (#DD),A puts a sample of #80 and up on A15 - so it goes first
+    else if (IsPort_PrinterCovox(port) && DispatchSelfDecodingOut(port, value))
+    {
+        disp.decodedPort = 0x00DD;
+        disp.wasDecoded = true;
+    }
+
     // AY #FFFD: A15=1, A14=1, A1=0 (register select / TurboSound chip select)
     // Mask: 0b1100'0000'0000'0010, Match: 0b1100'0000'0000'0000
     else if ((port & 0xC002) == 0xC000)
@@ -965,6 +996,14 @@ bool PortDecoder_Scorpion256::IsPort_SMUC(uint16_t port)
     bool result = (port & port_SMUC_mask) == port_SMUC_match;
 
     return result;
+}
+
+bool PortDecoder_Scorpion256::IsPort_PrinterCovox(uint16_t port) const
+{
+    if (!_context->config.sound.covoxDD)
+        return false;
+    const PortMaskMatch decode = Covox::PrinterDecodeOf(_context->config.mem_model);
+    return decode.mask != 0 && (port & decode.mask) == decode.match;
 }
 
 bool PortDecoder_Scorpion256::IsPort_KempstonJoystick(uint16_t port)

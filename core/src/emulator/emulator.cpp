@@ -1,4 +1,5 @@
 #include "emulator.h"
+#include "emulator/readoutschanged.h"
 
 #include <optional>
 
@@ -958,6 +959,8 @@ bool Emulator::SetRegisterFromTool(const char* source, const std::string& name, 
     const std::string refused = EditMemoryFromTool(source, [&]() { set = Z80::SetRegisterValue(z80, name, value); });
     if (refusal)
         *refusal = refused;
+    if (set)
+        NotifyReadoutsChanged(_context, "registers");  // a PC edit while paused: the breakpoint-at-PC toggle
     return set;
 }
 
@@ -1597,13 +1600,14 @@ execution::Result Emulator::Pause(const execution::Requester& requester, const s
     if (_arbiter.IsLoopThread())
     {
         const bool breakpoint = _pendingPauseCause.hit;
+        const bool step = _pendingPauseCause.step;  // another CPU's step (OnTargetStep): the debugger's stop too
         execution::Requester who = requester;
-        if (breakpoint)
+        if (breakpoint || step)
         {
             const execution::Origin owner = execution::OriginFromName(_pendingPauseOwner);
             who = execution::Requester{owner == execution::Origin::Internal ? execution::Origin::Debugger : owner, {}};
         }
-        _arbiter.PauseFromDriver(who, breakpoint ? "breakpoint" : reason);
+        _arbiter.PauseFromDriver(who, breakpoint ? "breakpoint" : step ? "step" : reason);
         return execution::Result{execution::Outcome::Applied, 0, execution::Intent::Pause, {}};
     }
 
@@ -1732,7 +1736,10 @@ void Emulator::OnIntentEdgeGate(const execution::IntentEdge& edge, bool parked)
         // The stop's cause, for LastStop() and the broadcast: a breakpoint (OnBreakpointHit set it just before, on
         // this same thread) or a request
         std::lock_guard<std::mutex> lock(_prevStopMutex);
-        _lastStop.reason = _pendingPauseCause.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Pause;
+        _lastStop.reason = _pendingPauseCause.hit    ? DebugStop::Reason::Breakpoint
+                           : _pendingPauseCause.step ? DebugStop::Reason::Step
+                           : edge.reason == "watch"  ? DebugStop::Reason::Watch
+                                                     : DebugStop::Reason::Pause;
         _lastStop.breakpoint = _pendingPauseCause;
         {
             std::lock_guard<std::mutex> causes(_edgeCausesMutex);
@@ -1807,6 +1814,13 @@ void Emulator::OnIntentEdge(const execution::IntentEdge& edge)
             payload->breakpointId = cause.breakpointId;
             payload->address = cause.address;
             payload->hitKind = cause.kind;
+            payload->cpu = DebugCpuName(cause.cpu);
+            payload->cpuPc = cause.cpuPc;
+        }
+        else if (cause.step)
+        {
+            payload->pauseCause = PauseCause::Step;
+            payload->address = cause.address;
             payload->cpu = DebugCpuName(cause.cpu);
             payload->cpuPc = cause.cpuPc;
         }
@@ -3040,6 +3054,19 @@ void Emulator::OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoi
     WaitWhilePaused();
 }
 
+void Emulator::OnTargetStep(DebugCpuId cpu, uint16_t cpuPc)
+{
+    BreakpointStop stop;
+    stop.step = true;
+    stop.address = cpuPc;
+    stop.cpu = cpu;
+    stop.cpuPc = cpuPc;
+    _pendingPauseCause = stop;
+    Pause();
+    _pendingPauseCause = BreakpointStop{};
+    WaitWhilePaused();
+}
+
 Z80::StepResult Emulator::ExecuteStep(bool skipBreakpoints, bool* frameCompleted)
 {
     Z80& z80 = *_core->GetZ80();
@@ -3634,6 +3661,47 @@ void Emulator::RunUntilInterrupt(bool skipBreakpoints)
     // Notify debugger
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
+}
+
+unsigned Emulator::RunFramesUntil(unsigned maxFrames, const std::function<bool()>& atStart,
+                                  const std::function<bool()>& atFrameEnd, bool skipBreakpoints, bool& met)
+{
+    met = false;
+    DirectStepScope directStep(*this, "run_until");
+    CancelPendingStepOver();
+    _hasFrameStepTarget = false;
+    ResetLineStepAnchor();
+
+    // See RunNFrames: never race a park still in flight
+    if (IsRunning() && _mainloop)
+        WaitForPauseConfirmation(500);
+    if (RunHalted())
+        return 0;
+    if (atStart && !atStart())
+        return 0;
+
+    Z80& z80 = *_core->GetZ80();
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    // A halted CPU's idle cycles may run in one go up to the frame end, as RunNFrames lets them
+    Z80::IdleSkipScope idleSkip(z80, 0);
+
+    unsigned frames = 0;
+    while (frames < maxFrames && !RunHalted())
+    {
+        z80.idleSkipLimit = z80._frameLimit;
+        bool frameCompleted = false;
+        ExecuteStep(skipBreakpoints, &frameCompleted);
+        if (!frameCompleted)
+            continue;
+        frames++;
+        messageCenter.Post(NC_EXECUTION_CPU_STEP);
+        if (atFrameEnd && atFrameEnd())
+        {
+            met = true;
+            break;
+        }
+    }
+    return frames;
 }
 
 void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates,

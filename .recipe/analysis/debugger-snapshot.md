@@ -101,8 +101,8 @@ memory save cpu:0:65536 all.bin
 
 ## Fields (summary)
 
-`seq`, `cpu` (`z80`), `state` (paused | running | stopped), `pause` {`reason` none | pause | breakpoint | step,
-`breakpoint_id`, `address`}, `consistency`, `regs` (the `GET /registers` object), `prev_regs` (null before the
+`seq`, `cpu` (`z80`), `state` (paused | running | stopped), `pause` {`reason` none | pause | breakpoint | step | watch,
+`breakpoint_id`, `address`; a watch: `watch_id`, `watch_label`, `frame`, `reasons`, `text_line`}, `consistency`, `regs` (the `GET /registers` object), `prev_regs` (null before the
 first stop), `pages[]` {`window`, `start`, `kind` rom | ram | cache, `page`}, `stack` {`sp`, `words[]`},
 `time` {`frame`, `t`, `frame_t`, `line`, `dot`}, `disasm[]` (the `GET /disasm` lines), `memory[]` {`space`,
 `address`, `length`, `base64` (WebAPI, MCP) or `bytes` (Lua, Python, CLI)} or {`space`, `address`, `error`}.

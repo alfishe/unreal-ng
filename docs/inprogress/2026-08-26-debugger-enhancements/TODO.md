@@ -1,9 +1,7 @@
 # TODO — Debugger enhancements / xpeccy parity (2026-08-26)
 
-**Status:** partially done — the analysis/proposal phase is complete; almost
-none of the parity feature list itself is implemented (verified 2026-09-16: no
-address history, marked addresses, port watch or heatmap code in
-`unreal-qt/src/debugger/`).
+**Status:** the Qt usability items 1-7 below are done (2026-11-04); the
+PreferenceManager abstraction and the remaining parity list are open.
 
 ## Progress
 - Full analysis set: [proposal.md](proposal.md) (phased plan),
@@ -15,35 +13,51 @@ address history, marked addresses, port watch or heatmap code in
 - Expression evaluator / breakpoints split into their own folders
   (`../2026-08-26-expression-evaluator/`, `../2026-08-26-breakpoint-enhancements/`).
 
-## Remaining (value order)
-1. **Phase 1 disassembly navigation** — address history back/forward, go-to-PC
-   hotkey, follow-operand on Enter, marked addresses (highest daily-use value).
-2. **Phase 3 flags/interrupts** — clickable flag checkboxes, IFF1/IFF2 + ISR
-   address display (feeds IRQ breakpoints later).
-3. **Phase 2 stack widget** — 9 entries, single-click jump, return-address
-   hints.
-4. **Phase 5 port watch** — PortRegistry list with value-change highlighting
-   (note: `/ports` automation surface with tags already exists — build on it).
-5. Signal indicators (DOS/ROM/INT), PreferenceManager abstraction.
-6. **CMOS / RTC panel** (from PLAN #60(c), 2026-09-29) — the Qt view of the
-   machine's clock chip: time, registers A-D and alarms decoded, a hex grid of
-   every cell with in-place edit. Render the core report `DeviceState::Rtc` and
-   write through `RtcAccess::Write`, the same calls CLI `rtc`, WebAPI
-   `/state/rtc` + `/rtc/cells`, MCP `rtc`, Lua / Python `rtc_*` use - no Qt-only
-   logic. Machines: ATM3 (the AVR's registers noted), Profi, Scorpion with SMUC.
-7. **TTD port-events search panel** (2026-09-29, branch `ttd-o1-journals`) -
-   the Qt view of "when did the program ...": an event picker (`key` with a key
-   name, `ear`, `ay-read` / `ay-write` / `ay-select` with a register, `border`,
-   `beeper`, raw `in` / `out` with port and value masks), options (time window,
-   limit, newest first, trigger), and a hit list (frame, T-state, PC, port,
-   value, AY register) where a double click seeks there and opens the
-   disassembly at the PC. Search the current session or a `.ttd` file on disk
-   without loading it. Call `TimeTravelManager::SearchPortEvents` /
-   `ttd::BuildPortEventQuery` / `ttd::ApplyPortQueryOption` - the same calls CLI
-   `ttd port-events`, WebAPI `/ttd/port-events`, MCP `port_events`, Lua /
-   Python `ttd_port_events` use - no Qt-only logic. Show why a search is
-   refused (no port journals on TSConf / ZX Next / NeoGS, recording running).
-   Design: [ttd-port-read-journal.md](../../emulator/design/debugger/time-travel-debug/ttd-port-read-journal.md) §10.
+## Done (2026-11-04)
+1. **Disassembly navigation** (`disassemblerwidget.*`): address history of
+   every jump (go to, follow, PC, marks; 64 places) - Backspace / Alt+Left
+   back, Alt+Right forward; Home shows PC; Enter follows the cursor row's
+   target (JP / CALL / JR / DJNZ / RST, JP (HL) through the live register,
+   RET to the stack's return address, else a 16-bit operand); marks 1-5
+   (Ctrl+N sets / clears, Alt+N shows), drawn as a digit after the breakpoint
+   column; the same in a right-click menu.
+2. **Flags / interrupts** (`registerswidget.*`): S Z 5 H 3 P N C cells, a
+   click toggles the bit; IM, clickable IFF1 / IFF2, the ISR address (0038,
+   or the IM 2 vector at I*256+FF) - a click shows it in the disassembly.
+   Writes go through `Emulator::SetRegisterFromTool` (a remote session refuses).
+3. **Stack** (`stackwidget.*`): 9 words SP-2 ... SP+E, click: disassembly,
+   double click: memory view, right click: menu; a word right after a
+   CALL / CALL cc / RST is marked "<- CALL nnnn" / "<- RST nn".
+4. **Port watch** (`portwatchdialog.*`, Debugger "Machine" menu): the
+   decoder's port map (port, mask, device, gate, latch value decoded, tags),
+   a changed value lit for 3 s, TR-DOS and mouse routing state.
+5. **Signal indicators** (disassembly header): DOS (the TR-DOS latch), the ROM
+   page in 0000-3FFF (or RAM) with its title, INT asserted / NMI in service.
+6. **CMOS clock** (`rtcdialog.*`): `DeviceState::Rtc` decoded (time,
+   registers A-D, alarm) and a hex grid of every cell, edited in place
+   through `RtcAccess::Write` (C and D read only); the reason when the
+   machine has no clock.
+7. **TTD port events** (`porteventsdialog.*`): the `port-events` verb of
+   `ttd::TTDControl` with every option (event + argument, window, limit,
+   newest, trigger, port / value masks, a `.ttd` file); a double click on a
+   hit seeks there (`seek`) and shows its PC; a refusal shows the verb's
+   message.
+
+8. **Window layout** (`debuggerwindow.ui`): toolbar, speed control + FDC
+   status, a band of framed panels of one height (Registers, Stack, Memory
+   pages), a Memory | Disassembly splitter; one frame style and one panel
+   font; no fixed sizes, the window's minimum comes from its contents (the
+   panels never overlap). Panes find their window with `DebuggerWindow::Of`
+   (their parent is a frame now).
+9. **Memory view follows PC**: every stop shows PC's 16 KB page read again
+   (it was empty until a click, and stale after a step), the PC byte marked.
+
+Tests: `unreal-qt-tests --gtest_filter='DebuggerPanels_Test.*'` (clock grid
+read / write / refusal, port watch highlight, port-events refusal).
+
+## Remaining
+- PreferenceManager abstraction.
+- The rest of the parity list in [proposal.md](proposal.md) (heatmap, ...).
 
 ## Pointers
 - Cumulative plan: [`../PLAN.md`](../PLAN.md) — row #46, debugger parity (T3).

@@ -14,6 +14,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
+#include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
@@ -21,6 +22,8 @@
 #include "emulator/slots/cards/multisound/multisoundstagedmachine.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/execution/runcontrol.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
@@ -287,7 +290,7 @@ TEST(GSCardTarget_Test, AFalseConditionCountsMatchesWithoutStopping)
     spec.access = BRK_IO_IN;
     spec.address = 0x04;
     spec.portMask = 0x00FF;
-    spec.condition = "IN == 4 && M(026E) == 00";  // the ROM holds DB there
+    spec.condition = "IN == 4 && M(#026E) == 00";  // the ROM holds DB there
     const uint16_t id = card.add(spec);
     EXPECT_FALSE(card.runUntilStop(1));
     const BreakpointSnapshot held = card.bp().GetBreakpointById(id);
@@ -514,4 +517,162 @@ TEST(GSCardTarget_Test, TheMultiSoundsGeneralSoundIsTheMsCpu)
     EXPECT_GT(target->StopCount(), 0u);
     EXPECT_EQ(target->LastStop().breakpointId, id);
     EXPECT_EQ(target->LastStop().boundaryPc, regs.pc);
+}
+
+namespace
+{
+// A routine in the card's RAM at #4000 (the classic card's RAM page 1, the NeoGS's RAM page 3), interrupts off:
+//   #4000 CALL #4010 / #4003 NOP / #4004 JR #4000 ... #4010 NOP / #4011 NOP / #4012 RET Z / #4013 RET
+constexpr uint16_t kCall = 0x4000;
+constexpr uint16_t kAfterCall = 0x4003;
+constexpr uint16_t kLoop = 0x4004;
+constexpr uint16_t kRoutine = 0x4010;
+constexpr uint16_t kStack = 0x7F00;
+
+void LoadRoutine(GeneralSoundCard& card)
+{
+    const uint8_t caller[] = {0xCD, 0x10, 0x40, 0x00, 0x18, 0xFA};
+    const uint8_t routine[] = {0x00, 0x00, 0xC8, 0xC9};
+    for (size_t i = 0; i < sizeof(caller); i++)
+        ASSERT_TRUE(card.pokeCardMemory(static_cast<uint16_t>(kCall + i), caller[i]));
+    for (size_t i = 0; i < sizeof(routine); i++)
+        ASSERT_TRUE(card.pokeCardMemory(static_cast<uint16_t>(kRoutine + i), routine[i]));
+    Z80CpuRegisters regs{};
+    ASSERT_TRUE(card.cardRegisters(regs));
+    regs.pc = kCall;
+    regs.sp = kStack;
+    regs.af = 0x0000;  // Z clear: RET Z falls through
+    regs.iff1 = regs.iff2 = 0;
+    regs.halted = 0;
+    ASSERT_TRUE(card.setCardRegisters(regs));
+}
+
+uint16_t CardSp(GeneralSoundCard& card)
+{
+    Z80CpuRegisters regs{};
+    card.cardRegisters(regs);
+    return regs.sp;
+}
+}  // namespace
+
+// A step parks at an instruction boundary (gs-debugger design §5.3). Without a machine the card runs on past the
+// park, so each step starts from the routine's entry: in after one instruction, in 3 after three, over at the
+// instruction after the CALL with the entry SP, out after the taken RET (RET Z not taken does not end it)
+TEST(GSCardTarget_Test, AStepParksAtItsBoundary)
+{
+    Card card;
+    card.boot();
+    struct Case
+    {
+        GSCardTarget::StepKind kind;
+        uint32_t count;
+        uint16_t start;
+        uint16_t boundary;
+    };
+    for (const Case& c : {Case{GSCardTarget::StepKind::In, 1, kCall, kRoutine},
+                          Case{GSCardTarget::StepKind::In, 3, kCall, kRoutine + 2},
+                          Case{GSCardTarget::StepKind::Over, 1, kCall, kAfterCall},
+                          Case{GSCardTarget::StepKind::Over, 1, kAfterCall, kLoop},
+                          Case{GSCardTarget::StepKind::Out, 1, kRoutine, kAfterCall}})
+    {
+        LoadRoutine(*card.chip);
+        Z80CpuRegisters regs{};
+        card.chip->cardRegisters(regs);
+        regs.pc = c.start;
+        if (c.start == kRoutine)
+        {
+            // Inside the routine as the CALL left it: the return address on the stack
+            regs.sp = kStack - 2;
+            card.chip->pokeCardMemory(kStack - 2, kAfterCall & 0xFF);
+            card.chip->pokeCardMemory(kStack - 1, kAfterCall >> 8);
+        }
+        card.chip->setCardRegisters(regs);
+        ASSERT_EQ(card.target->ArmStep(c.kind, c.count), "");
+        EXPECT_TRUE(card.target->HooksAttached()) << "an armed step runs the debug loop";
+        ASSERT_TRUE(card.runUntilStop(1)) << "start #" << std::hex << c.start;
+        const GSCardTarget::Stop stop = card.target->LastStop();
+        EXPECT_TRUE(stop.step);
+        EXPECT_FALSE(stop.hit);
+        EXPECT_EQ(stop.boundaryPc, c.boundary) << "start #" << std::hex << c.start;
+        EXPECT_FALSE(card.target->StepArmed());
+        card.frame();
+        EXPECT_FALSE(card.target->HooksAttached()) << "the step done, the hooks come off";
+    }
+}
+
+// A breakpoint on the way ends a step there: the stop is the breakpoint's, the step is disarmed
+TEST(GSCardTarget_Test, ABreakpointEndsAStepOver)
+{
+    Card card;
+    card.boot();
+    LoadRoutine(*card.chip);
+    const uint16_t id = card.add(Exec(kRoutine + 1));
+    ASSERT_EQ(card.target->ArmStep(GSCardTarget::StepKind::Over), "");
+    EXPECT_NE(card.target->ArmStep(GSCardTarget::StepKind::In), "") << "one step at a time";
+    ASSERT_TRUE(card.runUntilStop(1));
+    EXPECT_TRUE(card.target->LastStop().hit);
+    EXPECT_EQ(card.target->LastStop().breakpointId, id);
+    EXPECT_EQ(card.target->LastStop().boundaryPc, kRoutine + 1);
+    EXPECT_FALSE(card.target->StepArmed());
+}
+
+// The machine's card (the PENTAGON's NeoGS) through RunControl::CardStep as every surface calls it: the machine
+// resumes, the card's step pauses it, the reply names the card CPU's stop and position. Parked inside the card's run,
+// the next step starts from that boundary. Boot-bound, turbo: about 50 ms
+TEST(GSCardTarget_Test, TheMachinesCardStepsThroughRunControl)
+{
+    SoundCardScope sound(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::NGS));
+    emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    emulator->EnableTurboMode();
+    emulator->StartAsync();
+    ASSERT_TRUE(TestWait::For([&] { return context->emulatorState.frame_counter > 2; }));
+    emulator->Pause();
+    ASSERT_TRUE(TestWait::For([&] { return emulator->IsEmulationParked(); }));
+    GeneralSoundCard* card = context->pSoundManager->getGeneralSound();
+    ASSERT_NE(card, nullptr);
+    LoadRoutine(*card);
+
+    std::shared_ptr<Emulator> shared = EmulatorManager::GetInstance()->GetEmulator(emulator->GetId());
+    ASSERT_NE(shared, nullptr);
+    execution::RunControl control(shared);
+    const execution::Requester requester{execution::Origin::WebApi, {}};
+    auto step = [&](const char* kind, unsigned count, const char* reason, uint16_t pc) {
+        const execution::RunReply reply = control.CardStep(requester, DebugCpuId::GS, kind, count);
+        EXPECT_TRUE(reply.Ok()) << kind << ": " << reply.message;
+        const StateNode* stop = reply.body.find("stop");
+        EXPECT_NE(stop, nullptr) << kind;
+        if (!stop)
+            return;
+        EXPECT_EQ(stop->find("reason")->s, reason) << kind << ": " << reply.message;
+        EXPECT_EQ(stop->find("cpu")->s, "gs") << kind;
+        EXPECT_EQ(reply.body.find("pc")->i, pc) << kind;
+        EXPECT_NE(reply.body.find("main_pc"), nullptr);
+        EXPECT_EQ(reply.body.find("state")->s, "paused") << kind;
+        EXPECT_TRUE(emulator->IsPaused());
+    };
+    step("in", 1, "step", kRoutine);  // paused between frames: the first boundary is the CALL's own
+    step("in", 2, "step", kRoutine + 2);
+    step("out", 1, "step", kAfterCall);
+    EXPECT_EQ(CardSp(*card), kStack);
+    step("over", 1, "step", kLoop);  // a NOP: as in
+    step("in", 1, "step", kCall);
+
+    std::string error;
+    BreakpointManager* breakpoints = context->pDebugManager->GetBreakpointsManager(DebugCpuId::GS);
+    const uint16_t id = breakpoints->AddBreakpoint(Exec(kRoutine + 1), error);
+    ASSERT_NE(id, BRK_INVALID) << error;
+    step("over", 1, "breakpoint", kRoutine + 1);
+    breakpoints->RemoveBreakpointByID(id);
+    step("out", 1, "step", kAfterCall);
+
+    const execution::RunReply refused = control.CardStep(requester, DebugCpuId::MultiSoundGS, "in", 1);
+    EXPECT_FALSE(refused.Ok()) << "no MultiSound in this machine";
+    EXPECT_EQ(control.CardStep(requester, DebugCpuId::GS, "sideways", 1).status,
+              execution::RunReply::Status::BadRequest);
+    emulator->Stop();
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }

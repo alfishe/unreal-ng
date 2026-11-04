@@ -58,9 +58,18 @@ class Cli:
             i += 1
         return out.decode("utf-8", "replace").replace("\r", "")
 
-    def run(self, line: str, settle: float = 0.6) -> str:
+    def send(self, line: str, settle: float) -> str:
         self.sock.sendall((line + "\n").encode())
         return self.read_quiet(settle)
+
+    def run(self, line: str, settle: float = 0.6) -> str:
+        # The WebAPI calls in between leave an implicit session of theirs: this connection takes it over for the one
+        # command (Lua and Python run as the CLI connection) and ends it, so the next WebAPI call opens its own again
+        self.send("session take ttd-surface-contract", 0.15)
+        try:
+            return self.send(line, settle)
+        finally:
+            self.send("session release", 0.15)
 
 
 class Contract:

@@ -61,6 +61,8 @@ public:
     void PerformReset(bool hard) override;
     void SystemClockChanged() override;
     void SetCpuSpeed(uint8_t ratio) override;
+    /// TTD time units: 3.5 / 7 / 14 / 28 MHz (NR #07), one unit is a T-state at 28 MHz
+    uint8_t TtdClockUnits() const override { return 8; }
     void SetMachineTiming(uint8_t timing) override;
     void SetContentionDisabled(bool disabled) override;
     void ResetContentionDisabled() override;
@@ -154,6 +156,11 @@ public:
     bool SpiByteInFlight() const { return _spiPendingValid; }
     uint8_t SpiLastReceived() const { return _spiRx; }
 
+    /// NextReg: the register #243B selected; the rest as every machine
+#pragma push_macro("slots")
+#undef slots
+    int SelectedIndex(slots::InputRole role) const override;
+#pragma pop_macro("slots")
     NextBoard& Board() { return *_board; }
     NextInterruptSource& Interrupts() { return *_interrupts; }
     NextCtc& Ctc() { return _ctc; }

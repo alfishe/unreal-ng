@@ -96,6 +96,14 @@ std::shared_ptr<TTDFrameTrace> TimeTravelController::TraceCauseFrame(size_t cpIn
     const EmulatorState& st = _context->emulatorState;
 
     RestoreCheckpointForReplay(cp);
+    {
+        auto word = [&](uint16_t addr) {
+            return static_cast<uint16_t>(memory->DirectReadFromZ80Memory(addr) |
+                                         memory->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + 1)) << 8);
+        };
+        trace->startStackWord = word(z80->sp);
+        trace->startIm2Entry = word(static_cast<uint16_t>(z80->i << 8 | 0xFF));
+    }
     uint64_t interrupts = z80->interruptsAccepted;
     bool haltIdle = false;   // the open record is a HALT whose idle fetches follow
     std::vector<TTDTraceEvent> early;   // bus events before the frame's first instruction start
@@ -127,7 +135,7 @@ std::shared_ptr<TTDFrameTrace> TimeTravelController::TraceCauseFrame(size_t cpIn
             pushed = static_cast<uint16_t>(pushed | (e.address == static_cast<uint16_t>(cpu.sp + 1) ? e.value << 8 : e.value));
         }
         in.pc = pushed;
-        in.codePage = memory->TtdPageOfBank(static_cast<uint8_t>(in.pc >> 14));
+        in.codePage = memory->TtdPageOf(in.pc);
         ReadRegs(cpu, in.regs);
         const uint16_t sp = static_cast<uint16_t>(cpu.sp + 2);
         in.regs[size_t(TTDCauseReg::SPH)] = static_cast<uint8_t>(sp >> 8);
@@ -166,7 +174,7 @@ std::shared_ptr<TTDFrameTrace> TimeTravelController::TraceCauseFrame(size_t cpIn
         TTDTraceInsn in;
         in.tInFrame = st.TtdTInFrame(static_cast<uint32_t>(cpu.t));
         in.pc = pc;
-        in.codePage = memory->TtdPageOfBank(static_cast<uint8_t>(pc >> 14));
+        in.codePage = memory->TtdPageOf(pc);
         for (uint8_t k = 0; k < 4; ++k)
             in.bytes[k] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(pc + k));
         ReadRegs(cpu, in.regs);
@@ -183,7 +191,8 @@ std::shared_ptr<TTDFrameTrace> TimeTravelController::TraceCauseFrame(size_t cpIn
         e.type = type;
         e.value = value;
         e.address = address;
-        e.page = type == 'R' || type == 'W' ? memory->TtdPageOfBank(static_cast<uint8_t>(address >> 14)) : kPhysPageNone;
+        if (type == 'R' || type == 'W')
+            e.page = memory->TtdLocate(address, type == 'W', e.offset);
         e.tInFrame = st.TtdTInFrame(static_cast<uint32_t>(z80->t));
         if (trace->insns.empty())
         {
@@ -260,6 +269,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
 
     // A memory target: the page mapped at the moment (unless one was given) and the byte there
     PhysPage targetPage = query.page;
+    uint8_t targetFlip = 0;   // the half of the page (Memory::TtdKeyOf): known from the mapping, not from a given page
     uint8_t targetValue = 0;
     if (query.memory)
     {
@@ -281,7 +291,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
             return finish();
         }
         if (!query.hasPage)
-            targetPage = memory->TtdPageOfBank(static_cast<uint8_t>(query.address >> 14));
+            targetPage = memory->TtdKeyOf(query.address, targetFlip);
         targetValue = memory->DirectReadFromZ80Memory(query.address);
     }
 
@@ -413,6 +423,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
         q.access = TTDAccessType::Write;
         q.hasPhysPageFilter = name.page != kPhysPageNone;
         q.physPage = name.page;
+        q.flip = static_cast<int8_t>(name.flip);
         const uint64_t frameStart = GlobalT(_timeline[cpIndex].time);
         if (frameStart == 0)
             return p;
@@ -437,7 +448,8 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
             for (uint32_t e = in.firstEvent; e < in.firstEvent + in.eventCount; ++e)
             {
                 const TTDTraceEvent& ev = trace->events[e];
-                if (ev.type == 'W' && ev.address == name.address && ev.page == name.page && ev.tInFrame == hit.time.tInFrame)
+                if (ev.type == 'W' && ev.address == name.address && ev.page == name.page && ev.Flip() == name.flip &&
+                    ev.tInFrame == hit.time.tInFrame)
                     best = k;
             }
         }
@@ -455,7 +467,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
     };
 
     // The walk: depth first, each link's inputs after it
-    std::map<std::tuple<uint64_t, size_t, bool, uint16_t, PhysPage, uint8_t>, size_t> seen;
+    std::map<std::tuple<uint64_t, size_t, bool, uint16_t, PhysPage, uint8_t, uint8_t>, size_t> seen;
     std::function<void(const TTDCauseName&, uint8_t, Place, int32_t, uint32_t)> walk;
     walk = [&](const TTDCauseName& name, uint8_t value, Place from, int32_t parent, uint32_t depth) {
         const size_t index = result.links.size();
@@ -560,7 +572,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
                 link.inputs.push_back(TTDCauseNameText(i.name) + "=" + Hex2(i.value));
         }
 
-        const auto key = std::make_tuple(p.trace->frame, p.insn, name.memory, name.address, name.page,
+        const auto key = std::make_tuple(p.trace->frame, p.insn, name.memory, name.address, name.page, name.flip,
                                          static_cast<uint8_t>(name.reg));
         if (auto it = seen.find(key); it != seen.end())
         {
@@ -601,7 +613,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
     const uint8_t* atRegs = atInsn < atTrace->insns.size() ? atTrace->insns[atInsn].regs : atTrace->finalRegs;
 
     if (query.memory)
-        walk(TTDCauseName::Mem(query.address, targetPage), targetValue, atPlace, -1, 0);
+        walk(TTDCauseName::Mem(query.address, targetPage, targetFlip), targetValue, atPlace, -1, 0);
     else
     {
         for (TTDCauseReg r : regs)

@@ -17,6 +17,7 @@
 #include "devicedatabase.h"
 #include "fake/fakebackend.h"
 #include "hostinputcontrol.h"
+#include "haptics/hapticprofile.h"
 #include "hostinputservice.h"
 
 using namespace controllers;
@@ -67,7 +68,25 @@ public:
         std::vector<std::string> errors;
         _store.LoadGamesFor(_context, errors);
         _resolved = _store.Resolve(_context);
+        _underTrial = _resolved.haptics;
+        if (!_trial.IsNull())
+            _resolved.haptics = OverlayHaptics(_resolved.haptics, _trial);
         reapplied++;
+    }
+    std::string SetHapticsTrial(const JsonValue& overlay, std::string& message) override
+    {
+        (void)message;
+        _trial = overlay;
+        Reapply();
+        return {};
+    }
+    JsonValue HapticsTrial() const override
+    {
+        return _trial;
+    }
+    JsonValue HapticsUnderTrial() const override
+    {
+        return _underTrial;
     }
     HostInputService* Input() override
     {
@@ -102,6 +121,8 @@ private:
     ProfileStore _store;
     ProfileContext _context;
     ResolvedProfiles _resolved;
+    JsonValue _trial;
+    JsonValue _underTrial;
     std::string _userDir;
     std::string _manual;
 };
@@ -639,4 +660,40 @@ TEST(HostInputControl_Test, AliasesListAndUnaliasForgets)
     ASSERT_TRUE(reloaded.LoadAliases(dir, error)) << error;
     EXPECT_EQ(reloaded.Aliases().size(), 1u) << "the file keeps only the other alias";
     EXPECT_EQ(reloaded.Aliases().count("gc:xbox:2"), 1u);
+}
+
+// The session trial (haptics.md §11): laid over the game haptics at once, read back, cleared; never written
+TEST(HostInputControl_Test, HapticsTrialLaysOverAndClearsWithoutAFile)
+{
+    namespace fs = std::filesystem;
+    const fs::path dir = TestPathHelper::GetUniqueTestScratchPath("haptics-trial");
+    FakeOwner owner(dir.string());
+    HostInputControl control(owner);
+
+    HostReply reply = control.Execute({"haptics_trial", {}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_FALSE(reply.body.Find("active")->AsBool());
+
+    reply = control.Execute({"haptics_trial",
+                             {{"text", "events:\n  shot: { probe: exec, address: \"0x8366\" }\n"
+                                       "haptics:\n  rules:\n    - { on: shot, play: shot }\n"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_TRUE(reply.body.Find("active")->AsBool());
+    ASSERT_EQ(reply.body.Find("sources")->Items().size(), 1u);
+    EXPECT_EQ(reply.body.Find("sources")->Items()[0].AsString(), "shot");
+    const JsonValue* sources = owner.Resolved().haptics.Find("sources");
+    ASSERT_NE(sources, nullptr);
+    EXPECT_NE(sources->Find("shot"), nullptr) << "applied at once";
+    EXPECT_TRUE(!fs::exists(dir) || fs::is_empty(dir)) << "nothing written";
+
+    reply = control.Execute({"haptics_trial", {{"text", "haptics: { rules: [ { on: nobody, play: hit } ] }"}}});
+    EXPECT_EQ(reply.error, "bad-request");
+    EXPECT_TRUE(control.Execute({"haptics_trial", {}}).body.Find("active")->AsBool()) << "a refused one keeps the last";
+    EXPECT_EQ(control.Execute({"haptics_trial", {{"text", "x"}, {"clear", ""}}}).error, "bad-request");
+
+    reply = control.Execute({"haptics_trial", {{"clear", ""}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_FALSE(reply.body.Find("active")->AsBool());
+    EXPECT_TRUE(owner.Resolved().haptics.IsNull() || owner.Resolved().haptics.Find("sources") == nullptr ||
+                owner.Resolved().haptics.Find("sources")->Find("shot") == nullptr);
 }

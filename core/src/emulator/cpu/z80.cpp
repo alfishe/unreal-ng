@@ -22,7 +22,6 @@
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
 #include "emulator/io/fdc/wd1793.h"
-#include "emulator/io/controllers/portreadwatch.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/tape/tape.h"
 #include "emulator/io/tape/tapefastload.h"
@@ -56,6 +55,7 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     OverlayDbgMemIf = Memory::GetOverlayMemoryInterface(true, false);
     OverlayFastContendedMemIf = Memory::GetOverlayMemoryInterface(false, true, stockRead);
     OverlayDbgContendedMemIf = Memory::GetOverlayMemoryInterface(true, true);
+    ReadTapMemIf = Memory::GetReadTapMemoryInterface();
     MemIf = FastMemIf;  // Use fast memory access interface by default (Core::SelectMemoryInterface decides)
 
     // Ensure register memory and unions do not contain garbage
@@ -121,6 +121,8 @@ Z80::~Z80()
     OverlayFastContendedMemIf = nullptr;
     delete OverlayDbgContendedMemIf;
     OverlayDbgContendedMemIf = nullptr;
+    delete ReadTapMemIf;
+    ReadTapMemIf = nullptr;
 
     if (_opcodeProfiler)
     {
@@ -258,19 +260,28 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
 
     /// endregion  </Ports logic>
 
-    // Let debugger process step event
-    if ((cpu.isDebugMode || cpu.execTapHold) && skipBreakpoints == false && _context->pDebugManager != nullptr)
+    // Let debugger process step event. A run that skips breakpoints still tells the execution taps (haptic probes,
+    // analyzers, script callbacks): they never stop (breakpoint-taps §3)
+    if ((cpu.isDebugMode || cpu.execTapHold) && _context->pDebugManager != nullptr)
     {
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
-        // Taps (analyzers, haptic probes) are told inside and never stop: an id here is a breakpoint that stops
-        uint16_t breakpointID = brk.HandlePCChange(pc);
-        if (breakpointID != BRK_INVALID)
+        if (skipBreakpoints)
         {
-            // Pause and park, or during a direct run stop before this instruction
-            // A bare Core (tests) has no emulator to stop
-            Emulator* emulator = _context->pEmulator;
-            if (emulator && emulator->OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
-                return true;
+            if (cpu.execTapHold)
+                brk.HandlePCTaps(pc);
+        }
+        else
+        {
+            // Taps (analyzers, haptic probes) are told inside and never stop: an id here is a breakpoint that stops
+            uint16_t breakpointID = brk.HandlePCChange(pc);
+            if (breakpointID != BRK_INVALID)
+            {
+                // Pause and park, or during a direct run stop before this instruction
+                // A bare Core (tests) has no emulator to stop
+                Emulator* emulator = _context->pEmulator;
+                if (emulator && emulator->OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
+                    return true;
+            }
         }
     }
 
@@ -563,7 +574,15 @@ bool Z80::RunHaltedIdle(bool skipBreakpoints)
 bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
 {
     period = 1;
-    const MemoryInterface* const memIf = MemIf;
+    const MemoryInterface* memIf = MemIf;
+    // The read-tap interface: no read tap may watch the fetch, then the interface it reads through decides
+    if (memIf == ReadTapMemIf)
+    {
+        DebugManager* debug = _context->pDebugManager;
+        if (debug && !debug->GetBreakpointsManager()->ReadIsInertAt(fetch))
+            return false;
+        memIf = _memory->ReadTapInner();
+    }
     // The debug interfaces add the read's bookkeeping (Memory::ReadDebugEffects): for a fetch, the access
     // tracker's execute count and the read breakpoints; neither may watch it
     const bool debugIf = memIf == DbgMemIf || memIf == DbgContendedMemIf || memIf == OverlayDbgMemIf ||
@@ -631,7 +650,8 @@ void Z80::NoteHaltedIdleRefused()
 
 uint32_t Z80::HaltedFetchPureUntil(uint16_t fetch) const
 {
-    if (MemIf != OverlayFastMemIf && MemIf != OverlayFastContendedMemIf)
+    const MemoryInterface* const memIf = MemIf == ReadTapMemIf ? _memory->ReadTapInner() : MemIf;
+    if (memIf != OverlayFastMemIf && memIf != OverlayFastContendedMemIf)
         return UINT32_MAX;
     const HostBusOverlay* bus = _memory->GetBusOverlay();
     if (!bus || !bus->observesReads || fetch < bus->windowStart || fetch >= bus->windowEnd)
@@ -1503,8 +1523,10 @@ void Z80::NotifyInstructionStart()
     // it a reverse breakpoint has no choice but to replay every frame.
     if (_context->ttdCoverageActive && _context->ttdCoverage != nullptr)
     {
+        uint8_t flip = 0;
+        const ttd::PhysPage page = _memory->TtdKeyOf(m1_pc, flip);
         _context->ttdCoverage->Record(ttd::TTDCoverageKind::Executed,
-                                      ttd::MakeCoverageKey(_memory->GetPhysPageForZ80Address(m1_pc), m1_pc));
+                                      ttd::MakeCoverageKey(page, static_cast<uint16_t>(m1_pc ^ (flip << 13))));
     }
 
     // Phase 4 - access probe for Execute access type (TDD 9.2).
@@ -1515,13 +1537,14 @@ void Z80::NotifyInstructionStart()
         // breakpoint can distinguish "PC 0xC000 in page 3" from the same
         // address reached with a different page banked in. Code executing
         // from ROM reports kPhysPageNone.
-        const ttd::PhysPage execPhysPage = _memory->GetPhysPageForZ80Address(m1_pc);
-        if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
+        uint8_t flip = 0;
+        const ttd::PhysPage execPhysPage = _memory->TtdKeyOf(m1_pc, flip);
+        if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage, flip))
         {
             const auto& st = _context->emulatorState;
             const ttd::TTDTimePoint tp{st.frame_counter, st.TtdTInFrame(t)};
             _context->ttdProbe.RecordHit(tp, m1_pc, m1_pc, /*value=*/0, execPhysPage,
-                                          ttd::TTDAccessType::Execute);
+                                          ttd::TTDAccessType::Execute, flip);
         }
     }
 }
@@ -1594,14 +1617,31 @@ uint8_t Z80::in(uint16_t port)
         uint8_t value = inFromBus(port);
         if (rzx::RzxPlayer* player = _context->rzxPlayer) [[unlikely]]
             value = player->OnIn(port, value, pc);
-        return journal->OnRead(port, value, frame, tInFrame, pc);
+        value = journal->OnRead(port, value, frame, tInFrame, pc);
+        if (busTraceHook)
+            TraceIn(port, value);
+        return value;
     }
     // RZX playback: the CPU gets the recorded value (emulator/rzx/, design
     // §4); the devices still see the read. Below the TTD journal, so a TTD
     // recording during playback stores the RZX-fed values
+    uint8_t value = inFromBus(port);
     if (rzx::RzxPlayer* player = _context->rzxPlayer) [[unlikely]]
-        return player->OnIn(port, inFromBus(port), m1_pc);
-    return inFromBus(port);
+        value = player->OnIn(port, value, m1_pc);
+    if (busTraceHook)
+        TraceIn(port, value);
+    return value;
+}
+
+/// The trace hook's 'I' event: the byte the CPU takes (a replay's journal value, the floating bus, an RZX frame's),
+/// not the device's raw answer, so a replay's tools read the IN values the recording saw; at the T of the bus answer
+/// (inTraceT, kept by inFromBus), as the bus-phase consumers time it
+void Z80::TraceIn(uint16_t port, uint8_t value)
+{
+    const auto now = t;
+    t = inTraceT;
+    busTraceHook('I', port, value);
+    t = now;
 }
 
 /// The read as the bus answers it: interceptor, model decoder, observer cards,
@@ -1626,8 +1666,7 @@ uint8_t Z80::inFromBus(uint16_t port)
         uint8_t intercepted = 0xFF;
         if (portInterceptor->InterceptIn(port, intercepted))
         {
-            if (busTraceHook)
-                busTraceHook('I', port, intercepted);
+            inTraceT = t;
             if (ioContention)
                 IoWaitAfterIorq(port, ioWait);
             return intercepted;
@@ -1642,8 +1681,7 @@ uint8_t Z80::inFromBus(uint16_t port)
     bool cardDrove = false;
     uint8_t result = portDecoder.ReadCycle(port, m1_pc, cardDrove);
 
-    if (busTraceHook)
-        busTraceHook('I', port, result);
+    inTraceT = t;
 
     // Floating bus: if no hardware device decoded the port, the ULA returns
     // the video byte currently on the data bus.
@@ -1686,8 +1724,6 @@ uint8_t Z80::inFromBus(uint16_t port)
     // One flag for the observers: machines with none test it once
     if (_inResultHooks) [[unlikely]]
     {
-        if (portReadWatch)
-            portReadWatch->OnRead(port, pc);
         if (portInterceptor)
             portInterceptor->OnInResult(port, result, fromFloatingBus);
         // A latch clocked by read cycles takes the same byte the CPU took (the 128K's #7FFD)

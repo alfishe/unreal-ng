@@ -571,7 +571,15 @@ private:
             _token.kind = Token::Number;
             _token.text = _text.substr(_pos, end - _pos);
             if (!ParseNumber(_token.text, _token.value))
-                Fail("bad number '" + _token.text + "'", _pos + 1);
+            {
+                // Numbers are decimal: a hex one written bare (5C78) says how to write it
+                const bool hexDigits = std::all_of(_token.text.begin(), _token.text.end(), [](char ch) {
+                    return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
+                });
+                Fail("bad number '" + _token.text + "'" +
+                         (hexDigits ? " (numbers are decimal; write hex as #" + _token.text + ")" : std::string()),
+                     _pos + 1);
+            }
             _pos = end;
             return;
         }
@@ -604,14 +612,14 @@ private:
         _pos = _text.size();
     }
 
-    /// A number token that starts with a digit: 0x.., ..h hex; ..d decimal; otherwise hex (Unreal) or decimal (C)
+    /// A number token that starts with a digit: 0x.., ..h hex; otherwise decimal (a trailing d is allowed)
     bool ParseNumber(const std::string& text, int64_t& value) const
     {
         auto all = [](const std::string& s, int (*pred)(int)) {
             return !s.empty() && std::all_of(s.begin(), s.end(), [pred](char ch) { return pred(static_cast<unsigned char>(ch)) != 0; });
         };
         std::string body = text;
-        int base = _dialect == BreakpointConditionDialect::Unreal ? 16 : 10;
+        int base = 10;
         if (body.size() > 2 && body[0] == '0' && (body[1] == 'x' || body[1] == 'X'))
         {
             body = body.substr(2);

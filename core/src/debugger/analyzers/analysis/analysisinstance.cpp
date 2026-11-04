@@ -101,6 +101,12 @@ bool AnalysisInstance::Make(const TraceBundle& bundle, const char* name, bool se
     {
         features->setFeature(Features::kSoundGeneration, false);
         features->setFeature(Features::kTimeTravel, session);
+        // A free machine runs the program as the recording did. Fast disk is never in effect on a machine bound to a
+        // timeline (FeatureManager::ttdLocksFastLoader: it compresses the WD1793's timing, which no edit records), so
+        // it is off here too: with it, a fork taken while a disk command runs ends the command at the compressed
+        // timing and leaves the recorded path at once
+        if (!session)
+            features->setFeature(Features::kFastDisk, false);
     }
     if (context->pSoundManager != nullptr)
         context->pSoundManager->mute();

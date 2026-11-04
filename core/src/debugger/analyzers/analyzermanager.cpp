@@ -1,4 +1,5 @@
 #include "analyzermanager.h"
+#include "emulator/readoutschanged.h"
 
 #include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
@@ -113,6 +114,7 @@ bool AnalyzerManager::activate(const std::string& id)
 
     // Call analyzer's onActivate
     _analyzers[id]->onActivate(this);
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers and the analyzer.* toggles
 
     return true;
 }
@@ -142,6 +144,7 @@ bool AnalyzerManager::deactivate(const std::string& id)
     // Clean up all resources owned by this analyzer
     removeAllBreakpointsForAnalyzer(id);
     removeAllSubscriptionsForAnalyzer(id);
+    NotifyReadoutsChanged(_context, "debug.tools");
 
     return true;
 }

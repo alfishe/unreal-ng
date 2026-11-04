@@ -4,7 +4,9 @@ Goal: from a game's own tape, disk or snapshot to a reviewed SkoolKit disassembl
 the game ran, with code, data, text and graphics told apart, routines and variables named, and every claim tied to
 what the emulator saw. The emulator does the mechanics (it runs, records, replays and classifies); the agent spends
 tokens only on what needs judgement: names, kinds the detectors could not tell, bugs, conflicts. Read nothing else
-first: this recipe is the whole workflow for an agent that has never seen the analysis code.
+first: this recipe is the whole workflow for an agent that has never seen the analysis code. For a game reversed into a
+full case (sources bit for bit, resources, documents, figures from access traces) see
+[game-reverse-case.md](../articles/game-reverse-case.md).
 
 ## Why this works in an emulator
 
@@ -18,7 +20,7 @@ so it sees what a disassembler working from a snapshot cannot:
 | L2 | regions with a kind (code, text, font, sprite, tile, records, pointer table, music, ...), geometry, a confidence 0..1000, the draft | `query`, `export`, `gallery` |
 | L3 | the findings register, the review queue, experiments on clones, directed coverage | `findings`, `review`, `experiment`, `cover` |
 
-- **Every question goes to the machine.** "Who writes $5C00", "is this branch ever taken", "what does this routine
+- **Every question goes to the machine.** "Who writes `$5C00`", "is this branch ever taken", "what does this routine
   draw" are a run on a clone of the recording, not reasoning over code: `experiment` answers in seconds.
 - **The run is the evidence.** A claim is `observed` (seen in the recording or an experiment), `inferred` (read from
   code or a rule), `confirmed` (a reviewer said ok) or `refuted` (kept, shown wrong). Negative claims stay bounded:
@@ -86,8 +88,15 @@ KU KD) replace the exploration. `--ranges` (default `5B00-FFFF`) is the program 
 The script writes into the work folder: `start.szx` and `start.bin` (the state and the 64 K Z80 view the recording
 starts from: the draft decodes from it and the rebuild gate compares with it), `screens/` (a screen every 250
 frames), `screens.png` (eight of them on one sheet), `capture.json` (the load, the keys the explorer found, the
-build status), `l1.json`, `review.txt` (the first queue page), `findings.txt` (counts by kind and status) and
-`session.json`. The instance stays up: its MCP endpoint is `http://127.0.0.1:<port-base + 200>/mcp`.
+build status, the dump of the recording), `l1.json`, `review.txt` (the first queue page), `findings.txt` (counts by kind and status), `session.ttd` (the
+recording, always: `open` loads it into a new instance) and `session.json`; `capture.json` holds under `ttd` the
+first line of the dump's answer. With `--record-load` also `power-on.szx` (the state the recording starts from);
+`start.szx` is then the machine after the load, while `start.bin` is the memory at the recording's first keyframe
+(power-on, `capture.json` `start` says where), so it matches the build. A stage's own `start.bin` is the one
+`build` writes (with `--into`, in the stage's folder); `build` with no window writes it at the recording's first
+keyframe. The instance stays up: its MCP endpoint is `http://127.0.0.1:<port-base + 200>/mcp`. A folder made by
+`build --into` shares the instance but does not own it: `stop --work` the folder that launched it (`stop` checks the
+pid is still the launched unreal-qt before it ends it).
 
 **Look at `screens.png` before anything else.** The analysis knows only what the recording ran: a session that sat
 in a menu, a name prompt or the attract mode classifies the game's code as data. When the sheet shows no play, stop
@@ -101,6 +110,42 @@ python3 $R call --work W review '{"op":"next"}'
 python3 $R call --work W explain '{"address":"$8A3F","what":"routine"}'
 ```
 
+### Programs that arrive in stages
+
+A loader that loads a depacker that unpacks the game runs different code at the same addresses over time; one
+image cannot hold it. Record from power-on, keep the recording, and build each stage from its own point of it:
+
+```bash
+python3 $R capture --work W --media Game.tap --model 48K --record-load --frames 45000 --port-base 9720
+python3 $R stop --work W                                    # W/session.ttd stays
+python3 $R open --work W2 --ttd W/session.ttd --model 48K --port-base 9720   # any later session, no reload
+python3 $R build --work W2                                  # the whole recording; prints the status and the window
+python3 $R stages --work W2                                 # one line per arrival and the window to build it
+python3 $R build --work W2 --stage 2 --into W2/stage-2      # L1 from that arrival on, its own start.bin
+python3 $R build --work W2 --from-frame F --from-tinframe T --to-frame G --into W2/part
+```
+
+`--record-load` starts the recording before the load (the tape loader and the depacker are recorded too) and skips
+the explorer (it loads saved states, which a recording cannot cross): the play is the input scripts when given, else
+seeded random play (the seed is the work folder's name). A code arrival is the first run of bytes written during the recording,
+one per writer routine; a window build starts at the arrival's instruction, so its start image is the stage just
+unpacked. `stages` suggests `--to-frame` as the next arrival's frame + 1, so the window ends after the frame the next
+stage begins in. A recording replays exactly, so every later build, counter and experiment needs no capture again.
+
+### Interrupt handlers
+
+No address needed: L1 marks every routine entered by an interrupt (`kinds` `interrupt` / `nmi`).
+
+```bash
+python3 $R interrupts --work W2/stage-2
+# interrupt $FDFD -> $8340: 27645 entries in 42647 frames (0.65 a frame), 123 T an entry, 0.1 % of the CPU
+```
+
+The command follows single tail jumps from the entry (the IM 2 `JP` slot to the real handler). It prints the
+entries, the entries a frame, the inclusive T-states an entry, the share of the CPU and the callees. Fewer than one
+entry a frame means interrupts are off for part of the window. The routine's `first_frame` / `last_frame` in L1 say
+which part. Build a window per stage first, so the loader's handler (ROM `$0038`) does not mix with the program's.
+
 ## 2. Coverage
 
 ```text
@@ -109,7 +154,7 @@ analysis {"action":"findings","kind":"coverage"}
 ```
 
 Directed coverage holds the byte a one-way branch tests, or presses the keys of the port it reads, and records each
-flip as a `coverage` finding and a draft note ("needs poke $8100=$05"). Run it once, after the capture; when
+flip as a `coverage` finding and a draft note (`needs poke $8100=$05`). Run it once, after the capture; when
 `findings kind=coverage` lists flips, it ran. Code no run reached stays `unknown` or data: a second capture with
 input scripts for those parts (a later level, a menu option) is cheaper than reading the code to classify it.
 

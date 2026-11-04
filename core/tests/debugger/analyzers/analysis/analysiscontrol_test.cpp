@@ -108,6 +108,18 @@ TEST(AnalysisControl_Test, CliWords)
     ASSERT_TRUE(CliAnalysis::ParseArgs({"cover", "16", "frames=10"}, action, options, json, error));
     EXPECT_EQ(options, (std::map<std::string, std::string>{{"budget", "16"}, {"frames", "10"}}));
     EXPECT_FALSE(CliAnalysis::ParseArgs({"cover", "16", "17"}, action, options, json, error));
+    ASSERT_TRUE(CliAnalysis::ParseArgs({"trace", "out/pass.uatr", "from_frame=1001", "from_tinframe=5336",
+                                        "to_frame=1001", "to_tinframe=45336", "max_cycles=9000"},
+                                       action, options, json, error));
+    EXPECT_EQ(action, "trace");
+    EXPECT_EQ(options, (std::map<std::string, std::string>{{"path", "out/pass.uatr"},
+                                                           {"from_frame", "1001"},
+                                                           {"from_tinframe", "5336"},
+                                                           {"to_frame", "1001"},
+                                                           {"to_tinframe", "45336"},
+                                                           {"max_cycles", "9000"}}));
+    EXPECT_FALSE(CliAnalysis::ParseArgs({"trace", "a.uatr", "b.uatr"}, action, options, json, error))
+        << "one file";
 
     EXPECT_FALSE(CliAnalysis::ParseArgs({"start", "fast"}, action, options, json, error));
     EXPECT_FALSE(CliAnalysis::ParseArgs({"explain", "1", "2", "3"}, action, options, json, error));

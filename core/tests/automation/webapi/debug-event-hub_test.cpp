@@ -10,6 +10,7 @@
 #include "_helpers/testwaithelper.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
+#include "debugger/watch/framewatch.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulator.h"
 #include "emulator/notifications.h"
@@ -238,6 +239,40 @@ TEST_F(DebugEventHub_Test, ScriptCallbacksChangedCarriesTheCallbackOrItsRemoval)
     EXPECT_TRUE(event["removed"].asBool());
     EXPECT_FALSE(event.isMember("callback"));
     EXPECT_GT(event["seq"].asUInt64(), changes()[0]["seq"].asUInt64());
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// NC_FRAME_WATCH: watch_added, then watch_hit (frame, reasons, removed: a once watch) when a direct run passes it
+TEST_F(DebugEventHub_Test, FrameWatchEventsCarryTheHit)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    Inbox inbox;
+    _hub.HandleMessage(&inbox, R"({"op":"subscribe","id":"s","emulator":")" + emulator->GetId() + R"(","topics":["debug"]})",
+                       inbox.Sender());
+    auto watchEvents = [&inbox] {
+        std::vector<Json::Value> found;
+        for (const Json::Value& event : inbox.Events())
+            if (event["event"].asString().rfind("watch_", 0) == 0)
+                found.push_back(event);
+        return found;
+    };
+    // FRAME is the frame counter: two frames on
+    const uint64_t frame = context->emulatorState.frame_counter;
+    const framewatch::Outcome added =
+        framewatch::AddWatch(context, {{"if", "FRAME >= " + std::to_string(frame + 2)}, {"label", "two"}});
+    ASSERT_EQ(added.status, 201) << added.text;
+    emulator->RunNFrames(4);
+    ASSERT_TRUE(TestWait::For([&] { return watchEvents().size() == 2; }, std::chrono::seconds(2)));
+    const std::vector<Json::Value> events = watchEvents();
+    EXPECT_EQ(events[0]["event"].asString(), "watch_added");
+    EXPECT_EQ(events[0]["label"].asString(), "two");
+    EXPECT_EQ(events[1]["event"].asString(), "watch_hit");
+    EXPECT_EQ(events[1]["reasons"][0].asString(), "if");
+    EXPECT_TRUE(events[1]["removed"].asBool()) << "a once watch goes with its hit";
+    EXPECT_FALSE(events[1]["paused"].asBool()) << "a direct run is not paused by a watch";
+    EXPECT_GE(events[1]["frame"].asUInt64(), frame + 2);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 

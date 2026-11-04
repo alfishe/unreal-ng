@@ -831,6 +831,103 @@ TEST_F(McpTools_Test, ControlExecution_Wait_LongPolls)
     EXPECT_EQ(result.text, "Changed: seq 43, paused at breakpoint #3 (8000)");
 }
 
+/// Frame watches (docs/inprogress/2026-11-03-run-until-watches): run_until posts the rules (condition as `if`) and
+/// answers the server's text; watch_add / watch_list / watch_remove; wait names the watch that paused
+TEST_F(McpTools_Test, ControlExecution_RunUntil_PostsTheRulesAndAnswersTheText)
+{
+    Json::Value reply;
+    reply["met"] = true;
+    reply["outcome"] = "met";
+    reply["frames"] = 84;
+    reply["text"] = "met at frame 170 after 84 frames (text, row \"(c) 1982 Sinclair Research Ltd\"), PC #12A9, 31 ms; paused";
+    _caller->routes["POST /api/v1/emulator/emu-1/run_until"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "run_until";
+    args["text"] = "1982";
+    args["condition"] = "M(#5C3A) == 255";
+    args["match"] = "any";
+    args["max_frames"] = 500;
+    args["label"] = "ignored";  // a watch option: not sent to run_until
+    mcp::ToolResult result = RunTool(*_registry, "control_execution", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    ASSERT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/run_until"));
+    const Json::Value& body = _caller->calls.back().body;
+    EXPECT_EQ(body["text"].asString(), "1982");
+    EXPECT_EQ(body["if"].asString(), "M(#5C3A) == 255");
+    EXPECT_EQ(body["max_frames"].asUInt(), 500u);
+    EXPECT_FALSE(body.isMember("label"));
+    EXPECT_EQ(result.text, reply["text"].asString());
+
+    Json::Value refused;
+    refused["error"] = "Bad Request";
+    refused["message"] = "nothing to wait for: give if, text, screen or event";
+    _caller->routes["POST /api/v1/emulator/emu-1/run_until"] = {400, refused};
+    Json::Value empty;
+    empty["action"] = "run_until";
+    result = RunTool(*_registry, "control_execution", empty, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("nothing to wait for"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, ControlExecution_Watches_AddListRemoveAndWaitNamesTheWatch)
+{
+    Json::Value added;
+    added["id"] = 1;
+    added["text"] = "watch 1 armed: text \"GAME OVER\" -> pause, once";
+    _caller->routes["POST /api/v1/emulator/emu-1/watches"] = {201, added};
+    Json::Value args;
+    args["action"] = "watch_add";
+    args["text"] = "GAME OVER";
+    args["label"] = "over";
+    args["then"] = "pause";
+    args["max_frames"] = 9;  // a run_until option: not sent to a watch
+    mcp::ToolResult result = RunTool(*_registry, "control_execution", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(_caller->calls.back().body["label"].asString(), "over");
+    EXPECT_FALSE(_caller->calls.back().body.isMember("max_frames"));
+    EXPECT_EQ(result.text, added["text"].asString());
+
+    Json::Value listed;
+    listed["text"] = "1 watch(es)\n  1 over: text \"GAME OVER\" -> pause, once; armed at frame 10, 0 hit(s)";
+    _caller->routes["GET /api/v1/emulator/emu-1/watches"] = {200, listed};
+    Json::Value list;
+    list["action"] = "watch_list";
+    result = RunTool(*_registry, "control_execution", list, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.text, listed["text"].asString());
+
+    Json::Value removed;
+    removed["text"] = "1 watch(es) removed";
+    _caller->routes["DELETE /api/v1/emulator/emu-1/watches/all"] = {200, removed};
+    Json::Value remove;
+    remove["action"] = "watch_remove";
+    remove["watch_id"] = "all";
+    result = RunTool(*_registry, "control_execution", remove, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    Json::Value noId;
+    noId["action"] = "watch_remove";
+    EXPECT_TRUE(RunTool(*_registry, "control_execution", noId, *_caller).isError);
+
+    Json::Value reply;
+    reply["seq"] = 8;
+    reply["changed"] = true;
+    reply["state"] = "paused";
+    reply["pause"]["reason"] = "watch";
+    reply["pause"]["watch_id"] = 1;
+    reply["pause"]["watch_label"] = "over";
+    reply["pause"]["frame"] = 4521;
+    reply["pause"]["reasons"].append("text");
+    reply["pause"]["text_line"] = "GAME OVER";
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/wait?timeout_ms=10000&since=7"] = {200, reply};
+    Json::Value wait;
+    wait["action"] = "wait";
+    wait["since"] = 7;
+    result = RunTool(*_registry, "control_execution", wait, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.text, "Changed: seq 8, paused at watch 1 over, frame 4521 (text, row \"GAME OVER\")");
+}
+
 // ===========================================================================
 // emulator_manage: ZX-bus slots (SlotControl through the WebAPI /slots routes)
 // ===========================================================================
@@ -3114,7 +3211,9 @@ TEST_F(McpTools_Test, TimeTravel_BookmarkList_FormatsEntriesAndBarrierNote)
     body["count"] = 2;
     body["bookmarks"].append(bm1);
     body["bookmarks"].append(bm2);
-    _caller->routes["GET /api/v1/emulator/emu-1/ttd/bookmarks"] = {200, body};
+    // The lines are the server's (text=true): the MCP text passes them on with the advisory note
+    body["text"] = "2 bookmark(s):\n'boot' f5+0\n'umt entry' f9+300 [unpack]: PC #8000 di - the unpacker starts\n";
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/bookmarks?text=true"] = {200, body};
 
     Json::Value args;
     args["action"] = "bookmark_list";
@@ -3124,9 +3223,58 @@ TEST_F(McpTools_Test, TimeTravel_BookmarkList_FormatsEntriesAndBarrierNote)
     EXPECT_NE(result.text.find("2 bookmark(s)"), std::string::npos);
     EXPECT_NE(result.text.find("'boot'"), std::string::npos);
     EXPECT_NE(result.text.find("'umt entry'"), std::string::npos);
-    EXPECT_NE(result.text.find("t=300"), std::string::npos);
+    EXPECT_NE(result.text.find("the unpacker starts"), std::string::npos);
+    EXPECT_EQ(result.structured["bookmarks"].size(), 2u);
     // The advisory contract is part of the tool's own output.
     EXPECT_NE(result.text.find("never a replay barrier"), std::string::npos);
+}
+
+TEST_F(McpTools_Test, TimeTravel_BookmarkNote_PutsTheEditToTheLabel)
+{
+    Json::Value reply;
+    reply["updated"] = true;
+    reply["text"] = "Bookmark 'umt entry' f9+300 [unpack]: PC #8000 di - starts\nthen jumps";
+    _caller->routes["PUT /api/v1/emulator/emu-1/ttd/bookmarks/umt%20entry"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "bookmark_note";
+    args["label"] = "umt entry";
+    args["note"] = "then jumps";
+    args["append"] = true;
+    args["add_tags"].append("unpack");
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("then jumps"), std::string::npos);
+    ASSERT_FALSE(_caller->calls.empty());
+    EXPECT_EQ(_caller->calls.back().path, "/api/v1/emulator/emu-1/ttd/bookmarks/umt%20entry");
+    EXPECT_EQ(_caller->calls.back().body["note"].asString(), "then jumps");
+    EXPECT_TRUE(_caller->calls.back().body["append"].asBool());
+    EXPECT_EQ(_caller->calls.back().body["add_tags"][0].asString(), "unpack");
+    EXPECT_FALSE(_caller->calls.back().body.isMember("label")) << "the label is in the path";
+}
+
+TEST_F(McpTools_Test, TimeTravel_BookmarkExport_ReturnsTheTextAndTheFile)
+{
+    Json::Value reply;
+    reply["format"] = "markdown";
+    reply["count"] = 1;
+    reply["text"] = "## Game\n\n### boot (`f5+0`)\n";
+    reply["path"] = "/tmp/w.md";
+    reply["bytes"] = 30;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/export-bookmarks"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "bookmark_export";
+    args["format"] = "markdown";
+    args["title"] = "Game";
+    args["path"] = "/tmp/w.md";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("### boot"), std::string::npos);
+    EXPECT_NE(result.text.find("written to /tmp/w.md, 30 bytes"), std::string::npos);
+    EXPECT_EQ(_caller->calls.back().body["title"].asString(), "Game");
 }
 
 TEST_F(McpTools_Test, TimeTravel_BookmarkDelete_UrlEncodesLabelInPath)

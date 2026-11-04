@@ -30,6 +30,7 @@
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/card.h"
+#include "emulator/slots/cardcandidates.h"
 #include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/iturbosounddevice.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
@@ -136,6 +137,22 @@ bool Journaled(const Connector& connector)
     return connector.kind == ConnectorKind::KeyboardJoystick || connector.kind == ConnectorKind::Fuller;
 }
 
+/// The input role of a card's socket: the claim its card declares for the port the socket's device answers
+slots::InputRole InputOf(ConnectorKind kind)
+{
+    switch (kind)
+    {
+        case ConnectorKind::Fuller:
+            return slots::InputRole::FullerJoystick;
+        case ConnectorKind::Amx:
+            return slots::InputRole::AmxMouse;
+        case ConnectorKind::Kempston:
+            return slots::InputRole::KempstonJoystick;
+        default:
+            return slots::InputRole::None;
+    }
+}
+
 Connector MakeConnector(const std::string& id, const char* alias, ConnectorKind kind, bool fixed, RetroDeviceKind device,
                         std::vector<RetroDeviceKind> accepts)
 {
@@ -163,6 +180,10 @@ ControllerManager::~ControllerManager() = default;
 
 void ControllerManager::Rebuild()
 {
+    {
+        std::lock_guard<std::mutex> lock(_candidateMutex);
+        _candidates.clear();  // the slot set may have changed
+    }
     PortDecoder* decoder = _context ? _context->pPortDecoder : nullptr;
     const MEM_MODEL model = _context ? _context->config.mem_model : MM_PENTAGON;
     const std::vector<RetroDeviceKind> overlays = {RetroDeviceKind::SinclairJoystick, RetroDeviceKind::CursorJoystick,
@@ -174,13 +195,16 @@ void ControllerManager::Rebuild()
         // The Next's two DB9 connectors: the pad is part of the machine, its projection follows NR #05
         built.push_back(MakeConnector("next.left", "left", ConnectorKind::NextDb9, true, RetroDeviceKind::Md6Pad,
                                       {RetroDeviceKind::Md6Pad}));
+        built.back().input = slots::InputRole::KempstonJoystick;  // #1F
         built.push_back(MakeConnector("next.right", "right", ConnectorKind::NextDb9, true, RetroDeviceKind::Md6Pad,
                                       {RetroDeviceKind::Md6Pad}));
+        built.back().input = slots::InputRole::KempstonJoystick2;  // #37
     }
     else if (decoder && decoder->HasKempstonJoystick())
     {
         built.push_back(MakeConnector("kempston", "", ConnectorKind::Kempston, true, RetroDeviceKind::KempstonJoystick,
                                       {RetroDeviceKind::KempstonJoystick}));
+        built.back().input = slots::InputRole::KempstonJoystick;
     }
 
     // The +2 / +2A / +3 joystick sockets are wired to the keyboard rows
@@ -210,6 +234,8 @@ void ControllerManager::Rebuild()
                     id = socket.id + "." + std::to_string(n);
                 built.push_back(MakeConnector(id, "", socket.kind, true, socket.device, {socket.device}));
                 built.back().owner = card.get();
+                built.back().input = InputOf(socket.kind);
+                built.back().source = card->SlotId();
             }
         }
     }
@@ -280,6 +306,24 @@ int ControllerManager::Find(const std::string& selector) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
     return FindLocked(selector);
+}
+
+int ControllerManager::FindForInput(slots::InputRole input, const std::string& source) const
+{
+    if (input == slots::InputRole::None)
+        return -1;
+    std::lock_guard<std::mutex> lock(_mutex);
+    int first = -1;
+    for (size_t i = 0; i < _connectors.size(); i++)
+    {
+        if (_connectors[i].input != input)
+            continue;
+        if (!source.empty() && _connectors[i].source == source)
+            return static_cast<int>(i);
+        if (first < 0)
+            first = static_cast<int>(i);
+    }
+    return first;
 }
 
 int ControllerManager::FindLocked(const std::string& selector) const
@@ -879,83 +923,52 @@ void ControllerManager::EvaluateHapticConditions(HapticFrame& summary)
 
 void ControllerManager::WatchPortReads(bool on)
 {
-    _watchRequest.store(on ? 1 : 2, std::memory_order_release);
+    if (_context == nullptr || _context->pPortDecoder == nullptr)
+        return;
+    DeviceAccessWatch& watch = _context->pPortDecoder->GetAccessWatch();
+    if (on)
+        watch.RequestWindow(kPortReadWatchFrames);
+    else
+        watch.CloseWindow();
 }
 
-PortReadEvidence ControllerManager::PortReads() const
+DeviceAccessEvidence ControllerManager::PortReads() const
 {
-    PortReadEvidence evidence = _watch.Evidence();
-    evidence.active = _watching.load(std::memory_order_acquire);
+    if (_context == nullptr || _context->pPortDecoder == nullptr)
+        return {};
+    DeviceAccessEvidence evidence = _context->pPortDecoder->GetAccessWatch().Evidence();
+    const SlotManager* slotManager = _context->pSlotManager;
+    if (slotManager == nullptr || slotManager->Current().machine == nullptr)
+        return evidence;
+    // The candidates of each board access of the window (cached per port and direction), then ranked by how well each
+    // card explains all of them
+    std::vector<slots::BoardAccess> accesses;
+    std::vector<DeviceAccessChannel*> boards;
+    {
+        std::lock_guard<std::mutex> lock(_candidateMutex);
+        for (DeviceAccessChannel& channel : evidence.channels)
+        {
+            if (channel.device != "board" || channel.frames == 0)
+                continue;
+            const uint32_t key = (uint32_t(channel.out) << 16) | channel.port;
+            auto it = _candidates.find(key);
+            if (it == _candidates.end())
+                it = _candidates
+                         .emplace(key, slots::CardCandidates(slotManager->Current().model,
+                                                             slotManager->Current().Fitted(), channel.port, channel.out))
+                         .first;
+            accesses.push_back({channel.port, channel.out, it->second});
+            boards.push_back(&channel);
+        }
+    }
+    slots::RankCardCandidates(accesses);
+    for (size_t i = 0; i < boards.size(); ++i)
+        boards[i]->candidates = std::move(accesses[i].candidates);
     return evidence;
-}
-
-namespace
-{
-/// The watch's register probe (PortReadRegisterProbe): an IN of the AY's data port (#FFFD as the 128K family decodes
-/// it) with R14 selected, an IN of the Next's #253B with NR #B2 selected. Runs only while the watch does, after the IN
-bool ProbeRegisterRead(const void* context, uint16_t port, PortReadClass& cls)
-{
-    const EmulatorContext* ctx = static_cast<const EmulatorContext*>(context);
-    if (port == 0x253B)
-    {
-        auto* next = dynamic_cast<PortDecoder_Next*>(ctx->pPortDecoder);
-        if (next == nullptr || next->Board().SelectedRegister() != 0xB2)
-            return false;
-        cls = PortReadClass::NextB2;
-        return true;
-    }
-    if ((port & 0xC002) != 0xC000 || ctx->pSoundManager == nullptr)
-        return false;
-    const ITurboSoundDevice* ay = ctx->pSoundManager->getTurboSound();
-    if (ay == nullptr || ay->getBusReadRegister() != 14)
-        return false;
-    cls = PortReadClass::AyR14;
-    return true;
-}
-}  // namespace
-
-void ControllerManager::ApplyWatchRequest()
-{
-    Z80* cpu = _context->pCore != nullptr ? _context->pCore->GetZ80() : nullptr;
-    const int request = _watchRequest.exchange(0, std::memory_order_acq_rel);
-    if (request == 1)
-    {
-        _watch.Reset();
-        // The row bits read the code after a half-row IN as the CPU sees it, without side effects
-        if (_context->pMemory != nullptr)
-            _watch.SetCodeReader(
-                [](const void* memory, uint16_t address) {
-                    return static_cast<Memory*>(const_cast<void*>(memory))->DirectReadFromZ80Memory(address);
-                },
-                _context->pMemory);
-        _watch.SetRegisterProbe(&ProbeRegisterRead, _context);
-        _watching.store(true, std::memory_order_release);
-        if (cpu != nullptr)
-            cpu->SetPortReadWatch(&_watch);
-        return;
-    }
-    if (!_watching.load(std::memory_order_relaxed))
-        return;
-    // While a tape plays the program is still loading: the watch starts counting when it stops
-    if (_context->pTape != nullptr && _context->pTape->IsPlaying())
-    {
-        _watch.Reset();
-        return;
-    }
-    _watch.EndFrame();
-    if (request == 2 || _watch.Evidence().framesObserved >= kPortReadWatchFrames)
-    {
-        _watching.store(false, std::memory_order_release);
-        if (cpu != nullptr)
-            cpu->SetPortReadWatch(nullptr);
-        _watch.SetCodeReader(nullptr, nullptr);
-        _watch.SetRegisterProbe(nullptr, nullptr);
-    }
 }
 
 void ControllerManager::OnFrame(uint64_t frame)
 {
-    ApplyWatchRequest();
     if (InputOwnedByReplay())
     {
         _wasOwned = true;

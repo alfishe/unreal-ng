@@ -622,7 +622,7 @@ lv = audio_levels()                           -- every row's and channel's peak,
 r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 exe = execution_state()     -- execution arbiter: phase, intent + intent_set_by, serving, queue, claim, driver_violations
-take_control("my script")   -- automation session: the GUI shows it; after the user takes control back, control calls raise revoked_by_user - stop, do not retry. Takes over another client's implicit session, never an explicit one
+take_control("my script")   -- automation session: the GUI shows it; after the user takes control back, control calls raise revoked_by_user - stop, do not retry. Takes over another client's implicit session, never an explicit one. Code sent by POST /api/v1/lua/exec or /lua/file acts in the sender's session on a machine the sender holds (an MCP agent's too): no take needed, release_control() leaves that session in place
 release_control()
 c = companions()            -- companion clients (devices acting as the user's hands): {companions = {...}, pairings = {...}, approval_available}
 n = companion_revoke("Desk panel")   -- revoke by id or name ("all": every one); the number revoked. A script never pairs or acts as a companion
@@ -688,6 +688,14 @@ regs = get_registers()   -- pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr q
 -- t = CPU T-states since the frame's start
 v = get_register("memptr")        -- any name of the register table, nil when unknown
 ok = set_register("im", 2)        -- false for an unknown name or im > 2 / iff1, iff2 > 1
+-- The sound card CPU (General Sound / NeoGS; "ms": the MultiSound's): the CPU name last. get_registers has
+-- card_time instead of t; an unknown name or a card CPU that is not there is a script error
+regs = get_registers("gs");  pc = get_register("pc", "gs");  set_register("a", 0x10, "gs")
+b = mem_read(0x4000, "gs");  mem_write(0x4000, 1, "gs");  lines = disasm(-1, 8, "gs")  -- from the card's PC
+w = memory_map("gs")              -- {cpu, windows = {{start, size, kind = "rom"|"ram"|"none", page, offset}, ...}}
+-- Its steps: the machine runs until the card's step ends, then is paused; {ok, stop = {cpu, reason, cpu_pc, ...},
+-- pc, sp, main_pc, main_sp, state}, or {ok = false, error}
+r = step("gs");  r = steps(10, false, "gs");  r = stepover("gs");  r = step_out("gs")
 
 -- Properties
 id = emu:get_id()
@@ -1274,10 +1282,17 @@ end   -- kind: tape_control | disk_write | debugger_edit | other
 
 ttd_bookmark_add("before crash")            -- at the current position
 ttd_bookmark_add("umt entry", 4823, 14982)  -- at (frame, tinframe)
--- --> { added = true, label, frame, tinframe }  or  { added = false, error = "..." }
-for _, bm in ipairs(ttd_bookmarks()) do     -- time-sorted
-    print(bm.frame, bm.tinframe, bm.label)
+ttd_bookmark_add("lives", 212, 31540, {note = "the life counter drops", tags = {"lives"}, watch = {"#A13C"}})
+ttd_bookmark_add("here", {note = "...", context = false})  -- the options table may stand in for the frame
+-- --> { added = true, label, frame, tinframe, bookmark, text }  or  { added = false, error = "..." }
+-- bookmark.context = { pc, sp, af, ..., instruction, text } taken once (another moment: one silent seek)
+for _, bm in ipairs(ttd_bookmarks()) do     -- time-sorted; ttd_bookmarks("lives"): one tag
+    print(bm.frame, bm.tinframe, bm.label, bm.note)
 end
+ttd_bookmark_note("lives", {note = "only on contact", append = true, add_tags = {"enemy"}})
+-- also tags = {...}, remove_tags = {...}, rename = "..."; --> { updated = true, bookmark, text } or { updated = false, error }
+local e = ttd_bookmark_export{format = "markdown", tag = "lives", title = "Green Beret"}   -- or "profile", "json"
+print(e.text)                               -- path = "..." writes it too: e.path, e.bytes
 ttd_bookmark_delete("before crash")        --> bool
 ttd_seek_bookmark("umt entry")
 -- --> same table as ttd_seek (blocking_marker included when a marker stops it)
@@ -1381,6 +1396,22 @@ local down = ttd_find_event("mem", {addr = 0xA130, cond = "decreased", limit = 3
 local scene = ttd_find_event("screen", {min_changed = 60})
 local fire = ttd_find_event("key", {key = "SPACE"})
 
+-- What one frame did: frame (default the current one), options sections ("time,routines,..."), limit (8), text
+local f = ttd_explain_frame(1204, {sections = "time,routines,memory", limit = 4})
+-- { frame = 1204, frame_t = 69888, end_t = 69888, instructions = 18312, time = {isr = 6210, halt = 21700, code = ...},
+--   routines = { {pc = 0x8A14, calls = 1, t = 31220, own_t = 2110, insns = 4812, caller = 0x8003}, ... },
+--   memory = { {region = "screen pixels", addr = 0x4800, changed = 1024, writers = { {pc = 0x9A12,
+--   text = "ld (hl),a", count = 1024} }}, ... }, more_memory = 2, frames_replayed = 1, ms = ... }
+
+-- What differs between two moments: from_frame (+ from_tinframe), to_frame (+ to_tinframe; default the current
+-- position), options sections ("cpu,paging,memory,screen,devices,between"), limit (16), writers (true), text
+local d = ttd_diff{from_frame = 1201, to_frame = 1204, sections = "cpu,memory"}
+-- { from = {frame = 1201, tinframe = 0}, to = {frame = 1204, tinframe = 0}, backwards = false,
+--   registers = { {name = "PC", before = 0x8008, after = 0x8009}, ... },
+--   memory = {changed = 2, pages = 1, ranges = { {region = "ram", page = 2, offset = 0x2000, address = 0xA000,
+--   length = 1, changed = 1, before = {3}, after = {6}, last_write = {frame = 1203, tinframe = 71, pc = 0x800C,
+--   address = 0xA000, text = "inc (hl)"}}, ... }, more = 0}, writer_searches = 2, ms = ... }
+
 local summary = ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50, limit = 100}
 -- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,
 --   bucket_size = 50, bucket_count = 10, index_available = true,
@@ -1403,6 +1434,13 @@ return a result table; on failure the table carries an `error` string.
 emu.step_out()                       -- run until the current subroutine returns
 emu.skip_until(0x8000)               -- fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", 70000000)   -- optional explicit t-state budget
+
+-- Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end
+run_until{text = "PRESS", max_frames = 500}   -- {met, outcome, frames, frame, pc, ms, hit = {reasons, text_line}, text}
+run_until{["if"] = "M(#5C3A)==1", screen = "stable", stable_frames = 50, match = "all"}
+watch_add{text = "GAME OVER", label = "over"}  -- {id, watch, text}; a hit pauses at that frame end
+watches()                                       -- {count, watches = {...}, text}
+watch_remove(1)                                 -- or watch_remove("all")
 
 -- The paced run (core RunPacer, command-interface.md §2.1): a frame / lines / an instruction per interval,
 -- stops at a breakpoint. The reply: the body with `pace` and ok (false: error = the message)
@@ -1612,6 +1650,7 @@ emu.analysis("stop")                                 -- the facts stay readable
 -- L1: record, build from the recording (a job), then routine fact sheets
 emu.analysis("start", {record = true})               -- also a TTD recording
 emu.analysis("build", {wait = 20000})                -- { job, state, bundle, progress, ready, text }; frames, path
+emu.analysis("build", {from_frame = 1200, from_tinframe = 3500, to_frame = 4000})  -- a window: one stage (analysis-layers.md#stages-and-windows)
 emu.analysis("build", "500")                         -- a string: the frames to replay
 local sheet = emu.analysis("explain", "$0038")       -- L1 ready: { what = "routine", routine, text = the sheet }
 emu.analysis("explain", {address = 0x38, what = "byte"})
@@ -1625,6 +1664,7 @@ emu.analysis("export", {format = "skool", path = "game.skool", ranges = "5900-59
 emu.analysis("gallery", {kind = "sprite"})           -- the graphics found: { regions, count, truncated, text }
 local g = emu.analysis("gallery", "$8200")           -- a string: the address; g.png is the PNG (base64)
 emu.analysis("gallery", {address = 0x8200, scale = 4, path = "sprite.png"})
+emu.analysis("trace", {path = "scratch/pass.uatr", from_frame = 1001, to_frame = 1003})  -- the CPU access trace
 
 -- L3 (the review): findings register, review queue, experiments on muted clones, directed coverage
 emu.analysis("findings", {kind = "bug"})             -- { count, total, by_kind, by_status, findings, text }

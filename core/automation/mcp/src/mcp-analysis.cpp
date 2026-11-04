@@ -32,8 +32,11 @@
 //   start {level?, mode?, record?} → POST /analysis/start
 //   stop                  → POST /analysis/stop
 //   status                → GET  /analysis/status
-//   build {frames?, path?, wait?}  → POST /analysis/build (wait default 20000 ms: one call answers the result)
+//   build {frames?, from_frame?, from_tinframe?, to_frame?, path?, wait?} → POST /analysis/build (wait default
+//                         20000 ms: one call answers the result; the window: analysis-layers.md#stages-and-windows)
 //   cancel                → POST /analysis/cancel
+//   trace {path, from_frame?, from_tinframe?, to_frame?, to_tinframe?, max_cycles?} → POST /analysis/trace (the CPU
+//                         access trace of a window, written to path)
 //   explain {address, page?, what?} → GET /analysis/explain?address=&page=&what=
 //   query {kind?, range?, limit?}   → GET /analysis/query?kind=&range=&limit=      (L2 claims, P3)
 //   export {format, path?, ranges?, width?} → POST /analysis/export                (the L2 draft)
@@ -1265,7 +1268,7 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"start", "stop", "status", "build", "cancel", "explain", "query", "export",
-                               "gallery", "findings", "review", "experiment", "cover"})
+                               "gallery", "findings", "review", "experiment", "cover", "trace"})
         schema["properties"]["action"]["enum"].append(action);
     schema["properties"]["action"]["description"] =
         "start: switch on memory tracking with per-byte access facts and start a fresh session (level, mode; "
@@ -1289,7 +1292,10 @@ void RegisterAnalysis(ToolRegistry& registry)
         "optionally with an experiment); experiment: poke bytes / set registers / press keys on a muted clone from "
         "the recording, run N frames, check memory, the screen, watched addresses or new code (the source machine is "
         "never touched; the result marks the finding observed or refuted); cover: flip branches the session took one "
-        "way only by holding the byte they test or pressing the keys they read, and report the new code";
+        "way only by holding the byte they test or pressing the keys they read, and report the new code; trace: the "
+        "CPU access trace of a window of the recording (from_frame / from_tinframe .. to_frame / to_tinframe, default "
+        "one frame, at most 3000): every instruction with its registers and every fetch, read, write and port access "
+        "with its T-state, and the start memory, written to path for scripts (routine animations, who drew a pixel)";
     schema["properties"]["level"]["type"] = "string";
     schema["properties"]["level"]["enum"] = Json::Value(Json::arrayValue);
     schema["properties"]["level"]["enum"].append("facts");
@@ -1348,6 +1354,20 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["width"]["description"] = "export: bytes per DEFB line (default 8)";
     schema["properties"]["wait"]["type"] = "integer";
     schema["properties"]["wait"]["description"] = "build: milliseconds to wait for the result (0..30000, default 20000)";
+    schema["properties"]["from_frame"]["type"] = "integer";
+    schema["properties"]["from_frame"]["description"] =
+        "build: replay a window of the recording from this frame (a stage: an arrival's frame; the draft decodes from "
+        "the memory at the window's start)";
+    schema["properties"]["from_tinframe"]["type"] = "integer";
+    schema["properties"]["from_tinframe"]["description"] = "build: the point inside from_frame in TTD time units, as time_travel's tinframe (an arrival's tinframe)";
+    schema["properties"]["to_frame"]["type"] = "integer";
+    schema["properties"]["to_frame"]["description"] =
+        "build: the window ends before this frame (default: the end); trace: the frame the window ends in (default "
+        "from_frame + 1)";
+    schema["properties"]["to_tinframe"]["type"] = "integer";
+    schema["properties"]["to_tinframe"]["description"] = "trace: the point inside to_frame the window ends before (TTD units)";
+    schema["properties"]["max_cycles"]["type"] = "integer";
+    schema["properties"]["max_cycles"]["description"] = "trace: the most bus cycles written (default 8000000)";
     schema["properties"]["what"]["type"] = "string";
     schema["properties"]["what"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* what : {"auto", "routine", "byte"})
@@ -1451,7 +1471,7 @@ void RegisterAnalysis(ToolRegistry& registry)
             if (action == "build")
             {
                 Json::Value body(Json::objectValue);
-                for (const char* name : {"frames", "wait"})
+                for (const char* name : {"frames", "wait", "from_frame", "from_tinframe", "to_frame"})
                     if (args.isMember(name))
                         body[name] = args[name];  // a number or its text: the core checks it
                 if (!args.isMember("wait"))
@@ -1544,6 +1564,15 @@ void RegisterAnalysis(ToolRegistry& registry)
                 ResolveAndForward(args, "POST", "/analysis/gallery", &body, caller, "Analysis gallery", withImage);
                 return;
             }
+            if (action == "trace")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"path", "from_frame", "from_tinframe", "to_frame", "to_tinframe", "max_cycles"})
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name];
+                ResolveAndForward(args, "POST", "/analysis/trace", &body, caller, "Analysis access trace", withText);
+                return;
+            }
             if (action == "findings" || action == "review" || action == "experiment" || action == "cover")
             {
                 // Every option goes through as given (numbers, strings, booleans; spec / experiment / names objects or
@@ -1574,7 +1603,7 @@ void RegisterAnalysis(ToolRegistry& registry)
             }
             done(ToolResult::Error("unknown action '" + action +
                                    "': start, stop, status, build, cancel, explain, query, export, gallery, findings, "
-                                   "review, experiment or cover"));
+                                   "review, experiment, cover or trace"));
         });
 }
 

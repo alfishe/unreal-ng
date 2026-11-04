@@ -47,7 +47,7 @@ FdcStatusWidget::FdcStatusWidget(QWidget* parent) : QWidget(parent)
     connect(_deferTimer, SIGNAL(timeout()), this, SLOT(applyPendingState()));
     _sinceLastFlush.start();
 
-    _debuggerWindow = static_cast<DebuggerWindow*>(parent);
+    _debuggerWindow = DebuggerWindow::Of(parent);
 
     renderSnapshot(FdcSnapshot());  // Initial placeholder until the first seed / notification
 }

@@ -219,8 +219,8 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
            << "Sets an execution breakpoint: one address or a range. With a page it fires on that page through any"
            << NEWLINE << "slot that shows it (--slot-only: only through the slot of the address). --hits stops on the"
            << NEWLINE << "Nth hit only, from the Nth on (>=N) or on every Nth (%N); every hit is counted." << NEWLINE
-           << "if: the rest of the line is a condition (Unreal language, numbers hex unless 123d; --dialect c" << NEWLINE
-           << "before it: C precedence, decimal numbers); only the hits where it holds count for --hits." << NEWLINE
+           << "if: the rest of the line is a condition (Unreal language; numbers decimal, hex as #FF, $FF or" << NEWLINE
+           << "0xFF; --dialect c before it: C precedence); only the hits where it holds count for --hits." << NEWLINE
            << "Examples:" << NEWLINE << "  bp 0x1234            - Breakpoint at 0x1234" << NEWLINE
            << "  bp 0x8000 if A == 7 && M(5C3A) != 0 - Only when A is 7 and #5C3A is not 0 (hex in the condition)" << NEWLINE
            << "  bp 0x8000-0x80FF     - Anywhere in 0x8000-0x80FF" << NEWLINE

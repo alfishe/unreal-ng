@@ -1,4 +1,5 @@
 #include "memoryaccesstracker.h"
+#include "emulator/readoutschanged.h"
 
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
@@ -2166,6 +2167,7 @@ void MemoryAccessTracker::StartMemorySession()
 
     // Set state to capturing
     _memorySessionState = ProfilerSessionState::Capturing;
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 void MemoryAccessTracker::PauseMemorySession()
@@ -2174,6 +2176,7 @@ void MemoryAccessTracker::PauseMemorySession()
     {
         _memorySessionState = ProfilerSessionState::Paused;
     }
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 void MemoryAccessTracker::ResumeMemorySession()
@@ -2182,6 +2185,7 @@ void MemoryAccessTracker::ResumeMemorySession()
     {
         _memorySessionState = ProfilerSessionState::Capturing;
     }
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 void MemoryAccessTracker::StopMemorySession()
@@ -2191,12 +2195,14 @@ void MemoryAccessTracker::StopMemorySession()
         _memorySessionState = ProfilerSessionState::Stopped;
         // Data is retained until ClearMemoryData() is called
     }
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 void MemoryAccessTracker::ClearMemoryData()
 {
     ResetCounters();
     // State remains unchanged - can be called in any state
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 ProfilerSessionState MemoryAccessTracker::GetMemorySessionState() const
@@ -2232,6 +2238,7 @@ void MemoryAccessTracker::StartCalltraceSession()
 
     // Set state to capturing
     _calltraceSessionState = ProfilerSessionState::Capturing;
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 void MemoryAccessTracker::PauseCalltraceSession()
@@ -2240,6 +2247,7 @@ void MemoryAccessTracker::PauseCalltraceSession()
     {
         _calltraceSessionState = ProfilerSessionState::Paused;
     }
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 void MemoryAccessTracker::ResumeCalltraceSession()
@@ -2248,6 +2256,7 @@ void MemoryAccessTracker::ResumeCalltraceSession()
     {
         _calltraceSessionState = ProfilerSessionState::Capturing;
     }
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 void MemoryAccessTracker::StopCalltraceSession()
@@ -2258,6 +2267,7 @@ void MemoryAccessTracker::StopCalltraceSession()
         _calltraceSessionState = ProfilerSessionState::Stopped;
         // Data is retained until ClearCalltraceData() is called
     }
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 void MemoryAccessTracker::ClearCalltraceData()
@@ -2267,6 +2277,7 @@ void MemoryAccessTracker::ClearCalltraceData()
         _callTraceBuffer->Reset();
     }
     // State remains unchanged
+    NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers / debug.buffers and the profiler toggles
 }
 
 ProfilerSessionState MemoryAccessTracker::GetCalltraceSessionState() const

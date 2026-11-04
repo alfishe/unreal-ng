@@ -57,6 +57,12 @@ TsfmChip* SocketFm(const SoundManager& sound, AudioSourceType type)
     return nullptr;
 }
 
+/// A mono Covox (#FB, or the Scorpion's #DD alone) has one DAC, the RightB latch: one mixer channel, not four
+bool MonoCovox(const Covox* covox)
+{
+    return covox && (covox->fitment() == Covox::Fitment::Mono || covox->fitment() == Covox::Fitment::None);
+}
+
 /// The model audio source owns the row: the COVOX row of a device without parts, or one of its parts
 bool ModelOwns(const IModelAudioSource* model, AudioSourceType type)
 {
@@ -93,7 +99,9 @@ void Describe(const SoundManager& sound, AudioSourceType type, std::vector<Mixer
                 Numbered(out, 3, "FM ", true, false);
             return;
         case AudioSourceType::COVOX:
-            if (sound.hasCovox())
+            if (MonoCovox(sound.getCovox()))
+                out.push_back({"mono", "Mono", true, false});
+            else if (sound.hasCovox())
             {
                 out.push_back({"la", "Left A", true, false});
                 out.push_back({"lb", "Left B", true, false});
@@ -164,7 +172,7 @@ void Apply(SoundManager& sound, AudioSourceType type, size_t index, bool muted, 
         case AudioSourceType::COVOX:
             if (Covox* covox = index < 4 ? sound.getCovox() : nullptr)
             {
-                const auto ch = static_cast<Covox::Channel>(index);
+                const auto ch = MonoCovox(covox) ? Covox::Channel::RightB : static_cast<Covox::Channel>(index);
                 covox->setChannelMute(ch, muted);
                 covox->setChannelGain(ch, MixerChannelGainQ15(false, volume));
             }

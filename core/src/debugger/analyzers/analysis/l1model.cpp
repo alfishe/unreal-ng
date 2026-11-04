@@ -311,6 +311,7 @@ void L1Result::DiscountSweeps()
                             u->minWritten = 0xFF;
                             u->maxWritten = 0;
                             u->flags = static_cast<uint16_t>(u->flags & ~(use::kWrite | use::kOtherWrite | use::kSmc));
+                            u->overlaid = false;
                         }
                         else
                         {
@@ -917,6 +918,24 @@ StateNode L1Result::ToStateNode() const
     }
     doc["drawn_frames"] = std::move(frameList);
 
+    // Code arrivals, in time order: where execution first entered bytes the replay wrote (a loaded, unpacked or
+    // copied stage)
+    StateNode arrivalList = StateNode::Array();
+    for (const CodeArrival& a : arrivals)
+    {
+        StateNode node = StateNode::Object();
+        node["at"] = Hex4(a.z80);
+        node["frame"] = a.frame;
+        node["tstate"] = a.tstate;
+        node["tinframe"] = a.tInFrame;
+        node["writer"] = a.writer == kNoKey ? std::string() : Hex4(a.writerZ80);
+        node["from"] = a.from == kNoKey ? std::string() : Hex4(a.fromZ80);
+        node["written_from"] = Hex4(a.writtenStart);
+        node["written_to"] = Hex4(a.writtenEnd);
+        arrivalList.push(std::move(node));
+    }
+    doc["arrivals"] = std::move(arrivalList);
+
     // The bytes' uses, run-length: [page, offset, length, flags, first reader page, offset, last reader page,
     // offset, written] for each run of bytes alike in those
     StateNode useList = StateNode::Array();
@@ -924,7 +943,7 @@ StateNode L1Result::ToStateNode() const
     {
         const auto same = [](const ByteUse& a, const ByteUse& b) {
             return a.flags == b.flags && a.firstReader == b.firstReader && a.lastReader == b.lastReader &&
-                   (a.writes != 0) == (b.writes != 0);
+                   (a.writes != 0) == (b.writes != 0) && a.overlaid == b.overlaid;
         };
         const auto keyNode = [](StateNode& node, PhysKey key) {
             node.push(static_cast<unsigned>(key == kNoKey ? 0xFFFFu : KeyPage(key)));
@@ -946,12 +965,39 @@ StateNode L1Result::ToStateNode() const
                 keyNode(node, u.firstReader);
                 keyNode(node, u.lastReader);
                 node.push(static_cast<unsigned>(u.writes != 0 ? 1 : 0));
+                node.push(static_cast<unsigned>(u.overlaid ? 1 : 0));
                 useList.push(std::move(node));
             }
             at = end;
         }
     }
     doc["byte_use"] = std::move(useList);
+
+    // The counters behind a memory heatmap, dense per page: reads, writes (saturating), the first and the last frame
+    // of any access (frames since the replay's first; 0 with no access). Executions are the instructions'.
+    StateNode countList = StateNode::Array();
+    for (const BytePage& bp : bytePages)
+    {
+        StateNode node = StateNode::Object();
+        node["page"] = static_cast<unsigned>(bp.page);
+        StateNode reads = StateNode::Array();
+        StateNode writes = StateNode::Array();
+        StateNode firstFrames = StateNode::Array();
+        StateNode lastFrames = StateNode::Array();
+        for (const ByteUse& u : bp.bytes)
+        {
+            reads.push(static_cast<uint64_t>(u.reads));
+            writes.push(static_cast<uint64_t>(u.writes));
+            firstFrames.push(static_cast<uint64_t>(u.firstFrame));
+            lastFrames.push(static_cast<uint64_t>(u.lastFrame));
+        }
+        node["reads"] = std::move(reads);
+        node["writes"] = std::move(writes);
+        node["first_frame"] = std::move(firstFrames);
+        node["last_frame"] = std::move(lastFrames);
+        countList.push(std::move(node));
+    }
+    doc["byte_counts"] = std::move(countList);
     return doc;
 }
 

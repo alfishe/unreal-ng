@@ -877,18 +877,26 @@ StateNode Covox(EmulatorContext* context)
     }
     ::Covox* covox = sm->getCovox();
     if (!covox)
-        return Unavailable("Covox not fitted (configure [SOUND] CovoxFB=1 for #FB or SD=1 for the SoundDrive)");
+        return Unavailable("Covox not fitted (configure [SOUND] CovoxFB=1 for #FB, SD=1 for the SoundDrive or, on a "
+                           "Scorpion, CovoxDD=1 for the Covox on the printer port #DD)");
 
     const ::Covox::Fitment fitment = covox->fitment();
     const bool mono = fitment == ::Covox::Fitment::Mono;
     StateNode ret = StateNode::Object();
     ret["available"] = true;
-    ret["device"] = mono ? "Covox (8-bit DAC on #FB)" : "SoundDrive (4 x 8-bit DAC)";
-    ret["fitment"] = fitment == ::Covox::Fitment::Quad    ? "quad"
-                     : fitment == ::Covox::Fitment::Mode1 ? "mode1"
-                     : fitment == ::Covox::Fitment::Mode2 ? "mode2"
+    const bool printerOnly = fitment == ::Covox::Fitment::None;
+    const bool dd = covox->answersPrinterPort();
+    ret["device"] = printerOnly ? "Covox (8-bit DAC on #DD)"
+                    : mono      ? (dd ? "Covox (8-bit DAC on #DD and #FB)" : "Covox (8-bit DAC on #FB)")
+                                : (dd ? "SoundDrive (4 x 8-bit DAC) + Scorpion Covox #DD" : "SoundDrive (4 x 8-bit DAC)");
+    ret["fitment"] = fitment == ::Covox::Fitment::Quad        ? "quad"
+                     : fitment == ::Covox::Fitment::Mode1     ? "mode1"
+                     : fitment == ::Covox::Fitment::Mode2     ? "mode2"
                      : fitment == ::Covox::Fitment::Mode1Mono ? "mode1+mono"
+                     : printerOnly                            ? "none"
                                                               : "mono";
+    // The Scorpion's Covox port #DD (CovoxDD=1): the same instance, the right_b (mono) latch
+    ret["printer_port"] = dd;
 
     // Ports: this model's decode, straight from its port map (the same rows
     // /ports and `ports` list), and the ones it shares with Beta-128

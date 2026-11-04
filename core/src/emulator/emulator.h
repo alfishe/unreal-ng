@@ -202,6 +202,8 @@ public:
         /// Whose breakpoint: another CPU's (a card) stopped the machine at that CPU's instruction `cpuPc`
         DebugCpuId cpu = DebugCpuId::Main;
         uint16_t cpuPc = 0;
+        /// No breakpoint (`hit` false): a step of `cpu` ended at `cpuPc` (OnTargetStep)
+        bool step = false;
     };
 
     /// Why the emulator stopped last (the debugger snapshot's `pause`)
@@ -213,6 +215,7 @@ public:
             Pause,        ///< a pause request (a client, the GUI)
             Breakpoint,   ///< a breakpoint (`breakpoint`)
             Step,         ///< a direct step / run ended
+            Watch,        ///< an armed frame watch held at a frame end (framewatch::Manager::LastPause says which)
         } reason = Reason::None;
         BreakpointStop breakpoint;
     };
@@ -777,6 +780,12 @@ public:
     /// skipBreakpoints = false: a breakpoint ends the run first (run to the cursor; LastDirectStop says which)
     void RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates = 0,
                            bool notifyDebugger = true, bool skipBreakpoints = true);
+    /// Runs whole frames until `atFrameEnd` holds at a frame end (the next frame's first instruction not run yet),
+    /// `maxFrames` frame ends passed, or the run halts (a breakpoint with skipBreakpoints false, an abort). `atStart`
+    /// runs once the run holds the CPU, before the first step (a watcher takes its baseline there); false ends the run
+    /// before any step (a refused spec). Returns the frame ends passed; `met` tells whether atFrameEnd held (framewatch::RunUntil)
+    unsigned RunFramesUntil(unsigned maxFrames, const std::function<bool()>& atStart,
+                            const std::function<bool()>& atFrameEnd, bool skipBreakpoints, bool& met);
 
     /// Start the current frame again after machine state was replaced from
     /// outside the frame flow (reset, snapshot load). See MainLoop::RestartFrame
@@ -981,6 +990,9 @@ public:
     /// stop and ends after its current instruction
     void OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoints, uint16_t breakpointId, uint16_t address,
                                BreakpointHitKind kind, uint16_t cpuPc);
+    /// Another CPU's step ended at its instruction boundary `cpuPc` (GSCardTarget::ArmStep, the emulation thread):
+    /// the machine pauses with the reason step, the main CPU wherever it stands, and this thread parks until Resume()
+    void OnTargetStep(DebugCpuId cpu, uint16_t cpuPc);
     /// The stop goes to the script callbacks that wait for this breakpoint (on_breakpoint), before the pause
     void NoteBreakpointCallbacks(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
     /// The breakpoint that ended the last direct run early; hit = false when the run did all it was asked

@@ -40,7 +40,7 @@ YM2203 pair per chip, like the TurboSound FM's `ay1` / `ay2` / `fm1` / `fm2`),
 `next_ay1`..`next_ay3` and `next_dac` (its three AYs and its DAC, one row each). Only the devices the machine has are
 listed; naming one that is not fitted is a `400` whose text lists the fitted keys.
 
-Channels: `<source>.<channel>` names one channel of a row - `ay1.a` / `.b` / `.c`, `covox.la` / `lb` / `ra` / `rb`,
+Channels: `<source>.<channel>` names one channel of a row - `ay1.a` / `.b` / `.c`, `covox.la` / `lb` / `ra` / `rb` (SounDrive; a mono Covox - `#FB`, the Scorpion's `#DD` - has `covox.mono` alone),
 `gs.1`..`gs.4` (NeoGS `.8`), `fm1.1`..`fm1.3`, `moonsound_fm.1`..`.18`, `moonsound_pcm.1`..`.24` (metered),
 `ms_ssg1.a`, `ms_fm1.2`, `ms_midi.1`..`.16` (mute and solo only), `next_dac.a`..`.d`. A channel takes muted, solo
 (within its row: the row's other channels go silent) and volume / gain_db, applied at the next frame start

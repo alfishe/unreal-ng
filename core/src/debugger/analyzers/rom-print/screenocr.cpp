@@ -54,12 +54,16 @@ std::string ScreenOCR::ocrScreen(const std::string& emulatorId)
 {
     auto manager = EmulatorManager::GetInstance();
     auto emulator = manager->GetEmulator(emulatorId);
+    return ocrScreen(emulator.get());
+}
 
+std::string ScreenOCR::ocrScreen(Emulator* emulator)
+{
     if (!emulator)
         return "";
 
     std::string text;
-    if (textLayerScreen(emulator.get(), text))
+    if (textLayerScreen(emulator, text))
         return text;
 
     Memory* memory = emulator->GetMemory();

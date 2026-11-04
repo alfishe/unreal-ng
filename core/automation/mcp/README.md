@@ -98,7 +98,11 @@ machine when none exists, refuses when several exist) and answers with dual
 content: `content[]` text summary + `structuredContent` machine data. Every
 tool also takes `response_format`: `text` (default, human-readable) or `json`,
 which adds the structuredContent to `content[]` as JSON text (cut at 64 KB) for
-clients that pass only the text to the model. A screenshot with
+clients that pass only the text to the model. Every tool also takes `max_chars`
+(500 or more): the whole answer fits in that many characters, its first lines
+and last ones kept, a line saying what was left out and how to get it, JSON
+losing the tail of its biggest arrays with a `truncated` note
+([answer budgets](../../../docs/inprogress/2026-11-04-answer-budgets/README.md)). A screenshot with
 `include_image` carries its pixels as an MCP `image` content block.
 Tool-level failures are `isError: true` results with remediation hints —
 never JSON-RPC errors.

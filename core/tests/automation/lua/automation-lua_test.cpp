@@ -4,10 +4,12 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -89,6 +91,30 @@ TEST_F(AutomationLua_Test, AScriptErrorAnswersAnErrorAndTheInterpreterKeepsRunni
 }
 
 /// The headless runner's file (unreal-qt --script): the chunk's result is the exit code; an error is 1 with its message
+// unreal-qt's close stops the interpreter: a script still looping (a --script waiting with os.time) held it forever
+TEST_F(AutomationLua_Test, StopBreaksIntoARunningScriptEvenThroughPcall)
+{
+    std::atomic<bool> running = false;
+    _lua.dispatchSync([&running](sol::state& lua) { lua.set_function("mark_running", [&running] { running = true; }); });
+
+    std::atomic<bool> answered = false;
+    bool ok = true;
+    std::string message;
+    std::thread script([&] {
+        std::string output;
+        ok = _lua.executeCode("mark_running(); while true do pcall(function() while true do end end) end", message,
+                              output);
+        answered = true;
+    });
+    ASSERT_TRUE(TestWait::For([&running] { return running.load(); })) << "the script did not start";
+    EXPECT_FALSE(answered.load()) << "the script loops until stopped";
+
+    _lua.stop();
+    script.join();
+    EXPECT_FALSE(ok);
+    EXPECT_NE(message.find("stopped"), std::string::npos) << message;
+}
+
 TEST_F(AutomationLua_Test, RunFileAnswersTheScriptsExitCode)
 {
     const std::filesystem::path dir = TestPathHelper::GetUniqueTestScratchPath("runfile");
@@ -494,6 +520,52 @@ TEST(LuaGSCardHook_Test, ACardReadHookReplacesTheByteTheCardSees)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
+/// The sound card CPU's registers, memory, code and windows from a script (core CpuView): the CPU name last on the
+/// main CPU's functions; a card CPU that is not there is a script error, the main CPU's answers stay the machine's
+TEST(LuaCardCpu_Test, TheCardCpuIsTheLastArgument)
+{
+    SoundCardScope sound(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::Z80));
+    emulator->RunNFrames(2, false);
+    auto* card = dynamic_cast<SoundChip_GeneralSound*>(context->pSoundManager->getGeneralSound());
+    ASSERT_NE(card, nullptr);
+    Z80CpuRegisters regs{};
+    ASSERT_TRUE(card->cardRegisters(regs));
+
+    BoundLua lua;
+    lua.start();
+    lua.Bind(emulator);
+    std::string message;
+    std::string output;
+    ASSERT_TRUE(lua.executeCode(R"(
+        local r = get_registers("gs")
+        assert(r.cpu == "gs" and r.card_time ~= nil and r.t == nil)
+        assert(get_register("pc", "gs") == r.pc)
+        assert(set_register("a", 0x42, "gs") and get_register("a", "gs") == 0x42)
+        assert(set_register("nosuch", 1, "gs") == false)
+        mem_write(0x4000, 0xA5, "gs")
+        assert(mem_read(0x4000, "gs") == 0xA5)
+        local code = disasm(-1, 3, "gs")
+        assert(#code == 3 and code[1].address == r.pc)
+        local map = memory_map("gs")
+        assert(map.cpu == "gs" and #map.windows == 4 and map.windows[1].kind == "rom")
+        print(r.pc)
+    )", message, output)) << message;
+    EXPECT_EQ(output, std::to_string(regs.pc) + "\n");
+    ASSERT_TRUE(card->cardRegisters(regs));
+    EXPECT_EQ(regs.af >> 8, 0x42) << "the card's A";
+
+    EXPECT_FALSE(lua.executeCode("get_registers('ms')", message, output)) << "no MultiSound card";
+    EXPECT_NE(message.find("cpu ms not available"), std::string::npos) << message;
+    EXPECT_FALSE(lua.executeCode("mem_read(0, 'z81')", message, output));
+    EXPECT_NE(message.find("main, gs or ms"), std::string::npos) << message;
+    lua.stop();
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
 /// Q3 (gs-debugger design §8A.7): a logic hook on the card writes the card while TTD records - the byte its read
 /// sees, a poke and a register - and the track keeps them; a seek back and forward replays them without the hook, and
 /// a fork from a checkpoint records its own
@@ -698,4 +770,44 @@ TEST_F(AutomationLua_Test, SnapshotLoadSwitchesTheModelOnlyWhenAsked)
     output.clear();
     ASSERT_TRUE(_lua.executeCode("print((snapshot_load([[" + path + "]], 'legacy')))", message, output)) << message;
     EXPECT_EQ(output, "true\n") << "a string is still the commit (on the 128K now selected)";
+}
+
+/// analysis('trace', ...) reaches analysis::Execute with the path as its positional option: without a path the
+/// refusal names it, with one the refusal is the machine's (no recording to replay), with a table the same
+TEST_F(AutomationLua_Test, AnalysisTraceTakesThePathAsItsPositionalOption)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    struct RemoveAll
+    {
+        EmulatorManager* manager;
+        ~RemoveAll()
+        {
+            for (const auto& emulatorId : manager->GetEmulatorIds())
+                manager->RemoveEmulator(emulatorId);
+        }
+    } removeAll{manager};
+    auto emulator = manager->CreateEmulatorWithModel("lua-trace", "48K", LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    manager->SetSelectedEmulatorId(emulator->GetId());
+
+    // A scratch file, should a recording ever be there by default
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("lua-pass.uatr");
+    std::string message;
+    std::string output;
+    ASSERT_TRUE(_lua.executeCode("local r = analysis('trace'); print(r.ok, r.error)", message, output)) << message;
+    EXPECT_EQ(output.rfind("false\t", 0), 0u) << output;
+    EXPECT_NE(output.find("path"), std::string::npos) << output;
+
+    output.clear();
+    ASSERT_TRUE(_lua.executeCode("local r = analysis('trace', [[" + path + "]]); print(r.ok, r.error)", message, output))
+        << message;
+    EXPECT_EQ(output.rfind("false\t", 0), 0u) << output;
+    EXPECT_NE(output.find("no recording"), std::string::npos) << "past the options: " << output;
+
+    output.clear();
+    ASSERT_TRUE(_lua.executeCode("local r = analysis('trace', {path = [[" + path + "]], from_frame = 1, to_frame = 2}); "
+                                 "print(r.ok, r.error)",
+                                 message, output))
+        << message;
+    EXPECT_NE(output.find("no recording"), std::string::npos) << output;
 }

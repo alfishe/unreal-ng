@@ -512,6 +512,35 @@ TEST_F(ExecutionArbiterMachine_Test, AScriptSessionStopsWithControlRevoked)
 /// Reading a paused machine's video change log while automation runs frames on it (a direct run records into the
 /// log, reallocating as it goes): the readers take the CPU first, so they never read a frame being written. Found by
 /// an ASan soak (heap-use-after-free in DeviceState::VideoChanges against Emulator::RunNFrames)
+// A script a client sends (/lua/exec, /python/exec) acts in that client's session while it runs: its steps pass the
+// gate as the client's, take_control is a no-op, release_control leaves the session to the client. Afterwards the
+// script surface is on its own again (refused while the client holds the machine)
+TEST_F(ExecutionArbiterMachine_Test, AClientsScriptActsInTheClientsSession)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    const EmulatorContext::ImplicitControl mcp =
+        context->EnterImplicitRunControl("mcp", "mcp|127.0.0.1|MCP agent", "MCP agent", std::chrono::milliseconds(15000));
+    ASSERT_TRUE(mcp.allowed);
+    EXPECT_THROW(execution::script::Check(*_emulator, execution::Origin::Lua), std::runtime_error)
+        << "a script on its own is refused while MCP holds the machine";
+    {
+        const execution::script::BorrowedSessions borrowed(execution::Origin::Lua, {{_emulator, mcp.owner}});
+        EXPECT_NO_THROW(execution::script::Check(*_emulator, execution::Origin::Lua));
+        const execution::Requester me = execution::script::RequesterOf(*_emulator, execution::Origin::Lua);
+        EXPECT_EQ(me.client, mcp.owner.toString()) << "its requests are the client's";
+        EXPECT_EQ(_emulator->Pause(me).outcome, execution::Outcome::Applied);
+        EXPECT_EQ(_emulator->Resume(me).outcome, execution::Outcome::Applied);
+        std::string reason;
+        EXPECT_TRUE(execution::script::TakeControl(*_emulator, execution::Origin::Lua, "lua", reason)) << reason;
+        execution::script::ReleaseControl(*_emulator, execution::Origin::Lua);
+        EXPECT_TRUE(context->HasRunControl(mcp.owner)) << "the client's session stays";
+    }
+    EXPECT_TRUE(context->HasRunControl(mcp.owner));
+    EXPECT_THROW(execution::script::Check(*_emulator, execution::Origin::Lua), std::runtime_error)
+        << "the script ended: the surface is on its own again";
+    context->ReleaseImplicitRunControl("mcp|127.0.0.1|MCP agent");
+}
+
 TEST_F(ExecutionArbiterMachine_Test, ReadingTheVideoLogDuringADirectRunNeverReadsAFrameBeingWritten)
 {
     _emulator->Pause(execution::Requester{execution::Origin::WebApi, {}}, "test");

@@ -51,6 +51,7 @@ constexpr char const* NC_SURFACE_TARGET = "SURFACE_TARGET";                     
 constexpr char const* NC_COMPANION_CHANGED = "COMPANION_CHANGED";                 // A companion client asked to pair, was paired, denied or revoked; a pairing expired or was cancelled - payload: CompanionChangedPayload (process-wide, no emulator id)
 constexpr char const* NC_BREAKPOINTS_CHANGED = "BREAKPOINTS_CHANGED";             // The breakpoint set changed — payload: BreakpointsChangedPayload (posted by BreakpointManager::RebuildFilters)
 constexpr char const* NC_SCRIPT_CALLBACKS_CHANGED = "SCRIPT_CALLBACKS_CHANGED";   // A script callback was added, removed, suspended, disabled, resumed or got a new policy - payload: ScriptCallbacksChangedPayload
+constexpr char const* NC_FRAME_WATCH = "FRAME_WATCH";   // An armed frame watch was added, removed, hit or failed - payload: FrameWatchPayload (debugger/watch/framewatch.h)
 constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered — payload: BreakpointTriggeredPayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               // Scanline boundary reached (debug stepping only)
 
@@ -96,6 +97,7 @@ constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                       
 constexpr char const* NC_ASM_SYNC = "ASM_SYNC";                                 // asm-synchronizer: the watched source changed, was built, or its assembler came / went (payload: AsmSyncPayload). Posted from the worker of AsmSyncService
 
 constexpr char const* NC_CPU_FREQ_CHANGED = "CPU_FREQ_CHANGED";                 // CPU frequency changed (3.5/7.0/14.0 MHz) - payload: CPUFreqPayload
+constexpr char const* NC_READOUTS_CHANGED = "READOUTS_CHANGED";                 // Published state a readout shows changed where no other notification says so: tape transport, write protect, the mixer, TTD session state, debug tools, analysis jobs, window settings, front-panel switches, recent files, settings (payload: ReadoutsChangedPayload; NotifyReadoutsChanged, readoutschanged.h). The control surfaces read their values on it instead of polling
 
 // endregion </PER-EMULATOR-INSTANCE MessageCenter Notifications>
 
@@ -741,7 +743,6 @@ struct CONFIG
 		/// legacy SD=1), 1 mode 1 (#0F / #1F / #4F / #5F), 2 mode 2 (#F1 / #F3 / #F9 / #FB)
 		uint8_t sdMode = 0;
 		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol;
-		int covoxFB_vol, covoxDD_vol, sd_vol, covoxProfi_vol;
 		int gs_vol, bass_vol, moonsound_vol;
 		VOID_FUNC do_sound;
 		uint8_t enabled, gsreset, dsprimary;

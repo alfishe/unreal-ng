@@ -49,6 +49,14 @@ Unlike CLI (stateful sessions), WebAPI is stateless:
 - Each request is independent
 - Suitable for load balancing and horizontal scaling
 
+### Answer budgets (`max_chars`)
+Any route takes `?max_chars=N` (500 .. 10,000,000): a JSON or `text/plain` reply longer than N characters is fitted.
+JSON loses the tail of its biggest arrays, then long strings are cut, until the compact text fits; an object reply gets
+`"truncated": {"max_chars": N, "chars": <full size>, "omitted": {"<path>": <items left out>}, "hint": ...}` and the
+reply the header `X-Unreal-Truncated: <full size>`. Text keeps its first lines and up to three last ones with an
+omission line between. A bad value is 400 `bad_max_chars` before the handler runs. Binary replies are not touched. A
+WebSocket `call` takes it in its path the same way. Design: [answer budgets](../../../inprogress/2026-11-04-answer-budgets/README.md).
+
 ### API Versioning
 - Version in URL path: `/api/v1/...`
 - Future versions: `/api/v2/...` without breaking existing clients
@@ -379,6 +387,10 @@ POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"cou
 POST /api/v1/emulator/{id}/stepover          Step over CALL instructions
 POST /api/v1/emulator/{id}/stepout            Step out of current subroutine (breakpoints skipped)
 POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N, "breakpoints": false}; true: a breakpoint stops it first, run to a cursor; answers hit, target, max_tstates, stop)
+POST /api/v1/emulator/{id}/run_until         Whole frames until frame-end rules hold (body: {"if"?, "text"?, "screen"?: "changed"|"stable", "stable_frames"?, "event"?, "match"?: "any"|"all", "max_frames"?: 1..200000 (3000), "breakpoints"?: false}; answers met, outcome (met|budget|breakpoint|aborted), frames, frame, pc, ttd_frame?, ms, hit {frame, reasons, text_line?, stable_for?, event_fires?}, text; long-call pool)
+GET  /api/v1/emulator/{id}/watches           Armed frame watches: {count, watches: [{id, label?, spec, then, once, armed_frame, hits, last_hit?, error?}], text}
+POST /api/v1/emulator/{id}/watches           Arm a frame watch (the run_until rules plus "label"?, "then"?: "pause"|"notify", "once"?: true): 201 {id, watch, text}; 400 a bad spec or 16 armed. A hit: watch_hit on debug.events, debug/wait wakes, then=pause pauses (stop reason "watch")
+DELETE /api/v1/emulator/{id}/watches/{watch} One watch by id, or "all": {removed: [ids], text}; 404 unknown
 POST /api/v1/emulator/{id}/run_tstates       Run N t-states (body: {"count": N})
 POST /api/v1/emulator/{id}/run_to_scanline   Run until scanline N (body: {"scanline": N})
 POST /api/v1/emulator/{id}/run_scanlines     Run N scanlines forward (body: {"count": N})
@@ -439,6 +451,20 @@ GET /api/v1/emulator/{id}/memory/read/{addr}  Read memory (?length=N, default 12
 GET /api/v1/emulator/{id}/memory/page/{type}/{page}   Read a physical page window (?offset=&length=, ?filter=sparse; ?format=binary for raw bytes)
 PUT /api/v1/emulator/{id}/memory/{addr}       Write memory (body: {"data":[...]} or {"hex":"..."})
 GET /api/v1/emulator/{id}/memory/{type}/{page}/{offset}   Read from physical page (?len=N; ?format=binary for raw bytes)
+
+`?cpu=gs` (`ms`: the MultiSound card's General Sound) on `/registers`, `/registers/{name}`, `/memory/{addr}` (GET and
+PUT), `/memory/read/{addr}`, `/disasm`, `/memory/map` and `/memory/info`, the body's `cpu` on `/memory/write`: the
+sound card CPU's registers, memory, code (from its PC, no labels) and four windows instead of the machine's, in the
+same shapes plus `cpu` (`special.card_time` instead of `t`; the windows `{cpu, windows: [{start, size, kind, page,
+offset}]}`). A card write lands as the card CPU's would (a ROM / flash window or a NeoGS RAMRO page keeps its bytes):
+`bytes_written` / `written` count what landed. 400 for another name, 404 when no card with a CPU is in the slot, 409 for an edit in the recorded past
+([the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)).
+
+`?cpu=gs` on `POST /step`, `/steps` (body `count` 1-10000), `/stepover` and `/stepout` steps the card CPU: the
+machine resumes until the card's step ends and pauses again. The reply: `stop` (`cpu`, `reason` `step` /
+`breakpoint` / `pause` / `timeout`, `cpu_pc`, `breakpoint_id`, `address`, `access`), the card CPU's `pc` and `sp`,
+`main_pc`, `main_sp`, `state`; 409 when not paused or a step of that CPU is under way. The main CPU moves on to where
+the card catches up (a host port access or the frame end); none within 2 s (over / out 5 s) is a `timeout`.
 
 Every `format=binary` answer is the bytes alone (`application/octet-stream`) with the headers `X-Unreal-Space`
 (`cpu`, `ram5`, a region name), `X-Unreal-Address` and `X-Unreal-Length`, exposed to browser clients
@@ -547,6 +573,7 @@ POST /api/v1/emulator/{id}/control/session     Open an automation session {clien
 GET  /api/v1/emulator/{id}/control/session     Who holds run control (surface, client, peer: where it connects from, implicit, lease_seconds_left, holder), since when, clients in a re-take cooldown; yours, and session (the id) only for the asker's own implicit session
 DELETE /api/v1/emulator/{id}/control/session   End the session in X-Unreal-Session; without it (or with one that holds nothing) the asker's own implicit session; released: false + message (who holds it) otherwise
      (a change refused by the automation gate: 409 held_by_other {message: who holds it and how to resolve it, holder: {surface, client, peer, implicit, lease_seconds_left}}; an implicit holder is taken over by an explicit take; a session header that does not hold the instance is no pass, the gate applies)
+     (a debugger client - X-Unreal-Source: debugger on every request, on a WebSocket at its upgrade: unreal-debugger --connect, unreal-tui-debugger[-tsconf] - is the user's own hands like the GUI: its changes open no session, block neither the GUI nor the other debuggers, every client sees them on the topics; while any session holds the instance they are refused 409 held_by_other, as the GUI is locked)
      (any request with X-Unreal-Session of a session the user took back at the GUI: 409 revoked_by_user, retry: false - stop, do not retry)
      Companion clients (a paired device acting as the user's hands, docs/inprogress/2026-10-16-companion-client/protocol.md):
      with Authorization: Bearer <token> a change opens no session (no remote control at the GUI, no lock); any action
@@ -754,7 +781,9 @@ POST /api/v1/emulator/{id}/analysis/start     {level?: "facts"|"counters", mode?
 POST /api/v1/emulator/{id}/analysis/stop      the facts stay readable (a recording start made stops): status
 GET  /api/v1/emulator/{id}/analysis/status    {state, level, mode, frame, recording, facts {allocated, bytes,
                                                z80_bytes_touched, pages}, l1 {progress, ready}, text}
-POST /api/v1/emulator/{id}/analysis/build     {frames?, path?, wait?: ms <= 30000}: the L1 build job
+POST /api/v1/emulator/{id}/analysis/build     {frames?, from_frame?, from_tinframe?, to_frame?, path?,
+                                               wait?: ms <= 30000}: the L1 build job (a window: one stage,
+                                               analysis-layers.md#stages-and-windows)
                                               {job, state, bundle, progress, ready, text}
 POST /api/v1/emulator/{id}/analysis/cancel    cancel the running build: {job, state, text}
 GET  /api/v1/emulator/{id}/analysis/explain?address=$80BC[&page=ram:3][&what=auto|routine|byte]
@@ -791,6 +820,10 @@ POST /api/v1/emulator/{id}/analysis/experiment  {spec: an object or an array (or
 POST /api/v1/emulator/{id}/analysis/cover      {budget?, per_branch?, frames?, parallel?, limit?, ranges?}: directed
                                                coverage {candidates, tried, flipped, attempts, new_code, branches [...],
                                                text}
+POST /api/v1/emulator/{id}/analysis/trace      {path, from_frame?, from_tinframe?, to_frame?, to_tinframe?,
+                                               max_cycles?}: the CPU access trace of a window, written to path
+                                               {path, from_frame, from_tinframe, to_frame, to_tinframe, instructions,
+                                               cycles, fetches, reads, writes, ports, bytes, truncated, text}
 ```
 
 ### Settings Management
@@ -911,7 +944,7 @@ Everything but `type` and `address` is optional (the debugger protocol's Breakpo
 | `doors`, `value`, `value_mask` | ZX Next `nextreg*` only: `address` is the register (`address_end` a range); `doors` a comma separated list or array of `nextreg` (the NEXTREG instructions), `port` (OUT `#253B`), `copper` (a copper MOVE), default all (a read always comes through the port); `value` stops only on that byte, `value_mask` compares only those bits (default `255` with a value). The reply and the list carry `doors`, `value`, `value_mask`. |
 | `hc` | ZX Next `beam` only: `address` is the line of the copper's counter (NR #64 applied), `hc` the pixel clock in the row (0..511, default 0). A `copper` breakpoint takes `address` = list index (0..1023), `address_end` a range. |
 | `hits` | `"5"` stops on the 5th hit only, `">=5"` from the 5th on, `"%5"` every 5th. Every matching access is counted (`hit_count`). The same as `hit_mode` (`always` / `equal` / `at_least` / `multiple`) + `hit_target`. Stepping on from the breakpoint the machine stopped at is not counted again. |
-| `condition`, `condition_dialect` | Memory and port breakpoints: stop only when the expression holds (`"VAL == 0"`, `"(VAL & 7) == 2"`, `"A == 7 && M(#5C3A) != 0"`); the Unreal order and hex numbers, `condition_dialect` `"c"` for C's precedence and decimal numbers ([the language](../../../features/conditional-breakpoints.md)). A bad condition is 400 with the reason and the column, nothing is added. The reply and the list carry `condition` in the canonical form, `match_count` (every match; `hit_count` then counts the matches where it held, and `hits` works on them) and, after a run-time failure, `condition_error` (the breakpoint is skipped, never stops; enabling it or a new condition clears it). `PUT .../condition` changes it later (404 for an unknown id, 400 keeps the old one). |
+| `condition`, `condition_dialect` | Memory and port breakpoints: stop only when the expression holds (`"VAL == 0"`, `"(VAL & 7) == 2"`, `"A == 7 && M(#5C3A) != 0"`); the Unreal order and decimal numbers (hex `#FF`, `$FF`, `0xFF`), `condition_dialect` `"c"` for C's precedence ([the language](../../../features/conditional-breakpoints.md)). A bad condition is 400 with the reason and the column, nothing is added. The reply and the list carry `condition` in the canonical form, `match_count` (every match; `hit_count` then counts the matches where it held, and `hits` works on them) and, after a run-time failure, `condition_error` (the breakpoint is skipped, never stops; enabling it or a new condition clears it). `PUT .../condition` changes it later (404 for an unknown id, 400 keeps the old one). |
 
 Errors (400) name the problem: a range ending before it starts, a page range leaving its page, a missing
 page, a mask on a memory breakpoint, a hit policy without a target. The reply and the list carry
@@ -1813,7 +1846,7 @@ POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options}
 GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
                                                          | probe | database | reports | aliases | match
 POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
-                                                         | light | haptics_probe | role | pin | identify | player
+                                                         | light | haptics_trial | role | pin | identify | player
                                                          | database_save | database_delete | database_import | learn
                                                          | unalias
 POST /api/v1/controllers/database/import                 {text, save?}: the database_import verb
@@ -1839,10 +1872,11 @@ called with the wrong method answers `405`. `GET /api/v1/controllers/haptics[?de
 `message`, `404` `unknown-device`, `400` `bad-request` for an effect the device lacks, `503` `unavailable` with the
 reason for a device without drivable motors or a process without the Qt client.
 
-`POST /api/v1/controllers/haptics_probe {"kind": "write", "address": "0x5C3A", "page": 5, "play": "life-lost"}` adds
-a haptic probe (`exec`, `read`, `write`, `port-in`, `port-out`; `port_mask` for a port) with its rule to the loaded
-game's user profile: `200` with `id`, `source`, `path`; `400` `bad-request` for a bad kind, address or effect; `503`
-`unavailable` without a program loaded from a file.
+`POST /api/v1/controllers/haptics_trial {"text": "events:\n  shot: {probe: exec, address: \"0x8366\"}\nhaptics:\n  rules:\n    - {on: shot, play: shot}\n"}`
+tries events and rules on the loaded game for this session: laid over its haptics in memory, armed at once, never
+written (`game.events` shows them). `{"clear": true}` drops the trial, `{}` reads it: `200` with `active`, `sources`,
+`trial`, `haptics_profile`, `haptics_reason`; `400` `bad-request` for a fragment a game profile would refuse; `503`
+`unavailable` without the Qt client.
 
 `POST /api/v1/controllers/output` drives a control surface's outputs (the Surface Dial): `{"device", "pattern":
 "tick|double|buzz"}` plays a pattern; `{"device", "steps": 36, "clicks": false}` sets its feel until its context or
@@ -1944,7 +1978,7 @@ the I/O thread. The topic `streamdeck.status` on `/api/v1/ws` pushes the changes
 GET    /api/v1/monitor[?instance=]                       everything: {host, clients, instances: [{instance, index, model, emulator.stats, ...}]}
 GET    /api/v1/monitor/{name}[?instance=]                one name: host.stats, host.clients, emulator.stats, debug.breakpoints,
                                                          media.slots, recording.state, debug.labels, ttd.status, debug.analyzers,
-                                                         controllers.state, game.events, breakpoint_groups
+                                                         controllers.state, game.events, devices.access, breakpoint_groups
 GET    /api/v1/emulator/{id}/breakpoints/groups          {groups: [{name, total, active, ids}]} (the user breakpoints)
 ```
 
@@ -2070,8 +2104,10 @@ Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset
 | `POST` | `/ttd/resume` | Optional `{"frame": N, "tinframe"?: T}`; default is the current position | `resumed`, `frame`, `tinframe`, `state`. Truncates everything after the point and records again; resumes the emulator on success. Fails (`resumed: false`) from `idle` — seek first. | ✅ Implemented |
 | `GET`  | `/ttd/position` | — | `current {frame, tinframe}`, `session_end {frame, tinframe}`, `state`, `history`, `first_frame`, `paused`, `fps` (the machine's unscaled frame rate). The bounds come from the TTD's published cursor: the read never parks the machine (companions poll it at 50 Hz) | ✅ Implemented |
 | `GET`  | `/ttd/markers` | — | `count`, `markers[] {frame, tinframe, kind, reason}` — kinds `tape_control`, `disk_write`, `debugger_edit` (a tool edit made while recording), `other`; `hardware_reset` is reserved and never written (a reset stops the recording instead) | ✅ Implemented |
-| `GET`  | `/ttd/bookmarks` | — | `count`, `bookmarks[] {frame, tinframe, label}` (time-sorted) | ✅ Implemented |
-| `POST` | `/ttd/bookmarks` | `{"label": "...", "frame"?: N, "tinframe"?: T}` — no `frame` = current position. Label: non-empty, at most 63 characters, unique per session. | **201** with `added`, `label`, `frame`, `tinframe`. 400 for a missing/empty/overlong label; 409 for a duplicate label or a position outside the timeline. | ✅ Implemented |
+| `GET`  | `/ttd/bookmarks` | `?tag=T` (only those), `?text=true` (one line per bookmark in `text`) | `count`, `bookmarks[] {frame, tinframe, label, note, tags[], context, watch[]}` (time-sorted); `context` = `{pc, sp, af, bc, de, hl, ix, iy, iff1, im, p7ffd, code_page, code_kind, instruction, text}` or null; `watch[] {address, length, bytes[]}` | ✅ Implemented |
+| `POST` | `/ttd/bookmarks` | `{"label": "...", "frame"?: N, "tinframe"?: T, "note"?: "...", "tags"?: ["a"], "watch"?: ["#A130", "#A140:4"], "context"?: true}` — no `frame` = current position. The context (registers, the instruction at PC, the watched bytes) is taken once: the current position live, another moment by one silent seek with the machine put back. Label: non-empty, at most 63 characters, unique per session; note at most 4096 characters; at most 8 tags of 1..31 of `[A-Za-z0-9_.-]`; at most 8 watched ranges of 1..16 bytes. | **201** with `added`, `label`, `frame`, `tinframe`, `bookmark`, `text`. 400 for a missing/empty/overlong label or a bound broken; 409 for a duplicate label or a position outside the timeline. | ✅ Implemented |
+| `PUT` | `/ttd/bookmarks/{label}` | `{"note"?: "...", "append"?: true, "tags"?: [..], "add_tags"?: [..], "remove_tags"?: [..], "rename"?: "..."}` | `updated`, `bookmark`, `text`. 400 for nothing to change or a bound broken, 404 for an unknown label, 409 for a taken new label. The time and the context stay. | ✅ Implemented |
+| `GET`, `POST` | `/ttd/export-bookmarks` | `format` = `markdown` (a WALKTHROUGH section, default) \| `profile` (comment lines for a game profile's header) \| `json`; `tag`, `title`, `path` (also written there, on the emulator's machine); query or JSON body | `format`, `count`, `tag`, `text`, `path`, `bytes`. 400 for an unknown format, 409 when the file cannot be written. The machine does not move. | ✅ Implemented |
 | `DELETE` | `/ttd/bookmarks/{label}` | — | `removed`, `label`; 404 for an unknown label | ✅ Implemented |
 | `POST` | `/ttd/export-clip` | `{"from": F, "to": T, "path": "<dir>", "chunk": N}` (`chunk` optional, default 500) | Frames F..T as a lossless clip in `path` (created if missing): final picture, plane B when `zxdlss` is on, frame meta. Answer: `ok`, `frames`, `bytes`, `planeb`, `width`, `height`, `seconds`, `path`; `error` when it fails (400). 400 for missing or non-numeric fields; 409 while recording. See [command-interface.md → Exporting a clip](./command-interface.md). | ✅ Implemented |
 | `POST` | `/ttd/dump` | `{"path": "..."}` | `ok`; on success `path`, `bytes`; on failure `error` and `message`. 400 without `path`; 409 if the file cannot be opened or the session cannot be written (it was 500 / 200 before Phase 5). | ✅ Implemented |
@@ -2084,6 +2120,8 @@ Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset
 | `GET`  | `/ttd/timeline` | `?from_frame=F1&to_frame=F2&min_phase_ms=M&ports=false&buckets=true&limit=L&bucket_size=B` (phases cut per frame, shortest `min_phase_ms`, default 200; `buckets=true` adds an overview of `limit` buckets, default 20, at most 500) | `from_frame`, `to_frame`, `bucket_size`, `bucket_count`, `truncated`, `fps`, `devices[] {name, tags}`, `phases[] {frame_start, frame_end, tags[], executed, written, read, ram_pieces, screen_frames, halted_frames, in, out, sectors, vectors, key_events, keys[], input_other, net_events, ula_reads, border_outs, beeper_toggles, border_changes, paging_changes, length_changes, writes, devices[] {device, in, out} / {slot, sectors} (media read from the host: hard disks, SD, CD) / {region, frames} (a device memory region - a card RAM, a video RAM, a font - and the frames it changed in), busiest_frame}`, `buckets[]` (with `buckets=true`), `events[] {frame, tinframe, kind, text}`, `missing[] {fact, reason}` (`writes`, `ports`, `coverage`; after a session loaded from a file `halt`, and `screen` on a model other than the ULA ones: the captured screen layouts are not kept there), `screen_frames` = frames that wrote a byte the picture reads in its video mode at that frame, `cost {frames, port_records, ms}`; 503 without history | ✅ Implemented |
 | `GET`  | `/ttd/cause-chain` | `?addr=A[&phys_page=P]` or `?reg=R` (A F B C D E H L IXH IXL IYH IYL I R, AF BC DE HL IX IY SP, primed A' ... L'), `&frame=F&tinframe=T` (default: the current position), `&depth=D` (1..16, default 4), `&max_links=N` (1..256, default 32), `&max_frames=M` (1..1000, default 50), `&flags=true` (follow F), `&text=true` (the indented lines too) | `target {kind, name, addr, phys_page \| reg, frame, tinframe}`, `links[] {id, parent, depth, kind, name, value, frame, tinframe, pc, code_page, text, inputs[], detail, stop}` (depth first: a link's inputs follow it; kinds `store`, `load`, `copy`, `computed`, `constant`, `port`, `block`, `modify`, `return`, `interrupt`, `refresh`, `initial`, `rom`, `device`, `stop`), `stops`, `frames_traced`, `ms`, `text`. Replays what it needs and puts the machine back; pauses a live recording. 400 for a bad target or option, 503 without history | ✅ Implemented |
 | `GET`  | `/ttd/find-event` | `?kind=mem\|screen\|exec\|port\|border\|key`; mem: `&addr=A[&phys_page=P]&cond=changed\|increased\|decreased\|equals\|becomes\|differs\|bit_set\|bit_clear[&value=V\|&bit=B][&size=2][&exact=true]`; screen: `&cond=change\|cleared&min_changed=PCT` (default 50); exec: `&addr=A[&addr_to=B][&phys_page=P][&max_frames=N]`; port: `&dir=in\|out&port=P[&port_mask=M][&value=V][&value_mask=M]`; border: `[&value=C]`; key: `[&key=K][&pressed=false]`; all: `&order=first\|last&from_frame=F&to_frame=T&limit=N` (1..100, default 1), `&text=true` | `event {kind, cond, order, addr, addr_to, phys_page}`, `hits[] {frame, tinframe, pc, code_page, text, before, after, device, why}`, `window {from_frame, to_frame}`, `more`, `next_from_frame` \| `next_to_frame`, `barriers[]`, `missing[]`, `frames_scanned`, `frames_replayed`, `ms`, `text`. Frames filtered from the stored history, only hit frames replayed; the machine stays; pauses a live recording. 400 for a bad kind, condition, option or window, 503 without history | ✅ Implemented |
+| `GET`  | `/ttd/explain-frame` | `[?frame=F][&sections=time,routines,interrupt,paging,ports,memory,screen,input,markers][&limit=N]` (1..100, default 8), `&text=true` | `frame`, `frame_t`, `end_t`, `partial`, `barrier`, `instructions`, `time {isr, halt, code}`, `routines[] {pc, code_page, isr, start, calls, t, own_t, insns, caller, label}`, `more_routines`, `interrupts_enabled`, `interrupts[] {tinframe, mode, vector, entry, t, returned, returned_to, before_frame}` (`before_frame`: acknowledged in the frame before, still running at its start; IFF1 off at the start replays the frame before too, `frames_replayed` 2), `paging[] {tinframe, pc, bank, page, was}`, `more_paging`, `ports[] {dir, device, port, many_ports, count, tinframe, pc, values[], more_values, rows, keys[]}`, `more_ports`, `memory[] {region, phys_page, offset, addr, length, changed, written, before, after, device, writers[] {pc, code_page, text, count}, more_writers}`, `more_memory`, `screen {bytes, changed, pixels, attributes, switched, border[] {colour, count}}`, `input {held[], events[] {tinframe, key, pressed}}`, `markers[]`, `frames_replayed`, `ms`, `text`. One replay of the frame; the machine stays; pauses a live recording. 400 for a bad section, limit or a frame outside the history, 503 without history | ✅ Implemented |
+| `GET`  | `/ttd/diff` | `?from_frame=F[&from_tinframe=T][&to_frame=G[&to_tinframe=T]]` (default to: the current position), `[&sections=cpu,paging,memory,screen,devices,between]`, `[&limit=N]` (1..200, default 16), `[&writers=false]`, `&text=true` | `from`, `to` `{frame, tinframe}` (the moments taken: the first instruction boundary at or after each T), `backwards`, `registers[] {name, before, after}`, `latches[] {name, before, after}`, `slots[] {address, before, after, before_other_half, after_other_half}`, `memory {changed, pages, ranges[] {region, page, offset, address, length, changed, before[], after[], last_write {frame, tinframe, pc, address, text}, no_cpu_write}, more}`, `screen {bytes, pixels_changed, attributes_changed, switched, border_before, border_after}`, `devices {changed[] {name, bytes, changed}, more, same}`, `between {frames, t, keys_held[], keys[] {frame, tinframe, key, pressed}, more_keys, markers[], barrier}`, `writer_searches`, `ms`, `text`. Two silent seeks; the machine stays; pauses a live recording. 400 for a bad section, limit or a moment outside the history, 503 without history | ✅ Implemented |
 
 Query parameters for the coverage routes accept decimal or `0x` hex. `to_frame` defaults to the session end, the address range to the whole 64K, and `kind` to `executed` (probe/scan) or all kinds (summary).
 

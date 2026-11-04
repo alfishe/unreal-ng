@@ -139,7 +139,9 @@ class ITTDWriteSink
 {
 public:
     virtual ~ITTDWriteSink() = default;
-    virtual void RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal, uint16_t m1pc, PhysPage physPage) = 0;
+    /// `flip`: Memory::TtdKeyOf's bit for the byte
+    virtual void RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal, uint16_t m1pc, PhysPage physPage,
+                                   uint8_t flip = 0) = 0;
     virtual void RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1pc) = 0;
 };
 

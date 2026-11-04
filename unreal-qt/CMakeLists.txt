@@ -722,6 +722,14 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/symbolbundlepreferences_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolbundlepreferences.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolbundlepreferences.h"
+        # The debugger's machine panels: CMOS clock, port watch, port events (enhancements #4, #6, #7)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggerpanels_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/rtcdialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/rtcdialog.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/portwatchdialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/portwatchdialog.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/porteventsdialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/porteventsdialog.h"
         # The debugger's PC history dialog (debugger additions tdd §7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/pchistorydialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.cpp"

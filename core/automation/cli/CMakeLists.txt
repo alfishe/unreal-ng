@@ -16,6 +16,7 @@ set(SOURCES
     src/cli-processor.cpp
     src/commands/cli-processor-instance.cpp
     src/commands/cli-processor-action.cpp
+    src/commands/cli-processor-watch.cpp
     src/commands/cli-processor-recent.cpp
     src/commands/cli-processor-surface.cpp
     src/commands/cli-processor-streamdeck.cpp
@@ -24,6 +25,7 @@ set(SOURCES
     src/commands/cli-processor-asm.cpp
     src/commands/cli-processor-signature.cpp
     src/commands/cli-processor-breakpoint.cpp
+    src/commands/cli-processor-cardcpu.cpp
     src/commands/cli-processor-memory.cpp
     src/commands/cli-processor-analyzer.cpp
     src/commands/cli-processor-analyzer-mgr.cpp

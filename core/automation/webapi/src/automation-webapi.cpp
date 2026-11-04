@@ -15,6 +15,7 @@
 #include "common/threadhelper.h"
 #include "common/companion_helper.h"
 #include "common/request_gates.h"
+#include "../../common/answerbudget.h"  // max_chars (header only)
 #include "common/session_helper.h"
 #include "emulator/coordinator/machineop.h"
 #include "emulator/emulatormanager.h"
@@ -151,6 +152,40 @@ static std::string loadHtmlFile(const std::string& filename)
 
 namespace webapi_gate
 {
+void FitAnswer(const drogon::HttpRequestPtr& req, const drogon::HttpResponsePtr& resp)
+{
+    if (!resp || req->path().rfind("/mcp", 0) == 0 || req->attributes()->find("unreal.budget_fitted"))
+        return;
+    const std::string& text = req->getParameter(answer_budget::kArg);
+    size_t budget = 0;
+    std::string why;
+    if (text.empty() || !answer_budget::Parse(text, budget, why))
+        return;
+    req->attributes()->insert("unreal.budget_fitted", true);
+    const std::string_view body = resp->body();
+    if (answer_budget::Chars(std::string(body)) <= budget)
+        return;
+    if (resp->contentType() == drogon::CT_APPLICATION_JSON)
+    {
+        Json::Value value;
+        Json::CharReaderBuilder reader;
+        std::string errors;
+        const std::unique_ptr<Json::CharReader> parser(reader.newCharReader());
+        if (!parser->parse(body.data(), body.data() + body.size(), &value, &errors))
+            return;
+        size_t full = 0;
+        const Json::Value fitted = answer_budget::FitJson(value, budget, &full);
+        resp->setBody(answer_budget::CompactJson(fitted));
+        resp->addHeader("X-Unreal-Truncated", std::to_string(full));
+    }
+    else if (resp->contentType() == drogon::CT_TEXT_PLAIN)
+    {
+        const std::string full(body);
+        resp->setBody(answer_budget::FitText(full, budget));
+        resp->addHeader("X-Unreal-Truncated", std::to_string(answer_budget::Chars(full)));
+    }
+}
+
 /// The sync advice of every request (CORS preflight, companions, sessions, the automation gate); the WebSocket's
 /// calls (api-websocket.cpp) pass it too, since a forwarded request skips the sync advices
 drogon::HttpResponsePtr PassRequestGates(const drogon::HttpRequestPtr& req)
@@ -181,6 +216,24 @@ drogon::HttpResponsePtr PassRequestGates(const drogon::HttpRequestPtr& req)
         resp->addHeader("Access-Control-Max-Age", "86400");
 
         return resp;
+    }
+
+    // max_chars (answer budgets): checked before the handler runs, so a typo never costs a side effect
+    if (req->getParameters().count(answer_budget::kArg) != 0)
+    {
+        const std::string& budget = req->getParameter(answer_budget::kArg);
+        size_t value = 0;
+        std::string why;
+        if (!answer_budget::Parse(budget, value, why))
+        {
+            Json::Value body;
+            body["error"] = "bad_max_chars";
+            body["message"] = why;
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(body);
+            resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+            resp->addHeader("Access-Control-Allow-Origin", "*");
+            return resp;
+        }
     }
 
     // Companion clients (docs/inprogress/2026-10-16-companion-client): a paired device acts as the user's hands.
@@ -287,6 +340,22 @@ drogon::HttpResponsePtr PassRequestGates(const drogon::HttpRequestPtr& req)
     // it was taken over, it is another machine's) is no pass: the request is un-sessioned here and meets the gate
     if (session && context->HasRunControl(*session))
         return {};
+    // A debugger client (session_helper.h): the user's hands, no session; refused while one holds the machine
+    if (webapi_session::IsDebuggerClient(req))
+    {
+        const EmulatorContext::RunControlState control = context->GetRunControlState();
+        if (!control.claimed)
+        {
+            req->attributes()->insert(webapi_session::kDebuggerAttribute, true);
+            return {};
+        }
+        Json::Value body = webapi_session::HeldByOtherBody(
+            control, EmulatorContext::DescribeHolder(control) +
+                         ": the debuggers look on and act again when it ends, or the user takes control back");
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(drogon::HttpStatusCode::k409Conflict);
+        return resp;
+    }
     const webapi_session::GateClient client = webapi_session::GateClientOf(req);
     const EmulatorContext::ImplicitControl gate = context->EnterImplicitRunControl(
         client.surface, client.identity, client.client,
@@ -466,7 +535,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
         resp->addHeader("Access-Control-Allow-Headers",
                         "Content-Type, Authorization, X-Requested-With, X-Unreal-Session, X-Unreal-Source");
         resp->addHeader("Access-Control-Expose-Headers",
-                        "X-Unreal-Session, X-Unreal-Session-Implicit, X-Unreal-Session-Advice");
+                        "X-Unreal-Session, X-Unreal-Session-Implicit, X-Unreal-Session-Advice, X-Unreal-Truncated");
 
         // The automation gate opened (or went on in) an implicit session for this request: say so and advise
         // taking control explicitly - in headers, and in a JSON object reply as "automation_session"
@@ -497,6 +566,11 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
         Json::StreamWriterBuilder writer;
         writer["indentation"] = "";
         resp->setBody(Json::writeString(writer, body));
+    });
+
+    // Answer budgets: ?max_chars=N fits the reply (after the session note above, so that is counted too)
+    app.registerPostHandlingAdvice([](const drogon::HttpRequestPtr& req, const drogon::HttpResponsePtr& resp) -> void {
+        webapi_gate::FitAnswer(req, resp);
     });
 
     // Set max body size for file uploads (covers snapshots, disks, tapes)
@@ -570,16 +644,17 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     // time travel) posts no notification, so the views are compared once a second too; only changes are sent
     app.getLoop()->runEvery(1.0, [] { CompanionEventHub::Instance().Refresh(); });
 
-    // The /api/v1/ws hub runs on the main loop: producers post to it, one timer (armed while somebody subscribes)
-    // drives the readouts and topics. No thread of its own
+    // The /api/v1/ws hub runs on the main loop: producers post to it (the values they made stale), a one-shot timer
+    // holds a value back for its subscriber's interval. No thread of its own
     WsHub::Timer timer;
     timer.arm = [](double seconds, WsHub::Task tick) -> uint64_t {
-        return drogon::app().getLoop()->runEvery(seconds, std::move(tick));
+        return drogon::app().getLoop()->runAfter(seconds, std::move(tick));
     };
     timer.disarm = [](uint64_t id) { drogon::app().getLoop()->invalidateTimer(id); };
     WsHub::Instance().SetLoop([](WsHub::Task task) { drogon::app().getLoop()->queueInLoop(std::move(task)); },
                               std::move(timer));
 
+    webApi->_port = port;
     try
     {
         app.run();
@@ -590,4 +665,5 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
         LOG_ERROR << "Port " << port << " may already be in use. WebAPI will be disabled.";
         // Don't exit - just let the thread end gracefully
     }
+    webApi->_port = 0;
 }
