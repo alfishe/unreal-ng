@@ -95,6 +95,18 @@ TEST(SmoothMotion_Test, MixAndWeightAreExactIntegers)
     EXPECT_EQ(WeightAt(PERIOD / 3, 0, PERIOD), 85);
 }
 
+TEST(SmoothMotion_Test, AutoIsAWordAndRunsAsInterpolate)
+{
+    Mode mode = Mode::Off;
+    ASSERT_TRUE(ParseMode("Auto", mode));
+    EXPECT_EQ(mode, Mode::Auto);
+    EXPECT_STREQ(ModeName(mode), "auto");
+    // The front end decides when it runs (View > Video Synchronization); the engine interpolates
+    SmoothMotion smooth;
+    smooth.SetMode(Mode::Auto);
+    EXPECT_EQ(smooth.GetMode(), Mode::Interpolate);
+}
+
 TEST(SmoothMotion_Test, SearchOrderStartsAtZeroAndGrowsByLength)
 {
     const auto& order = MotionField::SearchOrder(2);

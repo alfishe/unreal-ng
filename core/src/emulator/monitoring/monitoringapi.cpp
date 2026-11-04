@@ -163,6 +163,10 @@ StateNode VideoPresent()
     node["present_policy"] = settings->presentPolicy;
     node["fixed_display"] = p.fixedDisplay;
     node["vrr"] = p.vrr;
+    StateNode sync = StateNode::Object();
+    sync["mode"] = p.sync;
+    sync["reason"] = p.syncReason;
+    node["sync"] = sync;
     StateNode refresh = StateNode::Object();
     refresh["min"] = Round2(p.minRefreshHz);
     refresh["max"] = Round2(p.maxRefreshHz);

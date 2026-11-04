@@ -22,6 +22,9 @@ enum class Mode : uint8_t
     Off,          // the frame due (the beat pattern on a fixed display)
     Blend,        // (1 - w) A + w B between the two frames around the refresh's time
     Interpolate,  // every pixel drawn by the layer moving through it at the refresh's time (LayerFlow, smoothlayers.h)
+    Auto,         // View > Video Synchronization: Interpolate while the display shows the frames unevenly (no VRR, no
+                  // rate fitting the machine's: PickVideoSync), the frame due otherwise. A front end's choice: the
+                  // SmoothMotion engine itself runs Off, Blend or Interpolate
 };
 
 /// A game profile's `video.smooth` (mapping-and-profiles.md section 7.7); only with Mode::Interpolate
@@ -33,7 +36,7 @@ enum class GameMode : uint8_t
 };
 
 const char* ModeName(Mode mode);
-/// "off" | "blend" | "interpolate", any case; false for anything else
+/// "off" | "blend" | "interpolate" | "auto", any case; false for anything else
 bool ParseMode(const char* text, Mode& mode);
 const char* GameModeName(GameMode mode);
 bool ParseGameMode(const char* text, GameMode& mode);
@@ -248,6 +251,7 @@ public:
         uint64_t heldFlicker = 0;   ///< Blend / Interpolate renders that kept flickering pixels as the frame due
     };
 
+    /// Auto runs as Interpolate (the front end decides when it runs)
     void SetMode(Mode mode);
     Mode GetMode() const { return _mode; }
     /// nullptr: the CPU. Not owned; the caller keeps its context current while it renders

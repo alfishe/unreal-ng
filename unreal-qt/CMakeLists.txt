@@ -380,6 +380,8 @@ endif ()
 # The DXGI presenter (platform/windows/dxgipresenter.cpp): D3D11 swap chain, its shaders, the kernel vblank wait
 if (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE d3d11 dxgi d3dcompiler gdi32)
+    # The session's moves between a remote desktop and the console (mainwindow_display.cpp)
+    target_link_libraries(${PROJECT_NAME} PRIVATE wtsapi32)
 endif ()
 
 # The media signatures (core/swsignature): the controller manager's signature hook (hostcontrollers.cpp)

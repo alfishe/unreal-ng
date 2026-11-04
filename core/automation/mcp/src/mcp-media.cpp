@@ -204,6 +204,10 @@ std::string WindowDisplaySummary(const Json::Value& s)
         const std::string presenter = present.get("presenter", "").asString();
         if (presenter == "metal" || presenter == "dxgi")
             line += present.get("vrr", false).asBool() ? ", each frame at its time (vrr)" : ", on the refresh grid (vsync)";
+        const Json::Value& sync = present["sync"];
+        if (sync.isObject() && sync.get("mode", "off").asString() != "off")
+            line += ", video sync " + sync["mode"].asString() +
+                    (sync.get("reason", "").asString().empty() ? "" : " (" + sync["reason"].asString() + ")");
         if (present.get("presented", 0).asUInt64() > 0)
         {
             const Json::Value& error = present["error_ms"];
@@ -448,7 +452,9 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "window_display_set: any of gpu (bool), crt (bool), crt_profile (one of the window's crt_profiles: "
         "none, basic, ...; other than none switches CRT on), blending (bool, temporal blending / gigascreen "
         "smoothing), blending_frames (2..5), blending_weights (equal, exponential), blending_decay (0.1..0.9), "
-        "smooth_motion (off, blend, interpolate: the shown instance's picture between two frames on a fixed display), "
+        "smooth_motion (off, blend, interpolate: the shown instance's picture between two frames on a fixed display; "
+        "auto: View > Video Synchronization, interpolate only when the display has neither VRR nor a rate fitting the "
+        "machine's), "
         "effects_device (gpu, cpu), present_policy (auto, vrr, vsync: how the native presenter shows the frames), "
         "display_rate (keep, match: while the emulator is active, the display runs the rate of the machine), "
         "lip_sync_offset_ms (-200..200, positive = the picture later), "

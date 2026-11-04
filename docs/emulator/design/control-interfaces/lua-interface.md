@@ -1369,10 +1369,10 @@ emu.window_display()                 -- GUI window display settings: { backend (
                                      --   gpu, crt, crt_profile, crt_profiles = {...}, blending (temporal blending),
                                      --   blending_frames (2..5), blending_weights ("equal" / "exponential"),
                                      --   blending_decay (0.1..0.9), smooth_motion ("off" / "blend" /
-                                     --   "interpolate"), effects_device ("gpu" / "cpu"), present_policy
+                                     --   "interpolate" / "auto"), effects_device ("gpu" / "cpu"), present_policy
                                      --   ("auto" / "vrr" / "vsync"), display_rate ("keep" / "match"),
                                      --   lip_sync_offset_ms (-200..200),
-                                     --   present = { presenter, vrr, late, lead_ms, error_ms, smooth = { mode, renders, interpolated, ... },
+                                     --   present = { presenter, vrr, late, lead_ms, error_ms, sync = { mode, reason }, smooth = { mode, renders, interpolated, ... },
                                      --   display = { state, reason, hz, ... } }
                                      --   (the frame presenter's timing), emulator (the instance the window shows),
                                      --   fullscreen, scale (1..4, 0 = resized by hand), toolbar, status_bar, hud,

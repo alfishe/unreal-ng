@@ -250,7 +250,7 @@ inline bool ApplyWord(WindowDisplayChange& change, const std::string& key, const
         smoothmotion::Mode mode = smoothmotion::Mode::Off;
         if (!smoothmotion::ParseMode(value.c_str(), mode))
         {
-            error = "'smooth_motion' takes off, blend or interpolate, not '" + value + "'";
+            error = "'smooth_motion' takes off, blend, interpolate or auto, not '" + value + "'";
             return false;
         }
         change.smoothMotion = smoothmotion::ModeName(mode);
@@ -454,7 +454,7 @@ inline Result Set(const WindowDisplayChange& change)
     return r;
 }
 
-/// The frame presenter's part of the report: presenter, fixed_display, vrr, refresh_hz {min, max}, presented, shown, dropped,
+/// The frame presenter's part of the report: presenter, fixed_display, vrr, sync {mode, reason}, refresh_hz {min, max}, presented, shown, dropped,
 /// late, lead_ms, error_ms {p50, p99, max}, gpu_wait_ms {p50, max}, smooth {mode, device, game, frames, pictures,
 /// renders, blended, interpolated, motion_fields, on_device, held_flicker}, display {state, reason, hz, original_hz,
 /// machine_hz}
@@ -464,6 +464,10 @@ inline StateNode PresentReport(const WindowPresentStats& p)
     node["presenter"] = p.presenter;
     node["fixed_display"] = p.fixedDisplay;
     node["vrr"] = p.vrr;
+    StateNode sync = StateNode::Object();
+    sync["mode"] = p.sync;
+    sync["reason"] = p.syncReason;
+    node["sync"] = sync;
     StateNode refresh = StateNode::Object();
     refresh["min"] = p.minRefreshHz;
     refresh["max"] = p.maxRefreshHz;
@@ -588,6 +592,8 @@ inline std::string Summary(const WindowDisplaySettings& s)
     // The policy in effect only where a native presenter applies it
     const bool native = s.present.presenter == "metal" || s.present.presenter == "dxgi";
     line += ", present " + s.presentPolicy + (native ? (s.present.vrr ? " (vrr)" : " (vsync)") : "");
+    if (s.present.sync != "off")
+        line += ", video sync " + s.present.sync + (s.present.syncReason.empty() ? "" : " (" + s.present.syncReason + ")");
     if (s.displayRate != "keep")
     {
         const WindowPresentStats& p = s.present;

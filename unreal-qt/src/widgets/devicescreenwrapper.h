@@ -140,6 +140,8 @@ public:
 
     /// @brief Check if GPU acceleration is available on this system
     static bool isGPUAvailable();
+    /// Asks again (a session, display or adapter change). @return the answer or the GPU's renderer changed
+    static bool recheckGPUAvailable();
 
     /// @brief Enable/disable CRT effects (GPU mode only)
     void setCRTEffectsEnabled(bool enabled);

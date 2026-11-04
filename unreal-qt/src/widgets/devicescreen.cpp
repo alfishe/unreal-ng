@@ -103,14 +103,40 @@ void DeviceScreen::setFrameSource(ScreenFrames source)
     smoothmotion::Mode mode = source.smooth;
     const QByteArray forced = qgetenv("UNREAL_SMOOTH_MOTION");
     if (!forced.isEmpty() && !smoothmotion::ParseMode(forced.constData(), mode))
-        qWarning() << "DeviceScreen: UNREAL_SMOOTH_MOTION=" << forced << "is not off | blend | interpolate";
+        qWarning() << "DeviceScreen: UNREAL_SMOOTH_MOTION=" << forced << "is not off | blend | interpolate | auto";
     {
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
         _frameSource = std::move(source.at);
         _nextFrameSource = std::move(source.next);
     }
+    _smoothAuto = mode == smoothmotion::Mode::Auto;
+    _sync = VideoSync::Off;
+    _syncReason.clear();
     _smooth.Reset();
     _smooth.SetMode(mode);
+    _smoothShown = {};
+    updateVideoSync();
+}
+
+void DeviceScreen::updateVideoSync()
+{
+    if (!_smoothAuto)
+    {
+        _sync = VideoSync::Off;
+        _syncReason.clear();
+        return;
+    }
+    const QScreen* display = screen();
+    const double displayHz = display ? display->refreshRate() : 0.0;
+    const double machineHz = _frameRate.Hz();
+    const VideoSync sync = PickVideoSync(false, displayHz, machineHz, _sync);
+    _syncReason = "no VRR and no display rate switch on the software screen (gpu on has them)";
+    if (sync == VideoSync::Interpolate && machineHz <= 0.0)
+        _syncReason += "; the machine's frame rate is not steady yet";
+    if (sync == _sync)
+        return;
+    _sync = sync;
+    _smooth.Reset();
     _smoothShown = {};
 }
 
@@ -121,6 +147,9 @@ WindowPresentStats DeviceScreen::presentStats() const
     const QScreen* display = screen();
     out.minRefreshHz = out.maxRefreshHz = display ? display->refreshRate() : 0.0;
     FillSmoothStats(_smooth, smoothActive(), false, out);
+    out.sync = VideoSyncName(_sync);
+    out.syncReason = _syncReason;
+    out.machineHz = _frameRate.Hz();
     if (_displayRate == DisplayRate::Match)
     {
         out.displayState = "unchanged";
@@ -131,7 +160,8 @@ WindowPresentStats DeviceScreen::presentStats() const
 
 bool DeviceScreen::smoothActive() const
 {
-    return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled;
+    return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled &&
+           (!_smoothAuto || _sync == VideoSync::Interpolate);
 }
 
 void DeviceScreen::clearFrameSource()
@@ -208,6 +238,15 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
             _frameSource(now, _latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes()), &info))
         {
             drawImage = &_latchedFrame;
+            if (_smoothAuto)
+            {
+                if (info.serial != 0 && info.serial != _meteredSerial && info.targetNs > 0)
+                {
+                    _meteredSerial = info.serial;
+                    _frameRate.Push(info.targetNs);
+                }
+                updateVideoSync();
+            }
             const bool smooth = smoothActive();
             if (smooth)
             {

@@ -17,6 +17,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -187,11 +188,24 @@ private slots:
     void handleStatusBarToggled(bool visible);
     void handleHudOverlayToggled(bool visible);
     void handleGpuAccelerationToggled(bool enabled);
+    /// The screen made anew on the GPU or the software one (the picture's settings carry over); `force`: also when it
+    /// already runs there (the GPU changed under it)
+    void rebuildScreen(bool gpu, bool force);
+    /// The GPU asked again on a session, display or adapter change (mainwindow_display.cpp): the screen follows it
+    /// without a restart, View > GPU Acceleration stays the user's wish
+    void watchDisplayChanges();
+    void unwatchDisplayChanges();
+    void scheduleGpuRecheck(const char* why);
+    void recheckGpu();
     void handleCrtEffectsToggled(bool enabled);
     void handleCrtProfileChanged(int profileIndex);
     void handleCrtShaderChanged(const QString& name);
     static int crtProfileIndex(CRTProfile profile);  ///< the entry of View > CRT Profile
     void handleTemporalBlendingToggled(bool enabled);
+    /// View > Video Synchronization: the shown instance's [VIDEO] settings (ApplyVideoSync), kept in View/VideoSync
+    void handleVideoSyncToggled(bool on);
+    /// Tools > Video Synchronization: the window with the step in effect, live
+    void handleVideoSyncWindowRequested();
     void handleDebuggerToggled(bool visible);
     void handleDebuggerVisibilityChanged(bool visible);
     void handleLogWindowToggled(bool visible);
@@ -246,6 +260,7 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
     void moveEvent(QMoveEvent* event) override;
     void changeEvent(QEvent* event) override;
+    bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
 
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragLeaveEvent(QDragLeaveEvent* event) override;
@@ -518,6 +533,17 @@ private:
     /// The shown instance's frames handed to the screen again: its [VIDEO] SmoothMotion / EffectsDevice changed (the
     /// automation's smooth_motion, effects_device). A ZX-Poly master's group display has no timed frames: left alone
     void refreshFrameSource();
+    /// TimedFrameSource for the shown instance; one the window starts showing takes View > Video Synchronization
+    ScreenFrames frameSourceFor(Screen* screen, EmulatorContext* context);
+    /// View > Video Synchronization (View/VideoSync, on unless set off); none with UNREAL_QT_VIEW_SETTINGS=off: the
+    /// instances keep their [VIDEO] settings
+    std::optional<bool> _videoSync;
+    std::string _videoSyncApplied;  ///< the instance it went to last
+    bool _gpuWanted = true;              ///< View > GPU Acceleration as asked (View/Gpu); the screen runs it when it can
+    QTimer* _gpuRecheckTimer = nullptr;  ///< the GPU asked again a moment after a change (the driver follows late)
+    int _gpuRechecksLeft = 0;            ///< more asks while the GPU wanted is not there yet
+    void* _sessionNotifyWindow = nullptr;  ///< Windows: the HWND registered for session changes
+    QPointer<class VideoSyncWindow> _videoSyncWindow;  ///< Tools > Video Synchronization, made on first use
     bool _switchingModel = false;  // True while model switch is in progress (prevents notification handler interference)
 
     QPoint _lastCursorPos;

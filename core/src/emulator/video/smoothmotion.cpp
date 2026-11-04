@@ -58,6 +58,8 @@ const char* ModeName(Mode mode)
             return "blend";
         case Mode::Interpolate:
             return "interpolate";
+        case Mode::Auto:
+            return "auto";
         case Mode::Off:
             break;
     }
@@ -68,7 +70,7 @@ bool ParseMode(const char* text, Mode& mode)
 {
     if (!text)
         return false;
-    for (Mode m : {Mode::Off, Mode::Blend, Mode::Interpolate})
+    for (Mode m : {Mode::Off, Mode::Blend, Mode::Interpolate, Mode::Auto})
         if (SameName(text, ModeName(m)))
         {
             mode = m;
@@ -405,7 +407,8 @@ ThreadPool* SmoothMotion::Pool()
 
 void SmoothMotion::SetMode(Mode mode)
 {
-    _mode = mode;
+    // Auto is the front end's: it decides when the engine runs, the engine interpolates
+    _mode = mode == Mode::Auto ? Mode::Interpolate : mode;
 }
 
 void SmoothMotion::SetGame(const GameVideo* game)

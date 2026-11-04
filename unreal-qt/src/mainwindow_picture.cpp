@@ -28,6 +28,7 @@
 #include "nextlayers/nextlayerswindow.h"
 #include "osdkeyboard/osdkeyboardwindow.h"
 #include "ui/temporaleffectsdialog.h"
+#include "ui/videosyncwindow.h"
 #include "widgets/crtprofiles.h"
 #include "widgets/slangpresetrunner.h"
 
@@ -228,6 +229,9 @@ void MainWindow::applyWindowDisplay(const WindowDisplayChange& change)
         if (change.displayRate && ParseDisplayRate(change.displayRate->c_str(), rate))
             context->config.displayRate = static_cast<uint8_t>(rate);
         refreshFrameSource();
+        if (_videoSyncWindow)
+            _videoSyncWindow->setSyncChecked(context->config.smoothMotion ==
+                                             static_cast<uint8_t>(smoothmotion::Mode::Auto));
     }
     // The emulation thread reads it at the next latch
     if (change.lipSyncOffsetMs && context)
@@ -451,7 +455,8 @@ std::string presentKey(const WindowDisplaySettings& s)
     key << s.emulatorId << '|' << p.presenter << '|' << s.presentPolicy << '|' << p.fixedDisplay << p.vrr << '|'
         << std::lround(p.minRefreshHz * 100) << '|' << std::lround(p.maxRefreshHz * 100) << '|' << s.smoothMotion
         << '|' << p.smooth << '|' << p.smoothDevice << '|' << p.game << '|' << s.displayRate << '|' << p.displayState
-        << '|' << p.displayReason << '|' << std::lround(p.displayHz * 100) << '|' << std::lround(p.originalHz * 100);
+        << '|' << p.displayReason << '|' << std::lround(p.displayHz * 100) << '|' << std::lround(p.originalHz * 100)
+        << '|' << p.sync;
     // Not the machine's rate: measured, it moves by hundredths every second (48.57, 48.78, 48.84 Hz), and every change
     // published the whole settings; it goes out with the next publish
     return key.str();
@@ -526,7 +531,7 @@ void MainWindow::saveViewSettings() const
     const WindowDisplaySettings s = windowDisplaySettings();
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
     settings.beginGroup(kViewGroup);
-    settings.setValue("Gpu", s.gpu);
+    settings.setValue("Gpu", _gpuWanted);  // the wish: a remote session without a GPU does not turn it off for later
     settings.setValue("Crt", s.crt);
     settings.setValue("CrtProfile", QString::fromStdString(s.crtProfile));
     // The values set on the preset shown, and the built-in profile's parameters
@@ -569,11 +574,12 @@ void MainWindow::restoreViewSettings()
     // The backend first: it re-creates the screen
     if (settings.contains("Gpu"))
     {
-        const bool gpu = settings.value("Gpu").toBool() && DeviceScreenWrapper::isGPUAvailable();
+        _gpuWanted = settings.value("Gpu").toBool();
+        const bool gpu = _gpuWanted && DeviceScreenWrapper::isGPUAvailable();
         if (gpu != _screenWrapper->isGPUAccelerated())
         {
             _menuManager->setGpuAccelerationChecked(gpu);
-            handleGpuAccelerationToggled(gpu);
+            rebuildScreen(gpu, false);
         }
     }
 
@@ -631,7 +637,10 @@ void MainWindow::restoreViewSettings()
         _screenWrapper->setCRTParams(params);
     }
     _startScale = std::clamp(settings.value("Scale", 2).toInt(), WindowDisplay::kMinScale, WindowDisplay::kMaxScale);
+    // View > Video Synchronization, off by default (the user turns it on): the instance shown already takes it now
+    _videoSync = settings.value("VideoSync", false).toBool();
     settings.endGroup();
+    refreshFrameSource();
 }
 
 void MainWindow::handleVideoViewportChanged(int id, Message* message)

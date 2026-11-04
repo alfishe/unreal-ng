@@ -659,7 +659,9 @@ private:
     /// Presenter thread: do the vblanks follow the presents? On a fixed display they stay on the refresh grid whatever
     /// the presents do. A G-Sync panel follows without tearing allowed too (policy vsync), so the screen times take
     /// the scan-out off by what the panel does, not by the present mode. Policy auto on a fixed display: Present(0)
-    /// without tearing from here on (tearing in an independent-flip window would show)
+    /// without tearing (tearing in an independent-flip window would show) until the vblanks follow the presents again,
+    /// then VRR again: the window started in a remote desktop session (a 32 Hz grid) or behind another one (windowed
+    /// G-Sync is the foreground window's) and moved to the console or to the front gets it there, without a restart
     void CheckVrr()
     {
         double vblank = 0.0, present = 0.0;
@@ -679,6 +681,18 @@ private:
         const bool presentsOffGrid = std::abs(present - refresh) > refresh * 0.10;
         if (!onGrid)
             _panelFollows = true;
+        // Off the grid and with the presents: the panel follows them (not a mode change's mix of two grids)
+        if (!onGrid && std::abs(vblank - present) < present * 0.03 && Policy() == PresentPolicy::Auto && _tearing &&
+            !_vrr)
+        {
+            _vrr = true;
+            {
+                std::lock_guard<std::mutex> lock(_statsMutex);
+                _vrrNote.clear();
+            }
+            qInfo().noquote() << "DxgiPresenter: the vblanks follow the frames again (every" << vblank
+                              << "ms) - VRR, Present(0, ALLOW_TEARING) from now on";
+        }
         if (!onGrid || !presentsOffGrid)
             return;
         _panelFollows = false;

@@ -56,6 +56,9 @@ public:
     /// A hardware OpenGL 3.3 core context (4.1 on macOS) can be created, not llvmpipe, GDI Generic, ...: otherwise
     /// the software screen
     static bool probeGPUAcceleration();
+    /// Probes again: a session (remote desktop / console), display or adapter change may bring or take the GPU.
+    /// probeGPUAcceleration answers the new probe from here on. @return the answer or the GPU's renderer changed
+    static bool reprobeGPUAcceleration();
     /// The window's surface format: 3.3 core, double buffered, vsync
     static QSurfaceFormat surfaceFormat();
 
@@ -193,7 +196,7 @@ protected:
 
 private:
     /// probeGPUAcceleration's work, done once
-    static bool probeGPUAccelerationOnce();
+    static bool probeGPUAccelerationOnce(QString& rendererName);
     /// The context made and current, the GL objects initialised on the first call
     bool prepareContext();
     /// GL way: draw the frame due at the next refresh and swap
@@ -214,6 +217,9 @@ private:
     /// active, its own mode otherwise (frame presenter design, section 4.6)
     void updateDisplayRate();
     void restoreDisplayRate(const char* reason);
+    /// Smooth motion auto (View > Video Synchronization): the step the display allows now (PickVideoSync), smooth
+    /// motion on only for interpolate; a change starts it afresh
+    void updateVideoSync();
     /// When the refresh being drawn reaches the screen: one refresh after now (the swap waits for the vblank)
     int64_t refreshTargetNs() const;
     int64_t refreshPeriodNs() const;  ///< the display's refresh (60 Hz when it does not say)
@@ -256,6 +262,11 @@ private:
     std::string _displayReason;
     double _displayHz = 0.0;
     double _originalHz = 0.0;
+    bool _smoothAuto = false;                             ///< ScreenFrames::smooth is auto
+    VideoSync _sync = VideoSync::Off;                     ///< its step in effect (Off while not auto)
+    bool _syncVrr = false;                                ///< the presenter's VRR the display rate step last saw
+    std::string _syncReason;                              ///< WindowPresentStats::syncReason
+    QTimer* _syncTimer = nullptr;                         ///< auto: updateVideoSync twice a second (VRR engaging)
     QTimer* _presentTimer = nullptr;              ///< native way: the next frame's present
     bool _presentPending = false;                 ///< native way: a forced present asked for
     int64_t _presentLeadNs = 0;                   ///< native way: UNREAL_PRESENT_LEAD_MS, 0 = presentLeadNs() picks

@@ -171,6 +171,14 @@ private:
     bool smoothActive() const;
     smoothmotion::SmoothMotion _smooth;
     DisplayRate _displayRate = DisplayRate::Keep;  // ScreenFrames::displayRate: reported, not done (no presenter)
+    // Smooth motion auto (View > Video Synchronization): no VRR and no display switch here, so interpolate unless the
+    // display's own rate fits the machine's
+    void updateVideoSync();
+    bool _smoothAuto = false;
+    VideoSync _sync = VideoSync::Off;
+    std::string _syncReason;
+    FrameRateMeter _frameRate;   // the machine's rate from the shown frames' targets
+    uint64_t _meteredSerial = 0; // the last frame pushed into it
     QImage _nextFrame;    // a frame on its way into _smooth
     QImage _smoothFrame;  // the picture drawn
     smoothmotion::SmoothMotion::Result _smoothShown;  // what _smoothFrame is made of

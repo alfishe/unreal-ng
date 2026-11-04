@@ -521,9 +521,31 @@ directly: the screen time minus the frame's target.
 ### 6.4 Settings and automation planes
 
 - `[VIDEO] PresentPolicy = auto | vrr | vsync`. `auto` is the flowchart of section 4.
-- `[VIDEO] SmoothMotion = off | blend | interpolate` (sections 4.3, 4.4), default off. A VRR display ignores it:
-  there every frame is shown for its own period. With `interpolate`, a game whose profile has a `video:` section gets
-  its cadence mode (section 4.5).
+- `[VIDEO] SmoothMotion = off | blend | interpolate | auto` (sections 4.3, 4.4), default off. A VRR display ignores
+  it: there every frame is shown for its own period. With `interpolate`, a game whose profile has a `video:` section
+  gets its cadence mode (section 4.5). `auto` is View > Video Synchronization's: interpolate only while the display
+  shows the frames unevenly (below).
+- **View > Video Synchronization** (unreal-qt, `View/VideoSync`, off by default for now): one switch for the steps of
+  section 4, the first one the display allows. On, the shown instance gets `SmoothMotion = auto`,
+  `PresentPolicy = auto`, `DisplayRate = match`: VRR when the presenter shows each frame at its own time; else the
+  display's rate fitting the machine's (switched to 50 / 100 Hz, or already such a rate; section 4.7); else
+  interpolation on the fixed rate (`PickVideoSync` in `displayrate.h`, re-checked twice a second and on every change
+  of the machine's rate, so a VRR turn on Windows or a refused switch moves it). Off: `off` / `vsync` / `keep`, the
+  frame of each refresh. An instance the window starts showing takes the switch; later changes (the automation's
+  `smooth_motion` etc.) stay. `UNREAL_QT_VIEW_SETTINGS=off` leaves the instances' `[VIDEO]` values alone. The
+  report's `present.sync` {mode: off / vrr / display_rate / interpolate, reason} names the step in effect and why the
+  ones before it are not; the software screen has neither VRR nor a switch, so it interpolates unless the display's
+  own rate fits. **Tools > Video Synchronization** shows it live (four times a second, as the audio settings show the
+  dynamic rate control): the step and the reason, the display's range, the switch, the machine's rate, the
+  presenter's shown / dropped / late and timing error, and while interpolating the interpolation's work per second
+  (frames in, pictures drawn, interpolated, blended, motion fields, flicker held).
+- **The host's displays and GPU without a restart** (unreal-qt, `mainwindow_display.cpp`), as the sound follows its
+  devices: a session change (Windows: remote desktop <-> console, unlock), a display added or removed, the primary
+  display or the display configuration changed ask the GPU again a second later (and every 2 s, five times, while
+  the GPU wanted is not there yet: the driver follows the session late). A remote desktop without hardware OpenGL 3.3
+  gets the software screen, the console the GPU screen again; a new renderer (another adapter) rebuilds the GPU
+  screen, its presenter with it. The picture's settings carry over, as on View > GPU Acceleration. `View/Gpu` keeps
+  the user's wish, not what the session could do.
 - `[VIDEO] EffectsDevice = gpu | cpu` (section 6.5), default `gpu`; `UNREAL_EFFECTS_DEVICE` overrides it.
 - `[VIDEO] DisplayRate = keep | match` (section 4.7), default `keep`.
 - `[VIDEO] LipSyncOffsetMs = 0`. It replaces `AVSyncDelayFrames`, whose job the audio clock now does; the old key is
@@ -645,7 +667,12 @@ Each phase lands on its own with tests and docs.
      on-screen p50 0.51 / p99 3.42 ms, screen time minus the frame's time p50 1.1 / p99 4.4 ms; policy `auto`
      0.25 / 0.90, 0.48 / 2.85, 1.0 / 4.7 ms;
    - under RDP (a fixed 32 Hz display) the check turns to `Present(0)` without tearing after 100 frames; a
-     `Present(1)` per frame piled up there (error up to a refresh): a refresh per present.
+     `Present(1)` per frame piled up there (error up to a refresh): a refresh per present. The check does not stop
+     there: when the vblanks leave the grid and follow the presents again (median within 3 % of theirs), auto goes
+     back to VRR. Seen on .101 (2026-11-03): a window started over RDP kept `Present(0)` on the console's G-Sync
+     monitor and had no VRR in a window until restarted; the same window moved from full screen to a window keeps VRR
+     (vblank interval p50 20.4 ms), so the window's layout (the presenter's HWND a child of the main window) is not
+     what stops windowed G-Sync. G-Sync is the foreground window's: one in the background gets the grid.
    - Found on the way: `refresh()` marks the texture on every latch, and a wake before the next frame was due uploaded
      the frame on screen again and presented it twice. Under VRR the copy started a refresh of its own, and the next
      frame came during its scan-out: 10 % of the frames off by up to a scan-out. A frame is new now by its serial.
@@ -786,7 +813,10 @@ Each phase lands on its own with tests and docs.
 7. **Display rate switch** (section 4.7, on the branch): `[VIDEO] DisplayRate`, the mode picking and the frame-rate
    meter with unit tests (`DisplayRate_Test`), the macOS and Windows switches, `display_rate` and `present.display`
    on every plane. Measured on a monitor by the owner: the agent's shell has no window server.
-8. Later:
+8. **Video Synchronization** (section 6.4, on the branch): View > Video Synchronization (VRR, else a fitting display
+   rate, else interpolation; `smooth_motion = auto`), `present.sync` on every plane, Tools > Video Synchronization
+   live; `PickVideoSync` unit tests. To check by the owner: the window on a G-Sync monitor (.101) and on the Mac.
+9. Later:
    - a Vulkan / Wayland presenter;
    - the iOS host (section 9) moves to `FrameClock` and the Metal presenter;
    - late input sampling in `c-vrr` (input-latency doc option B, nearly free once frames have target times).

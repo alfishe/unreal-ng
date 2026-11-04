@@ -45,6 +45,10 @@ struct WindowPresentStats
     /// `machineHz`, its own mode `originalHz`), "unchanged" (match asked, nothing switched: `displayReason` says why)
     std::string displayState = "keep";
     std::string displayReason;
+    /// View > Video Synchronization's step in effect (VideoSyncName: off / vrr / display_rate / interpolate), and why
+    /// the steps before it are not ("" for vrr and off)
+    std::string sync = "off";
+    std::string syncReason;
     double displayHz = 0.0;
     double originalHz = 0.0;
     double machineHz = 0.0;

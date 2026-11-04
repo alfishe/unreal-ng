@@ -68,7 +68,10 @@ inline DisplayRateFit FitDisplayRate(double displayHz, double machineHz)
 inline constexpr double kDisplayRateMaxError = 0.05;
 
 /// Of the display's rates at its current resolution, the one to switch to for the machine: the least error, equals the
-/// lower rate; none (false) when no rate is within kDisplayRateMaxError or the current one fits as well
+/// lower rate; none (false) when no rate is within kDisplayRateMaxError or the current one fits as well. A current
+/// rate within kDisplayRateMaxError stays unless the pick halves its error: a switch blanks the display, and a
+/// machine at 49.0 Hz is 2 % off both 100 Hz (two refreshes) and 144 Hz (three), its measured rate swaying across
+/// 49.0 picked them in turn (seen on a 144 Hz monitor: 100, 144, 100, ... every few seconds)
 inline bool DisplayRatePick(double machineHz, double currentHz, const std::vector<double>& rates, DisplayRateFit& pick)
 {
     bool found = false;
@@ -83,7 +86,49 @@ inline bool DisplayRatePick(double machineHz, double currentHz, const std::vecto
             found = true;
         }
     }
-    return found && pick.error < FitDisplayRate(currentHz, machineHz).error - 1e-9;
+    const double current = FitDisplayRate(currentHz, machineHz).error;
+    if (current <= kDisplayRateMaxError)
+        return found && pick.error < current / 2.0 - 1e-9;
+    return found && pick.error < current - 1e-9;
+}
+
+/// View > Video Synchronization (smooth motion auto, present policy auto, display rate match): the first of these the
+/// display allows, in effect
+/// - vrr: the presenter shows each frame at its own time (a VRR / ProMotion display);
+/// - display_rate: the display runs a rate fitting the machine's (switched to 50 or 100 Hz, or already such a rate):
+///   every frame for the same number of refreshes, give or take kDisplayRateMaxError;
+/// - interpolate: a fixed rate that beats with the machine's (60 Hz for 48.83 / 50): smooth motion draws each refresh.
+/// off: synchronization not asked (smooth motion other than auto)
+enum class VideoSync : uint8_t
+{
+    Off,
+    Vrr,
+    DisplayRate,
+    Interpolate
+};
+
+inline const char* VideoSyncName(VideoSync sync)
+{
+    switch (sync)
+    {
+        case VideoSync::Vrr: return "vrr";
+        case VideoSync::DisplayRate: return "display_rate";
+        case VideoSync::Interpolate: return "interpolate";
+        case VideoSync::Off: break;
+    }
+    return "off";
+}
+
+/// The step in effect for a display `vrr` (frames each at its own time) at `displayHz` and a machine at `machineHz`.
+/// Not steady yet (`machineHz` 0: start, pause, turbo): `last`, the step before, or interpolate when there was none
+inline VideoSync PickVideoSync(bool vrr, double displayHz, double machineHz, VideoSync last = VideoSync::Off)
+{
+    if (vrr)
+        return VideoSync::Vrr;
+    if (machineHz <= 0.0)
+        return last == VideoSync::Off ? VideoSync::Interpolate : last;
+    return FitDisplayRate(displayHz, machineHz).error <= kDisplayRateMaxError ? VideoSync::DisplayRate
+                                                                              : VideoSync::Interpolate;
 }
 
 /// The machine's frame rate from its frames' target times (steady clock, ns): the median of the last periods once

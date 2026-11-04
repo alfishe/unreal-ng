@@ -529,6 +529,11 @@ bool DeviceScreenWrapper::isGPUAvailable()
     return DeviceScreenGLWindow::probeGPUAcceleration();
 }
 
+bool DeviceScreenWrapper::recheckGPUAvailable()
+{
+    return DeviceScreenGLWindow::reprobeGPUAcceleration();
+}
+
 void DeviceScreenWrapper::setTemporalBlendingEnabled(bool enabled)
 {
     if (_useGPU && _gpuWindow)

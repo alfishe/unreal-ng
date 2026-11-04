@@ -5,6 +5,7 @@
 
 #include <QDebug>
 #include <algorithm>
+#include <atomic>
 #include <QPainter>
 #include <QDragEnterEvent>
 #include <QFocusEvent>
@@ -91,6 +92,9 @@ DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent) : QWindow(parent), _
         restoreDisplayRate("the window moved to another display");
         updateDisplayRate();
     });
+    _syncTimer = new QTimer(this);
+    _syncTimer->setInterval(500);
+    connect(_syncTimer, &QTimer::timeout, this, [this]() { updateVideoSync(); });
 }
 
 bool DeviceScreenGLWindow::prepareContext()
@@ -374,6 +378,8 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
     FillSmoothStats(_smooth, smoothActive(), _smoothOnGpu && _smoothGpu.isCreated(), out);
     out.displayState = _displayState;
     out.displayReason = _displayReason;
+    out.sync = VideoSyncName(_sync);
+    out.syncReason = _syncReason;
     out.displayHz = _displayHz;
     out.originalHz = _originalHz;
     out.machineHz = _frameRate.Hz();
@@ -398,15 +404,34 @@ QSurfaceFormat DeviceScreenGLWindow::surfaceFormat()
     return fmt;
 }
 
+namespace
+{
+// The last probe (the GUI thread): -1 none yet, 0 no GPU, 1 a hardware one; the renderer it saw
+std::atomic<int> gGpuProbe{-1};
+QString gGpuRenderer;
+}  // namespace
+
 bool DeviceScreenGLWindow::probeGPUAcceleration()
 {
-    // Once per process (the GUI thread): a context made and its functions resolved take ~80 ms, and the settings
-    // published to the automation planes ask it (a stall the screen's present timer showed as 4-5 skipped refreshes)
-    static const bool available = probeGPUAccelerationOnce();
-    return available;
+    // Once until a change asks again (reprobeGPUAcceleration): a context made and its functions resolved take ~80 ms,
+    // and the settings published to the automation planes ask it (a stall the screen's present timer showed as 4-5
+    // skipped refreshes)
+    if (gGpuProbe.load() < 0)
+        reprobeGPUAcceleration();
+    return gGpuProbe.load() == 1;
 }
 
-bool DeviceScreenGLWindow::probeGPUAccelerationOnce()
+bool DeviceScreenGLWindow::reprobeGPUAcceleration()
+{
+    QString renderer;
+    const int available = probeGPUAccelerationOnce(renderer) ? 1 : 0;
+    const bool changed = available != gGpuProbe.load() || renderer != gGpuRenderer;
+    gGpuRenderer = renderer;
+    gGpuProbe.store(available);
+    return changed;
+}
+
+bool DeviceScreenGLWindow::probeGPUAccelerationOnce(QString& rendererName)
 {
     QOpenGLContext ctx;
     ctx.setFormat(surfaceFormat());
@@ -433,6 +458,7 @@ bool DeviceScreenGLWindow::probeGPUAccelerationOnce()
 
     QOpenGLFunctions* gl = ctx.functions();
     const char* renderer = reinterpret_cast<const char*>(gl->glGetString(GL_RENDERER));
+    rendererName = QString::fromLatin1(renderer ? renderer : "");
     const char* vendor = reinterpret_cast<const char*>(gl->glGetString(GL_VENDOR));
     const char* version = reinterpret_cast<const char*>(gl->glGetString(GL_VERSION));
 
@@ -527,7 +553,7 @@ void DeviceScreenGLWindow::setFrameSource(ScreenFrames source)
     smoothmotion::Mode mode = source.smooth;
     const QByteArray forced = qgetenv("UNREAL_SMOOTH_MOTION");
     if (!forced.isEmpty() && !smoothmotion::ParseMode(forced.constData(), mode))
-        qWarning() << "DeviceScreenGLWindow: UNREAL_SMOOTH_MOTION=" << forced << "is not off | blend | interpolate";
+        qWarning() << "DeviceScreenGLWindow: UNREAL_SMOOTH_MOTION=" << forced << "is not off | blend | interpolate | auto";
     {
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
         _frameSource = std::move(source.at);
@@ -548,11 +574,82 @@ void DeviceScreenGLWindow::setFrameSource(ScreenFrames source)
     if (_presenter)
         _presenter->SetPolicy(_presentPolicy);
     _displayRate = source.displayRate;
-    updateDisplayRate();
+    _smoothAuto = mode == smoothmotion::Mode::Auto;
+    _sync = VideoSync::Off;
+    _syncReason.clear();
     _smooth.Reset();
     _smooth.SetMode(mode);
     _smoothShown = {};
     _uploadedSerial = 0;
+    updateDisplayRate();
+    updateVideoSync();
+    if (_smoothAuto)
+        _syncTimer->start();
+    else
+        _syncTimer->stop();
+}
+
+void DeviceScreenGLWindow::updateVideoSync()
+{
+    if (!_smoothAuto)
+    {
+        _sync = VideoSync::Off;
+        _syncReason.clear();
+        return;
+    }
+    bool vrr = false;
+    double displayHz = 0.0;
+    if (_presenter)
+    {
+        const NativePresenter::Stats s = _presenter->GetStats();
+        vrr = s.vrr;
+        displayHz = s.maxRefreshHz;
+    }
+    if (_displayState == "matched" && _displayHz > 0.0)
+        displayHz = _displayHz;
+    if (displayHz <= 0.0 && screen())
+        displayHz = screen()->refreshRate();
+    const double machineHz = _frameRate.Hz();
+    // The display rate step follows what the presenter sees now: a VRR it reported before the vblanks showed a fixed
+    // grid left "VRR" as the display rate's reason for good
+    if (vrr != _syncVrr && _displayRate == DisplayRate::Match)
+    {
+        _syncVrr = vrr;
+        updateDisplayRate();
+    }
+    const VideoSync sync = PickVideoSync(vrr, displayHz, machineHz, _sync);
+
+    // Why the steps before the one in effect are not
+    std::string reason;
+    if (sync != VideoSync::Vrr)
+    {
+        reason = !_presenter ? "no VRR: the window presents with GL (no present-at-time)"
+                 : _presentPolicy == PresentPolicy::Vsync ? "no VRR: present policy vsync"
+                 : _presenter->GetStats().minRefreshHz >= displayHz * 0.99
+                     ? "no VRR: the display's refreshes stay on their grid (a fixed display, or its variable refresh "
+                       "is off for this window: in the background, a remote session)"
+                     : "no VRR: the display's variable refresh did not engage";
+        if (sync == VideoSync::Interpolate)
+        {
+            if (machineHz <= 0.0)
+                reason += "; the machine's frame rate is not steady yet";
+            else
+                reason += "; display rate: " + (_displayReason.empty()
+                                                    ? QString::number(displayHz).toStdString() + " Hz does not fit " +
+                                                          QString::number(machineHz).toStdString() + " Hz"
+                                                    : _displayReason);
+        }
+    }
+    _syncReason = reason;
+    if (sync == _sync)
+        return;
+    qInfo() << "DeviceScreenGLWindow: video sync" << VideoSyncName(_sync) << "->" << VideoSyncName(sync) << "("
+            << QString::fromStdString(reason) << ")";
+    _sync = sync;
+    // Smooth motion on or off: the interpolation starts from the frames that come from now on
+    std::lock_guard<std::mutex> lock(_frameSourceMutex);
+    _smooth.Reset();
+    _smoothShown = {};
 }
 
 void DeviceScreenGLWindow::restoreDisplayRate(const char* reason)
@@ -636,7 +733,8 @@ void DeviceScreenGLWindow::updateDisplayRate()
 
 bool DeviceScreenGLWindow::smoothActive() const
 {
-    return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled;
+    return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled &&
+           (!_smoothAuto || _sync == VideoSync::Interpolate);
 }
 
 void DeviceScreenGLWindow::feedSmooth()
@@ -1112,8 +1210,11 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
             _shownInfo = info;
             // The machine's rate: a change (another machine, the first steady second) decides the display's
             if (newFrame && info.serial != 0 && info.targetNs > 0 && _frameRate.Push(info.targetNs) &&
-                _displayRate == DisplayRate::Match)
-                QMetaObject::invokeMethod(this, [this]() { updateDisplayRate(); }, Qt::QueuedConnection);
+                (_displayRate == DisplayRate::Match || _smoothAuto))
+                QMetaObject::invokeMethod(this, [this]() {
+                    updateDisplayRate();
+                    updateVideoSync();
+                }, Qt::QueuedConnection);
             if (smoothActive())
             {
                 // UNREAL_SMOOTH_TRACE: from a reset on, so the trace holds every frame smooth motion has

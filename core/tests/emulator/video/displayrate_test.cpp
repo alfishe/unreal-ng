@@ -77,6 +77,22 @@ TEST(DisplayRate_Test, NoSwitchWhenTheCurrentRateFitsAsWell)
     EXPECT_FALSE(DisplayRatePick(kSpectrum, 100.0, {50.0, 60.0, 100.0}, pick));
 }
 
+TEST(DisplayRate_Test, AFittingRateStaysWhileTheMachineSways)
+{
+    // 49.0 Hz is 2 % off both 100 (two refreshes) and 144 (three): a measured rate swaying across it keeps the one
+    // running, whichever it is, instead of switching the display back and forth
+    const std::vector<double> rates{60.0, 100.0, 120.0, 144.0};
+    DisplayRateFit pick;
+    for (const double machineHz : {48.95, 49.0, 49.05})
+    {
+        EXPECT_FALSE(DisplayRatePick(machineHz, 144.0, rates, pick)) << machineHz;
+        EXPECT_FALSE(DisplayRatePick(machineHz, 100.0, rates, pick)) << machineHz;
+    }
+    // A fitting rate gives way to one at most half as far off: 144 Hz is 4 % off a 50 Hz machine, 100 Hz exact
+    ASSERT_TRUE(DisplayRatePick(kSpectrum, 144.0, rates, pick));
+    EXPECT_DOUBLE_EQ(pick.hz, 100.0);
+}
+
 TEST(DisplayRate_Test, MeterFindsTheSteadyRate)
 {
     FrameRateMeter meter;
@@ -102,4 +118,27 @@ TEST(DisplayRate_Test, MeterIgnoresUnsteadyFrames)
         EXPECT_FALSE(meter.Push(t));
     }
     EXPECT_EQ(meter.Hz(), 0.0);
+}
+
+TEST(DisplayRate_Test, VideoSyncTakesTheFirstStepTheDisplayAllows)
+{
+    // VRR first, whatever the rates
+    EXPECT_EQ(PickVideoSync(true, 120.0, kPentagon), VideoSync::Vrr);
+    // A rate fitting the machine's: 50 Hz (2.4 % off a Pentagon), 100 Hz, a Spectrum on 50
+    EXPECT_EQ(PickVideoSync(false, 50.0, kPentagon), VideoSync::DisplayRate);
+    EXPECT_EQ(PickVideoSync(false, 100.0, kSpectrum), VideoSync::DisplayRate);
+    // A rate that beats with it: interpolation
+    EXPECT_EQ(PickVideoSync(false, 60.0, kPentagon), VideoSync::Interpolate);
+    EXPECT_EQ(PickVideoSync(false, 75.0, kSpectrum), VideoSync::Interpolate);
+    EXPECT_EQ(PickVideoSync(false, 120.0, kSpectrum), VideoSync::Interpolate);
+    EXPECT_STREQ(VideoSyncName(VideoSync::DisplayRate), "display_rate");
+}
+
+TEST(DisplayRate_Test, VideoSyncKeepsItsStepWhileTheMachineIsNotSteady)
+{
+    // Paused, turbo, just started: the step before stays; none before: interpolate (the display is unknown to fit)
+    EXPECT_EQ(PickVideoSync(false, 50.0, 0.0, VideoSync::DisplayRate), VideoSync::DisplayRate);
+    EXPECT_EQ(PickVideoSync(false, 60.0, 0.0, VideoSync::Interpolate), VideoSync::Interpolate);
+    EXPECT_EQ(PickVideoSync(false, 50.0, 0.0), VideoSync::Interpolate);
+    EXPECT_EQ(PickVideoSync(true, 50.0, 0.0, VideoSync::Interpolate), VideoSync::Vrr);
 }

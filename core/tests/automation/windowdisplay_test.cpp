@@ -273,8 +273,29 @@ TEST(WindowDisplay_Test, SmoothMotionWords)
     EXPECT_EQ(change.effectsDevice, "cpu");
     EXPECT_FALSE(change.Empty());
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "smooth_motion", "motion", error));
-    EXPECT_NE(error.find("off, blend or interpolate"), std::string::npos) << error;
+    EXPECT_NE(error.find("off, blend, interpolate or auto"), std::string::npos) << error;
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "effects_device", "npu", error));
+    // View > Video Synchronization's mode
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "smooth_motion", "AUTO", error)) << error;
+    EXPECT_EQ(change.smoothMotion, "auto");
+}
+
+TEST(WindowDisplay_Test, VideoSyncStepInTheReportAndSummary)
+{
+    WindowDisplaySettings s;
+    s.smoothMotion = "auto";
+    s.present.sync = "interpolate";
+    s.present.syncReason = "no VRR: the display has a fixed refresh";
+    StateNode report = WindowDisplay::Report(s);
+    const StateNode* sync = report["present"].find("sync");
+    ASSERT_NE(sync, nullptr);
+    EXPECT_EQ(sync->find("mode")->s, "interpolate");
+    EXPECT_EQ(sync->find("reason")->s, "no VRR: the display has a fixed refresh");
+    EXPECT_NE(WindowDisplay::Summary(s).find("video sync interpolate (no VRR: the display has a fixed refresh)"),
+              std::string::npos)
+        << WindowDisplay::Summary(s);
+    s.present.sync = "off";
+    EXPECT_EQ(WindowDisplay::Summary(s).find("video sync"), std::string::npos);
 }
 
 TEST(WindowDisplay_Test, PresentPolicyAndLipSyncWords)
