@@ -160,7 +160,7 @@ protected:
         _emulator = nullptr;
     }
 
-    void Record(unsigned frames)
+    void Record(unsigned frames, const char* source = kProgram)
     {
         _emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError, RamPowerOn::Zero);
         ASSERT_NE(_emulator, nullptr);
@@ -171,7 +171,7 @@ protected:
         if (_context->pSoundManager)
             _context->pSoundManager->mute();
         _context->pMemory->UpdateFeatureCache();
-        _program = Z80TextAssembler().Assemble(kProgram, 0x8000);
+        _program = Z80TextAssembler().Assemble(source, 0x8000);
         ASSERT_TRUE(_program.ok) << _program.error.line << ": " << _program.error.message;
         for (const AsmSourceLine& line : _program.lines)
             for (size_t i = 0; i < line.bytes.size(); ++i)
@@ -394,4 +394,47 @@ TEST_F(AccessTrace_Test, ReplayWindowRunsHooksStopsAndCleansUp)
     ASSERT_TRUE(late.Open(_bundle, "replay-window-late", ttd::TTDTimePoint{first + 1000, 0}, error)) << error;
     EXPECT_EQ(late.Start().frame, first + 1000);
     EXPECT_FALSE(late.Start().frame < late.SessionEnd().frame);
+}
+
+/// A replay's IN values are the CPU's: the trace hook gets the byte the CPU took (a recording's journal value, the
+/// floating bus), not the decoder's raw answer before them. Port #00FF on a 48K is decoded by nothing, so the ULA's
+/// floating bus answers it: the zeroed screen's bytes while the beam draws, #FF in the border
+TEST_F(AccessTrace_Test, ReplayInValueIsTheCpus)
+{
+    constexpr const char* kReader = R"(
+start:  ld hl,$9000
+loop:   xor a
+        in a,($ff)
+        ld (hl),a
+        inc l
+        jr loop
+)";
+    Record(2, kReader);
+    ASSERT_FALSE(HasFatalFailure());
+    std::string error;
+    ReplayWindow window;
+    ASSERT_TRUE(window.Open(_bundle, "replay-in-value", ttd::TTDTimePoint{0, 0}, error)) << error;
+
+    bool pending = false;
+    uint8_t taken = 0;
+    uint64_t pairs = 0, mismatches = 0, notFF = 0;
+    ReplayHooks hooks;
+    hooks.bus = [&](char type, uint16_t address, uint8_t value) {
+        if (type == 'I' && address == 0x00FF)
+        {
+            pending = true;
+            taken = value;
+        }
+        else if (type == 'W' && pending && address >= 0x9000 && address < 0x9100)
+        {
+            pending = false;
+            ++pairs;
+            mismatches += value != taken ? 1 : 0;
+            notFF += value != 0xFF ? 1 : 0;
+        }
+    };
+    EXPECT_EQ(window.RunTo(window.Start().frame + 1, 1, hooks), ReplayWindow::Run::Finished);
+    EXPECT_GT(pairs, 1000u);
+    EXPECT_GT(notFF, 0u) << "the floating bus answered some reads with the screen's zeros";
+    EXPECT_EQ(mismatches, 0u) << "the hook's IN value is the one LD (HL),A stored";
 }

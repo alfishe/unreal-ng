@@ -431,11 +431,19 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "one lists the offered ids; omit for the picture only";
     schema["properties"]["codec"]["type"] = "string";
     schema["properties"]["codec"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* codec : {"prores", "h264"})
+    for (const char* codec : {"prores", "h264", "h265"})
         schema["properties"]["codec"]["enum"].append(codec);
     schema["properties"]["codec"]["description"] =
-        "window_record_start: prores (default: ProRes 4444, .mov) or h264 (4:4:4, .mp4); full colour, a CRT mask "
-        "survives. Needs ffmpeg on the host";
+        "window_record_start: prores (default: ProRes 4444, .mov), h264 or h265 (4:4:4 through ffmpeg; with "
+        "hardware = true the Mac's VideoToolbox encoder, 4:2:0 / 4:2:2, no ffmpeg); a CRT mask survives 4:4:4";
+    schema["properties"]["hardware"]["type"] = "boolean";
+    schema["properties"]["hardware"]["description"] =
+        "window_record_start: h264 / h265 on the GPU's encoder (macOS VideoToolbox: real time at 4K, no ffmpeg; "
+        "4:2:0, H.265 4:2:2 10-bit); false = x264 / x265 4:4:4 through ffmpeg";
+    schema["properties"]["fit"]["type"] = "boolean";
+    schema["properties"]["fit"]["description"] =
+        "window_record_start: scale the picture to a given width x height frame (aspect kept, centred) instead of "
+        "refusing one that does not match";
     schema["properties"]["picture_height"]["type"] = "integer";
     schema["properties"]["picture_height"]["description"] =
         "window_record_start: draw the picture (CRT included) at this height instead of the window's (GPU only, "
@@ -1159,7 +1167,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                         return;
                     }
                     body["path"] = path;
-                    for (const char* field : {"keyboard", "codec", "fps", "scale", "picture_height", "width", "height", "layout"})
+                    for (const char* field : {"keyboard", "codec", "hardware", "fit", "fps", "scale", "picture_height", "width", "height",
+                                        "layout"})
                         if (args.isMember(field))
                             body[field] = args[field];
                     // The sound track is on unless switched off ("audio": false / "none" / "off")

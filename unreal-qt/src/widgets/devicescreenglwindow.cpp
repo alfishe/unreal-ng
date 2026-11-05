@@ -546,7 +546,14 @@ QImage DeviceScreenGLWindow::renderWindowImage(bool hud, int pictureHeight)
         glViewport(0, 0, pixels.width(), pixels.height());
         // The HUD's QPainter would paint into the window, not this FBO: it goes onto the image below
         _renderingImage = true;
+        // The window paints once per emulated frame too, so the count it keeps would give every picture of a
+        // recording the same parity: an interlace preset would never alternate its fields. The pictures count their own
+        const uint32_t windowCount = _slangRunner ? _slangRunner->frameCount() : 0;
+        if (_slangRunner)
+            _slangRunner->setFrameCount(_imageFrameCount++);
         paintGL();
+        if (_slangRunner)
+            _slangRunner->setFrameCount(windowCount);
         _renderingImage = false;
         fbo.release();
         image = fbo.toImage();

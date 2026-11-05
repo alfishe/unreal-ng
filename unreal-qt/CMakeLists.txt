@@ -632,6 +632,8 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/companioncontroller.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/companioncontroller.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/ttdwidget_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/recordingsettings_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/recordingplan_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.cpp"

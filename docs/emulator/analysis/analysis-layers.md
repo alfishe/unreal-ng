@@ -102,7 +102,7 @@ to the run:
 | the analysis instance, the recording loaded into its TTD | `AnalysisInstance::Make` (the `TraceBundle`'s session file) |
 | the machine at the window's start, from the nearest keyframe | `TimeTravelController::SeekTo` (a start before the first keyframe starts there) |
 | the recorded inputs played, not new ones recorded | `TimeTravelController::ReplayModeScope` |
-| every instruction start, every bus cycle, every tool edit's write | `Z80::m1TraceHook`, `Z80::busTraceHook`, `TimeTravelController::SetEditWriteObserver`, set for the run only (`HookScope`: taken off on any exit) |
+| every instruction start, every bus cycle, every tool edit's write | `Z80::m1TraceHook`, `Z80::busTraceHook`, `TimeTravelController::SetEditWriteObserver`, set for the run only (`HookScope`: taken off on any exit). A port read's value is the byte the CPU took - the recording's port journal value, the floating bus - not the replay's live device answer (a tape is not played in a replay) |
 | frame by frame to the window's end, a callback at each chunk's boundary | `Emulator::RunTStates`; the callback may stop the run (a cancelled build), a hook may call `Stop()` (the trace's end reached) |
 
 `RunTo` answers `Finished`, `Stopped` or `Stalled` (the clone stopped advancing). What a consumer adds is its own:
@@ -582,6 +582,23 @@ into the draft export like a resolve's label and title.
 - One **base** analysis instance holds the recording (`TraceBundle`, kept per build) and is seeked to each start point
   (`start`: the first keyframe, `end`, `frame:N`). Every experiment gets the base's state copied into an analysis
   instance of its own (`MachineStateTransfer`, the clone path) and runs there; the source instance is never touched.
+- The experiment's machine gets the recording's floppies and tape. The base replays disk and tape reads from the
+  port journal and needs no media, but a free machine reads its drives itself: with empty drives the first read after
+  the fork (TR-DOS waiting for a DRQ that never comes) leaves the recorded path. `TraceBundle::media` carries, per slot
+  (`fdd.a`..`fdd.d`, `tape`), an in-memory copy of the source's medium as at `Capture`
+  (`MachineStateTransfer::CopyMovingMedium`), or an image file a caller adds to a bundle built from a session file
+  (`TraceBundle::AddMediumFile("fdd.a", "game.trd")`, opened in session access: the file is never written). The base
+  inserts them before the session loads, so a seek finds the recording's medium (an untouched copy keeps its file's
+  identity: no `media_version_differs` issue), and `MachineStateTransfer` copies them into every experiment's machine.
+- Every analysis instance runs with the fast loaders off (`fastdisk`, `fasttape`, `turbotape`). A recording never
+  has them (`FeatureManager::ttdLocksFastLoader`: fast disk compresses the WD1793's timing, fast and turbo tape trap
+  the ROM loader), but a free machine has no TTD to force them off: with fast disk on, a start inside a disk command
+  ended it at the compressed timing, and the first seek after the fork stepped the head about four times faster
+  than the recording did; the run left the recorded path even with the disk in place.
+- Known limit: the copy is the medium as at `Capture`, the guest's writes made during the recording included; the
+  media manager's undo log does not travel with it. A disk the program wrote while recording is therefore another
+  medium for the base (its identity is the copy's): a seek reports `media_version_differs` and keeps it, the replay
+  stays bit-exact (the journal feeds the reads), but a fork made before a write reads the written sectors.
 - A pool of workers (`parallel`, default min(4, cores / 4), at most 8) runs the experiments; two never share a
   machine. Every analysis instance is muted, sound off, logging off.
 - Pokes and registers go in once the state is copied; input events (keys, Kempston directions, release all) at their
