@@ -769,6 +769,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/slangpresetrunner_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/slangpresetrunner.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/slangpresetrunner.h"
+        # Tools > Video Synchronization: fixed cells, nothing moves while the values change
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/videosyncwindow_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/videosyncwindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/videosyncwindow.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")

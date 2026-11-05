@@ -44,6 +44,7 @@
 #include <vector>
 
 #include "common/timehelper.h"
+#include "emulator/video/screenbeat.h"
 #include "platform/presentlead.h"
 
 using Microsoft::WRL::ComPtr;
@@ -316,23 +317,34 @@ public:
                 return false;
             };
             if (!_freeCv.wait_for(lock, std::chrono::milliseconds(100), found))
-                return 0;
+            {
+                char why[96];
+                std::snprintf(why, sizeof why, "no free slot (%zu queued for the presenter thread)", _queue.size());
+                lock.unlock();
+                return Failed(why);
+            }
         }
         Slot& slot = _slots[index];
         if (slot.width != width || slot.height != height || !slot.framebuffer)
         {
-            if (!AllocateSlot(slot, width, height, f))
+            if (const char* why = AllocateSlot(slot, width, height, f))
             {
                 ReleaseSlot(slot);
-                return 0;
+                return Failed(why, width, height);
             }
         }
         if (!_lockObjects(_interopDevice, 1, &slot.interop))
-            return 0;
+            return Failed("wglDXLockObjectsNV failed");
         f->glBindFramebuffer(GL_FRAMEBUFFER, slot.framebuffer);
         _current = index;
         _drawing = true;
         return slot.framebuffer;
+    }
+
+    std::string LastFailure() const override
+    {
+        std::lock_guard<std::mutex> lock(_statsMutex);
+        return _failure;
     }
 
     void PresentFrame(int64_t atNs, const TraceInfo& trace) override
@@ -418,6 +430,11 @@ public:
             s.presented = _presented;
             s.shown = _shown;
             s.dropped = _dropped;
+            const ScreenBeat::Stats beat = _beat.GetStats();
+            s.beatFrames = beat.frames;
+            s.offBeat = beat.offBeat;
+            s.soundOffsetP50 = beat.offsetP50Ms;
+            s.soundOffsetP99 = beat.offsetP99Ms;
         }
         s.late = _lead.Late();
         s.leadMs = static_cast<double>(_lead.MarginNs()) / 1e6;
@@ -429,7 +446,9 @@ public:
         s.gpuWaitMax = waits.empty() ? 0.0 : *std::max_element(waits.begin(), waits.end());
         s.drawableWaitP50 = Percentile(drawableWaits, 0.50);
         s.drawableWaitMax = drawableWaits.empty() ? 0.0 : *std::max_element(drawableWaits.begin(), drawableWaits.end());
-        s.minRefreshHz = s.maxRefreshHz = _refreshHz;
+        // Windows reports no VRR range: while the panel follows the frames its low end is not known (0)
+        s.maxRefreshHz = _refreshHz;
+        s.minRefreshHz = _vrr ? 0.0 : _refreshHz.load();
         s.visible = IsVisible();
         s.vrr = _vrr;
         return s;
@@ -511,7 +530,25 @@ private:
         s.width = s.height = 0;
     }
 
-    bool AllocateSlot(Slot& s, int width, int height, QOpenGLFunctions* f)
+    /// GUI thread: BeginFrame gives no framebuffer; `why` with the system's last error for the window's log
+    unsigned Failed(const char* why, int width = 0, int height = 0)
+    {
+        const unsigned long error = GetLastError();
+        const HRESULT removed = _device ? _device->GetDeviceRemovedReason() : S_OK;
+        char line[256];
+        int n = std::snprintf(line, sizeof line, "%s", why);
+        if (width > 0 && n > 0 && n < static_cast<int>(sizeof line))
+            n += std::snprintf(line + n, sizeof line - n, " (%dx%d)", width, height);
+        if (n > 0 && n < static_cast<int>(sizeof line))
+            std::snprintf(line + n, sizeof line - n, ", last error %lu, device %s 0x%08lX", error,
+                          removed == S_OK ? "ok" : "removed", static_cast<unsigned long>(removed));
+        std::lock_guard<std::mutex> lock(_statsMutex);
+        _failure = line;
+        return 0;
+    }
+
+    /// GUI thread: the slot's texture, its interop registration and framebuffer. @return nullptr, or what failed
+    const char* AllocateSlot(Slot& s, int width, int height, QOpenGLFunctions* f)
     {
         ReleaseSlot(s);
         D3D11_TEXTURE2D_DESC td{};
@@ -525,22 +562,24 @@ private:
         td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
         if (FAILED(_device->CreateTexture2D(&td, nullptr, &s.texture)) ||
             FAILED(_device->CreateShaderResourceView(s.texture.Get(), nullptr, &s.srv)))
-            return false;
+            return "the slot's D3D11 texture not made";
         f->glGenTextures(1, &s.glTexture);
         s.interop =
             _registerObject(_interopDevice, s.texture.Get(), s.glTexture, GL_TEXTURE_2D, kWglAccessWriteDiscardNV);
-        if (!s.interop || !_lockObjects(_interopDevice, 1, &s.interop))
-            return false;
+        if (!s.interop)
+            return "wglDXRegisterObjectNV failed";
+        if (!_lockObjects(_interopDevice, 1, &s.interop))
+            return "wglDXLockObjectsNV failed on a new slot";
         f->glGenFramebuffers(1, &s.framebuffer);
         f->glBindFramebuffer(GL_FRAMEBUFFER, s.framebuffer);
         f->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s.glTexture, 0);
         const bool complete = f->glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         _unlockObjects(_interopDevice, 1, &s.interop);
         if (!complete)
-            return false;
+            return "the slot's framebuffer incomplete";
         s.width = width;
         s.height = height;
-        return true;
+        return nullptr;
     }
 
     /// Presenter thread: the slot into the back buffer (resized to it first)
@@ -693,46 +732,62 @@ private:
     /// without tearing (tearing in an independent-flip window would show) until the vblanks follow the presents again,
     /// then VRR again: the window started in a remote desktop session (a 32 Hz grid) or behind another one (windowed
     /// G-Sync is the foreground window's) and moved to the console or to the front gets it there, without a restart
+    /// VRR is on while the vblanks follow the presents: off the display's grid and at the presents' interval. A steady
+    /// grid of their own that the presents are not on is no VRR, whoever's grid it is: the display's (a fixed display,
+    /// VRR off for this window), or another one's (a remote session's display reports its own rate while the vblank
+    /// wait still hears the monitor the adapter drives). A mode change's mix of two grids is neither: nothing changes
     void CheckVrr()
     {
-        double vblank = 0.0, present = 0.0;
+        double vblank = 0.0, vblankLo = 0.0, vblankHi = 0.0, present = 0.0;
         {
             std::lock_guard<std::mutex> lock(_statsMutex);
             if (_vblankIntervals.size() < kVBlankWindow / 2 || _presentIntervals.size() < kVBlankWindow / 2)
                 return;
             vblank = Percentile(_vblankIntervals, 0.50);
+            vblankLo = Percentile(_vblankIntervals, 0.10);
+            vblankHi = Percentile(_vblankIntervals, 0.90);
             present = Percentile(_presentIntervals, 0.50);
         }
         const double refreshHz = MonitorRefreshHz(_hwnd);
         _refreshHz = refreshHz;
-        if (refreshHz <= 0.0)
+        if (refreshHz <= 0.0 || vblank <= 0.0 || present <= 0.0)
             return;
         const double refresh = 1000.0 / refreshHz;
         const bool onGrid = std::abs(vblank - refresh) < refresh * 0.03;
-        const bool presentsOffGrid = std::abs(present - refresh) > refresh * 0.10;
-        if (!onGrid)
-            _panelFollows = true;
-        // Off the grid and with the presents: the panel follows them (not a mode change's mix of two grids)
-        if (!onGrid && std::abs(vblank - present) < present * 0.03 && Policy() == PresentPolicy::Auto && _tearing &&
-            !_vrr)
+        const bool follows = std::abs(vblank - present) < present * 0.03;
+        const bool steady = vblankHi - vblankLo < vblank * 0.03;
+        const bool presentsOffGrid = std::abs(present - vblank) > vblank * 0.10;
+        // Off the grid and with the presents: the panel follows them
+        if (follows && !onGrid)
         {
-            _vrr = true;
+            _panelFollows = true;
+            if (Policy() == PresentPolicy::Auto && _tearing && !_vrr)
             {
-                std::lock_guard<std::mutex> lock(_statsMutex);
-                _vrrNote.clear();
+                _vrr = true;
+                {
+                    std::lock_guard<std::mutex> lock(_statsMutex);
+                    _vrrNote.clear();
+                }
+                qInfo().noquote() << "DxgiPresenter: the vblanks follow the frames again (every" << vblank
+                                  << "ms) - VRR, Present(0, ALLOW_TEARING) from now on";
             }
-            qInfo().noquote() << "DxgiPresenter: the vblanks follow the frames again (every" << vblank
-                              << "ms) - VRR, Present(0, ALLOW_TEARING) from now on";
+            return;
         }
-        if (!onGrid || !presentsOffGrid)
+        if (!(onGrid || steady) || !presentsOffGrid)
             return;
         _panelFollows = false;
         if (Policy() == PresentPolicy::Auto && _vrr)
         {
             _vrr = false;
-            char note[160];
-            std::snprintf(note, sizeof note, "no VRR: vblanks every %.2f ms while frames come every %.2f ms", vblank,
-                          present);
+            char note[200];
+            if (onGrid)
+                std::snprintf(note, sizeof note, "no VRR: vblanks every %.2f ms while frames come every %.2f ms",
+                              vblank, present);
+            else
+                std::snprintf(note, sizeof note,
+                              "no VRR: vblanks every %.2f ms, not the display's %.2f ms (another display's: a remote "
+                              "session), while frames come every %.2f ms",
+                              vblank, refresh, present);
             {
                 std::lock_guard<std::mutex> lock(_statsMutex);
                 _vrrNote = note;
@@ -852,6 +907,7 @@ private:
                     AddSample(_errors, _errorNext, static_cast<double>(screen - p.askedNs) / 1e6);
                     // The lead from the frame's own time: a window that handed it over late was late too
                     _lead.Shown(screen - (p.atNs > 0 ? p.atNs : p.askedNs));
+                    _beat.Shown(p.trace.picture, p.trace.targetNs, screen, static_cast<int64_t>(1e9 / topHz));
                 }
                 else
                 {
@@ -926,6 +982,7 @@ private:
     mutable std::mutex _statsMutex;
     std::deque<Pending> _pending;
     std::vector<double> _errors;
+    ScreenBeat _beat;  // under _statsMutex
     size_t _errorNext = 0;
     std::vector<double> _gpuWaits;
     size_t _gpuWaitNext = 0;
@@ -934,6 +991,7 @@ private:
     std::vector<double> _vblankIntervals;
     std::vector<double> _presentIntervals;
     int64_t _lastAtNs = 0;
+    std::string _failure;  ///< the last BeginFrame failure (_statsMutex)
     uint64_t _presented = 0;
     uint64_t _shown = 0;
     uint64_t _dropped = 0;

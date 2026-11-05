@@ -40,15 +40,22 @@ public:
         double maxRefreshHz = 0.0;
         bool visible = true;  ///< some of the window is on screen
         bool vrr = false;     ///< each frame at its own time (c-vrr); false: on the refresh grid (b-vsync)
+        uint64_t beatFrames = 0;   ///< pictures judged against the beat pattern (ScreenBeat)
+        uint64_t offBeat = 0;      ///< ... on screen for a refresh count outside it
+        double soundOffsetP50 = 0.0;  ///< screen time minus the picture's target (its sound plus the lip-sync trim)
+        double soundOffsetP99 = 0.0;
     };
 
-    /// Where a present came from, for UNREAL_PRESENT_TRACE only (steady clock, ns; 0 = unknown)
+    /// Where a present came from (steady clock, ns; 0 = unknown): UNREAL_PRESENT_TRACE's columns, and the picture and
+    /// its target the screen times are judged by (ScreenBeat)
     struct TraceInfo
     {
         uint64_t serial = 0;
         int64_t latchNs = 0;    ///< the frame was latched
         int64_t plannedNs = 0;  ///< the wake the window planned
         int64_t wokeNs = 0;     ///< the wake that drew it
+        uint64_t picture = 0;   ///< the picture's number: the frame's serial, or smooth motion's count of pictures
+        int64_t targetNs = 0;   ///< the picture's time on the frame clock (0: a repaint, not judged)
     };
 
     /// The platform's presenter for a window (QWindow::winId()), the GL context that will draw current. nullptr: none
@@ -82,6 +89,9 @@ public:
     virtual uint64_t LastLatePresent() const { return 0; }
     virtual uint32_t LastLateLag() const { return 0; }
     virtual uint64_t LastOnTimePresent() const { return 0; }
+
+    /// Why the last BeginFrame gave no framebuffer (empty: none failed)
+    virtual std::string LastFailure() const { return {}; }
 
     virtual Stats GetStats() const = 0;
     /// One line for the log

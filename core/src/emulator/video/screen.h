@@ -377,6 +377,7 @@ struct PresentFrameInfo
     int64_t targetNs = 0;      ///< steady-clock time the frame should reach the screen
     int64_t latchNs = 0;       ///< steady-clock time it was latched
     FrameClockSource source = FrameClockSource::None;
+    int64_t periodNs = 0;      ///< the machine frame's nominal period (0: not timed yet)
     PictureGeometry geometry;
     /// CopyFrameAt: every frame's target is after the time asked for (start up): the oldest one is served
     bool early = false;
@@ -1038,6 +1039,7 @@ protected:
         float fraction = 1.0f;  // where in the machine frame it was latched (an external picture: mid-frame)
         bool timed = false;
         FrameClockSource source = FrameClockSource::None;
+        int64_t periodNs = 0;   // the machine frame's nominal period it was timed with
     };
     PresentSlotTiming _presentSlotTiming[PRESENT_SLOTS];
     FrameClock _frameClock;                    // emulation thread, under _presentMutex for the stats readers

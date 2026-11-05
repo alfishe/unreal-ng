@@ -131,17 +131,28 @@ inline VideoSync PickVideoSync(bool vrr, double displayHz, double machineHz, Vid
                                                                               : VideoSync::Interpolate;
 }
 
-/// The machine's frame rate from its frames' target times (steady clock, ns): the median of the last periods once
-/// they agree. A pause, turbo or a seek breaks the agreement; the rate stays the last steady one
+/// The machine's frame rate. A frame paced to real time (the audio or the emulated clock) brings the machine's
+/// nominal period (`periodNs`, from its frame length and clock: a Pentagon's 71 680 T at 3.5 MHz is 48.83 Hz): that
+/// is the rate. The targets themselves wander by a few percent (the audio clock's steps, a remote session's audio),
+/// so measuring them gives a rate a little off that a 1 % agreement check rarely confirms. Without a period (an
+/// external picture's source not timed yet) the rate is the median of the last target periods once they agree.
+/// Turbo, a pause or a seek pass no period and break the agreement; the rate stays the last one
 class FrameRateMeter
 {
 public:
     static constexpr size_t kPeriods = 25;
     static constexpr double kSpread = 0.01;  ///< the middle half of the periods within 1 % of the median
 
-    /// A new frame's target time; returns true when the steady rate changed
-    bool Push(int64_t targetNs)
+    /// A new frame's target time and, when it is paced to real time, the machine's nominal period; returns true
+    /// when the rate changed
+    bool Push(int64_t targetNs, int64_t periodNs = 0)
     {
+        if (periodNs > 0)
+        {
+            _periods.clear();
+            _last = targetNs;
+            return Set(std::round(1e9 / static_cast<double>(periodNs) * 100.0) / 100.0, 0.005);
+        }
         if (_last != 0 && targetNs > _last)
         {
             _periods.push_back(targetNs - _last);
@@ -159,11 +170,7 @@ public:
         if (median <= 0.0 || high - low > median * kSpread)
             return false;
         // The rate at 0.01 Hz: the audio clock's trim moves the periods by a few ppm
-        const double hz = std::round(1e9 / median * 100.0) / 100.0;
-        if (std::fabs(hz - _hz) < 0.05)
-            return false;
-        _hz = hz;
-        return true;
+        return Set(std::round(1e9 / median * 100.0) / 100.0, 0.05);
     }
 
     double Hz() const { return _hz; }
@@ -175,6 +182,15 @@ public:
     }
 
 private:
+    /// A measured rate moves by less than `minChange` without being a change: no churn from the trim
+    bool Set(double hz, double minChange)
+    {
+        if (std::fabs(hz - _hz) < minChange)
+            return false;
+        _hz = hz;
+        return true;
+    }
+
     std::vector<int64_t> _periods;
     int64_t _last = 0;
     double _hz = 0.0;

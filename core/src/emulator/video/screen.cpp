@@ -1478,6 +1478,7 @@ void Screen::StampPresentTiming(const FrameStampInput& in)
         const FrameTimingResult result = _frameClock.Next(input);
         timing.targetNs = result.targetNs;
         timing.source = result.source;
+        timing.periodNs = input.periodNs;
         timing.timed = true;
         _lastStampedSerial = _presentSlotSerial[i];
     }
@@ -1596,6 +1597,7 @@ bool Screen::CopyFrameAt(int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFr
         info->targetNs = SlotTargetLocked(chosen);
         info->latchNs = _presentSlotTiming[chosen].latchNs;
         info->source = _presentSlotTiming[chosen].source;
+        info->periodNs = _presentSlotTiming[chosen].periodNs;
         info->geometry = _presentSlotGeometry[chosen];
         info->early = early;
         if (next != PRESENT_SLOTS)
@@ -1639,6 +1641,7 @@ bool Screen::CopyNextFrame(uint64_t afterSerial, uint8_t* dst, size_t dstSize, P
             info->targetNs = SlotTargetLocked(index);
             info->latchNs = _presentSlotTiming[index].latchNs;
             info->source = _presentSlotTiming[index].source;
+            info->periodNs = _presentSlotTiming[index].periodNs;
             info->geometry = _presentSlotGeometry[index];
         }
         return true;

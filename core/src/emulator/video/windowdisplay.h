@@ -454,8 +454,9 @@ inline Result Set(const WindowDisplayChange& change)
     return r;
 }
 
-/// The frame presenter's part of the report: presenter, fixed_display, vrr, sync {mode, reason}, refresh_hz {min, max}, presented, shown, dropped,
-/// late, lead_ms, error_ms {p50, p99, max}, gpu_wait_ms {p50, max}, smooth {mode, device, game, frames, pictures,
+/// The frame presenter's part of the report: presenter, fixed_display, vrr, sync {mode, reason}, refresh_hz {min, max},
+/// clock, presented, shown, dropped, late, beat {frames, off}, lead_ms, error_ms {p50, p99, max}, sound_offset_ms
+/// {p50, p99}, gpu_wait_ms {p50, max}, smooth {mode, device, game, frames, pictures,
 /// renders, blended, interpolated, motion_fields, on_device, held_flicker}, display {state, reason, hz, original_hz,
 /// machine_hz}
 inline StateNode PresentReport(const WindowPresentStats& p)
@@ -472,16 +473,25 @@ inline StateNode PresentReport(const WindowPresentStats& p)
     refresh["min"] = p.minRefreshHz;
     refresh["max"] = p.maxRefreshHz;
     node["refresh_hz"] = refresh;
+    node["clock"] = p.clock;
     node["presented"] = p.presented;
     node["shown"] = p.shown;
     node["dropped"] = p.dropped;
     node["late"] = p.late;
+    StateNode beat = StateNode::Object();
+    beat["frames"] = p.beatFrames;
+    beat["off"] = p.offBeat;
+    node["beat"] = beat;
     node["lead_ms"] = p.leadMs;
     StateNode error = StateNode::Object();
     error["p50"] = p.errorP50Ms;
     error["p99"] = p.errorP99Ms;
     error["max"] = p.errorMaxMs;
     node["error_ms"] = error;
+    StateNode sound = StateNode::Object();
+    sound["p50"] = p.soundOffsetP50Ms;
+    sound["p99"] = p.soundOffsetP99Ms;
+    node["sound_offset_ms"] = sound;
     StateNode wait = StateNode::Object();
     wait["p50"] = p.gpuWaitP50Ms;
     wait["max"] = p.gpuWaitMaxMs;

@@ -1694,10 +1694,13 @@ Fields: `backend` (`gpu` / `software`), `gpu_available`, `gpu`, `crt`, `crt_prof
 `blending`, `blending_frames`, `blending_weights`, `blending_decay`, `smooth_motion`, `effects_device`, `present_policy`, `display_rate`, `lip_sync_offset_ms`, `present` (how
 the frames reach the screen: `presenter` metal / dxgi / gl / software, `fixed_display`, `vrr` (each frame at its own
 time, else on the refresh grid), `sync` {mode: off / vrr / display_rate / interpolate, reason: why the steps before
-it are not} (View > Video Synchronization's step in effect), `refresh_hz` {min, max},
-`presented`, `shown`, `dropped`, `late` (a refresh late), `lead_ms`, `error_ms` {p50, p99, max}, `gpu_wait_ms` {p50,
-max}: the native presenter's last 600 presents; `smooth` {`mode` in effect, `device`, `game`, `frames`, `pictures`,
-`renders`, `blended`, `interpolated`, `motion_fields`, `on_device`, `held_flicker`}; `display` {`state` keep / matched / unchanged, `reason` (why unchanged), `hz` the display's rate now, `original_hz` its own, `machine_hz` the measured frame rate}), `emulator` (the instance the window shows),
+it are not} (View > Video Synchronization's step in effect), `refresh_hz` {min, max}, `clock` (what timed the frame
+on screen: `audio` when its sound is heard, `emulated` with no audio device delivering, `latch` in turbo, `none`),
+`presented`, `shown`, `dropped`, `late` (a refresh late), `beat` {`frames` judged, `off`: on screen for a refresh count
+outside floor / ceil of their span over the refresh, a refresh missed, a frame held or never shown}, `lead_ms`,
+`error_ms` {p50, p99, max}, `sound_offset_ms` {p50, p99: screen time minus the picture's sound, the lip-sync trim
+taken out}, `gpu_wait_ms` {p50, max}: the native presenter's last 600 presents (the beat since the start); `smooth` {`mode` in effect, `device`, `game`, `frames`, `pictures`,
+`renders`, `blended`, `interpolated`, `motion_fields`, `on_device`, `held_flicker`}; `display` {`state` keep / matched / unchanged, `reason` (why unchanged), `hz` the display's rate now, `original_hz` its own, `machine_hz` the machine's own frame rate: its frame length at its CPU clock, 48.83 on a Pentagon}), `emulator` (the instance the window shows),
 `fullscreen`, `scale` (1..4 while the window is fitted to the picture, 0 when resized by hand, maximized or full
 screen), `toolbar`, `status_bar`, `hud`, `hud_theme`, `hud_themes` (`dark_glass`, `retro_zx`, `cyberpunk`,
 `amber_crt`, `emerald_crt`, `light_modern`), `hud_notices` ({id: shown}, the 22 categories of View > HUD

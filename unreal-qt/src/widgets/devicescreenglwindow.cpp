@@ -278,9 +278,53 @@ void DeviceScreenGLWindow::renderNative(bool force)
             paintGL();
             // A forced repaint of the frame on screen goes at once; a new frame at its target
             int64_t at = newFrame && _shownInfo.targetNs > 0 ? _shownInfo.targetNs : 0;
+            // The picture and its time on the frame clock, for the beat and the screen-to-sound offset: the frame, or
+            // smooth motion's picture for its refresh
+            NativePresenter::TraceInfo trace{_shownInfo.serial, _shownInfo.latchNs, _presentPlannedNs, now,
+                                             _shownInfo.serial, at};
             if (newFrame && _smoothRefreshNs != 0)
+            {
                 at = _smoothRefreshNs - _smoothPeriodNs / 2;
-            _presenter->PresentFrame(at, {_shownInfo.serial, _shownInfo.latchNs, _presentPlannedNs, now});
+                trace.picture = ++_smoothPictures;
+                trace.targetNs = _smoothRefreshNs;
+            }
+            _presenter->PresentFrame(at, trace);
+            if (_presentFailingSinceNs != 0)
+            {
+                qInfo().noquote() << "DeviceScreenGLWindow: presenting again after"
+                                  << (now - _presentFailingSinceNs) / 1'000'000 << "ms," << _presentFailures
+                                  << "pictures not presented";
+                _presentFailingSinceNs = 0;
+            }
+        }
+        else if (pixels.isEmpty())
+        {
+            // A window of no size has nothing to present
+        }
+        else if (_presentFailingSinceNs == 0)
+        {
+            // Every failure is told: a picture not presented is a black or frozen window
+            _presentFailingSinceNs = now;
+            _presentFailures = 1;
+            qWarning().noquote() << "DeviceScreenGLWindow: picture not presented:"
+                                 << QString::fromStdString(_presenter->LastFailure());
+        }
+        else if (now - _presentFailingSinceNs <= PRESENTER_RESTART_NS)
+        {
+            _presentFailures++;
+        }
+        else
+        {
+            // No framebuffer for a while (seen once on .101 after a snapshot load: the presenter thread idle, every
+            // BeginFrame failing, the window black until a restart): a new presenter, made on the next paint
+            qWarning().noquote() << "DeviceScreenGLWindow: no picture presented for"
+                                 << (now - _presentFailingSinceNs) / 1'000'000 << "ms (" << _presentFailures + 1
+                                 << "tries):" << QString::fromStdString(_presenter->LastFailure())
+                                 << "; the native presenter is made anew";
+            _presentFailingSinceNs = 0;
+            _presenter.reset();
+            update();  // the timer's present at once makes it
+            return;
         }
     }
 
@@ -367,6 +411,10 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
         out.gpuWaitP50Ms = s.gpuWaitP50;
         out.gpuWaitMaxMs = s.gpuWaitMax;
         out.vrr = s.vrr;
+        out.beatFrames = s.beatFrames;
+        out.offBeat = s.offBeat;
+        out.soundOffsetP50Ms = s.soundOffsetP50;
+        out.soundOffsetP99Ms = s.soundOffsetP99;
     }
     else
     {
@@ -383,6 +431,7 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
     out.displayHz = _displayHz;
     out.originalHz = _originalHz;
     out.machineHz = _frameRate.Hz();
+    out.clock = FrameClockSourceName(_shownInfo.source);
     return out;
 }
 
@@ -1209,7 +1258,9 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
                 _idleRefreshes++;
             _shownInfo = info;
             // The machine's rate: a change (another machine, the first steady second) decides the display's
-            if (newFrame && info.serial != 0 && info.targetNs > 0 && _frameRate.Push(info.targetNs) &&
+            // (the nominal period of a frame paced to real time; a turbo frame, timed by its latch, has none)
+            const int64_t period = info.source == FrameClockSource::Latch ? 0 : info.periodNs;
+            if (newFrame && info.serial != 0 && info.targetNs > 0 && _frameRate.Push(info.targetNs, period) &&
                 (_displayRate == DisplayRate::Match || _smoothAuto))
                 QMetaObject::invokeMethod(this, [this]() {
                     updateDisplayRate();

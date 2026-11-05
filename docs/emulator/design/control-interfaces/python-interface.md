@@ -1791,7 +1791,7 @@ emu.window_display()                 # GUI window display settings: {'backend' (
                                      #   'blend' / 'interpolate' / 'auto'), 'effects_device' ('gpu' / 'cpu'),
                                      #   'present_policy' ('auto' / 'vrr' / 'vsync'), 'display_rate' ('keep' /
                                      #   'match'), 'lip_sync_offset_ms'
-                                     #   (-200..200), 'present' {'presenter', 'vrr', 'sync': {'mode', 'reason'}, 'late', 'lead_ms', 'error_ms', 'smooth': {'mode',
+                                     #   (-200..200), 'present' {'presenter', 'vrr', 'sync': {'mode', 'reason'}, 'clock', 'late', 'beat': {'frames', 'off'}, 'lead_ms', 'error_ms', 'sound_offset_ms': {'p50', 'p99'}, 'smooth': {'mode',
                                      #   'renders', 'interpolated', ...}, 'display': {'state', 'reason', 'hz', ...}} (the frame presenter's timing), 'emulator' (the instance the
                                      #   window shows), 'fullscreen', 'scale' (1..4, 0 = resized by hand), 'toolbar',
                                      #   'status_bar', 'hud', 'hud_theme', 'hud_themes', 'hud_notices' {id: shown},

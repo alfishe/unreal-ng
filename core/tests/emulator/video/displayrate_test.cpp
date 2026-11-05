@@ -107,6 +107,29 @@ TEST(DisplayRate_Test, MeterFindsTheSteadyRate)
     EXPECT_FALSE(meter.Push(t));
 }
 
+TEST(DisplayRate_Test, MeterTakesTheNominalPeriodOfPacedFrames)
+{
+    // A remote session's audio clock: targets wandering by a few percent, never 1 % steady. The machine's own
+    // period gives its rate at the first frame
+    FrameRateMeter meter;
+    int64_t t = 1'000'000'000;
+    EXPECT_TRUE(meter.Push(t, 20'480'000));  // a Pentagon: 71 680 T at 3.5 MHz
+    EXPECT_DOUBLE_EQ(meter.Hz(), 48.83);
+    for (int i = 0; i < 60; i++)
+    {
+        t += 20'480'000 + ((i % 4) - 2) * 600'000;
+        EXPECT_FALSE(meter.Push(t, 20'480'000));
+    }
+    EXPECT_DOUBLE_EQ(meter.Hz(), 48.83);
+    // Another machine: a Spectrum 128K's 70 908 T at 3.5469 MHz
+    EXPECT_TRUE(meter.Push(t + 20'000'000, 19'992'000));
+    EXPECT_DOUBLE_EQ(meter.Hz(), 50.02);
+    // Turbo (no period): the rate stays
+    for (int i = 0; i < 30; i++)
+        EXPECT_FALSE(meter.Push(t += (i % 2) ? 2'000'000 : 9'000'000));
+    EXPECT_DOUBLE_EQ(meter.Hz(), 50.02);
+}
+
 TEST(DisplayRate_Test, MeterIgnoresUnsteadyFrames)
 {
     FrameRateMeter meter;

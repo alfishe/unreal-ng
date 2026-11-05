@@ -269,6 +269,9 @@ private:
     QTimer* _syncTimer = nullptr;                         ///< auto: updateVideoSync twice a second (VRR engaging)
     QTimer* _presentTimer = nullptr;              ///< native way: the next frame's present
     bool _presentPending = false;                 ///< native way: a forced present asked for
+    int64_t _presentFailingSinceNs = 0;           ///< native way: BeginFrame failing since (0: it works)
+    uint64_t _presentFailures = 0;                ///< ... the pictures not presented since
+    static constexpr int64_t PRESENTER_RESTART_NS = 2'000'000'000;  ///< ... this long: a new presenter
     int64_t _presentLeadNs = 0;                   ///< native way: UNREAL_PRESENT_LEAD_MS, 0 = presentLeadNs() picks
     int64_t _statusLogNs = 0;                     ///< native way: the last stats line in the log
     int64_t _presentPlannedNs = 0;                ///< native way: the wake the timer was set for (trace)
@@ -318,6 +321,7 @@ private:
     uint64_t _smoothDrained = 0;
     uint32_t _smoothLag = 0;  // the lag (refreshes) of the run of late presents the last drain answered  ///< presents handed over before the last refresh left out (a late one: renderNative)
     int64_t _smoothRefreshNs = 0;  ///< native way on a refresh grid: the refresh drawn for (0: no grid)
+    uint64_t _smoothPictures = 0;  ///< smooth motion's pictures presented: their numbers for the presenter's beat count
     int64_t _smoothPeriodNs = 0;
 
     FrameHistory _frameHistory;

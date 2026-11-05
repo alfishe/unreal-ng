@@ -568,8 +568,17 @@ directly: the screen time minus the frame's target.
   `[VIDEO] PresentPolicy`, applied to the native presenter at once (Metal: off the refresh grid or on it; DXGI:
   tearing presents or `Present(0)`, auto keeps its VRR check); `UNREAL_PRESENT_POLICY` overrides it. The report's
   `present.vrr` says which way the frames go now. `lip_sync_offset_ms` (-200..200) is `[VIDEO] LipSyncOffsetMs`,
-  a relaxed atomic the emulation thread reads per latch: it moves the next frame's target time. Not yet: the
-  clock in use, frames off the beat pattern and the screen-to-sound offset. The policy topic is `video.present`, a
+  a relaxed atomic the emulation thread reads per latch: it moves the next frame's target time. The report's
+  `present.clock` is the clock that timed the frame on screen (audio / emulated / latch / none, `FrameClockSource`),
+  `present.beat` {frames, off} the pictures judged against the beat pattern and those outside it, and
+  `present.sound_offset_ms` {p50, p99} the screen time minus the picture's sound over the last 600 shown. Both come
+  from `ScreenBeat` (`core/src/emulator/video/screenbeat.h`), fed by each native presenter with the screen time it
+  learns and the picture's target the window hands over (`TraceInfo.picture`, `targetNs`: the frame, or with smooth
+  motion each picture at its refresh). The rule is POC 037's irregular count: a picture stays on screen for floor or
+  ceil of its target span over the display's shortest refresh, or it is off the beat (a refresh missed, a frame held,
+  a frame due a refresh or more never shown); the span is the pictures' own target difference, so a fixed display's
+  beat, VRR, a machine faster than the display and interpolation share it. The offset takes the lip-sync trim out
+  again (the target carries it). The GL and software paths have no screen times: the counts stay 0. The policy topic is `video.present`, a
   monitoring name (so a verb on every plane and a WebSocket topic of the process): the presenter, the policy, VRR,
   the refresh range, smooth motion's setting and mode in effect, the display rate switch's state; no counters, so
   a message only when one of them changes. The window publishes its settings when they change, checked once a second
@@ -813,8 +822,10 @@ Each phase lands on its own with tests and docs.
       games' blocks or most of the dot clouds. Owner 2026-11-03: left as a limit.
 6. **Automation planes.** Settings and `PresentStats` on CLI, Python, Lua, MCP, REST and WebSocket; docs chain per the
    guidelines. On the branch: `smooth_motion`, `effects_device`, `present_policy`, `lip_sync_offset_ms`,
-   `display_rate`, the `present` report and the `video.present` topic (section 6.4); not yet the clock in use, the
-   frames off the beat pattern and the screen-to-sound offset.
+   `display_rate`, the `present` report with the clock in use, the frames off the beat pattern and the
+   screen-to-sound offset (`ScreenBeat_Test`), and the `video.present` topic (section 6.4). Tools > Video
+   Synchronization shows them in fixed cells (numbers right aligned at a fixed width, the reason three lines high,
+   rates over a second), so nothing moves while they change.
 7. **Display rate switch** (section 4.7, on the branch): `[VIDEO] DisplayRate`, the mode picking and the frame-rate
    meter with unit tests (`DisplayRate_Test`), the macOS and Windows switches, `display_rate` and `present.display`
    on every plane. Measured on a monitor by the owner: the agent's shell has no window server.

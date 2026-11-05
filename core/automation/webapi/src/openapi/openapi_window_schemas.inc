@@ -41,11 +41,20 @@
             pf("vrr", "boolean",
                "Native presenters: each frame presented at its own time (true) or on the refresh grid (false), as the "
                "policy and the display decide");
-            pf("refresh_hz", "object", "{min, max}: the display's refresh range");
+            pf("refresh_hz", "object", "{min, max}: the display's refresh range (min 0: a variable range whose low end the system does not report, Windows)");
+            pf("clock", "string",
+               "The clock the frame on screen was timed by: audio (when its sound is heard), emulated (no audio device "
+               "delivering), latch (turbo, a run not paced to real time), none (untimed)");
             for (const char* count : {"presented", "shown", "dropped", "late"})
                 pf(count, "integer", "Presents since the start: handed over, on screen, never on screen, a refresh late");
             pf("lead_ms", "number", "The adaptive lead: how long before its time a frame is drawn and handed over");
             pf("error_ms", "object", "{p50, p99, max}: screen time minus the time asked for");
+            pf("beat", "object",
+               "Native presenters, since the start: {frames (pictures judged), off (on screen for a refresh count "
+               "outside floor / ceil of their span over the refresh: a refresh missed, a frame held or never shown)}");
+            pf("sound_offset_ms", "object",
+               "{p50, p99} over the last 600 shown: screen time minus the picture's sound on the clock in use (the "
+               "lip-sync trim taken out)");
             pf("gpu_wait_ms", "object", "{p50, max}: the wait for GL's draw before the native pass");
             pf("smooth", "object",
                "{mode (in effect: off with temporal blending or without timed frames), device (gpu / cpu), game (a "

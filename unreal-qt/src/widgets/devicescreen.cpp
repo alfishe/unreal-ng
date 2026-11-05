@@ -150,6 +150,7 @@ WindowPresentStats DeviceScreen::presentStats() const
     out.sync = VideoSyncName(_sync);
     out.syncReason = _syncReason;
     out.machineHz = _frameRate.Hz();
+    out.clock = FrameClockSourceName(_shownClock);
     if (_displayRate == DisplayRate::Match)
     {
         out.displayState = "unchanged";
@@ -238,12 +239,13 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
             _frameSource(now, _latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes()), &info))
         {
             drawImage = &_latchedFrame;
+            _shownClock = info.source;
             if (_smoothAuto)
             {
                 if (info.serial != 0 && info.serial != _meteredSerial && info.targetNs > 0)
                 {
                     _meteredSerial = info.serial;
-                    _frameRate.Push(info.targetNs);
+                    _frameRate.Push(info.targetNs, info.source == FrameClockSource::Latch ? 0 : info.periodNs);
                 }
                 updateVideoSync();
             }

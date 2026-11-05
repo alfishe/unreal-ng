@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "emulator/video/screenbeat.h"
 #include "platform/presentlead.h"
 
 namespace
@@ -92,6 +93,7 @@ struct MetalPresenter::Impl
 
     mutable std::mutex statsMutex;
     std::vector<double> errors;  // ms, ring
+    ScreenBeat beat;             // under statsMutex
     size_t errorNext = 0;
     std::vector<double> gpuWaits;  // ms, ring
     size_t gpuWaitNext = 0;
@@ -418,6 +420,9 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
         const uint64_t number = p.presented.load(std::memory_order_relaxed) + 1;
         Impl* impl = &p;
         const TraceInfo traced = info;
+        // The display's shortest refresh, read here (NSScreen on this thread): the beat's unit
+        NSScreen* display = p.view.window.screen ?: [NSScreen mainScreen];
+        const int64_t refreshNs = display.minimumRefreshInterval > 0 ? SecondsToNs(display.minimumRefreshInterval) : 0;
         [drawable addPresentedHandler:^(id<MTLDrawable> d) {
           const CFTimeInterval t = d.presentedTime;
           if (impl->trace)
@@ -440,6 +445,7 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
           impl->lead.Shown(SecondsToNs(t) - (atNs > 0 ? atNs : asked), number, asked - now);
           std::lock_guard<std::mutex> lock(impl->statsMutex);
           impl->AddSample(impl->errors, impl->errorNext, static_cast<double>(SecondsToNs(t) - asked) / 1e6);
+          impl->beat.Shown(traced.picture, traced.targetNs, SecondsToNs(t), refreshNs);
         }];
         if (atNs > now)
             [cb presentDrawable:drawable atTime:static_cast<CFTimeInterval>(atNs) / 1e9];
@@ -529,6 +535,11 @@ MetalPresenter::Stats MetalPresenter::GetStats() const
         errors = p.errors;
         waits = p.gpuWaits;
         drawableWaits = p.drawableWaits;
+        const ScreenBeat::Stats beat = p.beat.GetStats();
+        s.beatFrames = beat.frames;
+        s.offBeat = beat.offBeat;
+        s.soundOffsetP50 = beat.offsetP50Ms;
+        s.soundOffsetP99 = beat.offsetP99Ms;
     }
     auto at = [](std::vector<double>& v, double q) {
         const size_t i = static_cast<size_t>(q * static_cast<double>(v.size() - 1) + 0.5);

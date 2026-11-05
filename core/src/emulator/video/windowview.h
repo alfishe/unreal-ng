@@ -64,6 +64,13 @@ struct WindowPresentStats
     double errorMaxMs = 0.0;
     double gpuWaitP50Ms = 0.0;  ///< the wait for GL's draw before the native pass
     double gpuWaitMaxMs = 0.0;
+    /// The clock the frame on screen was timed by (FrameClockSourceName): "audio" (when its sound is heard),
+    /// "emulated" (no audio device delivering), "latch" (turbo, a run not paced to real time), "none" (untimed)
+    std::string clock = "none";
+    uint64_t beatFrames = 0;  ///< native presenter only: pictures judged against the beat pattern (ScreenBeat)
+    uint64_t offBeat = 0;     ///< ... on screen for a refresh count outside it: a refresh missed, held, never shown
+    double soundOffsetP50Ms = 0.0;  ///< screen time minus the picture's sound (the clock's time, the lip-sync trim out)
+    double soundOffsetP99Ms = 0.0;
 
     std::string smooth = "off";  ///< smooth motion in effect: off / blend / interpolate (off with temporal blending)
     std::string smoothDevice;    ///< where its steps run: "gpu" / "cpu" ("" while off)

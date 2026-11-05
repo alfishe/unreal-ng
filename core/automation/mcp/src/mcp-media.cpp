@@ -200,7 +200,9 @@ std::string WindowDisplaySummary(const Json::Value& s)
         const Json::Value& refresh = present["refresh_hz"];
         line += "\npresent: " + present.get("presenter", "").asString() + ", " +
                 NumberText(refresh.get("max", 0.0).asDouble()) + " Hz" +
-                (present.get("fixed_display", true).asBool() ? " fixed" : " range from " + NumberText(refresh.get("min", 0.0).asDouble()));
+                (present.get("fixed_display", true).asBool()     ? " fixed"
+                 : refresh.get("min", 0.0).asDouble() <= 0.0 ? " variable (its low end not reported)"
+                                                             : " range from " + NumberText(refresh.get("min", 0.0).asDouble()));
         const std::string presenter = present.get("presenter", "").asString();
         if (presenter == "metal" || presenter == "dxgi")
             line += present.get("vrr", false).asBool() ? ", each frame at its time (vrr)" : ", on the refresh grid (vsync)";
@@ -217,7 +219,14 @@ std::string WindowDisplaySummary(const Json::Value& s)
                     NumberText(std::round(present.get("lead_ms", 0.0).asDouble() * 10) / 10) + " ms, error p50 " +
                     NumberText(std::round(error.get("p50", 0.0).asDouble() * 100) / 100) + " p99 " +
                     NumberText(std::round(error.get("p99", 0.0).asDouble() * 100) / 100) + " ms";
+            const Json::Value& beat = present["beat"];
+            const Json::Value& sound = present["sound_offset_ms"];
+            line += ", " + std::to_string(beat.get("off", 0).asUInt64()) + " of " +
+                    std::to_string(beat.get("frames", 0).asUInt64()) + " frames off the beat, screen to sound p50 " +
+                    NumberText(std::round(sound.get("p50", 0.0).asDouble() * 100) / 100) + " p99 " +
+                    NumberText(std::round(sound.get("p99", 0.0).asDouble() * 100) / 100) + " ms";
         }
+        line += ", clock " + present.get("clock", "none").asString();
         // [VIDEO] DisplayRate: the display's mode switched for the machine, or why not
         const Json::Value& display = present["display"];
         const std::string state = display.get("state", "keep").asString();

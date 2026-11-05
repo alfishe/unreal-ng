@@ -100,6 +100,13 @@ void MainWindow::fillPresentSettings(WindowDisplaySettings& s) const
                                             : DisplayRate::Keep);
     }
     s.present = _screenWrapper->presentStats();
+    // The presenter measures against the frame's target, which carries the lip-sync trim: the offset to the sound takes
+    // it out
+    if (context && s.present.shown > 0)
+    {
+        s.present.soundOffsetP50Ms += context->config.lipSyncOffsetMs;
+        s.present.soundOffsetP99Ms += context->config.lipSyncOffsetMs;
+    }
 }
 
 WindowDisplaySettings MainWindow::windowDisplaySettings() const
