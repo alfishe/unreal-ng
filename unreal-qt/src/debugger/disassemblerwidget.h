@@ -294,8 +294,11 @@ private:
     void markCursorLine();
     void publishCursor();
     bool lineOf(uint16_t address, int& line) const;
+    std::map<uint16_t, uint16_t>::const_iterator rowAt(int line) const;  // the row at or below a text line
+    int visibleRows() const;  // text lines the view holds
     QTextCharFormat m_cursorFormat;
     std::optional<uint16_t> m_cursorAddress;
+    int m_rowsRendered = 0;         ///< text lines the last refresh asked for
     bool m_settingContent = false;  ///< setHtml / a programmatic caret move: not the user's cursor
 };
 

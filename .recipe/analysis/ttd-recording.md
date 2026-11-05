@@ -227,6 +227,20 @@ Every scrub pauses the emulator first and leaves it paused at the new
 position; the screen/UI repaint automatically. To continue live execution
 from a past point: seek, then `POST /ttd/resume` (it resumes the emulator).
 
+### Audio during a replay
+
+The audio capture (`POST /audio/capture`, also `to_file`) keeps working while the machine replays; nothing blocks
+its sample tap (measured on a Pentagon with a 2 kHz beeper loop: 2046 Hz replayed against 2043 Hz live). What gets
+sound differs by move:
+
+- `seek` (either direction) fast-forwards the frames from the nearest checkpoint without rendering sound: only the
+  last frame of the jump reaches the capture (about 1 frame of samples for a 40-, 50- or 80-frame jump).
+- `step-forward` renders the sound of every frame it replays (50 steps gave 51.2 frames of samples).
+
+To hear a recorded span: seek to its start, arm a capture (`to_file` for a long one), step forward frame by frame.
+Sound of a live run is captured the same way, with no TTD. The synthesizer phase after a `seek` (AY envelope /
+noise, FM) was not compared with the original on music, only the tone.
+
 ### Bookmarks (agent-friendly labels)
 
 ```bash
