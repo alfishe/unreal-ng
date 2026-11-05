@@ -239,7 +239,9 @@
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["tags"].append("Capture");
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["description"] =
         "Arm/stop/clear a stereo sample capture from the sound core. start arms a target of "
-        "`seconds` of emulated audio (0.01-30.0); the emulator must run to collect samples. `source` records "
+        "`seconds` of emulated audio (0.01-30.0); the emulator must run to collect samples. With `to_file` true the "
+        "samples are written to a WAV file while they come (`path` optional, else a temp file; `wav_path` in the reply) "
+        "and `seconds` may go up to 86400: no memory ceiling, only the disk; stop closes the file. `source` records "
         "one mixer device instead of the master mix (its own buffer, before mute / solo / volume): beeper, ay1, "
         "ay2, fm1, fm2, covox (also the Sprinter's Covox-Blaster DAC), gs, gs_mp3, moonsound_fm, moonsound_pcm, "
         "a ZX-MultiSound's ms_ssg1, ms_ssg2, ms_fm1, ms_fm2 (its YM2203 pair per chip), ms_saa, ms_pcm (GS + SounDrive "
@@ -258,6 +260,10 @@
          ["properties"]["seconds"]["type"] = "number";
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["source"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/audio/capture"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["to_file"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/audio/capture"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["path"]["type"] = "string";
 
     // Per-device mixer (core AudioMixer; DeviceState::AudioMixer: CLI `audio mixer`, Lua / Python audio_mixer() /
     // audio_mixer_set(), MCP aspect audio_mixer)

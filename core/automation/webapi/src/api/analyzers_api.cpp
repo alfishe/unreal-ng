@@ -1593,10 +1593,8 @@ size_t audioCoreRate(Emulator* emulator)
     return context && context->pSoundManager ? context->pSoundManager->getCoreRate() : 44100;
 }
 
-/// Write an interleaved int16 stereo capture to a timestamped WAV under the
-/// OS temp dir (unreal-mcp/). Returns the written path or "" on failure.
-std::string writeCaptureWav(const std::string& emulatorId, const std::vector<int16_t>& buffer, size_t frames,
-                            uint32_t rate)
+/// A fresh timestamped WAV path under the OS temp dir (unreal-mcp/). "" on failure.
+std::string newCaptureWavPath(const std::string& emulatorId)
 {
     namespace fs = std::filesystem;
 
@@ -1619,7 +1617,18 @@ std::string writeCaptureWav(const std::string& emulatorId, const std::vector<int
 
     static std::atomic<uint64_t> counter{0};
     const uint64_t stamp = static_cast<uint64_t>(std::time(nullptr)) * 1000 + counter++;
-    fs::path path = directory / ("audio-" + safeId + "-" + std::to_string(stamp) + ".wav");
+    return (directory / ("audio-" + safeId + "-" + std::to_string(stamp) + ".wav")).string();
+}
+
+/// Write an interleaved int16 stereo capture to a timestamped WAV under the
+/// OS temp dir (unreal-mcp/). Returns the written path or "" on failure.
+std::string writeCaptureWav(const std::string& emulatorId, const std::vector<int16_t>& buffer, size_t frames,
+                            uint32_t rate)
+{
+    namespace fs = std::filesystem;
+    fs::path path = newCaptureWavPath(emulatorId);
+    if (path.empty())
+        return "";
 
     TinyWav wav{};
     if (tinywav_open_write(&wav, 2, static_cast<int32_t>(rate), TW_INT16, TW_INTERLEAVED, path.string().c_str()) != 0)
@@ -1936,11 +1945,15 @@ void EmulatorAPI::audioCapture(const HttpRequestPtr& req, std::function<void(con
         {
             seconds = (*json)["seconds"].asDouble();
         }
-        if (seconds < 0.01 || seconds > 30.0)
+        // "to_file": the samples go to a WAV file while they come (no memory ceiling, only the disk)
+        const bool toFile = json && json->isMember("to_file") && (*json)["to_file"].asBool();
+        const double maxSeconds = toFile ? AudioCaptureAnalyzer::MAX_STREAM_SECONDS : 30.0;
+        if (seconds < 0.01 || seconds > maxSeconds)
         {
             Json::Value error;
             error["error"] = "Bad Request";
-            error["message"] = "'seconds' must be within [0.01, 30.0]";
+            error["message"] = toFile ? "'seconds' must be within [0.01, 86400] with 'to_file'"
+                                      : "'seconds' must be within [0.01, 30.0] (use 'to_file' for longer)";
 
             auto resp = HttpResponse::newHttpJsonResponse(error);
             resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -1971,9 +1984,30 @@ void EmulatorAPI::audioCapture(const HttpRequestPtr& req, std::function<void(con
         // Mutate analyzer subscriptions only while the emulation thread is parked
         ScopedPause pause(emulator.get());
         analyzerManager->activate("audiocapture");
-        capture->startCapture(target, source);
+        std::string streamPath;
+        if (toFile)
+        {
+            streamPath = json->isMember("path") ? (*json)["path"].asString() : newCaptureWavPath(id);
+            std::string streamError;
+            if (streamPath.empty() ||
+                !capture->startStreamCapture(streamPath, static_cast<uint32_t>(rate), target, source, streamError))
+            {
+                Json::Value error;
+                error["error"] = "Conflict";
+                error["message"] = streamError.empty() ? "cannot create the capture file" : streamError;
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k409Conflict);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+        }
+        else
+            capture->startCapture(target, source);
 
         Json::Value ret;
+        if (toFile)
+            ret["wav_path"] = streamPath;
         ret["emulator_id"] = id;
         ret["success"] = capture->isCaptureArmed();
         ret["armed"] = capture->isCaptureArmed();
@@ -2002,7 +2036,10 @@ void EmulatorAPI::audioCapture(const HttpRequestPtr& req, std::function<void(con
         ret["complete"] = capture->isCaptureComplete();
         ret["captured_samples"] = static_cast<Json::UInt64>(capture->getCapturedSamples());
         ret["target_samples"] = static_cast<Json::UInt64>(capture->getTargetSamples());
-        ret["message"] = "Audio capture stopped (buffer retained)";
+        if (capture->isStreaming())
+            ret["wav_path"] = capture->getStreamPath();
+        ret["message"] = capture->isStreaming() ? "Audio capture stopped (file closed)"
+                                                : "Audio capture stopped (buffer retained)";
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);
         addCorsHeaders(resp);
@@ -2083,6 +2120,13 @@ void EmulatorAPI::audioCaptureStatus(const HttpRequestPtr& req,
     ret["progress"] = target > 0 ? static_cast<double>(captured) / target : 0.0;
     ret["sample_rate"] = static_cast<Json::UInt64>(audioCoreRate(emulator.get()));
     ret["channels"] = 2;
+    ret["to_file"] = capture->isStreaming();
+    if (capture->isStreaming())
+    {
+        ret["wav_path"] = capture->getStreamPath();
+        ret["file_closed"] = capture->isStreamClosed();
+        ret["file_failed"] = capture->hasStreamFailed();
+    }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -2140,8 +2184,42 @@ void EmulatorAPI::audioCaptureResult(const HttpRequestPtr& req,
         return;
     }
 
+    if (capture->isStreaming())
+    {
+        // File mode: the audio is in the WAV, nothing is held in memory to analyze
+        if (!capture->isStreamClosed())
+        {
+            Json::Value error;
+            error["error"] = "Conflict";
+            error["message"] = "The capture file is still being written - POST action=stop first";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k409Conflict);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        const size_t rate = audioCoreRate(emulator.get());
+        const size_t frames = capture->getCapturedSamples() / 2;
+        Json::Value ret;
+        ret["emulator_id"] = id;
+        ret["sample_rate"] = static_cast<Json::UInt64>(rate);
+        ret["channels"] = 2;
+        ret["frames"] = static_cast<Json::UInt64>(frames);
+        ret["duration_seconds"] = static_cast<double>(frames) / static_cast<double>(rate);
+        ret["complete"] = capture->isCaptureComplete();
+        ret["wav_path"] = capture->getStreamPath();
+        ret["file_failed"] = capture->hasStreamFailed();
+        std::error_code ec;
+        const auto size = std::filesystem::file_size(capture->getStreamPath(), ec);
+        ret["wav_bytes"] = ec ? 0 : static_cast<Json::UInt64>(size);
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     const auto& buffer = capture->getBuffer();
-    const size_t frames = buffer.size() / 2;
+    const size_t frames = std::min(buffer.size(), capture->getCapturedSamples()) / 2;
     if (frames == 0)
     {
         Json::Value error;

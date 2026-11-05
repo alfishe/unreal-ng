@@ -192,6 +192,13 @@ How to use them:
   collects nothing; `audio/capture/result` answers `409` while a capture is
   armed but incomplete ("poll /audio/capture/status first") and `409` when
   there is no captured audio at all.
+- **Long captures go to a file.** The memory capture holds 30 s at most. `POST /audio/capture
+  {"action":"start","seconds":600,"to_file":true,"path":"..."}` streams a WAV through a writer thread (up to
+  24 h, only the disk limits it); `stop` closes the file, `status` shows `wav_path` / `file_closed`, `result` gives
+  the path and length (no level analysis: the samples are not in memory). The `cap.audio_capture` action always
+  streams, so it has no 30 s ceiling. CLI, Lua, Python and MCP keep the 30 s memory capture.
+- **A stopped capture holds only what came.** `stop` cuts the buffer to the captured samples; the result
+  and the WAV never carry a silent tail up to the target.
 - **One capture buffer per instance.** A new `start` replaces the previous
   one; read or export the result first. `seconds` outside 0.01-30 is a `400`.
 - **`source` is validated at arming time.** An unknown key, or a device that
