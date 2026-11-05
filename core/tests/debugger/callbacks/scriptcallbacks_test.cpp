@@ -219,7 +219,8 @@ TEST_F(ScriptCallbacks_Test, TapHitsArriveAsSnapshots)
     bad.tap.address = 0x8009;
     bad.tap.condition = "RD == 1";
     EXPECT_EQ(_callbacks->Register(bad, error), 0u);
-    EXPECT_NE(error.find("RD is not supplied"), std::string::npos) << error;
+    EXPECT_NE(error.find("RD ("), std::string::npos) << error;
+    EXPECT_NE(error.find("exists only on"), std::string::npos) << error;
 }
 
 TEST_F(ScriptCallbacks_Test, AFullRingDropsAndNeverWaits)
