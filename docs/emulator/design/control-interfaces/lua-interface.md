@@ -849,6 +849,8 @@ id = gs_on_dac_fetch(fn, {mode="sync"})  -- a card event callback (hit.arg its d
 id, why = bp_chipreg("ay", 7, {value=0x3F, vmask=0x3F})  -- a sound chip register write by the main CPU: ay, fm,
                                -- saa, opl4, opl4wave, dac, cbl; to= a range end, unit= one chip of the kind
 bp_reset_hits(id)              -- hit counter back to 0 (no id: all)
+bp(0x0038, {stop=false})       -- only counts its hits, never stops (bp, bp_read, bp_write, bp_port_in/out)
+bp_hits(id)                    -- the hit count; -1 for an unknown id
 bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)
 bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id

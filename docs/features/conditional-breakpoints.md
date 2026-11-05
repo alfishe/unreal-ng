@@ -133,6 +133,16 @@ A hit policy (`--hits 5`, `>=5`, `%5`) counts `hit_count`. So `bp 0x8000 --hits 
 #8000 runs with A = 7. `HITS` inside the condition is the count before this match. Resetting the hit counters resets
 both counters.
 
+### Counting without stopping
+
+A breakpoint can count its hits and never stop: `--count` on the CLI (`bp`, `wp`, `bport`, `bevent`, `bchip`),
+`stop: false` on WebAPI and MCP `bp_add`, `{stop=false}` in Lua, `stop=False` in Python, "Count only (never stops)"
+in the Qt editor. `bp 0x0038 --count` counts the interrupts while the program runs at full speed; `bplist` (and the
+WebAPI list, MCP `bp_list`, Lua / Python `bp_hits(id)`) shows the count, a condition still decides which matches
+count (`wp 0x5C3A w --count if VAL != 0`). Memory, port, event and chip register breakpoints only (the kinds a tap
+watches): it is a tap of no sink, so it costs what a tap costs and runs in a direct run too. The list marks it
+`count only` (`stop: false`); a hit policy has nothing to pick there, every hit is counted.
+
 ## Checks when a condition is set
 
 A condition is checked when it is set, whether with the breakpoint or later with `bpcond` / `bp_condition`. A bad

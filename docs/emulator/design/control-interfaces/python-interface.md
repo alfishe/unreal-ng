@@ -1209,6 +1209,8 @@ id = emu.gs_on_dma_done(fn)          # a card event callback (hit["arg"] its det
                                     # gs_on_reply, gs_on_int, gs_on_nmi, gs_on_page, gs_on_dac_fetch, gs_on_clock_change,
                                     # gs_on_dma_start, gs_on_gscfg0, gs_on_port_in(port, fn), gs_on_port_out(port, fn); cpu="ms"
 emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
+emu.bp(0x0038, stop=False)          # only counts its hits, never stops (bp, bp_read, bp_write, bp_port_in/out)
+emu.bp_hits(id)                     # the hit count; -1 for an unknown id
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id

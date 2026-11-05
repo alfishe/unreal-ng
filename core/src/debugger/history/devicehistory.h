@@ -239,6 +239,12 @@ private:
                 }
                 _written.fetch_add(1, std::memory_order_relaxed);
             }
+            // On disk per batch, not when the stream closes: a reader (tail -f, an agent) sees the records while
+            // the machine runs, and the written count is what the file holds
+            if (!batch.empty())
+            {
+                std::fflush(_file);
+            }
             batch.clear();
         }
         std::fflush(_file);

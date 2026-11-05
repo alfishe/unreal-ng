@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testwaithelper.h"
 
 namespace
 {
@@ -106,6 +107,23 @@ TEST(DeviceHistory_Test, StreamWritesCompletedRecords)
     ASSERT_EQ(lines.size(), 5u) << "the ring keeps 2, the stream all 5";
     EXPECT_EQ(lines[0], R"({"value":1,"done":true})");
     EXPECT_EQ(lines[4], R"({"value":5,"done":true})");
+}
+
+/// The records reach the file while the stream is open, not only when it closes
+TEST(DeviceHistory_Test, StreamIsOnDiskWhileOpen)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("history-stream-open.jsonl");
+    TestHistory h("dev", "things");
+    std::string error;
+    ASSERT_TRUE(h.Configure({ .mode = history::Mode::Ring, .limit = 2, .stream = path }, error)) << error;
+    for (int i = 1; i <= 3; i++)
+        h.Push({ i });  // the third stays open: the next record or the close completes it
+    const bool onDisk = TestWait::For([&path] { return Lines(path).size() == 2; });
+    EXPECT_TRUE(onDisk) << "lines in the file while open: " << Lines(path).size();
+    if (onDisk)
+        EXPECT_EQ(Lines(path)[1], R"({"value":2,"done":false})");
+    ASSERT_TRUE(h.Configure({ .mode = history::Mode::Off }, error));
+    EXPECT_EQ(Lines(path).size(), 3u) << "the close writes the open one";
 }
 
 /// Paused: nothing recorded, the records kept; resume goes on; a configuration starts unpaused

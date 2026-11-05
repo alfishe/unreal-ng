@@ -599,8 +599,8 @@ protected:
     }
 
     /// bp / bp_read / bp_write / bp_port_in / bp_port_out: `options` is nothing, a page string ("ram32"), or
-    /// a table {page=, to=, slot_only=, mask=, hits=, condition=, dialect=, cpu=}. The breakpoint id; -1 and the reason
-    /// when refused
+    /// a table {page=, to=, slot_only=, mask=, hits=, condition=, dialect=, cpu=, stop=} (stop = false: it only counts,
+    /// bp_hits reads the count). The breakpoint id; -1 and the reason when refused
     std::tuple<int, sol::optional<std::string>> AddScriptBreakpoint(BreakpointTypeEnum type, uint8_t access,
                                                                     uint16_t address,
                                                                     const sol::optional<sol::object>& options)
@@ -628,6 +628,7 @@ protected:
             to = t.get<sol::optional<int32_t>>("to").value_or(-1);
             slotOnly = t.get<sol::optional<bool>>("slot_only").value_or(false);
             mask = t.get<sol::optional<int32_t>>("mask").value_or(-1);
+            spec.stop = t.get<sol::optional<bool>>("stop").value_or(true);
             hits = t.get<sol::optional<std::string>>("hits").value_or("");
             if (hits.empty())
                 if (auto n = t.get<sol::optional<int64_t>>("hits"))
@@ -4168,6 +4169,14 @@ public:
         lua.set_function("bp_list", [this](sol::optional<std::string> cpu) -> std::string {
             BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or(""));
             return bpm ? bpm->GetBreakpointListAsString() : "";
+        });
+
+        // bp_hits(id[, cpu]): the breakpoint's hit count (a count-only one, stop = false, counts and never stops); -1
+        // for an unknown id
+        lua.set_function("bp_hits", [this](uint16_t id, sol::optional<std::string> cpu) -> int64_t {
+            BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or(""));
+            const BreakpointSnapshot bp = bpm ? bpm->GetBreakpointById(id) : BreakpointSnapshot();
+            return bp ? static_cast<int64_t>(bp->hitCount) : -1;
         });
 
         lua.set_function("bp_status", [this]() -> sol::table {

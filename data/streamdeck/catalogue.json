@@ -1252,7 +1252,7 @@
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "kind (exec|read|write|rw|in|out|io|nextreg_read|nextreg_write|nextreg|beam|copper|magic|keyboard), address (or a label), end?, preset? (fe|7ffd|1ffd|fffd|bffd), mask?, page?, slot_only?, hc?, doors?, value?, value_mask?, opcode? (edff|dd01), key? (any), on? (press|release|both), hits?, note?, group?"
+   "params": "kind (exec|read|write|rw|in|out|io|nextreg_read|nextreg_write|nextreg|beam|copper|magic|keyboard), address (or a label), end?, preset? (fe|7ffd|1ffd|fffd|bffd), mask?, page?, slot_only?, hc?, doors?, value?, value_mask?, opcode? (edff|dd01), key? (any), on? (press|release|both), hits?, stop? (false: only count), note?, group?"
   },
   {
    "id": "dbg.bp_remove",
