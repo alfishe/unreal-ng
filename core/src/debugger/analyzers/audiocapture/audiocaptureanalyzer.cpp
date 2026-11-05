@@ -5,6 +5,7 @@
 #include "3rdparty/tinywav/tinywav.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -114,6 +115,13 @@ bool AudioCaptureAnalyzer::startStreamCapture(const std::string& path, uint32_t 
     _complete.store(false, std::memory_order_relaxed);
     _armed.store(true, std::memory_order_release);
     return true;
+}
+
+bool AudioCaptureAnalyzer::waitStreamClosed(int timeoutMs) const
+{
+    for (int waited = 0; !_streamClosed.load(std::memory_order_acquire) && waited < timeoutMs; waited += 5)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    return _streamClosed.load(std::memory_order_acquire);
 }
 
 void AudioCaptureAnalyzer::writerLoop()

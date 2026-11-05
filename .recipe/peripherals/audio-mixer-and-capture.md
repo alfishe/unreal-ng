@@ -194,9 +194,11 @@ How to use them:
   there is no captured audio at all.
 - **Long captures go to a file.** The memory capture holds 30 s at most. `POST /audio/capture
   {"action":"start","seconds":600,"to_file":true,"path":"..."}` streams a WAV through a writer thread (up to
-  24 h, only the disk limits it); `stop` closes the file, `status` shows `wav_path` / `file_closed`, `result` gives
+  24 h, only the disk limits it; the same on every plane: CLI `audiocapture start 600 file out.wav`, Lua
+  `audio_capture_start(600, "", "out.wav")`, Python `audio_capture_start(600, file="out.wav")`, MCP `audio_capture`
+  with `to_file` / `path`, which arms and returns at once); `stop` closes the file, `status` shows `wav_path` / `file_closed`, `result` gives
   the path and length (no level analysis: the samples are not in memory). The `cap.audio_capture` action always
-  streams, so it has no 30 s ceiling. CLI, Lua, Python and MCP keep the 30 s memory capture.
+  streams, so it has no 30 s ceiling.
 - **A stopped capture holds only what came.** `stop` cuts the buffer to the captured samples; the result
   and the WAV never carry a silent tail up to the target.
 - **One capture buffer per instance.** A new `start` replaces the previous

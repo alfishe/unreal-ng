@@ -1081,16 +1081,37 @@ void CLIProcessor::HandleAudioCapture(const ClientSession& session, const std::v
                 return;
             }
         }
-        if (seconds < 0.01 || seconds > 30.0)
+
+        // "... [source] file <path.wav>": the samples go to the WAV while they come (no memory ceiling)
+        std::string file;
+        std::string sourceArg = args.size() >= 3 ? args[2] : std::string();
+        for (size_t i = 2; i < args.size(); i++)
         {
-            session.SendResponse("Duration must be within [0.01, 30.0] seconds.");
+            if (args[i] == "file")
+            {
+                if (i + 1 >= args.size())
+                {
+                    session.SendResponse("Usage: audiocapture start <seconds> [source] [file <path.wav>]");
+                    return;
+                }
+                file = args[i + 1];
+                if (i == 2)
+                    sourceArg.clear();
+                break;
+            }
+        }
+        const double maxSeconds = file.empty() ? 30.0 : AudioCaptureAnalyzer::MAX_STREAM_SECONDS;
+        if (seconds < 0.01 || seconds > maxSeconds)
+        {
+            session.SendResponse(file.empty() ? "Duration must be within [0.01, 30.0] seconds (use 'file <path>' for longer)."
+                                              : "Duration must be within [0.01, 86400] seconds.");
             return;
         }
 
         // One mixer device instead of the master mix (core AudioMixer::Capturable; GET /audio/mixer lists them)
         AudioSourceType source = AudioSourceType::MasterMix;
         std::string sourceError;
-        if (!AudioMixer::Capturable(context, args.size() >= 3 ? args[2] : std::string(), source, sourceError))
+        if (!AudioMixer::Capturable(context, sourceArg, source, sourceError))
         {
             session.SendResponse("Error: " + sourceError);
             return;
@@ -1100,10 +1121,20 @@ void CLIProcessor::HandleAudioCapture(const ClientSession& session, const std::v
         const size_t target = static_cast<size_t>(seconds * static_cast<double>(rate)) * 2;  // interleaved stereo
 
         analyzerManager->activate("audiocapture");
-        capture->startCapture(target, source);
+        if (!file.empty())
+        {
+            std::string streamError;
+            if (!capture->startStreamCapture(file, static_cast<uint32_t>(rate), target, source, streamError))
+            {
+                session.SendResponse("Error: " + streamError);
+                return;
+            }
+        }
+        else
+            capture->startCapture(target, source);
 
         std::stringstream ss;
-        ss << std::dec << "Audio capture armed: " << seconds << "s (" << target << " stereo samples @ " << rate
+        ss << std::dec << "Audio capture armed" << (file.empty() ? "" : " to " + file) << ": " << seconds << "s (" << target << " stereo samples @ " << rate
            << " Hz), source " << AudioMixer::Key(source) << ".";
         session.SendResponse(ss.str());
         return;
@@ -1124,10 +1155,27 @@ void CLIProcessor::HandleAudioCapture(const ClientSession& session, const std::v
         return;
     }
 
+    if ((subcommand == "result" || subcommand == "save") && capture->isStreaming())
+    {
+        // The audio is in the WAV, not in memory
+        if (!capture->isStreamClosed())
+        {
+            session.SendResponse("The capture file is still being written - use 'audiocapture stop' or wait for the target.");
+            return;
+        }
+        const size_t streamRate = context->pSoundManager ? context->pSoundManager->getCoreRate() : 44100;
+        std::stringstream ss;
+        ss << std::dec << "Audio capture written to " << capture->getStreamPath() << ": "
+           << capture->getCapturedSamples() / 2 << " frames @ " << streamRate << " Hz"
+           << (capture->hasStreamFailed() ? " (write failed)" : "") << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
     if (subcommand == "result" || subcommand == "save")
     {
         const auto& buffer = capture->getBuffer();
-        const size_t frames = buffer.size() / 2;
+        const size_t frames = std::min(buffer.size(), capture->getCapturedSamples()) / 2;
 
         if (frames == 0)
         {
@@ -1195,6 +1243,9 @@ void CLIProcessor::HandleAudioCapture(const ClientSession& session, const std::v
     ss << "  Armed: " << (capture->isCaptureArmed() ? "yes" : "no") << NEWLINE;
     ss << "  Complete: " << (capture->isCaptureComplete() ? "yes" : "no") << NEWLINE;
     ss << "  Samples: " << capture->getCapturedSamples() << " / " << capture->getTargetSamples() << NEWLINE;
+    if (capture->isStreaming())
+        ss << "  File: " << capture->getStreamPath() << (capture->isStreamClosed() ? " (closed)" : " (writing)")
+           << NEWLINE;
 
     session.SendResponse(ss.str());
 }
