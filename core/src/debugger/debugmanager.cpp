@@ -21,6 +21,7 @@
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/watch/framewatch.h"
+#include "debugger/markup/memorymarkup.h"
 
 /// region <Constructors / Destructors>
 
@@ -38,6 +39,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     _asmSync = std::make_unique<AsmSyncService>(_context);
     _scriptCallbacks = std::make_unique<ScriptCallbackManager>(_context);
     _frameWatches = std::make_unique<framewatch::Manager>(_context);
+    _markup = std::make_unique<markup::MemoryMarkup>(_context);
     _gsTarget = std::make_unique<GSCardTarget>(_context);
     _msTarget = std::make_unique<GSCardTarget>(_context, DebugCpuId::MultiSoundGS, [context]() -> GeneralSoundCard* {
         SlotManager* slots = context->pSlotManager;

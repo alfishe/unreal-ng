@@ -1,14 +1,23 @@
 /// @file memoryprofile_test.cpp
 /// @brief The `memory` section of a software profile (docs/inprogress/2026-11-05-software-metadata-profile): places
 /// in every written form, regions of the analysis' kinds, labels, label files, entries and comments; what it refuses,
-/// naming the place; a profile keeps the section and writes it back.
+/// naming the place; a profile keeps the section and writes it back; laid over a machine as the markup's profile
+/// layer and the label set profile:<id>.
 
 #include <gtest/gtest.h>
 
 #include <string>
 
+#include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
 #include "debugger/analyzers/analysis/l2model.h"
+#include "debugger/debugmanager.h"
+#include "debugger/markup/memorymarkup.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/memory/memory.h"
 #include "profiles/memoryprofile.h"
+#include "profiles/memoryprofilemarkup.h"
 #include "profiles/profile.h"
 #include "profiles/profilestore.h"
 #include "profiles/json.h"
@@ -145,4 +154,56 @@ TEST(MemoryProfile_Test, TheKindsAreTheAnalysisKinds)
     for (int kind = 0; kind <= static_cast<int>(analysis::RegionKind::Untouched); kind++)
         kinds.push_back(analysis::RegionKindName(static_cast<analysis::RegionKind>(kind)));
     EXPECT_EQ(kinds, MemoryRegionKinds());
+}
+
+/// The section over a machine: regions, entries and comments in the profile layer, labels and entries in the set
+/// profile:<id> between the bundles and the files; a missing label file is a warning; the clear takes both back
+TEST(MemoryProfile_Test, LaidOverAMachineAndTakenBack)
+{
+    Profile profile;
+    std::string error;
+    ASSERT_TRUE(ParseProfile(kProfile, profile, error)) << error;
+    MemoryProfile memory;
+    ASSERT_TRUE(ParseMemoryProfile(profile.memory, memory, error)) << error;
+
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    DebugManager* debug = emulator->GetContext()->pDebugManager;
+    markup::MemoryMarkup& markup = *debug->GetMemoryMarkup();
+    LabelManager* labels = debug->GetLabelManager();
+
+    std::vector<std::string> warnings;
+    ApplyMemoryProfile(memory, profile.id, "Memory test", TestPathHelper::GetUniqueTestScratchPath("profiles"), markup,
+                       labels, warnings);
+    ASSERT_EQ(warnings.size(), 1u);
+    EXPECT_NE(warnings[0].find("memory-test.usym.json"), std::string::npos) << warnings[0];
+
+    const std::optional<markup::Span> engine = markup.At(0x6100);
+    ASSERT_TRUE(engine.has_value());
+    EXPECT_EQ(engine->kind, analysis::RegionKind::Code);
+    EXPECT_EQ(engine->layer, markup::Layer::Profile);
+    EXPECT_EQ(engine->source, "profile:game/memory-test");
+    EXPECT_TRUE(markup.IsInstructionStart(24000)) << "the entry";
+    ASSERT_EQ(markup.Comments(0x6A10, 0x6A10).size(), 1u);
+
+    emulator->GetContext()->pMemory->SetRAMPageToBank3(1);
+    ASSERT_TRUE(markup.At(0xC100).has_value()) << "page:1 shows while RAM 1 is at #C000";
+    EXPECT_EQ(markup.At(0xC100)->kind, analysis::RegionKind::Sprite);
+
+    ASSERT_NE(labels->GetLabelByName("main_loop"), nullptr);
+    EXPECT_EQ(labels->GetLabelByName("main_loop")->address, 0x6A00);
+    EXPECT_NE(labels->GetLabelByName("start"), nullptr);
+    bool found = false;
+    for (const auto& set : labels->GetSymbolSets())
+        if (set.id == "profile:game/memory-test")
+        {
+            found = true;
+            EXPECT_EQ(set.priority, kMemoryProfileLabelPriority);
+        }
+    EXPECT_TRUE(found);
+
+    ClearMemoryProfile(profile.id, markup, labels);
+    EXPECT_FALSE(markup.At(0x6100).has_value());
+    EXPECT_EQ(labels->GetLabelByName("main_loop"), nullptr);
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }

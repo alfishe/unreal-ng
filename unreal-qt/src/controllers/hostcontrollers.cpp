@@ -19,6 +19,7 @@
 #include <QThread>
 
 #include <algorithm>
+#include <filesystem>
 #include <functional>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -46,6 +47,8 @@
 #include "hostcontrols.h"
 #include "platform/processinfo.h"
 #include "profiles/json.h"
+#include "profiles/memoryprofilemarkup.h"
+#include "debugger/debugmanager.h"
 #include "router/inputrouter.h"
 #ifdef ENABLE_SWSIGNATURE
 #include "swsignature.h"
@@ -995,6 +998,7 @@ void HostControllers::Reapply()
     _context = context;
     applyConnectorPlans();
     attachHaptics();
+    applyMemoryProfile();
     for (const std::string& warning : _resolved.warnings)
         qWarning("controllers: %s", warning.c_str());
     emit changed();
@@ -1028,6 +1032,39 @@ void HostControllers::releaseWheelMenu()
     for (WheelClaim::Window window : _wheelClaim.ReleaseAll().release)
         WheelMenuWindows::Release(_wheelHolds[window]);
     _wheelHolds.clear();
+}
+
+void HostControllers::applyMemoryProfile()
+{
+    if (!_attached)
+        return;
+    EmulatorContext* context = _attached->GetContext();  // lifetime-ok: _attached holds the emulator
+    DebugManager* debug = context ? context->pDebugManager : nullptr;
+    markup::MemoryMarkup* markup = debug ? debug->GetMemoryMarkup() : nullptr;
+    if (markup == nullptr)
+        return;
+    const std::string id = _resolved.gameMatches.empty() ? std::string() : _resolved.gameMatches.front().first;
+    std::string& applied = _memoryProfiles[_attached->GetId()];
+    if (id == applied)
+        return;
+    if (!applied.empty())
+        ClearMemoryProfile(applied, *markup, debug->GetLabelManager());
+    applied = id;
+    const Profile* profile = id.empty() ? nullptr : _profiles.Find(id);
+    if (profile == nullptr || profile->memory.IsNull())
+        return;
+    MemoryProfile memory;
+    std::string error;
+    if (!ParseMemoryProfile(profile->memory, memory, error))
+    {
+        qWarning("controllers: %s: %s", id.c_str(), error.c_str());
+        return;
+    }
+    std::vector<std::string> warnings;
+    const std::string folder = std::filesystem::path(profile->path).parent_path().string();
+    ApplyMemoryProfile(memory, id, profile->label, folder, *markup, debug->GetLabelManager(), warnings);
+    for (const std::string& warning : warnings)
+        qWarning("controllers: %s", warning.c_str());
 }
 
 void HostControllers::attachHaptics()
