@@ -43,7 +43,7 @@ A bad condition is refused with **400** and the reason, before anything is added
 ```bash
 curl -s -X POST $BASE/emulator/$EMU/breakpoints -H 'Content-Type: application/json' \
      -d '{"type":"exec","address":"0x8000","condition":"RD == 9000"}' | jq -r .message
-#   condition: RD is not supplied by this breakpoint's trigger at column 1
+#   condition: RD (the address read) exists only on a memory read; this breakpoint fires on execution at column 1
 ```
 
 ## CLI, MCP, Lua, Python

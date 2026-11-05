@@ -8,6 +8,8 @@ constexpr int ADDRESS_COL_WIDTH = 5;     // $XXXX
 constexpr int BYTECODE_COL_WIDTH = 11;   // XX XX XX XX XX
 constexpr int LABEL_COL_WIDTH = 15;      // LABEL_NAME:
 constexpr int MNEMONIC_COL_WIDTH = 24;   // Instruction mnemonic
+// Where the label column starts: "[ ]" + mark + "$XXXX: " + bytes + space
+constexpr int LABEL_LINE_INDENT = BREAKPOINT_COL_WIDTH + 1 + ADDRESS_COL_WIDTH + 2 + BYTECODE_COL_WIDTH + 1;
 
 #include <algorithm>
 
@@ -15,6 +17,7 @@ constexpr int MNEMONIC_COL_WIDTH = 24;   // Instruction mnemonic
 #include <algorithm>
 #include <cstdlib>
 #include <QFontDatabase>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
@@ -57,6 +60,8 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     // takes strong focus): a read-only text edit may not
     customTextEdit->setFocusPolicy(Qt::StrongFocus);
     customTextEdit->setLineWrapMode(QTextEdit::NoWrap);
+    // Rows fill the view and scrolling re-renders them from another address: no scrollbar of its own
+    customTextEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
     // Set a monospace font for the disassembler
     QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
@@ -299,7 +304,7 @@ void DisassemblerWidget::showContextMenu(const QPoint& pos)
 {
     // The row under the pointer becomes the cursor row, as a click
     const int line = m_disassemblyTextEdit->cursorForPosition(pos).blockNumber();
-    if (auto it = m_addressMap.find(static_cast<uint16_t>(line)); line >= 0 && it != m_addressMap.end())
+    if (auto it = rowAt(line); it != m_addressMap.end())
     {
         m_cursorAddress = it->second;
         publishCursor();
@@ -349,9 +354,8 @@ void DisassemblerWidget::onTextCursorMoved()
 {
     if (m_settingContent || m_isShuttingDown)
         return;
-    const int line = m_disassemblyTextEdit->textCursor().blockNumber();
-    auto it = m_addressMap.find(static_cast<uint16_t>(line));
-    if (line < 0 || it == m_addressMap.end())
+    auto it = rowAt(m_disassemblyTextEdit->textCursor().blockNumber());
+    if (it == m_addressMap.end())
         return;
     m_cursorAddress = it->second;
     publishCursor();
@@ -362,6 +366,26 @@ void DisassemblerWidget::publishCursor()
 {
     if (Emulator* emulator = getEmulator())
         actions::DebuggerCursors::Instance().Set(emulator->GetId(), "disasm", m_cursorAddress);
+}
+
+int DisassemblerWidget::visibleRows() const
+{
+    // The lines the viewport holds, in the font the HTML renders with, and one partly shown at the bottom
+    static constexpr int MIN_ROWS = 20;
+    if (!m_disassemblyTextEdit)
+        return MIN_ROWS;
+    QFont font(QStringLiteral("Courier New"));
+    font.setPointSize(m_disassemblyTextEdit->font().pointSize());
+    const int lineHeight = std::max(1, QFontMetrics(font).lineSpacing());
+    return std::max(MIN_ROWS, m_disassemblyTextEdit->viewport()->height() / lineHeight + 1);
+}
+
+std::map<uint16_t, uint16_t>::const_iterator DisassemblerWidget::rowAt(int line) const
+{
+    // A long label's own line belongs to the instruction below it
+    if (line < 0)
+        return m_addressMap.end();
+    return m_addressMap.lower_bound(static_cast<uint16_t>(line));
 }
 
 bool DisassemblerWidget::lineOf(uint16_t address, int& line) const
@@ -497,9 +521,6 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         return;
     }
 
-    // Number of instructions to disassemble
-    static constexpr size_t INSTRUCTIONS_TO_DISASSEMBLE = 20;
-
     // Every getter below is documented to return null when the emulator, its
     // context or the debug manager is not available, and this runs on the GUI
     // thread in response to state-change signals — including the ones a TTD
@@ -554,7 +575,11 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     }
 
     // Disassemble instructions to provide more context
-    for (size_t i = 0; i < INSTRUCTIONS_TO_DISASSEMBLE && currentAddress < 0xFFFF; i++)
+    // As many text lines as the view holds; long labels add lines of their own
+    const int rows = visibleRows();
+    m_rowsRendered = rows;
+    uint16_t line = 0;  // text line of the next row
+    while (line < rows && currentAddress < 0xFFFF)
     {
         // Read memory for current instruction
         for (size_t j = 0; j < buffer.size(); j++)
@@ -581,9 +606,6 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         {
             commandLen = 1;
         }
-
-        // Store the line number to address mapping
-        m_addressMap[i] = currentAddress;
 
         std::string hex = DumpHelper::HexDumpBuffer(pcPhysicalAddress, commandLen);
         std::string runtime;
@@ -658,6 +680,19 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         {
             truncatedCommand = truncatedCommand.substr(0, MNEMONIC_COL_WIDTH - 3) + "...";
         }
+
+        // A label wider than its column takes a line of its own above the instruction, as in assembler sources,
+        // so the mnemonic column stays aligned. That line has no address: clicks on it go to the instruction below
+        if (labelColumn.length() > LABEL_COL_WIDTH)
+        {
+            ss << std::string(LABEL_LINE_INDENT, ' ') << "<span class='label'>" << labelColumn << "</span>"
+               << std::endl;
+            line++;
+            labelColumn.clear();
+        }
+
+        // Store the line number to address mapping
+        m_addressMap[line++] = instructionAddress;
 
         // Format with fixed-width columns and CSS classes
         ss << StringHelper::Format(
@@ -1196,8 +1231,9 @@ void DisassemblerWidget::refresh()
     // Update the disassembly view with current PC
     if (getEmulator() && getZ80Registers())
     {
-        static constexpr size_t INSTRUCTIONS_TO_DISASSEMBLE = 20;
-        static constexpr size_t INSTRUCTIONS_BEFORE_PC = 10;  // Show ~10 instructions before PC
+        // The rows shown follow the view height; the first refresh has none yet
+        const size_t rowsShown = m_addressMap.empty() ? static_cast<size_t>(visibleRows()) : m_addressMap.size();
+        const size_t instructionsBeforePc = rowsShown / 2;  // PC about in the middle
         static constexpr size_t MARGIN_TOP = 3;               // Scroll when PC reaches top 3 lines
         static constexpr size_t MARGIN_BOTTOM = 3;            // Scroll when PC reaches bottom 3 lines
         
@@ -1207,21 +1243,24 @@ void DisassemblerWidget::refresh()
         bool pcInView = false;
         int pcLineNumber = -1;
         
+        // Counted in instruction rows: the lines of long labels do not count
+        int row = 0;
         for (const auto& [lineNum, addr] : m_addressMap)
         {
             if (addr == currentPC)
             {
                 pcInView = true;
-                pcLineNumber = lineNum;
+                pcLineNumber = row;
                 break;
             }
+            row++;
         }
         
         // Determine how to position the view
         uint16_t displayStart;
         
         if (pcInView && pcLineNumber >= (int)MARGIN_TOP && 
-            pcLineNumber < (int)(INSTRUCTIONS_TO_DISASSEMBLE - MARGIN_BOTTOM))
+            pcLineNumber < (int)rowsShown - (int)MARGIN_BOTTOM)
         {
             // PC is visible and not at the edge margins - keep current display start
             // Just refresh at the current display address to update highlights
@@ -1231,7 +1270,7 @@ void DisassemblerWidget::refresh()
         {
             // PC is not visible or at the edge - recenter the display
             // Position PC roughly in the middle by walking backwards
-            displayStart = getCenteredStartAddress(currentPC, INSTRUCTIONS_BEFORE_PC);
+            displayStart = getCenteredStartAddress(currentPC, instructionsBeforePc);
         }
         
         setDisassemblerAddress(displayStart);
@@ -1366,10 +1405,10 @@ void DisassemblerWidget::handleBreakpointClick(int lineNumber)
     qDebug() << "Clicked on line number:" << lineNumber;
     qDebug() << "Address map contains:" << m_addressMap.size() << "entries";
 
-    // Check if the line number is valid and has an address mapping
-    if (m_addressMap.find(lineNumber) != m_addressMap.end())
+    // Check if the line number is valid and has an address mapping (a long label's line: the instruction below)
+    if (auto it = rowAt(lineNumber); it != m_addressMap.end() && it->first <= lineNumber + 1)
     {
-        uint16_t address = m_addressMap[lineNumber];
+        uint16_t address = it->second;
         qDebug() << "Found address:" << QString::number(address, 16) << "for line" << lineNumber;
         toggleBreakpointAtAddress(address);
     }
@@ -1462,6 +1501,11 @@ void DisassemblerWidget::goToAddress(uint16_t address)
 // Override event filter to handle mouse clicks for breakpoint toggling
 bool DisassemblerWidget::eventFilter(QObject* obj, QEvent* event)
 {
+    // A taller view gets more rows from the same top address
+    if (obj == m_disassemblyTextEdit->viewport() && event->type() == QEvent::Resize && !m_isShuttingDown &&
+        !m_addressMap.empty() && visibleRows() != m_rowsRendered)
+        setDisassemblerAddress(m_displayAddress);
+
     if (obj == m_disassemblyTextEdit->viewport() && event->type() == QEvent::MouseButtonPress)
     {
         QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);

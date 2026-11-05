@@ -198,22 +198,61 @@ TEST_F(BreakpointCondition_Test, AccessOperandsAndAliases)
     EXPECT_TRUE(Holds("OUT == #FE && VAL & #10 && PWV == #10 && PORT == #FE && WPORT == #FE", out));
 }
 
+// The refusals say what was probably meant: the closest names, hex written bare, operators as words, other
+// languages' habits
+TEST_F(BreakpointCondition_Test, RefusalsSuggestWhatWasMeant)
+{
+    EXPECT_EQ(Refused("HLL == 1"),
+              "unknown name 'HLL': not a register, flag, machine value or label (did you mean HL?) at column 1");
+    EXPECT_EQ(Refused("FRAM > 100"),
+              "unknown name 'FRAM': not a register, flag, machine value or label (did you mean FRAME?) at column 1");
+    EXPECT_EQ(Refused("PC == C000"),
+              "unknown name 'C000': not a register, flag, machine value or label (for the hex number write #C000) "
+              "at column 7");
+    EXPECT_EQ(Refused("A == FFh"),
+              "unknown name 'FFh': not a register, flag, machine value or label (for the hex number write #FF; or did you mean FH?) "
+              "at column 6");
+    EXPECT_EQ(Refused("A == 1 and B == 2"), "write 'AND' as && at column 8");
+    EXPECT_EQ(Refused("(A == 1 or B == 2)"), "write 'OR' as || at column 9");
+    EXPECT_EQ(Refused("not Z"),
+              "unknown name 'not': not a register, flag, machine value or label (write 'NOT' as !) at column 1");
+    EXPECT_EQ(Refused("PEEK(#5C08) == 13"),
+              "unknown name 'PEEK': not a register, flag, machine value or label (read a byte of memory with "
+              "M(address)) at column 1");
+    EXPECT_EQ(Refused("M == 1"),
+              "unknown name 'M': not a register, flag, machine value or label (M reads memory: write M(address)) "
+              "at column 1");
+    EXPECT_EQ(Refused("A 5"), "'5' follows a complete value: an operator (==, &&, +, ...) is missing before it at column 3");
+    EXPECT_EQ(Refused("(A 5)"),
+              "'5' follows a complete value: an operator (==, &&, +, ...) or a ')' is missing before it at column 4");
+    EXPECT_EQ(Refused("A == == 5"), "a value is missing before '==' at column 6");
+    EXPECT_EQ(Refused("[#4000] == 1"), "'[' cannot appear in a condition: read memory with M(address) or W(address) at column 1");
+    EXPECT_EQ(Refused("A == #"), "'#' starts a hex number: hex digits (0-9, A-F) must follow it at column 6");
+    EXPECT_EQ(Refused("A == #1G"), "bad hex number: 'G' is not a hex digit (0-9, A-F) at column 8");
+    EXPECT_EQ(Refused("A == 'ab'"), "a character constant is one character in quotes, like 'a' at column 6");
+}
+
 TEST_F(BreakpointCondition_Test, RefusalsNameTheProblemAndItsColumn)
 {
     EXPECT_EQ(Refused(""), "empty condition at column 1");
-    EXPECT_EQ(Refused("A == "), "operand expected at column 6");
-    EXPECT_EQ(Refused("A == (1"), "missing ')' for '(' at column 6 at column 8");
-    EXPECT_EQ(Refused("A == 1)"), "unexpected ')' at column 7");
-    EXPECT_EQ(Refused("QQ == 1"), "unknown name 'QQ' at column 1");
-    EXPECT_EQ(Refused("A == 12G"), "bad number '12G' at column 6");
-    EXPECT_EQ(Refused("A @ 1"), "'@' takes 'prev' at column 3");
-    EXPECT_EQ(Refused("A == #12345678901234567"), "bad hex number at column 6") << "17 digits do not fit 64 bits";
+    EXPECT_EQ(Refused("A == "), "the condition ends after '==': a value is missing at column 6");
+    EXPECT_EQ(Refused("A == (1"), "'(' at column 6 is not closed: a ')' is missing at column 8");
+    EXPECT_EQ(Refused("A == 1)"), "')' has no matching '(' at column 7");
+    EXPECT_EQ(Refused("QQ == 1"), "unknown name 'QQ': not a register, flag, machine value or label at column 1");
+    EXPECT_EQ(Refused("A == 12G"), "bad number '12G' (decimal 123; hex #7B, $7B, 0x7B or 7Bh) at column 6");
+    EXPECT_EQ(Refused("A @ 1"), "'@' takes 'prev': x@prev is the value x had at the previous check at column 3");
+    EXPECT_EQ(Refused("A == #12345678901234567"), "hex number too long: at most 16 digits (64 bits) at column 6")
+        << "17 digits do not fit 64 bits";
     EXPECT_TRUE(Compile("A == #1234567890123456"));
     // The trigger supplies the access operands: none of these can ever hold, so they are refused, not inert
-    EXPECT_EQ(Refused("RD == #4000", BRK_COND_EXEC), "RD is not supplied by this breakpoint's trigger at column 1");
+    EXPECT_EQ(Refused("RD == #4000", BRK_COND_EXEC),
+              "RD (the address read) exists only on a memory read; this breakpoint fires on execution at column 1");
     EXPECT_EQ(Refused("A == 0 && MWV == 0", BRK_COND_EXEC),
-              "MWV is not supplied by this breakpoint's trigger at column 11");
-    EXPECT_EQ(Refused("VAL == 1", BRK_COND_PORT_IN), "VAL is not supplied by this breakpoint's trigger at column 1")
+              "MWV (the byte read or written) exists only on a memory read or a memory write; this breakpoint fires "
+              "on execution at column 11");
+    EXPECT_EQ(Refused("VAL == 1", BRK_COND_PORT_IN),
+              "VAL (the value read or written) exists only on a memory read or a memory write or a port write (OUT); "
+              "this breakpoint fires on a port read (IN) (an IN breakpoint stops before the port is read) at column 1")
         << "an IN breakpoint is checked before the port is read";
     EXPECT_TRUE(Compile("MWV == 0", BRK_COND_WRITE));
     EXPECT_TRUE(Compile("RD == #4000 || WR == #4000", BRK_COND_READ | BRK_COND_WRITE));
@@ -318,7 +357,7 @@ TEST_F(BreakpointCondition_Test, ShortCircuitAndErrors)
     std::string error;
     EXPECT_FALSE(BreakpointConditionProgram::Compile("M(HL) == 0", BRK_COND_ANY, nullptr, error,
                                                      BreakpointConditionDialect::Unreal, &noCpu));
-    EXPECT_EQ(error, "the condition does not evaluate here: no CPU");
+    EXPECT_EQ(error, "the condition cannot be evaluated on this machine: no CPU");
     // Addresses wrap at 64K, as the CPU's own
     _memory->DirectWriteToZ80Memory(0x0000, 0xAA);
     EXPECT_EQ(Compile("M(#FFFF + 1) == M(0)")->Evaluate(Context()), Result::True);
@@ -427,18 +466,18 @@ TEST_F(BreakpointCondition_Test, TheExtendedMachinesLatchesSlotsAndSpeed)
     // No machine: NR(x), the beam and the copper are errors, which the dry run of a compile reports
     std::string why;
     EXPECT_EQ(Compile("NR(7) == 0")->Evaluate(Context(), &why), Result::Error);
-    EXPECT_EQ(why, "no NR here");
+    EXPECT_EQ(why, "NR(x): this machine has no ZX Next registers");
     EXPECT_EQ(Compile("HC == 0")->Evaluate(Context(), &why), Result::Error);
-    EXPECT_EQ(why, "no HC here");
+    EXPECT_EQ(why, "HC: this machine has no ZX Next beam counter");
     std::string error;
     const BreakpointConditionContext dryRun = Context();
     EXPECT_FALSE(BreakpointConditionProgram::Compile("CPC == 0", BRK_COND_ANY, nullptr, error,
                                                      BreakpointConditionDialect::Unreal, &dryRun));
-    EXPECT_NE(error.find("no CPC here"), std::string::npos) << error;
+    EXPECT_NE(error.find("CPC: this machine has no ZX Next copper"), std::string::npos) << error;
     // Another CPU's breakpoint has none of the machine's
-    EXPECT_NE(Refused("NR(7) == 0", BRK_COND_ANY | BRK_COND_TARGET).find("the machine's"), std::string::npos);
-    EXPECT_NE(Refused("DFFD == 0", BRK_COND_ANY | BRK_COND_TARGET).find("the machine's"), std::string::npos);
-    EXPECT_NE(Refused("VC == 0", BRK_COND_ANY | BRK_COND_TARGET).find("the machine's"), std::string::npos);
+    EXPECT_NE(Refused("NR(7) == 0", BRK_COND_ANY | BRK_COND_TARGET).find("belongs to the main machine"), std::string::npos);
+    EXPECT_NE(Refused("DFFD == 0", BRK_COND_ANY | BRK_COND_TARGET).find("belongs to the main machine"), std::string::npos);
+    EXPECT_NE(Refused("VC == 0", BRK_COND_ANY | BRK_COND_TARGET).find("belongs to the main machine"), std::string::npos);
 
     FakeConditionMachine machine;
     machine.regs[0x57] = 0x21;

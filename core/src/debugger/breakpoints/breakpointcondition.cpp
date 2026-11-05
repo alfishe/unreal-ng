@@ -126,6 +126,143 @@ bool FindName(const Name* names, size_t count, const std::string& upper, uint8_t
     return false;
 }
 
+/// region <Refusal wording>
+
+/// What an access operand is, for a refusal that says why the trigger cannot supply it
+const char* MeaningOf(uint8_t var)
+{
+    switch (var)
+    {
+        case V_RD: return "the address read";
+        case V_WR: return "the address written";
+        case V_MDT: return "the byte read or written";
+        case V_IN: return "the port read";
+        case V_OUT: return "the port written";
+        case V_PORTVAL: return "the byte written to the port";
+        case V_VAL: return "the value read or written";
+        case V_ADDR: return "the address or port accessed";
+        case V_PORT: return "the port accessed";
+        default: return "";
+    }
+}
+
+/// The accesses of a trigger mask in words: "a memory read or a memory write"
+std::string AccessesInWords(uint8_t trigger)
+{
+    static const std::pair<uint8_t, const char*> kWords[] = {{BRK_COND_EXEC, "execution"},
+                                                             {BRK_COND_READ, "a memory read"},
+                                                             {BRK_COND_WRITE, "a memory write"},
+                                                             {BRK_COND_PORT_IN, "a port read (IN)"},
+                                                             {BRK_COND_PORT_OUT, "a port write (OUT)"}};
+    std::string text;
+    for (const auto& [bit, words] : kWords)
+        if (trigger & bit)
+            text += (text.empty() ? "" : " or ") + std::string(words);
+    return text.empty() ? std::string("no access") : text;
+}
+
+/// Case-insensitive edit distance (the names are short: the full table is cheap)
+size_t EditDistance(const std::string& a, const std::string& b)
+{
+    std::vector<size_t> row(b.size() + 1);
+    for (size_t j = 0; j <= b.size(); j++)
+        row[j] = j;
+    for (size_t i = 1; i <= a.size(); i++)
+    {
+        size_t diagonal = row[0];
+        row[0] = i;
+        for (size_t j = 1; j <= b.size(); j++)
+        {
+            const size_t above = row[j];
+            const bool same = std::toupper(static_cast<unsigned char>(a[i - 1])) ==
+                              std::toupper(static_cast<unsigned char>(b[j - 1]));
+            row[j] = std::min({row[j] + 1, row[j - 1] + 1, diagonal + (same ? 0 : 1)});
+            diagonal = above;
+        }
+    }
+    return row[b.size()];
+}
+
+bool AllHexDigits(const std::string& text)
+{
+    return !text.empty() && std::all_of(text.begin(), text.end(), [](char ch) {
+        return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
+    });
+}
+
+/// Why `upper` (an unknown name, upper case) is not one, and what was probably meant
+std::string UnknownNameHint(const std::string& upper)
+{
+    if (upper == "AND" || upper == "OR" || upper == "NOT" || upper == "XOR")
+    {
+        const char* op = upper == "AND" ? "&&" : upper == "OR" ? "||" : upper == "NOT" ? "!" : "^";
+        return "write '" + upper + "' as " + op;
+    }
+    if (upper == "TRUE" || upper == "FALSE")
+        return std::string("write ") + (upper == "TRUE" ? "1" : "0");
+    if (upper == "PEEK" || upper == "MEM" || upper == "BYTE")
+        return "read a byte of memory with M(address)";
+    if (upper == "DPEEK" || upper == "WORD")
+        return "read a word of memory with W(address)";
+    if (upper == "M" || upper == "W")
+        return upper + " reads memory: write " + upper + "(address)";
+    if (upper == "NR")
+        return "NR reads a ZX Next register: write NR(register)";
+
+    std::vector<std::string> hints;
+    // The names closest to it: one edit away for a short name, two for a longer one
+    std::vector<std::string> names;
+    for (const Name& n : kReg16Names)
+        names.push_back(n.text);
+    for (const Name& n : kReg8Names)
+        names.push_back(n.text);
+    for (const Name& n : kVarNames)
+        names.push_back(n.text);
+    for (const char* n : {"Z", "NZ", "CY", "NC", "PE", "PO", "FM", "FP", "FH", "FN", "M", "W", "NR"})
+        names.push_back(n);
+    const size_t limit = upper.size() <= 3 ? 1 : 2;
+    size_t best = limit + 1;
+    std::vector<std::string> closest;
+    const bool primed = upper.find('\'') != std::string::npos;
+    for (const std::string& name : names)
+    {
+        if (!primed && name.find('\'') != std::string::npos)
+            continue;  // HL' only when a ' was typed: HL is the likely one
+        const size_t d = EditDistance(upper, name);
+        if (d > limit || d > best || std::find(closest.begin(), closest.end(), name) != closest.end())
+            continue;
+        if (d < best)
+            closest.clear();
+        best = d;
+        closest.push_back(name);
+    }
+    if (closest.size() > 4)
+        closest.resize(4);
+    if (!closest.empty())
+    {
+        std::string list;
+        for (size_t i = 0; i < closest.size(); i++)
+            list += (i == 0 ? "" : i + 1 == closest.size() ? " or " : ", ") + closest[i];
+        hints.push_back("did you mean " + list + "?");
+    }
+    // A hex number written bare (C000, FFh): numbers are decimal. Likely the intent, so it comes first
+    std::string digits = upper;
+    if (digits.size() > 1 && digits.back() == 'H')
+        digits.pop_back();
+    if (AllHexDigits(digits))
+    {
+        if (!hints.empty())
+            hints[0] = "or " + hints[0];
+        hints.insert(hints.begin(), "for the hex number write #" + digits);
+    }
+    std::string text;
+    for (const std::string& hint : hints)
+        text += (text.empty() ? "" : "; ") + hint;
+    return text;
+}
+
+/// endregion </Refusal wording>
+
 inline int64_t ReadReg8(const Z80Registers& r, uint8_t reg)
 {
     switch (reg)
@@ -336,7 +473,15 @@ inline bool ReadVar(const BreakpointConditionContext& x, uint8_t var, int64_t& v
         }
     }
     if (error)
-        *error = std::string("no ") + NameOf(kVarNames, std::size(kVarNames), var) + " here";
+    {
+        const std::string name = NameOf(kVarNames, std::size(kVarNames), var);
+        if (var == V_HC || var == V_VC)
+            *error = name + ": this machine has no ZX Next beam counter";
+        else if (var == V_CPC)
+            *error = name + ": this machine has no ZX Next copper";
+        else
+            *error = "no " + name + " here";
+    }
     return false;
 }
 
@@ -455,7 +600,14 @@ public:
         else
             root = ParseBinary(1);
         if (_error.empty() && _token.kind != Token::End)
-            Fail("unexpected '" + _token.text + "'");
+        {
+            if (_token.kind == Token::Close)
+                Fail("')' has no matching '('");
+            else if (const std::string hint = OperatorWordHint(_token); !hint.empty())
+                Fail(hint);
+            else
+                Fail("'" + _token.text + "' follows a complete value: an operator (==, &&, +, ...) is missing before it");
+        }
         if (!_error.empty())
         {
             error = _error + " at column " + std::to_string(_errorColumn);
@@ -519,6 +671,7 @@ private:
     {
         while (_pos < _text.size() && std::isspace(static_cast<unsigned char>(_text[_pos])))
             _pos++;
+        _previous = _token;
         _token = Token{};
         _token.column = _pos + 1;
         if (_pos >= _text.size())
@@ -541,7 +694,7 @@ private:
                 _pos += 3;
                 return;
             }
-            Fail("unterminated character constant", _pos + 1);
+            Fail("a character constant is one character in quotes, like 'a'", _pos + 1);
             _pos = _text.size();
             return;
         }
@@ -553,7 +706,13 @@ private:
             // 16 digits fill the 64 bits; more would throw in stoull
             if (end == _pos + 1 || end - _pos - 1 > 16 || (end < _text.size() && IsNameChar(_text[end])))
             {
-                Fail("bad hex number", _pos + 1);
+                const std::string prefix(1, c);
+                if (end == _pos + 1)
+                    Fail("'" + prefix + "' starts a hex number: hex digits (0-9, A-F) must follow it", _pos + 1);
+                else if (end - _pos - 1 > 16)
+                    Fail("hex number too long: at most 16 digits (64 bits)", _pos + 1);
+                else
+                    Fail("bad hex number: '" + std::string(1, _text[end]) + "' is not a hex digit (0-9, A-F)", end + 1);
                 _pos = _text.size();
                 return;
             }
@@ -577,7 +736,8 @@ private:
                     return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
                 });
                 Fail("bad number '" + _token.text + "'" +
-                         (hexDigits ? " (numbers are decimal; write hex as #" + _token.text + ")" : std::string()),
+                         (hexDigits ? " (numbers are decimal; write hex as #" + _token.text + ")"
+                                    : " (decimal 123; hex #7B, $7B, 0x7B or 7Bh)"),
                      _pos + 1);
             }
             _pos = end;
@@ -608,9 +768,31 @@ private:
                 return;
             }
         }
-        Fail(std::string("unexpected '") + c + "'", _pos + 1);
+        std::string hint;
+        if (c == '[' || c == ']')
+            hint = ": read memory with M(address) or W(address)";
+        else if (c == '"')
+            hint = ": a character is written in single quotes, like 'a'";
+        else if (c == '?' || c == ':')
+            hint = ": there is no ?: operator, combine with && and ||";
+        Fail(std::string("'") + c + "' cannot appear in a condition" + hint, _pos + 1);
         _pos = _text.size();
     }
+
+    /// 'and', 'or', 'not', 'xor' written as words where an operator belongs
+    static std::string OperatorWordHint(const Token& token)
+    {
+        if (token.kind != Token::Name)
+            return {};
+        std::string upper = token.text;
+        std::transform(upper.begin(), upper.end(), upper.begin(), [](char ch) { return static_cast<char>(std::toupper(static_cast<unsigned char>(ch))); });
+        if (upper != "AND" && upper != "OR" && upper != "XOR" && upper != "NOT")
+            return {};
+        return UnknownNameHint(upper);
+    }
+
+    /// The token before the current one, for "a value is missing after '&&'"
+    std::string PreviousText() const { return _previous.kind == Token::End ? std::string() : _previous.text; }
 
     /// A number token that starts with a digit: 0x.., ..h hex; otherwise decimal (a trailing d is allowed)
     bool ParseNumber(const std::string& text, int64_t& value) const
@@ -744,7 +926,7 @@ private:
             std::transform(name.begin(), name.end(), name.begin(), [](char ch) { return static_cast<char>(std::toupper(static_cast<unsigned char>(ch))); });
             if (_token.kind != Token::Name || name != "PREV")
             {
-                Fail("'@' takes 'prev'", column);
+                Fail("'@' takes 'prev': x@prev is the value x had at the previous check", column);
                 return -1;
             }
             if (_prevSlots >= kMaxPrevious)
@@ -769,9 +951,12 @@ private:
         const Token token = _token;
         switch (token.kind)
         {
-            case Token::End: Fail("operand expected"); return -1;
-            case Token::Close: Fail("unexpected ')'"); return -1;
-            case Token::Operator: Fail("operand expected before '" + token.text + "'"); return -1;
+            case Token::End:
+                Fail(PreviousText().empty() ? std::string("a value is missing")
+                                            : "the condition ends after '" + PreviousText() + "': a value is missing");
+                return -1;
+            case Token::Close: Fail("a value is missing before ')'"); return -1;
+            case Token::Operator: Fail("a value is missing before '" + token.text + "'"); return -1;
             case Token::Number:
             {
                 Next();
@@ -809,7 +994,7 @@ private:
         {
             if (_trigger & BRK_COND_TARGET)
             {
-                Fail("NR is the machine's, not this CPU's", token.column);
+                Fail("NR belongs to the main machine; this breakpoint is on another CPU", token.column);
                 return -1;
             }
             const size_t open = _token.column;
@@ -832,12 +1017,18 @@ private:
                 const uint8_t needs = TriggersOf(id);
                 if (needs && !(needs & _trigger))
                 {
-                    Fail(token.text + " is not supplied by this breakpoint's trigger", token.column);
+                    const uint8_t fires = static_cast<uint8_t>(_trigger & BRK_COND_ANY);
+                    Fail(token.text + " (" + MeaningOf(id) + ") exists only on " + AccessesInWords(needs) +
+                             "; this breakpoint fires on " + AccessesInWords(fires) +
+                             ((fires & BRK_COND_PORT_IN) && (needs & BRK_COND_PORT_OUT) && id == V_VAL
+                                  ? " (an IN breakpoint stops before the port is read)"
+                                  : ""),
+                         token.column);
                     return -1;
                 }
                 if ((_trigger & BRK_COND_TARGET) && MachineOnly(id))
                 {
-                    Fail(token.text + " is the machine's, not this CPU's", token.column);
+                    Fail(token.text + " belongs to the main machine; this breakpoint is on another CPU", token.column);
                     return -1;
                 }
                 return Add(Leaf(Node::Var, id));
@@ -882,7 +1073,10 @@ private:
                 node.label = labelName;
                 return Add(node);
             }
-        Fail("unknown name '" + token.text + "'", token.column);
+        const std::string hint = UnknownNameHint(upper);
+        Fail("unknown name '" + token.text + "': not a register, flag, machine value or label" +
+                 (hint.empty() ? std::string() : " (" + hint + ")"),
+             token.column);
         return -1;
     }
 
@@ -900,7 +1094,13 @@ private:
             return;
         if (_token.kind != Token::Close)
         {
-            Fail("missing ')' for '(' at column " + std::to_string(openColumn));
+            if (_token.kind == Token::End)
+                Fail("'(' at column " + std::to_string(openColumn) + " is not closed: a ')' is missing");
+            else if (const std::string hint = OperatorWordHint(_token); !hint.empty())
+                Fail(hint);
+            else
+                Fail("'" + _token.text + "' follows a complete value: an operator (==, &&, +, ...) or a ')' is missing "
+                     "before it");
             return;
         }
         Next();
@@ -1090,6 +1290,7 @@ private:
     BreakpointConditionDialect _dialect;
     size_t _pos = 0;
     Token _token;
+    Token _previous;  ///< the token before _token
     std::vector<Node> _nodes;
     std::string _error;
     size_t _errorColumn = 0;
@@ -1114,7 +1315,7 @@ std::shared_ptr<const BreakpointConditionProgram> BreakpointConditionProgram::Co
         std::string why;
         if (program->Evaluate(*dryRun, &why) == BreakpointConditionResult::Error)
         {
-            error = "the condition does not evaluate here: " + why;
+            error = "the condition cannot be evaluated on this machine: " + why;
             return nullptr;
         }
         program->ResetPrevious();  // the dry run is not a hit: @prev starts from the first real evaluation
@@ -1224,7 +1425,7 @@ BreakpointConditionResult BreakpointConditionProgram::EvaluateCode(const Breakpo
                     return fail("NR register outside 0..#FF");
                 uint8_t value = 0;
                 if (!x.machine || !x.machine->NextRegister(static_cast<uint8_t>(reg), value))
-                    return fail("no NR here");
+                    return fail("NR(x): this machine has no ZX Next registers");
                 stack[sp - 1] = value;
                 break;
             }

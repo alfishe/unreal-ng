@@ -1,7 +1,8 @@
 # TODO — Conditional breakpoints (2026-08-17)
 
-**Status:** partially done — Phase 0 (hot-path retrofit) shipped; the condition
-engine itself (Phase 1) is not implemented.
+**Status:** done — the condition engine landed on every plane and in the debugger protocols (87beafff2,
+2026-10-26); the Qt breakpoint editor got its Condition field and the refusals their wording (2026-11-04). User
+guide: [conditional-breakpoints.md](../../features/conditional-breakpoints.md). The lines below are history.
 
 ## Progress
 - **Phase 0 complete (2026-08-19):** breakpoint miss-path cost cut 12–18× via

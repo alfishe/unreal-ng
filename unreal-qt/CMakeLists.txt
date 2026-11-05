@@ -722,6 +722,14 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/symbolbundlepreferences_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolbundlepreferences.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolbundlepreferences.h"
+        # The breakpoint editor's condition: checked while typed, the reason and its place shown
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointeditor_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointeditor.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointeditor.h"
+        # The debugger's stop line: the breakpoint the machine stopped at, in words
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointstopline_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.h"
         # The debugger's machine panels: CMOS clock, port watch, port events (enhancements #4, #6, #7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggerpanels_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/rtcdialog.cpp"

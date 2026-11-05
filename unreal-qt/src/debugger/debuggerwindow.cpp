@@ -4,6 +4,7 @@
 
 #include <QBoxLayout>
 #include <QColor>
+#include <QCoreApplication>
 #include <QDialog>
 #include <QGroupBox>
 #include <QHeaderView>
@@ -22,6 +23,7 @@
 #include "QHexView/model/buffer/qmemorybuffer.h"
 #include "debugger/breakpointdialog.h"
 #include "debugger/breakpointeditor.h"
+#include "debugger/breakpointstopline.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/devicememorydialog.h"
@@ -293,6 +295,18 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     ui->fdcStatusWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     speedRow->addWidget(ui->fdcStatusWidget);
     ui->verticalLayout_2->insertLayout(1, speedRow);
+
+    // The stop line: which breakpoint stopped the machine, on what, by which condition (gone when it moves on)
+    _stopBanner = new QLabel(this);
+    _stopBanner->setTextFormat(Qt::RichText);
+    _stopBanner->setWordWrap(true);
+    _stopBanner->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    _stopBanner->setStyleSheet("QLabel { background: #FFF1C2; color: #202020; border: 1px solid #E0B040;"
+                               " border-left: 4px solid #D03030; padding: 3px 6px; }");
+    _stopBanner->setVisible(false);
+    connect(_stopBanner, &QLabel::linkActivated, this, &DebuggerWindow::onStopBannerLink);
+    ui->verticalLayout_2->insertWidget(2, _stopBanner);
+
     connect(m_speedControl, &SpeedControlWidget::stepped, this, [this]() {
         updateState();
         emit screenRefreshRequested();
@@ -332,12 +346,36 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     // NOTE: DebuggerWindow is now FULLY DEPENDENT on MainWindow via EmulatorBinding.
     // We do NOT subscribe to ANY global MessageCenter events here!
     //
-    // Problem: Global events (NC_EXECUTION_BREAKPOINT, NC_EXECUTION_CPU_STEP, etc.)
+    // Problem: Global events (NC_EXECUTION_CPU_STEP, etc.)
     // don't carry emulator ID information. When multiple emulators exist, we can't
     // tell which emulator the event is from, leading to race conditions and crashes.
     //
     // Solution: DebuggerWindow receives state via EmulatorBinding signals from MainWindow.
     // Child widgets are connected to DebuggerWindow dispatch signals.
+    //
+    // The exception: NC_EXECUTION_BREAKPOINT carries the machine's id (BreakpointTriggeredPayload). The observer
+    // copies the hit and posts it; the GUI thread keeps it only for the machine this window shows
+    QPointer<DebuggerWindow> self(this);
+    _breakpointObserver =
+        MessageCenter::DefaultMessageCenter().AddObserver(NC_EXECUTION_BREAKPOINT, [self](int, Message* message) {
+            auto* payload = message != nullptr ? dynamic_cast<BreakpointTriggeredPayload*>(message->obj) : nullptr;
+            if (payload == nullptr)
+                return;
+            BreakpointHit hit;
+            hit.emulatorId = payload->emulatorId.toString();
+            hit.id = static_cast<uint16_t>(payload->_payloadNumber);
+            hit.address = payload->address;
+            hit.kind = payload->kind;
+            hit.cpu = payload->cpu;
+            hit.cpuPc = payload->cpuPc;
+            QMetaObject::invokeMethod(
+                QCoreApplication::instance(),
+                [self, hit] {
+                    if (self)
+                        self->onBreakpointHit(hit);
+                },
+                Qt::QueuedConnection);
+        });
 
     // Connect dispatch signals to child widgets (hierarchical pattern)
     connect(this, &DebuggerWindow::readyForChildren, ui->disassemblerWidget, &DisassemblerWidget::refresh);
@@ -364,8 +402,8 @@ DebuggerWindow::~DebuggerWindow()
 
     // Block all refreshes during shutdown
     _isClosing = true;
-    // so there's nothing to unsubscribe from here. All event handling is done via
-    // explicit method calls from MainWindow.
+    // All other event handling is done via explicit method calls from MainWindow; the breakpoint observer goes here
+    MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_EXECUTION_BREAKPOINT, _breakpointObserver);
 
     delete ui;
 }
@@ -579,6 +617,7 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
         case StateResumed:  // StateResumed = running after pause, same as StateRun
             // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON, Labels: ON)
             updateToolbarActions(false, true, false, true, true, true);
+            clearStopBanner();
             break;
         case StateStopped:
         case StateUnknown:
@@ -977,22 +1016,12 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
     });
 }
 
-void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
+void DebuggerWindow::onBreakpointHit(const BreakpointHit& hit)
 {
-    Q_UNUSED(id);
-
-    if (!_emulator || !message || !message->obj)
-    {
+    if (_isClosing || !_emulator || hit.emulatorId != _emulator->GetId())
         return;
-    }
 
-    SimpleNumberPayload* payload = static_cast<SimpleNumberPayload*>(message->obj);
-    if (!payload)
-    {
-        return;
-    }
-
-    uint16_t breakpointID = static_cast<uint16_t>(payload->_payloadNumber);
+    const uint16_t breakpointID = hit.id;
     BreakpointManager* bpManager = _emulator->GetDebugManager()->GetBreakpointsManager();
     if (!bpManager)
     {
@@ -1067,17 +1096,51 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
         _stepOutBreakpointID = BRK_INVALID;
     }
 
-    // Update the UI in the main thread
-    dispatchToMainThread([this]() {
-        // Stop speed control auto-run on breakpoint hit
-        if (m_speedControl)
-            m_speedControl->stop();
+    // Stop speed control auto-run on breakpoint hit
+    if (m_speedControl)
+    {
+        m_speedControl->stop();
+        m_speedControl->setMachineRunning(false);
+    }
 
-        // When a breakpoint is hit:
-        // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
-        updateToolbarActions(true, false, true, true, true, true);
+    // The user's breakpoints speak; the step traps and the owners' (BASIC typer, adapters) stay silent
+    if (BreakpointManager::IsUserBreakpoint(*breakpoint) && !breakpoint->hidden)
+    {
+        _stopBreakpointId = breakpointID;
+        _stopBanner->setText(BreakpointStopLine(*breakpoint, hit));
+        _stopBanner->setVisible(true);
+    }
+
+    // When a breakpoint is hit:
+    // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
+    updateToolbarActions(true, false, true, true, true, true);
+    updateState();
+}
+
+void DebuggerWindow::clearStopBanner()
+{
+    _stopBreakpointId = BRK_INVALID;
+    if (_stopBanner)
+        _stopBanner->setVisible(false);
+}
+
+void DebuggerWindow::onStopBannerLink(const QString& link)
+{
+    if (!_emulator)
+        return;
+    if (link == "edit" && _stopBreakpointId != BRK_INVALID)
+    {
+        if (!_emulator->GetBreakpointManager()->GetBreakpointById(_stopBreakpointId))
+        {
+            clearStopBanner();  // removed meanwhile
+            return;
+        }
+        BreakpointEditor editor(_emulator, BreakpointEditor::Edit, _stopBreakpointId, this);
+        editor.exec();
         updateState();
-    });
+    }
+    else if (link == "list")
+        showBreakpointManager();
 }
 
 void DebuggerWindow::handleCPUStepMessage(int id, Message* message)
@@ -1101,6 +1164,7 @@ void DebuggerWindow::handleLabelChanged(int id, Message* message)
 
 void DebuggerWindow::continueExecution()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::continueExecution()";
 
     _breakpointTriggered = false;
@@ -1147,6 +1211,7 @@ void DebuggerWindow::pauseExecution()
 
 void DebuggerWindow::stepIn()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::stepIn()";
 
     _breakpointTriggered = false;
@@ -1167,6 +1232,7 @@ void DebuggerWindow::stepIn()
 
 void DebuggerWindow::stepOver()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::stepOver()";
 
     _breakpointTriggered = false;
@@ -1190,6 +1256,7 @@ void DebuggerWindow::stepOver()
 
 void DebuggerWindow::stepOut()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::stepOut()";
 
     _breakpointTriggered = false;
@@ -1256,6 +1323,7 @@ void DebuggerWindow::stepOut()
 
 void DebuggerWindow::frameStep()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::frameStep()";
 
     _breakpointTriggered = false;
@@ -1276,6 +1344,7 @@ void DebuggerWindow::frameStep()
 
 void DebuggerWindow::waitInterrupt()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::waitInterrupt()";
 
     if (!_emulator)
@@ -1451,6 +1520,7 @@ void DebuggerWindow::showPortEvents()
 
 void DebuggerWindow::runTStates()
 {
+    clearStopBanner();  // the machine moves on
     if (!_emulator) return;
 
     bool ok;
@@ -1464,6 +1534,7 @@ void DebuggerWindow::runTStates()
 
 void DebuggerWindow::runToScanline()
 {
+    clearStopBanner();  // the machine moves on
     if (!_emulator) return;
 
     bool ok;
@@ -1477,6 +1548,7 @@ void DebuggerWindow::runToScanline()
 
 void DebuggerWindow::runNScanlines()
 {
+    clearStopBanner();  // the machine moves on
     if (!_emulator) return;
 
     bool ok;
@@ -1490,6 +1562,7 @@ void DebuggerWindow::runNScanlines()
 
 void DebuggerWindow::runToPixel()
 {
+    clearStopBanner();  // the machine moves on
     if (!_emulator) return;
 
     _breakpointTriggered = false;
@@ -1499,6 +1572,7 @@ void DebuggerWindow::runToPixel()
 
 void DebuggerWindow::runToInterrupt()
 {
+    clearStopBanner();  // the machine moves on
     if (!_emulator) return;
 
     _breakpointTriggered = false;
@@ -1508,6 +1582,7 @@ void DebuggerWindow::runToInterrupt()
 
 void DebuggerWindow::resetEmulator()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::resetEmulator()";
 
     if (_emulator)

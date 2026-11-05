@@ -81,10 +81,10 @@ TEST(HapticProfile_Test, ParsesAndRefusesWhatItCannotDo)
         {R"({"sources": {"s": {"probe": "write", "address": 1, "word": true}}})", "on a value probe"},
         {R"({"sources": {"s": {"probe": "value", "address": "0xFFFF", "word": true}}})", "second byte"},
         {R"({"source": {}})", "unknown field"},
-        {R"({"sources": {"s": {"probe": "exec", "address": 1, "if": "A =="}}})", "'if' operand expected at column 5"},
+        {R"({"sources": {"s": {"probe": "exec", "address": 1, "if": "A =="}}})", "'if' the condition ends after '==': a value is missing at column 5"},
         {R"({"sources": {"s": {"probe": "write", "address": 1, "each_write": true, "if": "RD == 1"}}})",
-         "RD is not supplied"},
-        {R"({"sources": {"s": {"probe": "value", "address": 1, "if": "VAL == 1"}}})", "VAL is not supplied"},
+         "RD (the address read) exists only on"},
+        {R"({"sources": {"s": {"probe": "value", "address": 1, "if": "VAL == 1"}}})", "VAL (the value read or written) exists only on"},
         {R"({"sources": {"s": {"probe": "value", "address": 1, "if": 7}}})", "'if'"},
     };
     for (const Bad& entry : bad)
