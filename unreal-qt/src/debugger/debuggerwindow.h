@@ -12,6 +12,7 @@
 #include <emulator/emulatorbinding.h>
 
 #include <QMenu>
+#include <QPointer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QWidget>
@@ -121,7 +122,9 @@ private slots:
     void showDiskSector();
     void showDiskFiles();
     void showLiveSource();
-    void showPcHistory();
+    void showPcHistory(bool shown);
+    /// Device memory / Disk sector on only when the machine has regions / drives
+    void updateMachineActions();
     void showPortWatch();
     void showRtc();
     void showPortEvents();
@@ -229,6 +232,8 @@ private:
     // Visualization window
     class DebugVisualizationWindow* _visualizationWindow = nullptr;
     class LiveSourceWindow* _liveSourceWindow = nullptr;
+    class PcHistoryPane* _pcHistoryPane = nullptr;  // in the splitter, right of the disassembly
+    QPointer<class PortEventsDialog> _portEventsDialog;  // not modal: open while the program runs
 
     // Speed control widget
     SpeedControlWidget* m_speedControl = nullptr;

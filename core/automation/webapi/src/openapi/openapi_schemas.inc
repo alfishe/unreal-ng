@@ -1433,6 +1433,17 @@
     schemas["TTDPortEventHit"]["properties"]["pc"]["description"] = "Address of the IN / OUT instruction";
     schemas["TTDPortEventHit"]["properties"]["ay_register"]["type"] = "integer";
     schemas["TTDPortEventHit"]["properties"]["ay_register"]["description"] = "AY register selected at the access (AY queries only)";
+    schemas["TTDPortEventHit"]["properties"]["device"]["type"] = "string";
+    schemas["TTDPortEventHit"]["properties"]["device"]["nullable"] = true;
+    schemas["TTDPortEventHit"]["properties"]["device"]["description"] =
+        "The device the machine's port map gives the port (null when no row decodes it, or for a file)";
+    schemas["TTDPortEventHit"]["properties"]["tags"]["type"] = "array";
+    schemas["TTDPortEventHit"]["properties"]["tags"]["items"]["type"] = "string";
+    schemas["TTDPortEventHit"]["properties"]["tags"]["description"] = "The port map row's tags (keyboard, ay, storage, ...)";
+    schemas["TTDPortEventHit"]["properties"]["what"]["type"] = "string";
+    schemas["TTDPortEventHit"]["properties"]["what"]["description"] =
+        "What the access did, in words: 'keyboard: half-row A-G, keys down: a', 'AY: select register 7 (mixer)', "
+        "'FDC: command Read sector (#80)', 'paging: RAM 3 at #C000, screen 5, ROM 1', 'border blue, MIC 0, beeper 0'";
     schemas["TTDPortEventHit"]["properties"]["rows"]["type"] = "integer";
     schemas["TTDPortEventHit"]["properties"]["rows"]["description"] =
         "A read of the ULA (even port): the keyboard half-rows its address selects, bit n = A(8+n) low "

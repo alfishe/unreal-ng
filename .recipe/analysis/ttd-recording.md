@@ -309,7 +309,9 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: appli
   `in`, `out`; `arg` (MCP: `event_arg`) is the key name or AY register. `in`/`out` narrow with `port` /
   `port_mask` / `value` / `value_mask`; `newest` returns the last hits first. The reply has `event`,
   `direction`, `count`, `truncated`, `scanned` and `hits[]` (`index`, `frame`, `tinframe`, `port`, `value`,
-  `pc`, plus `ay_register` for AY events). A keyboard read adds `rows` (the half-rows selected) and `keys` (the
+  `pc`, plus `ay_register` for AY events, and `device` / `tags` / `what`: the port map's device, its tags and the
+  access in words - "AY: select register 7 (mixer)", "FDC: command Read sector (#80)", "paging: RAM 3 at #C000,
+  screen 5, ROM 1"). A keyboard read adds `rows` (the half-rows selected) and `keys` (the
   keys it saw down, one half-row only). `context` (default on, off while a recording runs; `true` pauses it) adds
   `registers` (`af` `bc` `de` `hl` `ix` `iy` `sp`) at the IN / OUT instruction and `stack_top` (the word at SP:
   the caller's return address when the key routine pushed nothing) - replayed, the machine put back.

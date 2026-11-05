@@ -729,9 +729,9 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/porteventsdialog.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/porteventsdialog.h"
         # The debugger's PC history dialog (debugger additions tdd §7)
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/pchistorydialog_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/pchistorypane_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorypane.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorypane.h"
         # The Network traffic window (network #91 T4): rows, filter, decode, Seek here
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/trafficwindow_test.cpp"
         # Windows against an instance automation removes while they show it (BUGS.md #11)

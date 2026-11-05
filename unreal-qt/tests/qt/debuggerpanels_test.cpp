@@ -3,8 +3,12 @@
 // (TTDControl's verb: its refusal shown as is).
 
 #include <QApplication>
+#include <QComboBox>
+#include <QFile>
 #include <QLabel>
+#include <QPushButton>
 #include <QTableWidget>
+#include <QTemporaryDir>
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -116,4 +120,73 @@ TEST_F(DebuggerPanels_Test, PortEventsShowsTheVerbsRefusal)
                   label->text().contains("time travel", Qt::CaseInsensitive) ||
                   label->text().contains("session", Qt::CaseInsensitive);
     EXPECT_TRUE(message) << "no recording: the verb says so";
+}
+
+// The journals come from a recording: the dialog's top row starts it, the search then reads them
+TEST_F(DebuggerPanels_Test, PortEventsStartsTheRecordingItNeeds)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("48K"));
+    PortEventsDialog dialog(_emulator);
+    QPushButton* record = nullptr;
+    for (QPushButton* button : dialog.findChildren<QPushButton*>())
+        if (button->text() == "Start recording")
+            record = button;
+    ASSERT_NE(record, nullptr);
+    ASSERT_TRUE(record->isEnabled());
+
+    record->click();
+    EXPECT_EQ(record->text(), "Stop recording");
+    dialog.search();
+    bool searched = false;
+    for (QLabel* label : dialog.findChildren<QLabel*>())
+        searched = searched || label->text().contains("hit(s)");
+    EXPECT_TRUE(searched) << "recording: the search reads the port journals";
+
+    record->click();
+    EXPECT_EQ(record->text(), "Start recording");
+}
+
+// The hits export to CSV: a header row, one row per hit, the core's words quoted where they hold a comma
+TEST_F(DebuggerPanels_Test, PortEventsExportsTheHitsAsCsv)
+{
+    ASSERT_NO_FATAL_FAILURE(Create("48K"));
+    PortEventsDialog dialog(_emulator);
+    QPushButton* record = nullptr;
+    QPushButton* exportButton = nullptr;
+    for (QPushButton* button : dialog.findChildren<QPushButton*>())
+    {
+        if (button->text() == "Start recording")
+            record = button;
+        if (button->text().startsWith("Export CSV"))
+            exportButton = button;
+    }
+    ASSERT_NE(record, nullptr);
+    ASSERT_NE(exportButton, nullptr);
+    EXPECT_FALSE(exportButton->isEnabled()) << "nothing to export yet";
+
+    for (QComboBox* combo : dialog.findChildren<QComboBox*>())
+        if (combo->findText("out") >= 0)
+            combo->setCurrentText("out");  // every OUT: the ROM sets the border as it starts
+    record->click();
+    _emulator->RunNFrames(3);
+    record->click();
+    dialog.search();
+    QTableWidget* table = dialog.findChild<QTableWidget*>();
+    ASSERT_GT(table->rowCount(), 0) << dialog.findChildren<QLabel*>().last()->text().toStdString();
+    EXPECT_TRUE(exportButton->isEnabled());
+
+    const QStringList lines = dialog.hitsCsv().split("\r\n", Qt::SkipEmptyParts);
+    ASSERT_EQ(lines.size(), table->rowCount() + 1);
+    EXPECT_EQ(lines[0], "event,direction,index,frame,t_in_frame,pc,port,value,ay_register,device,tags,what");
+    EXPECT_TRUE(lines[1].contains(",0x" + table->item(0, 2)->text() + ",0x" + table->item(0, 3)->text() + ",")) << lines[1].toStdString();
+    EXPECT_TRUE(lines[1].endsWith("\"" + table->item(0, 6)->text() + "\"")) << "the words hold commas: quoted";
+
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString path = dir.filePath("hits.csv");
+    ASSERT_TRUE(dialog.exportCsv(path));
+    QFile file(path);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    EXPECT_EQ(QString::fromUtf8(file.readAll()), dialog.hitsCsv());
+    EXPECT_FALSE(dialog.exportCsv(dir.filePath("missing/hits.csv"))) << "an unwritable path is refused";
 }

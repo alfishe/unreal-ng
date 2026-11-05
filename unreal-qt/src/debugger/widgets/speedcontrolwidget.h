@@ -104,6 +104,9 @@ public:
     /// @brief Stop the paced run if it runs (the machine stays paused)
     void stop();
 
+    /// @brief The machine runs at full speed (the debugger's binding state): Pause is on while it or a pace runs
+    void setMachineRunning(bool running);
+
 signals:
     /// @brief Emitted after each paced step so parent can refresh UI
     void stepped();
@@ -114,6 +117,7 @@ signals:
 private slots:
     void onSliderChanged(int position);
     void onPlayPauseClicked();
+    void onPauseClicked();
     void onStepForwardClicked();
     void onStepBackwardClicked();
 
@@ -131,9 +135,11 @@ private:
     QLabel* _label = nullptr;
     QToolButton* _stepBackButton = nullptr;
     QToolButton* _playPauseButton = nullptr;
+    QToolButton* _pauseButton = nullptr;
     QSpinBox* _intervalSpinBox = nullptr;  // Auto-run interval in ms
     QToolButton* _stepForwardButton = nullptr;
     bool _running = false;
+    bool _machineRunning = false;  ///< running at full speed (not paced)
     bool _syncing = false;  ///< the controls follow the pacer: their signals do not submit
     uint64_t _paceObserver = 0;
     uint64_t _stepObserver = 0;

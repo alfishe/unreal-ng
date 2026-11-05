@@ -6641,6 +6641,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                 if (!keys.empty())
                                     out << " keys " << keys;
                             }
+                            if (h.isMember("what"))
+                                out << " - " << h["what"].asString();
                             if (h.isMember("registers"))
                             {
                                 const Json::Value& r = h["registers"];

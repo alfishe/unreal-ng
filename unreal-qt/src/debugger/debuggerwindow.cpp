@@ -5,6 +5,7 @@
 #include <QBoxLayout>
 #include <QColor>
 #include <QDialog>
+#include <QGroupBox>
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QMessageBox>
@@ -28,7 +29,7 @@
 #include "debugger/diskfilesdialog.h"
 #include "debugger/livesourcewindow.h"
 #include "debugger/panefocus.h"
-#include "debugger/pchistorydialog.h"
+#include "debugger/pchistorypane.h"
 #include "debugger/porteventsdialog.h"
 #include "debugger/portwatchdialog.h"
 #include "debugger/rtcdialog.h"
@@ -59,14 +60,24 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
 
     // Panels: one frame style for all of them (the speed control's), the panels' text in the window's monospace font
     // (a group box's style sheet font would pass its small title size down to the contents)
+    // The PC history: a third splitter pane right of the disassembly, shown (and recording) by its toolbar toggle
+    QGroupBox* historyGroup = new QGroupBox("PC history", this);
+    historyGroup->setObjectName("historyGroup");
+    QVBoxLayout* historyLayout = new QVBoxLayout(historyGroup);
+    historyLayout->setSpacing(0);
+    _pcHistoryPane = new PcHistoryPane(_emulator, historyGroup);
+    historyLayout->addWidget(_pcHistoryPane);
+    ui->mainSplitter->addWidget(historyGroup);
+    historyGroup->hide();
+
     const QFont panelFont = font();
     for (QWidget* contents : std::initializer_list<QWidget*>{ui->registersWidget, ui->stackWidget,
                                                               ui->memorypagesWidget, ui->hexView,
-                                                              ui->disassemblerWidget})
+                                                              ui->disassemblerWidget, _pcHistoryPane})
         contents->setFont(panelFont);
     setStyleSheet(QStringLiteral(R"(
         QGroupBox#registersGroup, QGroupBox#stackGroup, QGroupBox#pagesGroup, QGroupBox#memoryGroup,
-        QGroupBox#disasmGroup {
+        QGroupBox#disasmGroup, QGroupBox#historyGroup {
             font-family: "Consolas", "Monaco", "Courier New", monospace;
             font-size: 11px;
             border: 1px solid palette(mid);
@@ -75,7 +86,7 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
             padding: 8px 6px 4px 6px;
         }
         QGroupBox#registersGroup::title, QGroupBox#stackGroup::title, QGroupBox#pagesGroup::title,
-        QGroupBox#memoryGroup::title, QGroupBox#disasmGroup::title {
+        QGroupBox#memoryGroup::title, QGroupBox#disasmGroup::title, QGroupBox#historyGroup::title {
             subcontrol-origin: margin;
             subcontrol-position: top left;
             left: 8px;
@@ -85,7 +96,8 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     )"));
     ui->mainSplitter->setStretchFactor(0, 0);
     ui->mainSplitter->setStretchFactor(1, 1);
-    ui->mainSplitter->setSizes({400, 700});
+    ui->mainSplitter->setStretchFactor(2, 0);
+    ui->mainSplitter->setSizes({400, 700, 260});
 
     // Create floating toolbar
     // toolBar = new QToolBar("Debugger toolbar", this);
@@ -189,7 +201,9 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     liveSourceAction->setToolTip("The source an assembler (ALASM, TASM 4.12) holds in RAM, followed while you type: its labels in the debugger, its errors on their lines");
     toolBar->addAction(liveSourceAction);
     pcHistoryAction = new QAction("PC history", this);
-    pcHistoryAction->setToolTip("The newest instructions the CPU started, with their window's page (starts recording)");
+    pcHistoryAction->setToolTip("The PC history pane: the newest instructions the CPU started, with their window's page "
+                                "(records while shown)");
+    pcHistoryAction->setCheckable(true);
     toolBar->addAction(pcHistoryAction);
     QMenu* machineMenu = new QMenu(this);
     QAction* portWatchAction = machineMenu->addAction("Ports");
@@ -235,7 +249,9 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     connect(diskSectorAction, &QAction::triggered, this, &DebuggerWindow::showDiskSector);
     connect(diskFilesAction, &QAction::triggered, this, &DebuggerWindow::showDiskFiles);
     connect(liveSourceAction, &QAction::triggered, this, &DebuggerWindow::showLiveSource);
-    connect(pcHistoryAction, &QAction::triggered, this, &DebuggerWindow::showPcHistory);
+    connect(pcHistoryAction, &QAction::toggled, this, &DebuggerWindow::showPcHistory);
+    connect(_pcHistoryPane, &PcHistoryPane::addressPicked, ui->disassemblerWidget, &DisassemblerWidget::goToAddress);
+    connect(this, &DebuggerWindow::readyForChildren, _pcHistoryPane, &PcHistoryPane::refresh);
     connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
     connect(visualizationAction, &QAction::triggered, this, &DebuggerWindow::showVisualizationWindow);
@@ -487,6 +503,27 @@ void DebuggerWindow::propagateEmulator()
         _liveSourceWindow->setEmulator(_emulator);
     if (_visualizationWindow)
         _visualizationWindow->setEmulator(_emulator);
+    _pcHistoryPane->setEmulator(_emulator);
+    // Port events holds the machine it searches: another machine (or none) closes it
+    if (_portEventsDialog && _portEventsDialog->emulator() != _emulator)
+        _portEventsDialog->close();
+    updateMachineActions();
+}
+
+void DebuggerWindow::updateMachineActions()
+{
+    // A tool the machine has nothing for is off, its tooltip says why (no empty dialog to open)
+    const bool regions = DeviceMemoryDialog::HasRegions(_emulator.get());
+    deviceMemoryAction->setEnabled(regions);
+    deviceMemoryAction->setToolTip(regions ? "Memory a device owns outside RAM / ROM (Sprinter vram, TS-Conf cram / "
+                                             "sfile, sound card RAM): view and edit"
+                                           : "This machine has no device memory (memory a device owns outside RAM / "
+                                             "ROM: Sprinter vram, TS-Conf cram / sfile, sound card RAM)");
+    const bool drives = DiskSectorDialog::HasDrives(_emulator.get());
+    diskSectorAction->setEnabled(drives);
+    diskSectorAction->setToolTip(drives ? "View and edit a floppy sector's data field (CRC recalculated, the image "
+                                          "counts as modified)"
+                                        : "This machine has no floppy drives");
 }
 
 void DebuggerWindow::onBindingBound()
@@ -552,6 +589,9 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
             break;
     }
 
+    if (m_speedControl)
+        m_speedControl->setMachineRunning(state == StateRun || state == StateResumed);
+
     // Dispatch to children
     emit stateChangedForChildren(state);
 }
@@ -559,12 +599,16 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
 void DebuggerWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
+    if (pcHistoryAction && pcHistoryAction->isChecked() && !_pcHistoryPane->isRecording())
+        _pcHistoryPane->setRecording(true);
     emit visibilityChanged(true);
 }
 
 void DebuggerWindow::hideEvent(QHideEvent* event)
 {
     QWidget::hideEvent(event);
+    if (_pcHistoryPane->isRecording())
+        _pcHistoryPane->setRecording(false);  // a closed debugger costs the emulation nothing
     emit visibilityChanged(false);
 }
 
@@ -579,6 +623,7 @@ void DebuggerWindow::onBindingReady()
 
     // Dispatch to children via signal (widgets are connected to readyForChildren)
     emit readyForChildren();
+    updateMachineActions();  // the machine is complete now (its cards and drives fitted)
     showMemoryAtPc();
 }
 
@@ -708,6 +753,7 @@ void DebuggerWindow::updateState()
         // Update stack widget
         ui->stackWidget->refresh();
 
+        _pcHistoryPane->refresh();
         showMemoryAtPc();
     }
     else
@@ -1360,12 +1406,10 @@ void DebuggerWindow::showLiveSource()
     _liveSourceWindow->activateWindow();
 }
 
-void DebuggerWindow::showPcHistory()
+void DebuggerWindow::showPcHistory(bool shown)
 {
-    if (!_emulator) return;
-
-    PcHistoryDialog dialog(_emulator, this);
-    dialog.exec();
+    _pcHistoryPane->parentWidget()->setVisible(shown);
+    _pcHistoryPane->setRecording(shown);
 }
 
 void DebuggerWindow::showPortWatch()
@@ -1389,14 +1433,20 @@ void DebuggerWindow::showPortEvents()
 {
     if (!_emulator) return;
 
-    PortEventsDialog dialog(_emulator, this);
-    // A hit sought: the panes show the machine there, the disassembly the instruction that made the access
-    connect(&dialog, &PortEventsDialog::seekedTo, this, [this](uint16_t pc) {
-        updateState();
-        ui->disassemblerWidget->goToAddress(pc);
-    });
-    dialog.exec();
-    updateState();
+    // Not modal: the program runs (and records) while the window stays open
+    if (!_portEventsDialog)
+    {
+        _portEventsDialog = new PortEventsDialog(_emulator, this);
+        _portEventsDialog->setAttribute(Qt::WA_DeleteOnClose);
+        // A hit sought: the panes show the machine there, the disassembly the instruction that made the access
+        connect(_portEventsDialog, &PortEventsDialog::seekedTo, this, [this](uint16_t pc) {
+            updateState();
+            ui->disassemblerWidget->goToAddress(pc);
+        });
+    }
+    _portEventsDialog->show();
+    _portEventsDialog->raise();
+    _portEventsDialog->activateWindow();
 }
 
 void DebuggerWindow::runTStates()
