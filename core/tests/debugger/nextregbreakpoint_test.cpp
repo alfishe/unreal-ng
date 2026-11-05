@@ -679,7 +679,7 @@ TEST(NextRegBreakpointManager_Test, AConditionOnAMachineWithoutTheOperandIsRefus
     spec.condition = "NR(7) == 0";
     std::string error;
     EXPECT_EQ(manager->AddBreakpoint(spec, error), BRK_INVALID);
-    EXPECT_NE(error.find("no NR here"), std::string::npos) << error;
+    EXPECT_NE(error.find("this machine has no ZX Next registers"), std::string::npos) << error;
     spec.condition = "MMU7 == 1 && CPUSPEED == 1";
     EXPECT_NE(manager->AddBreakpoint(spec, error), BRK_INVALID) << error;
     EmulatorTestHelper::CleanupEmulator(emulator);

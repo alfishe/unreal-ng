@@ -10,7 +10,9 @@
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorbinding.h>
+#include "debugger/breakpointstopline.h"
 
+#include <QLabel>
 #include <QMenu>
 #include <QPointer>
 #include <QToolBar>
@@ -97,7 +99,11 @@ private slots:
 
     // Legacy MessageCenter handlers (to be removed)
     void handleEmulatorStateChanged(int id, Message* message);
-    void handleMessageBreakpointTriggered(int id, Message* message);
+    /// A breakpoint of this window's machine fired (GUI thread): the step traps finish, the stop line tells which
+    void onBreakpointHit(const BreakpointHit& hit);
+    /// The stop line goes when the machine moves on (continue, a step, a reset)
+    void clearStopBanner();
+    void onStopBannerLink(const QString& link);
     void handleCPUStepMessage(int id, Message* message);
     void handleLabelChanged(int id, Message* message);
 
@@ -237,6 +243,10 @@ private:
 
     // Speed control widget
     SpeedControlWidget* m_speedControl = nullptr;
+    // The stop line under the speed control: the breakpoint the machine stopped at
+    QLabel* _stopBanner = nullptr;
+    uint16_t _stopBreakpointId = BRK_INVALID;
+    uint64_t _breakpointObserver = 0;  // NC_EXECUTION_BREAKPOINT, filtered by the machine's id
     PaneFocus* _paneFocus = nullptr;
 };
 
