@@ -341,6 +341,9 @@ public:
     /// is not on that path. It remains as a cheap query for code that needs to
     /// know whether the model has the ROM at all.
     inline bool HasDosRom() const { return base_dos_rom != nullptr; }
+    /// A TR-DOS session can run: the DOS ROM, and the service ROM it pages with #7FFD bit 4 clear. The 48K (a Beta 128
+    /// on the edge connector) has no #7FFD, so it needs the DOS ROM alone
+    bool IsDosAvailable() const;
 
     /// endregion </Fields>
 

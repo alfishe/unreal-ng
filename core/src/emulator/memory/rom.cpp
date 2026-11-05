@@ -446,6 +446,22 @@ bool ROM::LoadROM()
                     MLOGERROR("Incorrect ROM size. Should be 16 KB. Found %d", loadedBanks * PAGE_SIZE);
                     result = false;
                 }
+                else if (config.trdos_present && config.dos_rom_path[0] != '\0')
+                {
+                    // A Beta 128 on the edge connector brings its own TR-DOS ROM ([ROM] TRDOS=, the 48K-BETA128
+                    // variant): page 1, paged in at #3Dxx (Memory::IsDosAvailable)
+                    std::string dosPath = config.dos_rom_path;
+                    if (LoadROM(dosPath, memory.ROMPageHostAddress(1)) != 1)
+                    {
+                        MLOGERROR("Unable to load the Beta 128 TR-DOS ROM from file: '%s'", config.dos_rom_path);
+                        result = false;
+                    }
+                    else
+                    {
+                        memory.base_dos_rom = memory.ROMPageHostAddress(1);
+                        _ROMBanksLoaded = 2;
+                    }
+                }
             }
 			else if (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PLUS2)
             {
@@ -783,7 +799,8 @@ std::string ROM::GetROMPageRole(uint8_t page) const
     switch (config.mem_model)
     {
         case MM_SPECTRUM48:
-            return "48K BASIC ROM";
+            return (page == 1 && _context->pMemory && _context->pMemory->base_dos_rom != nullptr) ? "TR-DOS ROM"
+                                                                                                   : "48K BASIC ROM";
         case MM_SPECTRUM128:
         case MM_PLUS2:
             return (page == 0) ? "128K Editor/Menu ROM" : "48K BASIC ROM";
