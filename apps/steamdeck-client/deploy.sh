@@ -42,7 +42,7 @@ BIN="$ROOT/apps/steamdeck-client/build/$VARIANT/bin"
 # The binaries and the runtime data the core reads next to them (cmake/RuntimeData.cmake), plus the WebAPI's web
 # pages (resources/html) for automation builds
 INCLUDES=(--include='p[0-9][0-9]-*' --include='*.sh')
-for dir in configs rom symbols fonts midi boot controllers resources shaders; do INCLUDES+=(--include="$dir/***"); done
+for dir in configs rom symbols fonts midi boot controllers software resources shaders; do INCLUDES+=(--include="$dir/***"); done
 # The copy goes without debug info (p01: ~530 MB with it, ~30 MB without; symbols stay for backtraces), stripped in
 # the SDK image build.sh uses; the build keeps the full binaries for crash analysis
 STAGE="$ROOT/apps/steamdeck-client/build/$VARIANT/deploy"

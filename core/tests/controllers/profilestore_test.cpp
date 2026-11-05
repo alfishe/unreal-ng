@@ -33,7 +33,7 @@ const Binding* Find(const ResolvedProfiles& resolved, const std::string& scope, 
 
 std::string GamesDir()
 {
-    return (TestPathHelper::FindProjectRoot() / "data" / "controllers" / "profiles" / "games").string();
+    return (TestPathHelper::FindProjectRoot() / "data" / "software").string();
 }
 
 std::string Play(const std::string& id, const std::string& extra, const std::string& bindings)
@@ -126,7 +126,7 @@ TEST(ProfileStore_Test, BuiltinsParseAndInvalidProfilesSayWhy)
     std::string why;
     ASSERT_TRUE(GameLibrary::ParseIndex(indexText, indexed, why)) << why;
     EXPECT_EQ(GameLibrary::DumpIndex(indexed), GameLibrary::DumpIndex(entries))
-        << "games/index.yaml is stale: run tools/controllers/profile-index.py";
+        << "software/index.yaml is stale: run tools/controllers/profile-index.py";
     {
         ProfileStore store;
         ASSERT_TRUE(store.OpenGames(GamesDir(), errors));

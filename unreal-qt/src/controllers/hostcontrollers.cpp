@@ -215,7 +215,7 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
     if (!_profiles.LoadAliases(UserProfileDir().toStdString(), aliasError))
         errors.push_back(aliasError);
     // The shipped game profiles: the index now, a profile when a loaded file or a manual choice names it
-    _profiles.OpenGames(FileHelper::GetResourcesPath() + "/controllers/profiles/games", errors);
+    _profiles.OpenGames(FileHelper::GetResourcesPath() + "/software", errors);
     for (const std::string& error : errors)
         qWarning("controllers: %s", error.c_str());
     _service->Router().SetActionSink([this](const ActionEvent& event) {

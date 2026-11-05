@@ -617,7 +617,7 @@ over no probe: one more indirect call per access and one filter bit per read). T
 | H5 | first built-in game profiles with haptics, chosen by signature (`core/swsignature`) |
 
 Built (2026-10-23, widened 2026-10-24 and 2026-10-26 with Dizzy X), H5: game profiles in
-`data/controllers/profiles/games/pentagon/`, found by the SHA-256 of the image (no signature library yet) on a
+`data/software/pentagon/`, found by the SHA-256 of the image (no signature library yet) on a
 Pentagon with TR-DOS (Dizzy X: of the snapshot). Each file is a bundle: one document per address set, each listing the
 hashes of the releases that share it. Every address was checked by play
 through the WebAPI: an exec counter or breakpoint hit at the moment, and the game's state changed as expected. The

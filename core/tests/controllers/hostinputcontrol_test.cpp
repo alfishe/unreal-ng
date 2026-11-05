@@ -31,7 +31,7 @@ public:
     explicit FakeOwner(const std::string& userDir) : _userDir(userDir)
     {
         std::vector<std::string> errors;
-        _store.OpenGames((TestPathHelper::FindProjectRoot() / "data" / "controllers" / "profiles" / "games").string(),
+        _store.OpenGames((TestPathHelper::FindProjectRoot() / "data" / "software").string(),
                          errors);
         _context.machine = "next";
         _context.devices = {{"bt:054c:0ce6:1", "DualSense", "dualsense", "playstation", "fake"}};

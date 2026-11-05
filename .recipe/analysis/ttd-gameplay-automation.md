@@ -3,7 +3,7 @@
 Goal: drive a game from a script, record it, and find out from the recording *where in the game's code and memory a
 gameplay event lives* (crash, jump, pickup, death, level end). The same loop gives the checks for an automated
 gameplay test and the checkpoints for a speedrun script. Worked on ATV Simulator (Z80 snapshot, Pentagon) while writing
-its haptic profile ([games/pentagon/atv-simulator.yaml](../../data/controllers/profiles/games/pentagon/atv-simulator.yaml)).
+its haptic profile ([software/pentagon/atv-simulator.yaml](../../data/software/pentagon/atv-simulator.yaml)).
 
 Preconditions: [ttd-recording.md](ttd-recording.md) (start / stop / seek), [ttd-reverse-debugging.md](ttd-reverse-debugging.md)
 (find-last, reverse-continue, coverage). Everything below is WebAPI (a host-side Python pipeline, the allowed case in

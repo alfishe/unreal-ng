@@ -64,7 +64,7 @@ public:
         std::vector<std::string> errors;
         _profiles.LoadDirectory(UserProfileDir(), ProfileScope::User, errors);
         const char* base = SDL_GetBasePath();
-        _profiles.OpenGames(std::string(base != nullptr ? base : "") + "controllers/profiles/games", errors);
+        _profiles.OpenGames(std::string(base != nullptr ? base : "") + "software", errors);
         for (const std::string& error : errors)
             SDL_Log("controllers: %s", error.c_str());
         _service->Router().SetActionSink([this](const ActionEvent& event) {

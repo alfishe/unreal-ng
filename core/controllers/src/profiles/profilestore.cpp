@@ -724,6 +724,8 @@ JsonValue ProfileStore::ToJson(const Profile& profile)
     root.Set("layers", layers);
     if (!profile.haptics.IsNull())
         root.Set("haptics", profile.haptics);
+    if (!profile.memory.IsNull())
+        root.Set("memory", profile.memory);
     return root;
 }
 

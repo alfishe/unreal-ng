@@ -85,6 +85,9 @@ struct Profile
     std::vector<std::pair<std::string, JsonValue::Members>> layers;
     /// `haptics` as written (haptics.md §7), checked by ParseHapticProfile; null when the profile has none
     JsonValue haptics;
+    /// `memory` as written (memoryprofile.h): regions, labels, label files, entries and comments of the program,
+    /// checked by ParseMemoryProfile; null when the profile has none
+    JsonValue memory;
 
     Specificity GetSpecificity() const;
     bool IsGame() const
