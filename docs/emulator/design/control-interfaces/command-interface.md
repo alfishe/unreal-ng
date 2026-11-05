@@ -4341,7 +4341,7 @@ the same name: `media.recent`, `media.rzx`, `cap.record`, `machine.switches`, `i
 
 | Action | Params | What | Readout |
 | :--- | :--- | :--- | :--- |
-| `mach.start` | `model` (a short name, a variant `TSL-VDAC2` / `PROFI-PLUS` and their aliases, a ZX-Poly configuration), ... | Start a machine (in place by default); the names `machines::Resolve` takes are the ones `EmulatorManager` creates (before 2026-10-21 variants and ZX-Poly configurations were refused here and by `POST /emulator/{id}/model`) | `machine` |
+| `mach.start` | `model` (a short name, a variant `TSL-VDAC2` / `PROFI-PLUS` / `48K-BETA128` and their aliases, a ZX-Poly configuration), ... | Start a machine (in place by default); the names `machines::Resolve` takes are the ones `EmulatorManager` creates (before 2026-10-21 variants and ZX-Poly configurations were refused here and by `POST /emulator/{id}/model`) | `machine` |
 | `mach.switch` | `name` (`turbo`, `cpm`), `on?` (flips) | The Profi's front panel (v3 / v5 TURBO, v5 CP/M) | `toggle.mach.switch.<name>`, `machine.switches` |
 | `mach.previous` | `replace?`, `stranded?`, `ram_power_on?` | Start the model used before this one (the machine history of the process) | `machine.previous` |
 | `media.insert`, `media.swap`, `media.export`, `media.discard`, `media.rescan`, `media.create` | `drive`, the verb's | The media verbs a key needs; `media.swap` with `with` exchanges two drives' disks; `media.export` writes another format (disk: trd, scl, udi, fdi, dsk, td0, mgt, img, mb2, d80, pro, hfe, scp; tape: tap, tzx); `media.create` `format` `trdos` (formatted), `plus3`, `unformatted` (`raw`), `size` for IDE / SD (`64M`) | `media.disk` (with `changed`), `media.tape` |
