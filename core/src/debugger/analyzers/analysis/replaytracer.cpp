@@ -5,6 +5,7 @@
 #include <sstream>
 
 #include "base/featuremanager.h"
+#include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "debugger/analyzers/analysis/analysisinstance.h"
 #include "debugger/analyzers/analysis/l1builder.h"
@@ -15,6 +16,8 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/media/mediamanager.h"
+#include "emulator/media/medium.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/platform.h"
@@ -65,6 +68,25 @@ bool TraceBundle::Capture(Emulator& source, TraceBundle& out, std::string& error
     out.endFrame = ttd->SessionEndPosition().frame;
     out.checkpoints = ttd->GetCheckpointCount();
     out.coverage = ttd->IsCoverageIndexEnabled();
+    // The floppies and the tape as they are now: a free machine forked from the replay reads them itself (the
+    // replay reads the port journal and needs none)
+    if (MediaManager* media = context->pMediaManager)
+    {
+        for (const SlotInfo& slot : media->List())
+        {
+            if (!slot.present || !MachineStateTransfer::MediumMovesWithState(slot.descriptor.kind))
+                continue;
+            const Medium* medium = media->GetMedium(slot.descriptor.id);
+            std::unique_ptr<Medium> copy = medium ? MachineStateTransfer::CopyMovingMedium(*medium, "analysis") : nullptr;
+            if (!copy)
+                continue;
+            BundleMedium entry;
+            entry.slot = slot.descriptor.id;
+            entry.medium = std::shared_ptr<const Medium>(std::move(copy));
+            entry.writeProtect = slot.writeProtect;
+            out.media.push_back(std::move(entry));
+        }
+    }
     if (Memory* memory = source.GetMemory())
     {
         MemoryAccessTracker& tracker = memory->GetAccessTracker();
@@ -72,6 +94,24 @@ bool TraceBundle::Capture(Emulator& source, TraceBundle& out, std::string& error
         out.factsMode = tracker.GetTrackingMode() == TrackingMode::PhysicalMemory ? "physical" : "z80";
         out.callTrace = tracker.GetCallTraceBuffer() != nullptr;
     }
+    return true;
+}
+
+bool TraceBundle::AddMediumFile(const std::string& slot, const std::string& path, std::string& error,
+                                bool writeProtect)
+{
+    if (!FileHelper::IsFile(path))
+    {
+        error = "no image file '" + path + "' for " + slot;
+        return false;
+    }
+    media.erase(std::remove_if(media.begin(), media.end(), [&slot](const BundleMedium& m) { return m.slot == slot; }),
+                media.end());
+    BundleMedium entry;
+    entry.slot = slot;
+    entry.path = path;
+    entry.writeProtect = writeProtect;
+    media.push_back(std::move(entry));
     return true;
 }
 
@@ -89,6 +129,15 @@ StateNode TraceBundle::ToStateNode() const
     node["facts_mode"] = factsMode;
     node["coverage"] = coverage;
     node["calltrace"] = callTrace;
+    StateNode list = StateNode::Array();
+    for (const BundleMedium& m : media)
+    {
+        StateNode item = StateNode::Object();
+        item["slot"] = m.slot;
+        item["what"] = m.medium ? m.medium->Describe() : m.path;
+        list.push(std::move(item));
+    }
+    node["media"] = std::move(list);
     return node;
 }
 
