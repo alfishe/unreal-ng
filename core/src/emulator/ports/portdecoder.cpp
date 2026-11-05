@@ -1563,6 +1563,42 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
 /// Whether a decoded port value belongs to the Beta128 FDC register set
 /// (#1F status/cmd, #3F track, #5F sector, #7F data, #FF system) — hoisted
 /// from PortDecoder_Pentagon128 so the Scorpion decoder shares it
+bool PortDecoder::TryBeta128LowBytePortIn(uint16_t port, uint8_t& result, PortDecodeDisposition& disp)
+{
+    const uint16_t beta = port & 0x00FF;
+    if (!IsBeta128Port(beta))
+        return false;
+    if (_context->emulatorState.flags & CF_TRDOS)
+    {
+        result = PeripheralPortIn(beta);
+        if (_lastPortDecoded)
+            disp.decodedPort = beta;
+    }
+    else
+    {
+        disp.wasBeta128Gated = true;
+    }
+    return true;
+}
+
+bool PortDecoder::TryBeta128LowBytePortOut(uint16_t port, uint8_t value, PortDecodeDisposition& disp)
+{
+    const uint16_t beta = port & 0x00FF;
+    if (!IsBeta128Port(beta))
+        return false;
+    if (_context->emulatorState.flags & CF_TRDOS)
+    {
+        PeripheralPortOut(beta, value);
+        disp.decodedPort = beta;
+        disp.wasDecoded = true;
+    }
+    else
+    {
+        disp.wasBeta128Gated = true;
+    }
+    return true;
+}
+
 bool PortDecoder::IsBeta128Port(uint16_t decodedPort) const
 {
     switch (decodedPort)
