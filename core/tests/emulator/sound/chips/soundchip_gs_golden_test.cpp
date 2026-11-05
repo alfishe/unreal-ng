@@ -219,6 +219,7 @@ struct Digests
 // state) moved by that overshoot; the firmware's behavior did not change.
 // Trace re-recorded 2026-11-01: the idle poll loop sleeps with the trace on, each sleep one `idle` event in place of
 // its FLAGS reads (audio, state and counters unchanged).
+// Trace re-recorded 2026-11-05: a card read records the byte the card got (COMRG: the host's command), not 0.
 // When the pinned values need re-recording (a deliberate behaviour change),
 // run with GS_GOLDEN_PRINT=1 and paste the printed values
 void check(const char* name, const Digests& got, const Digests& want)
@@ -266,7 +267,7 @@ TEST(SoundChip_GeneralSound_Golden, BootUploadPlayResetNmi)
 
     EXPECT_GT(h.nonSilentSamples, 10000u) << "the scenario must actually play";
     check("BootUploadPlayResetNmi", {h.audio.h, h.traceDigest(), h.stateDigest(), h.countersDigest()},
-          {0xa7dc0245f27e0bb3ull, 0xad2261f5e58f1f24ull, 0x9044413a7c0b0b9eull, 0x8bc1d5adc309962full});
+          {0xa7dc0245f27e0bb3ull, 0x16317c84cee781a9ull, 0x9044413a7c0b0b9eull, 0x8bc1d5adc309962full});
 }
 
 TEST(SoundChip_GeneralSound_Golden, ModuleReplayOntoFreshCard)
