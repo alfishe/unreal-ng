@@ -3059,6 +3059,8 @@ public:
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
+            if (!DebugKeyboardManager::IsKnownKeyName(keyName))
+                return false;  // an unknown name fails, not a silent no-op
             ctx->pDebugManager->GetKeyboardManager()->TapKey(keyName, holdFrames.value_or(2));
             return true;
         });
@@ -3068,6 +3070,8 @@ public:
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
+            if (!DebugKeyboardManager::IsKnownKeyName(keyName))
+                return false;  // an unknown name fails, not a silent no-op
             ctx->pDebugManager->GetKeyboardManager()->PressKey(keyName);
             return true;
         });
@@ -3077,6 +3081,8 @@ public:
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
+            if (!DebugKeyboardManager::IsKnownKeyName(keyName))
+                return false;  // an unknown name fails, not a silent no-op
             ctx->pDebugManager->GetKeyboardManager()->ReleaseKey(keyName);
             return true;
         });

@@ -6152,18 +6152,21 @@ namespace PythonBindings
             .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                if (!DebugKeyboardManager::IsKnownKeyName(keyName)) return false;  // not a silent no-op
                 ctx->pDebugManager->GetKeyboardManager()->TapKey(keyName, holdFrames);
                 return true;
             }, "Tap a key (press, hold, release)", py::arg("key"), py::arg("frames") = 2)
             .def("key_press", [](Emulator& self, const std::string& keyName) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                if (!DebugKeyboardManager::IsKnownKeyName(keyName)) return false;  // not a silent no-op
                 ctx->pDebugManager->GetKeyboardManager()->PressKey(keyName);
                 return true;
             }, "Press and hold a key", py::arg("key"))
             .def("key_release", [](Emulator& self, const std::string& keyName) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                if (!DebugKeyboardManager::IsKnownKeyName(keyName)) return false;  // not a silent no-op
                 ctx->pDebugManager->GetKeyboardManager()->ReleaseKey(keyName);
                 return true;
             }, "Release a held key", py::arg("key"))
