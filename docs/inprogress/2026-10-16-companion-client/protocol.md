@@ -189,9 +189,10 @@ closes; the handshake marked `X-Unreal-Source: mcp` is answered `companion_not_f
 woke up).
 
 An entry is sent only when it differs from the last one sent on this connection. The server compares on every
-notification that can change it (state, run control, companions, instances, features) and once a second for what
-changes with time alone (a re-take cooldown running out, the first recorded frame of time travel), so the latency is
-that of the notification, at most a second. A dropped connection loses nothing: reconnect and take `hello` as the truth.
+notification that can change it (state, run control, companions, instances, features, the followed instance, time
+travel's state: a history appearing or going, recording) and, for what changes with time alone (an idle lease running
+out, a re-take cooldown ending), at that moment by a one-shot timer (`companion::NextTimedChange`): the latency is that
+of the notification. Nothing is compared on a beat; with no lease or cooldown under way no timer is armed. A dropped connection loses nothing: reconnect and take `hello` as the truth.
 
 ## 5. Managing companions (any client)
 

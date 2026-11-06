@@ -548,8 +548,9 @@ Monitoring ([command-interface.md §17](./command-interface.md#17-monitoring)), 
 | :--- | :--- |
 | `monitor [all] [instance=]` | Host, clients, every instance's pace and breakpoints |
 | `monitor host.stats` / `host.clients` | The process: CPU %, resident / peak memory, threads; connections and requests per plane |
+| `monitor controllers.devices` | The host input devices: one line per device (id, name, battery, notice); `--json` the value the topic pushes |
 | `monitor emulator.stats [instance]` | fps, real-time speed %, frame time, halted %, CPU MHz and multipliers, interrupts per frame |
-| `monitor debug.breakpoints` / `breakpoint_groups` / `media.slots` / `recording.state` / `debug.labels` / `ttd.status` / `debug.analyzers` / `controllers.state` / `game.events` / `devices.access` | The summaries (JSON) |
+| `monitor debug.breakpoints` / `breakpoint_groups` / `media.slots` / `recording.state` / `debug.labels` / `ttd.status` / `debug.analyzers` / `debug.cpuprofile` / `controllers.state` / `game.events` / `devices.access` | The summaries (JSON) |
 | `monitor <name> --json` | The reply every plane returns |
 
 ```
@@ -614,7 +615,7 @@ reference: [command-interface.md](./command-interface.md).
 | `profiler memory watch add <name> <start> <length> [callers] [values]` / `watch port <name> <port> [mask] [callers] [values]` / `watch remove <name>` / `watch clear` / `watch list` | Watches over CPU addresses or a partially decoded port (`mask 0xFF`: the low byte; Kempston `0x1F`, keyboard `0xFE`), with the PCs and the values; counts while the session captures. |
 | `coverage <start\|stop\|clear\|gaps\|status\|export>` | Executed-address coverage analysis; `export [<path>] [--start A] [--end B] [--merge]` writes the SkoolKit code execution map. |
 | `aylog <start\|stop\|clear\|dump\|status>` | AY-3-8910 register access log. |
-| `audiocapture <start\|stop\|clear\|result\|save>` | Audio capture with level stats and WAV export; `start <seconds> [source]` records one mixer device. |
+| `audiocapture <start\|stop\|clear\|result\|save>` | Audio capture with level stats and WAV export; `start <seconds> [source] [file <path.wav>]` records one mixer device; `file` writes the WAV while the samples come (up to 86400 s, no 30 s memory ceiling). |
 | `recent [kind] [--json]` / `recent clear [kind]` | The files opened lately, newest first, with each one's index (`kind`: all, snapshot, tape, disk, rzx, image, cd); open one with `action run media.open_recent index=N [kind=K]` ([media.md → Recent files](../../../features/media.md#recent-files)). |
 | `videorecord <start\|stop\|pause\|resume\|toggle\|status\|presets>` | Screen recording (requires `ENABLE_RECORDING` build). `presets` lists the core's presets; `start` accepts `--preset NAME` (gameplay, music, audio, gif, hq, multitrack), `--mode single\|multi\|audio`, `--container EXT`, `--region full\|screen` (default `full`: the whole frame with its border; `screen`: the working picture, fitted into the start window's size when the window changes), `--profile native\|1080p\|1440p\|4k` (a fixed frame, the picture scaled sharply into it with black bars; h264/h265 only), `--acceleration auto\|hardware\|software` (GPU or software encoder), `--audio-rate N\|auto` to pin the core audio rate for the whole recording (one step for fixed-rate captures; fails fast if the emulator is paused so the file cannot be mislabeled — see [command-interface.md §5.8](./command-interface.md)). |
 | `assemble <addr> <code>` (`asm`) | Assemble Z80 source in place (`--write` to patch RAM). |
@@ -661,6 +662,35 @@ range     kind          detector       conf status   label / title
   vs 842F-8457 text          text            800 observed 
 > analysis export skool scratch/game.skool ranges=5900-59FF,8000-FFFF
 L2 skool (5900-59FF,8000-FFFF): 103 entries, 224275 bytes written to scratch/game.skool
+```
+
+### CPU time profile
+
+Where the CPU's T-states go per executed instruction and per routine, live, with no recording and no code map
+([CPU time profile](../../analysis/cpu-profile.md)); the same core handler as every plane (`profile::Execute`), so the
+lines are also the `text` of the REST and MCP answers.
+
+| CLI Command | Description |
+| :--- | :--- |
+| `cpuprofile start [nostack] [beam] [noframes] [reset] [stream=F] [ring_kib=N]` | Switch the profile on: cells, the call stack (routines found at run time, self / inclusive), the per-frame series (default on), `beam` (self per 1/64 of the frame), `stream` (the series as JSONL). The CPU is held for the switch. |
+| `cpuprofile stop` / `reset` / `status` (`cpuprofile`) | Off (counters kept) / a fresh window (marks dropped) / the totals. |
+| `cpuprofile mark <name> [drop]` | A baseline: `since=<name>` reads the time after it (at most 8). |
+| `cpuprofile report [top] [since=M] [sort=self\|inclusive\|calls] [callers=] [beam=]` | The top (24) routines with self / inclusive share, entries, kinds and the attribution notes. |
+| `cpuprofile frames [last] [top=N]` | The last (50) frames of the series, the top (8) routines of each. |
+| `cpuprofile export <kit\|json\|entries\|sym\|ann> [path] [since=M]` | `kit`: the L1 subset `kit/fig_budget.py` reads; `entries`, `sym`, `ann`: the routine entries found. |
+
+`--json` prints the fields. Example:
+
+```text
+> cpuprofile start
+CPU profile started (stack on, beam off, frames on). Run the program, then read the report.
+> run frames 500
+> cpuprofile report 3
+CPU profile since the start: 500 frame(s), 34944000 T, 118 routine(s) found
+  self    incl    calls  routine (entry, page, kinds)
+   22.5%   24.8%    500  sub_B30C ($B30C, RAM 2, call)
+   14.1%   14.1%  61000  sub_A6E0 ($A6E0, RAM 2, call)
+    9.8%   99.9%      0  (outside any call) ($8000, RAM 2, root)
 ```
 
 ## Connection Examples

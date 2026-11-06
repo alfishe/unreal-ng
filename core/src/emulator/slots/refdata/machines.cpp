@@ -138,6 +138,14 @@ constexpr BuiltInDef kAtmMouseFitted[] = {
     { .id = "kempston-mouse", .name = kStdMouseName, .functions = kMouseFunctions, .claims = kAtmMouseClaims },
 };
 
+// The Beta 128 the 48K-BETA128 variant fits on the edge connector (machinevariants.cpp): it answers only in DOS mode,
+// so on a plain 48K (no TR-DOS ROM, never in DOS mode) the claims name ports nothing drives
+constexpr BuiltInDef kSpectrum48Fitted[] = {
+    { .id = "kempston-mouse", .name = kStdMouseName, .functions = kMouseFunctions, .claims = kStdMouseClaims },
+    { .id = "beta128", .name = "Beta 128 (WD1793, fitted by the 48K-BETA128 variant)", .functions = kBetaFunctions,
+      .claims = kBetaClaims },
+};
+
 constexpr BuiltInDef kSpectrum48BuiltIns[] = {
     { .id = "ula", .name = "ULA `#FE` (keyboard, beeper, border)", .claims = kUlaClaims },
 };
@@ -657,7 +665,7 @@ constexpr Src kSprinterSources[] = { Src::SprinterSchematic, Src::SprinterHard, 
 
 constexpr MachineDef kMachines[] = {
     { .model = MM_SPECTRUM48, .name = "48K", .variant = "Sinclair 16K / 48K", .buses = kSpectrum48Buses,
-      .builtIns = kSpectrum48BuiltIns, .fitted = kStdMouseFitted, .sources = kSpectrum48Sources },
+      .builtIns = kSpectrum48BuiltIns, .fitted = kSpectrum48Fitted, .sources = kSpectrum48Sources },
     { .model = MM_SPECTRUM128, .name = "128K", .variant = "Sinclair 128K (UK / Spanish)", .buses = kSpectrum128Buses,
       .builtIns = kSpectrum128BuiltIns, .fitted = kStdMouseFitted, .sources = kSpectrum128Sources },
     { .model = MM_PLUS2, .name = "PLUS2", .variant = "Amstrad grey +2", .buses = kPlus2Buses,

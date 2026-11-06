@@ -400,7 +400,7 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
     if (DebugManager* debug = _context->pDebugManager)
     {
         const AnalyzerManager* analyzers = debug->GetAnalyzerManager();
-        if (analyzers && analyzers->hasCPUStepSubscribers())
+        if (analyzers && analyzers->hasIdleStepSubscribers())
             return false;
     }
     // The TR-DOS session switch (RunInstructionStartHooks) acts on the PC at the instruction start: idle steps repeat
@@ -896,7 +896,17 @@ void Z80::EngineStep(bool skipBreakpoints)
             tracker.GetCallTraceBuffer()->LogIfControlFlow(_context, _memory, m1_pc, _context->emulatorState.frame_counter);
     }
 
-    _engine->ExecuteStep();
+    if (flowHook) [[unlikely]]
+    {
+        // The engines' libraries have no flow hook: the instruction is decoded after it ran (FlowEvent)
+        const uint16_t spBefore = sp;
+        _engine->ExecuteStep();
+        NoteEngineFlow(spBefore);
+    }
+    else
+    {
+        _engine->ExecuteStep();
+    }
 
     if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
         _opcodeProfiler->LogExecution(m1_pc, prefix, opcode, f, a, _context->emulatorState.frame_counter, t);
@@ -906,6 +916,36 @@ void Z80::EngineStep(bool skipBreakpoints)
         static char buffer[1024];
         DumpZ80State(buffer, sizeof(buffer) / sizeof(buffer[0]));
         LOGINFO(buffer);
+    }
+}
+
+/// The flow event of the instruction an engine just ran, from its opcode word (opcode, prefix) and the SP it moved:
+/// CALL / CALL cc / RST with SP 2 lower (taken), RET / RET cc / RETN / RETI with SP 2 higher (taken). DD / FD before
+/// them run them unchanged
+void Z80::NoteEngineFlow(uint16_t spBefore)
+{
+    if (prefix != 0 && prefix != 0xDD && prefix != 0xFD && prefix != 0xED)
+        return;
+    const uint8_t op = opcode;
+    if (prefix == 0xED)
+    {
+        if ((op & 0xC7) == 0x45 && sp == static_cast<uint16_t>(spBefore + 2))
+            NoteFlow(FlowEvent::Ret, pc, spBefore, pc);
+        return;
+    }
+    if ((op & 0xC0) != 0xC0)
+        return;
+    const bool call = op == 0xCD || (op & 0xC7) == 0xC4;
+    const bool rst = (op & 0xC7) == 0xC7;
+    const bool ret = op == 0xC9 || (op & 0xC7) == 0xC0;
+    if ((call || rst) && sp == static_cast<uint16_t>(spBefore - 2))
+    {
+        const uint16_t pushed = static_cast<uint16_t>(DirectRead(sp) | (DirectRead(static_cast<uint16_t>(sp + 1)) << 8));
+        NoteFlow(call ? FlowEvent::Call : FlowEvent::Rst, pc, sp, pushed);
+    }
+    else if (ret && sp == static_cast<uint16_t>(spBefore + 2))
+    {
+        NoteFlow(FlowEvent::Ret, pc, spBefore, pc);
     }
 }
 
@@ -1963,6 +2003,7 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
     if (_nmi_pending_count > 0 && !prefixPending && cpu.boundary != Z80_BOUNDARY_NMI_ACK)
     {
         _nmi_pending_count = 0;
+        const uint32_t ackStart = cpu.t;
 
         // CPU-LIBRARY-MIGRATION(nmi-ack): the engine's NMI acknowledge. A machine on its own engine
         // (ICpuEngine) already takes it there: the restart fetch, the pushes, PC = #0066, IFF1 = 0
@@ -1970,6 +2011,7 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
         {
             _engine->AcknowledgeNmi();
             cpu.int_pending = false;
+            NoteAcknowledge(ackStart);
             return true;
         }
         cpu.nmi_in_progress = true;
@@ -2025,6 +2067,7 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
             cpu.pc = 0x0067;
         }
 
+        NoteAcknowledge(ackStart);
         return true;  // NMI accepted: skip Z80Step this iteration
     }
 
@@ -2152,6 +2195,7 @@ void Z80::HandleINT(uint8_t vector)
     Z80& cpu = *this;
     interruptsAccepted++;
     interruptsAcceptedHalted += cpu.halted ? 1 : 0;
+    const uint32_t ackStart = cpu.t;
 
     // A machine on its own engine: the acknowledge cycle, the pushes and the vector read are the engine's
     // (ICpuEngine); one test per accepted INT, not per instruction
@@ -2163,6 +2207,7 @@ void Z80::HandleINT(uint8_t vector)
         cpu.int_pending = false;
         if (IntClearedByAcknowledge())
             cpu.int_acked_in_pulse = 1;
+        NoteAcknowledge(ackStart);
         return;
     }
 
@@ -2281,6 +2326,7 @@ void Z80::HandleINT(uint8_t vector)
     // this pulse window (ProcessInterrupts re-arms after it)
     if (IntClearedByAcknowledge())
         cpu.int_acked_in_pulse = 1;
+    NoteAcknowledge(ackStart);
 }
 
 void Z80::OnCPUStep()

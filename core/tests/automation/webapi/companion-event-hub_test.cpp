@@ -6,9 +6,13 @@
 #include "companion-event-hub.h"
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "_helpers/emulatortesthelper.h"
 #include "_helpers/testwaithelper.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/execution/companionregistry.h"
 #include "emulator/platform.h"
+#include "emulator/readoutschanged.h"
 
 #include <json/json.h>
 
@@ -211,4 +215,66 @@ TEST_F(CompanionEventHub_Test, ANotificationRefreshes)
     MessageCenter::DefaultMessageCenter().Post(NC_RUN_CONTROL_CHANGED, nullptr, true);
     ASSERT_TRUE(TestWait::For([&] { return inbox.Messages().size() == 2; }, std::chrono::seconds(2)));
     EXPECT_EQ(inbox.Last()["emulator"]["state"].asString(), "paused");
+}
+
+TEST_F(CompanionEventHub_Test, TimeTravelsStateRefreshesTheOtherReadoutAreasDoNot)
+{
+    _hub.Start();
+    Inbox inbox;
+    Connect(inbox);
+    const int built = _built;
+    SetView({Entry("e0", "paused")});
+    NotifyReadoutsChanged("e0", "audio");  // the mixer: not in `me`
+    NotifyReadoutsChanged("e0", "ttd");    // a history appeared: rewind, the speed lock
+    ASSERT_TRUE(TestWait::For([&] { return inbox.Messages().size() == 2; }, std::chrono::seconds(2)));
+    EXPECT_EQ(inbox.Last()["emulator"]["state"].asString(), "paused");
+    EXPECT_EQ(_built, built + 1) << "built for time travel's change only";
+}
+
+TEST_F(CompanionEventHub_Test, WhatChangesWithTimeAloneArmsOneTimerAtItsMomentAndNothingElseWaits)
+{
+    std::vector<double> armed;
+    std::vector<std::function<void()>> tasks;
+    _hub.SetTimer([&](double seconds, std::function<void()> task) {
+        armed.push_back(seconds);
+        tasks.push_back(std::move(task));
+    });
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto now = std::chrono::steady_clock::time_point(std::chrono::hours(1));
+    context->SetRunControlClock([&] { return now; });
+
+    // No lease, no cooldown: a connected companion waits for notifications only
+    Inbox inbox;
+    Connect(inbox);
+    EXPECT_TRUE(armed.empty());
+    EXPECT_EQ(_hub.TimerDelay(), 0);
+
+    // An HTTP session with an idle lease: the timer at its end (1 ms past it), once
+    const unreal::UUID owner = unreal::UUID::Generate();
+    ASSERT_TRUE(context->TakeRunControl(owner, "webapi", nullptr, "agent", std::chrono::milliseconds(5000)));
+    _hub.Refresh();
+    ASSERT_EQ(armed.size(), 1u);
+    EXPECT_NEAR(armed[0], 5.001, 1e-9);
+    _hub.Refresh();
+    EXPECT_EQ(armed.size(), 1u) << "armed for that moment already";
+
+    // Taken back by the user: the client's re-take cooldown (300 s) waits now; the earlier moment stays armed, its
+    // task finds the cooldown and arms for it
+    ASSERT_TRUE(context->RevokeRunControl());
+    _hub.Refresh();
+    EXPECT_EQ(armed.size(), 1u);
+    now += std::chrono::seconds(6);
+    tasks[0]();
+    ASSERT_EQ(armed.size(), 2u);
+    EXPECT_NEAR(armed[1], 294.001, 1e-6);
+    EXPECT_NEAR(_hub.TimerDelay(), 294.001, 1e-6);
+
+    context->AllowRunControlRetake();
+    _hub.Refresh();
+    EXPECT_EQ(_hub.TimerDelay(), 0) << "nothing waits on the clock: no timer";
+    _hub.SetTimer({});
+    context->SetRunControlClock({});
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }

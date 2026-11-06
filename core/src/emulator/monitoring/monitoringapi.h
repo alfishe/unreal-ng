@@ -14,6 +14,7 @@
 /// |:--|:--|:--|
 /// | `host.stats` | the process | available, cpu_percent (100 = one core), cpu_percent_host (of all cores), cores, rss_bytes, peak_rss_bytes, virtual_bytes, threads, cpu_time_s, uptime_s, interval_s |
 /// | `host.clients` | the process | per plane (rest, ws, events, debug_ws, mcp, cli): connections, opened, requests; companions (paired), instances |
+/// | `controllers.devices` | the process | The host input devices (hostdevices.h): available (a host input owner, the Qt client, publishes them), revision (one more per change), devices [the `devices` reply's entries: id, name, family, layout, backend, role, pin, layers, context, outputs, battery {known, text, level, coarse, charging, wired}, light {available, reason}, notice]; a new value when a device arrives or leaves, its battery, notice, light, role or pin changes |
 /// | `emulator.stats` | an instance | state, measuring, fps, nominal_fps, speed_percent, frame_time_us {avg, max}, frame_budget_percent, halted_percent, interrupts_per_frame, frame, t_states, turbo, cpu {mhz, base_mhz, multiplier (host x hardware), host_multiplier, hw_turbo_ratio} |
 /// | `debug.breakpoints` | an instance | available, total, active, inactive, owned, by_kind {memory, exec, read, write, port, port_in, port_out, keyboard, nextreg, beam, copper, magic}, groups [{name, total, active}], last_hit {id, type, address, access, group, note} or null |
 /// | `media.slots` | an instance | available, slots [{id, kind, present, pending, name, format, dirty, changed_units, protect}], loaded, dirty (any) |

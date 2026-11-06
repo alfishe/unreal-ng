@@ -222,7 +222,7 @@ bool AnalyzerManager::ownsBreakpointAtAddress(uint16_t address, uint8_t page, Me
 // Hot path subscriptions
 
 CallbackId AnalyzerManager::subscribeCPUStep(void (*fn)(void* ctx, Z80* cpu, uint16_t pc), void* context,
-                                             const std::string& analyzerId)
+                                             const std::string& analyzerId, bool idleTolerant)
 {
     CallbackId id = _nextCallbackId++;
 
@@ -230,8 +230,11 @@ CallbackId AnalyzerManager::subscribeCPUStep(void (*fn)(void* ctx, Z80* cpu, uin
     cb.fn = fn;
     cb.context = context;
     cb.ownerId = analyzerId;
+    cb.idleTolerant = idleTolerant;
 
     _cpuStepCallbacks.push_back(cb);
+    if (!idleTolerant)
+        ++_idleStepSubscribers;
 
     _subscriptionOwners[id] = analyzerId;
     _analyzerSubscriptions[analyzerId].push_back(id);
@@ -558,6 +561,8 @@ void AnalyzerManager::removeAllSubscriptionsForAnalyzer(const std::string& analy
     _cpuStepCallbacks.erase(std::remove_if(_cpuStepCallbacks.begin(), _cpuStepCallbacks.end(),
                                            [&](const CPUStepCallback& cb) { return cb.ownerId == analyzerId; }),
                             _cpuStepCallbacks.end());
+    _idleStepSubscribers = static_cast<size_t>(std::count_if(_cpuStepCallbacks.begin(), _cpuStepCallbacks.end(),
+                                                             [](const CPUStepCallback& cb) { return !cb.idleTolerant; }));
 
     _videoLineCallbacks.erase(std::remove_if(_videoLineCallbacks.begin(), _videoLineCallbacks.end(),
                                              [&](const auto& pair) { return pair.second == analyzerId; }),

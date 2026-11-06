@@ -375,7 +375,8 @@ class Emulator:
     def audio_levels(self) -> dict: ...              # every row's and channel's peak, active, mute, solo (topic audio.mixer)
     # get_sound_character() / set_sound_character(name, value) also serve ay_stereo, ay_chip, fm_trim_db,
     # neogs_stereo, covox_dc_removal, fir_filter ("unavailable" where the machine has no such part)
-    # audio_capture_start(seconds=1.0, source="") records one mixer device's own buffer
+    # audio_capture_start(seconds=1.0, source="", file="") records one mixer device's own buffer; file="out.wav"
+    # writes the WAV while the samples come (seconds up to 86400, closes at the target; status: file_closed)
 
     def tsconf_tsu(self) -> dict:
         """TS-Conf TSU objects and palette for debug views: t_config, tilemap_page,
@@ -1209,6 +1210,8 @@ id = emu.gs_on_dma_done(fn)          # a card event callback (hit["arg"] its det
                                     # gs_on_reply, gs_on_int, gs_on_nmi, gs_on_page, gs_on_dac_fetch, gs_on_clock_change,
                                     # gs_on_dma_start, gs_on_gscfg0, gs_on_port_in(port, fn), gs_on_port_out(port, fn); cpu="ms"
 emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
+emu.bp(0x0038, stop=False)          # only counts its hits, never stops (bp, bp_read, bp_write, bp_port_in/out)
+emu.bp_hits(id)                     # the hit count; -1 for an unknown id
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
@@ -2120,6 +2123,24 @@ emu.analysis("review", op="resolve", id=item["item"]["id"], verdict="ok", label=
 emu.analysis("experiment", finding="F12", spec={"poke": {"$8100": 5}, "frames": 50,
              "watch": [{"pc": "$8130", "as": "rare"}], "expect": {"rare": "reached"}})  # a dict or a list of dicts
 emu.analysis("cover", budget=32)                       # {candidates, tried, flipped, new_code, branches [...], text}
+```
+
+### CPU time profile
+
+The [CPU time profile](../../analysis/cpu-profile.md) through the shared core handler (`profile::Execute`): the answer
+is a dict of its fields plus `text` (the CLI's lines); a refusal is `{"ok": False, "error": <why>}`.
+
+```python
+emu.cpuprofile("start")                                # cells + call stack + per-frame series
+emu.cpuprofile("start", beam=True, stream="scratch/series.jsonl", reset=True)
+emu.run_frames(500)
+r = emu.cpuprofile("report", top=10)                   # {window {...}, routines [{name, entry, self, inclusive, ...}], text}
+emu.cpuprofile("mark", name="level2")                  # a baseline
+emu.cpuprofile("report", since="level2", sort="inclusive")
+emu.cpuprofile("frames", last=20, top=4)               # {frames [{frame, tstates, routines [[id, self, incl]]}], names}
+emu.cpuprofile("export", format="kit", path="work/p1/profile-l1.json")  # for kit/fig_budget.py
+entries = emu.cpuprofile("export", format="entries")["content"]
+emu.cpuprofile("stop")                                 # the counters stay readable
 ```
 
 ### Enumerations

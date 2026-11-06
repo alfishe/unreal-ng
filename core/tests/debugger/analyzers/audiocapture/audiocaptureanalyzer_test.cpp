@@ -100,6 +100,8 @@ TEST_F(AudioCaptureAnalyzer_Test, StreamStopsByItselfAtTheTarget)
     ASSERT_TRUE(_capture->startStreamCapture(path, 44100, 1000 * 2, AudioSourceType::MasterMix, error)) << error;
     Feed(3000);
     EXPECT_TRUE(_capture->isCaptureComplete());
+    EXPECT_TRUE(_capture->waitStreamClosed(2000));   // the writer closes the file by itself, no stop needed
+    EXPECT_EQ(std::filesystem::file_size(path), 44u + 1000u * 4u);
     _capture->stopCapture();   // joins the writer
 
     EXPECT_EQ(_capture->getCapturedSamples(), 2000u);

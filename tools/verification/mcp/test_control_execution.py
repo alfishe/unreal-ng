@@ -81,7 +81,7 @@ def test_conditional_breakpoint(s):
     expect(r.is_error and 'column' in r.text, 'a condition that does not compile is refused with its column', r.text)
     r = s.call('control_execution', {'action': 'bp_add', 'type': 'execution', 'address': '0x9000', 'condition': 'VAL == 6'},
                ok=False)
-    expect(r.is_error and 'trigger' in r.text, 'an execution breakpoint has no written value', r.text)
+    expect(r.is_error and 'fires on execution' in r.text, 'an execution breakpoint has no written value', r.text)
     # di; ld a,5; ld (#9000),a; ld a,6; ld (#9000),a; jr back to ld a,5: only the write of 6 stops
     s.call('memory_access', {'action': 'write', 'address': '0x8000', 'hex': 'F3 3E 05 32 00 90 3E 06 32 00 90 18 F3'})
     s.call('control_execution', {'action': 'pause'})
@@ -97,9 +97,29 @@ def test_conditional_breakpoint(s):
     r = s.call('control_execution', {'action': 'bp_condition', 'bp_id': bp_id, 'condition': 'VAL == 5'})
     expect(r.text == 'Condition set: VAL == 5', 'bp_condition answers the new condition', r.text)
     r = s.call('control_execution', {'action': 'bp_condition', 'bp_id': bp_id, 'condition': 'RD == 1'}, ok=False)
-    expect(r.is_error and 'trigger' in r.text, 'checked like at creation', r.text)
+    expect(r.is_error and 'exists only' in r.text, 'checked like at creation', r.text)
     r = s.call('control_execution', {'action': 'bp_condition', 'bp_id': bp_id, 'condition': ''})
     expect(r.text == 'Condition cleared', 'an empty condition clears it', r.text)
+    s.call('control_execution', {'action': 'bp_clear'})
+
+
+def test_count_only_breakpoint(s):
+    """stop: false counts the hits of a running machine and never stops it; the list says 'count only'"""
+    s.call('control_execution', {'action': 'bp_clear'})
+    # di; ld a,5; ld (#9000),a; ld a,6; ld (#9000),a; jr back: two writes a pass
+    s.call('memory_access', {'action': 'write', 'address': '0x8000', 'hex': 'F3 3E 05 32 00 90 3E 06 32 00 90 18 F3'})
+    s.call('control_execution', {'action': 'pause'})
+    s.call('invoke_api', {'method': 'PUT', 'path': '/api/v1/emulator/{id}/registers/pc', 'body': {'value': 0x8000}})
+    s.call('control_execution', {'action': 'bp_add', 'type': 'write', 'address': '0x9000', 'stop': False})
+    r = s.call('control_execution', {'action': 'bp_add', 'type': 'keyboard', 'key': 'any', 'stop': False}, ok=False)
+    expect(r.is_error and 'only counts' in r.text, 'a keyboard breakpoint cannot only count', r.text)
+    s.call('control_execution', {'action': 'resume'})
+    r = s.call('control_execution', {'action': 'wait', 'timeout_ms': 300}, ok=False)
+    expect(r.text.startswith('No change') and 'running' in r.text, 'the running machine never stops', r.text)
+    s.call('control_execution', {'action': 'pause'})
+    r = s.call('control_execution', {'action': 'bp_list'})
+    m = re.search(r'hits (\d+) count only', r.text)
+    expect(m and int(m.group(1)) > 100, 'the writes are counted, the list says count only', r.text)
     s.call('control_execution', {'action': 'bp_clear'})
 
 

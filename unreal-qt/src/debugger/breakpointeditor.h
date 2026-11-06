@@ -96,6 +96,7 @@ private:
     QComboBox* _groupCombo;
     QLineEdit* _noteEdit;
     QCheckBox* _activeCheck;
+    QCheckBox* _countOnlyCheck;  // BreakpointSpec::stop = false: only counts the hits
     
     QPushButton* _okButton;
     QPushButton* _cancelButton;

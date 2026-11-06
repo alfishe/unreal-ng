@@ -90,6 +90,7 @@
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "debugger/analyzers/profile/profilecontrol.h"
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
@@ -599,8 +600,8 @@ protected:
     }
 
     /// bp / bp_read / bp_write / bp_port_in / bp_port_out: `options` is nothing, a page string ("ram32"), or
-    /// a table {page=, to=, slot_only=, mask=, hits=, condition=, dialect=, cpu=}. The breakpoint id; -1 and the reason
-    /// when refused
+    /// a table {page=, to=, slot_only=, mask=, hits=, condition=, dialect=, cpu=, stop=} (stop = false: it only counts,
+    /// bp_hits reads the count). The breakpoint id; -1 and the reason when refused
     std::tuple<int, sol::optional<std::string>> AddScriptBreakpoint(BreakpointTypeEnum type, uint8_t access,
                                                                     uint16_t address,
                                                                     const sol::optional<sol::object>& options)
@@ -628,6 +629,7 @@ protected:
             to = t.get<sol::optional<int32_t>>("to").value_or(-1);
             slotOnly = t.get<sol::optional<bool>>("slot_only").value_or(false);
             mask = t.get<sol::optional<int32_t>>("mask").value_or(-1);
+            spec.stop = t.get<sol::optional<bool>>("stop").value_or(true);
             hits = t.get<sol::optional<std::string>>("hits").value_or("");
             if (hits.empty())
                 if (auto n = t.get<sol::optional<int64_t>>("hits"))
@@ -3059,6 +3061,8 @@ public:
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
+            if (!DebugKeyboardManager::IsKnownKeyName(keyName))
+                return false;  // an unknown name fails, not a silent no-op
             ctx->pDebugManager->GetKeyboardManager()->TapKey(keyName, holdFrames.value_or(2));
             return true;
         });
@@ -3068,6 +3072,8 @@ public:
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
+            if (!DebugKeyboardManager::IsKnownKeyName(keyName))
+                return false;  // an unknown name fails, not a silent no-op
             ctx->pDebugManager->GetKeyboardManager()->PressKey(keyName);
             return true;
         });
@@ -3077,6 +3083,8 @@ public:
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
+            if (!DebugKeyboardManager::IsKnownKeyName(keyName))
+                return false;  // an unknown name fails, not a silent no-op
             ctx->pDebugManager->GetKeyboardManager()->ReleaseKey(keyName);
             return true;
         });
@@ -4168,6 +4176,14 @@ public:
         lua.set_function("bp_list", [this](sol::optional<std::string> cpu) -> std::string {
             BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or(""));
             return bpm ? bpm->GetBreakpointListAsString() : "";
+        });
+
+        // bp_hits(id[, cpu]): the breakpoint's hit count (a count-only one, stop = false, counts and never stops); -1
+        // for an unknown id
+        lua.set_function("bp_hits", [this](uint16_t id, sol::optional<std::string> cpu) -> int64_t {
+            BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or(""));
+            const BreakpointSnapshot bp = bpm ? bpm->GetBreakpointById(id) : BreakpointSnapshot();
+            return bp ? static_cast<int64_t>(bp->hitCount) : -1;
         });
 
         lua.set_function("bp_status", [this]() -> sol::table {
@@ -7392,6 +7408,35 @@ public:
             }
             return StateNodeToLua(ts, value);
         });
+        // The CPU time profile through profile::Execute (profilecontrol.h): cpuprofile(op, opts) with op start | stop |
+        // reset | mark | status | report | frames | export; opts a table ({stack=, beam=, frames=, ring_kib=, stream=,
+        // reset=} / {name=, drop=} / {since=, top=, sort=, callers=, beam=} / {last=, top=} / {format=, path=,
+        // since=}) or, for mark the name, for report the top, for frames the last, for export the format. The answer:
+        // the reply's fields plus text; a refusal: ok = false, error = why
+        lua.set_function("cpuprofile", [this](sol::this_state ts, sol::optional<std::string> op,
+                                              sol::optional<sol::object> opts) -> sol::object {
+            const std::string verb = op.value_or("status");
+            Emulator* emulator = effectiveEmulator();
+            profile::Reply reply;
+            if (!emulator)
+                reply.error = profile::Error::NotAvailable, reply.message = "no emulator";
+            else
+                reply = profile::Execute(*emulator, verb,
+                                         opts ? SymbolOptions(*opts, verb == "mark"     ? "name"
+                                                                     : verb == "report" ? "top"
+                                                                     : verb == "frames" ? "last"
+                                                                     : verb == "export" ? "format"
+                                                                                        : "")
+                                              : profile::Options{});
+            StateNode value = reply.ToValue();
+            if (!reply.Ok())
+            {
+                value = StateNode::Object();
+                value["ok"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
         // The analyzers (GET /analyzers): analyzer_list(), analyzer_enable(name), analyzer_disable(name),
         // analyzer_active(name) (nil: no such analyzer)
         auto analyzers = [this]() -> AnalyzerManager* {
@@ -7814,9 +7859,11 @@ public:
             return StateNodeToLua(s, AudioMixer::Levels(emulator->GetContext()));
         });
 
-        // audio_capture_start(seconds [, source]): source = a mixer key (beeper, ay1, covox, gs ...) records that
-        // device's own buffer; default the master mix
-        lua.set_function("audio_capture_start", [this](double seconds, sol::optional<std::string> sourceKey) -> sol::table {
+        // audio_capture_start(seconds [, source [, file]]): source = a mixer key (beeper, ay1, covox, gs ...) records
+        // that device's own buffer; default the master mix. file = a WAV path: the samples are written there while
+        // they come (seconds up to 86400, no memory ceiling); it closes by itself at the target
+        lua.set_function("audio_capture_start", [this](double seconds, sol::optional<std::string> sourceKey,
+                                                       sol::optional<std::string> fileOpt) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
@@ -7824,9 +7871,12 @@ public:
             auto* context = emulator->GetContext();
             if (!context || !context->pDebugManager) { result["error"] = "debug manager not available"; return result; }
 
-            if (seconds < 0.01 || seconds > 30.0)
+            const std::string file = fileOpt.value_or("");
+            const double maxSeconds = file.empty() ? 30.0 : AudioCaptureAnalyzer::MAX_STREAM_SECONDS;
+            if (seconds < 0.01 || seconds > maxSeconds)
             {
-                result["error"] = "seconds must be within [0.01, 30.0]";
+                result["error"] = file.empty() ? "seconds must be within [0.01, 30.0] (give a file for longer)"
+                                               : "seconds must be within [0.01, 86400]";
                 return result;
             }
 
@@ -7847,7 +7897,18 @@ public:
             const size_t target = static_cast<size_t>(seconds * static_cast<double>(rate)) * 2;
 
             manager->activate("audiocapture");
-            capture->startCapture(target, source);
+            if (!file.empty())
+            {
+                std::string streamError;
+                if (!capture->startStreamCapture(file, static_cast<uint32_t>(rate), target, source, streamError))
+                {
+                    result["error"] = streamError;
+                    return result;
+                }
+                result["wav_path"] = file;
+            }
+            else
+                capture->startCapture(target, source);
 
             result["armed"] = capture->isCaptureArmed();
             result["source"] = AudioMixer::Key(source);
@@ -7872,6 +7933,13 @@ public:
             result["complete"] = capture->isCaptureComplete();
             result["captured_samples"] = static_cast<uint64_t>(capture->getCapturedSamples());
             result["target_samples"] = static_cast<uint64_t>(capture->getTargetSamples());
+            result["to_file"] = capture->isStreaming();
+            if (capture->isStreaming())
+            {
+                result["wav_path"] = capture->getStreamPath();
+                result["file_closed"] = capture->isStreamClosed();
+                result["file_failed"] = capture->hasStreamFailed();
+            }
             return result;
         });
 
@@ -7889,8 +7957,27 @@ public:
                 manager ? manager->getAnalyzer<AudioCaptureAnalyzer>("audiocapture") : nullptr;
             if (!capture || !manager) { result["error"] = "audio capture analyzer not available"; return result; }
 
+            if (capture->isStreaming())
+            {
+                // The audio is in the WAV, not in memory: nothing to analyze
+                if (!capture->isStreamClosed())
+                {
+                    result["error"] = "the capture file is still being written - poll audio_capture_status";
+                    return result;
+                }
+                const size_t streamRate = context->pSoundManager ? context->pSoundManager->getCoreRate() : 44100;
+                const size_t streamFrames = capture->getCapturedSamples() / 2;
+                result["frames"] = static_cast<uint64_t>(streamFrames);
+                result["sample_rate"] = static_cast<uint64_t>(streamRate);
+                result["duration_seconds"] = static_cast<double>(streamFrames) / streamRate;
+                result["complete"] = capture->isCaptureComplete();
+                result["wav_path"] = capture->getStreamPath();
+                result["file_failed"] = capture->hasStreamFailed();
+                return result;
+            }
+
             const auto& buffer = capture->getBuffer();
-            const size_t frames = buffer.size() / 2;
+            const size_t frames = std::min(buffer.size(), capture->getCapturedSamples()) / 2;
             if (frames == 0)
             {
                 result["error"] = "no captured audio — call audio_capture_start first";

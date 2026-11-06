@@ -10,6 +10,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
 
@@ -130,3 +131,59 @@ TEST(PortDecoderSpectrum3ReadCycle_Test, ReadOf7FFDLeavesTheLatch)
     EXPECT_EQ(z80->readCycleLatch, nullptr) << "no read-cycle latch on the +3";
     EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
 }
+
+/// A Beta 128 on the 128K / +2 / +2A / +3: the WD1793 ports and #FF decode the low byte and answer only while the
+/// TR-DOS ROM is paged in (FUSE beta.c; the 48K is in beta128_test.cpp). Writes used to never reach the controller
+/// and a read with a high byte (#803F) missed it
+class Beta128OnSinclair_Test : public ::testing::TestWithParam<const char*>
+{
+protected:
+    std::shared_ptr<Emulator> _emulator;
+    EmulatorContext* _context = nullptr;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("beta128-ports", GetParam(), LoggerLevel::LogError);
+        ASSERT_TRUE(_emulator);
+        _context = _emulator->GetContext();
+        ASSERT_NE(_context->pBetaDisk, nullptr);
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+            EmulatorManager::GetInstance()->RemoveEmulator(_emulator->GetUUID());
+    }
+};
+
+TEST_P(Beta128OnSinclair_Test, SilentWithTheTrDosRomOff)
+{
+    PortDecoder* decoder = _context->pPortDecoder;
+    WD1793* fdc = _context->pBetaDisk;
+    ASSERT_FALSE(_context->emulatorState.flags & CF_TRDOS);
+    const uint8_t track = fdc->getTrackRegister();
+    decoder->DecodePortOut(0x003F, static_cast<uint8_t>(track ^ 0x55), 0);
+    decoder->DecodePortOut(0x423F, static_cast<uint8_t>(track ^ 0x55), 0);
+    EXPECT_EQ(fdc->getTrackRegister(), track) << "#3F reached the WD1793 outside TR-DOS";
+    for (const uint16_t port : { 0x001F, 0x003F, 0x005F, 0x007F, 0x00FF, 0x123F })
+    {
+        decoder->DecodePortIn(port, 0);
+        EXPECT_FALSE(decoder->WasLastPortDecoded()) << std::hex << port << " answered outside TR-DOS";
+    }
+}
+
+TEST_P(Beta128OnSinclair_Test, LowByteDecodeWhileTrDosIsPagedIn)
+{
+    PortDecoder* decoder = _context->pPortDecoder;
+    WD1793* fdc = _context->pBetaDisk;
+    _context->emulatorState.flags |= CF_TRDOS;  // the decoder gate only: what an M1 at #3Dxx sets
+    decoder->DecodePortOut(0x423F, 0x21, 0);    // OUT (#3F),A with A = #42 on the high byte
+    EXPECT_EQ(fdc->getTrackRegister(), 0x21);
+    EXPECT_EQ(decoder->DecodePortIn(0x803F, 0), 0x21);
+    EXPECT_TRUE(decoder->WasLastPortDecoded());
+    decoder->DecodePortOut(0x005F, 0x07, 0);
+    EXPECT_EQ(fdc->getSectorRegister(), 0x07);
+    _context->emulatorState.flags &= ~CF_TRDOS;
+}
+
+INSTANTIATE_TEST_SUITE_P(Models, Beta128OnSinclair_Test, ::testing::Values("128k", "PLUS2", "PLUS2A", "PLUS3"));

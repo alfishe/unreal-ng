@@ -3306,8 +3306,11 @@ void TimeTravelController::PublishCursor() const
         cursor.end = end.frame;
         cursor.endTinframe = end.tInFrame;
     }
-    if (_cursor.Publish(cursor))
+    bool changed = false;
+    if (_cursor.Publish(cursor, &changed))
         NoteHistoryChange(_context, cursor.history);
+    if (changed)
+        NotifyFramePublished(_context);  // after NC_VIDEO_FRAME_REFRESH: a deck's timecode reads this cursor, not the last
 }
 
 TTDCursor TimeTravelController::PublishedCursor() const

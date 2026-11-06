@@ -10,8 +10,13 @@
 #include <QPushButton>
 #include <QTableWidget>
 
+#include <memory>
+#include <mutex>
+#include <vector>
+
 #include "_helpers/testwaithelper.h"
 #include "controllers/streamdeckpage.h"
+#include "controllers/studiolauncher.h"
 #include "emulator/companions/streamdecksupervisor.h"
 #include "emulator/execution/companionregistry.h"
 
@@ -89,7 +94,149 @@ public:
 private:
     Daemon& _d;
 };
+
+/// Stream Deck Studio as the launcher sees it: its automation port (answers or not), what was started
+struct FakeStudio
+{
+    std::mutex mutex;
+    std::string connection;  ///< GET /api/v1/connection's body; "" = the port does not answer
+    std::vector<std::string> calls;
+    std::vector<QStringList> launches;
+    bool launchFails = false;
+    qint64 now = 0;
+
+    StudioLauncher::Hooks Hooks()
+    {
+        StudioLauncher::Hooks h;
+        h.http = [this](const std::string& method, const std::string& path, const std::string&) {
+            std::lock_guard lock(mutex);
+            calls.push_back(method + " " + path);
+            netsock::HttpReply r;
+            if (connection.empty())
+                r.error = "refused";
+            else
+                r = {200, method == "GET" ? connection : std::string("{}"), {}};
+            return r;
+        };
+        h.launch = [this](const QString&, const QStringList& args, QString& error) {
+            std::lock_guard lock(mutex);
+            launches.push_back(args);
+            if (launchFails)
+                error = "cannot start it";
+            return !launchFails;
+        };
+        h.clock = [this] { return now; };
+        return h;
+    }
+    void Answer(const std::string& body)
+    {
+        std::lock_guard lock(mutex);
+        connection = body;
+    }
+    bool Called(const std::string& call)
+    {
+        std::lock_guard lock(mutex);
+        return std::find(calls.begin(), calls.end(), call) != calls.end();
+    }
+    size_t Launches()
+    {
+        std::lock_guard lock(mutex);
+        return launches.size();
+    }
+};
+
+const std::string kMirror = R"({"mode":"client","state":"joined","role":"mirror","deck":"A1B2C3",)"
+                            R"("model_name":"Stream Deck + XL"})";
+
+/// The answer of the probe in flight, on the GUI thread
+bool Settled(StudioLauncher& studio)
+{
+    return TestWait::For([&] {
+        QApplication::processEvents();
+        return !studio.Probing();
+    });
+}
 } // namespace
+
+TEST(StudioLauncher_Test, OpensStudioShowsItStartingThenWhatItsDeckShowsAndRaisesItWhenItRuns)
+{
+    FakeStudio fake;
+    StudioLauncher studio(fake.Hooks(), "/apps/Stream Deck Studio.app");
+    studio.Probe();
+    ASSERT_TRUE(Settled(studio));
+    EXPECT_EQ(studio.GetState(), StudioLauncher::State::Off);
+    EXPECT_EQ(studio.ButtonText(), "Open Studio");
+    EXPECT_TRUE(studio.CanOpen());
+
+    studio.SetDaemonPorts(37150, 37153);
+    studio.Open();
+    ASSERT_EQ(fake.Launches(), 1u);
+    EXPECT_EQ(fake.launches[0], (QStringList{"--daemon", "127.0.0.1:37150", "--daemon-api", "37153"}))
+        << "it joins the daemon unreal-qt supervises";
+    EXPECT_EQ(studio.GetState(), StudioLauncher::State::Starting);
+    EXPECT_FALSE(studio.CanOpen()) << "no second start while the first comes up";
+    ASSERT_TRUE(Settled(studio));
+    EXPECT_EQ(studio.GetState(), StudioLauncher::State::Starting) << "the port does not answer yet";
+
+    fake.Answer(kMirror);
+    studio.Probe();
+    ASSERT_TRUE(Settled(studio));
+    EXPECT_EQ(studio.GetState(), StudioLauncher::State::Running);
+    EXPECT_EQ(studio.StatusText(), "Running: mirrors deck A1B2C3 (Stream Deck + XL)");
+    EXPECT_EQ(studio.ButtonText(), "Show Studio");
+
+    studio.Open();
+    EXPECT_TRUE(TestWait::For([&] { return fake.Called("PUT /api/v1/window"); })) << "its window to the front";
+#ifdef Q_OS_MACOS
+    EXPECT_EQ(fake.Launches(), 2u) << "Launch Services activates the running app";
+    EXPECT_TRUE(fake.launches[1].isEmpty());
+#else
+    EXPECT_EQ(fake.Launches(), 1u) << "not started twice";
+#endif
+
+    fake.Answer("");  // closed
+    studio.Probe();
+    ASSERT_TRUE(Settled(studio));
+    EXPECT_EQ(studio.GetState(), StudioLauncher::State::Off);
+    EXPECT_EQ(studio.ButtonText(), "Open Studio");
+}
+
+TEST(StudioLauncher_Test, AStartThatFailsOrNeverAnswersSaysSoAndMayBeTriedAgain)
+{
+    FakeStudio fake;
+    fake.launchFails = true;
+    StudioLauncher studio(fake.Hooks(), "/bin/unreal-streamdeck-studio");
+    studio.Open();
+    EXPECT_EQ(studio.GetState(), StudioLauncher::State::Failed);
+    EXPECT_EQ(studio.StatusText(), "Did not start: cannot start it");
+    EXPECT_TRUE(studio.CanOpen());
+
+    fake.launchFails = false;
+    studio.Open();
+    ASSERT_TRUE(Settled(studio));
+    EXPECT_EQ(studio.GetState(), StudioLauncher::State::Starting);
+    fake.now += StudioLauncher::kStartTimeoutMs;
+    studio.Probe();
+    ASSERT_TRUE(Settled(studio));
+    EXPECT_EQ(studio.GetState(), StudioLauncher::State::Failed);
+    EXPECT_TRUE(studio.StatusText().contains("did not answer on 127.0.0.1:37052"))
+        << studio.StatusText().toStdString();
+    studio.Probe();
+    ASSERT_TRUE(Settled(studio));
+    EXPECT_EQ(studio.GetState(), StudioLauncher::State::Failed) << "said until the next start";
+
+    // a Studio whose own port is off: the daemon counts its window
+    studio.SetViewers(1);
+    EXPECT_EQ(studio.GetState(), StudioLauncher::State::Running);
+    studio.SetViewers(0);
+    EXPECT_EQ(studio.GetState(), StudioLauncher::State::Off);
+
+    StudioLauncher missing(fake.Hooks(), "");
+    EXPECT_EQ(missing.GetState(), StudioLauncher::State::Missing);
+    EXPECT_FALSE(missing.CanOpen());
+    missing.Open();
+    EXPECT_EQ(fake.Launches(), 2u) << "nothing to start";
+}
 
 class StreamDeckDialog_Test : public ::testing::Test
 {
@@ -189,4 +336,28 @@ TEST_F(StreamDeckDialog_Test, TheDaemonsPairingIsApprovedHere)
         << "the code to compare with the deck's strip";
     dialog.approveButton()->click();
     EXPECT_EQ(registry.PollPairing(request.pairing.id).state, "approved") << "approved at the GUI";
+}
+
+TEST_F(StreamDeckDialog_Test, TheStudioButtonOpensStudioAndTheLineFollowsIt)
+{
+    FakeStudio fake;
+    auto* studio = new StudioLauncher(fake.Hooks(), "/apps/Stream Deck Studio.app");
+    StreamDeckDialog dialog(nullptr, nullptr, studio);
+    ASSERT_TRUE(Settled(*studio));
+    EXPECT_TRUE(dialog.studioLabel()->text().contains("Not running")) << dialog.studioLabel()->text().toStdString();
+    EXPECT_EQ(dialog.studioButton()->text(), "Open Studio");
+
+    dialog.studioButton()->click();
+    EXPECT_EQ(fake.Launches(), 1u);
+    EXPECT_TRUE(dialog.studioLabel()->text().contains("Starting")) << dialog.studioLabel()->text().toStdString();
+    EXPECT_FALSE(dialog.studioButton()->isEnabled());
+
+    fake.Answer(kMirror);
+    ASSERT_TRUE(Settled(*studio));
+    dialog.refresh();
+    ASSERT_TRUE(Settled(*studio));
+    EXPECT_TRUE(dialog.studioLabel()->text().contains("mirrors deck A1B2C3"))
+        << dialog.studioLabel()->text().toStdString();
+    EXPECT_EQ(dialog.studioButton()->text(), "Show Studio");
+    EXPECT_TRUE(dialog.studioButton()->isEnabled());
 }

@@ -525,18 +525,26 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         d->owner = spec.owner;
     d->shared = spec.shared;
     d->hidden = spec.hidden;
-    if (spec.tapSink != BRK_NO_TAP)
+    if (!spec.stop && spec.tapSink != BRK_NO_TAP)
+    {
+        delete d;
+        error = "a tap never stops: 'stop' false is for a breakpoint of its own";
+        return BRK_INVALID;
+    }
+    const uint8_t tapSink = spec.stop ? spec.tapSink : BRK_COUNT_TAP;
+    if (tapSink != BRK_NO_TAP)
     {
         // The card's CPU: its memory, ports and events; the main CPU's also its events and the chips' registers
         if (spec.type != BRK_MEMORY && spec.type != BRK_IO && spec.type != BRK_EVENT &&
             !(spec.type == BRK_CHIPREG && !_target))
         {
             delete d;
-            error = _target ? "a tap watches memory, ports or card events"
-                            : "a tap watches memory, ports, machine events or chip registers";
+            const char* what = spec.stop ? "a tap" : "a breakpoint that only counts";
+            error = std::string(what) + (_target ? " watches memory, ports or card events"
+                                                 : " watches memory, ports, machine events or chip registers");
             return BRK_INVALID;
         }
-        d->tapSink = spec.tapSink;
+        d->tapSink = tapSink;
         d->tapCookie = spec.tapCookie;
     }
 
@@ -1750,6 +1758,8 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
             oss << " [condition failed: " << bp->conditionError << "]";
         if (bp->hitMode != BRK_HIT_ALWAYS)
             oss << " hits " << HitSpecName(*bp);
+        if (bp->tapSink == BRK_COUNT_TAP)
+            oss << " count only";
         if (bp->hitCount)
             oss << " (hit " << std::dec << bp->hitCount << "x)";
         if (bp->condition && bp->matchCount != bp->hitCount)
@@ -3343,7 +3353,7 @@ uint8_t BreakpointManager::RegisterTapSink(IBreakpointTapSink* sink)
     if (sink == nullptr)
         return BRK_NO_TAP;
     ChangeScope change(*this);
-    for (size_t id = 1; id < _tapSinks.size(); id++)
+    for (size_t id = 1; id < BRK_COUNT_TAP; id++)
         if (_tapSinks[id] == nullptr)
         {
             _tapSinks[id] = sink;
@@ -3354,7 +3364,7 @@ uint8_t BreakpointManager::RegisterTapSink(IBreakpointTapSink* sink)
 
 void BreakpointManager::UnregisterTapSink(uint8_t sinkId)
 {
-    if (sinkId == BRK_NO_TAP)
+    if (sinkId == BRK_NO_TAP || sinkId == BRK_COUNT_TAP)
         return;
     ChangeScope change(*this);
     std::vector<uint16_t> taps;

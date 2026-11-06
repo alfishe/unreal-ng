@@ -1016,6 +1016,7 @@ void DebugKeyboardManager::InitializeKeyNameMap()
     _keyNameMap["sym"] = ZXKEY_SYM_SHIFT;
     _keyNameMap["symshift"] = ZXKEY_SYM_SHIFT;
     _keyNameMap["sym_shift"] = ZXKEY_SYM_SHIFT;
+    _keyNameMap["symbol_shift"] = ZXKEY_SYM_SHIFT;  // the pair of caps_shift
     _keyNameMap["ss"] = ZXKEY_SYM_SHIFT;   // Shorthand alias
     
     // Special keys

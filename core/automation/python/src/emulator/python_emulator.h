@@ -73,6 +73,7 @@
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "debugger/analyzers/profile/profilecontrol.h"
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
 #include "debugger/asm/asmcontrol.h"
@@ -237,11 +238,12 @@ inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind,
 /// bp / bp_read / bp_write / bp_port_in / bp_port_out: the options as keyword arguments (BreakpointManager::
 /// ApplyScriptOptions). The breakpoint id, or -1 when refused
 /// `condition` (empty: none) in `dialect` ("unreal", "c"); a condition that does not compile raises ValueError with
-/// the reason and its column, the other refusals answer -1. `cpu` "gs": the sound card CPU's breakpoint
+/// the reason and its column, the other refusals answer -1. `cpu` "gs": the sound card CPU's breakpoint. `stop` false:
+/// it only counts its hits (BreakpointSpec::stop)
 inline int PythonScriptBreakpoint(Emulator& self, BreakpointTypeEnum type, uint8_t access, uint16_t address,
                                   const std::string& page, int32_t to, bool slotOnly, int32_t mask, const std::string& hits,
                                   const std::string& condition = "", const std::string& dialect = "",
-                                  const std::string& cpu = "")
+                                  const std::string& cpu = "", bool stop = true)
 {
     BreakpointManager* bpm = PythonBreakpoints(self, cpu);
     if (!bpm)
@@ -254,6 +256,7 @@ inline int PythonScriptBreakpoint(Emulator& self, BreakpointTypeEnum type, uint8
     if (!BreakpointManager::ApplyScriptOptions(spec, page, to, slotOnly, mask, hits, error))
         return -1;
     spec.condition = condition;
+    spec.stop = stop;
     if (!BreakpointConditionProgram::ParseDialect(dialect, spec.conditionDialect))
         throw py::value_error("dialect must be 'unreal' or 'c'");
     const uint16_t id = bpm->AddBreakpoint(spec, error);
@@ -763,11 +766,10 @@ inline pybind11::object StreamDeckPy(const std::string& verb, const pybind11::kw
     return StateNodeToPy(companion::streamdeck::Call(verb, args).body);
 }
 
-/// A monitoring verb (monitoring::Call: all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots,
-/// recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events, devices.access) with its
-/// args as keywords
-/// (instance=
-/// an id or an index; default this emulator for an instance's name); the reply every plane returns
+/// A monitoring verb (monitoring::Call: all, host.stats, host.clients, controllers.devices, emulator.stats,
+/// debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state,
+/// game.events, devices.access) with its args as keywords (instance= an id or an index; default this emulator for an
+/// instance's name); the reply every plane returns
 inline pybind11::object MonitorPy(Emulator& self, const std::string& verb, const pybind11::kwargs& options)
 {
     StateNode args = StateNode::Object();
@@ -2852,7 +2854,8 @@ namespace PythonBindings
             .def("monitor", [](Emulator& self, const std::string& verb, const py::kwargs& options) {
                      return MonitorPy(self, verb, options);
                  }, py::arg("verb") = "all",
-                 "Monitoring (all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots, "
+                 "Monitoring (all, host.stats, host.clients, controllers.devices, emulator.stats, debug.breakpoints, "
+                 "media.slots, "
                  "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events, devices.access): "
                  "monitor('emulator.stats') -> {ok, instance, fps, speed_percent, ...} as WebAPI /api/v1/monitor")
             .def("surfaces", [](Emulator&, const std::string& verb, const py::kwargs& options) {
@@ -3560,53 +3563,53 @@ namespace PythonBindings
             // Breakpoint management
             .def("bp", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
                              const std::string& hits, const std::string& condition, const std::string& dialect,
-                             const std::string& cpu) -> int {
+                             const std::string& cpu, bool stop) -> int {
                 return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_EXECUTE, addr, page, to, slot_only, -1, hits, condition,
-                                              dialect, cpu);
+                                              dialect, cpu, stop);
             }, "Add a breakpoint (bp); page 'ram32' / 'rom3' / 'cache0' (the Next: also 'bank8k33', 'divmmc3', "
                "'divmmcrom', 'mfrom', 'mfram'): physical, through any slot that shows it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
                "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
-               "reason when it does not compile); cpu 'gs': the sound card CPU's. -1 when refused",
+               "reason when it does not compile); cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop. -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
-               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "")
+               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true)
             .def("bp_read", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
                              const std::string& hits, const std::string& condition, const std::string& dialect,
-                             const std::string& cpu) -> int {
+                             const std::string& cpu, bool stop) -> int {
                 return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_READ, addr, page, to, slot_only, -1, hits, condition,
-                                              dialect, cpu);
+                                              dialect, cpu, stop);
             }, "Add a breakpoint (bp_read); page 'ram32' / 'rom3' / 'cache0' (the Next: also 'bank8k33', 'divmmc3', "
                "'divmmcrom', 'mfrom', 'mfram'): physical, through any slot that shows it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
                "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
-               "reason when it does not compile); cpu 'gs': the sound card CPU's. -1 when refused",
+               "reason when it does not compile); cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop. -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
-               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "")
+               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true)
             .def("bp_write", [](Emulator& self, uint16_t addr, const std::string& page, int32_t to, bool slot_only,
                              const std::string& hits, const std::string& condition, const std::string& dialect,
-                             const std::string& cpu) -> int {
+                             const std::string& cpu, bool stop) -> int {
                 return PythonScriptBreakpoint(self, BRK_MEMORY, BRK_MEM_WRITE, addr, page, to, slot_only, -1, hits, condition,
-                                              dialect, cpu);
+                                              dialect, cpu, stop);
             }, "Add a breakpoint (bp_write); page 'ram32' / 'rom3' / 'cache0' (the Next: also 'bank8k33', 'divmmc3', "
                "'divmmcrom', 'mfrom', 'mfram'): physical, through any slot that shows it (slot_only: only through the slot of addr); to: range end; hits '5' / '>=5' / '%5'; condition: stop "
                "only when it holds (Unreal language; dialect 'c': C precedence, decimal numbers; ValueError with the "
-               "reason when it does not compile); cpu 'gs': the sound card CPU's. -1 when refused",
+               "reason when it does not compile); cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop. -1 when refused",
                py::arg("addr"), py::arg("page") = "", py::arg("to") = -1, py::arg("slot_only") = false,
-               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "")
+               py::arg("hits") = "", py::arg("condition") = "", py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true)
             .def("bp_port_in", [](Emulator& self, uint16_t port, int32_t mask, const std::string& hits,
-                             const std::string& condition, const std::string& dialect, const std::string& cpu) -> int {
+                             const std::string& condition, const std::string& dialect, const std::string& cpu, bool stop) -> int {
                 return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_IN, port, "", -1, false, mask, hits, condition, dialect,
-                                              cpu);
+                                              cpu, stop);
             }, "Add a port breakpoint (bp_port_in); mask: matches every port with (port & mask) == (port & mask); "
-               "hits '5' / '>=5' / '%5'; condition as for bp; cpu 'gs': the sound card CPU's. -1 when refused",
+               "hits '5' / '>=5' / '%5'; condition as for bp; cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop. -1 when refused",
                py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "", py::arg("condition") = "",
-               py::arg("dialect") = "", py::arg("cpu") = "")
+               py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true)
             .def("bp_port_out", [](Emulator& self, uint16_t port, int32_t mask, const std::string& hits,
-                             const std::string& condition, const std::string& dialect, const std::string& cpu) -> int {
+                             const std::string& condition, const std::string& dialect, const std::string& cpu, bool stop) -> int {
                 return PythonScriptBreakpoint(self, BRK_IO, BRK_IO_OUT, port, "", -1, false, mask, hits, condition, dialect,
-                                              cpu);
+                                              cpu, stop);
             }, "Add a port breakpoint (bp_port_out); mask: matches every port with (port & mask) == (port & mask); "
-               "hits '5' / '>=5' / '%5'; condition as for bp; cpu 'gs': the sound card CPU's. -1 when refused",
+               "hits '5' / '>=5' / '%5'; condition as for bp; cpu 'gs': the sound card CPU's; stop=False: only count the hits (hit_count), never stop. -1 when refused",
                py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "", py::arg("condition") = "",
-               py::arg("dialect") = "", py::arg("cpu") = "")
+               py::arg("dialect") = "", py::arg("cpu") = "", py::arg("stop") = true)
             .def("bp_nextreg_write", [](Emulator& self, uint16_t reg, int32_t to, const std::string& doors, int32_t value,
                              int32_t vmask, const std::string& hits) -> int {
                 return PythonScriptNextRegBreakpoint(self, BRK_IO_OUT, reg, to, doors, value, vmask, hits);
@@ -3794,6 +3797,25 @@ namespace PythonBindings
                "(on='press'), up ('release') or both. Returns the id",
                py::arg("key") = "any", py::arg("on") = "press", py::arg("hits") = "", py::arg("group") = "",
                py::arg("note") = "")
+            .def("cpuprofile", [](Emulator& self, const std::string& op, const py::kwargs& kwargs) -> py::object {
+                profile::Options options;
+                for (const auto& [key, value] : kwargs)
+                    options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                const profile::Reply reply = profile::Execute(self, op, options);
+                StateNode value = reply.ToValue();
+                if (!reply.Ok())
+                {
+                    value = StateNode::Object();
+                    value["ok"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "CPU time per routine (profilecontrol.h): op start (stack=True, beam=False, frames=True, ring_kib=4096, "
+               "stream='series.jsonl', reset=False) | stop | reset | mark (name='level2', drop=False) | status | report "
+               "(since='level2', top=24, sort='self' | 'inclusive' | 'calls', callers=True, beam=False) | frames (last=50, "
+               "top=8) | export (format='kit' | 'json' | 'entries' | 'sym' | 'ann', path=, since=). The reply's fields "
+               "plus text; a refusal: ok = False, error = why",
+               py::arg("op") = "status")
             .def("analysis", [](Emulator& self, const std::string& action, const py::kwargs& kwargs) -> py::object {
                 analysis::Options options;
                 for (const auto& [key, value] : kwargs)
@@ -3877,6 +3899,12 @@ namespace PythonBindings
                 BreakpointManager* bpm = PythonBreakpoints(self, cpu);
                 return bpm ? bpm->GetBreakpointListAsString() : "";
             }, "Get formatted breakpoint list (cpu 'gs': the sound card CPU's)", py::arg("cpu") = "")
+            .def("bp_hits", [](Emulator& self, uint16_t id, const std::string& cpu) -> int64_t {
+                BreakpointManager* bpm = PythonBreakpoints(self, cpu);
+                const BreakpointSnapshot bp = bpm ? bpm->GetBreakpointById(id) : BreakpointSnapshot();
+                return bp ? static_cast<int64_t>(bp->hitCount) : -1;
+            }, "The breakpoint's hit count (a count-only one, stop=False, counts and never stops); -1 for an unknown id "
+               "(cpu 'gs': the sound card CPU's)", py::arg("id"), py::arg("cpu") = "")
             .def("bp_status", [](Emulator& self) -> py::dict {
                 py::dict result;
                 auto* ctx = self.GetContext();
@@ -6152,18 +6180,21 @@ namespace PythonBindings
             .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                if (!DebugKeyboardManager::IsKnownKeyName(keyName)) return false;  // not a silent no-op
                 ctx->pDebugManager->GetKeyboardManager()->TapKey(keyName, holdFrames);
                 return true;
             }, "Tap a key (press, hold, release)", py::arg("key"), py::arg("frames") = 2)
             .def("key_press", [](Emulator& self, const std::string& keyName) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                if (!DebugKeyboardManager::IsKnownKeyName(keyName)) return false;  // not a silent no-op
                 ctx->pDebugManager->GetKeyboardManager()->PressKey(keyName);
                 return true;
             }, "Press and hold a key", py::arg("key"))
             .def("key_release", [](Emulator& self, const std::string& keyName) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                if (!DebugKeyboardManager::IsKnownKeyName(keyName)) return false;  // not a silent no-op
                 ctx->pDebugManager->GetKeyboardManager()->ReleaseKey(keyName);
                 return true;
             }, "Release a held key", py::arg("key"))
@@ -7961,14 +7992,16 @@ namespace PythonBindings
         .def("audio_levels", [](Emulator& self) -> py::object {
             return StateNodeToPy(AudioMixer::Levels(self.GetContext()));
         }, "Every mixer row's and channel's levels and mute / solo (the WebSocket topic audio.mixer)")
-        .def("audio_capture_start", [](Emulator& self, double seconds, const std::string& sourceKey) -> py::dict {
+        .def("audio_capture_start", [](Emulator& self, double seconds, const std::string& sourceKey, const std::string& file) -> py::dict {
             py::dict d;
             auto* context = self.GetContext();
             if (!context || !context->pDebugManager) { d["error"] = "debug manager not available"; return d; }
 
-            if (seconds < 0.01 || seconds > 30.0)
+            const double maxSeconds = file.empty() ? 30.0 : AudioCaptureAnalyzer::MAX_STREAM_SECONDS;
+            if (seconds < 0.01 || seconds > maxSeconds)
             {
-                d["error"] = "seconds must be within [0.01, 30.0]";
+                d["error"] = file.empty() ? "seconds must be within [0.01, 30.0] (give file= for longer)"
+                                          : "seconds must be within [0.01, 86400]";
                 return d;
             }
 
@@ -7986,15 +8019,28 @@ namespace PythonBindings
             const size_t target = static_cast<size_t>(seconds * static_cast<double>(rate)) * 2;
 
             manager->activate("audiocapture");
-            capture->startCapture(target, source);
+            if (!file.empty())
+            {
+                // The samples go to the WAV while they come; it closes by itself at the target
+                std::string streamError;
+                if (!capture->startStreamCapture(file, static_cast<uint32_t>(rate), target, source, streamError))
+                {
+                    d["error"] = streamError;
+                    return d;
+                }
+                d["wav_path"] = file;
+            }
+            else
+                capture->startCapture(target, source);
 
             d["armed"] = capture->isCaptureArmed();
             d["source"] = AudioMixer::Key(source);
             d["target_samples"] = static_cast<uint64_t>(target);
             d["sample_rate"] = static_cast<uint64_t>(rate);
             return d;
-        }, "Arm a buffered stereo capture (source: a mixer key - beeper, ay1, covox, gs ... - for one device's own buffer; default the master mix)",
-           py::arg("seconds") = 1.0, py::arg("source") = "")
+        }, "Arm a stereo capture (source: a mixer key - beeper, ay1, covox, gs ... - for one device's own buffer; default the master mix). "
+           "file: a WAV path - the samples are written there while they come (seconds up to 86400, no memory ceiling)",
+           py::arg("seconds") = 1.0, py::arg("source") = "", py::arg("file") = "")
 
         .def("set_speed", [](Emulator& self, int multiplier) -> bool {
             if (multiplier != 1 && multiplier != 2 && multiplier != 4 && multiplier != 8 && multiplier != 16)
@@ -8083,8 +8129,15 @@ namespace PythonBindings
             d["complete"] = capture->isCaptureComplete();
             d["captured_samples"] = static_cast<uint64_t>(capture->getCapturedSamples());
             d["target_samples"] = static_cast<uint64_t>(capture->getTargetSamples());
+            d["to_file"] = capture->isStreaming();
+            if (capture->isStreaming())
+            {
+                d["wav_path"] = capture->getStreamPath();
+                d["file_closed"] = capture->isStreamClosed();
+                d["file_failed"] = capture->hasStreamFailed();
+            }
             return d;
-        }, "Audio capture progress")
+        }, "Audio capture progress (to_file / wav_path / file_closed for a capture written to a file)")
 
         .def("audio_capture_result", [](Emulator& self, py::object pathValue) -> py::dict {
             py::dict d;
@@ -8096,8 +8149,27 @@ namespace PythonBindings
                 manager ? manager->getAnalyzer<AudioCaptureAnalyzer>("audiocapture") : nullptr;
             if (!capture || !manager) { d["error"] = "audio capture analyzer not available"; return d; }
 
+            if (capture->isStreaming())
+            {
+                // The audio is in the WAV, not in memory: nothing to analyze
+                if (!capture->isStreamClosed())
+                {
+                    d["error"] = "the capture file is still being written - poll audio_capture_status";
+                    return d;
+                }
+                const size_t streamRate = context->pSoundManager ? context->pSoundManager->getCoreRate() : 44100;
+                const size_t streamFrames = capture->getCapturedSamples() / 2;
+                d["frames"] = static_cast<uint64_t>(streamFrames);
+                d["sample_rate"] = static_cast<uint64_t>(streamRate);
+                d["duration_seconds"] = static_cast<double>(streamFrames) / streamRate;
+                d["complete"] = capture->isCaptureComplete();
+                d["wav_path"] = capture->getStreamPath();
+                d["file_failed"] = capture->hasStreamFailed();
+                return d;
+            }
+
             const auto& buffer = capture->getBuffer();
-            const size_t frames = buffer.size() / 2;
+            const size_t frames = std::min(buffer.size(), capture->getCapturedSamples()) / 2;
             if (frames == 0)
             {
                 d["error"] = "no captured audio — call audio_capture_start first";

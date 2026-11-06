@@ -67,6 +67,8 @@ public:
                             std::string& error);
     bool isStreaming() const { return _streaming; }
     bool isStreamClosed() const { return _streamClosed.load(std::memory_order_acquire); }
+    /// Wait (bounded) for the writer to drain and close the file: after the target was reached it does so by itself
+    bool waitStreamClosed(int timeoutMs) const;
     const std::string& getStreamPath() const { return _streamPath; }
 
     /// Stop appending. Memory mode: the buffer is cut to what came (getBuffer() holds exactly the captured

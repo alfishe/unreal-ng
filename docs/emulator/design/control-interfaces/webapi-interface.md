@@ -826,6 +826,29 @@ POST /api/v1/emulator/{id}/analysis/trace      {path, from_frame?, from_tinframe
                                                cycles, fetches, reads, writes, ports, bytes, truncated, text}
 ```
 
+### CPU time profile
+
+The [CPU time profile](../../analysis/cpu-profile.md) (`profile::Execute`, the CLI's `cpuprofile`): every answer has
+`text`; refusals are 400 (bad option or value), 404 (no such mark), 409 (not possible now), 503 (no debug manager).
+The reads also take a POST with a JSON body.
+
+```
+POST /api/v1/emulator/{id}/cpuprofile/start   {stack?, beam?, frames?, ring_kib?, stream?, reset?}: the CPU held for
+                                              the switch; the status
+POST /api/v1/emulator/{id}/cpuprofile/stop    the status (the counters stay readable)
+POST /api/v1/emulator/{id}/cpuprofile/reset   a fresh window, marks dropped
+POST /api/v1/emulator/{id}/cpuprofile/mark    {name, drop?}: a baseline for since=
+GET  /api/v1/emulator/{id}/cpuprofile/status  {active, settings, frames, tstates, instructions, acknowledges,
+                                              routines, pages, depth, discontinuities, frames_kept, marks, text}
+GET  /api/v1/emulator/{id}/cpuprofile/report?since=&top=&sort=self|inclusive|calls&callers=&beam=
+                                              {window, routines [{name, entry, page, kinds, self, inclusive,
+                                              self_permille, calls, callers, notes, ...}], text}
+GET  /api/v1/emulator/{id}/cpuprofile/frames?last=&top=   {frames [{frame, tstates, routines [[id, self, incl]]}],
+                                              names, text}
+POST /api/v1/emulator/{id}/cpuprofile/export  {format: kit|json|entries|sym|ann, path?, since?}: written to path or
+                                              answered in content
+```
+
 ### Settings Management
 ```
 GET  /api/v1/emulator/{id}/settings            All settings, grouped (io_acceleration, disk_interface, audio) plus turbo_mode, speed, effective_speed, turbo_active, turbo_audio
@@ -944,6 +967,7 @@ Everything but `type` and `address` is optional (the debugger protocol's Breakpo
 | `doors`, `value`, `value_mask` | ZX Next `nextreg*` only: `address` is the register (`address_end` a range); `doors` a comma separated list or array of `nextreg` (the NEXTREG instructions), `port` (OUT `#253B`), `copper` (a copper MOVE), default all (a read always comes through the port); `value` stops only on that byte, `value_mask` compares only those bits (default `255` with a value). The reply and the list carry `doors`, `value`, `value_mask`. |
 | `hc` | ZX Next `beam` only: `address` is the line of the copper's counter (NR #64 applied), `hc` the pixel clock in the row (0..511, default 0). A `copper` breakpoint takes `address` = list index (0..1023), `address_end` a range. |
 | `hits` | `"5"` stops on the 5th hit only, `">=5"` from the 5th on, `"%5"` every 5th. Every matching access is counted (`hit_count`). The same as `hit_mode` (`always` / `equal` / `at_least` / `multiple`) + `hit_target`. Stepping on from the breakpoint the machine stopped at is not counted again. |
+| `stop` | `false`: the breakpoint only counts its hits (`hit_count`) and never stops; memory, port, event and chip register breakpoints (400 for the others). The reply and the list carry `stop`. |
 | `condition`, `condition_dialect` | Memory and port breakpoints: stop only when the expression holds (`"VAL == 0"`, `"(VAL & 7) == 2"`, `"A == 7 && M(#5C3A) != 0"`); the Unreal order and decimal numbers (hex `#FF`, `$FF`, `0xFF`), `condition_dialect` `"c"` for C's precedence ([the language](../../../features/conditional-breakpoints.md)). A bad condition is 400 with the reason and the column, nothing is added. The reply and the list carry `condition` in the canonical form, `match_count` (every match; `hit_count` then counts the matches where it held, and `hits` works on them) and, after a run-time failure, `condition_error` (the breakpoint is skipped, never stops; enabling it or a new condition clears it). `PUT .../condition` changes it later (404 for an unknown id, 400 keeps the old one). |
 
 Errors (400) name the problem: a range ending before it starts, a page range leaving its page, a missing
@@ -1976,8 +2000,9 @@ the I/O thread. The topic `streamdeck.status` on `/api/v1/ws` pushes the changes
 
 ```
 GET    /api/v1/monitor[?instance=]                       everything: {host, clients, instances: [{instance, index, model, emulator.stats, ...}]}
-GET    /api/v1/monitor/{name}[?instance=]                one name: host.stats, host.clients, emulator.stats, debug.breakpoints,
-                                                         media.slots, recording.state, debug.labels, ttd.status, debug.analyzers,
+GET    /api/v1/monitor/{name}[?instance=]                one name: host.stats, host.clients, controllers.devices,
+                                                         emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status, debug.analyzers,
+                                                         debug.cpuprofile,
                                                          controllers.state, game.events, devices.access, breakpoint_groups
 GET    /api/v1/emulator/{id}/breakpoints/groups          {groups: [{name, total, active, ids}]} (the user breakpoints)
 ```

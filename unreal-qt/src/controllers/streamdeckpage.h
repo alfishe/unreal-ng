@@ -10,6 +10,7 @@
 ///   lease goes back: the daemon ends unless Stream Deck Studio still holds it.
 /// - StreamDeckDialog is Tools > Stream Deck...: the daemon's status (state, pid, version, decks, viewers, the link),
 ///   Start / Stop / Restart, when to start it, how activity shows (Q-3), the pairing (Pair, Approve here, Revoke),
+///   Stream Deck Studio (StudioLauncher: Open / Show, whether it runs and what its deck shows),
 ///   each deck's brightness and icon pack (the daemon's packs; "its scenario's" clears it), the surfaces table (Tools > Controllers), the Linux udev rule. It reads and changes the
 ///   same verbs every automation plane uses (companion::streamdeck::Call); calls that reach the daemon run off the
 ///   GUI thread.
@@ -25,6 +26,7 @@ class QPlainTextEdit;
 class QPushButton;
 class QTableWidget;
 class QTimer;
+class StudioLauncher;
 
 class StreamDeckSupervision : public QObject
 {
@@ -49,7 +51,9 @@ class StreamDeckDialog : public QWidget
     Q_OBJECT
 
 public:
-    explicit StreamDeckDialog(CompanionController* companions, QWidget* parent = nullptr);
+    /// `studio` null: the real one (Stream Deck Studio beside this executable); tests pass a fake
+    explicit StreamDeckDialog(CompanionController* companions, QWidget* parent = nullptr,
+                              StudioLauncher* studio = nullptr);
 
     /// Shown again from the supervisor's status (the timer does it while visible; tests call it)
     void refresh();
@@ -62,6 +66,8 @@ public:
     QLabel* stateLabel() const { return _state; }
     QLabel* pairingLabel() const { return _pairing; }
     QTableWidget* decksTable() const { return _decks; }
+    QPushButton* studioButton() const { return _studioButton; }
+    QLabel* studioLabel() const { return _studioState; }
     /// The icon pack box of a deck's row (null when the row has none)
     QComboBox* packBox(int row) const;
 
@@ -81,6 +87,8 @@ private:
     void loadPacks(const QString& pid);
     /// The pack choices of a deck's box: its scenario's, then the daemon's packs (and its setting if not among them)
     void fillPackBox(QComboBox* box, const QString& setting) const;
+    /// The studio's line and button from its launcher
+    void showStudio();
 
     QPointer<CompanionController> _companions;
     QLabel* _state = nullptr;
@@ -96,6 +104,9 @@ private:
     QPushButton* _approve = nullptr;
     QPushButton* _revoke = nullptr;
     QTableWidget* _decks = nullptr;
+    StudioLauncher* _studio = nullptr;
+    QLabel* _studioState = nullptr;
+    QPushButton* _studioButton = nullptr;
     QPlainTextEdit* _udev = nullptr;
     QTimer* _timer = nullptr;
     QString _pendingPairing;  ///< the daemon's pairing waiting for the user (its id at the registry)

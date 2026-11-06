@@ -3,6 +3,7 @@
 #include "emulator/actions/contextstate.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/readoutschanged.h"
 
 namespace ttd
 {
@@ -24,6 +25,8 @@ void NoteHistoryChange(const EmulatorContext* context, bool history)
     if (emulator == nullptr)
         return;
     actions::ContextState::Instance().HistoryChanged(emulator->GetId(), history);
+    // What may be done changes with it (rewind, the speed lock): the companions' views, the readouts
+    NotifyReadoutsChanged(emulator->GetId(), "ttd");
 }
 
 }  // namespace ttd

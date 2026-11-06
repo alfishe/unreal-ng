@@ -165,6 +165,8 @@ protected:
         uint8_t flip = 0;
     };
     const TtdSlotKey* _ttdSlots8k = nullptr;
+    /// ExecPhysOffset per 8K slot: the buffer offset each slot reads from, set by a memory that maps 8K slots
+    const uint32_t* _readSlots8k = nullptr;
     ttd::PhysPage _bank_ram_page_cache[4] = {ttd::kPhysPageNone, ttd::kPhysPageNone,
                                              ttd::kPhysPageNone, ttd::kPhysPageNone};
 
@@ -295,6 +297,20 @@ public:
     /// A machine whose TTD keys come per 8K slot (TtdKeyOf)
     bool HasTtdSlots8k() const { return _ttdSlots8k != nullptr; }
 
+    /// The offset in the memory buffer (BlockAt) of the byte the CPU reads at `addr`: its page is offset >> 14 (the
+    /// absolute page numbering of GetPageForBank: RAM, cache, misc, ROM). The CPU time profile keys its cells by it
+    /// (once per instruction): a bank pointer and a subtraction, or the 8K slot table of a machine that maps 8K
+    /// slots (the Next)
+    inline uint32_t ExecPhysOffset(uint16_t addr) const
+    {
+        if (_readSlots8k) [[unlikely]]
+            return _readSlots8k[addr >> 13] + (addr & 0x1FFFu);
+        return static_cast<uint32_t>(_bank_read[addr >> 14] - _memory) + (addr & 0x3FFFu);
+    }
+
+    /// The byte at an ExecPhysOffset (the profile's opcode classifier reads the instruction it booked)
+    inline uint8_t PhysByte(uint32_t offset) const { return _memory[offset]; }
+
     inline ttd::PhysPage GetPhysPageForZ80Address(uint16_t addr) const
     {
         return _bank_ram_page_cache[(addr >> 14) & 0b11];
@@ -341,6 +357,9 @@ public:
     /// is not on that path. It remains as a cheap query for code that needs to
     /// know whether the model has the ROM at all.
     inline bool HasDosRom() const { return base_dos_rom != nullptr; }
+    /// A TR-DOS session can run: the DOS ROM, and the service ROM it pages with #7FFD bit 4 clear. The 48K (a Beta 128
+    /// on the edge connector) has no #7FFD, so it needs the DOS ROM alone
+    bool IsDosAvailable() const;
 
     /// endregion </Fields>
 

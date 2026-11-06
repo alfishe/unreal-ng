@@ -15,7 +15,9 @@
 #include <QToolButton>
 
 #include "base/featuremanager.h"
+#include "_helpers/testwaithelper.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdsession.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -142,4 +144,28 @@ TEST_F(TtdWidget_Test, TheJournalChoiceReachesTheRecordingAndBuildJournalShowsOn
     EXPECT_FALSE(ttd::TTDSessionRef(bare->GetContext())->GetPublishedSessionInfo().writeJournalComplete);
     EXPECT_FALSE(Button(w, QStringLiteral("Build Journal"))->isHidden()) << "the session has no journal";
     EXPECT_TRUE(Status(w).contains(QStringLiteral("No journal"))) << Status(w).toStdString();
+}
+
+// Dropping a session empties the panel's timeline: the slider's range goes to 0..0, which moves its value and fires
+// valueChanged. That used to reach the panel's own seek, and the seek parked a machine that was running: a resume
+// after a dropped session was followed by a pause
+TEST_F(TtdWidget_Test, EmptyingTheTimelineDoesNotSeekOrParkARunningMachine)
+{
+    TtdWidget w;
+    w.setVisibleByUser(true);
+    std::shared_ptr<Emulator> machine = Machine("ttdwidget-dropped");
+    ASSERT_NE(machine, nullptr);
+    w.updateState(machine);
+    ASSERT_NO_FATAL_FAILURE(RecordThroughThePanel(w, *machine));
+    w.updateState(machine);   // the slider now spans the recording, its value on the end
+
+    EXPECT_TRUE(ttd::TTDControl(machine->GetContext()).Execute({"invalidate", {{"reason", "test"}}}).Ok());
+    machine->StartAsync();   // the machine runs on its own thread
+    ASSERT_TRUE(TestWait::For([&] { return machine->IsRunning() && !machine->IsPaused(); }));
+
+    w.updateState(nullptr);
+    w.updateState(machine);   // telemetry sees no session: the timeline empties
+
+    EXPECT_FALSE(machine->IsPaused()) << "the emptied timeline sought and parked the running machine";
+    machine->Stop();
 }

@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <chrono>
+#include <optional>
 #include <functional>
 #include "stdafx.h"
 
@@ -497,6 +498,11 @@ public:
 
     /// Snapshot for UI status / diagnostics. Thread-safe.
     RunControlState GetRunControlState() const;
+
+    /// How long until the claim's state changes with time alone, with no notification of its own: the idle lease of
+    /// a session runs out (seen, and "expired" posted, at the next query) or a re-take cooldown ends. nullopt: nothing
+    /// waits on the clock. The push planes arm a one-shot timer for it instead of re-reading on a beat
+    std::optional<std::chrono::milliseconds> RunControlTimeToChange() const;
 
 private:
     struct RunControlClaim

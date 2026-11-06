@@ -134,16 +134,18 @@ when their runs are done, on their own analysis instances (the socket's other ca
 | `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed`, `watch_hit` / `watch_added` / `watch_removed` / `watch_error` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
 | `host.stats` | the host process, once for the process (no `instance`): `{cpu_percent, cpu_percent_host, cores, rss_bytes, peak_rss_bytes, virtual_bytes, threads, cpu_time_s, uptime_s, …}`, sampled at most twice a second (`GET /api/v1/monitor/host.stats`, [command-interface.md §17](./command-interface.md#17-monitoring)) | none | implemented |
 | `host.clients` | the process: per plane (`rest`, `ws`, `events`, `debug_ws`, `mcp`, `cli`) `{connections, opened, requests}`, `companions`, `instances` (`GET /api/v1/monitor/host.clients`) | none | implemented |
+| `controllers.devices` | the process: the host input devices `{available, revision, devices [{id, name, family, layout, backend, role, pin, layers, context, outputs, battery {known, text, level?, coarse?, charging?, wired?}, light {available, reason?}, notice?}]}`, the entries of `GET /api/v1/controllers/devices` ([controller manager surfaces, the topic](../../../inprogress/2026-10-17-controller-manager/surfaces.md#the-controllersdevices-topic-built)); a new value when a device arrives or leaves, its battery, notice, light, role or pin changes (`GET /api/v1/monitor/controllers.devices`); `available: false` without a host input owner (no Qt client) | none | implemented (2026-11-04) |
 | `emulator.stats` | per instance the measured pace `{state, measuring, fps, nominal_fps, speed_percent, frame_time_us {avg, max}, frame_budget_percent, halted_percent, interrupts_per_frame, frame, t_states, turbo, cpu {mhz, base_mhz, multiplier, host_multiplier, hw_turbo_ratio}}`: a new value every 0.5 s while it runs (`GET /api/v1/monitor/emulator.stats`) | none | implemented |
 | `debug.breakpoints` | per instance `{total, active, inactive, owned, by_kind {…}, groups [{name, total, active}], last_hit}` on every change of the set and on a new last hit (`GET /api/v1/monitor/debug.breakpoints`; the events are `breakpoints_changed` on `debug.events`) | none | implemented |
 | `media.slots` | per instance every media slot `{slots [{id, kind, present, pending, name, format, dirty, changed_units, protect}], loaded, dirty}` (`GET /api/v1/monitor/media.slots`) | none | implemented |
 | `recording.state` | per instance `{available, enabled, recording, paused, mode, file, frames, duration_s, emulated_s, file_bytes, fps}` (`GET /api/v1/monitor/recording.state`) | none | implemented |
 | `debug.labels` | per instance `{total, sets [{id, title, enabled, symbols}]}` (`GET /api/v1/monitor/debug.labels`) | none | implemented |
 | `ttd.status` | per instance `{state, recording, history, frame, first, end, frames, checkpoints, memory_bytes, history_bytes, page_store_bytes, bookmarks, write_journal_records, input_events, evicted_checkpoints}`: the cursor's fields at the rate, the sizes refreshed every 2 s (`GET /api/v1/monitor/ttd.status`; the full status is `GET …/ttd/status`) | none | implemented |
-| `debug.analyzers` | per instance the profilers' session states `{opcode, memory, calltrace, coverage {available, recording, instructions}, pchist}` (`GET /api/v1/monitor/debug.analyzers`) | none | implemented |
+| `debug.analyzers` | per instance the profilers' session states `{opcode, memory, calltrace, coverage {available, recording, instructions}, cpuprofile, pchist}` (`GET /api/v1/monitor/debug.analyzers`) | none | implemented |
 | `controllers.state` | per instance `{connectors [{id, kind, device, plugged, fixed}], plugged}` (`GET /api/v1/monitor/controllers.state`) | none | implemented |
 | `game.events` | per instance the game's events `{available, profile, frame, seq, events {<name>: {kind, fires, last_frame, level, value, condition?, condition_error?}}, recent [{seq, frame, name}]}` (`GET /api/v1/monitor/game.events`); a new value when an event fires or a watched value changes, coalesced at `max_hz`: `recent` holds the fired ones between two messages | none | implemented |
 | `debug.watches` | per instance the memory watches' totals `{available, session, revision, watches [{name, kind (region / port), start + length or port + mask, reads, writes, executes (regions)}]}` (`GET /api/v1/monitor/debug.watches`); published at every frame's end and on every watch change; the callers and values are in `GET .../profiler/memory/watches` | none | implemented |
+| `debug.cpuprofile` | per instance the [CPU time profile](../../analysis/cpu-profile.md)'s totals `{available, active, frames, tstates, instructions, acknowledges, routines, pages, depth, discontinuities, frames_kept}` (`GET /api/v1/monitor/debug.cpuprofile`); the report, the series and the exports are `call`s of `/api/v1/emulator/{id}/cpuprofile/*` | none | implemented |
 | `devices.access` | per instance the [device access watch](../../../inprogress/2026-11-02-device-access-watch/README.md) `{available, active, continuous, frames_observed, window, dropped_channels, channels [{device, channel, dir, port, input, frames, reads_per_frame, tested_bits, sites [{pc, count, tested_bits}], other_sites}]}` (`GET /api/v1/monitor/devices.access`); a new value at every folded frame while the watch counts (a media load, `controllers auto apply`, the feature `deviceaccess`), coalesced at `max_hz` | none | implemented (2026-11-03) |
 | `debug.asm_sync` | the asm synchroniser's watch: `asm_sync_*` (the `asm_sync` topic of `/api/v1/websocket`) | none; no token needed from this host | implemented |
 
@@ -156,7 +158,7 @@ when their runs are done, on their own analysis instances (the socket's other ca
   instance went.
 - A prefix such as `debug.*` from a peer without a token (a loopback debugger) takes the event topics and skips the
   state topics it may not have, without an error; a name it may not have is still `companion_required`.
-- A topic of the process (`streamdeck.status`, `host.stats`, `host.clients`) sends one `state` message without `instance`:
+- A topic of the process (`streamdeck.status`, `host.stats`, `host.clients`, `controllers.devices`) sends one `state` message without `instance`:
   `{"t":"streamdeck.status","op":"state","value":{…}}`, at once on `subscribe`, then on change.
 - Messages of the hub itself (`subscribed`, `unsubscribed`, their errors, `revoked` before a `join`, `slow_consumer`)
   carry `t: "ws"`; those of the calls (`result`, `auth`) `t: "call"`.
@@ -312,14 +314,18 @@ stale. Every readout and state topic has a cadence (`ReadoutCadence`, `ws-hub.cp
 
 | Cadence | Read when | Names |
 |---------|-----------|-------|
-| Events | the instance's state changed: a notification (`NC_EMULATOR_STATE_CHANGE`, `NC_SPEED_CHANGED`, `NC_BREAKPOINT_CHANGED`, the media, TTD and surface ones, ...), `NC_READOUTS_CHANGED` (state with no notification of its own: the mixer, TTD bookmarks, the tape transport, write protect, the profilers, the analysis jobs, the GUI's window settings, a setting set from the CLI, ...), or an action run on it (the activity feed) | `run.state`, `machine`, `audio.mute`, `debug.*` state, `media.recent`, `machine.*`, `input.connectors`, `video.*`, `surfaces.context`, `actions.unavailable`, `analysis.*`, `toggle.*` |
-| Frames | the events above, and every emulated frame or CPU step of that instance (`NC_VIDEO_FRAME_REFRESH`, `NC_EXECUTION_CPU_STEP`) | everything that moves with emulated time: `ttd.position`, `emulator.stats`, `audio.mixer`, `media.tape`, `game.events`, ... (the default) |
+| Events | the instance's state changed: a notification (`NC_EMULATOR_STATE_CHANGE`, `NC_SPEED_CHANGED`, `NC_BREAKPOINT_CHANGED`, the media, TTD and surface ones, ...), `NC_READOUTS_CHANGED` (state with no notification of its own: the mixer, TTD bookmarks, the tape transport, write protect, the profilers, the analysis jobs, the GUI's window settings, a setting set from the CLI, ...), or an action run on it (the activity feed) | `run.state`, `machine`, `audio.mute`, `debug.*` state, `media.recent`, `machine.*`, `input.connectors`, `video.*`, `surfaces.context`, `actions.unavailable`, `analysis.*`, `controllers.devices` (`NC_CONTROLLER_DEVICES_CHANGED`), `toggle.*` |
+| Frames | the events above, and every emulated frame or CPU step of that instance (`NC_VIDEO_FRAME_REFRESH`, `NC_EXECUTION_CPU_STEP`, and `NC_READOUTS_CHANGED` `frame` once the TTD cursor of the frame is written: the frame refresh is posted before it) | everything that moves with emulated time: `ttd.position`, `emulator.stats`, `audio.mixer`, `media.tape`, `game.events`, ... (the default) |
 | Meter | on time, at the subscriber's `max_hz` | `host.stats`, `host.clients`, `streamdeck.status` |
 
 - Frames of an instance are only taken while somebody subscribes to one of its Frames values: a deck that shows
   toggles and names ignores the emulated frames entirely.
-- A burst of changes within one interval (`1 / max_hz`) is read once: a one-shot timer fires for the values held
-  back, and is not armed when nothing waits. `instances` refreshes once a second while subscribed.
+- A burst of changes within one interval (`1 / max_hz`) after a message is read once: a one-shot timer fires for the
+  values held back, and is not armed when nothing waits. The interval runs from the last message sent, not the last
+  read: a read that found nothing new (a frame read before its cursor was written) holds the next one back by nothing.
+- The frame's own signal (`NotifyFramePublished`) is posted only while the hub watches some instance's frames
+  (`FrameReadersWanted`); otherwise it costs one relaxed load per frame. `instances` is compared on its notifications, and at the moment an idle
+  lease runs out or a re-take cooldown ends (`companion::NextTimedChange`): nothing waits on the clock otherwise.
 - A producer of new state with no notification calls `NotifyReadoutsChanged(context, area)`
   (`emulator/readoutschanged.h`); a value cached by monitoring (`CachedValue`) is dropped on that mark.
 

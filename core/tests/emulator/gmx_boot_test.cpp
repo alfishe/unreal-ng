@@ -17,6 +17,8 @@
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/trdoscatalog.h>
 #include <emulator/io/keyboard/keyboard.h>
+#include <emulator/io/network/networkmanager.h>
+#include <emulator/io/sprinter/isa/isaslotconfig.h>
 #include <emulator/memory/memory.h>
 #include <gtest/gtest.h>
 
@@ -288,6 +290,13 @@ TEST_F(GmxBoot_Test, LoaderSchemeFourIsAPentagon128)
 ///        16550 of the ISA slot's modem at COM1 (#7AFE = ISA #3FA, #2021) and the ISA window's DOS-port gate
 TEST_F(GmxBoot_Test, SmucPeripheralsAnswerTheFastTestProbes)
 {
+    // The shipped config leaves the ISA slot empty: the modem goes in as [SMUC] Isa=MODEM would put it
+    _context->config.smucIsa = sprinterisa::SlotConfig{};
+    _context->config.smucIsa.kind = static_cast<uint8_t>(sprinterisa::CardKind::Modem);
+    _context->config.smucIsa.base = sprinterisa::kModemDefaultBase;
+    _context->config.smucIsa.irq = sprinterisa::kModemDefaultIrq;
+    _context->pCore->GetNetworkManager()->ApplyConfiguration();
+
     PortDecoder* decoder = _context->pPortDecoder;
     EmulatorState& state = _context->emulatorState;
 
@@ -330,6 +339,27 @@ TEST_F(GmxBoot_Test, SmucPeripheralsAnswerTheFastTestProbes)
     _context->pKeyboard->ReleaseKey(ZXKEY_SPACE);
     state.p1FFD = p1FFD;
     state.scorpion.dosTrigger = dosTrigger;
+    state.flags = flags;
+}
+
+/// @brief The shipped GMX has an empty ISA slot: with the SMUC's DOS ports open (the TR-DOS page, #1FFD bit 2, as
+///        VPlayer opens them for its SD / HDD driver) and the firmware's #FFBA = #F7, #7FFE is still the Space - B row.
+///        A modem there answers ISA #3FF (its scratch register): VPlayer then read every key as Space and paused
+///        instead of stopping
+TEST_F(GmxBoot_Test, ShippedConfigKeepsTheSpaceRowWithTheDosPortsOpen)
+{
+    EXPECT_EQ(_context->config.smucIsa.kind, static_cast<uint8_t>(sprinterisa::CardKind::None));
+
+    PortDecoder* decoder = _context->pPortDecoder;
+    EmulatorState& state = _context->emulatorState;
+    const unsigned flags = state.flags;
+    state.flags |= CF_DOSPORTS;
+    decoder->DecodePortOut(0xFFBA, 0xF7, 0x8000);
+    decoder->DecodePortOut(0x7FFE, 0x00, 0x8000);   // a write a scratch register would keep
+    EXPECT_EQ(decoder->DecodePortIn(0x7FFE, 0x8355) & 0x1F, 0x1F) << "no key held";
+    _context->pKeyboard->PressKey(ZXKEY_SPACE);
+    EXPECT_EQ(decoder->DecodePortIn(0x7FFE, 0x8355) & 0x1F, 0x1E) << "Space";
+    _context->pKeyboard->ReleaseKey(ZXKEY_SPACE);
     state.flags = flags;
 }
 
