@@ -9,6 +9,8 @@
 
 class Emulator;
 class EmulatorContext;
+class Medium;
+enum class MediaKind : uint8_t;
 
 /// Options of MachineStateTransfer (outside the class: a default argument of the class's own members)
 struct MachineStateTransferOptions
@@ -111,4 +113,14 @@ public:
     /// @details Used by TransferToNewInstance; public so callers creating instances their own way can fit the
     ///          same cards
     static void FitSourceDevices(const CONFIG& source, CONFIG& target);
+
+    /// @brief The media kinds that move with the state: floppies and tapes (they live entirely in memory)
+    static bool MediumMovesWithState(MediaKind kind);
+
+    /// @brief An in-memory copy of a medium that moves with the state, as the transfer inserts it into a target
+    /// @details Same contents (unsaved writes included), clean, session access, standing for the postfixed file
+    ///          (game.trd -> game.<tag>.trd). An untouched medium keeps its identity (the hash of its file), so time
+    ///          travel on the machine that gets the copy sees the recording's medium. nullptr for kinds that do not
+    ///          move. Public for callers that carry media between machines their own way (the analysis bundle)
+    static std::unique_ptr<Medium> CopyMovingMedium(const Medium& medium, const std::string& tag);
 };

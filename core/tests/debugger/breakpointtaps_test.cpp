@@ -1,11 +1,13 @@
 /// @file breakpointtaps_test.cpp
 /// @brief Taps (docs/inprogress/2026-10-26-breakpoint-taps): breakpoints that tell a registered sink instead of
-/// stopping. Several sinks at once, the demand the armed set derives (the exec check, the fast write's hook, the debug
-/// path for reads), the hook seeing only marked addresses, the hit policy, and no tap during a TTD replay.
+/// stopping. Several sinks at once, the demand the armed set derives (the exec check, the fast write's hook, the
+/// read-tap interface; the debug path on the Next), the hook seeing only marked addresses, the hit policy, and no tap during a TTD replay.
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -139,11 +141,15 @@ TEST_F(BreakpointTaps_Test, DemandFollowsTheArmedSet)
     EXPECT_TRUE(FastMemoryPath());
 
     const uint16_t read = AddTap(id, BRK_MEM_READ, 0x9000);
-    EXPECT_TRUE(features->tapDebugHold()) << "a read tap takes the debug path";
-    EXPECT_TRUE(_z80->isDebugMode);
+    EXPECT_FALSE(features->tapDebugHold()) << "a read tap takes the read-tap interface";
+    EXPECT_FALSE(_z80->isDebugMode);
+    EXPECT_EQ(_z80->MemIf, _z80->ReadTapMemIf);
+    const MemoryInterface* inner = _context->pMemory->ReadTapInner();
+    EXPECT_TRUE(inner == _z80->FastMemIf || inner == _z80->FastContendedMemIf) << "over the fast interface";
     _breakpoints->RemoveBreakpointByID(read);
     EXPECT_FALSE(features->tapDebugHold());
     EXPECT_FALSE(_z80->isDebugMode);
+    EXPECT_TRUE(FastMemoryPath()) << "the plain fast interface back";
 
     _breakpoints->RemoveBreakpointByID(exec);
     EXPECT_FALSE(_z80->execTapHold);
@@ -190,6 +196,56 @@ TEST_F(BreakpointTaps_Test, WriteTapOnTheDebugPathIsToldOnce)
 
     RunPasses(3);
     EXPECT_EQ(sink.hits.size(), 3u);
+    _breakpoints->UnregisterTapSink(id);
+}
+
+TEST_F(BreakpointTaps_Test, ReadTapSeesTheMarkedReadsOffTheDebugPath)
+{
+    RecordingSink sink;
+    const uint8_t id = _breakpoints->RegisterTapSink(&sink);
+    AddTap(id, BRK_MEM_READ, 0x9000, 9);
+    AddTap(id, BRK_MEM_READ, 0x8003, 3);  // the operand of LD (#9000),A: an operand read of the instruction stream
+    ASSERT_FALSE(_z80->isDebugMode);
+
+    RunPasses(4);
+    unsigned data = 0, operand = 0;
+    for (const BreakpointTapHit& hit : sink.hits)
+    {
+        EXPECT_EQ(hit.kind, BRK_TAP_READ);
+        if (hit.address == 0x9000)
+        {
+            EXPECT_EQ(hit.cookie, 9u);
+            EXPECT_EQ(hit.value, 5) << "the byte the CPU read";
+            data++;
+        }
+        else if (hit.address == 0x8003)
+            operand++;
+    }
+    EXPECT_EQ(data, 4u) << "one read of #9000 a pass; the writes to it are not told";
+    EXPECT_EQ(operand, 4u);
+    EXPECT_EQ(sink.hits.size(), 8u);
+    _breakpoints->UnregisterTapSink(id);
+    EXPECT_TRUE(FastMemoryPath());
+}
+
+TEST_F(BreakpointTaps_Test, ReadTapOnTheDebugPathIsToldOnce)
+{
+    // The debug mode on for another reason: the debug read tells the tap (with 'breakpoints' off), never twice
+    FeatureManager* features = _emulator->GetFeatureManager();
+    features->setFeature("debugmode", true);
+    features->setFeature("breakpoints", false);
+    ASSERT_TRUE(_z80->isDebugMode);
+    RecordingSink sink;
+    const uint8_t id = _breakpoints->RegisterTapSink(&sink);
+    AddTap(id, BRK_MEM_READ, 0x9000);
+    EXPECT_NE(_z80->MemIf, _z80->ReadTapMemIf) << "the debug interface tells the taps itself";
+
+    RunPasses(3);
+    EXPECT_EQ(sink.hits.size(), 3u);
+    features->setFeature("debugmode", false);
+    EXPECT_EQ(_z80->MemIf, _z80->ReadTapMemIf) << "the debug mode off: the read-tap interface";
+    RunPasses(2);
+    EXPECT_EQ(sink.hits.size(), 5u);
     _breakpoints->UnregisterTapSink(id);
 }
 
@@ -268,4 +324,82 @@ TEST(BreakpointTapsNext_Test, WriteTapsTakeTheDebugPathOnTheNext)
     breakpoints->UnregisterTapSink(id);
     EXPECT_FALSE(emulator->GetFeatureManager()->tapDebugHold());
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(BreakpointTapsNext_Test, ReadTapsTakeTheDebugPathOnTheNext)
+{
+    // The Next brings its own memory interface (ModelMemoryInterface): the read-tap interface does not wrap it
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    BreakpointManager* breakpoints = context->pDebugManager->GetBreakpointsManager();
+    RecordingSink sink;
+    const uint8_t id = breakpoints->RegisterTapSink(&sink);
+    auto* descriptor = new BreakpointDescriptor();
+    descriptor->type = BRK_MEMORY;
+    descriptor->memoryType = BRK_MEM_READ;
+    descriptor->z80address = 0x9000;
+    descriptor->hidden = true;
+    descriptor->tapSink = id;
+    breakpoints->AddBreakpoint(descriptor);
+    EXPECT_FALSE(context->pMemory->SupportsReadTapHook());
+    EXPECT_TRUE(emulator->GetFeatureManager()->tapDebugHold());
+    EXPECT_NE(context->pCore->GetZ80()->MemIf, context->pCore->GetZ80()->ReadTapMemIf);
+    breakpoints->UnregisterTapSink(id);
+    EXPECT_FALSE(emulator->GetFeatureManager()->tapDebugHold());
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// stop = false: a breakpoint of its own that only counts (a tap of no sink, BRK_COUNT_TAP). Every hit is counted, none
+/// stops; the kinds a tap cannot watch and a tap that asks not to stop are refused
+TEST_F(BreakpointTaps_Test, CountOnlyCountsAndNeverStops)
+{
+    BreakpointSpec exec;
+    exec.type = BRK_MEMORY;
+    exec.access = BRK_MEM_EXECUTE;
+    exec.address = 0x8002;
+    exec.stop = false;
+    std::string error;
+    const uint16_t execId = _breakpoints->AddBreakpoint(exec, error);
+    ASSERT_NE(execId, BRK_INVALID) << error;
+
+    BreakpointSpec write = exec;
+    write.access = BRK_MEM_WRITE;
+    write.address = 0x9000;
+    const uint16_t writeId = _breakpoints->AddBreakpoint(write, error);
+    ASSERT_NE(writeId, BRK_INVALID) << error;
+
+    RunPasses(4);
+    EXPECT_EQ(_breakpoints->GetLastTriggeredBreakpointID(), BRK_INVALID) << "a count-only breakpoint never stops";
+    EXPECT_EQ(_breakpoints->GetBreakpointById(execId)->hitCount, 4u);
+    EXPECT_EQ(_breakpoints->GetBreakpointById(writeId)->hitCount, 4u);
+    EXPECT_EQ(_breakpoints->GetBreakpointById(execId)->tapSink, BRK_COUNT_TAP);
+    EXPECT_NE(_breakpoints->GetBreakpointListAsString().find("count only"), std::string::npos);
+
+    BreakpointSpec key;
+    key.type = BRK_KEYBOARD;
+    key.access = BRK_KEY_PRESS;
+    key.address = BRK_KEY_ANY;
+    key.stop = false;
+    EXPECT_EQ(_breakpoints->AddBreakpoint(key, error), BRK_INVALID) << "a keyboard breakpoint cannot only count";
+
+    RecordingSink sink;
+    BreakpointSpec tap = exec;
+    tap.tapSink = _breakpoints->RegisterTapSink(&sink);
+    EXPECT_EQ(_breakpoints->AddBreakpoint(tap, error), BRK_INVALID) << "a tap never stops already";
+    _breakpoints->UnregisterTapSink(tap.tapSink);
+}
+
+/// Every sink id but the count-only one: 255 registrations exhaust the 254 ids, none of them is 255
+TEST_F(BreakpointTaps_Test, CountOnlyIdIsNoSinks)
+{
+    std::vector<RecordingSink> sinks(BRK_COUNT_TAP);
+    std::vector<uint8_t> ids;
+    for (RecordingSink& sink : sinks)
+        ids.push_back(_breakpoints->RegisterTapSink(&sink));
+    EXPECT_EQ(std::count(ids.begin(), ids.end(), BRK_COUNT_TAP), 0) << "255 is never handed out";
+    EXPECT_EQ(ids.back(), BRK_NO_TAP) << "the ids ran out";
+    for (uint8_t id : ids)
+        if (id != BRK_NO_TAP)
+            _breakpoints->UnregisterTapSink(id);
 }

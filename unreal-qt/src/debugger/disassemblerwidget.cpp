@@ -8,6 +8,8 @@ constexpr int ADDRESS_COL_WIDTH = 5;     // $XXXX
 constexpr int BYTECODE_COL_WIDTH = 11;   // XX XX XX XX XX
 constexpr int LABEL_COL_WIDTH = 15;      // LABEL_NAME:
 constexpr int MNEMONIC_COL_WIDTH = 24;   // Instruction mnemonic
+// Where the label column starts: "[ ]" + mark + "$XXXX: " + bytes + space
+constexpr int LABEL_LINE_INDENT = BREAKPOINT_COL_WIDTH + 1 + ADDRESS_COL_WIDTH + 2 + BYTECODE_COL_WIDTH + 1;
 
 #include <algorithm>
 
@@ -15,8 +17,10 @@ constexpr int MNEMONIC_COL_WIDTH = 24;   // Instruction mnemonic
 #include <algorithm>
 #include <cstdlib>
 #include <QFontDatabase>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPointer>
 #include <QTextBlock>
@@ -41,7 +45,7 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     ui->setupUi(this);
 
     m_mainThread = QApplication::instance()->thread();
-    m_debuggerWindow = static_cast<DebuggerWindow*>(parent);
+    m_debuggerWindow = DebuggerWindow::Of(parent);
 
     // Initialize member variables
     m_currentPC = 0;
@@ -56,6 +60,8 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     // takes strong focus): a read-only text edit may not
     customTextEdit->setFocusPolicy(Qt::StrongFocus);
     customTextEdit->setLineWrapMode(QTextEdit::NoWrap);
+    // Rows fill the view and scrolling re-renders them from another address: no scrollbar of its own
+    customTextEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
     // Set a monospace font for the disassembler
     QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
@@ -103,6 +109,8 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     m_bankIndicator = new QLabel(this);
     m_bankIndicator->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     m_bankIndicator->setText("Bank: ROM");  // Default value
+    // A long bank title gives way to the indicators (cut at the right; the whole text in the tooltip)
+    m_bankIndicator->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
     // Position the indicators in the top-right corner
     QVBoxLayout* mainLayout = qobject_cast<QVBoxLayout*>(layout);
@@ -110,11 +118,25 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     {
         QHBoxLayout* topLayout = new QHBoxLayout();
 
-        // Add bank indicator on the left
-        topLayout->addWidget(m_bankIndicator);
+        // The bank on the left takes the free width (pushing the indicators to the right)
+        topLayout->addWidget(m_bankIndicator, 1);
 
-        // Add stretch to push other indicators to the right
-        topLayout->addStretch();
+        // The machine's signals (lit: bold on green; out: gray)
+        for (QLabel** indicator : {&m_dosIndicator, &m_romIndicator, &m_intIndicator})
+        {
+            *indicator = new QLabel(this);
+            (*indicator)->setAlignment(Qt::AlignCenter);
+            (*indicator)->setMinimumWidth(40);
+            (*indicator)->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);  // never cut
+            (*indicator)->setFixedHeight(24);
+            topLayout->addWidget(*indicator);
+            topLayout->addSpacing(3);
+        }
+        m_dosIndicator->setText("DOS");
+        m_dosIndicator->setToolTip("TR-DOS: the DOS ROM and the Beta 128 ports are on (lit) or off");
+        m_intIndicator->setText("INT");
+        m_intIndicator->setToolTip("INT: the maskable interrupt is asserted at this instruction (NMI: in service)");
+        topLayout->addSpacing(5);
 
         // Add state and scroll mode indicators on the right
         topLayout->addWidget(m_stateIndicator);
@@ -135,7 +157,14 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::keyDownPressed, this, [this] { moveCursorBy(1); });
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::pageUpPressed, this, [this] { moveCursorBy(-16); });
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::pageDownPressed, this, [this] { moveCursorBy(16); });
-    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::enterPressed, this, &DisassemblerWidget::returnToCurrentPC);
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::enterPressed, this, &DisassemblerWidget::followOperand);
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::goToPcRequested, this, &DisassemblerWidget::followPc);
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::backRequested, this, &DisassemblerWidget::historyBack);
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::forwardRequested, this, &DisassemblerWidget::historyForward);
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::markSetRequested, this, &DisassemblerWidget::setMark);
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::markGoRequested, this, &DisassemblerWidget::goToMark);
+    m_disassemblyTextEdit->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_disassemblyTextEdit, &QWidget::customContextMenuRequested, this, &DisassemblerWidget::showContextMenu);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::toggleScrollMode, this, &DisassemblerWidget::toggleScrollMode);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::goToAddressRequested, this,
             &DisassemblerWidget::showGoToAddressDialog);
@@ -166,7 +195,154 @@ void DisassemblerWidget::setShowLabels(bool show)
 
 void DisassemblerWidget::followPc()
 {
-    returnToCurrentPC();
+    if (Z80Registers* registers = getZ80Registers())
+        jumpTo(registers->pc);
+}
+
+void DisassemblerWidget::jumpTo(uint16_t address)
+{
+    if (m_isShuttingDown || !getEmulator() || !getZ80Registers())
+        return;
+    if (!m_addressMap.empty())
+    {
+        m_back.push_back(currentPlace());
+        if (m_back.size() > kHistoryDepth)
+            m_back.pop_front();
+    }
+    m_forward.clear();
+    m_cursorAddress = address;
+    publishCursor();
+    setDisassemblerAddress(address);
+}
+
+void DisassemblerWidget::showPlace(const ViewPlace& place)
+{
+    m_cursorAddress = place.cursor;
+    publishCursor();
+    setDisassemblerAddress(place.top);
+}
+
+void DisassemblerWidget::historyBack()
+{
+    if (m_back.empty() || !getEmulator())
+        return;
+    m_forward.push_back(currentPlace());
+    const ViewPlace place = m_back.back();
+    m_back.pop_back();
+    showPlace(place);
+}
+
+void DisassemblerWidget::historyForward()
+{
+    if (m_forward.empty() || !getEmulator())
+        return;
+    m_back.push_back(currentPlace());
+    const ViewPlace place = m_forward.back();
+    m_forward.pop_back();
+    showPlace(place);
+}
+
+void DisassemblerWidget::setMark(int n)
+{
+    if (n < 1 || n > static_cast<int>(m_marks.size()) || m_addressMap.empty())
+        return;
+    const uint16_t address = m_cursorAddress.value_or(m_displayAddress);
+    std::optional<uint16_t>& mark = m_marks[static_cast<size_t>(n - 1)];
+    mark = mark == address ? std::nullopt : std::optional<uint16_t>(address);
+    setDisassemblerAddress(m_displayAddress);  // the mark column
+}
+
+void DisassemblerWidget::goToMark(int n)
+{
+    if (n < 1 || n > static_cast<int>(m_marks.size()))
+        return;
+    if (const std::optional<uint16_t> mark = m_marks[static_cast<size_t>(n - 1)])
+        jumpTo(*mark);
+}
+
+bool DisassemblerWidget::decodeAt(uint16_t address, DecodedInstruction& decoded)
+{
+    Memory* memory = getMemory();
+    Z80Registers* registers = getZ80Registers();
+    std::unique_ptr<Z80Disassembler>& disassembler = getDisassembler();
+    if (!memory || !registers || !disassembler)
+        return false;
+    std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
+    for (size_t i = 0; i < buffer.size(); i++)
+        buffer[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address + i));
+    uint8_t commandLen = 0;
+    try
+    {
+        disassembler->disassembleSingleCommandWithRuntime(buffer, address, &commandLen, registers, memory, &decoded);
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+    return decoded.isValid;
+}
+
+void DisassemblerWidget::followOperand()
+{
+    DecodedInstruction decoded;
+    if (!m_cursorAddress || !decodeAt(*m_cursorAddress, decoded))
+    {
+        followPc();
+        return;
+    }
+    if (decoded.hasJump || decoded.hasRelativeJump || decoded.isRst)
+        jumpTo(decoded.jumpAddr);
+    else if (decoded.hasReturn)
+        jumpTo(decoded.returnAddr);
+    else if (decoded.hasWordOperand)
+        jumpTo(decoded.wordOperand);
+    else
+        followPc();
+}
+
+void DisassemblerWidget::showContextMenu(const QPoint& pos)
+{
+    // The row under the pointer becomes the cursor row, as a click
+    const int line = m_disassemblyTextEdit->cursorForPosition(pos).blockNumber();
+    if (auto it = rowAt(line); it != m_addressMap.end())
+    {
+        m_cursorAddress = it->second;
+        publishCursor();
+        markCursorLine();
+    }
+    const auto hex = [](uint16_t value) { return QString("$%1").arg(value, 4, 16, QLatin1Char('0')).toUpper(); };
+    QMenu menu(this);
+    DecodedInstruction decoded;
+    if (m_cursorAddress && decodeAt(*m_cursorAddress, decoded))
+    {
+        std::optional<uint16_t> target;
+        if (decoded.hasJump || decoded.hasRelativeJump || decoded.isRst)
+            target = decoded.jumpAddr;
+        else if (decoded.hasReturn)
+            target = decoded.returnAddr;
+        else if (decoded.hasWordOperand)
+            target = decoded.wordOperand;
+        if (target)
+            menu.addAction(tr("Follow %1\tEnter").arg(hex(*target)), this, &DisassemblerWidget::followOperand);
+    }
+    menu.addAction(tr("Go to PC\tHome"), this, &DisassemblerWidget::followPc);
+    menu.addAction(tr("Go to address...\tCtrl+G"), this, &DisassemblerWidget::showGoToAddressDialog);
+    QAction* back = menu.addAction(tr("Back\tBackspace"), this, &DisassemblerWidget::historyBack);
+    back->setEnabled(!m_back.empty());
+    QAction* forward = menu.addAction(tr("Forward\tAlt+Right"), this, &DisassemblerWidget::historyForward);
+    forward->setEnabled(!m_forward.empty());
+    menu.addSeparator();
+    QMenu* marks = menu.addMenu(tr("Marks"));
+    const uint16_t here = m_cursorAddress.value_or(m_displayAddress);
+    for (int n = 1; n <= static_cast<int>(m_marks.size()); n++)
+    {
+        const std::optional<uint16_t>& mark = m_marks[static_cast<size_t>(n - 1)];
+        if (mark)
+            marks->addAction(tr("Go to mark %1: %2\tAlt+%1").arg(n).arg(hex(*mark)), this, [this, n] { goToMark(n); });
+        marks->addAction((mark == here ? tr("Unmark %1\tCtrl+%1") : tr("Mark %2 as %1\tCtrl+%1")).arg(n).arg(hex(here)),
+                         this, [this, n] { setMark(n); });
+    }
+    menu.exec(m_disassemblyTextEdit->viewport()->mapToGlobal(pos));
 }
 
 void DisassemblerWidget::switchScrollMode()
@@ -178,9 +354,8 @@ void DisassemblerWidget::onTextCursorMoved()
 {
     if (m_settingContent || m_isShuttingDown)
         return;
-    const int line = m_disassemblyTextEdit->textCursor().blockNumber();
-    auto it = m_addressMap.find(static_cast<uint16_t>(line));
-    if (line < 0 || it == m_addressMap.end())
+    auto it = rowAt(m_disassemblyTextEdit->textCursor().blockNumber());
+    if (it == m_addressMap.end())
         return;
     m_cursorAddress = it->second;
     publishCursor();
@@ -191,6 +366,26 @@ void DisassemblerWidget::publishCursor()
 {
     if (Emulator* emulator = getEmulator())
         actions::DebuggerCursors::Instance().Set(emulator->GetId(), "disasm", m_cursorAddress);
+}
+
+int DisassemblerWidget::visibleRows() const
+{
+    // The lines the viewport holds, in the font the HTML renders with, and one partly shown at the bottom
+    static constexpr int MIN_ROWS = 20;
+    if (!m_disassemblyTextEdit)
+        return MIN_ROWS;
+    QFont font(QStringLiteral("Courier New"));
+    font.setPointSize(m_disassemblyTextEdit->font().pointSize());
+    const int lineHeight = std::max(1, QFontMetrics(font).lineSpacing());
+    return std::max(MIN_ROWS, m_disassemblyTextEdit->viewport()->height() / lineHeight + 1);
+}
+
+std::map<uint16_t, uint16_t>::const_iterator DisassemblerWidget::rowAt(int line) const
+{
+    // A long label's own line belongs to the instruction below it
+    if (line < 0)
+        return m_addressMap.end();
+    return m_addressMap.lower_bound(static_cast<uint16_t>(line));
 }
 
 bool DisassemblerWidget::lineOf(uint16_t address, int& line) const
@@ -326,9 +521,6 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         return;
     }
 
-    // Number of instructions to disassemble
-    static constexpr size_t INSTRUCTIONS_TO_DISASSEMBLE = 20;
-
     // Every getter below is documented to return null when the emulator, its
     // context or the debug manager is not available, and this runs on the GUI
     // thread in response to state-change signals — including the ones a TTD
@@ -367,6 +559,7 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 
     // Update the bank indicator
     updateBankIndicator(pc);
+    updateSignalIndicators();
 
     std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
     uint16_t currentAddress = pc;  // Track current address being disassembled
@@ -382,7 +575,11 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     }
 
     // Disassemble instructions to provide more context
-    for (size_t i = 0; i < INSTRUCTIONS_TO_DISASSEMBLE && currentAddress < 0xFFFF; i++)
+    // As many text lines as the view holds; long labels add lines of their own
+    const int rows = visibleRows();
+    m_rowsRendered = rows;
+    uint16_t line = 0;  // text line of the next row
+    while (line < rows && currentAddress < 0xFFFF)
     {
         // Read memory for current instruction
         for (size_t j = 0; j < buffer.size(); j++)
@@ -409,9 +606,6 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         {
             commandLen = 1;
         }
-
-        // Store the line number to address mapping
-        m_addressMap[i] = currentAddress;
 
         std::string hex = DumpHelper::HexDumpBuffer(pcPhysicalAddress, commandLen);
         std::string runtime;
@@ -456,6 +650,14 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 
         // Format value like: [B] $15FB: CD 2C 16   LABEL:    call $162C (init_screen)
         std::string breakpointMarker = hasBreakpointAtAddress(instructionAddress) ? "●" : " ";
+        // Marked addresses (Ctrl+1..5): the lowest mark's digit between the breakpoint column and the address
+        std::string markMarker = " ";
+        for (size_t m = 0; m < m_marks.size(); m++)
+            if (m_marks[m] == instructionAddress)
+            {
+                markMarker = std::to_string(m + 1);
+                break;
+            }
 
         // Extract label from symbolicLabelInfo if present (format: "; LABEL:")
         std::string labelColumn = "";
@@ -479,12 +681,25 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
             truncatedCommand = truncatedCommand.substr(0, MNEMONIC_COL_WIDTH - 3) + "...";
         }
 
+        // A label wider than its column takes a line of its own above the instruction, as in assembler sources,
+        // so the mnemonic column stays aligned. That line has no address: clicks on it go to the instruction below
+        if (labelColumn.length() > LABEL_COL_WIDTH)
+        {
+            ss << std::string(LABEL_LINE_INDENT, ' ') << "<span class='label'>" << labelColumn << "</span>"
+               << std::endl;
+            line++;
+            labelColumn.clear();
+        }
+
+        // Store the line number to address mapping
+        m_addressMap[line++] = instructionAddress;
+
         // Format with fixed-width columns and CSS classes
         ss << StringHelper::Format(
-            "<span class='breakpoint'>[%s]</span> "
+            "<span class='breakpoint'>[%s]</span><span class='mark'>%s</span>"
             "<span class='address'>$%s</span>: "
             "<span class='bytes'>%-*s</span> ",
-            breakpointMarker.c_str(), formattedAddress.c_str(), BYTECODE_COL_WIDTH, hex.c_str());
+            breakpointMarker.c_str(), markMarker.c_str(), formattedAddress.c_str(), BYTECODE_COL_WIDTH, hex.c_str());
 
         // Add label column if present
         if (!labelColumn.empty())
@@ -532,6 +747,7 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
                                   "<html><head><style>"
                                   "pre { font-family: 'Courier New', monospace; white-space: pre; tab-size: 24; }"
                                   ".breakpoint { color: red; }"
+                                  ".mark { color: #E07000; font-weight: bold; }"
                                   ".address { color: #008000; }"   // Dark green for addresses
                                   ".bytes { color: #0000FF; }"     // Blue for byte codes
                                   ".label { color: #8A2BE2; }"     // Blue violet for labels
@@ -956,6 +1172,50 @@ void DisassemblerWidget::updateBankIndicator(uint16_t address)
 
     // Update the bank indicator label with both bank name and address range
     m_bankIndicator->setText(QString("Bank: %1 (%2)").arg(QString::fromStdString(bankName), addressRangeStr));
+    m_bankIndicator->setToolTip(m_bankIndicator->text());
+}
+
+void DisassemblerWidget::updateSignalIndicators()
+{
+    static const QString lit =
+        "QLabel { background-color: #2E7D32; color: #fff; font-weight: bold; border: 1px solid #555; padding: 0 4px; }";
+    static const QString out = "QLabel { background-color: #333; color: #777; border: 1px solid #555; padding: 0 4px; }";
+    static const QString shown = "QLabel { background-color: #333; color: #ddd; border: 1px solid #555; padding: 0 4px; }";
+    Memory* memory = getMemory();
+    Z80Registers* registers = getZ80Registers();
+    EmulatorContext* ctx = getEmulatorContext();
+    if (!ctx || !memory || !registers || !m_dosIndicator)
+        return;
+
+    const bool dos = (ctx->emulatorState.flags & CF_TRDOS) != 0;
+    m_dosIndicator->setStyleSheet(dos ? lit : out);
+
+    // The ROM the CPU sees at 0000: its page and title ("48K BASIC", "TR-DOS"); RAM there (Profi CP/M, ATM, +3
+    // special paging) is shown as RAM
+    QString rom;
+    QString romTip;
+    if (memory->MapZ80AddressToPhysicalAddress(0x0000) && memory->IsBank0ROM())
+    {
+        std::string title;
+        if (ctx->pCore && ctx->pCore->GetROM())
+            title = ctx->pCore->GetROM()->GetROMTitleByAddress(memory->MapZ80AddressToPhysicalAddress(0x0000));
+        rom = QString("ROM %1").arg(memory->GetROMPage());
+        romTip = title.empty() ? rom : QString("%1: %2").arg(rom, QString::fromStdString(title));
+    }
+    else
+    {
+        rom = "RAM";
+        romTip = "RAM in 0000-3FFF";
+    }
+    m_romIndicator->setText(rom);
+    m_romIndicator->setToolTip(romTip);
+    m_romIndicator->setStyleSheet(shown);
+
+    Z80* z80 = ctx->pCore ? ctx->pCore->GetZ80() : nullptr;
+    const bool nmi = registers->nmi_in_progress;
+    const bool intAsserted = z80 && z80->int_pending;
+    m_intIndicator->setText(nmi ? "NMI" : "INT");
+    m_intIndicator->setStyleSheet(nmi || intAsserted ? lit : out);
 }
 
 void DisassemblerWidget::refresh()
@@ -971,8 +1231,9 @@ void DisassemblerWidget::refresh()
     // Update the disassembly view with current PC
     if (getEmulator() && getZ80Registers())
     {
-        static constexpr size_t INSTRUCTIONS_TO_DISASSEMBLE = 20;
-        static constexpr size_t INSTRUCTIONS_BEFORE_PC = 10;  // Show ~10 instructions before PC
+        // The rows shown follow the view height; the first refresh has none yet
+        const size_t rowsShown = m_addressMap.empty() ? static_cast<size_t>(visibleRows()) : m_addressMap.size();
+        const size_t instructionsBeforePc = rowsShown / 2;  // PC about in the middle
         static constexpr size_t MARGIN_TOP = 3;               // Scroll when PC reaches top 3 lines
         static constexpr size_t MARGIN_BOTTOM = 3;            // Scroll when PC reaches bottom 3 lines
         
@@ -982,21 +1243,24 @@ void DisassemblerWidget::refresh()
         bool pcInView = false;
         int pcLineNumber = -1;
         
+        // Counted in instruction rows: the lines of long labels do not count
+        int row = 0;
         for (const auto& [lineNum, addr] : m_addressMap)
         {
             if (addr == currentPC)
             {
                 pcInView = true;
-                pcLineNumber = lineNum;
+                pcLineNumber = row;
                 break;
             }
+            row++;
         }
         
         // Determine how to position the view
         uint16_t displayStart;
         
         if (pcInView && pcLineNumber >= (int)MARGIN_TOP && 
-            pcLineNumber < (int)(INSTRUCTIONS_TO_DISASSEMBLE - MARGIN_BOTTOM))
+            pcLineNumber < (int)rowsShown - (int)MARGIN_BOTTOM)
         {
             // PC is visible and not at the edge margins - keep current display start
             // Just refresh at the current display address to update highlights
@@ -1006,7 +1270,7 @@ void DisassemblerWidget::refresh()
         {
             // PC is not visible or at the edge - recenter the display
             // Position PC roughly in the middle by walking backwards
-            displayStart = getCenteredStartAddress(currentPC, INSTRUCTIONS_BEFORE_PC);
+            displayStart = getCenteredStartAddress(currentPC, instructionsBeforePc);
         }
         
         setDisassemblerAddress(displayStart);
@@ -1141,10 +1405,10 @@ void DisassemblerWidget::handleBreakpointClick(int lineNumber)
     qDebug() << "Clicked on line number:" << lineNumber;
     qDebug() << "Address map contains:" << m_addressMap.size() << "entries";
 
-    // Check if the line number is valid and has an address mapping
-    if (m_addressMap.find(lineNumber) != m_addressMap.end())
+    // Check if the line number is valid and has an address mapping (a long label's line: the instruction below)
+    if (auto it = rowAt(lineNumber); it != m_addressMap.end() && it->first <= lineNumber + 1)
     {
-        uint16_t address = m_addressMap[lineNumber];
+        uint16_t address = it->second;
         qDebug() << "Found address:" << QString::number(address, 16) << "for line" << lineNumber;
         toggleBreakpointAtAddress(address);
     }
@@ -1230,16 +1494,18 @@ uint16_t DisassemblerWidget::parseAddressInput(const QString& input)
 
 void DisassemblerWidget::goToAddress(uint16_t address)
 {
-    if (!getEmulator() || !getZ80Registers())
-        return;
-
-    // Update the disassembly view to show the specified address
-    setDisassemblerAddress(address);
+    // Go to (Ctrl+G, dbg.goto), a register or stack entry: a jump of the address history
+    jumpTo(address);
 }
 
 // Override event filter to handle mouse clicks for breakpoint toggling
 bool DisassemblerWidget::eventFilter(QObject* obj, QEvent* event)
 {
+    // A taller view gets more rows from the same top address
+    if (obj == m_disassemblyTextEdit->viewport() && event->type() == QEvent::Resize && !m_isShuttingDown &&
+        !m_addressMap.empty() && visibleRows() != m_rowsRendered)
+        setDisassemblerAddress(m_displayAddress);
+
     if (obj == m_disassemblyTextEdit->viewport() && event->type() == QEvent::MouseButtonPress)
     {
         QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);

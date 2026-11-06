@@ -375,7 +375,8 @@ class Emulator:
     def audio_levels(self) -> dict: ...              # every row's and channel's peak, active, mute, solo (topic audio.mixer)
     # get_sound_character() / set_sound_character(name, value) also serve ay_stereo, ay_chip, fm_trim_db,
     # neogs_stereo, covox_dc_removal, fir_filter ("unavailable" where the machine has no such part)
-    # audio_capture_start(seconds=1.0, source="") records one mixer device's own buffer
+    # audio_capture_start(seconds=1.0, source="", file="") records one mixer device's own buffer; file="out.wav"
+    # writes the WAV while the samples come (seconds up to 86400, closes at the target; status: file_closed)
 
     def tsconf_tsu(self) -> dict:
         """TS-Conf TSU objects and palette for debug views: t_config, tilemap_page,
@@ -1209,6 +1210,8 @@ id = emu.gs_on_dma_done(fn)          # a card event callback (hit["arg"] its det
                                     # gs_on_reply, gs_on_int, gs_on_nmi, gs_on_page, gs_on_dac_fetch, gs_on_clock_change,
                                     # gs_on_dma_start, gs_on_gscfg0, gs_on_port_in(port, fn), gs_on_port_out(port, fn); cpu="ms"
 emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
+emu.bp(0x0038, stop=False)          # only counts its hits, never stops (bp, bp_read, bp_write, bp_port_in/out)
+emu.bp_hits(id)                     # the hit count; -1 for an unknown id
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
@@ -1996,7 +1999,7 @@ emu.window_record('/abs/demo.mp4', keyboard='default', codec='h264')  # record t
                                      #   on-screen keyboard, the machine's sound, one video frame per emulated frame);
                                      #   keyboard= ('default', a picture id, False), codec= ('prores', 'h264'),
                                      #   audio= (bool), fps= (1..100, audio=False only), scale= (1..4),
-                                     #   picture_height= (0..4320, GPU), width= / height= (the frame), layout=
+                                     #   hardware, fit, picture_height= (0..4320, GPU), width= / height= (the frame), layout=
                                      #   ('below', 'side'). Returns {'recording', 'path', 'keyboard', 'frames', 'width',
                                      #   'height', 'fps', 'audio', 'sample_rate', 'audio_samples'} or {'ok': False, ...}
 emu.window_record_frames(100)        # a paused machine runs 100 frames, every one recorded; the status with 'ran'

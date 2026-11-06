@@ -103,6 +103,8 @@ bool CLIProcessor::ParseBreakpointArgs(const std::vector<std::string>& args, siz
         }
         else if (a == "--slot-only")
             spec.slotOnly = true;
+        else if (a == "--count")
+            spec.stop = false;  // counts the hits, never stops
         else if (a == "--mask")
         {
             uint16_t mask = 0;
@@ -214,11 +216,12 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
     if (args.empty())
     {
         stringstream ss;
-        ss << "Usage: bp <address>[-<end>] [--page ramN|romN|cacheN|bank8kN|divmmcN|divmmcrom|mfrom|mfram [--slot-only]] [--hits N|>=N|%N] [note]"
+        ss << "Usage: bp <address>[-<end>] [--page ramN|romN|cacheN|bank8kN|divmmcN|divmmcrom|mfrom|mfram [--slot-only]] [--hits N|>=N|%N] [--count] [note]"
            << " [if <condition>]" << NEWLINE
            << "Sets an execution breakpoint: one address or a range. With a page it fires on that page through any"
            << NEWLINE << "slot that shows it (--slot-only: only through the slot of the address). --hits stops on the"
-           << NEWLINE << "Nth hit only, from the Nth on (>=N) or on every Nth (%N); every hit is counted." << NEWLINE
+           << NEWLINE << "Nth hit only, from the Nth on (>=N) or on every Nth (%N); every hit is counted. --count only" << NEWLINE
+           << "counts the hits and never stops (bplist shows the count)." << NEWLINE
            << "if: the rest of the line is a condition (Unreal language; numbers decimal, hex as #FF, $FF or" << NEWLINE
            << "0xFF; --dialect c before it: C precedence); only the hits where it holds count for --hits." << NEWLINE
            << "Examples:" << NEWLINE << "  bp 0x1234            - Breakpoint at 0x1234" << NEWLINE
@@ -226,6 +229,7 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
            << "  bp 0x8000-0x80FF     - Anywhere in 0x8000-0x80FF" << NEWLINE
            << "  bp 0xC000 --page ram32 - RAM page 32 offset 0, in whatever slot it is mapped" << NEWLINE
            << "  bp 0x0038 --hits 50  - The 50th interrupt" << NEWLINE
+           << "  bp 0x0038 --count    - Count the interrupts, never stop" << NEWLINE
            << "  bp 1234 Main loop    - With a note" << NEWLINE << "Use 'bplist' to view all breakpoints";
         session.SendResponse(ss.str());
         return;
@@ -301,7 +305,7 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
     if (args.size() < 2)
     {
         std::stringstream ss;
-        ss << "Usage: wp <address>[-<end>] <r|w|rw> [--page ramN|romN|cacheN|bank8kN|divmmcN|divmmcrom|mfrom|mfram [--slot-only]] [--hits N|>=N|%N] [note]"
+        ss << "Usage: wp <address>[-<end>] <r|w|rw> [--page ramN|romN|cacheN|bank8kN|divmmcN|divmmcrom|mfrom|mfram [--slot-only]] [--hits N|>=N|%N] [--count] [note]"
            << NEWLINE << "Sets a memory watchpoint on one address or a range (with a page: on that page through any slot"
            << NEWLINE << "that shows it)." << NEWLINE << "Types:" << NEWLINE << "  r    - Watch for memory reads" << NEWLINE
            << "  w    - Watch for memory writes" << NEWLINE << "  rw   - Watch for both reads and writes" << NEWLINE
@@ -359,7 +363,7 @@ void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std:
     if (args.size() < 2)
     {
         std::stringstream ss;
-        ss << "Usage: bport <port> <i|o|io> [--mask M] [--hits N|>=N|%N] [note]" << NEWLINE
+        ss << "Usage: bport <port> <i|o|io> [--mask M] [--hits N|>=N|%N] [--count] [note]" << NEWLINE
            << "Sets a port breakpoint. With --mask it matches every port where (port & M) == (<port> & M)." << NEWLINE
            << "Types:" << NEWLINE << "  i    - Watch for port IN operations" << NEWLINE
            << "  o    - Watch for port OUT operations" << NEWLINE << "  io   - Watch for both IN and OUT operations"
@@ -584,7 +588,7 @@ void CLIProcessor::HandleEventBreakpoint(const ClientSession& session, const std
     if (args.empty() || !ParseGSCardEvent(args[0].c_str(), kind))
     {
         std::stringstream ss;
-        ss << "Usage: bevent <kind> [--value V [--vmask M]] [--hits N|>=N|%N] [--group G] [note]" << NEWLINE
+        ss << "Usage: bevent <kind> [--value V [--vmask M]] [--hits N|>=N|%N] [--count] [--group G] [note]" << NEWLINE
            << "Stops on a General Sound / NeoGS protocol event (gs-debugger design §4) or a machine event. The card's events stop the" << NEWLINE
            << "machine at the card's next instruction boundary; the host's stop the main CPU after its access." << NEWLINE
            << "Card (the gs CPU): int, nmi, reset, page (a page register written), card_command, card_data (the card" << NEWLINE
@@ -644,7 +648,7 @@ void CLIProcessor::HandleChipRegisterBreakpoint(const ClientSession& session, co
     if (args.size() < 2 || !ParseSoundChipKind(args[0].c_str(), chip))
     {
         std::stringstream ss;
-        ss << "Usage: bchip <chip> <reg>[-<end>] [--unit N] [--value V [--vmask M]] [--hits N|>=N|%N] [--group G] [note]"
+        ss << "Usage: bchip <chip> <reg>[-<end>] [--unit N] [--value V [--vmask M]] [--hits N|>=N|%N] [--count] [--group G] [note]"
            << NEWLINE << "Stops the main CPU after its OUT wrote a sound chip's register (platform-debugging P3)." << NEWLINE
            << "Chips: ay (AY / YM2149, the SSG of a YM2203: 0-15), fm (YM2203 FM: #10-#FF), saa (SAA1099: 0-#1F)," << NEWLINE
            << "  opl4 (MoonSound FM: bank 0 #000-#0FF, bank 1 #100-#1FF), opl4wave (0-#FF), dac (Covox / SounDrive:"

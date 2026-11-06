@@ -309,7 +309,7 @@ TEST(GSCardTarget_Test, AConditionRefusesTheMachinesState)
         BreakpointSpec spec = Exec(kIdleLoop);
         spec.condition = text;
         EXPECT_EQ(card.bp().AddBreakpoint(spec, error), BRK_INVALID) << text;
-        EXPECT_NE(error.find("the machine's, not this CPU's"), std::string::npos) << error;
+        EXPECT_NE(error.find("belongs to the main machine"), std::string::npos) << error;
     }
     std::string error;
     BreakpointSpec spec = Exec(kIdleLoop);

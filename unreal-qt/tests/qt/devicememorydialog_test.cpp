@@ -3,6 +3,8 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QLabel>
+#include <QStackedWidget>
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -39,6 +41,7 @@ TEST_F(DeviceMemoryDialog_Test, TypedBytesReachTheTsConfPalette)
     auto* decoder = dynamic_cast<PortDecoder_TSConf*>(_emulator->GetContext()->pPortDecoder);
     ASSERT_NE(decoder, nullptr);
 
+    EXPECT_TRUE(DeviceMemoryDialog::HasRegions(_emulator.get()));
     DeviceMemoryDialog dialog(_emulator);
     auto* regions = dialog.findChild<QComboBox*>();
     auto* view = dialog.findChild<QHexView*>();
@@ -70,7 +73,10 @@ TEST_F(DeviceMemoryDialog_Test, TypedBytesReachTheTsConfPalette)
 TEST_F(DeviceMemoryDialog_Test, MachineWithoutRegions)
 {
     ASSERT_NO_FATAL_FAILURE(Create("48K"));
+    EXPECT_FALSE(DeviceMemoryDialog::HasRegions(_emulator.get()));
     DeviceMemoryDialog dialog(_emulator);
     EXPECT_EQ(dialog.findChild<QComboBox*>()->count(), 0);
-    EXPECT_FALSE(dialog.findChild<QHexView*>()->isEnabled());
+    auto* note = qobject_cast<QLabel*>(dialog.findChild<QStackedWidget*>()->currentWidget());
+    ASSERT_NE(note, nullptr) << "a note, not an empty hex view";
+    EXPECT_TRUE(note->text().contains("no device memory"));
 }

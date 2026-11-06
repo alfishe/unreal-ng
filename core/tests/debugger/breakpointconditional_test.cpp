@@ -155,8 +155,8 @@ TEST_F(BreakpointConditional_Test, AccessOperandsComeFromTheAccess)
 
 TEST_F(BreakpointConditional_Test, RefusedAtCreationWithTheReason)
 {
-    EXPECT_NE(Refused(Spec(BRK_MEMORY, BRK_MEM_EXECUTE, 0x8000, "RD == 9000")).find("trigger"), std::string::npos);
-    EXPECT_NE(Refused(Spec(BRK_IO, BRK_IO_IN, 0x00FE, "VAL == 1")).find("trigger"), std::string::npos)
+    EXPECT_NE(Refused(Spec(BRK_MEMORY, BRK_MEM_EXECUTE, 0x8000, "RD == 9000")).find("this breakpoint fires on execution"), std::string::npos);
+    EXPECT_NE(Refused(Spec(BRK_IO, BRK_IO_IN, 0x00FE, "VAL == 1")).find("this breakpoint fires on a port read"), std::string::npos)
         << "a port-in breakpoint has no written value";
     EXPECT_NE(Refused(Spec(BRK_MEMORY, BRK_MEM_EXECUTE, 0x8000, "A ==")).find("column"), std::string::npos);
     EXPECT_NE(Refused(Spec(BRK_MEMORY, BRK_MEM_EXECUTE, 0x8000, "NOSUCH == 1")).find("unknown name"), std::string::npos);

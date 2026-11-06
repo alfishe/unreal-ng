@@ -8,6 +8,7 @@
 #include <QContextMenuEvent>
 #include <QLabel>
 
+#include <array>
 #include <vector>
 
 #include "emulator/emulator.h"
@@ -19,6 +20,7 @@ namespace Ui { class RegistersWidget; }
 QT_END_NAMESPACE
 
 class DebuggerWindow;
+class QClickableLabel;
 
 class RegistersWidget : public QWidget
 {
@@ -66,6 +68,11 @@ public slots:
     /// (Emulator::SetRegisterFromTool: a tool edit, refused in the recorded past of time travel)
     void editRegister(const QString& name);
 
+    /// A click on a flag letter (S Z 5 H 3 P N C): that bit of F flips (a tool edit on a paused machine)
+    void toggleFlag(int bit);
+    /// A click on IFF1 / IFF2: the flip-flop flips
+    void toggleIff(int n);
+
     /// endregion </Event handlers / Slots>
 
 signals:
@@ -79,6 +86,16 @@ private:
     Ui::RegistersWidget* ui;
     QThread* m_mainThread;
     DebuggerWindow* m_debuggerWindow;
+
+    /// Sets a register by its Z80::FindRegister name as editRegister does, without asking: false when refused
+    bool setRegister(const QString& name, uint16_t value);
+    /// The flag letters, the IFF1 / IFF2 cells and the ISR address (built beside the form's Flags and int rows)
+    void buildInterruptAndFlagCells();
+    /// Where an INT would go now: 0038 in IM0 / IM1 (RST #38: the bus floats to FF), the word at I:FF in IM2
+    uint16_t isrAddress() const;
+    std::array<QClickableLabel*, 8> m_flagCells{};  // bit 7 (S) first
+    std::array<QClickableLabel*, 2> m_iffCells{};
+    QClickableLabel* m_isrCell = nullptr;
 
     Z80Registers* m_z80Registers;
     bool m_isShuttingDown = false;  // Flag to block refreshes during shutdown

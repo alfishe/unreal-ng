@@ -192,6 +192,9 @@ struct BreakpointDescriptor
 };
 
 constexpr uint8_t BRK_NO_TAP = 0;
+/// A breakpoint that only counts (BreakpointSpec::stop = false): a tap of no sink. Its hits are counted (hitCount,
+/// the hit policy) and never stop; nothing is told. Never handed out by RegisterTapSink
+constexpr uint8_t BRK_COUNT_TAP = 0xFF;
 
 /// The access a tap saw
 enum BreakpointTapKind : uint8_t
@@ -335,6 +338,8 @@ struct BreakpointSpec
     bool hidden = false;               // internal: not in the lists, no breakpoints_changed
     uint8_t tapSink = BRK_NO_TAP;      // memory and port: a tap of this sink (RegisterTapSink), never stops
     uint32_t tapCookie = 0;
+    // False: the breakpoint only counts its hits and never stops (BRK_COUNT_TAP); the kinds a tap watches
+    bool stop = true;
     // Physical only: the offset in the page when it is not `address` & #3FFF (an 8K bank of the Next is half a
     // 16K page; `address` stays the CPU address, so the slot). 0xFFFF: address & #3FFF
     uint16_t pageOffset = 0xFFFF;
@@ -681,8 +686,8 @@ public:
     /// Bumped on every change of the set (add, remove, enable, group, note; hidden ones too): a reader caches by it
     uint64_t Revision() const { return _revision.load(std::memory_order_relaxed); }
 
-    /// A tap sink: the id its taps carry in BreakpointDescriptor::tapSink, BRK_NO_TAP when all 255 are taken. Holds
-    /// the CPU as a change does; the sink must stay alive until UnregisterTapSink
+    /// A tap sink: the id its taps carry in BreakpointDescriptor::tapSink, BRK_NO_TAP when all 254 are taken
+    /// (BRK_COUNT_TAP is no sink's). Holds the CPU as a change does; the sink must stay alive until UnregisterTapSink
     uint8_t RegisterTapSink(IBreakpointTapSink* sink);
     /// Removes the sink and every tap that reports to it
     void UnregisterTapSink(uint8_t sinkId);

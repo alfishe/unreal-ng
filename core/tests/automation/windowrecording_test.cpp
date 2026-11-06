@@ -111,6 +111,8 @@ TEST(WindowRecording_Test, WordsMakeARequest)
     EXPECT_TRUE(WindowRecording::ApplyWord(request, "width", "3840", error));
     EXPECT_TRUE(WindowRecording::ApplyWord(request, "height", "2160", error));
     EXPECT_TRUE(WindowRecording::ApplyWord(request, "layout", "side", error));
+    EXPECT_TRUE(WindowRecording::ApplyWord(request, "hardware", "on", error));
+    EXPECT_TRUE(WindowRecording::ApplyWord(request, "fit", "true", error));
     EXPECT_EQ(request.path, "/x/demo.mp4");
     EXPECT_EQ(request.keyboard, "zxnext");
     EXPECT_EQ(request.codec, "h264") << "codec words in any case";
@@ -121,6 +123,17 @@ TEST(WindowRecording_Test, WordsMakeARequest)
     EXPECT_EQ(request.frameWidth, 3840);
     EXPECT_EQ(request.frameHeight, 2160);
     EXPECT_EQ(request.layout, "side");
+    EXPECT_TRUE(request.hardware);
+    EXPECT_TRUE(request.fit);
+    EXPECT_TRUE(WindowRecording::ApplyWord(request, "hardware", "off", error));
+    EXPECT_FALSE(request.hardware);
+    EXPECT_FALSE(WindowRecording::ApplyWord(request, "hardware", "fast", error)) << "a boolean word only";
+    EXPECT_FALSE(error.empty());
+    error.clear();
+    EXPECT_FALSE(WindowRecording::ApplyWord(request, "fit", "2x", error));
+    error.clear();
+    EXPECT_TRUE(WindowRecording::ApplyWord(request, "codec", "H265", error));
+    EXPECT_EQ(request.codec, "h265");
 
     // The keyboard: on = the window's, off / none = the picture only; audio none = off
     EXPECT_TRUE(WindowRecording::ApplyWord(request, "keyboard", "on", error));

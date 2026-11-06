@@ -4,20 +4,26 @@
 
 #include <QBoxLayout>
 #include <QColor>
+#include <QCoreApplication>
 #include <QDialog>
+#include <QGroupBox>
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QLineEdit>
 #include <QPointer>
 #include <QRegularExpression>
+#include <QSplitter>
 #include <QTableWidget>
 #include <QTimer>
 #include <Qt>
 
+#include <initializer_list>
+
 #include "QHexView/model/buffer/qmemorybuffer.h"
 #include "debugger/breakpointdialog.h"
 #include "debugger/breakpointeditor.h"
+#include "debugger/breakpointstopline.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/devicememorydialog.h"
@@ -25,7 +31,10 @@
 #include "debugger/diskfilesdialog.h"
 #include "debugger/livesourcewindow.h"
 #include "debugger/panefocus.h"
-#include "debugger/pchistorydialog.h"
+#include "debugger/pchistorypane.h"
+#include "debugger/porteventsdialog.h"
+#include "debugger/portwatchdialog.h"
+#include "debugger/rtcdialog.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/labeleditor.h"
 #include "debugvisualizationwindow.h"
@@ -35,6 +44,14 @@
 
 /// region <Constructor / destructors>
 
+DebuggerWindow* DebuggerWindow::Of(QWidget* widget)
+{
+    for (QWidget* at = widget; at; at = at->parentWidget())
+        if (auto* window = qobject_cast<DebuggerWindow*>(at))
+            return window;
+    return nullptr;
+}
+
 DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* parent) : QWidget(parent), ui(new Ui::DebuggerWindow)
 {
     _emulator = emulator;
@@ -42,6 +59,47 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
 
     // Instantiate all child widgets (UI form auto-generated)
     ui->setupUi(this);
+
+    // Panels: one frame style for all of them (the speed control's), the panels' text in the window's monospace font
+    // (a group box's style sheet font would pass its small title size down to the contents)
+    // The PC history: a third splitter pane right of the disassembly, shown (and recording) by its toolbar toggle
+    QGroupBox* historyGroup = new QGroupBox("PC history", this);
+    historyGroup->setObjectName("historyGroup");
+    QVBoxLayout* historyLayout = new QVBoxLayout(historyGroup);
+    historyLayout->setSpacing(0);
+    _pcHistoryPane = new PcHistoryPane(_emulator, historyGroup);
+    historyLayout->addWidget(_pcHistoryPane);
+    ui->mainSplitter->addWidget(historyGroup);
+    historyGroup->hide();
+
+    const QFont panelFont = font();
+    for (QWidget* contents : std::initializer_list<QWidget*>{ui->registersWidget, ui->stackWidget,
+                                                              ui->memorypagesWidget, ui->hexView,
+                                                              ui->disassemblerWidget, _pcHistoryPane})
+        contents->setFont(panelFont);
+    setStyleSheet(QStringLiteral(R"(
+        QGroupBox#registersGroup, QGroupBox#stackGroup, QGroupBox#pagesGroup, QGroupBox#memoryGroup,
+        QGroupBox#disasmGroup, QGroupBox#historyGroup {
+            font-family: "Consolas", "Monaco", "Courier New", monospace;
+            font-size: 11px;
+            border: 1px solid palette(mid);
+            border-radius: 4px;
+            margin-top: 8px;
+            padding: 8px 6px 4px 6px;
+        }
+        QGroupBox#registersGroup::title, QGroupBox#stackGroup::title, QGroupBox#pagesGroup::title,
+        QGroupBox#memoryGroup::title, QGroupBox#disasmGroup::title, QGroupBox#historyGroup::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            left: 8px;
+            padding: 0 4px;
+            color: palette(text);
+        }
+    )"));
+    ui->mainSplitter->setStretchFactor(0, 0);
+    ui->mainSplitter->setStretchFactor(1, 1);
+    ui->mainSplitter->setStretchFactor(2, 0);
+    ui->mainSplitter->setSizes({400, 700, 260});
 
     // Create floating toolbar
     // toolBar = new QToolBar("Debugger toolbar", this);
@@ -145,8 +203,26 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     liveSourceAction->setToolTip("The source an assembler (ALASM, TASM 4.12) holds in RAM, followed while you type: its labels in the debugger, its errors on their lines");
     toolBar->addAction(liveSourceAction);
     pcHistoryAction = new QAction("PC history", this);
-    pcHistoryAction->setToolTip("The newest instructions the CPU started, with their window's page (starts recording)");
+    pcHistoryAction->setToolTip("The PC history pane: the newest instructions the CPU started, with their window's page "
+                                "(records while shown)");
+    pcHistoryAction->setCheckable(true);
     toolBar->addAction(pcHistoryAction);
+    QMenu* machineMenu = new QMenu(this);
+    QAction* portWatchAction = machineMenu->addAction("Ports");
+    portWatchAction->setToolTip("Every port the machine decodes, the latched ones with their values (changes lit)");
+    QAction* rtcAction = machineMenu->addAction("CMOS clock");
+    rtcAction->setToolTip("The clock chip: time, registers A-D and the alarm decoded, every cell edited in place");
+    QAction* portEventsAction = machineMenu->addAction("Port events");
+    portEventsAction->setToolTip("When did the program read a key, write an AY register, change the border... (time travel)");
+    machineMenu->setToolTipsVisible(true);
+    machineButton = new QToolButton(this);
+    machineButton->setText("Machine \u25BE");
+    machineButton->setMenu(machineMenu);
+    machineButton->setPopupMode(QToolButton::InstantPopup);
+    toolBar->addWidget(machineButton);
+    connect(portWatchAction, &QAction::triggered, this, &DebuggerWindow::showPortWatch);
+    connect(rtcAction, &QAction::triggered, this, &DebuggerWindow::showRtc);
+    connect(portEventsAction, &QAction::triggered, this, &DebuggerWindow::showPortEvents);
     breakpointsAction = new QAction("Breakpoints", this);
     labelsAction = new QAction("Labels", this);
     visualizationAction = new QAction("Visualization", this);
@@ -175,7 +251,9 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     connect(diskSectorAction, &QAction::triggered, this, &DebuggerWindow::showDiskSector);
     connect(diskFilesAction, &QAction::triggered, this, &DebuggerWindow::showDiskFiles);
     connect(liveSourceAction, &QAction::triggered, this, &DebuggerWindow::showLiveSource);
-    connect(pcHistoryAction, &QAction::triggered, this, &DebuggerWindow::showPcHistory);
+    connect(pcHistoryAction, &QAction::toggled, this, &DebuggerWindow::showPcHistory);
+    connect(_pcHistoryPane, &PcHistoryPane::addressPicked, ui->disassemblerWidget, &DisassemblerWidget::goToAddress);
+    connect(this, &DebuggerWindow::readyForChildren, _pcHistoryPane, &PcHistoryPane::refresh);
     connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
     connect(visualizationAction, &QAction::triggered, this, &DebuggerWindow::showVisualizationWindow);
@@ -217,6 +295,18 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     ui->fdcStatusWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     speedRow->addWidget(ui->fdcStatusWidget);
     ui->verticalLayout_2->insertLayout(1, speedRow);
+
+    // The stop line: which breakpoint stopped the machine, on what, by which condition (gone when it moves on)
+    _stopBanner = new QLabel(this);
+    _stopBanner->setTextFormat(Qt::RichText);
+    _stopBanner->setWordWrap(true);
+    _stopBanner->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    _stopBanner->setStyleSheet("QLabel { background: #FFF1C2; color: #202020; border: 1px solid #E0B040;"
+                               " border-left: 4px solid #D03030; padding: 3px 6px; }");
+    _stopBanner->setVisible(false);
+    connect(_stopBanner, &QLabel::linkActivated, this, &DebuggerWindow::onStopBannerLink);
+    ui->verticalLayout_2->insertWidget(2, _stopBanner);
+
     connect(m_speedControl, &SpeedControlWidget::stepped, this, [this]() {
         updateState();
         emit screenRefreshRequested();
@@ -256,12 +346,36 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     // NOTE: DebuggerWindow is now FULLY DEPENDENT on MainWindow via EmulatorBinding.
     // We do NOT subscribe to ANY global MessageCenter events here!
     //
-    // Problem: Global events (NC_EXECUTION_BREAKPOINT, NC_EXECUTION_CPU_STEP, etc.)
+    // Problem: Global events (NC_EXECUTION_CPU_STEP, etc.)
     // don't carry emulator ID information. When multiple emulators exist, we can't
     // tell which emulator the event is from, leading to race conditions and crashes.
     //
     // Solution: DebuggerWindow receives state via EmulatorBinding signals from MainWindow.
     // Child widgets are connected to DebuggerWindow dispatch signals.
+    //
+    // The exception: NC_EXECUTION_BREAKPOINT carries the machine's id (BreakpointTriggeredPayload). The observer
+    // copies the hit and posts it; the GUI thread keeps it only for the machine this window shows
+    QPointer<DebuggerWindow> self(this);
+    _breakpointObserver =
+        MessageCenter::DefaultMessageCenter().AddObserver(NC_EXECUTION_BREAKPOINT, [self](int, Message* message) {
+            auto* payload = message != nullptr ? dynamic_cast<BreakpointTriggeredPayload*>(message->obj) : nullptr;
+            if (payload == nullptr)
+                return;
+            BreakpointHit hit;
+            hit.emulatorId = payload->emulatorId.toString();
+            hit.id = static_cast<uint16_t>(payload->_payloadNumber);
+            hit.address = payload->address;
+            hit.kind = payload->kind;
+            hit.cpu = payload->cpu;
+            hit.cpuPc = payload->cpuPc;
+            QMetaObject::invokeMethod(
+                QCoreApplication::instance(),
+                [self, hit] {
+                    if (self)
+                        self->onBreakpointHit(hit);
+                },
+                Qt::QueuedConnection);
+        });
 
     // Connect dispatch signals to child widgets (hierarchical pattern)
     connect(this, &DebuggerWindow::readyForChildren, ui->disassemblerWidget, &DisassemblerWidget::refresh);
@@ -288,8 +402,8 @@ DebuggerWindow::~DebuggerWindow()
 
     // Block all refreshes during shutdown
     _isClosing = true;
-    // so there's nothing to unsubscribe from here. All event handling is done via
-    // explicit method calls from MainWindow.
+    // All other event handling is done via explicit method calls from MainWindow; the breakpoint observer goes here
+    MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_EXECUTION_BREAKPOINT, _breakpointObserver);
 
     delete ui;
 }
@@ -427,6 +541,27 @@ void DebuggerWindow::propagateEmulator()
         _liveSourceWindow->setEmulator(_emulator);
     if (_visualizationWindow)
         _visualizationWindow->setEmulator(_emulator);
+    _pcHistoryPane->setEmulator(_emulator);
+    // Port events holds the machine it searches: another machine (or none) closes it
+    if (_portEventsDialog && _portEventsDialog->emulator() != _emulator)
+        _portEventsDialog->close();
+    updateMachineActions();
+}
+
+void DebuggerWindow::updateMachineActions()
+{
+    // A tool the machine has nothing for is off, its tooltip says why (no empty dialog to open)
+    const bool regions = DeviceMemoryDialog::HasRegions(_emulator.get());
+    deviceMemoryAction->setEnabled(regions);
+    deviceMemoryAction->setToolTip(regions ? "Memory a device owns outside RAM / ROM (Sprinter vram, TS-Conf cram / "
+                                             "sfile, sound card RAM): view and edit"
+                                           : "This machine has no device memory (memory a device owns outside RAM / "
+                                             "ROM: Sprinter vram, TS-Conf cram / sfile, sound card RAM)");
+    const bool drives = DiskSectorDialog::HasDrives(_emulator.get());
+    diskSectorAction->setEnabled(drives);
+    diskSectorAction->setToolTip(drives ? "View and edit a floppy sector's data field (CRC recalculated, the image "
+                                          "counts as modified)"
+                                        : "This machine has no floppy drives");
 }
 
 void DebuggerWindow::onBindingBound()
@@ -482,6 +617,7 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
         case StateResumed:  // StateResumed = running after pause, same as StateRun
             // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON, Labels: ON)
             updateToolbarActions(false, true, false, true, true, true);
+            clearStopBanner();
             break;
         case StateStopped:
         case StateUnknown:
@@ -492,6 +628,9 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
             break;
     }
 
+    if (m_speedControl)
+        m_speedControl->setMachineRunning(state == StateRun || state == StateResumed);
+
     // Dispatch to children
     emit stateChangedForChildren(state);
 }
@@ -499,12 +638,16 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
 void DebuggerWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
+    if (pcHistoryAction && pcHistoryAction->isChecked() && !_pcHistoryPane->isRecording())
+        _pcHistoryPane->setRecording(true);
     emit visibilityChanged(true);
 }
 
 void DebuggerWindow::hideEvent(QHideEvent* event)
 {
     QWidget::hideEvent(event);
+    if (_pcHistoryPane->isRecording())
+        _pcHistoryPane->setRecording(false);  // a closed debugger costs the emulation nothing
     emit visibilityChanged(false);
 }
 
@@ -519,6 +662,25 @@ void DebuggerWindow::onBindingReady()
 
     // Dispatch to children via signal (widgets are connected to readyForChildren)
     emit readyForChildren();
+    updateMachineActions();  // the machine is complete now (its cards and drives fitted)
+    showMemoryAtPc();
+}
+
+void DebuggerWindow::showMemoryAtPc()
+{
+    // The memory view follows PC: its 16 KB page read again (a step changes memory), the PC byte marked; a page
+    // picked by hand stays until the next stop
+    if (!_emulator || !_emulator->IsPaused() || !_emulator->GetZ80State())
+        return;
+    const uint16_t pc = _emulator->GetZ80State()->Z80Registers::pc;
+    changeMemoryViewZ80Address(pc);
+    if (QHexMetadata* metadata = ui->hexView->getMetadata())
+    {
+        const uint16_t pcInPage = pc & 0x3FFF;
+        metadata->clear();
+        metadata->setMetadata(pcInPage, pcInPage + 1, Qt::black, QColor(255, 255, 140), tr("PC"));
+    }
+    ui->hexView->update();
 }
 
 void DebuggerWindow::onBindingNotReady()
@@ -630,44 +792,8 @@ void DebuggerWindow::updateState()
         // Update stack widget
         ui->stackWidget->refresh();
 
-        // Update hex viewer widget
-        if (true)
-        {
-            // Getting address of current ROM page
-            Memory* memory = _emulator->GetMemory();
-            uint16_t pc = state->Z80Registers::pc;
-            uint8_t bank = memory->GetZ80BankFromAddress(pc);
-            uint16_t addressInBank = pc & 0b0011'1111'1111'1111;
-            size_t pageOffset = memory->GetPhysicalOffsetForZ80Bank(bank);
-            uint8_t* pagePhysicalAddress = memory->GetPhysicalAddressForZ80Page(bank);
-
-            QHexDocument* document;
-            if (pageOffset != _curPageOffset)
-            {
-                _curPageOffset = pageOffset;
-
-                QByteArray data((const char*)pagePhysicalAddress, 0x4000);
-                document = QHexDocument::fromMemory<QMemoryBuffer>(data);
-                ui->hexView->setDocument(document);
-
-                // Display 8 hex bytes per line
-                QHexOptions options = ui->hexView->options();
-                options.linelength = 8;
-                ui->hexView->setOptions(options);
-            }
-            else
-            {
-                document = ui->hexView->getDocument();
-            }
-
-            ui->hexView->gotoOffset(addressInBank);
-            QHexMetadata* hexmetadata = ui->hexView->getMetadata();
-            hexmetadata->clear();
-            hexmetadata->setMetadata(addressInBank, addressInBank + 1, Qt::black, Qt::blue, "JR Z,xx");
-            hexmetadata->setMetadata(addressInBank + 1, addressInBank + 2, Qt::black, Qt::green, "");
-        }
-
-        ui->hexView->update();
+        _pcHistoryPane->refresh();
+        showMemoryAtPc();
     }
     else
     {
@@ -890,22 +1016,12 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
     });
 }
 
-void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
+void DebuggerWindow::onBreakpointHit(const BreakpointHit& hit)
 {
-    Q_UNUSED(id);
-
-    if (!_emulator || !message || !message->obj)
-    {
+    if (_isClosing || !_emulator || hit.emulatorId != _emulator->GetId())
         return;
-    }
 
-    SimpleNumberPayload* payload = static_cast<SimpleNumberPayload*>(message->obj);
-    if (!payload)
-    {
-        return;
-    }
-
-    uint16_t breakpointID = static_cast<uint16_t>(payload->_payloadNumber);
+    const uint16_t breakpointID = hit.id;
     BreakpointManager* bpManager = _emulator->GetDebugManager()->GetBreakpointsManager();
     if (!bpManager)
     {
@@ -980,17 +1096,51 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
         _stepOutBreakpointID = BRK_INVALID;
     }
 
-    // Update the UI in the main thread
-    dispatchToMainThread([this]() {
-        // Stop speed control auto-run on breakpoint hit
-        if (m_speedControl)
-            m_speedControl->stop();
+    // Stop speed control auto-run on breakpoint hit
+    if (m_speedControl)
+    {
+        m_speedControl->stop();
+        m_speedControl->setMachineRunning(false);
+    }
 
-        // When a breakpoint is hit:
-        // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
-        updateToolbarActions(true, false, true, true, true, true);
+    // The user's breakpoints speak; the step traps and the owners' (BASIC typer, adapters) stay silent
+    if (BreakpointManager::IsUserBreakpoint(*breakpoint) && !breakpoint->hidden)
+    {
+        _stopBreakpointId = breakpointID;
+        _stopBanner->setText(BreakpointStopLine(*breakpoint, hit));
+        _stopBanner->setVisible(true);
+    }
+
+    // When a breakpoint is hit:
+    // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
+    updateToolbarActions(true, false, true, true, true, true);
+    updateState();
+}
+
+void DebuggerWindow::clearStopBanner()
+{
+    _stopBreakpointId = BRK_INVALID;
+    if (_stopBanner)
+        _stopBanner->setVisible(false);
+}
+
+void DebuggerWindow::onStopBannerLink(const QString& link)
+{
+    if (!_emulator)
+        return;
+    if (link == "edit" && _stopBreakpointId != BRK_INVALID)
+    {
+        if (!_emulator->GetBreakpointManager()->GetBreakpointById(_stopBreakpointId))
+        {
+            clearStopBanner();  // removed meanwhile
+            return;
+        }
+        BreakpointEditor editor(_emulator, BreakpointEditor::Edit, _stopBreakpointId, this);
+        editor.exec();
         updateState();
-    });
+    }
+    else if (link == "list")
+        showBreakpointManager();
 }
 
 void DebuggerWindow::handleCPUStepMessage(int id, Message* message)
@@ -1014,6 +1164,7 @@ void DebuggerWindow::handleLabelChanged(int id, Message* message)
 
 void DebuggerWindow::continueExecution()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::continueExecution()";
 
     _breakpointTriggered = false;
@@ -1060,6 +1211,7 @@ void DebuggerWindow::pauseExecution()
 
 void DebuggerWindow::stepIn()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::stepIn()";
 
     _breakpointTriggered = false;
@@ -1080,6 +1232,7 @@ void DebuggerWindow::stepIn()
 
 void DebuggerWindow::stepOver()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::stepOver()";
 
     _breakpointTriggered = false;
@@ -1103,6 +1256,7 @@ void DebuggerWindow::stepOver()
 
 void DebuggerWindow::stepOut()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::stepOut()";
 
     _breakpointTriggered = false;
@@ -1169,6 +1323,7 @@ void DebuggerWindow::stepOut()
 
 void DebuggerWindow::frameStep()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::frameStep()";
 
     _breakpointTriggered = false;
@@ -1189,6 +1344,7 @@ void DebuggerWindow::frameStep()
 
 void DebuggerWindow::waitInterrupt()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::waitInterrupt()";
 
     if (!_emulator)
@@ -1319,16 +1475,52 @@ void DebuggerWindow::showLiveSource()
     _liveSourceWindow->activateWindow();
 }
 
-void DebuggerWindow::showPcHistory()
+void DebuggerWindow::showPcHistory(bool shown)
+{
+    _pcHistoryPane->parentWidget()->setVisible(shown);
+    _pcHistoryPane->setRecording(shown);
+}
+
+void DebuggerWindow::showPortWatch()
 {
     if (!_emulator) return;
 
-    PcHistoryDialog dialog(_emulator, this);
+    PortWatchDialog dialog(_emulator, this);
     dialog.exec();
+}
+
+void DebuggerWindow::showRtc()
+{
+    if (!_emulator) return;
+
+    RtcDialog dialog(_emulator, this);
+    dialog.exec();
+    updateState();
+}
+
+void DebuggerWindow::showPortEvents()
+{
+    if (!_emulator) return;
+
+    // Not modal: the program runs (and records) while the window stays open
+    if (!_portEventsDialog)
+    {
+        _portEventsDialog = new PortEventsDialog(_emulator, this);
+        _portEventsDialog->setAttribute(Qt::WA_DeleteOnClose);
+        // A hit sought: the panes show the machine there, the disassembly the instruction that made the access
+        connect(_portEventsDialog, &PortEventsDialog::seekedTo, this, [this](uint16_t pc) {
+            updateState();
+            ui->disassemblerWidget->goToAddress(pc);
+        });
+    }
+    _portEventsDialog->show();
+    _portEventsDialog->raise();
+    _portEventsDialog->activateWindow();
 }
 
 void DebuggerWindow::runTStates()
 {
+    clearStopBanner();  // the machine moves on
     if (!_emulator) return;
 
     bool ok;
@@ -1342,6 +1534,7 @@ void DebuggerWindow::runTStates()
 
 void DebuggerWindow::runToScanline()
 {
+    clearStopBanner();  // the machine moves on
     if (!_emulator) return;
 
     bool ok;
@@ -1355,6 +1548,7 @@ void DebuggerWindow::runToScanline()
 
 void DebuggerWindow::runNScanlines()
 {
+    clearStopBanner();  // the machine moves on
     if (!_emulator) return;
 
     bool ok;
@@ -1368,6 +1562,7 @@ void DebuggerWindow::runNScanlines()
 
 void DebuggerWindow::runToPixel()
 {
+    clearStopBanner();  // the machine moves on
     if (!_emulator) return;
 
     _breakpointTriggered = false;
@@ -1377,6 +1572,7 @@ void DebuggerWindow::runToPixel()
 
 void DebuggerWindow::runToInterrupt()
 {
+    clearStopBanner();  // the machine moves on
     if (!_emulator) return;
 
     _breakpointTriggered = false;
@@ -1386,6 +1582,7 @@ void DebuggerWindow::runToInterrupt()
 
 void DebuggerWindow::resetEmulator()
 {
+    clearStopBanner();  // the machine moves on
     qDebug() << "DebuggerWindow::resetEmulator()";
 
     if (_emulator)
@@ -1501,11 +1698,15 @@ void DebuggerWindow::changeMemoryViewZ80Address(uint16_t addr)
 {
     qDebug("DebuggerWindow::changeMemoryViewZ80Address");
 
-    Memory* memory = _emulator->GetMemory();
+    Memory* memory = _emulator ? _emulator->GetMemory() : nullptr;
+    if (!memory)
+        return;
     uint8_t bank = memory->GetZ80BankFromAddress(addr);
+    uint8_t* pageAddress = memory->GetPhysicalAddressForZ80Page(bank);
+    if (!pageAddress)
+        return;
     _curPageOffset = memory->GetPhysicalOffsetForZ80Bank(bank);
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
-    uint8_t* pageAddress = memory->GetPhysicalAddressForZ80Page(bank);
     size_t size = 0x4000;
     uint16_t offset = bank * 0x4000;
 

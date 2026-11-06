@@ -19,6 +19,7 @@
 #include "emulator/media/recentfiles.h"
 #include "emulator/readoutschanged.h"
 #include "emulator/monitoring/clientstats.h"
+#include "emulator/monitoring/hostdevices.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/activityfeed.h"
 #include "emulator/actions/contextstate.h"
@@ -821,6 +822,55 @@ TEST_F(WsHub_Test, AChangeWithoutFramesReachesTheSurfaceThroughItsProducersNotif
     RecentFiles::Instance().Note("tape", "/games/elite.tzx");
     EXPECT_TRUE(arrives("media.recent")) << "RecentFiles posts NC_READOUTS_CHANGED (of the process)";
     RecentFiles::Instance().Clear();
+    _hub->Stop();
+}
+
+/// controllers.devices (monitoring/hostdevices.h): the value at once, then each change the owner publishes, pushed by
+/// its NC_CONTROLLER_DEVICES_CHANGED; never read on time or on a frame (no timer while it is the only topic)
+TEST_F(WsHub_Test, ControllersDevicesPushesWhatTheOwnerPublishesAndNothingElse)
+{
+    monitoring::HostDevices& board = monitoring::HostDevices::Instance();
+    board.Withdraw();
+    _hub->SetClock({});
+    _hub->Start();
+    Inbox inbox;
+    Connect(inbox);
+    Send(inbox, R"({"op":"subscribe","topics":["controllers.devices"],"max_hz":50})");
+    std::vector<Json::Value> states = InTopic(inbox, "controllers.devices");
+    ASSERT_EQ(states.size(), 1u);
+    EXPECT_FALSE(states[0].isMember("instance")) << "a topic of the process";
+    EXPECT_FALSE(states[0]["value"]["available"].asBool()) << "no host input owner in the test";
+    EXPECT_EQ(_hub->TimerDelay(), 0) << "an event topic: no timer";
+
+    const uint64_t reads = _hub->ValuesRead();
+    _hub->OnFrame(_id);
+    _hub->Tick();
+    EXPECT_EQ(_hub->ValuesRead(), reads) << "a frame never reads it";
+
+    StateNode devices = StateNode::Array();
+    StateNode pad = StateNode::Object();
+    pad["id"] = "fake:1";
+    pad["battery"]["text"] = "80 %";
+    devices.push(pad);
+    board.Publish(devices, 1);
+    const auto arrived = [&](size_t count) {
+        return TestWait::For(
+            [&] {
+                _hub->Tick();
+                return InTopic(inbox, "controllers.devices").size() >= count;
+            },
+            std::chrono::seconds(5));
+    };
+    ASSERT_TRUE(arrived(2)) << "the publish's notification wakes the hub";
+    Json::Value value = InTopic(inbox, "controllers.devices")[1]["value"];
+    EXPECT_TRUE(value["available"].asBool());
+    EXPECT_EQ(value["revision"].asInt(), 1);
+    ASSERT_EQ(value["devices"].size(), 1u);
+    EXPECT_EQ(value["devices"][0]["battery"]["text"].asString(), "80 %");
+
+    board.Withdraw();
+    ASSERT_TRUE(arrived(3)) << "the owner went";
+    EXPECT_FALSE(InTopic(inbox, "controllers.devices")[2]["value"]["available"].asBool());
     _hub->Stop();
 }
 

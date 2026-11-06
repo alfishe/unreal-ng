@@ -149,6 +149,14 @@ SpeedControlWidget::SpeedControlWidget(QWidget* parent)
     _playPauseButton->setFixedSize(26, 24);
     layout->addWidget(_playPauseButton);
 
+    // ⏸ Pause: the machine stops wherever it runs - at full speed (run.pause) or paced (run.pace_stop)
+    _pauseButton = new QToolButton(this);
+    _pauseButton->setText("\u23F8");  // ⏸
+    _pauseButton->setToolTip("Pause the machine (a full-speed or a paced run)");
+    _pauseButton->setFixedSize(26, 24);
+    _pauseButton->setEnabled(false);
+    layout->addWidget(_pauseButton);
+
     // ⏭ Step Forward button (execute one step)
     _stepForwardButton = new QToolButton(this);
     _stepForwardButton->setText("\u23ED");  // ⏭
@@ -225,6 +233,7 @@ SpeedControlWidget::SpeedControlWidget(QWidget* parent)
     // Connections
     connect(_slider, &QSlider::valueChanged, this, &SpeedControlWidget::onSliderChanged);
     connect(_playPauseButton, &QToolButton::clicked, this, &SpeedControlWidget::onPlayPauseClicked);
+    connect(_pauseButton, &QToolButton::clicked, this, &SpeedControlWidget::onPauseClicked);
     connect(_stepForwardButton, &QToolButton::clicked, this, &SpeedControlWidget::onStepForwardClicked);
     connect(_stepBackButton, &QToolButton::clicked, this, &SpeedControlWidget::onStepBackwardClicked);
 
@@ -249,6 +258,7 @@ void SpeedControlWidget::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     unsubscribe();
     _emulator = std::move(emulator);
+    _machineRunning = _emulator && _emulator->IsRunning() && !_emulator->IsPaused();
     if (_emulator)
         subscribe();
     syncFromPacer();
@@ -358,6 +368,7 @@ void SpeedControlWidget::syncFromPacer()
     _stepBackButton->setEnabled(state.preset > 0);
     _playPauseButton->setChecked(state.running);
     _playPauseButton->setText(state.running ? "\u23F8" : "\u25B6");  // ⏸ / ▶
+    _pauseButton->setEnabled(state.running || _machineRunning);
     updateLabel();
 
     if (state.running != _running)
@@ -414,6 +425,17 @@ void SpeedControlWidget::onPlayPauseClicked()
         submit("run.pace_toggle");  // paced: start; full speed and paused: continue
     else
         syncFromPacer();
+}
+
+void SpeedControlWidget::setMachineRunning(bool running)
+{
+    _machineRunning = running;
+    _pauseButton->setEnabled(_running || _machineRunning);
+}
+
+void SpeedControlWidget::onPauseClicked()
+{
+    submit(_running ? "run.pace_stop" : "run.pause");
 }
 
 void SpeedControlWidget::onStepForwardClicked()

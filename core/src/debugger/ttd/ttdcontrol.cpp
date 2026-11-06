@@ -23,6 +23,7 @@
 #include "debugger/ttd/ttdexternalevents.h"
 #include "debugger/ttd/ttdfileinfo.h"
 #include "debugger/ttd/ttdperipheralmask.h"
+#include "debugger/ttd/ttdportdescribe.h"
 #include "debugger/ttd/ttdportsearch.h"
 #include "debugger/ttd/ttdprobe.h"
 #include "debugger/ttd/ttdrecordingfolders.h"
@@ -1693,6 +1694,10 @@ TTDReply TTDControlBackend::PortEvents(const TTDRequest& request)
     reply.body["scanned"] = static_cast<uint64_t>(result.scanned);
     reply.body["context"] = context;
     StateNode hits = StateNode::Array();
+    // Each hit in words: the device the port map gives the port, its tags, what the access did (a file: the
+    // standard Spectrum ports only, the machine that recorded it may not be this one)
+    const PortAccessDescriber describer(file || !_context ? nullptr : _context->pPortDecoder);
+    const bool out = q.direction == TTDPortJournal::Direction::Write;
     for (size_t i = 0; i < result.hits.size(); ++i)
     {
         const TTDPortHit& h = result.hits[i];
@@ -1705,6 +1710,14 @@ TTDReply TTDControlBackend::PortEvents(const TTDRequest& request)
         hit["pc"] = static_cast<unsigned>(h.record.pc);
         if (h.ayRegister >= 0)
             hit["ay_register"] = h.ayRegister;
+        const TTDPortAccessText text =
+            describer.Describe(out, h.record.port, h.record.value, h.record.pc, h.ayRegister);
+        hit["device"] = text.device.empty() ? StateNode() : StateNode(text.device);
+        StateNode tags = StateNode::Array();
+        for (const std::string& tag : text.tags)
+            tags.push(StateNode(tag));
+        hit["tags"] = tags;
+        hit["what"] = text.what;
         // A read of the ULA: the half-rows its address selects, the keys it saw down (one half-row only)
         if (q.direction == TTDPortJournal::Direction::Read && (h.record.port & 1) == 0)
         {

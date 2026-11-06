@@ -126,6 +126,10 @@ public:
     /// @p hud false leaves the HUD out (the window recording; the GPU screen only)
     /// @p pictureHeight > 0: the picture alone at that height in device pixels (the GPU screen only)
     bool grabWindowView(WindowViewGrab& out, std::string& error, bool hud = true, int pictureHeight = 0);
+    /// The window's picture as the renderer produced it (no HUD), without the copies grabWindowView makes: the
+    /// window recorder's per-frame call on the GUI thread, where every millisecond counts. The format is the
+    /// renderer's own (the alpha is not set: the picture is opaque)
+    bool grabWindowPicture(QImage& image, std::string& error, int pictureHeight);
 
     /// @brief Host mouse capture of this screen (both backends); owned by the wrapper
     MouseCaptureController* mouseCapture() const { return _mouseCapture; }

@@ -17,9 +17,11 @@
 /// BM_HapticProbeFrame: a 48K idling in BASIC, N `write` probes on the system variables from FRAMES (#5C78) up, which
 /// the ROM's frame interrupt writes every frame (so probe 0 hits each frame).
 ///   /0   the feed with no probe: nothing armed, the fast memory interface (the cost of the feed itself)
-///   /1   one write probe: the debug memory path held on, one filter bit, one hit a frame
+///   /1   one write probe: the fast write's hook, one filter bit, one hit a frame
 ///   /16  sixteen write probes, a few of them hit
 /// BM_HapticExecProbeFrame: the same 48K, N `exec` probes from #0038 (the frame interrupt's entry, one hit a frame) up.
+/// BM_HapticReadProbeFrame: the same 48K, N `read` probes from FRAMES up (the interrupt's INC (HL) reads it every
+/// frame): the read-tap interface over the fast contended one, one filter bit per read
 /// BM_HapticProbeDizzy: a game, Dizzy X on a Pentagon (testdata/loaders/sna), standing in its first room
 ///   /-1  no feed at all (the baseline)
 ///   /0   the feed with no probe
@@ -122,6 +124,13 @@ static void BM_HapticExecProbeFrame(benchmark::State& state)
                   std::make_shared<ProbeFeed>(controllers::HapticProbeKind::Exec, Consecutive(0x0038, count)));
 }
 
+static void BM_HapticReadProbeFrame(benchmark::State& state)
+{
+    const int count = static_cast<int>(state.range(0));
+    RunProbeFrame(state, "48K", nullptr,
+                  std::make_shared<ProbeFeed>(controllers::HapticProbeKind::Read, Consecutive(0x5C78, count)));
+}
+
 static void BM_HapticProbeDizzy(benchmark::State& state)
 {
     const int count = static_cast<int>(state.range(0));
@@ -137,4 +146,5 @@ static void BM_HapticProbeDizzy(benchmark::State& state)
 
 BENCHMARK(BM_HapticProbeFrame)->Arg(0)->Arg(1)->Arg(16)->Iterations(600)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HapticExecProbeFrame)->Arg(1)->Arg(16)->Iterations(600)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HapticReadProbeFrame)->Arg(1)->Arg(16)->Iterations(600)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HapticProbeDizzy)->Arg(-1)->Arg(0)->Arg(4)->Iterations(600)->Unit(benchmark::kMicrosecond);

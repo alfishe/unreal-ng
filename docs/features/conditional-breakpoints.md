@@ -133,19 +133,33 @@ A hit policy (`--hits 5`, `>=5`, `%5`) counts `hit_count`. So `bp 0x8000 --hits 
 #8000 runs with A = 7. `HITS` inside the condition is the count before this match. Resetting the hit counters resets
 both counters.
 
+### Counting without stopping
+
+A breakpoint can count its hits and never stop: `--count` on the CLI (`bp`, `wp`, `bport`, `bevent`, `bchip`),
+`stop: false` on WebAPI and MCP `bp_add`, `{stop=false}` in Lua, `stop=False` in Python, "Count only (never stops)"
+in the Qt editor. `bp 0x0038 --count` counts the interrupts while the program runs at full speed; `bplist` (and the
+WebAPI list, MCP `bp_list`, Lua / Python `bp_hits(id)`) shows the count, a condition still decides which matches
+count (`wp 0x5C3A w --count if VAL != 0`). Memory, port, event and chip register breakpoints only (the kinds a tap
+watches): it is a tap of no sink, so it costs what a tap costs and runs in a direct run too. The list marks it
+`count only` (`stop: false`); a hit policy has nothing to pick there, every hit is counted.
+
 ## Checks when a condition is set
 
 A condition is checked when it is set, whether with the breakpoint or later with `bpcond` / `bp_condition`. A bad
-condition is refused with the reason and its column:
+condition is refused with the reason, what was probably meant, and the column (every surface gets the same text):
 
 | Text | Refused because |
 |:--|:--|
-| `A ==` | `condition: operand expected at column 5` |
-| `RD == #9000` on an execution breakpoint | `RD is not supplied by this breakpoint's trigger` |
-| `VAL == 1` on a port-in breakpoint | the same: the value of an IN is not known when the check runs |
-| `NOSUCH == 1` | `unknown name 'NOSUCH'` (not a register, a variable or a loaded label) |
+| `A ==` | `condition: the condition ends after '==': a value is missing at column 5` |
+| `RD == #9000` on an execution breakpoint | `RD (the address read) exists only on a memory read; this breakpoint fires on execution` |
+| `VAL == 1` on a port-in breakpoint | the same, plus `(an IN breakpoint stops before the port is read)` |
+| `HLL == 1` | `unknown name 'HLL': not a register, flag, machine value or label (did you mean HL?)` |
+| `PC == C000` | `unknown name 'C000': ... (for the hex number write #C000)` |
+| `A == 1 and B == 2` | `write 'AND' as &&` (also `or`, `not`, `xor`; `PEEK(x)` points to `M(x)`) |
+| `A 5` | `'5' follows a complete value: an operator (==, &&, +, ...) is missing before it` |
+| `(A == 1` | `'(' at column 1 is not closed: a ')' is missing` |
 | a condition on a keyboard or an event breakpoint | `a condition applies to memory, port, NextREG, copper, beam, magic and chip register breakpoints` |
-| `NR(7) == 0` on a machine without NEXTREG | `the condition does not evaluate here: no NR here` |
+| `NR(7) == 0` on a machine without NEXTREG | `the condition cannot be evaluated on this machine: NR(x): this machine has no ZX Next registers` |
 
 A refused text leaves the old condition in place. An empty text removes the condition. With a machine present the
 condition is also run once on the current state: an expression that cannot be computed there is refused too.
@@ -204,7 +218,8 @@ operands are the card's:
 - `PG0`..`PG3` are the card's RAM page in each 16K window (`#FF` for ROM or flash), `ROMPG` its ROM / flash page at
   `#0000`;
 - `FRAME` and `HITS` are as on the machine (`FRAME` is the machine's frame counter);
-- `T`, `FD` and `DOS` are the machine's state and are refused ("FD is the machine's, not this CPU's");
+- `T`, `FD` and `DOS` are the machine's state and are refused ("FD belongs to the main machine; this breakpoint is
+  on another CPU");
 - labels name the main CPU's addresses and do not resolve.
 
 ```
@@ -229,4 +244,10 @@ the access, any other source at the frame end. See
   (`gs.A` on a main CPU breakpoint), and a check on every memory access of an instruction.
 - Labels are not followed when they change.
 - Script callbacks on a hit (Lua and Python code run on the breakpoint or a tap): [script-callbacks.md](script-callbacks.md).
-- The Qt breakpoint editor does not have a condition field yet.
+- The Qt breakpoint editor has a Condition field: it is checked while typed against the breakpoint's kind and access
+  (OK stays off while it is refused), the reason shows under it with the offending word marked, and a good condition
+  shows how it binds ("Stops when: (A == 5) & 1"). The breakpoint list has a Condition column and a Hits column (the
+  hits so far, the hit policy, the matches the condition was checked on in the tooltip); a condition that failed while
+  running shows as "Condition failed" with the reason in the tooltip. A stop shows in the debugger itself: a line
+  under the speed control names the breakpoint, the access (execution at, write to, OUT to port ...), the condition
+  that held and the hit count, with links to edit it and to the list; it goes when the machine moves on.

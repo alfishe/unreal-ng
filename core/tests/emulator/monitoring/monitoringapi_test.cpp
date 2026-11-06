@@ -11,6 +11,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/monitoring/clientstats.h"
+#include "emulator/monitoring/hostdevices.h"
 #include "emulator/monitoring/monitoringapi.h"
 #include "emulator/ports/deviceaccesswatch.h"
 #include "emulator/ports/portdecoder.h"
@@ -184,6 +185,32 @@ TEST_F(MonitoringApi_Test, TheNamesAreSurfaceReadoutsAndMediaDiskSaysDirty)
     ASSERT_NE(drives, nullptr);
     ASSERT_FALSE(drives->items.empty()) << "a Pentagon has Beta 128 drives";
     EXPECT_NE(drives->items[0].find("dirty"), nullptr);
+}
+
+/// controllers.devices is the process's: the owner's published devices, available false without an owner
+TEST(MonitoringApiDevices_Test, ControllersDevicesIsWhatTheOwnerPublished)
+{
+    monitoring::HostDevices& board = monitoring::HostDevices::Instance();
+    board.Withdraw();
+    EXPECT_TRUE(monitoring::IsProcessName("controllers.devices"));
+    monitoring::Reply reply = monitoring::Call("controllers.devices", StateNode::Object());
+    ASSERT_TRUE(reply.Ok());
+    EXPECT_FALSE(reply.body.find("available")->b) << "no host input owner in the test";
+    EXPECT_EQ(reply.body.find("devices"), nullptr);
+
+    StateNode devices = StateNode::Array();
+    StateNode pad = StateNode::Object();
+    pad["id"] = "fake:1";
+    devices.push(pad);
+    board.Publish(devices, 7);
+    reply = monitoring::Call("controllers.devices", StateNode::Object());
+    ASSERT_TRUE(reply.Ok());
+    EXPECT_TRUE(reply.body.find("available")->b);
+    EXPECT_EQ(reply.body.find("revision")->i, 7);
+    ASSERT_EQ(reply.body.find("devices")->items.size(), 1u);
+    EXPECT_EQ(reply.body.find("devices")->items[0].find("id")->s, "fake:1");
+    board.Withdraw();
+    EXPECT_FALSE(monitoring::ReadProcess("controllers.devices").find("available")->b);
 }
 
 TEST_F(MonitoringApi_Test, HostClientsCountWhatThePlanesReport)

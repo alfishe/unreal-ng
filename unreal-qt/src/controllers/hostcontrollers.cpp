@@ -37,9 +37,11 @@
 #include "clientqueue.h"
 #include "debugger/ttd/timetravelhooks.h"
 #include "devicedatabase.h"
+#include "devicesfeed.h"
 #include "emulator/config.h"
 #include "emulator/io/controllers/controllercontrol.h"
 #include "emulator/io/controllers/controllermanager.h"
+#include "emulator/monitoring/hostdevices.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "haptics/profilehaptics.h"
@@ -315,6 +317,7 @@ HostControllers::~HostControllers()
     onUnbound();
 #ifdef ENABLE_CONTROLLERS
     HostInputControl::SetOwner(nullptr);
+    monitoring::HostDevices::Instance().Withdraw();
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_FILE_LOADED, _fileObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_GUEST_PROGRAM, _guestObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_SURFACE_CONTEXT, _contextObserver);
@@ -808,7 +811,10 @@ void HostControllers::poll()
     followContext();
     updateWheelMenu();  // a window may have got its native handle
     if (_service->Revision() == _revision && machine == _machineRevision)
+    {
+        publishDevices();
         return;
+    }
     _revision = _service->Revision();
     _machineRevision = machine;
     const auto promotions = _service->TakePromotions();
@@ -902,8 +908,60 @@ void HostControllers::poll()
             emit deviceDisconnected(QString::fromStdString(name), paused);
         emit notice(tr("%1 disconnected").arg(QString::fromStdString(name)));
     }
+    publishDevices();  // after Reapply: the context holds the arrived devices
 #endif
 }
+
+#ifdef ENABLE_CONTROLLERS
+namespace
+{
+StateNode ToStateNode(const JsonValue& value)
+{
+    switch (value.GetType())
+    {
+        case JsonValue::Type::Null:
+            return {};
+        case JsonValue::Type::Bool:
+            return StateNode(value.AsBool());
+        case JsonValue::Type::Number:
+        {
+            const double number = value.AsNumber();
+            const auto whole = static_cast<int64_t>(number);
+            return static_cast<double>(whole) == number ? StateNode(whole) : StateNode(number);
+        }
+        case JsonValue::Type::String:
+            return StateNode(value.AsString());
+        case JsonValue::Type::Array:
+        {
+            StateNode node = StateNode::Array();
+            for (const JsonValue& item : value.Items())
+                node.push(ToStateNode(item));
+            return node;
+        }
+        case JsonValue::Type::Object:
+        {
+            StateNode node = StateNode::Object();
+            for (const auto& [key, member] : value.GetMembers())
+                node.members.emplace_back(key, ToStateNode(member));
+            return node;
+        }
+    }
+    return {};
+}
+}  // namespace
+
+void HostControllers::publishDevices()
+{
+    // The `controllers.devices` topic (monitoring/hostdevices.h): built again only when a device, a host verb or the
+    // status period says so, published only when it changed
+    if (_controlOwner == nullptr ||
+        !_devicesFeed.Poll(*_controlOwner, _service->Revision(), DevicesFeed::Clock::now()))
+        return;
+    const JsonValue* devices = _devicesFeed.Value().Find("devices");
+    monitoring::HostDevices::Instance().Publish(devices != nullptr ? ToStateNode(*devices) : StateNode::Array(),
+                                                _devicesFeed.Revision());
+}
+#endif
 
 connectorview::Led HostControllers::ConnectorLed() const
 {

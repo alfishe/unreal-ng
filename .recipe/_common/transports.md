@@ -90,6 +90,15 @@ Every tool answers **dual content**: `content[]` (human/LLM summary) plus
 returns). Tool-level failures are `isError: true` results with remediation
 hints, not JSON-RPC errors.
 
+**Keep answers short with `max_chars`.** Any tool takes `"max_chars": 2000`
+(500 or more): the answer fits in that many characters, keeps its first lines
+and the last ones, and one line says what was left out and how to get it
+(`... 230 of 260 lines (17,412 chars) left out for max_chars=2000; narrow the
+call or raise max_chars`); JSON loses the tail of its biggest arrays and says so in
+`truncated`. Use it on reads whose size you cannot guess (a memory read, a
+disassembly, a label list, a trace) instead of reading everything and asking
+again. REST and WebSocket calls take `?max_chars=2000` the same way.
+
 Tool catalog (16: 14 smart tools + the 2 router tools):
 
 | Tool | Highlights |

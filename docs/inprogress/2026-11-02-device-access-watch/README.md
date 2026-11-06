@@ -273,6 +273,8 @@ Default: stays off; the load window and the feature turn it on.
 - **Undeclared ports.** A port the registry does not declare goes to `board` by its exact address: a bare 48K /
   128K has no Kempston joystick, it is a card there, so a `#1F` read with no card fitted is `board.001f`, with the
   `kempston` card as its candidate (Built: card candidates). A card is proposed, never fitted on its own.
-- **Test time.** `HostInputMachine_Test.AccessWatchSeesTheKeyboardOnEveryMachine` creates every machine of the
-  refdata: 1.3-1.5 s under a machine load of about 150, over the 1 s integration budget; shorten it or move the
-  full sweep behind `TestTier::Long()` if it stays there under normal load.
+- **Test time** (settled 2026-11-04). The sweep over every machine of the refdata is one test per machine
+  (`Registry/HostInputMachineEvery_Test.AccessWatchSeesTheKeyboard/<model>`), so each model's decoder hook keeps its
+  own check and the parallel runner spreads them. Measured alone: the three frames take 0.3-3.3 ms on every model,
+  the rest is the model's creation (4-20 ms, TS-Conf about 80 ms); one frame is not enough (the watch's window has
+  not closed). Nothing is behind `TestTier::Long()`: dropping models would lose the very check.

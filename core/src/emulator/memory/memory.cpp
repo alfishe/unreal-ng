@@ -231,6 +231,38 @@ MemoryInterface* Memory::GetDebugMemoryInterface()
     return result;
 }
 
+MemoryInterface* Memory::GetReadTapMemoryInterface()
+{
+    return new MemoryInterface(&Memory::MemoryReadTapped, &Memory::MemoryWriteTapPass, &Memory::MemoryReadM1Tapped);
+}
+
+/// A read through the read-tap interface: the chosen interface's read (contention, overlay, the model's own fast
+/// read), then the read filter's bit. As on the debug path a stopping breakpoint there is counted only: it stops on
+/// the debug path
+uint8_t Memory::MemoryReadTapped(uint16_t addr, bool isExecution)
+{
+    const uint8_t value = (this->*_readTapInner->MemoryRead)(addr, isExecution);
+    if (_tapFilter->MemoryBit(BRK_KIND_READ, addr)) [[unlikely]]
+        if (_context->pDebugManager != nullptr)
+            (void)_context->pDebugManager->GetBreakpointsManager()->HandleMemoryRead(addr, value);
+    return value;
+}
+
+/// The opcode fetch: the debug path tells the read taps of fetches too (ReadDebugEffects)
+uint8_t Memory::MemoryReadM1Tapped(uint16_t addr, bool isExecution)
+{
+    const uint8_t value = (this->*_readTapInner->MemoryReadM1)(addr, isExecution);
+    if (_tapFilter->MemoryBit(BRK_KIND_READ, addr)) [[unlikely]]
+        if (_context->pDebugManager != nullptr)
+            (void)_context->pDebugManager->GetBreakpointsManager()->HandleMemoryRead(addr, value);
+    return value;
+}
+
+void Memory::MemoryWriteTapPass(uint16_t addr, uint8_t value)
+{
+    (this->*_readTapInner->MemoryWrite)(addr, value);
+}
+
 /// Overlay read: the inner access first (Fast / Debug, contended or not), so
 /// the video logic's wait, model overrides (ScorpionMemory's ProfROM strobes,
 /// virtual), the access tracker, TTD coverage and probes and read breakpoints
@@ -377,7 +409,8 @@ void Memory::ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, t
     }
 
     /// region <Read breakpoint logic>
-    if (_feature_breakpoints_enabled && _context->pDebugManager != nullptr)
+    // Read taps armed on the read-tap interface still hear the debug path's reads (debug mode on for another reason)
+    if ((_feature_breakpoints_enabled || _readTapDemand) && _context->pDebugManager != nullptr)
     {
         Emulator& emulator = *_context->pEmulator;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
@@ -452,7 +485,8 @@ void Memory::MemoryWriteTapped(uint16_t addr, uint8_t value)
 void Memory::SetWriteTapDemand(bool on, const BreakpointHotState* filter)
 {
     _writeTapDemand = on && filter != nullptr;
-    _tapFilter = filter;
+    if (filter != nullptr)
+        _tapFilter = filter;
     RefreshWriteHooks();
 }
 
@@ -953,6 +987,13 @@ void Memory::MigratePointersAfterReallocation(uint8_t* oldBase, uint8_t* newBase
 //
 // Switch to certain ROM section RM_SOS | RM_128 | RM_DOS | RM_SYS
 // Address space: [0x0000 - 0x3FFF]
+bool Memory::IsDosAvailable() const
+{
+    if (base_dos_rom == nullptr)
+        return false;
+    return base_sys_rom != nullptr || _context->config.mem_model == MM_SPECTRUM48;
+}
+
 void Memory::SetROMMode(ROMModeEnum mode)
 {
     EmulatorState& state = _context->emulatorState;
@@ -964,7 +1005,7 @@ void Memory::SetROMMode(ROMModeEnum mode)
     // Validate the requested mode against the available ROMs (guards from the
     // original m_reset()): TR-DOS mode requires the DOS + service ROMs to be
     // loaded, the memory cache is not emulated
-    bool dosAvailable = base_dos_rom != nullptr && base_sys_rom != nullptr;
+    const bool dosAvailable = IsDosAvailable();
     if (mode == RM_DOS && !(config.trdos_present && dosAvailable))
         mode = RM_SOS;
     if (mode == RM_CACHE)
@@ -1048,9 +1089,12 @@ void Memory::UpdateZ80Banks()
     if (UpdateModelBanks())
         return;
 
-    // TR-DOS session machinery requires both DOS and service ROMs to be present
+    // TR-DOS session machinery requires the DOS ROM and (with a #7FFD) the service ROM
     // (models without them can never enter a TR-DOS session)
-    bool dosAvailable = base_dos_rom != nullptr && base_sys_rom != nullptr;
+    const bool dosAvailable = IsDosAvailable();
+    // The 48K has no #7FFD: its only ROM is the 48K BASIC one, so it always counts as selected
+    // (a snapshot may leave p7FFD at 0 there)
+    const bool sosSelected = (state.p7FFD & 0x10) || config.mem_model == MM_SPECTRUM48;
 
     // Recalculate TR-DOS session flags on every bank update (port of the original
     // UnrealSpeccy set_banks()): CF_TRDOS itself is preserved, the derived session
@@ -1072,7 +1116,7 @@ void Memory::UpdateZ80Banks()
     }
     else if ((state.flags & CF_TRDOS) && dosAvailable)
     {
-        if (state.p7FFD & 0x10)
+        if (sosSelected)
         {
             SetROMDOS();
         }
@@ -1083,7 +1127,7 @@ void Memory::UpdateZ80Banks()
     }
     else
     {
-        if (state.p7FFD & 0x10)
+        if (sosSelected)
         {
             SetROM48k();
         }
@@ -1105,7 +1149,9 @@ void Memory::UpdateZ80Banks()
     }
 
     unsigned char dosflags = CF_LEAVEDOSRAM;
-    if (config.mem_model == MM_PENTAGON || IsProfiModel(config.mem_model))
+    // The Beta 128 on a 48K pages TR-DOS out on an M1 at #4000 and above, as the Pentagon (its ROM select
+    // flip-flop resets on A14 | A15 during M1)
+    if (config.mem_model == MM_PENTAGON || IsProfiModel(config.mem_model) || config.mem_model == MM_SPECTRUM48)
         dosflags = CF_LEAVEDOSADR;
 
     if ((state.flags & CF_TRDOS) && dosAvailable)
@@ -1114,7 +1160,7 @@ void Memory::UpdateZ80Banks()
         // semantics (PC leaves ROM area / execution from RAM)
         state.flags |= dosflags | CF_DOSPORTS;
     }
-    else if ((state.p7FFD & 0x10) && config.trdos_present && dosAvailable)
+    else if (sosSelected && config.trdos_present && dosAvailable)
     {
         // 48K ROM slot selected with Beta128 attached: the DOS ROM will be paged in
         // automatically once execution reaches $3Dxx (armed in Z80Step).

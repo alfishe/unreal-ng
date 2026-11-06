@@ -22,6 +22,35 @@ Reference: `POST/GET /api/v1/emulator/{id}/video/window/record`, `.../record/fra
 | A still of the window as drawn | `screenshot source=window` ([crt-effects.md](crt-effects.md)) |
 | **The window as drawn + the on-screen keyboard + sound, every frame** | this recipe (`window_record_*`, `/video/window/record*`) |
 
+### From the GUI: the recording panel and the Video Recording dialog
+
+No automation needed for a plain "record what I see". Two windows offer it, with the same options: the recording
+panel (Tools > Recording, also the toolbar) and the full dialog (Tools > Video Recording...). Set the **Source**
+list (Raw / Window) to **Window**, then press *Start Rec* / *Start*. The file gets the window as drawn (CRT shader,
+temporal processing) and the machine's sound; the keyboard is not drawn (use `keyboard=` through the planes for that).
+
+- **One set of options.** Format, codec, engine, quality, capture, size, profile, Source, sound and the audio-only
+  formats live in one settings store (`QSettings("unreal-ng", "recording")`) and one rule set
+  (`unreal-qt/src/widgets/recordingplan.h`, tested by `RecordingPlan_Test`). Change an option in one window and the
+  other follows at once; a window recording started in one is shown as running in the other.
+- **When Source is active.** Window is offered for H.264 / H.265 in MP4 / MKV / MOV; GIF, WebP, VP9, AVI, APNG and
+  the audio formats record the raw frame buffer only (the list is greyed). ProRes 4444 is window-only, MOV only,
+  needs a Mac with ffmpeg, and is listed under any engine (Native included); choosing it fixes Source to Window.
+- **What a Window recording ignores.** Capture region and output size are greyed (the file is the window's picture);
+  there is no pause. The profile list (Native / 1080p / 1440p / 4K) applies to H.264 / H.265 / ProRes and is greyed
+  for the other codecs; with a profile the CRT is drawn at the frame's height. Quality maps to the encoder preset
+  (Fastest .. Best = 1 / 3 / 5 / 7 / 9) in both windows.
+- On a Mac with View > GPU acceleration on (and for ProRes 4444) the project's own VideoToolbox encoder
+  (`VideoToolboxEncoder`, AVAssetWriter) writes the file: no ffmpeg, picture and sound in one MP4 / MOV from the
+  start, the picture goes straight into the encoder's pixel buffer, and a picture is held until the next one's time,
+  so a lagging encoder drops frames instead of piling up work. H.265 and H.264 are 4:2:0 there (the hardware has no
+  4:4:4 H.26x); ProRes 4444 is 4:4:4. MKV, GPU acceleration off, and other systems use ffmpeg (x264 / x265 4:4:4:
+  a CRT mask keeps its colour, but 4K is slower than real time; the picture repeats while the encoder is behind).
+- With ffmpeg the sound goes into the same process through a FIFO (macOS / Linux): nothing to copy and mux at the
+  end. Stop returns at once; a slow encoder is waited for, never killed.
+- Same folder and `unreal_<time>` name as the raw recording. The choice is remembered (`windowSource` in the
+  settings above). It is the same recorder as `video window record`: one window recording at a time.
+
 ## The clock is the machine's
 
 The file's time is emulated time, not the host's. Every emulated frame is one video frame at the machine's own rate

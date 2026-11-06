@@ -287,6 +287,9 @@ bool Config::ParseConfig(IniFile& inimanager)
     // Populate rom files for each platform
     CopyStringValue(inimanager.GetValue(rom, "PENTAGON", nullptr), config.pent_rom_path, sizeof config.pent_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "48k", nullptr), config.zx48_rom_path, sizeof config.zx48_rom_path);
+    // The Beta 128's own TR-DOS ROM on a board whose ROM file has none (the 48K): empty = no TR-DOS
+    config.dos_rom_path[0] = '\0';
+    CopyStringValue(inimanager.GetValue(rom, "TRDOS", nullptr), config.dos_rom_path, sizeof config.dos_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "128k", nullptr), config.zx128_rom_path, sizeof config.zx128_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PLUS3", nullptr), config.plus3_rom_path, sizeof config.plus3_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PLUS2", nullptr), config.plus2_rom_path, sizeof config.plus2_rom_path);

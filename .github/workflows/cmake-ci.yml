@@ -34,7 +34,10 @@ jobs:
   # Pushes to master build at most once per CI_MIN_INTERVAL_MINUTES (repository variable, Settings -> Secrets and
   # variables -> Actions -> Variables; default 60, 0 = no throttle). A push that comes too early waits here; a newer push
   # cancels older waiting throttle jobs (concurrency on throttle), so only the newest commit of a burst waits. Builds
-  # that already started are never cancelled. Pull requests build at once (no wait, own concurrency group).
+  # that already started are never cancelled: each build job's concurrency group has cancel-in-progress false, so a
+  # newer run's job stays pending until the running one ends (a still newer one replaces it in the queue). With true,
+  # build-gcc-latest (~85 min) never finished under the 60 min interval. Pull requests build at once (no wait, own
+  # concurrency group).
   throttle:
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -102,7 +105,7 @@ jobs:
     runs-on: ubuntu-latest # <--- The VM that runs Docker
     concurrency:
       group: ci-build-linux-${{ github.event_name == 'push' && 'master' || github.run_id }}
-      cancel-in-progress: true
+      cancel-in-progress: false
 
     # 1. TELL GITHUB TO RUN INSIDE YOUR IMAGE
     container:             # <--- Custom environment inside the VM
@@ -159,15 +162,18 @@ jobs:
     container: gcc:16
     concurrency:
       group: ci-build-gcc-${{ github.event_name == 'push' && 'master' || github.run_id }}
-      cancel-in-progress: true
+      cancel-in-progress: false
 
     steps:
       - name: Install build dependencies
         run: |
           apt-get update
-          # libudev-dev and pkg-config: the Stream Deck companion's hidraw backend (steps at the end)
+          # libudev-dev and pkg-config: the Stream Deck companion's hidraw backend (steps at the end); the X11 and
+          # Wayland dev headers: SDL3's video drivers for the terminal debuggers' pixel window (lib/SDL fails its
+          # configure on a partial set, e.g. X11 without Xcursor) - the same list as release.yml
           apt-get install -y --no-install-recommends cmake ninja-build uuid-dev libssl-dev zlib1g-dev \
-            libudev-dev pkg-config
+            libudev-dev pkg-config libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev \
+            libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev libegl-dev libdecor-0-dev
 
       - uses: actions/checkout@v7
         with:
@@ -225,7 +231,7 @@ jobs:
     timeout-minutes: 30
     concurrency:
       group: ci-streamdeck-linux-${{ github.event_name == 'push' && 'master' || github.run_id }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     container:
       image: ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04
       credentials:
@@ -276,7 +282,7 @@ jobs:
     timeout-minutes: 30
     concurrency:
       group: ci-streamdeck-macos-${{ github.event_name == 'push' && 'master' || github.run_id }}
-      cancel-in-progress: true
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v7
@@ -328,7 +334,7 @@ jobs:
     timeout-minutes: 30
     concurrency:
       group: ci-streamdeck-msvc-${{ github.event_name == 'push' && 'master' || github.run_id }}
-      cancel-in-progress: true
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v7
@@ -387,7 +393,7 @@ jobs:
     timeout-minutes: 30
     concurrency:
       group: ci-streamdeck-mingw-${{ github.event_name == 'push' && 'master' || github.run_id }}
-      cancel-in-progress: true
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v7
@@ -461,7 +467,7 @@ jobs:
     timeout-minutes: 45
     concurrency:
       group: ci-debuggers-linux-${{ github.event_name == 'push' && 'master' || github.run_id }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     container:
       image: ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04
       credentials:
@@ -505,7 +511,7 @@ jobs:
     timeout-minutes: 45
     concurrency:
       group: ci-debuggers-macos-${{ github.event_name == 'push' && 'master' || github.run_id }}
-      cancel-in-progress: true
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v7
@@ -558,7 +564,7 @@ jobs:
     timeout-minutes: 45
     concurrency:
       group: ci-debuggers-msvc-${{ github.event_name == 'push' && 'master' || github.run_id }}
-      cancel-in-progress: true
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v7
@@ -619,7 +625,7 @@ jobs:
     timeout-minutes: 45
     concurrency:
       group: ci-debuggers-mingw-${{ github.event_name == 'push' && 'master' || github.run_id }}
-      cancel-in-progress: true
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v7
