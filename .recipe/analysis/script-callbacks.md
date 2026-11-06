@@ -39,7 +39,7 @@ print(#zeros, zeros[1], zeros[2])'
 ```
 
 - A refusal comes back as `-1` and the reason: `on_tap({write = 0x5C78, ["if"] = "FOO == 1"}, f)` gives
-  `-1	condition: unknown name 'FOO' at column 1`.
+  `-1	condition: unknown name 'FOO': not a register, flag, machine value or label at column 1`.
 - `callbacks()` lists every callback of the emulator, from every script, with its statistics: `hits`, `dropped`,
   `pending`, `calls`, `errors`, `overruns`, `total_us`, `max_us`, `p99_us`, `last_error`.
 - An error in the function is counted, not fatal: `errors` grows and `last_error` holds the message.

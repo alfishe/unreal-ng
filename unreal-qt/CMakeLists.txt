@@ -632,6 +632,8 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/companioncontroller.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/companioncontroller.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/ttdwidget_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/recordingsettings_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/recordingplan_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.cpp"
@@ -720,10 +722,26 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/symbolbundlepreferences_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolbundlepreferences.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolbundlepreferences.h"
+        # The breakpoint editor's condition: checked while typed, the reason and its place shown
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointeditor_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointeditor.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointeditor.h"
+        # The debugger's stop line: the breakpoint the machine stopped at, in words
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointstopline_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.h"
+        # The debugger's machine panels: CMOS clock, port watch, port events (enhancements #4, #6, #7)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggerpanels_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/rtcdialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/rtcdialog.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/portwatchdialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/portwatchdialog.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/porteventsdialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/porteventsdialog.h"
         # The debugger's PC history dialog (debugger additions tdd §7)
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/pchistorydialog_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/pchistorypane_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorypane.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorypane.h"
         # The Network traffic window (network #91 T4): rows, filter, decode, Seek here
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/trafficwindow_test.cpp"
         # Windows against an instance automation removes while they show it (BUGS.md #11)

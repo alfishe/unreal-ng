@@ -229,6 +229,8 @@ Json::Value BreakpointJson(const BreakpointDescriptor& bp)
     if (bp.hitMode != BRK_HIT_ALWAYS)
         j["hit_target"] = static_cast<Json::UInt>(bp.hitTarget);
     j["hit_count"] = static_cast<Json::UInt>(bp.hitCount);
+    // False: the breakpoint only counts its hits (BRK_COUNT_TAP)
+    j["stop"] = bp.tapSink != BRK_COUNT_TAP;
     if (bp.condition)
     {
         // Counted on every match; hit_count counts the matches whose condition held
@@ -1318,6 +1320,16 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
     {
         badRequest("'hit_mode' must be always, equal, at_least or multiple");
         return;
+    }
+    // stop: false counts the hits and never stops (hit_count; the hit policy still counts as for a stop)
+    if (body.isMember("stop"))
+    {
+        if (!body["stop"].isBool())
+        {
+            badRequest("'stop' must be true or false");
+            return;
+        }
+        spec.stop = body["stop"].asBool();
     }
     // Condition: an expression in the Unreal language (condition_dialect "c": C precedence, decimal numbers)
     if (body.isMember("condition"))

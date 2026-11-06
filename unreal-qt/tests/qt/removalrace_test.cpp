@@ -17,7 +17,7 @@
 #include "debugger/diskfilesdialog.h"
 #include "debugger/disksectordialog.h"
 #include "debugger/livesourcewindow.h"
-#include "debugger/pchistorydialog.h"
+#include "debugger/pchistorypane.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatorcontext.h"
@@ -122,9 +122,9 @@ TEST_F(RemovalRace_Test, DiskFilesDialog)
     DialogOutlivesTheRemoval<DiskFilesDialog>("removal-disk-files", nullptr);
 }
 
-TEST_F(RemovalRace_Test, PcHistoryDialog)
+TEST_F(RemovalRace_Test, PcHistoryPane)
 {
-    DialogOutlivesTheRemoval<PcHistoryDialog>("removal-pc-history", nullptr);
+    DialogOutlivesTheRemoval<PcHistoryPane>("removal-pc-history", nullptr);
 }
 
 // The Live Source window keeps the instance's id, not the instance: after the removal it is freed at once and the

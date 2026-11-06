@@ -12,7 +12,7 @@ MemoryPagesWidget::MemoryPagesWidget(QWidget *parent) : QWidget(parent), ui(new 
 
     m_mainThread = QApplication::instance()->thread();
 
-    m_debuggerWindow = static_cast<DebuggerWindow*>(parent);
+    m_debuggerWindow = DebuggerWindow::Of(parent);
 
     // Shortcuts for value labels
     page0Value = ui->page_0_value_label;

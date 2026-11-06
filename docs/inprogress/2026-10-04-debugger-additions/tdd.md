@@ -358,7 +358,7 @@ GET /api/v1/emulator/{id}/debug/pchist?depth=4
 
 `PcHistory_Test`: off until armed (no step-work bit, nothing recorded), newest first, disarm keeps the entries, the
 ring keeps the newest 1024, the TS-Conf page of window 3, the first report arms it, the snapshot's `pchist` field
-and its limit. MCP `InspectState_PcHistoryAspect`; Qt `PcHistoryDialog_Test`.
+and its limit. MCP `InspectState_PcHistoryAspect`; Qt `PcHistoryPane_Test`.
 
 ### 7.4 A/B benchmark
 

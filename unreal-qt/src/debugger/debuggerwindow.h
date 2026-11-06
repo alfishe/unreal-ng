@@ -10,8 +10,11 @@
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorbinding.h>
+#include "debugger/breakpointstopline.h"
 
+#include <QLabel>
 #include <QMenu>
+#include <QPointer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QWidget>
@@ -34,6 +37,9 @@ class DebuggerWindow : public QWidget, public Observer
     Q_OBJECT
 public:
     explicit DebuggerWindow(std::shared_ptr<Emulator> emulator = nullptr, QWidget* parent = nullptr);
+
+    /// The debugger window a pane sits in, however deep (a pane's parent is its frame); null outside one
+    static DebuggerWindow* Of(QWidget* widget);
 
     /// The panes as control surface contexts (control surfaces architecture.md §6): disassembly `debug.disasm`,
     /// registers `debug.registers`, memory `debug.memory`, stack `debug.stack`
@@ -66,6 +72,8 @@ public:
     /// region <Helper methods>
 protected:
     void updateState();
+    /// The memory view at PC's page (a paused machine)
+    void showMemoryAtPc();
     void loadState();
     void saveState();
     void updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset, bool canManageBreakpoints,
@@ -91,7 +99,11 @@ private slots:
 
     // Legacy MessageCenter handlers (to be removed)
     void handleEmulatorStateChanged(int id, Message* message);
-    void handleMessageBreakpointTriggered(int id, Message* message);
+    /// A breakpoint of this window's machine fired (GUI thread): the step traps finish, the stop line tells which
+    void onBreakpointHit(const BreakpointHit& hit);
+    /// The stop line goes when the machine moves on (continue, a step, a reset)
+    void clearStopBanner();
+    void onStopBannerLink(const QString& link);
     void handleCPUStepMessage(int id, Message* message);
     void handleLabelChanged(int id, Message* message);
 
@@ -116,7 +128,12 @@ private slots:
     void showDiskSector();
     void showDiskFiles();
     void showLiveSource();
-    void showPcHistory();
+    void showPcHistory(bool shown);
+    /// Device memory / Disk sector on only when the machine has regions / drives
+    void updateMachineActions();
+    void showPortWatch();
+    void showRtc();
+    void showPortEvents();
     void showBreakpointManager();
     void showLabelManager();
     void showVisualizationWindow();
@@ -204,6 +221,7 @@ private:
     QAction* diskFilesAction;
     QAction* liveSourceAction;
     QAction* pcHistoryAction;
+    QToolButton* machineButton = nullptr;  ///< Machine: Ports, CMOS clock, Port events
     QAction* breakpointsAction;
     QAction* labelsAction;
     QAction* visualizationAction;
@@ -220,9 +238,15 @@ private:
     // Visualization window
     class DebugVisualizationWindow* _visualizationWindow = nullptr;
     class LiveSourceWindow* _liveSourceWindow = nullptr;
+    class PcHistoryPane* _pcHistoryPane = nullptr;  // in the splitter, right of the disassembly
+    QPointer<class PortEventsDialog> _portEventsDialog;  // not modal: open while the program runs
 
     // Speed control widget
     SpeedControlWidget* m_speedControl = nullptr;
+    // The stop line under the speed control: the breakpoint the machine stopped at
+    QLabel* _stopBanner = nullptr;
+    uint16_t _stopBreakpointId = BRK_INVALID;
+    uint64_t _breakpointObserver = 0;  // NC_EXECUTION_BREAKPOINT, filtered by the machine's id
     PaneFocus* _paneFocus = nullptr;
 };
 

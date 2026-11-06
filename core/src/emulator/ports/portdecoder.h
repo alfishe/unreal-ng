@@ -742,6 +742,14 @@ public:
     /// the base class and is shared by the model decoders for session gating
     bool IsBeta128Port(uint16_t decodedPort) const;
 
+    /// A Beta 128 on a Sinclair (48K-BETA128, the 128K and +3 decoders): the interface decodes the low byte only
+    /// (FUSE beta.c; MAME beta128.cpp decodes even fewer lines) and drives the bus only while the TR-DOS ROM is
+    /// paged in (CF_TRDOS). Returns false when the low byte is not a Beta port; otherwise the cycle is the Beta's:
+    /// with TR-DOS on it reaches the WD1793 / system register, with it off a read stays undecoded (Z80::in()
+    /// serves the floating bus) and a write is dropped, both marked wasBeta128Gated
+    bool TryBeta128LowBytePortIn(uint16_t port, uint8_t& result, PortDecodeDisposition& disp);
+    bool TryBeta128LowBytePortOut(uint16_t port, uint8_t value, PortDecodeDisposition& disp);
+
     /// Whether a decoded port value belongs to the General Sound host mailbox
     /// (#33 reset/NMI, #B3 data, #BB command/status). Shared the same way as
     /// IsBeta128Port, for model decoders to gate these rows on whether a GS

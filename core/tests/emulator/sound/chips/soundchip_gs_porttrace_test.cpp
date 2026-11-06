@@ -158,3 +158,38 @@ TEST(SoundChip_GeneralSound_PortTrace, RealRomProducesDacActivity)
     // idle/unloaded firmware runs with interrupts enabled is exactly the open
     // question this diagnostic exists to answer empirically (see printf above).
 }
+
+/// The card CPU's reads are traced with the byte they returned: the host's command through COMRG (port 1), its data
+/// through DATRG (port 2), not 0
+TEST(SoundChip_GeneralSound_PortTrace, CardReadsRecordTheByteRead)
+{
+    EmulatorContext ctx(LoggerLevel::LogError);
+    auto chip = makeChip(ctx);
+
+    const uint8_t program[] = {
+        0xDB, 0x01,  // IN A,(#01) - COMRG: the host's command
+        0xDB, 0x02,  // IN A,(#02) - DATRG: the host's data
+        0x76         // HALT
+    };
+    chip->loadROM(writeRom("gs-trace-comrg.rom", program, sizeof(program)));
+
+    chip->startPortTrace();
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_DATA, 0x5C);
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0xD1);
+    chip->handleFrameStart();
+    chip->handleFrameEnd(SAMPLES_PER_FRAME);
+
+    int comrg = -1;
+    int datrg = -1;
+    for (const auto& e : chip->getPortTraceEvents())
+    {
+        if (e.side != GSTraceSide::GsInternal || e.isOut())
+            continue;
+        if (e.port == 0x01 && comrg < 0)
+            comrg = e.value;
+        if (e.port == 0x02 && datrg < 0)
+            datrg = e.value;
+    }
+    EXPECT_EQ(comrg, 0xD1) << "the card's COMRG read holds the command byte";
+    EXPECT_EQ(datrg, 0x5C) << "the card's DATRG read holds the data byte";
+}

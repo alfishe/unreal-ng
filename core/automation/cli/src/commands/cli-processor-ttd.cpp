@@ -1306,6 +1306,8 @@ void CLIProcessor::HandleTTDPortEvents(const ClientSession& session, EmulatorCon
             if (!keys.empty())
                 ss << "  keys " << keys;
         }
+        if (const StateNode* what = h.find("what"))
+            ss << "  - " << what->s;
         if (const StateNode* regs = h.find("registers"))
         {
             ss << std::hex << std::uppercase << std::setfill('0');

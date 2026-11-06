@@ -6,6 +6,7 @@
 #include <chrono>
 #include <future>
 #include <memory>
+#include <thread>
 
 #include "devicescreenwrapper.h"
 
@@ -155,7 +156,32 @@ bool WindowViewProvider::StartWindowRecording(const std::string& emulatorId, con
 
 bool WindowViewProvider::StopWindowRecording(WindowRecordingStatus& out, std::string& error)
 {
-    return RecordHere(RecordAction::Stop, out, error);
+    // The GUI thread only stops the pictures; the file is finished in the background. This caller (an automation
+    // plane, never the GUI thread) waits for it, polling, so the window stays responsive meanwhile
+    if (!RecordHere(RecordAction::Stop, out, error))
+        return false;
+    const auto deadline = std::chrono::steady_clock::now() + kRecordingStopTimeout;
+    WindowRecordingStatus now;
+    for (;;)
+    {
+        if (!RecordHere(RecordAction::Status, now, error))
+            return false;
+        if (!now.finalizing)
+            break;
+        if (std::chrono::steady_clock::now() > deadline)
+        {
+            error = "The file was not finished within " + std::to_string(kRecordingStopTimeout.count() / 1000) + " s";
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    out.finalizing = false;
+    if (!now.error.empty())
+    {
+        error = now.error;
+        return false;
+    }
+    return true;
 }
 
 bool WindowViewProvider::GetWindowRecording(WindowRecordingStatus& out, std::string& error)

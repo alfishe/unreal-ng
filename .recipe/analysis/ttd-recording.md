@@ -227,6 +227,22 @@ Every scrub pauses the emulator first and leaves it paused at the new
 position; the screen/UI repaint automatically. To continue live execution
 from a past point: seek, then `POST /ttd/resume` (it resumes the emulator).
 
+### Audio during a replay
+
+The audio capture (`POST /audio/capture`, also `to_file`) keeps working while the machine replays; nothing blocks
+its sample tap (measured on a Pentagon with a 2 kHz beeper loop: 2046 Hz replayed against 2043 Hz live). What gets
+sound differs by move:
+
+- `seek` (either direction) fast-forwards the frames from the nearest checkpoint without rendering sound: only the
+  last frame of the jump reaches the capture (about 1 frame of samples for a 40-, 50- or 80-frame jump).
+- `step-forward` renders the sound of every frame it replays (50 steps gave 51.2 frames of samples).
+
+Short spans: seek to the start, arm a capture, step forward frame by frame. A long span, or the AY register
+writes (the device histories write nothing during a replay): rewind, drop the TTD and free-run with the captures
+armed - [audio-mixer-and-capture.md](../peripherals/audio-mixer-and-capture.md#sound-or-ay-writes-of-a-recorded-ttd-span-rewind-drop-the-ttd-free-run-with-a-capture).
+The synthesizer phase after a `seek` (AY envelope / noise, FM) was not compared with the original on music, only the
+tone; a free run does not have that question.
+
 ### Bookmarks (agent-friendly labels)
 
 ```bash
@@ -309,7 +325,9 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: appli
   `in`, `out`; `arg` (MCP: `event_arg`) is the key name or AY register. `in`/`out` narrow with `port` /
   `port_mask` / `value` / `value_mask`; `newest` returns the last hits first. The reply has `event`,
   `direction`, `count`, `truncated`, `scanned` and `hits[]` (`index`, `frame`, `tinframe`, `port`, `value`,
-  `pc`, plus `ay_register` for AY events). A keyboard read adds `rows` (the half-rows selected) and `keys` (the
+  `pc`, plus `ay_register` for AY events, and `device` / `tags` / `what`: the port map's device, its tags and the
+  access in words - "AY: select register 7 (mixer)", "FDC: command Read sector (#80)", "paging: RAM 3 at #C000,
+  screen 5, ROM 1"). A keyboard read adds `rows` (the half-rows selected) and `keys` (the
   keys it saw down, one half-row only). `context` (default on, off while a recording runs; `true` pauses it) adds
   `registers` (`af` `bc` `de` `hl` `ix` `iy` `sp`) at the IN / OUT instruction and `stack_top` (the word at SP:
   the caller's return address when the key routine pushed nothing) - replayed, the machine put back.

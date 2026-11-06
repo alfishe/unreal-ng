@@ -133,11 +133,10 @@ uint8_t PortDecoder_Spectrum3::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = port;
         disp.wasHandledInline = true;
     }
-    else if (IsBeta128Port(port) && !(_context->emulatorState.flags & CF_TRDOS))
+    else if (TryBeta128LowBytePortIn(port, result, disp))
     {
-        // Beta 128 FDC ports answer only while the TR-DOS ROM is paged in (as in the Pentagon decoder):
-        // outside TR-DOS the port stays undecoded and Z80::in() serves the floating bus
-        disp.wasBeta128Gated = true;
+        // Beta 128 FDC ports: low byte decode, answer only while the TR-DOS ROM is paged in (outside it the port
+        // stays undecoded and Z80::in() serves the floating bus)
     }
     else
     {
@@ -250,6 +249,11 @@ void PortDecoder_Spectrum3::DecodePortOut(uint16_t port, uint8_t value, uint16_t
         disp.decodedPort = 0xBFFD;
         disp.wasDecoded = true;
     }
+
+    // Beta 128 (low byte #1F #3F #5F #7F #FF: A0=1, A1=1, so none of the arms above take it): the WD1793 and #FF
+    // take writes only while the TR-DOS ROM is paged in
+    if (!disp.wasDecoded)
+        TryBeta128LowBytePortOut(port, value, disp);
 
     /// region <Debug logging>
 

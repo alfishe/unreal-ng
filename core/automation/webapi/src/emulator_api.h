@@ -1438,7 +1438,7 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void setVideoViewport(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                           const std::string& id) const;
     /// @brief POST /api/v1/emulator/{id}/video/window/record — body {path, keyboard ("" | "default" | a picture id),
-    /// codec (prores | h264), fps, scale, picture_height, width, height, layout (below | side)}: record the window as it draws, the on-screen keyboard under it (409 headless)
+    /// codec (prores | h264 | h265), hardware, fit, fps, scale, picture_height, width, height, layout (below | side)}: record the window as it draws, the on-screen keyboard under it (409 headless)
     void startVideoWindowRecord(const drogon::HttpRequestPtr& req,
                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                 const std::string& id) const;

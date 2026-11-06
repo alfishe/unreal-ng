@@ -581,11 +581,17 @@ namespace
             source.path.clear();
         }
 
+        std::unique_ptr<Medium> copy;
         if (const DiskImage* disk = medium.Floppy())
-            return std::make_unique<Medium>(source, AccessMode::Session, medium.Format(), disk->Clone(source.path));
-        if (const TapeImage* tape = medium.Tape())
-            return std::make_unique<Medium>(source, medium.Access(), medium.Format(), std::make_unique<TapeImage>(*tape));
-        return nullptr;
+            copy = std::make_unique<Medium>(source, AccessMode::Session, medium.Format(), disk->Clone(source.path));
+        else if (const TapeImage* tape = medium.Tape())
+            copy = std::make_unique<Medium>(source, medium.Access(), medium.Format(), std::make_unique<TapeImage>(*tape));
+        // An untouched medium is still its file's bytes: the copy keeps that identity, so a TTD seek on the target
+        // (the analysis base replaying a recording) sees the recording's medium. A written one is another medium:
+        // its own identity (the copy's path), so a seek reports it instead of setting versions it does not have
+        if (copy && medium.ChangedUnits() == 0)
+            copy->SetIdentity(medium.Identity());
+        return copy;
     }
 
     /// Check (apply = false) or copy (apply = true) the floppies and the tape into the same slots of the target.
@@ -1331,6 +1337,16 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
     second.reset();
     first.reset();
     return report;
+}
+
+bool MachineStateTransfer::MediumMovesWithState(MediaKind kind)
+{
+    return MovesWithState(kind);
+}
+
+std::unique_ptr<Medium> MachineStateTransfer::CopyMovingMedium(const Medium& medium, const std::string& tag)
+{
+    return MovesWithState(medium.Kind()) ? CopyMedium(medium, tag) : nullptr;
 }
 
 void MachineStateTransfer::FitSourceDevices(const CONFIG& source, CONFIG& target)

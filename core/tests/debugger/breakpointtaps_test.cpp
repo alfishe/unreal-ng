@@ -5,7 +5,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -346,4 +348,58 @@ TEST(BreakpointTapsNext_Test, ReadTapsTakeTheDebugPathOnTheNext)
     breakpoints->UnregisterTapSink(id);
     EXPECT_FALSE(emulator->GetFeatureManager()->tapDebugHold());
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// stop = false: a breakpoint of its own that only counts (a tap of no sink, BRK_COUNT_TAP). Every hit is counted, none
+/// stops; the kinds a tap cannot watch and a tap that asks not to stop are refused
+TEST_F(BreakpointTaps_Test, CountOnlyCountsAndNeverStops)
+{
+    BreakpointSpec exec;
+    exec.type = BRK_MEMORY;
+    exec.access = BRK_MEM_EXECUTE;
+    exec.address = 0x8002;
+    exec.stop = false;
+    std::string error;
+    const uint16_t execId = _breakpoints->AddBreakpoint(exec, error);
+    ASSERT_NE(execId, BRK_INVALID) << error;
+
+    BreakpointSpec write = exec;
+    write.access = BRK_MEM_WRITE;
+    write.address = 0x9000;
+    const uint16_t writeId = _breakpoints->AddBreakpoint(write, error);
+    ASSERT_NE(writeId, BRK_INVALID) << error;
+
+    RunPasses(4);
+    EXPECT_EQ(_breakpoints->GetLastTriggeredBreakpointID(), BRK_INVALID) << "a count-only breakpoint never stops";
+    EXPECT_EQ(_breakpoints->GetBreakpointById(execId)->hitCount, 4u);
+    EXPECT_EQ(_breakpoints->GetBreakpointById(writeId)->hitCount, 4u);
+    EXPECT_EQ(_breakpoints->GetBreakpointById(execId)->tapSink, BRK_COUNT_TAP);
+    EXPECT_NE(_breakpoints->GetBreakpointListAsString().find("count only"), std::string::npos);
+
+    BreakpointSpec key;
+    key.type = BRK_KEYBOARD;
+    key.access = BRK_KEY_PRESS;
+    key.address = BRK_KEY_ANY;
+    key.stop = false;
+    EXPECT_EQ(_breakpoints->AddBreakpoint(key, error), BRK_INVALID) << "a keyboard breakpoint cannot only count";
+
+    RecordingSink sink;
+    BreakpointSpec tap = exec;
+    tap.tapSink = _breakpoints->RegisterTapSink(&sink);
+    EXPECT_EQ(_breakpoints->AddBreakpoint(tap, error), BRK_INVALID) << "a tap never stops already";
+    _breakpoints->UnregisterTapSink(tap.tapSink);
+}
+
+/// Every sink id but the count-only one: 255 registrations exhaust the 254 ids, none of them is 255
+TEST_F(BreakpointTaps_Test, CountOnlyIdIsNoSinks)
+{
+    std::vector<RecordingSink> sinks(BRK_COUNT_TAP);
+    std::vector<uint8_t> ids;
+    for (RecordingSink& sink : sinks)
+        ids.push_back(_breakpoints->RegisterTapSink(&sink));
+    EXPECT_EQ(std::count(ids.begin(), ids.end(), BRK_COUNT_TAP), 0) << "255 is never handed out";
+    EXPECT_EQ(ids.back(), BRK_NO_TAP) << "the ids ran out";
+    for (uint8_t id : ids)
+        if (id != BRK_NO_TAP)
+            _breakpoints->UnregisterTapSink(id);
 }

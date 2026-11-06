@@ -28,7 +28,9 @@
 #include "encoders/dsd/dsd_encoder.h"
 #include "benchmarkfeeder.h"
 #include "multitrackdialog.h"
+#include "widgets/recordingplan.h"
 #include "widgets/recordingsettings.h"
+#include "widgets/windowrecorder.h"
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -120,6 +122,13 @@ VideoRecordingWidget::VideoRecordingWidget(std::shared_ptr<Emulator> emulator, Q
 
     // Subscribe to recording state changes (from toolbar or external sources)
     subscribeRecordingObserver();
+
+    // The options shared with the recording panel: shown now, and followed whenever the panel changes one
+    applySharedSettings();
+    recordingsettingsbus::Subscribe(this, [this] {
+        if (!_selfSave && !_wasRecording && !_windowRecording && !_isStopping)
+            applySharedSettings();
+    });
 }
 
 VideoRecordingWidget::~VideoRecordingWidget()
@@ -248,6 +257,7 @@ void VideoRecordingWidget::createUI()
 
     // Tab widget for Video+Audio vs Audio-only modes
     _tabWidget = new QTabWidget();
+    _tabWidget->setObjectName("tabWidget");
     mainLayout->addWidget(_tabWidget);
 
     createVideoTab();
@@ -270,9 +280,11 @@ void VideoRecordingWidget::createUI()
     // === Recording Controls (shared) ===
     auto* controlsLayout = new QHBoxLayout();
     _startButton = new QPushButton("Start");
+    _startButton->setObjectName("startButton");
     _pauseButton = new QPushButton("Pause");
     _resumeButton = new QPushButton("Resume");
     _stopButton = new QPushButton("Stop");
+    _stopButton->setObjectName("stopButton");
     controlsLayout->addWidget(_startButton);
     controlsLayout->addWidget(_pauseButton);
     controlsLayout->addWidget(_resumeButton);
@@ -312,8 +324,11 @@ void VideoRecordingWidget::createVideoTab()
 
     _backendGroup = new QButtonGroup(this);
     _nativeBackendRadio = new QRadioButton("Native (Hardware)");
+    _nativeBackendRadio->setObjectName("nativeBackendRadio");
     _ffmpegBackendRadio = new QRadioButton("FFmpeg");
+    _ffmpegBackendRadio->setObjectName("ffmpegBackendRadio");
     _autoBackendRadio = new QRadioButton("Auto (Recommended)");
+    _autoBackendRadio->setObjectName("autoBackendRadio");
     {
         // The shared engine choice (this dialog and the recording toolbar)
         RecordingSettings saved;
@@ -371,14 +386,17 @@ void VideoRecordingWidget::createVideoTab()
     auto* formatLayout = new QHBoxLayout();
     formatLayout->addWidget(new QLabel("Container:"));
     _containerCombo = new QComboBox();
+    _containerCombo->setObjectName("containerCombo");
     formatLayout->addWidget(_containerCombo);
 
     formatLayout->addWidget(new QLabel("Video:"));
     _videoCodecCombo = new QComboBox();
+    _videoCodecCombo->setObjectName("videoCodecCombo");
     formatLayout->addWidget(_videoCodecCombo);
 
     formatLayout->addWidget(new QLabel("Quality:"));
     _qualityCombo = new QComboBox();
+    _qualityCombo->setObjectName("qualityCombo");
     _qualityCombo->addItems({"Fastest", "Fast", "Medium", "High", "Best"});
     _qualityCombo->setCurrentIndex(2);
     formatLayout->addWidget(_qualityCombo);
@@ -388,11 +406,23 @@ void VideoRecordingWidget::createVideoTab()
     auto* regionLayout = new QHBoxLayout();
     regionLayout->addWidget(new QLabel("Capture:"));
     _captureCombo = new QComboBox();
+    _captureCombo->setObjectName("captureCombo");
     _captureCombo->addItems({"Full frame (with border)", "Screen only (256×192)"});
     regionLayout->addWidget(_captureCombo);
 
+    regionLayout->addWidget(new QLabel("Source:"));
+    _sourceCombo = new QComboBox();
+    _sourceCombo->setObjectName("sourceCombo");
+    _sourceCombo->addItem("Raw", false);
+    _sourceCombo->addItem("Window", true);
+    _sourceCombo->setToolTip("Picture source: the emulator's raw frame buffer, or the window as it draws it\n"
+                             "(CRT shaders, temporal processing). Window takes MP4 / MKV / MOV with H.264 / H.265\n"
+                             "or ProRes 4444, and uses the profile below for its frame size.");
+    regionLayout->addWidget(_sourceCombo);
+
     regionLayout->addWidget(new QLabel("Size:"));
     _sizeCombo = new QComboBox();
+    _sizeCombo->setObjectName("sizeCombo");
     _sizeCombo->addItems({"1× native", "2× (recommended)", "3×", "4×", "5×", "6×", "7×", "8×"});
     _sizeCombo->setCurrentIndex(1);
     _sizeCombo->setToolTip("Integer nearest-neighbor upscale. 2× or more keeps ZX pixels crisp and\n"
@@ -407,6 +437,7 @@ void VideoRecordingWidget::createVideoTab()
     auto* profileLayout = new QHBoxLayout();
     profileLayout->addWidget(new QLabel("Profile:"));
     _profileCombo = new QComboBox();
+    _profileCombo->setObjectName("profileCombo");
     _profileCombo->addItem("Native (size factor)", "native");
     _profileCombo->addItem("1080p (1920×1080)", "1080p");
     _profileCombo->addItem("1440p (2560×1440)", "1440p");
@@ -429,11 +460,13 @@ void VideoRecordingWidget::createVideoTab()
     // Audio settings
     auto* audioLayout = new QHBoxLayout();
     _includeAudioCheck = new QCheckBox("Include Audio");
+    _includeAudioCheck->setObjectName("includeAudioCheck");
     _includeAudioCheck->setChecked(true);
     audioLayout->addWidget(_includeAudioCheck);
 
     audioLayout->addWidget(new QLabel("Audio:"));
     _audioCodecCombo = new QComboBox();
+    _audioCodecCombo->setObjectName("audioCodecCombo");
     audioLayout->addWidget(_audioCodecCombo);
     _multiTrackButton = new QPushButton("Configure Multi-Track...");
     _multiTrackButton->setEnabled(false);
@@ -458,6 +491,7 @@ void VideoRecordingWidget::createAudioTab()
     auto* formatRow = new QHBoxLayout();
     formatRow->addWidget(new QLabel("Format:"));
     _audioFormatCombo = new QComboBox();
+    _audioFormatCombo->setObjectName("audioFormatCombo");
     _audioFormatCombo->addItems({"WAV (PCM)", "MP3", "FLAC", "OGG Vorbis", "DSD (DSF)"});
     formatRow->addWidget(_audioFormatCombo);
     formatLayout->addLayout(formatRow);
@@ -466,6 +500,7 @@ void VideoRecordingWidget::createAudioTab()
     _audioQualityLabel = new QLabel("Quality:");
     qualityRow->addWidget(_audioQualityLabel);
     _audioQualityCombo = new QComboBox();
+    _audioQualityCombo->setObjectName("audioQualityCombo");
     _audioQualityCombo->addItems({"128 kbps", "192 kbps", "256 kbps", "320 kbps"});
     _audioQualityCombo->setCurrentIndex(1);
     _audioQualityCombo->setToolTip("Bitrate applies to lossy formats (MP3, OGG Vorbis) only;\n"
@@ -563,6 +598,16 @@ void VideoRecordingWidget::connectSignals()
     connect(_includeAudioCheck, &QCheckBox::checkStateChanged, this, &VideoRecordingWidget::onIncludeAudioChanged);
     connect(_profileCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) { onProfileChanged(); });
+    connect(_sourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { onSourceChanged(); });
+    // Every option is shared with the recording panel: a change is saved at once, and the panel follows it
+    for (QComboBox* combo : {_containerCombo, _videoCodecCombo, _qualityCombo, _captureCombo, _sizeCombo,
+                             _audioCodecCombo})
+        connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+            updateRecordingControls();
+            saveFromControls();
+        });
+    connect(_includeAudioCheck, &QCheckBox::toggled, this, [this](bool) { saveFromControls(); });
     connect(_multiTrackButton, &QPushButton::clicked, this, &VideoRecordingWidget::onMultiTrackConfigure);
     connect(_benchmarkButton, &QPushButton::clicked, this, &VideoRecordingWidget::onBenchmark);
 
@@ -642,6 +687,11 @@ void VideoRecordingWidget::connectSignals()
     });
 
     // Shared controls
+    connect(_audioFormatCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) { saveFromControls(); });
+    connect(_audioQualityCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) { saveFromControls(); });
+    connect(_tabWidget, &QTabWidget::currentChanged, this, [this](int) { saveFromControls(); });
     connect(_startButton, &QPushButton::clicked, this, &VideoRecordingWidget::onStartRecording);
     connect(_pauseButton, &QPushButton::clicked, this, &VideoRecordingWidget::onPauseRecording);
     connect(_resumeButton, &QPushButton::clicked, this, &VideoRecordingWidget::onResumeRecording);
@@ -846,14 +896,11 @@ void VideoRecordingWidget::onBackendChanged()
     _ffmpegPathEdit->setEnabled(ffmpegActive);
     _detectButton->setEnabled(ffmpegActive);
 
-    // The engine is chosen here and shared by every recording UI (the recording toolbar follows it)
-    RecordingSettings saved;
-    saved.load();
-    saved.backend = _nativeBackendRadio->isChecked() ? 1 : _ffmpegBackendRadio->isChecked() ? 2 : 0;
-    saved.save();
-
     // Rebuild container list for this backend
     populateContainers();
+
+    // The engine is chosen here and shared by every recording UI (the recording toolbar follows it)
+    saveFromControls();
 
     updateRealtimeEstimate();
 }
@@ -935,100 +982,44 @@ void VideoRecordingWidget::onBrowseFile()
     }
 }
 
+recordingplan::Environment VideoRecordingWidget::environment() const
+{
+    recordingplan::Environment env;
+    env.engine = _nativeBackendRadio->isChecked() ? 1 : _ffmpegBackendRadio->isChecked() ? 2 : 0;
+    env.nativeAvailable = _nativeAvailable;
+    env.ffmpegAvailable = _ffmpegAvailable;
+    env.ffmpegHasWebP = _ffmpegHasWebP;
+#ifdef Q_OS_MAC
+    env.mac = true;
+#endif
+    // Native encoder: what it can actually write
+    const auto encoders = PlatformEncoderFactory::getAvailableNativeEncoders();
+    if (!encoders.empty())
+    {
+        const auto& enc = encoders[0];
+        if (enc.supportsH264) env.nativeCodecs << "h264";
+        if (enc.supportsHEVC) env.nativeCodecs << "h265";
+        if (enc.supportsAV1)  env.nativeCodecs << "av1";
+    }
+    return env;
+}
+
 QStringList VideoRecordingWidget::containersForBackend() const
 {
-    // GIF is encoded natively by GIFEncoder and is always available
-    const QStringList nativeContainers = {"MP4", "MOV", "GIF"};
-    QStringList ffmpegContainers = {"MP4", "MKV", "MOV", "WebM", "AVI", "GIF", "APNG"};
-    if (_ffmpegHasWebP)
-        ffmpegContainers << "WebP";
-
-    if (_nativeBackendRadio->isChecked())
-        return nativeContainers;
-
-    if (_ffmpegBackendRadio->isChecked())
-        return ffmpegContainers;
-
-    // Auto: whatever the available backends can produce
-    if (_ffmpegAvailable)
-        return ffmpegContainers;
-    if (_nativeAvailable)
-        return nativeContainers;
-    return {"GIF"};
+    return recordingplan::Containers(environment());
 }
 
 QStringList VideoRecordingWidget::videoCodecsFor(const QString& container) const
 {
-    const QString c = container.toUpper();
-
-    // Fixed-codec animation formats
-    if (c == "GIF")  return {"GIF"};
-    if (c == "APNG") return {"APNG"};
-    if (c == "WEBP") return {"WebP"};
-
-    const bool nativeOnly = _nativeBackendRadio->isChecked();
-    const bool ffmpegUsable = !nativeOnly && _ffmpegAvailable;
-
-    // Native encoder: query actual capabilities
-    if (nativeOnly)
-    {
-        QStringList codecs;
-        auto encoders = PlatformEncoderFactory::getAvailableNativeEncoders();
-        if (!encoders.empty())
-        {
-            const auto& enc = encoders[0];
-            if (enc.supportsH264) codecs << "H.264";
-            if (enc.supportsHEVC) codecs << "H.265 (HEVC)";
-            if (enc.supportsAV1)  codecs << "AV1";
-        }
-        return codecs.isEmpty() ? QStringList{"H.264"} : codecs;
-    }
-
-    QStringList codecs;
-    if (c == "MP4")
-    {
-        codecs = {"H.264", "H.265 (HEVC)"};
-        if (ffmpegUsable)
-            codecs << "AV1";
-    }
-    else if (c == "MOV")
-    {
-        codecs = {"H.264", "H.265 (HEVC)"};
-    }
-    else if (c == "MKV")
-    {
-        codecs = {"H.264", "H.265 (HEVC)", "VP9", "AV1"};
-    }
-    else if (c == "WEBM")
-    {
-        codecs = {"VP9", "VP8", "AV1"};
-    }
-    else if (c == "AVI")
-    {
-        codecs = {"H.264"};
-    }
-
-    return codecs;
+    QStringList labels;
+    for (const QString& id : recordingplan::VideoCodecIds(environment(), container))
+        labels << recordingplan::CodecLabel(id);
+    return labels;
 }
 
 QStringList VideoRecordingWidget::audioCodecsFor(const QString& container) const
 {
-    const QString c = container.toUpper();
-
-    // Video-only animation formats
-    if (c == "GIF" || c == "APNG" || c == "WEBP")
-        return {};
-
-    if (_nativeBackendRadio->isChecked())
-        return {"AAC"};  // AVAssetWriter writes AAC
-
-    if (c == "MP4")  return {"AAC", "MP3"};
-    if (c == "MOV")  return {"AAC", "PCM"};
-    if (c == "MKV")  return {"AAC", "MP3", "FLAC", "PCM", "Opus", "Vorbis"};
-    if (c == "WEBM") return {"Opus", "Vorbis"};
-    if (c == "AVI")  return {"MP3", "PCM"};
-
-    return {"AAC"};
+    return recordingplan::AudioCodecsFor(container, _nativeBackendRadio->isChecked());
 }
 
 void VideoRecordingWidget::populateContainers()
@@ -1038,6 +1029,16 @@ void VideoRecordingWidget::populateContainers()
     // Refresh everything that depends on the container
     populateCodecCombos();
     populateAudioCodecs();
+
+    // The lists were rebuilt: the shared choice of format is shown again, nothing is saved back
+    {
+        RecordingSettings shared;
+        shared.load();
+        const bool before = _syncing;
+        _syncing = true;
+        applyFormatFromSettings(shared);
+        _syncing = before;
+    }
     updateFileExtension();
 }
 
@@ -1205,26 +1206,8 @@ void VideoRecordingWidget::updateRealtimeEstimate()
 
 void VideoRecordingWidget::onProfileChanged()
 {
-    const QString profile = _profileCombo->currentData().toString();
-    _sizeCombo->setEnabled(profile == "native" && !(context() && context()->pRecordingManager &&
-                                                    context()->pRecordingManager->IsRecording()));
-
-    RecordingSettings saved;
-    saved.load();
-    saved.profile = profile;
-    saved.save();
-
-    // A fixed frame takes H.264 / H.265: move off any other codec (VP9, AV1, GIF...) when the lists allow
-    if (profile != "native")
-    {
-        const QString current = _videoCodecCombo->currentText();
-        if (!current.startsWith("H.26"))
-        {
-            const int h264 = _videoCodecCombo->findText("H.264");
-            if (h264 >= 0)
-                _videoCodecCombo->setCurrentIndex(h264);
-        }
-    }
+    updateRecordingControls();
+    saveFromControls();
     updateRealtimeEstimate();
 }
 
@@ -1383,52 +1366,37 @@ void VideoRecordingWidget::onStartRecording()
         return;
     }
 
-    // Determine codec strings
-    QString container = _containerCombo->currentText().toUpper();
-    bool videoOnly = (container == "GIF" || container == "APNG" || container == "WEBP");
-
-    QString videoCodec;
-    if (videoOnly)
+    // What the options mean is decided in one place, for this dialog and the recording panel alike
+    saveFromControls();
+    RecordingSettings shared;
+    shared.load();
+    const recordingplan::Plan plan = recordingplan::MakePlan(shared, _nativeBackendRadio->isChecked());
+    if (!plan.problem.isEmpty())
     {
-        videoCodec = container.toLower();
+        QMessageBox::warning(this, "Recording", plan.problem);
+        return;
     }
-    else
-    {
-        QString codecText = _videoCodecCombo->currentText();
-        videoCodec = codecText.split(" ")[0].toLower();
-        if (videoCodec == "h.264") videoCodec = "h264";
-        if (videoCodec == "h.265") videoCodec = "h265";
-    }
+    const QString container = plan.container;
+    const QString videoCodec = plan.videoCodec;
+    const QString audioCodec = plan.audioCodec;
 
-    QString audioCodec;
-    if (_includeAudioCheck->isChecked() && !videoOnly)
+    // The window as drawn (CRT shaders, temporal processing): the window recorder, shared with the recording panel
+    if (plan.windowSource && windowSourceAvailable())
     {
-        audioCodec = _audioCodecCombo->currentText().toLower();
-        if (audioCodec == "pcm") audioCodec = "pcm_s16le";
+        startWindowRecording(filename, container, videoCodec, !audioCodec.isEmpty());
+        return;
     }
 
     // Configure recording manager
     RecordingManager* rm = context()->pRecordingManager;
     rm->SetVideoEnabled(true);
-
-    // Output profile + encoder acceleration (a fixed frame takes H.264 / H.265 only)
-    const QString profileId = _profileCombo->currentData().toString();
-    if (profileId != "native" && videoCodec != "h264" && videoCodec != "h265" && videoCodec != "hevc")
-    {
-        QMessageBox::warning(this, "Profile",
-                             QString("The %1 profile takes H.264 or H.265 only. Pick one of them in the Video list "
-                                     "(any container that holds it) or switch the profile to Native.")
-                                 .arg(_profileCombo->currentText()));
-        return;
-    }
-    rm->SetOutputProfile(profileId.toStdString());
+    rm->SetOutputProfile(plan.profile.toStdString());
     // No switch of its own: recording follows View > GPU acceleration (on = a GPU encoder when there is one)
     rm->SetEncoderAcceleration(UiGpuAcceleration() ? EncoderAcceleration::Auto : EncoderAcceleration::Software);
 
     // Capture region + output size; resolution derives from the region
-    rm->SetCaptureRegion(_captureCombo->currentIndex() == 1 ? VideoCaptureRegion::MainScreen
-                                                            : VideoCaptureRegion::FullFrame);
-    rm->SetScaleFactor(static_cast<uint32_t>(_sizeCombo->currentIndex() + 1));
+    rm->SetCaptureRegion(plan.mainScreenOnly ? VideoCaptureRegion::MainScreen : VideoCaptureRegion::FullFrame);
+    rm->SetScaleFactor(static_cast<uint32_t>(plan.scale));
     rm->SetVideoResolution(0, 0);  // Re-derive from screen + capture region
     rm->SetVideoCodec(videoCodec.toStdString());
 
@@ -1440,15 +1408,7 @@ void VideoRecordingWidget::onStartRecording()
     else
         rm->SetEncoderBackend(EncoderBackend::Auto);
 
-    // Quality preset
-    int qualityIdx = _qualityCombo->currentIndex();
-    int qualityPreset = 5; // Medium
-    if (qualityIdx == 0) qualityPreset = 1; // Fastest
-    else if (qualityIdx == 1) qualityPreset = 3; // Fast
-    else if (qualityIdx == 2) qualityPreset = 5; // Medium
-    else if (qualityIdx == 3) qualityPreset = 7; // High
-    else if (qualityIdx == 4) qualityPreset = 9; // Best
-    rm->SetQualityPreset(qualityPreset);
+    rm->SetQualityPreset(plan.qualityPreset);
 
     // Explicit ffmpeg path from the UI (empty = auto-detect)
     rm->SetFFmpegPath(_ffmpegPathEdit->text().toStdString());
@@ -1527,6 +1487,11 @@ void VideoRecordingWidget::onStopRecording()
 {
     if (_isStopping)
         return;
+    if (_windowRecording)
+    {
+        stopWindowRecording();
+        return;
+    }
 
     const std::shared_ptr<Emulator> recEmulator = recordingEmulator();
     EmulatorContext* recCtx = ContextOf(recEmulator);
@@ -1585,6 +1550,11 @@ void VideoRecordingWidget::onStopRecording()
 
 void VideoRecordingWidget::onUpdateStats()
 {
+    if (_windowRecording)
+    {
+        updateWindowRecordingStats();
+        return;
+    }
     // Always validate the active context pointer — the emulator may have been
     // destroyed while this timer was running
     validateContext();
@@ -1673,6 +1643,241 @@ void VideoRecordingWidget::onUpdateStats()
         _fpsLabel->setText("0.0 fps");
 }
 
+QString VideoRecordingWidget::codecIdOf(const QString& codecText)
+{
+    return recordingplan::CodecIdOf(codecText);
+}
+
+QString VideoRecordingWidget::currentCodecId() const
+{
+    const QString container = _containerCombo->currentText().toUpper();
+    if (container == "GIF" || container == "APNG" || container == "WEBP")
+        return container.toLower();
+    return codecIdOf(_videoCodecCombo->currentText());
+}
+
+bool VideoRecordingWidget::windowSourceAvailable() const
+{
+    if (!_windowRecorder)
+        return false;
+    return recordingplan::WindowSourceTakes(_containerCombo->currentText(), currentCodecId());
+}
+
+bool VideoRecordingWidget::windowSourceChosen() const
+{
+    return recordingplan::ControlsFor(_containerCombo->currentText(), currentCodecId(),
+                                      _sourceCombo->currentData().toBool(), _profileCombo->currentData().toString(),
+                                      _windowRecorder != nullptr)
+        .windowSource;
+}
+
+void VideoRecordingWidget::saveFromControls()
+{
+    if (_syncing)
+        return;
+    RecordingSettings shared;
+    shared.load();
+    shared.backend = _nativeBackendRadio->isChecked() ? 1 : _ffmpegBackendRadio->isChecked() ? 2 : 0;
+    shared.includeAudio = _includeAudioCheck->isChecked();
+    if (isAudioOnlyMode())
+    {
+        static const char* const kAudioContainers[] = {"WAV", "MP3", "FLAC", "OGG", "DSD"};
+        const int format = std::clamp(_audioFormatCombo->currentIndex(), 0, 4);
+        shared.container = QString::fromLatin1(kAudioContainers[format]);
+        shared.videoCodec.clear();
+        static const int kBitrates[] = {128, 192, 256, 320};
+        shared.audioBitrate = kBitrates[std::clamp(_audioQualityCombo->currentIndex(), 0, 3)];
+    }
+    else
+    {
+        shared.container = _containerCombo->currentText();
+        shared.videoCodec = currentCodecId();
+        shared.quality = _qualityCombo->currentIndex();
+        shared.captureRegion = _captureCombo->currentIndex();
+        shared.scaleFactor = _sizeCombo->currentIndex() + 1;
+        shared.profile = _profileCombo->currentData().toString();
+        shared.windowSource = _sourceCombo->currentData().toBool();
+        shared.audioCodec = _audioCodecCombo->currentText();
+    }
+    _selfSave = true;
+    shared.save();  // the recording panel follows
+    _selfSave = false;
+}
+
+void VideoRecordingWidget::applyFormatFromSettings(const RecordingSettings& settings)
+{
+    // A format this engine does not offer leaves the list as it is
+    for (int i = 0; i < _containerCombo->count(); ++i)
+        if (_containerCombo->itemText(i).compare(settings.container, Qt::CaseInsensitive) == 0)
+        {
+            if (i != _containerCombo->currentIndex())
+                _containerCombo->setCurrentIndex(i);  // fills the codec list
+            break;
+        }
+    for (int i = 0; i < _videoCodecCombo->count(); ++i)
+        if (codecIdOf(_videoCodecCombo->itemText(i)) == settings.videoCodec.toLower())
+        {
+            if (i != _videoCodecCombo->currentIndex())
+                _videoCodecCombo->setCurrentIndex(i);
+            break;
+        }
+}
+
+void VideoRecordingWidget::applySharedSettings()
+{
+    const bool before = _syncing;
+    _syncing = true;
+    RecordingSettings shared;
+    shared.load();
+
+    QRadioButton* engine = shared.backend == 1 ? _nativeBackendRadio : shared.backend == 2 ? _ffmpegBackendRadio
+                                                                                          : _autoBackendRadio;
+    if (!engine->isChecked() && engine->isEnabled())
+    {
+        engine->setChecked(true);
+        onBackendChanged();  // the lists of formats follow the engine
+    }
+
+    static const QStringList kAudioContainers = {"WAV", "MP3", "FLAC", "OGG", "DSD"};
+    const int audioFormat = kAudioContainers.indexOf(shared.container.toUpper());
+    if (audioFormat >= 0)
+    {
+        _tabWidget->setCurrentIndex(1);
+        _audioFormatCombo->setCurrentIndex(audioFormat);
+        static const int kBitrates[] = {128, 192, 256, 320};
+        for (int i = 0; i < 4; ++i)
+            if (kBitrates[i] == shared.audioBitrate)
+                _audioQualityCombo->setCurrentIndex(i);
+    }
+    else
+    {
+        _tabWidget->setCurrentIndex(0);
+        applyFormatFromSettings(shared);
+        _qualityCombo->setCurrentIndex(std::clamp(shared.quality, 0, _qualityCombo->count() - 1));
+        _captureCombo->setCurrentIndex(std::clamp(shared.captureRegion, 0, _captureCombo->count() - 1));
+        _sizeCombo->setCurrentIndex(std::clamp(shared.scaleFactor - 1, 0, _sizeCombo->count() - 1));
+        const int profile = _profileCombo->findData(shared.profile);
+        _profileCombo->setCurrentIndex(profile >= 0 ? profile : 0);
+        _sourceCombo->setCurrentIndex(shared.windowSource ? 1 : 0);
+        const int audioCodec = _audioCodecCombo->findText(shared.audioCodec, Qt::MatchFixedString);
+        if (audioCodec >= 0)
+            _audioCodecCombo->setCurrentIndex(audioCodec);
+    }
+    _includeAudioCheck->setChecked(shared.includeAudio);
+
+    updateRecordingControls();
+    updateRealtimeEstimate();
+    _syncing = before;
+}
+
+void VideoRecordingWidget::onSourceChanged()
+{
+    updateRecordingControls();
+    saveFromControls();
+    updateRealtimeEstimate();
+}
+
+void VideoRecordingWidget::setWindowRecording(WindowRecorder* recorder, std::function<DeviceScreenWrapper*()> screen)
+{
+    _windowRecorder = recorder;
+    _windowScreen = std::move(screen);
+    updateRecordingControls();
+    syncWindowRecordingState();
+}
+
+void VideoRecordingWidget::syncWindowRecordingState()
+{
+    if (!_windowRecorder || _windowRecording)
+        return;
+    WindowRecordingStatus status;
+    _windowRecorder->status(status);
+    if (!status.recording && !status.finalizing)
+        return;
+    // Another recording UI (the panel, the WebAPI) is recording the window: shown here, and stoppable
+    _windowRecording = true;
+    _statsTimer->start();
+    updateRecordingControls();
+    updateWindowRecordingStats();
+}
+
+void VideoRecordingWidget::startWindowRecording(const QString& filename, const QString& container,
+                                                const QString& codec, bool audio)
+{
+    DeviceScreenWrapper* screen = _windowScreen ? _windowScreen() : nullptr;
+    const WindowRecordingRequest request =
+        MakeWindowRecordingRequest(container, codec, audio, UiGpuAcceleration(),
+                                   _profileCombo->currentData().toString(), filename);
+    WindowRecordingStatus status;
+    std::string error;
+    if (!_windowRecorder->start(screen, recordingEmulator(), request, status, error))
+    {
+        QMessageBox::critical(this, "Recording Failed", QString::fromStdString(error));
+        return;
+    }
+    QSettings settings("unreal-ng", "recording");
+    settings.setValue("lastVideoDir", QFileInfo(filename).absolutePath());
+    _windowRecording = true;
+    _statsTimer->start();
+    updateRecordingControls();
+    updateWindowRecordingStats();
+}
+
+void VideoRecordingWidget::stopWindowRecording()
+{
+    // Never waits: the recorder's thread finishes the file; the stats timer sees when it is done
+    WindowRecordingStatus status;
+    std::string error;
+    if (!_windowRecorder->stop(status, error))
+        QMessageBox::warning(this, "Recording Error", QString::fromStdString(error));
+    updateRecordingControls();
+    updateWindowRecordingStats();
+}
+
+void VideoRecordingWidget::updateWindowRecordingStats()
+{
+    if (!_windowRecorder)
+    {
+        _windowRecording = false;
+        _statsTimer->stop();
+        updateRecordingControls();
+        return;
+    }
+    WindowRecordingStatus status;
+    _windowRecorder->status(status);
+    if (status.finalizing && !status.recording)
+    {
+        _recordingIndicator->setText("⏳ FINALIZING…");
+        _recordingIndicator->setStyleSheet("font-weight: bold; color: orange;");
+        updateRecordingControls();
+        return;
+    }
+    if (!status.recording)  // finished: stopped here or elsewhere, or the window closed / the encoder died
+    {
+        _windowRecording = false;
+        _statsTimer->stop();
+        if (status.error.empty())
+        {
+            _recordingIndicator->setText("IDLE");
+            _recordingIndicator->setStyleSheet("font-weight: bold; color: gray;");
+        }
+        else
+        {
+            _recordingIndicator->setText("ERROR: " + QString::fromStdString(status.error));
+            _recordingIndicator->setStyleSheet("font-weight: bold; color: red;");
+        }
+        updateRecordingControls();
+        return;
+    }
+    _recordingIndicator->setText("● RECORDING (window)");
+    _recordingIndicator->setStyleSheet("font-weight: bold; color: red;");
+    const int totalSec = status.fps > 0 ? static_cast<int>(static_cast<double>(status.frames) / status.fps) : 0;
+    _durationLabel->setText(QString::asprintf("%02d:%02d:%02d", totalSec / 3600, (totalSec % 3600) / 60, totalSec % 60));
+    const qint64 bytes = QFileInfo(QString::fromStdString(status.path)).size();
+    _sizeLabel->setText(bytes < 1024 * 1024 ? QString::asprintf("%.1f KB", static_cast<double>(bytes) / 1024.0)
+                                            : QString::asprintf("%.1f MB", static_cast<double>(bytes) / (1024.0 * 1024.0)));
+    _fpsLabel->setText(QString::asprintf("%.1f fps", status.fps));
+}
+
 void VideoRecordingWidget::updateRecordingControls()
 {
     // Recording state is tracked on the RECORDING emulator, which may differ
@@ -1686,11 +1891,20 @@ void VideoRecordingWidget::updateRecordingControls()
     // Idle = active context available AND not currently in any recording session
     validateContext();
     bool hasActiveContext = context() && context()->pRecordingManager;
-    bool notRecording = !recording && !paused && !_isStopping && !_wasRecording;
+    bool notRecording = !recording && !paused && !_isStopping && !_wasRecording && !_windowRecording;
     bool idle = hasActiveContext && notRecording;
 
+    // A window recording stops while it takes pictures; its file is finished in the background
+    bool windowRunning = false;
+    if (_windowRecording && _windowRecorder)
+    {
+        WindowRecordingStatus windowStatus;
+        _windowRecorder->status(windowStatus);
+        windowRunning = windowStatus.recording;
+    }
+
     // Stop must work even if context is gone (orphaned recording state)
-    bool canStop = (recording || paused || _wasRecording) && !_isStopping;
+    bool canStop = ((recording || paused || _wasRecording) && !_isStopping) || windowRunning;
 
     _startButton->setEnabled(idle);
     _pauseButton->setEnabled(recording && !paused && !_isStopping);
@@ -1707,9 +1921,24 @@ void VideoRecordingWidget::updateRecordingControls()
     _audioCodecCombo->setEnabled(notRecording && audioSupported && _includeAudioCheck->isChecked());
     _includeAudioCheck->setEnabled(notRecording && audioSupported);
     _qualityCombo->setEnabled(notRecording);
-    _captureCombo->setEnabled(notRecording);
-    _sizeCombo->setEnabled(notRecording && _profileCombo->currentData().toString() == "native");
-    _profileCombo->setEnabled(notRecording);
+    // Which controls the options leave free: the same rules as the recording panel
+    const recordingplan::Controls free = recordingplan::ControlsFor(
+        _containerCombo->currentText(), currentCodecId(), _sourceCombo->currentData().toBool(),
+        _profileCombo->currentData().toString(), _windowRecorder != nullptr);
+    _sourceCombo->setEnabled(notRecording && free.source);
+    _sourceCombo->setToolTip(free.source ? "Picture source: the emulator's raw frame buffer, or the window "
+                                           "as it draws it (CRT shaders, temporal processing)"
+                                         : "The window as source needs MP4 / MKV / MOV with H.264, H.265 or "
+                                           "ProRes 4444");
+    if (currentCodecId() == "prores" && !_sourceCombo->currentData().toBool())
+    {
+        _sourceCombo->blockSignals(true);
+        _sourceCombo->setCurrentIndex(1);  // ProRes is the window recording's alone
+        _sourceCombo->blockSignals(false);
+    }
+    _captureCombo->setEnabled(notRecording && free.capture);
+    _sizeCombo->setEnabled(notRecording && free.size);
+    _profileCombo->setEnabled(notRecording && free.profile);
     _filePathEdit->setEnabled(notRecording);
     _browseButton->setEnabled(notRecording);
     _backendGroup->setExclusive(false);

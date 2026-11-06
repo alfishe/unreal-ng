@@ -371,7 +371,15 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "run and record (1-100000; a call must end within 2 minutes: a few hundred at a time)";
     schema["properties"]["seconds"]["type"] = "number";
     schema["properties"]["seconds"]["default"] = 1.0;
-    schema["properties"]["seconds"]["description"] = "audio_capture duration in emulated seconds (0.01-30)";
+    schema["properties"]["seconds"]["description"] = "audio_capture duration in emulated seconds (0.01-30; up to 86400 with to_file)";
+    schema["properties"]["to_file"]["type"] = "boolean";
+    schema["properties"]["to_file"]["default"] = false;
+    schema["properties"]["to_file"]["description"] =
+        "audio_capture: write the samples to a WAV file while they come (no 30 s memory ceiling). The call arms the "
+        "capture and returns wav_path at once, without running the machine: run frames, poll audio_status "
+        "(file_closed), read audio_result for the length";
+    schema["properties"]["path"]["type"] = "string";
+    schema["properties"]["path"]["description"] = "audio_capture with to_file: the WAV path (default a temp file)";
     schema["properties"]["source"]["type"] = "string";
     schema["properties"]["source"]["description"] =
         "screenshot: presented (default: the finished frame the window shows, a couple of frames behind) or live "
@@ -431,11 +439,19 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "one lists the offered ids; omit for the picture only";
     schema["properties"]["codec"]["type"] = "string";
     schema["properties"]["codec"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* codec : {"prores", "h264"})
+    for (const char* codec : {"prores", "h264", "h265"})
         schema["properties"]["codec"]["enum"].append(codec);
     schema["properties"]["codec"]["description"] =
-        "window_record_start: prores (default: ProRes 4444, .mov) or h264 (4:4:4, .mp4); full colour, a CRT mask "
-        "survives. Needs ffmpeg on the host";
+        "window_record_start: prores (default: ProRes 4444, .mov), h264 or h265 (4:4:4 through ffmpeg; with "
+        "hardware = true the Mac's VideoToolbox encoder, 4:2:0 / 4:2:2, no ffmpeg); a CRT mask survives 4:4:4";
+    schema["properties"]["hardware"]["type"] = "boolean";
+    schema["properties"]["hardware"]["description"] =
+        "window_record_start: h264 / h265 on the GPU's encoder (macOS VideoToolbox: real time at 4K, no ffmpeg; "
+        "4:2:0, H.265 4:2:2 10-bit); false = x264 / x265 4:4:4 through ffmpeg";
+    schema["properties"]["fit"]["type"] = "boolean";
+    schema["properties"]["fit"]["description"] =
+        "window_record_start: scale the picture to a given width x height frame (aspect kept, centred) instead of "
+        "refusing one that does not match";
     schema["properties"]["picture_height"]["type"] = "integer";
     schema["properties"]["picture_height"]["description"] =
         "window_record_start: draw the picture (CRT included) at this height instead of the window's (GPU only, "
@@ -941,7 +957,42 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
             {
                 double seconds = args.isMember("seconds") && args["seconds"].isNumeric() ? args["seconds"].asDouble() : 1.0;
                 if (seconds < 0.01) seconds = 0.01;
-                if (seconds > 30.0) seconds = 30.0;
+                const bool toFile = args.isMember("to_file") && args["to_file"].asBool();
+                if (seconds > (toFile ? 86400.0 : 30.0)) seconds = toFile ? 86400.0 : 30.0;
+                if (toFile)
+                {
+                    // A long capture is armed and left to the caller: running a day of frames inside one call is no use
+                    const std::string fileSource = args.isMember("source") && args["source"].isString() ? args["source"].asString() : "";
+                    const std::string filePath = args.isMember("path") && args["path"].isString() ? args["path"].asString() : "";
+                    TargetResolver::ResolveFromArgs(args, caller, [seconds, fileSource, filePath, &caller, done](bool ok, const std::string& idOrError) {
+                        if (!ok)
+                        {
+                            done(ToolResult::Error(idOrError));
+                            return;
+                        }
+                        auto arm = std::make_shared<Json::Value>();
+                        (*arm)["action"] = "start";
+                        (*arm)["seconds"] = seconds;
+                        (*arm)["to_file"] = true;
+                        if (!fileSource.empty())
+                            (*arm)["source"] = fileSource;
+                        if (!filePath.empty())
+                            (*arm)["path"] = filePath;
+                        caller.Call("POST", Endpoint(idOrError, "/audio/capture"), arm.get(),
+                                    [arm, done](int status, Json::Value armResponse) mutable {
+                            if (status < 200 || status >= 300)
+                            {
+                                done(ToolResult::Error("Audio capture start failed (HTTP " + std::to_string(status) + "): " +
+                                                       DescribeErrorBody(armResponse)));
+                                return;
+                            }
+                            done(ToolResult::Ok("Audio capture armed to " + armResponse.get("wav_path", "").asString() +
+                                                " - run the machine and poll audio_status (file_closed)",
+                                                std::move(armResponse)));
+                        });
+                    });
+                    return;
+                }
                 bool wantWav = args.isMember("wav") && args["wav"].asBool();
                 const std::string source = args.isMember("source") && args["source"].isString() ? args["source"].asString() : "";
 
@@ -1159,7 +1210,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                         return;
                     }
                     body["path"] = path;
-                    for (const char* field : {"keyboard", "codec", "fps", "scale", "picture_height", "width", "height", "layout"})
+                    for (const char* field : {"keyboard", "codec", "hardware", "fit", "fps", "scale", "picture_height", "width", "height",
+                                        "layout"})
                         if (args.isMember(field))
                             body[field] = args[field];
                     // The sound track is on unless switched off ("audio": false / "none" / "off")

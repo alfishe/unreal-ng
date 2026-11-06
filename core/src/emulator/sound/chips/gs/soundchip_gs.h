@@ -388,6 +388,7 @@ private:
     // GS-side port handlers (ports 0x00-0x0B): classic, and the MultiSound
     // CPLD's rules (GSPortRules), bound per profile at construction
     uint8_t gsIn(uint16_t port);
+    uint8_t gsInDecode(uint16_t port);  // the byte and its side effects, untraced
     void gsOut(uint16_t port, uint8_t value);
     uint8_t gsInMultiSound(uint16_t port);
     uint8_t gsInMultiSoundDecode(uint16_t port);
