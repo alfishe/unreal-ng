@@ -13,6 +13,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/memory/memoryaccessfacts.h"
 #include "emulator/memory/memoryaccesstracker.h"
+#include "emulator/readoutschanged.h"
 
 namespace markup
 {
@@ -146,9 +147,12 @@ MemoryMarkup::MemoryMarkup(EmulatorContext* context) : _context(context)
 
 void MemoryMarkup::SetLayer(Layer layer, LayerContent content)
 {
-    std::lock_guard<std::mutex> lock(_lock);
-    _layers[static_cast<int>(layer)] = std::move(content);
-    _revision++;
+    {
+        std::lock_guard<std::mutex> lock(_lock);
+        _layers[static_cast<int>(layer)] = std::move(content);
+        _revision++;
+    }
+    NotifyReadoutsChanged(_context, "markup");  // debug.markup
 }
 
 void MemoryMarkup::ClearLayer(Layer layer)
@@ -173,6 +177,39 @@ uint64_t MemoryMarkup::Revision() const
     std::lock_guard<std::mutex> lock(_lock);
     RefreshStructureLocked();
     return _revision;
+}
+
+std::vector<LayerSummary> MemoryMarkup::Summary() const
+{
+    std::lock_guard<std::mutex> lock(_lock);
+    View view;
+    ViewOf({}, false, view);
+    std::vector<LayerSummary> summary;
+    for (int i = 0; i < kLayerCount; i++)
+    {
+        const LayerContent& content = *view.layers[i];
+        LayerSummary layer;
+        layer.layer = static_cast<Layer>(i);
+        layer.source = content.source;
+        layer.claims = content.claims.size();
+        layer.entries = content.entries.size();
+        layer.comments = content.comments.size();
+        summary.push_back(std::move(layer));
+    }
+    return summary;
+}
+
+std::string MemoryMarkup::RuntimeFeed() const
+{
+    Memory* memory = _context ? _context->pMemory : nullptr;
+    if (!memory)
+        return "none";
+    const MemoryAccessTracker& tracker = memory->GetAccessTracker();
+    if (tracker.GetLevel() == TrackerLevel::Facts)
+        return tracker.GetTrackingMode() == TrackingMode::Z80AddressSpace ? "facts" : "facts-physical";
+    AnalyzerManager* analyzers = _context->pDebugManager ? _context->pDebugManager->GetAnalyzerManager() : nullptr;
+    CoverageAnalyzer* coverage = analyzers ? analyzers->getAnalyzer<CoverageAnalyzer>("coverage") : nullptr;
+    return coverage && (coverage->isRecording() || coverage->getInstructionCount() > 0) ? "coverage" : "none";
 }
 
 void MemoryMarkup::RefreshStructureLocked() const
@@ -580,12 +617,14 @@ bool MemoryMarkup::Mark(uint16_t lo, uint16_t hi, analysis::RegionKind kind, con
             claim.continues = !made.empty();
             made.push_back(std::move(claim));
         }
-    std::lock_guard<std::mutex> lock(_lock);
+    std::unique_lock<std::mutex> lock(_lock);
     LayerContent& user = _layers[static_cast<int>(Layer::User)];
     user.source = "user";
     for (Claim& claim : made)
         user.claims.push_back(std::move(claim));
     _revision++;
+    lock.unlock();
+    NotifyReadoutsChanged(_context, "markup");
     return true;
 }
 
@@ -594,7 +633,7 @@ void MemoryMarkup::Unmark(uint16_t lo, uint16_t hi)
     if (lo > hi)
         return;
     const std::vector<Window> windows = WindowsOf(lo, hi);
-    std::lock_guard<std::mutex> lock(_lock);
+    std::unique_lock<std::mutex> lock(_lock);
     LayerContent& user = _layers[static_cast<int>(Layer::User)];
     std::vector<Claim> kept;
     for (const Claim& claim : user.claims)
@@ -628,6 +667,8 @@ void MemoryMarkup::Unmark(uint16_t lo, uint16_t hi)
     }
     user.claims = std::move(kept);
     _revision++;
+    lock.unlock();
+    NotifyReadoutsChanged(_context, "markup");
 }
 
 void MemoryMarkup::SetComment(uint16_t address, const std::string& text)
@@ -636,13 +677,16 @@ void MemoryMarkup::SetComment(uint16_t address, const std::string& text)
     Place place{Space::Cpu, 0, address, address};
     if (!windows.empty() && windows.front().mapped)
         place = Place{windows.front().space, windows.front().page, windows.front().offset, windows.front().offset};
-    std::lock_guard<std::mutex> lock(_lock);
-    LayerContent& user = _layers[static_cast<int>(Layer::User)];
-    user.source = "user";
-    std::erase_if(user.comments, [&place](const Note& note) { return note.place == place; });
-    if (!text.empty())
-        user.comments.push_back(Note{place, text});
-    _revision++;
+    {
+        std::lock_guard<std::mutex> lock(_lock);
+        LayerContent& user = _layers[static_cast<int>(Layer::User)];
+        user.source = "user";
+        std::erase_if(user.comments, [&place](const Note& note) { return note.place == place; });
+        if (!text.empty())
+            user.comments.push_back(Note{place, text});
+        _revision++;
+    }
+    NotifyReadoutsChanged(_context, "markup");
 }
 
 }  // namespace markup

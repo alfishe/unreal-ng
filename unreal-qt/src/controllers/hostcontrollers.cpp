@@ -267,6 +267,18 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
         else
             QMetaObject::invokeMethod(app, [&task] { task(); }, Qt::BlockingQueuedConnection);
     });
+    // markup save from any plane: the profiles are this object's, so the write runs on the GUI thread too
+    markup::SetProfileSaver([this](Emulator& emulator, const markup::SaveRequest& request) {
+        markup::Reply reply;
+        QCoreApplication* app = QCoreApplication::instance();
+        if (app == nullptr || QThread::currentThread() == app->thread())
+            reply = saveMarkup(emulator, request);
+        else
+            QMetaObject::invokeMethod(
+                this, [this, &emulator, &request, &reply] { reply = saveMarkup(emulator, request); },
+                Qt::BlockingQueuedConnection);
+        return reply;
+    });
     // The program loaded: its file's hash keys the game profiles, and the auto decision starts again
     _fileObserver = MessageCenter::DefaultMessageCenter().AddObserver(NC_FILE_LOADED, [this](int, Message* message) {
         auto* payload = message != nullptr ? dynamic_cast<FileLoadedPayload*>(message->obj) : nullptr;
@@ -318,6 +330,7 @@ HostControllers::~HostControllers()
     onUnbound();
 #ifdef ENABLE_CONTROLLERS
     HostInputControl::SetOwner(nullptr);
+    markup::SetProfileSaver({});
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_FILE_LOADED, _fileObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_GUEST_PROGRAM, _guestObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_SURFACE_CONTEXT, _contextObserver);
@@ -1065,6 +1078,106 @@ void HostControllers::applyMemoryProfile()
     ApplyMemoryProfile(memory, id, profile->label, folder, *markup, debug->GetLabelManager(), warnings);
     for (const std::string& warning : warnings)
         qWarning("controllers: %s", warning.c_str());
+}
+
+markup::Reply HostControllers::saveMarkup(Emulator& emulator, const markup::SaveRequest& request)
+{
+    markup::Reply reply;
+    auto refuse = [&reply](markup::Error error, const std::string& message) {
+        reply.error = error;
+        reply.message = message;
+        return reply;
+    };
+    if (!_attached || _attached.get() != &emulator)
+        return refuse(markup::Error::Conflict, "the software profiles follow the machine the window shows; this one "
+                                               "is not it (select it in the window first)");
+    std::string id = request.profile;
+    if (id.empty())
+        id = _memoryProfiles[emulator.GetId()];
+    Profile profile;
+    bool created = false;
+    if (!id.empty())
+    {
+        if (_profiles.Find(id) == nullptr)
+        {
+            // A shipped game profile is parsed when something names it
+            ProfileContext named;
+            named.manual = {id};
+            std::vector<std::string> errors;
+            _profiles.LoadGamesFor(named, errors);
+        }
+        const Profile* found = _profiles.Find(id);
+        if (found == nullptr)
+            return refuse(markup::Error::NotFound, "no software profile '" + id + "'");
+        profile = *found;
+    }
+    else
+    {
+        if (_program.fileSha256.empty())
+            return refuse(markup::Error::Conflict, "no profile matches and no program was loaded from a file to key a "
+                                                   "new one: name a profile (profile=<id>)");
+        // Keyed as KeepAutoDecision keys a kept choice: the content signature, else the file hash
+        std::string content;
+        for (const std::string& signature : _program.signatures)
+            if (signature.rfind("file:", 0) != 0)
+                content = signature;
+        const std::string& sha = _program.fileSha256.front();
+        const std::string key = content.empty() ? sha : content.substr(content.rfind(':') + 1);
+        id = "user/game-" + key.substr(0, 16);
+        if (const Profile* found = _profiles.Find(id))
+            profile = *found;
+        else
+        {
+            profile.kind = ProfileKind::Play;
+            profile.id = id;
+            profile.label = _fileName.toStdString();
+            profile.fileSha256 = {sha};
+            if (!content.empty())
+                profile.signatures = {content};
+            profile.fileSet = _program.fileSet;
+            profile.options = JsonValue::Object();
+            created = true;
+        }
+    }
+    MemoryProfile memory;
+    std::string error;
+    if (!profile.memory.IsNull() && !ParseMemoryProfile(profile.memory, memory, error))
+        return refuse(markup::Error::Conflict, id + ": its memory section does not read (" + error + "): fix the "
+                                               "file first");
+    const MemoryProfileMerge merge = MergeIntoMemoryProfile(request.user, request.analysis, memory);
+    profile.memory = MemoryProfileToJson(memory);
+    profile.scope = ProfileScope::User;
+    // Laid over again from the file written, even when the same profile was the applied one
+    _memoryProfiles[emulator.GetId()].clear();
+    if (EmulatorContext* context = emulator.GetContext())  // lifetime-ok: _attached holds the emulator
+        if (DebugManager* debug = context->pDebugManager)
+            if (markup::MemoryMarkup* markup = debug->GetMemoryMarkup())
+                markup->ClearLayer(markup::Layer::Profile);
+    QString why;
+    if (!saveUserProfile(profile, why))
+        return refuse(markup::Error::Conflict, id + ": " + why.toStdString());
+    const Profile* saved = _profiles.Find(id);
+    reply.body["profile"] = id;
+    const std::string path =
+        saved != nullptr && !saved->path.empty() ? saved->path : ProfileStore::SavePath(profile, UserProfileDir().toStdString());
+    reply.body["path"] = path;
+    reply.body["created"] = created;
+    reply.body["regions"] = static_cast<uint64_t>(memory.regions.size());
+    reply.body["comments"] = static_cast<uint64_t>(memory.comments.size());
+    reply.body["added_regions"] = static_cast<uint64_t>(merge.regions);
+    reply.body["added_comments"] = static_cast<uint64_t>(merge.comments);
+    reply.body["skipped"] = static_cast<uint64_t>(merge.skipped);
+    reply.body["applied"] = _memoryProfiles[emulator.GetId()] == id;
+    std::string text = (created ? "Created " : "Saved to ") + id + " (" + path + "): " +
+                       std::to_string(merge.regions) + " region(s), " + std::to_string(merge.comments) +
+                       " comment(s) added; the section holds " + std::to_string(memory.regions.size()) +
+                       " region(s), " + std::to_string(memory.comments.size()) + " comment(s)";
+    if (merge.skipped > 0)
+        text += "; " + std::to_string(merge.skipped) + " on a cache page skipped (a profile names RAM, ROM or the CPU)";
+    if (_memoryProfiles[emulator.GetId()] != id)
+        text += "; another profile matches this program more strongly, so " + id + " does not lie over the machine";
+    reply.text = text;
+    return reply;
 }
 
 void HostControllers::attachHaptics()

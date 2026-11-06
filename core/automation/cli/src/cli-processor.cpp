@@ -186,6 +186,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"frame_cost", &CLIProcessor::HandleFrameCost},      // Halt/active frame cost stats
                         {"coverage", &CLIProcessor::HandleCoverage},          // Code coverage control/queries
                         {"analysis", &CLIProcessor::HandleAnalysis},          // Analysis layers: start/stop/status/explain
+                        {"markup", &CLIProcessor::HandleMarkup},              // Memory markup: show/layers/mark/unmark/save
                         {"aylog", &CLIProcessor::HandleAyLog},                // AY register-write logging
                         {"audiocapture", &CLIProcessor::HandleAudioCapture},  // Buffered stereo capture
                         {"mixer", &CLIProcessor::HandleMixer},                // Per-device mixer (mute, solo, volume)
@@ -835,6 +836,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  coverage export [<path>] [--start A] [--end B] [--merge] - SkoolKit code execution map ($HHHH lines)" << NEWLINE;
     oss << "  analysis start [facts|counters] [z80|physical]|stop|status - Analysis layers: L0 access facts" << NEWLINE;
     oss << "  analysis explain <addr> [page] [--json] - What L0 knows of a byte: kinds, last reader/writer, frames, values" << NEWLINE;
+    oss << "  markup [show] [range] | layers | mark <range> <kind> [title] | unmark <range> | comment <addr> [text] | clear [layer] | save [profile] [keep] - Memory markup" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
     oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;
     oss << "  videorecord start|stop|pause|resume|toggle|status|presets [opts] - Video (--preset gameplay, --mode audio, --audio aac, --profile 4k)" << NEWLINE;

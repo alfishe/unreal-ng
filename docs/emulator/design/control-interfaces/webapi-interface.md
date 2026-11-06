@@ -826,6 +826,40 @@ POST /api/v1/emulator/{id}/analysis/trace      {path, from_frame?, from_tinframe
                                                cycles, fetches, reads, writes, ports, bytes, truncated, text}
 ```
 
+### Memory markup
+
+What each byte is (code, data, text, sprite, ...) by layer, bundle < runtime < analysis < profile < user: the
+[memory markup](../../../inprogress/2026-11-05-software-metadata-profile/README.md) (`markup_api.cpp` over the shared core handler `markup::Execute`; OpenAPI tag `Analyzers`).
+Every answer carries `text`, the CLI's lines; refusals are `{"error", "message"}` with 400 (unknown option, bad
+value), 404 (no such label or profile), 409 (nothing to save, no program to key a new profile), 503 (`save-profile` in
+a process without software profiles: only unreal-qt keeps them). Addresses: `$8000`, `#8000`, `0x8000`, `8000h`,
+decimal or a label. A WebSocket `call` runs the same routes; the topic `debug.markup` pushes the layers' counts.
+
+```
+GET    /api/v1/emulator/{id}/markup?range=8000-80FF | from=&to=, layer=?, limit=? (200, <= 4096)
+                                              the CPU range (default the 64K): {from, to, revision, count, truncated,
+                                               spans [{from, to, kind, layer, source, title, confidence, start}],
+                                               anchors ["$8000", ...] (instruction starts known), comments [{address,
+                                               layer, text}], text}; layer: only the spans that layer wins
+GET    /api/v1/emulator/{id}/markup/layers   {layers [{layer, source, claims, entries, comments}] lowest first,
+                                               runtime: facts | facts-physical | coverage | none, revision, text}
+PUT    /api/v1/emulator/{id}/markup          {range | from, to?, kind, title?, cpu?}: the user layer marks the range
+                                               on the pages mapped now (cpu: true on the CPU addresses)
+                                               {from, to, kind, cpu, revision, text}
+DELETE /api/v1/emulator/{id}/markup?range= | from=&to=   the user layer forgets its claims there
+PUT    /api/v1/emulator/{id}/markup/comment  {address, text?}: the user layer's comment (empty text removes it)
+DELETE /api/v1/emulator/{id}/markup/layers?layer=user   empty a layer (user by default; analysis: back to the
+                                               last L2 build)
+POST   /api/v1/emulator/{id}/markup/save-profile  {profile?, analysis?: "all" | "code,sprite" | [kinds],
+                                               confidence? (700), keep?}: the user layer and the analysis claims
+                                               chosen into the memory section of the profile named, else the matched
+                                               one, else a new user game profile keyed by the loaded program; the
+                                               user layer is emptied unless keep (or the profile does not lie over
+                                               the machine) {profile, path, created, applied, regions, comments,
+                                               added_regions, added_comments, skipped, saved_user_claims,
+                                               saved_comments, saved_analysis_claims, kept_user_layer, text}
+```
+
 ### Settings Management
 ```
 GET  /api/v1/emulator/{id}/settings            All settings, grouped (io_acceleration, disk_interface, audio) plus turbo_mode, speed, effective_speed, turbo_active, turbo_audio
@@ -1977,7 +2011,7 @@ the I/O thread. The topic `streamdeck.status` on `/api/v1/ws` pushes the changes
 ```
 GET    /api/v1/monitor[?instance=]                       everything: {host, clients, instances: [{instance, index, model, emulator.stats, ...}]}
 GET    /api/v1/monitor/{name}[?instance=]                one name: host.stats, host.clients, emulator.stats, debug.breakpoints,
-                                                         media.slots, recording.state, debug.labels, ttd.status, debug.analyzers,
+                                                         media.slots, recording.state, debug.labels, ttd.status, debug.analyzers, debug.markup,
                                                          controllers.state, game.events, devices.access, breakpoint_groups
 GET    /api/v1/emulator/{id}/breakpoints/groups          {groups: [{name, total, active, ids}]} (the user breakpoints)
 ```

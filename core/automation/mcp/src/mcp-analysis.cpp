@@ -5,6 +5,13 @@
 //   assemble    → POST /assemble {code, address?, write}
 //   find_bytes  → POST /memory/find {pattern_hex, space?, mask_hex?, start?, end?, max?, alignment?}
 //   trace       → POST /profiler/calltrace/start → run_frames → stop (finalizes hot→cold) → GET entries
+//   markup         → GET    /markup?range=&from=&to=&layer=&limit=   (the memory markup, core markup::Execute)
+//   markup_layers  → GET    /markup/layers
+//   mark           → PUT    /markup {range | from, to?, kind, title?, cpu?}
+//   unmark         → DELETE /markup?range=&from=&to=
+//   markup_comment → PUT    /markup/comment {address, text?}
+//   markup_clear   → DELETE /markup/layers?layer=
+//   save_profile   → POST   /markup/save-profile {profile?, analysis?, confidence?, keep?}
 //
 // analyze_performance actions:
 //   coverage_start/stop/read/gaps/clear → /coverage* endpoints
@@ -79,18 +86,22 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"disassemble", "assemble", "find_bytes", "trace"})
+    for (const char* action : {"disassemble", "assemble", "find_bytes", "trace", "markup", "markup_layers", "mark",
+                               "unmark", "markup_comment", "markup_clear", "save_profile"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Code operation: read disassembly, assemble Z80 source into memory, search for byte patterns, capture a call trace.";
+        "Code operation: read disassembly, assemble Z80 source into memory, search for byte patterns, capture a call "
+        "trace; the memory markup: markup (what a range holds: code / data / sprite ... spans by layer, instruction "
+        "starts, comments), markup_layers, mark / unmark / markup_comment / markup_clear (the user layer), "
+        "save_profile (the user layer and chosen analysis claims into the game's software profile).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["address"]["type"] = "string";
     schema["properties"]["address"]["description"] =
         "Start address for disassemble/assemble and window start for find_bytes — integer or \"0x…\" hex string "
-        "(disassemble defaults to the current PC)";
+        "(disassemble defaults to the current PC); markup_comment: the comment's address ($8000, decimal or a label)";
     schema["properties"]["count"]["type"] = "integer";
     schema["properties"]["count"]["default"] = 16;
     schema["properties"]["count"]["description"] = "Instruction count for disassemble (1-256)";
@@ -125,7 +136,39 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
     schema["properties"]["frames"]["description"] = "Emulated frames to run while tracing (1-1000)";
     schema["properties"]["limit"]["type"] = "integer";
     schema["properties"]["limit"]["default"] = 64;
-    schema["properties"]["limit"]["description"] = "Maximum trace entries to return";
+    schema["properties"]["limit"]["description"] = "Maximum trace entries to return; markup: rows of each list (200)";
+    schema["properties"]["range"]["type"] = "string";
+    schema["properties"]["range"]["description"] =
+        "markup, mark, unmark: the CPU range, \"8000-80FF\" or \"$8000-$80FF\" (or from / to)";
+    for (const char* name : {"from", "to"})
+        schema["properties"][name]["type"] = "string";
+    schema["properties"]["from"]["description"] = "markup, mark, unmark: the range's first address (or a label)";
+    schema["properties"]["to"]["description"] = "markup, mark, unmark: the range's last address (default from)";
+    schema["properties"]["layer"]["type"] = "string";
+    schema["properties"]["layer"]["description"] =
+        "markup: only the spans this layer wins; markup_clear: the layer to empty (user, the default; bundle, runtime, "
+        "analysis, profile)";
+    schema["properties"]["kind"]["type"] = "string";
+    schema["properties"]["kind"]["description"] =
+        "mark: the region kind (code, data, text, font, sprite, tile, screen, table, ...)";
+    schema["properties"]["title"]["type"] = "string";
+    schema["properties"]["title"]["description"] = "mark: the region's title";
+    schema["properties"]["cpu"]["type"] = "boolean";
+    schema["properties"]["cpu"]["description"] =
+        "mark: claim the CPU addresses instead of the pages they show now (default false)";
+    schema["properties"]["text"]["type"] = "string";
+    schema["properties"]["text"]["description"] = "markup_comment: the comment (empty removes it)";
+    schema["properties"]["profile"]["type"] = "string";
+    schema["properties"]["profile"]["description"] =
+        "save_profile: the profile id to write into (default the matched one, else a new one for the loaded program)";
+    for (const char* type : {"string", "array"})
+        schema["properties"]["analysis"]["type"].append(type);
+    schema["properties"]["analysis"]["description"] =
+        "save_profile: the analysis claims to save too: \"all\" or kinds (\"code,sprite\" or an array)";
+    schema["properties"]["confidence"]["type"] = "integer";
+    schema["properties"]["confidence"]["description"] = "save_profile: the analysis claims' least confidence (700)";
+    schema["properties"]["keep"]["type"] = "boolean";
+    schema["properties"]["keep"]["description"] = "save_profile: keep the user layer after saving (default false)";
     schema["required"].append("action");
 
     registry.Register(
@@ -383,7 +426,74 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                 return;
             }
 
-            done(ToolResult::Error("Unknown action '" + action + "'. Valid: disassemble, assemble, find_bytes, trace"));
+            // The memory markup: the core answer's text (shared with the CLI) is the readable answer
+            auto withText = [done](ToolResult result) {
+                if (!result.isError && result.structured.isObject() && result.structured.isMember("text"))
+                    result.text = result.text + "\n" + result.structured["text"].asString();
+                done(std::move(result));
+            };
+            auto query = [&args](std::initializer_list<const char*> names) {
+                std::string suffix;
+                for (const char* name : names)
+                    if (args.isMember(name) && !AddressArg(args[name]).empty())
+                        suffix += (suffix.empty() ? "?" : "&") + std::string(name) + "=" +
+                                  UrlEncodeSegment(AddressArg(args[name]));
+                return suffix;
+            };
+            auto bodyOf = [&args](std::initializer_list<const char*> names) {
+                Json::Value body(Json::objectValue);
+                for (const char* name : names)
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name];  // the core checks the values
+                return body;
+            };
+            if (action == "markup")
+            {
+                ResolveAndForward(args, "GET", "/markup" + query({"range", "from", "to", "layer", "limit"}), nullptr,
+                                  caller, "Memory markup", withText);
+                return;
+            }
+            if (action == "markup_layers")
+            {
+                ResolveAndForward(args, "GET", "/markup/layers", nullptr, caller, "Memory markup layers", withText);
+                return;
+            }
+            if (action == "mark")
+            {
+                const Json::Value body = bodyOf({"range", "from", "to", "kind", "title", "cpu"});
+                ResolveAndForward(args, "PUT", "/markup", &body, caller, "Marked", withText);
+                return;
+            }
+            if (action == "unmark")
+            {
+                ResolveAndForward(args, "DELETE", "/markup" + query({"range", "from", "to"}), nullptr, caller,
+                                  "Unmarked", withText);
+                return;
+            }
+            if (action == "markup_comment")
+            {
+                Json::Value body = bodyOf({"text"});
+                if (args.isMember("address") && !AddressArg(args["address"]).empty())
+                    body["address"] = AddressArg(args["address"]);
+                ResolveAndForward(args, "PUT", "/markup/comment", &body, caller, "Comment", withText);
+                return;
+            }
+            if (action == "markup_clear")
+            {
+                ResolveAndForward(args, "DELETE", "/markup/layers" + query({"layer"}), nullptr, caller,
+                                  "Markup layer cleared", withText);
+                return;
+            }
+            if (action == "save_profile")
+            {
+                const Json::Value body = bodyOf({"profile", "analysis", "confidence", "keep"});
+                ResolveAndForward(args, "POST", "/markup/save-profile", &body, caller, "Saved to the profile", withText);
+                return;
+            }
+
+            done(ToolResult::Error("Unknown action '" + action +
+                                   "'. Valid: disassemble, assemble, find_bytes, trace, markup, markup_layers, mark, "
+                                   "unmark, markup_comment, markup_clear, save_profile"));
         });
 }
 

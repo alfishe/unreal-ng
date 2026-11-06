@@ -663,6 +663,34 @@ range     kind          detector       conf status   label / title
 L2 skool (5900-59FF,8000-FFFF): 103 entries, 224275 bytes written to scratch/game.skool
 ```
 
+### Memory markup
+
+What each byte of memory is (code, data, text, sprite, ...) by layer, the [memory markup](../../../inprogress/2026-11-05-software-metadata-profile/README.md): one command over the
+same core handler as every other plane (`markup::Execute`), so its lines are also the `text` of the REST and MCP
+answers. Addresses: `$8000`, `#8000`, `0x8000`, `8000h`, decimal or a label; a range `8000-80FF` or `$8000-$80FF`.
+`--json` prints the answer's fields.
+
+| CLI Command | Description |
+| :--- | :--- |
+| `markup [show] [<range> \| <from> [<to>]] [layer=<l>] [limit=<n>]` | The CPU range (default the 64K) as spans of one winning claim each (kind, layer source, title, confidence below 1000), then the comments; `layer=` keeps the spans that layer wins. |
+| `markup layers` | Every layer, highest first: its source and counts; the runtime layer's feed (`facts`, `facts-physical`, `coverage`, `none`). |
+| `markup mark <range> \| <from> [<to>] <kind> [<title words>] [cpu]` | The user layer: the range as a region kind on the pages the CPU shows now (`cpu`: on the CPU addresses). |
+| `markup unmark <range> \| <from> [<to>]` | The user layer forgets its claims there. |
+| `markup comment <address> [<text words>]` | The user layer's comment (no text removes it). |
+| `markup clear [<layer>]` | Empty a layer (`user` by default; `analysis` shows the last L2 build again). |
+| `markup save [<profile>] [analysis=all\|<kinds>] [confidence=<n>] [keep]` | The user layer, and the analysis claims of at least the confidence (700) chosen, into a software profile's `memory:` section (unreal-qt only): the profile named, else the matched one, else a new user profile keyed by the loaded program. The user layer is emptied after unless `keep` (or the profile does not lie over the machine). |
+
+```
+> markup mark 8000 80FF sprite hero
+Marked $8000-$80FF as sprite 'hero' (on the pages mapped now)
+> markup comment $8010 frame 2
+Comment at $8010: frame 2
+> markup 8000-81FF
+Markup $8000-$81FF: 1 span(s), 0 instruction start(s), 1 comment(s)
+$8000-$80FF sprite [user] hero
+; $8010 frame 2
+```
+
 ## Connection Examples
 
 ### Using Telnet

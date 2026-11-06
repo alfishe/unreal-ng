@@ -1674,6 +1674,22 @@ emu.analysis("experiment", '{"poke": {"$8100": 5}, "frames": 50, "expect": {"mem
 emu.analysis("cover", "32")                          -- a string: the budget
 ```
 
+### Memory markup
+
+The [memory markup](../../../inprogress/2026-11-05-software-metadata-profile/README.md) through the shared core handler (`markup::Execute`): the answer is a table of its fields
+plus `text`; a refusal is `{ ok = false, error = <why> }`. A string second argument is the action's main option
+(show, mark, unmark: the range; comment: the address; clear: the layer; save: the profile).
+
+```lua
+emu.markup("mark", {range = "8000-80FF", kind = "sprite", title = "hero"})  -- the user layer
+local m = emu.markup("show", "8000-81FF")            -- { from, to, spans, anchors, comments, count, truncated, text }
+emu.markup("comment", {address = "$8010", text = "frame 2"})
+emu.markup("unmark", "8040-80FF")
+emu.markup("layers")                                 -- { layers, runtime, revision, text }
+emu.markup("clear", "user")
+emu.markup("save", {analysis = {"code", "sprite"}, keep = true})  -- unreal-qt: into the game's software profile
+```
+
 ## Usage Examples
 
 ### Register Dump Macro

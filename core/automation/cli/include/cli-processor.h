@@ -212,6 +212,7 @@ private:
     void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAnalysis(const ClientSession& session, const std::vector<std::string>& args);  // analysis layers (L0 facts)
+    void HandleMarkup(const ClientSession& session, const std::vector<std::string>& args);    // memory markup
     void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAudioCapture(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMixer(const ClientSession& session, const std::vector<std::string>& args);

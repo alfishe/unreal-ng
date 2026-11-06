@@ -111,6 +111,16 @@ struct Span
     bool claimStart = false;  ///< `lo` is the claim's first byte (not a part after a higher claim, a window or the query)
 };
 
+/// What one layer holds now, counted (the `debug.markup` topic, the `layers` verb)
+struct LayerSummary
+{
+    Layer layer = Layer::User;
+    std::string source;
+    size_t claims = 0;
+    size_t entries = 0;
+    size_t comments = 0;
+};
+
 struct CommentAt
 {
     uint16_t address = 0;
@@ -159,6 +169,10 @@ public:
 
     /// Grows on every change of a layer (a consumer redraws when it moved)
     uint64_t Revision() const;
+    /// Every layer counted, in priority order (the runtime layer: only what was set; RuntimeFeed names its source)
+    std::vector<LayerSummary> Summary() const;
+    /// What the runtime layer is derived from now: "facts" (L0, Z80 view), "facts-physical", "coverage" or "none"
+    std::string RuntimeFeed() const;
 
 private:
     struct Window

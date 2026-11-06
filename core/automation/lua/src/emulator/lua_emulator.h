@@ -90,6 +90,7 @@
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "debugger/markup/markupcontrol.h"
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
@@ -7364,6 +7365,34 @@ public:
                                                              : verb == "trace" ? "path"
                                                                                : "")
                                                : analysis::Options{});
+            StateNode value = reply.ToValue();
+            if (!reply.Ok())
+            {
+                value = StateNode::Object();
+                value["ok"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+        // The memory markup through markup::Execute (markupcontrol.h): markup(action, opts) with action show
+        // {range=, from=, to=, layer=, limit=} (or the range), layers, mark {range= | from=, to=, kind=, title=, cpu=}
+        // (or the range), unmark {range= | from=, to=} (or the range), comment {address=, text=} (or the address),
+        // clear {layer=} (or the layer), save {profile=, analysis=, confidence=, keep=} (or the profile)
+        lua.set_function("markup", [this](sol::this_state ts, sol::optional<std::string> action,
+                                          sol::optional<sol::object> opts) -> sol::object {
+            const std::string verb = action.value_or("show");
+            Emulator* emulator = effectiveEmulator();
+            markup::Reply reply;
+            if (!emulator)
+                reply.error = markup::Error::NotAvailable, reply.message = "no emulator";
+            else
+                reply = markup::Execute(*emulator, verb,
+                                        opts ? SymbolOptions(*opts, verb == "comment" ? "address"
+                                                           : verb == "clear" ? "layer"
+                                                           : verb == "save" ? "profile"
+                                                           : verb == "layers" ? ""
+                                                                              : "range")
+                                             : markup::Options{});
             StateNode value = reply.ToValue();
             if (!reply.Ok())
             {

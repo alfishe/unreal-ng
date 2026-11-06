@@ -103,17 +103,39 @@ without the controllers (none today) would need the match in its own glue.
 
 ## 4. Saving back
 
-Explicit only (nothing is written on its own): "save to profile" writes the `user` layer, chosen `analysis` claims
-and the `user` labels into the profile's `memory:` section (or a new profile with the current `match` keys).
+Explicit only (nothing is written on its own): `markup save` (`POST /markup/save-profile`, every plane) writes the
+`user` layer's claims and comments and the chosen `analysis` claims (`analysis=all` or kinds, at least `confidence`,
+700) into a profile's `memory:` section:
+
+- the profile named (`profile=`), else the one applied to the machine, else a new user game profile keyed by the
+  loaded program as a kept auto decision is (`user/game-<key16>` with the file hash, content signature and file set);
+  no program loaded from a file and no profile: 409;
+- written to the user profile directory (a shipped profile gets a user copy, which wins by scope) and laid over the
+  machine again;
+- the order keeps what the layers showed (a later region wins inside a layer): the analysis claims first, then the
+  regions the section had, then the user's claims; a region already there as it is is not repeated; a user comment
+  replaces the one at its address; claims on cache pages are skipped (a profile names CPU, RAM and ROM places);
+- the user layer is emptied after, unless `keep` or the profile does not lie over the machine (another one matches
+  more strongly: the marks would go out of sight).
+
+Core cannot link the controllers library, so the core verb gathers the request and the process's profile owner
+registers the writer (`markup::SetProfileSaver`; unreal-qt's `HostControllers`, on the GUI thread). Elsewhere `save`
+answers 503. The `user` labels are not saved yet.
 
 ## 5. Planes
 
 | Plane | Form |
 |:--|:--|
-| REST | `GET /markup?from=&to=`, `PUT /markup` (user layer), `GET /markup/layers`, `POST /markup/save-profile` |
-| WebSocket | the same as calls; `markup` topic on changes |
-| MCP | `debug_code` actions `markup`, `mark`, `save_profile` |
-| CLI / Python / Lua | `markup`, `mark`, `unmark`, `markup-save` |
+One core handler, `markup::Execute` (`core/src/debugger/markup/markupcontrol.h`): actions `show`, `layers`, `mark`,
+`unmark`, `comment`, `clear`, `save`; every plane passes its input through unchanged and shows the reply's `text`.
+
+| Plane | Form |
+|:--|:--|
+| REST | `GET /markup?range=&from=&to=&layer=&limit=`, `PUT /markup` {range \| from, to, kind, title, cpu}, `DELETE /markup?range=`, `GET /markup/layers`, `DELETE /markup/layers?layer=`, `PUT /markup/comment` {address, text}, `POST /markup/save-profile` {profile, analysis, confidence, keep} |
+| WebSocket | the same as calls; topic `debug.markup` (the layers' counts, the runtime feed, the revision) on every change |
+| MCP | `debug_code` actions `markup`, `markup_layers`, `mark`, `unmark`, `markup_comment`, `markup_clear`, `save_profile` |
+| CLI | `markup [show\|layers\|mark\|unmark\|comment\|clear\|save] ...` |
+| Lua / Python | `emu.markup(action, opts)` / `emu.markup(action, **opts)` |
 
 ## 6. Steps
 
@@ -122,7 +144,7 @@ and the `user` labels into the profile's `memory:` section (or a new profile wit
 | 1 | Move game profiles to `data/software/` (loader, index, packaging, docs); `memory:` section parsed, validated, kept and saved back (`MemoryProfile_Test`) |
 | 2 | `MemoryMarkup` with layers, physical keys, queries; profile layer + profile label set on a match (done: `MemoryMarkup_Test`, `MemoryProfile_Test.LaidOverAMachineAndTakenBack`) |
 | 3 | Runtime layer from L0 facts / coverage; analysis layer from L2 (done: `MemoryMarkup_Test.Runtime*`, `AnalysisLayerFollowsTheLastBuild`) |
-| 4 | Planes; save to profile |
+| 4 | Planes; save to profile (done: `MarkupControl_Test`, `MarkupControlCli_Test`, `MemoryProfile_Test.WrittenSectionReadsBack`, `SaveMergesTheLayersInTheirOrder`, `tools/verification/mcp/test_debug_code.py`) |
 | 5 | Consumers: disassembler window (anchors, data rows), memory viewer colouring |
 
 ## 7. Open points

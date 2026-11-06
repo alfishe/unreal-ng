@@ -18,6 +18,7 @@
 #include <vector>
 
 #ifdef ENABLE_CONTROLLERS
+#include "debugger/markup/markupcontrol.h"
 #include "emulator/io/controllers/ihapticfeed.h"
 #include "hostinputcontrol.h"
 #include "hostinputservice.h"
@@ -243,6 +244,10 @@ private:
     /// The strongest game match's `memory` section over the attached machine (the markup's profile layer, the label
     /// set profile:<id>); another match, or none, takes the previous one back
     void applyMemoryProfile();
+    /// markup `save` (markupcontrol.h, every plane), on the GUI thread: the user layer and the analysis claims chosen
+    /// into the memory section of the profile named, else the applied one, else a new user game profile keyed by the
+    /// loaded program (as KeepAutoDecision keys it); then the profile lies over the machine again
+    markup::Reply saveMarkup(Emulator& emulator, const markup::SaveRequest& request);
     /// surface-dial.md §4.1: while a wheel device (the Surface Dial) is connected, the main and debugger windows hold
     /// the system wheel (Windows: no built-in tools, no wheel menu); released when the last one goes and at the end
     void updateWheelMenu();

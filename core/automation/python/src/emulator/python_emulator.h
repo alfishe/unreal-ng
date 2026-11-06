@@ -73,6 +73,7 @@
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "debugger/markup/markupcontrol.h"
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
 #include "debugger/asm/asmcontrol.h"
@@ -3836,6 +3837,37 @@ namespace PythonBindings
                "The reply's fields plus text (the readable answer); "
                "a refusal: ok = False, error = why",
                py::arg("action") = "status")
+            .def("markup", [](Emulator& self, const std::string& action, const py::kwargs& kwargs) -> py::object {
+                markup::Options options;
+                for (const auto& [key, value] : kwargs)
+                {
+                    // analysis may be a list of kinds: comma separated for markup::Execute
+                    if (py::isinstance<py::list>(value))
+                    {
+                        std::string kinds;
+                        for (const auto& kind : value)
+                            kinds += (kinds.empty() ? "" : ",") + py::str(kind).cast<std::string>();
+                        options[py::str(key).cast<std::string>()] = kinds;
+                    }
+                    else
+                        options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                }
+                const markup::Reply reply = markup::Execute(self, action, options);
+                StateNode value = reply.ToValue();
+                if (!reply.Ok())
+                {
+                    value = StateNode::Object();
+                    value["ok"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Memory markup (markupcontrol.h): action show (range='8000-80FF' or from=, to=, layer='user' | ..., "
+               "limit=200: spans, instruction starts, comments) | layers | mark (range= or from=, to=, kind='code' | "
+               "'data' | 'sprite' | ..., title=, cpu=True: the user layer) | unmark (range= or from=, to=) | comment "
+               "(address='$8000' or a label, text=: empty removes) | clear (layer='user') | save (profile=, "
+               "analysis='all' or ['code', 'sprite'], confidence=700, keep=True: into a software profile, unreal-qt "
+               "only). The reply's fields plus text; a refusal: ok = False, error = why",
+               py::arg("action") = "show")
             .def("trace", [](Emulator& self, const std::string& name, const std::string& op, const py::kwargs& kwargs) -> py::object {
                 tracecontrol::Options options;
                 for (const auto& [key, value] : kwargs)

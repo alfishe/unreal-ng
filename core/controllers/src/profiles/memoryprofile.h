@@ -75,4 +75,9 @@ bool ParseMemoryPlace(const JsonValue& value, bool range, MemoryPlace& out, std:
 /// Parse and validate a `memory` section; false with the reason, which names the place (`memory.regions[2]: ...`)
 bool ParseMemoryProfile(const JsonValue& section, MemoryProfile& out, std::string& error);
 
+/// A place as ParseMemoryPlace reads it back: `0x6A00`, `0x6A00-0x6AFF`, `page:3:0x0100-0x01FF`, `rom:1:0x0C0A`
+std::string FormatMemoryPlace(const MemoryPlace& place);
+/// The `memory` section of @p profile, the lists it has (the save to a profile writes it into the profile file)
+JsonValue MemoryProfileToJson(const MemoryProfile& profile);
+
 }  // namespace controllers

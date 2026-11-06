@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 
 namespace controllers
@@ -373,6 +374,83 @@ bool ParseMemoryProfile(const JsonValue& section, MemoryProfile& out, std::strin
             out.comments.push_back(std::move(comment));
         }
     return true;
+}
+
+std::string FormatMemoryPlace(const MemoryPlace& place)
+{
+    char lo[8];
+    char hi[8];
+    std::snprintf(lo, sizeof(lo), "0x%04X", place.lo);
+    std::snprintf(hi, sizeof(hi), "0x%04X", place.hi);
+    std::string text = place.space == MemorySpace::Ram   ? "page:" + std::to_string(place.page) + ":"
+                       : place.space == MemorySpace::Rom ? "rom:" + std::to_string(place.page) + ":"
+                                                         : std::string();
+    text += lo;
+    if (place.hi != place.lo)
+        text += std::string("-") + hi;
+    return text;
+}
+
+JsonValue MemoryProfileToJson(const MemoryProfile& profile)
+{
+    JsonValue section = JsonValue::Object();
+    auto labels = [](const std::vector<MemoryLabelSpec>& list) {
+        std::vector<JsonValue> items;
+        for (const MemoryLabelSpec& label : list)
+        {
+            JsonValue entry = JsonValue::Object();
+            entry.Set("name", JsonValue::String(label.name));
+            entry.Set("at", JsonValue::String(FormatMemoryPlace(label.place)));
+            if (!label.comment.empty())
+                entry.Set("comment", JsonValue::String(label.comment));
+            items.push_back(std::move(entry));
+        }
+        return JsonValue::Array(std::move(items));
+    };
+    if (!profile.regions.empty())
+    {
+        std::vector<JsonValue> items;
+        for (const MemoryRegionSpec& region : profile.regions)
+        {
+            JsonValue entry = JsonValue::Object();
+            entry.Set("at", JsonValue::String(FormatMemoryPlace(region.place)));
+            entry.Set("kind", JsonValue::String(region.kind));
+            if (!region.title.empty())
+                entry.Set("title", JsonValue::String(region.title));
+            if (!region.sha256.empty())
+                entry.Set("sha256", JsonValue::String(region.sha256));
+            if (region.confidence != 1000)
+                entry.Set("confidence", JsonValue::Number(region.confidence));
+            if (region.geometry.IsObject())
+                entry.Set("geometry", region.geometry);
+            items.push_back(std::move(entry));
+        }
+        section.Set("regions", JsonValue::Array(std::move(items)));
+    }
+    if (!profile.labels.empty())
+        section.Set("labels", labels(profile.labels));
+    if (!profile.symbols.empty())
+    {
+        std::vector<JsonValue> items;
+        for (const std::string& file : profile.symbols)
+            items.push_back(JsonValue::String(file));
+        section.Set("symbols", JsonValue::Array(std::move(items)));
+    }
+    if (!profile.entries.empty())
+        section.Set("entries", labels(profile.entries));
+    if (!profile.comments.empty())
+    {
+        std::vector<JsonValue> items;
+        for (const MemoryCommentSpec& comment : profile.comments)
+        {
+            JsonValue entry = JsonValue::Object();
+            entry.Set("at", JsonValue::String(FormatMemoryPlace(comment.place)));
+            entry.Set("text", JsonValue::String(comment.text));
+            items.push_back(std::move(entry));
+        }
+        section.Set("comments", JsonValue::Array(std::move(items)));
+    }
+    return section;
 }
 
 }  // namespace controllers

@@ -29,6 +29,7 @@ openapi/
 ├── openapi_interpreter.inc # CLI/Lua/Python interpreters
 ├── openapi_keyboard.inc   # Keyboard injection
 ├── openapi_labels.inc     # Labels/symbols management
+├── openapi_markup.inc     # Memory markup: show, layers, mark, unmark, comment, clear, save-profile (markup::Execute)
 ├── openapi_symbols.inc    # Symbol files in every format, symbol sets (SymbolControl)
 ├── openapi_asm.inc        # Assembler sources: decode, encode, convert, disk files (AsmControl)
 ├── openapi_signature.inc  # Media signatures: a file, the loaded media, compare (SignatureControl)

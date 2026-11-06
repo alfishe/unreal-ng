@@ -156,6 +156,100 @@ TEST(MemoryProfile_Test, TheKindsAreTheAnalysisKinds)
     EXPECT_EQ(kinds, MemoryRegionKinds());
 }
 
+/// MemoryProfileToJson writes what ParseMemoryProfile reads: the section of a save parses to the same lists
+TEST(MemoryProfile_Test, WrittenSectionReadsBack)
+{
+    Profile profile;
+    std::string error;
+    ASSERT_TRUE(ParseProfile(kProfile, profile, error)) << error;
+    MemoryProfile memory;
+    ASSERT_TRUE(ParseMemoryProfile(profile.memory, memory, error)) << error;
+
+    MemoryProfile again;
+    ASSERT_TRUE(ParseMemoryProfile(MemoryProfileToJson(memory), again, error)) << error;
+    ASSERT_EQ(again.regions.size(), memory.regions.size());
+    for (size_t i = 0; i < memory.regions.size(); i++)
+    {
+        EXPECT_EQ(FormatMemoryPlace(again.regions[i].place), FormatMemoryPlace(memory.regions[i].place)) << i;
+        EXPECT_EQ(again.regions[i].kind, memory.regions[i].kind) << i;
+        EXPECT_EQ(again.regions[i].title, memory.regions[i].title) << i;
+        EXPECT_EQ(again.regions[i].confidence, memory.regions[i].confidence) << i;
+        EXPECT_EQ(again.regions[i].sha256, memory.regions[i].sha256) << i;
+        EXPECT_EQ(again.regions[i].geometry.Dump(), memory.regions[i].geometry.Dump()) << i;
+    }
+    EXPECT_EQ(FormatMemoryPlace(memory.regions[1].place), "page:1:0x0000-0x1AFF");
+    EXPECT_EQ(FormatMemoryPlace(memory.regions[3].place), "rom:0:0x0D6B-0x0D7A");
+    ASSERT_EQ(again.labels.size(), 2u);
+    EXPECT_EQ(again.labels[1].name, "draw_sprite");
+    EXPECT_EQ(FormatMemoryPlace(again.labels[1].place), "page:1:0x2000");
+    EXPECT_EQ(again.labels[1].comment, "IX = sprite");
+    EXPECT_EQ(again.symbols, memory.symbols);
+    ASSERT_EQ(again.entries.size(), 1u);
+    EXPECT_EQ(again.entries[0].name, "start");
+    ASSERT_EQ(again.comments.size(), 1u);
+    EXPECT_EQ(again.comments[0].text, memory.comments[0].text);
+}
+
+/// A save's merge: the analysis claims under the profile's regions, the user's on top (the later wins), nothing
+/// repeated, a user comment replacing the one at its address, cache pages skipped
+TEST(MemoryProfile_Test, SaveMergesTheLayersInTheirOrder)
+{
+    MemoryProfile memory;
+    MemoryRegionSpec engine;
+    engine.place = MemoryPlace{MemorySpace::Cpu, 0, 0x6000, 0x7FFF};
+    engine.kind = "code";
+    memory.regions.push_back(engine);
+    MemoryCommentSpec old;
+    old.place = MemoryPlace{MemorySpace::Cpu, 0, 0x6A10, 0x6A10};
+    old.text = "old";
+    memory.comments.push_back(old);
+
+    auto claim = [](markup::Place place, analysis::RegionKind kind, const std::string& title = "") {
+        markup::Claim c;
+        c.place = place;
+        c.kind = kind;
+        c.title = title;
+        return c;
+    };
+    markup::LayerContent user;
+    user.claims = {claim({markup::Space::Ram, 3, 0x0100, 0x01FF}, analysis::RegionKind::Sprite, "hero"),
+                   claim({markup::Space::Cpu, 0, 0x6000, 0x7FFF}, analysis::RegionKind::Code),
+                   claim({markup::Space::Cache, 0, 0x0000, 0x00FF}, analysis::RegionKind::Data)};
+    user.comments = {markup::Note{{markup::Space::Cpu, 0, 0x6A10, 0x6A10}, "waits for the frame"},
+                     markup::Note{{markup::Space::Rom, 1, 0x0C0A, 0x0C0A}, "the ROM's print"}};
+    std::vector<markup::Claim> analysisClaims = {claim({markup::Space::Cpu, 0, 0x8000, 0x80FF}, analysis::RegionKind::Data),
+                                                 claim({markup::Space::Cpu, 0, 0x6000, 0x7FFF}, analysis::RegionKind::Code)};
+    analysisClaims[0].confidence = 800;
+
+    const MemoryProfileMerge merge = MergeIntoMemoryProfile(user, analysisClaims, memory);
+    EXPECT_EQ(merge.regions, 2u) << "the analysis data and the user sprite; the engine is there as it is";
+    EXPECT_EQ(merge.comments, 2u);
+    EXPECT_EQ(merge.skipped, 1u) << "the cache page";
+    ASSERT_EQ(memory.regions.size(), 3u);
+    EXPECT_EQ(FormatMemoryPlace(memory.regions[0].place), "0x8000-0x80FF") << "the analysis claim lowest";
+    EXPECT_EQ(memory.regions[0].confidence, 800);
+    EXPECT_EQ(memory.regions[1].kind, "code") << "then the profile's own";
+    EXPECT_EQ(FormatMemoryPlace(memory.regions[2].place), "page:3:0x0100-0x01FF") << "the user's on top";
+    EXPECT_EQ(memory.regions[2].title, "hero");
+    ASSERT_EQ(memory.comments.size(), 2u);
+    EXPECT_EQ(memory.comments[0].text, "waits for the frame") << "replaced at its address";
+    EXPECT_EQ(FormatMemoryPlace(memory.comments[1].place), "rom:1:0x0C0A");
+
+    // The user's claim over a lower equal one still goes on top: a later region over it would win otherwise
+    MemoryRegionSpec over;
+    over.place = MemoryPlace{MemorySpace::Cpu, 0, 0x6000, 0x60FF};
+    over.kind = "data";
+    memory.regions.push_back(over);
+    markup::LayerContent again;
+    again.claims = {claim({markup::Space::Cpu, 0, 0x6000, 0x7FFF}, analysis::RegionKind::Code)};
+    EXPECT_EQ(MergeIntoMemoryProfile(again, {}, memory).regions, 1u);
+    EXPECT_EQ(memory.regions.back().kind, "code");
+
+    std::string error;
+    MemoryProfile parsed;
+    EXPECT_TRUE(ParseMemoryProfile(MemoryProfileToJson(memory), parsed, error)) << error;
+}
+
 /// The section over a machine: regions, entries and comments in the profile layer, labels and entries in the set
 /// profile:<id> between the bundles and the files; a missing label file is a warning; the clear takes both back
 TEST(MemoryProfile_Test, LaidOverAMachineAndTakenBack)

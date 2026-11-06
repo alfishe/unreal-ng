@@ -6,6 +6,7 @@
 /// `profile:<id>` (between the ROM bundles and the loaded files). Header only: the controllers library uses no core
 /// symbols, its owners (unreal-qt, core-tests) link both.
 
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -33,6 +34,110 @@ inline markup::Place ToMarkupPlace(const MemoryPlace& place)
                                 : place.space == MemorySpace::Rom ? markup::Space::Rom
                                                                   : markup::Space::Cpu;
     return markup::Place{space, place.page, place.lo, place.hi};
+}
+
+/// The place a markup claim is written at in a profile; false for a cache page (a profile names the CPU, RAM and ROM)
+inline bool FromMarkupPlace(const markup::Place& place, MemoryPlace& out)
+{
+    if (place.space != markup::Space::Cpu && place.space != markup::Space::Ram && place.space != markup::Space::Rom)
+        return false;
+    out.space = place.space == markup::Space::Ram   ? MemorySpace::Ram
+                : place.space == markup::Space::Rom ? MemorySpace::Rom
+                                                    : MemorySpace::Cpu;
+    out.page = place.space == markup::Space::Cpu ? 0 : place.page;
+    out.lo = place.lo;
+    out.hi = place.hi;
+    return true;
+}
+
+inline bool SameMemoryPlace(const MemoryPlace& a, const MemoryPlace& b)
+{
+    return a.space == b.space && a.page == b.page && a.lo == b.lo && a.hi == b.hi;
+}
+
+/// What MergeIntoMemoryProfile added
+struct MemoryProfileMerge
+{
+    size_t regions = 0;   ///< regions added
+    size_t comments = 0;  ///< comments added or replaced
+    size_t skipped = 0;   ///< claims and comments on a cache page (a profile cannot name one)
+};
+
+/// A save to a profile (markup `save`, markupcontrol.h): the user layer's claims and comments and the analysis claims
+/// chosen go into @p profile so that its layer alone shows what the layers showed. A later region wins where regions
+/// overlap, so the analysis claims go first (the profile's own regions were above them), then the regions there were,
+/// then the user's claims; a region already there as it is (place, kind, title) is not repeated. A user comment
+/// replaces the one at its address
+inline MemoryProfileMerge MergeIntoMemoryProfile(const markup::LayerContent& user,
+                                                 const std::vector<markup::Claim>& analysisClaims,
+                                                 MemoryProfile& profile)
+{
+    MemoryProfileMerge merge;
+    auto toRegion = [&merge](const markup::Claim& claim, MemoryRegionSpec& region) {
+        if (!FromMarkupPlace(claim.place, region.place))
+        {
+            merge.skipped++;
+            return false;
+        }
+        region.kind = analysis::RegionKindName(claim.kind);
+        region.title = claim.title;
+        region.sha256 = claim.sha256;
+        region.confidence = claim.confidence;
+        return true;
+    };
+    auto known = [](const std::vector<MemoryRegionSpec>& regions, const MemoryRegionSpec& region) {
+        return std::any_of(regions.begin(), regions.end(), [&region](const MemoryRegionSpec& other) {
+            return SameMemoryPlace(other.place, region.place) && other.kind == region.kind &&
+                   other.title == region.title;
+        });
+    };
+    std::vector<MemoryRegionSpec> below;
+    for (const markup::Claim& claim : analysisClaims)
+    {
+        MemoryRegionSpec region;
+        if (toRegion(claim, region) && !known(profile.regions, region) && !known(below, region))
+            below.push_back(std::move(region));
+    }
+    merge.regions += below.size();
+    for (MemoryRegionSpec& region : profile.regions)
+        below.push_back(std::move(region));
+    profile.regions = std::move(below);
+    for (const markup::Claim& claim : user.claims)
+    {
+        MemoryRegionSpec region;
+        if (!toRegion(claim, region))
+            continue;
+        // Already the last word there (the topmost region over its place is this one): nothing to add. Otherwise it
+        // goes on top, even when an equal one lies lower
+        auto top = std::find_if(profile.regions.rbegin(), profile.regions.rend(), [&region](const MemoryRegionSpec& r) {
+            return r.place.space == region.place.space && r.place.page == region.place.page &&
+                   r.place.lo <= region.place.hi && region.place.lo <= r.place.hi;
+        });
+        if (top != profile.regions.rend() && SameMemoryPlace(top->place, region.place) && top->kind == region.kind &&
+            top->title == region.title)
+            continue;
+        profile.regions.push_back(std::move(region));
+        merge.regions++;
+    }
+    for (const markup::Note& note : user.comments)
+    {
+        MemoryCommentSpec comment;
+        if (!FromMarkupPlace(note.place, comment.place))
+        {
+            merge.skipped++;
+            continue;
+        }
+        comment.text = note.text;
+        auto same = std::find_if(profile.comments.begin(), profile.comments.end(), [&comment](const MemoryCommentSpec& c) {
+            return SameMemoryPlace(c.place, comment.place);
+        });
+        if (same != profile.comments.end())
+            same->text = comment.text;
+        else
+            profile.comments.push_back(std::move(comment));
+        merge.comments++;
+    }
+    return merge;
 }
 
 inline unrealasm::symbols::Location ToSymbolLocation(const MemoryPlace& place)

@@ -2122,6 +2122,21 @@ emu.analysis("experiment", finding="F12", spec={"poke": {"$8100": 5}, "frames": 
 emu.analysis("cover", budget=32)                       # {candidates, tried, flipped, new_code, branches [...], text}
 ```
 
+### Memory markup
+
+The [memory markup](../../../inprogress/2026-11-05-software-metadata-profile/README.md) through the shared core handler (`markup::Execute`): the answer is a dict of its fields
+plus `text`; a refusal is `{"ok": False, "error": <why>}`.
+
+```python
+emu.markup("mark", range="8000-80FF", kind="sprite", title="hero")  # the user layer (cpu=True: CPU addresses)
+m = emu.markup("show", range="8000-81FF")              # {from, to, spans [...], anchors, comments, count, text}
+emu.markup("comment", address="$8010", text="frame 2")
+emu.markup("unmark", range="8040-80FF")
+emu.markup("layers")                                   # {layers [...], runtime, revision, text}
+emu.markup("clear", layer="user")
+emu.markup("save", analysis=["code", "sprite"], keep=True)  # unreal-qt: into the game's software profile
+```
+
 ### Enumerations
 
 ```python
