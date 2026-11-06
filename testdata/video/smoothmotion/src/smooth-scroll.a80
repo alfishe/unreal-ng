@@ -1,8 +1,0 @@
-; Scene 2 of smoothtest.a80 (see there)
-                DEFINE SCENE 2
-                DEFINE NAME "scroll"
-                DEFINE FILE_SNA "smooth-scroll.sna"
-                DEFINE FILE_TAP "smooth-scroll.tap"
-                DEFINE FILE_TRD "smooth-scroll.trd"
-                DEFINE TRD_CODE "scroll.C"
-                include "smoothtest.a80"

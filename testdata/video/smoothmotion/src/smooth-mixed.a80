@@ -1,8 +1,0 @@
-; Scene 5 of smoothtest.a80 (see there)
-                DEFINE SCENE 5
-                DEFINE NAME "mixed"
-                DEFINE FILE_SNA "smooth-mixed.sna"
-                DEFINE FILE_TAP "smooth-mixed.tap"
-                DEFINE FILE_TRD "smooth-mixed.trd"
-                DEFINE TRD_CODE "mixed.C"
-                include "smoothtest.a80"

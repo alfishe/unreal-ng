@@ -1,6 +1,8 @@
 {
  "scene": "speeds",
- "note": "rect in paper pixels; position step16/16 px every period frames; balls wrap after 192 px",
+ "note": "rect in paper pixels; in a cycle of `cycle` pictures, picture k = n mod cycle shows a ball at x = floor(step16 * floor(k / period) / 16) px (drawn at paper x 48 + x) while x < end; past it the ball is gone. A cycle ends two pictures after the last ball is gone, then all start again at 0",
+ "end": 192,
+ "cycle": 386,
  "paper": [
   48,
   48

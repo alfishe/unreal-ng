@@ -1,8 +1,0 @@
-; Scene 4 of smoothtest.a80 (see there)
-                DEFINE SCENE 4
-                DEFINE NAME "dots"
-                DEFINE FILE_SNA "smooth-dots.sna"
-                DEFINE FILE_TAP "smooth-dots.tap"
-                DEFINE FILE_TRD "smooth-dots.trd"
-                DEFINE TRD_CODE "dots.C"
-                include "smoothtest.a80"

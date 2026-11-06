@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Smoothness of a frame rate conversion, measured on its pictures.
 
-Input: the source frames (50 Hz, raw RGBA, as tools/poc/047-smoothing-filters/capture.py writes them) and the pictures
-a filter put on the display (60 Hz refreshes, raw RGBA, `FILTERS_RAW=1` of the POC 047 filters tool). Output: per
+Input: the source frames (50 Hz, raw RGBA, as tools/smoothmotion/capture.py writes them) and the pictures
+a filter put on the display (60 Hz refreshes, raw RGBA, `FILTERS_RAW=1` of filters.cpp here). Output: per
 filter and per region the numbers below, a table and JSON.
 
 Regions are rectangles that move rigidly in the source: from a ground-truth file of the synthetic tests
@@ -329,19 +329,28 @@ def static_job(job, margin=2):
 
 def truth_segments(traj, axis, reg):
     """Oracle C: every unbroken stretch of the track (at least 2 periods long) must be the program's own trajectory,
-    dir * floor(floor(n / period) * step16 / 16) px, for some frame phase n0. Returns (stretches, matched)."""
+    dir * floor(floor(n / period) * step16 / 16) px, for some frame phase n0. With `end` and `cycle` (the truth of
+    the region's scene) the motion restarts every `cycle` pictures at k = n mod cycle and the content is gone from
+    x = end on: the shown frames of a stretch must follow the motion and the track must not move while it is gone
+    (the step into the gone frames is whatever shift hides the last picture best: not checked). Returns
+    (stretches, matched)."""
     sign = reg["dir"]
+    cycle, end = reg.get("cycle"), reg.get("end")
     if "offsets" in reg:
         offsets = reg["offsets"]
         period = len(offsets)
+        phases = period
 
         def f(n):
             return sign * offsets[n % period]
     else:
         period, step16 = reg["period"], reg["step16"]
+        phases = cycle or period * 16
 
         def f(n):
-            return sign * ((n // period) * step16 // 16)
+            k = n % cycle if cycle else n
+            x = (k // period) * step16 // 16
+            return None if end is not None and x >= end else sign * x
 
     stretches = matched = 0
     k = 0
@@ -349,17 +358,22 @@ def truth_segments(traj, axis, reg):
         if not traj.ok[k]:
             k += 1
             continue
-        end = k
-        while end < len(traj.ok) and traj.ok[end]:
-            end += 1
-        if end - k >= 2 * period:
-            q = traj.p[k:end + 1, axis] - traj.p[k, axis]
+        last = k
+        while last < len(traj.ok) and traj.ok[last]:
+            last += 1
+        if last - k >= 2 * period:
+            q = traj.p[k:last + 1, axis] - traj.p[k, axis]
             stretches += 1
-            for n0 in range(period * (1 if "offsets" in reg else 16)):
-                if all(f(n0 + i) - f(n0) == q[i] for i in range(len(q))):
+            for n0 in range(phases):
+                want = [f(n0 + i) for i in range(len(q))]
+                shown = [i for i, w in enumerate(want) if w is not None]
+                hit = all(want[i] - want[shown[0]] == q[i] - q[shown[0]] for i in shown) if shown else True
+                # gone: no motion inside each run of gone frames
+                hit = hit and all(q[i] == q[i - 1] for i in range(1, len(q)) if want[i] is None and want[i - 1] is None)
+                if hit:
                     matched += 1
                     break
-        k = end
+        k = last
     return stretches, matched
 
 
@@ -422,7 +436,10 @@ def main():
     if args.truth:
         truth = json.load(open(args.truth))
         ox, oy = truth.get("paper", [48, 48])
+        if "regions" not in truth:
+            raise SystemExit(f"{args.truth}: no regions (the action screen's truth is for the programs' own truth.py)")
         for reg in truth["regions"]:
+            reg = dict(reg, **{key: truth[key] for key in ("end", "cycle") if key in truth})
             x0, y0, x1, y1 = reg["rect"]
             if "offsets" in reg:
                 tv = None
