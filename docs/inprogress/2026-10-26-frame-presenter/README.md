@@ -1,7 +1,10 @@
 # Frame presenter: video timed by the sound, with and without VRR
 
 **Date:** 2026-10-26
-**Status:** design; measured in [POC 037](../../../tools/poc/037-frame-presenter/README.md)
+**Status:** implemented on the `frame-presenter` branch: phases 1-8 of section 8 (the audio-timed frames, the GL,
+Metal and DXGI presenters, smooth motion on CPU and GPU, the automation planes, the display rate switch, Video
+Synchronization), plus the recovery from a GPU reset; not on master yet. Measured in
+[POC 037](../../../tools/poc/037-frame-presenter/README.md)
 ([results](../../../tools/poc/037-frame-presenter/results.md)): fixed 60 Hz (Mac), 144 Hz and G-Sync (Windows);
 ProMotion on macOS 12: the 120 Hz grid only (section 9).
 **Owner decisions (2026-10-26):**
@@ -255,13 +258,40 @@ has at the refresh's time: the scroller moves 4 x w pixels, not two half-bright 
 
 - **Motion from the frames.** ZX graphics move in whole pixels or attribute cells, on a black or flat background,
   often whole-screen (scrollers) or in a few sprites. The search runs on the presented framebuffer (RGBA, exact
-  colours), so it serves every machine, not only the ZX bitmap. Per 8 x 8 block of the output: the vector within
-  ±8 px (consecutive frames) on which A warped back by `w` and B warped forward by `1 - w` agree, all but at most 4
-  of 64 pixels. Candidates first (the zero vector, the neighbours', the most common of this pair), then the full
-  search, at most 96 full searches per pair (full-screen effects fall back instead of costing 100+ ms).
-- **Per pixel.** Of the candidates on which the two warped sources agree at the pixel, the one agreeing on most of
-  its 3 x 3 neighbourhood wins: a coincidental single-pixel match (a static letter under a neighbour's vector) loses.
-  Where none agrees: the blend of section 4.3. The worst case is the blend, never a made-up picture.
+  colours), so it serves every machine, not only the ZX bitmap. `MotionField` (`smoothmotion.h`) estimates one vector
+  per 8 x 8 block between consecutive frames: the vectors within ±8 px (`kRangeFrames`) nearest first, scored by the
+  pixels where A warped back and B warped forward to the middle disagree; the first with the fewest, at most
+  `kAccept` = 16 of 64, wins (a quarter: content that changes shape as it moves, water or spinning dots, keeps its
+  motion). Two refinement passes then try zero, the field's four most common vectors and the eight neighbours': on a
+  flat or periodic area many vectors agree, and the common motion wins over the nearest.
+- **Layers: per pixel, decided per block** (`LayerFlow`, `smoothlayers.{h,cpp}`, built and tuned in
+  [POC 047](../../../tools/poc/047-smoothing-filters/README.md)). The in-between picture uses three frames, the one
+  before A (`p`), A and B, and two fields (p -> A and A -> B). A layer is a vector: zero, the vectors several blocks of
+  both fields share (`kCommon` = 8), and per block those of the 3 x 3 blocks round it. At a pixel and the weight `w`,
+  a vector `v` samples A at `x - w v` and B at `x - w v + v`:
+  - it **fits** when the two samples agree and `v` carries the pixel's own colour in one of the frames (a static
+    layer over motion keeps its pixels; a recoloured or blinking one fits nothing). Zero fits only a pixel that is the
+    same in p, A and B, or one where nothing changes round it;
+  - a moving vector needs **support**: pixels in a 16 px window where it fits and explains a change, more than the
+    changes no vector explains there (flux takes no motion);
+  - a **block** takes the vector most of its pixels fit (no mosaic of A and B). Look-alikes that fit as many pixels
+    tie; a faster look-alike beats a slower one only with changes of its own; the frame's main motion wins a block it
+    fits nearly as well (within 1/8: spinning dots fit a look-alike by chance);
+  - **tied regions** (connected blocks with the same tie set) take what most decided blocks round them say, a
+    neighbour voting only where its layer continues into the region (its edge colours, its vector carrying them);
+  - **holes**: a still pixel a moving layer passes over takes the layer's content when the layer covers that colour
+    round here more than it goes under it; in a decided moving block that explains at least half of its changes, a
+    pixel the vector does not fit is carried from the nearer frame by the block's vector (shape changing on the move);
+  - **ink kept**: per 24 px tile, a picture with less ink than both A and B, or more than both, by over a quarter
+    shows no motion of what is there (a cloud of dots, each its own motion) and takes the nearer frame;
+  - nothing fits: the nearer frame. The worst case is a frame or the blend, never a made-up picture.
+
+  On the synthetic suite (12 scenes, ground truth at any time) this is 24.5 % wrong pixels over the 10-scene sum,
+  against 118 % for the per-block composition it replaced (`MotionField::Compose`, which the game modes of section 4.5
+  still use between pictures). Known limits: animation on the move (spinning sprites, water), periodic content that
+  fits +v and -v, fast sprites (POC 047 README). The CPU reference is integer and bit-exact; the GPU device runs the
+  per-pixel passes over every vector in one draw and the block decisions on the CPU with the reference's own code
+  (`LayerFlow::Decide`), the same bits (section 6.5). `UNREAL_SMOOTH_THREADS` splits the CPU passes over a pool.
 - **Where it runs.** On the presenter's side, per refresh with that refresh's `w` (at 60 Hz about 1.2 refreshes per
   frame, so about once per frame pair). The audio delay (section 3) leaves 30+ ms for it.
 - **Not ZX DLSS.** ZX DLSS (`TemporalEffects`) reconstructs gigascreen pictures inside the core's present slots. This
@@ -499,6 +529,16 @@ classDiagram
     up to 0.5 ms before their target.
   - Diagnostics: `UNREAL_PRESENT_LOG` (stats every 5 s), `UNREAL_PRESENT_TRACE` (one line per present),
     `UNREAL_PRESENT_DUMP` (the drawable as shown, read back: checked upright with crt-geom and the HUD).
+- **A GPU reset** (Windows TDR: a pass ran too long and the system reset the GPU; seen on .101, the screen froze)
+  loses the GL context and the native presenter's device. The context is created with `ResetNotification`; when it
+  is lost, `DeviceScreenGLWindow::recreateLostContext` drops the presenter first (its slots and interop
+  registrations belong to the old device), makes a new context and every GL object of the screen in it, and the
+  window makes the native presenter again: up to 20 tries 500 ms apart, since the system may still hold the window.
+  On Windows the old device may keep the window's swap chain for good (the new one refused with `E_ACCESSDENIED`):
+  after the second failed try the window gets a new native handle. `DxgiPresenter` lets a window go at once (swap
+  chain and views released, `ClearState` + `Flush`). No presenter after the tries: the window presents with GL
+  (Windows) or says so (macOS). `UNREAL_TEST_GPU_HANG=d3d:<s>|gl:<s>` hangs the GPU for real once per process to test
+  it (`DxgiPresenter_Test` covers a presenter made anew for the same window).
 - The overlays now drawn by `DeviceScreenGLWindow` (OSD, HUD) are drawn by GL into the same texture, never blended
   between frames.
 - Linux: a Vulkan presenter later. `VK_KHR_present_wait` / `VK_GOOGLE_display_timing` where the compositor offers them,
@@ -585,6 +625,11 @@ directly: the screen time minus the frame's target.
   (`MainWindow::publishIfPresentChanged`): the presenter's turn to VRR or back has no menu signal.
   `display_rate` (keep / match) is `[VIDEO] DisplayRate` (section 4.7), applied at once; `present.display` reports
   its state (`keep`, `matched`, `unchanged`), the reason, the display's rate now and before, and the machine's rate.
+  `present.gpu_ms` {`smooth`, `picture`: {p50, max over the last 600, `longest` since the GL context was made,
+  `measured`}} is the GPU time of smooth motion's steps and of the picture (the CRT composition, beam model, custom
+  shader or preset), from GL timestamp queries (`GpuPassTimes`, `unreal-qt/src/widgets/gpupasstimes.h`) read back
+  frames later, never waited for. A pass over 100 ms is logged at once: the times before a GPU reset show which pass
+  grew. Without timer queries nothing is measured (`measured` 0).
 
 ### 6.5 Every effect on the GPU and on the CPU
 
@@ -617,8 +662,10 @@ Owner: blend, interpolation and the cadence modes run on the GPU and on the CPU,
   GL, a headless or offscreen instance, the video recording); `gpu` / `cpu` force it. The CPU path runs on the
   presenter's thread for the screen, and serves the readers that have no GPU (screenshots, recording, the video
   wall, WebAPI captures) with the same picture the screen shows.
-- **Cost budget.** CPU: 1.3-2.3 ms p50 per frame pair scalar (POC 046); SIMD (NEON / SSE2, with a scalar fallback)
-  brings it under 1 ms. GPU: the search is per block and independent, one dispatch per refresh.
+- **Cost budget** (the design, for POC 046's per-block interpolation). CPU: 1.3-2.3 ms p50 per frame pair scalar;
+  SIMD (NEON / SSE2, with a scalar fallback) brings it under 1 ms. GPU: the search is per block and independent, one
+  dispatch per refresh. As built, `LayerFlow` costs more and runs on a CPU pool or on the GPU (phase 5b, steps 2
+  and 4).
 
 ## 7. Cost
 
@@ -635,7 +682,7 @@ Measured in POC 037 unless marked. The POC's frames are 384x288x4 bytes, a littl
 | Today's Qt GL path, for comparison | 0.48-0.52 ms per paint, on the GUI thread |
 | Presenter CPU, Windows | not resolved: `GetThreadTimes` has a 15.6 ms granularity there; the next runs use `QueryThreadCycleTime` |
 | Smooth motion, blend | one more texture and a two-texture shader: about one more draw per refresh (design, not measured) |
-| Smooth motion, interpolate | a block search per frame pair (1-bit bitmap, 1584 cells of 8x8, ±16 px) on the presenter thread, and a warp per refresh; the POC of phase 5 measures it (design) |
+| Smooth motion, interpolate | a motion field per frame pair (8x8 blocks of the RGBA frame, ±8 px, on the CPU) and `LayerFlow` per refresh: a whole interpolated refresh p50 / p90 3.22 / 4.30 ms on Aleste with the CPU pool, the window's work per refresh p50 6.3-6.9 ms live (phase 5b) |
 | Threads | one presenter thread per emulator window, waking at the refresh rate (`b`: 60-144 per second) or the frame rate (`c`: ~50 per second); one vblank-watch thread per window on Windows |
 | Memory | the native swap chain (2-3 back buffers at the window size) replaces the GL default framebuffer; no change in the core's slots |
 | Latency, latch to screen | the audio delay, as today: ring target + device buffer ≈ 52 ms, the same at every machine rate; `b-vsync` adds up to one refresh. The POC ran with one period of delay to measure the presenters themselves: `c-vrr` 28 ms on the Mac at 60 Hz, 27.4-28.8 ms on Windows under G-Sync to the end of scan-out |
@@ -692,6 +739,9 @@ Each phase lands on its own with tests and docs.
      frame came during its scan-out: 10 % of the frames off by up to a scan-out. A frame is new now by its serial.
    - A display in power save has no vblanks (`D3DKMTWaitForVerticalBlankEvent` returns
      `STATUS_GRAPHICS_PRESENT_OCCLUDED`, 0xC01E0006): the vblank thread opens the adapter again until it works.
+   - After a GPU reset (TDR) the window makes its GL context, its GL objects and the presenter anew, a new native
+     window when the old device keeps the swap chain (section 6.2); `present.gpu_ms` shows the GPU time per pass.
+     `UNREAL_TEST_GPU_HANG` makes a real reset (section 9).
 5. **Smooth motion**, at once after phases 3-4 are stable on the VRR hosts (owner decision):
    - the CPU reference in `core/` (blend, interpolation, the cadence modes; integer, bit-exact), its tests on the
      POC 046 sequences;
@@ -857,6 +907,10 @@ Each phase lands on its own with tests and docs.
   (a frame for 2 or 3 refreshes), plus smooth motion on top; `presentDrawable:atTime:` with exact times has to be
   measured on a device; on the MacBook (macOS 12) it gave the 120 Hz grid only. Fixed 60 Hz iPhones and iPads get `b-vsync` and smooth motion. External
   displays on iPad have no VRR.
+- **GPU reset recovery, as far as it can be tested.** `UNREAL_TEST_GPU_HANG=d3d:<s>` hangs the DXGI presenter's
+  D3D11 device (a compute shader that never ends), `gl:<s>` the screen's GL context. On NVIDIA (.101, driver
+  32.0.16.1088) the `gl` hang crashes the driver's own thread after the reset, so the GL side's recovery is a test of
+  the driver there, not of the window. A reset on macOS (Metal) is not exercised.
 - **The audio clock is designed, not measured.** The POC timed frames on a steady clock. Phase 1 has to show that the
   fitted line of a real device (miniaudio on CoreAudio and WASAPI) is as smooth: target interval error under 0.1 ms
   beyond the DRC trim.
