@@ -9,7 +9,9 @@
 /// did not grant its scope; the state does not fit (resume while running, pause while paused, stepping while running,
 /// rewind without recorded history, take-back with no session, allow-again with no cooldown).
 
+#include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -48,4 +50,9 @@ MachineView ViewOf(Emulator& emulator);
 
 /// {action: {available, scope, reason?}} for this companion and machine state
 StateNode ActionsReport(const CompanionInfo& companion, const MachineView& view);
+
+/// How long until a companion's view of some instance changes with time alone (EmulatorContext::
+/// RunControlTimeToChange over every instance: an idle lease runs out, a re-take cooldown ends); nullopt: never.
+/// Everything else in the view has a notification (state, run control, time travel's NC_READOUTS_CHANGED "ttd")
+std::optional<std::chrono::milliseconds> NextTimedChange();
 }  // namespace companion

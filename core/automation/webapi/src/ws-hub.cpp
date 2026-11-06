@@ -18,6 +18,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/execution/companionactions.h"
 #include "emulator/monitoring/clientstats.h"
 #include "emulator/monitoring/monitoringapi.h"
 #include "emulator/notifications.h"
@@ -215,6 +216,7 @@ WsHub::WsHub() = default;
 WsHub::~WsHub()
 {
     Stop();
+    SetFrameReadersWanted(false);  // nobody left to read a frame's state
     {
         std::lock_guard<std::mutex> lock(_timerMutex);
         if (_armed && _timer.disarm)
@@ -312,7 +314,15 @@ void WsHub::Start()
                                 auto* payload = message != nullptr
                                                     ? dynamic_cast<ReadoutsChangedPayload*>(message->obj)
                                                     : nullptr;
+                                if (payload != nullptr && payload->area == kFrameArea)
+                                {
+                                    OnFrame(payload->emulatorId);  // a frame's state written: its Frames values
+                                    return;
+                                }
                                 OnChange(payload != nullptr ? payload->emulatorId : std::string());
+                                // Time travel's state decides rewind and the speed lock of an `instances` entry
+                                if (payload != nullptr && payload->area.compare(0, 3, "ttd") == 0)
+                                    WakeInstances();
                             })));
     // Emulated time moved (a frame, a TTD seek's frame, a step): the instance's Frames values
     _observers.emplace_back(NC_VIDEO_FRAME_REFRESH,
@@ -844,19 +854,21 @@ void WsHub::Tick()
                     surfaceDue.push_back({connection.get(), session.get(), want});
             }
         }
-        // `instances`: what changes with time alone (a re-take cooldown) once a second while subscribed
+        // `instances`: what changes with time alone (an idle lease running out, a re-take cooldown ending) at that
+        // moment (RefreshInstances keeps it); everything else has a notification
         if (_instancesSubscribed.load(std::memory_order_relaxed))
         {
-            refreshInstances = drained || now - _instancesAt >= DueAfter(1);
-            Earliest(deadline, (refreshInstances ? now : _instancesAt) + std::chrono::seconds(1));
+            refreshInstances = drained || (_instancesDue && now >= *_instancesDue);
+            if (!refreshInstances && _instancesDue)
+                Earliest(deadline, *_instancesDue);
         }
         if (!topicDue.empty() || !surfaceDue.empty())
             DeliverValues(topicDue, topicNames, surfaceDue, now, out);
     }
     out.Flush();
-    if (refreshInstances)
-        RefreshInstances();
     ArmFor(deadline, now);
+    if (refreshInstances)
+        RefreshInstances();  // arms for its next timed change itself
 }
 
 void WsHub::OnChange(const std::string& instanceId)
@@ -1004,6 +1016,7 @@ void WsHub::DeliverValues(const TopicDue& topicDue, const std::set<std::string>&
     for (const auto& [connection, want] : topicDue)
     {
         std::set<std::string> present;
+        bool sent = false;
         for (const std::string& id : all)
         {
             auto values = readings.find(id);
@@ -1029,6 +1042,7 @@ void WsHub::DeliverValues(const TopicDue& topicDue, const std::set<std::string>&
                                                  "\",\"value\":" + value->second + "}")
                                .first;
                 out.Message(*connection, text->second);
+                sent = true;
             }
         }
         for (const std::string& topic : connection->topics)
@@ -1042,6 +1056,7 @@ void WsHub::DeliverValues(const TopicDue& topicDue, const std::set<std::string>&
                 continue;
             last = value->second;
             out.Message(*connection, "{\"t\":\"" + topic + "\",\"op\":\"state\",\"value\":" + value->second + "}");
+            sent = true;
         }
         // An instance that went: only a read of every value tells (its going is an event)
         if ((want & kStaleEvent) != 0)
@@ -1058,11 +1073,13 @@ void WsHub::DeliverValues(const TopicDue& topicDue, const std::set<std::string>&
                 gone["op"] = "gone";
                 gone["instance"] = it->first.substr(bar + 1);
                 out.Message(*connection, gone);
+                sent = true;
                 it = connection->topicSent.erase(it);
             }
         connection->topicFull = false;
         connection->topicStale = 0;
-        connection->topicSentAt = now;
+        if (sent)
+            connection->topicSentAt = now;  // the rate bounds what is sent; a read that sent nothing holds nothing back
     }
     for (const SurfaceWant& due : surfaceDue)
         _surface.Deliver(*due.connection, *due.session, readings, due.want, now, out);
@@ -1119,17 +1136,36 @@ void WsHub::RefreshInstances()
     std::lock_guard<std::mutex> refresh(_instancesMutex);
     std::vector<std::pair<uint64_t, companion::CompanionInfo>> targets;
     Snapshot snapshot;
+    const std::optional<std::chrono::milliseconds> left = companion::NextTimedChange();
+    std::optional<std::chrono::steady_clock::time_point> due;
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        _instancesAt = Now();
+        const auto now = Now();
+        if (left)
+            due = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(*left);
+        _instancesDue = due;
+        bool congested = false;
         for (const auto& [client, connection] : _connections)
-            if (!connection->closing && connection->companion && connection->topics.count(kInstances) != 0 &&
-                !Congested(*connection))
+        {
+            if (connection->closing || !connection->companion || connection->topics.count(kInstances) == 0)
+                continue;
+            if (Congested(*connection))
+                congested = true;
+            else
                 targets.emplace_back(connection->id, *connection->companion);
+        }
+        // A subscriber over the mark is measured again by the tick (it drains: the view then; it stays: a slow
+        // consumer). Nothing else may tick for it: `instances` alone has no beat
+        if (congested)
+            Earliest(due, now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(DueAfter(kDefaultHz)));
         snapshot = _snapshot;
     }
     if (targets.empty())
+    {
+        if (due)
+            ArmFor(due, Now());
         return;
+    }
 
     // Built outside the hub's lock (`me` reads every instance), once per companion
     std::map<std::string, Json::Value> views;
@@ -1196,6 +1232,8 @@ void WsHub::RefreshInstances()
         }
     }
     out.Flush();
+    if (due)
+        ArmFor(due, Now());  // an earlier wait stays armed (ArmFor keeps the earliest)
 }
 
 void WsHub::WakeTick()
@@ -1420,6 +1458,8 @@ void WsHub::UpdateTimer()
             }
         }
     }
+    // The frame's publishers post only while somebody reads what they publish
+    SetFrameReadersWanted(frameAll || !frames.empty());
     {
         std::lock_guard<std::mutex> lock(_staleMutex);
         _frameWatch = std::move(frames);

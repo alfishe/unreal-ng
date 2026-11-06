@@ -67,7 +67,7 @@ struct SurfaceSession
     std::vector<std::string> patterns;  ///< as subscribed (names, prefixes): expanded again on a rebind
     std::set<std::string> readouts;     ///< the names they match on the bound instance
     double hz = 10;
-    std::chrono::steady_clock::time_point sentAt{};  ///< the last read of its values (the rate's clock)
+    std::chrono::steady_clock::time_point sentAt{};  ///< the last send of its values (the rate's clock)
     bool full = false;                         ///< send every subscribed value at the next tick
     uint8_t stale = 0;                         ///< WsHub::kStaleEvent / kStaleFrame: what to read again
     std::map<std::string, std::string> sent;   ///< readout -> its value as last sent (compact JSON)

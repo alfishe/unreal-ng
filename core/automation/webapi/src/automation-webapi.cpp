@@ -398,6 +398,7 @@ void AutomationWebAPI::stop()
 
     DebugEventHub::Instance().Stop();
     CompanionEventHub::Instance().Stop();
+    CompanionEventHub::Instance().SetTimer({});
     WsHub::Instance().Stop();
 
     std::cout << "AutomationWebAPI stopped" << std::endl;
@@ -582,9 +583,11 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
         .addListener("0.0.0.0", static_cast<uint16_t>(port))
         .setThreadNum(2);
 
-    // Companion events: what changes with time alone (a re-take cooldown running out, the first recorded frame of
-    // time travel) posts no notification, so the views are compared once a second too; only changes are sent
-    app.getLoop()->runEvery(1.0, [] { CompanionEventHub::Instance().Refresh(); });
+    // Companion events are pushed on notifications; what changes with time alone (an idle lease running out, a
+    // re-take cooldown ending) gets a one-shot timer at that moment, armed only while a companion is connected
+    CompanionEventHub::Instance().SetTimer([](double seconds, std::function<void()> task) {
+        drogon::app().getLoop()->runAfter(seconds, std::move(task));
+    });
 
     // The /api/v1/ws hub runs on the main loop: producers post to it (the values they made stale), a one-shot timer
     // holds a value back for its subscriber's interval. No thread of its own

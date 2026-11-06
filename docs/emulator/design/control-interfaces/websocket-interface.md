@@ -311,13 +311,17 @@ stale. Every readout and state topic has a cadence (`ReadoutCadence`, `ws-hub.cp
 | Cadence | Read when | Names |
 |---------|-----------|-------|
 | Events | the instance's state changed: a notification (`NC_EMULATOR_STATE_CHANGE`, `NC_SPEED_CHANGED`, `NC_BREAKPOINT_CHANGED`, the media, TTD and surface ones, ...), `NC_READOUTS_CHANGED` (state with no notification of its own: the mixer, TTD bookmarks, the tape transport, write protect, the profilers, the analysis jobs, the GUI's window settings, a setting set from the CLI, ...), or an action run on it (the activity feed) | `run.state`, `machine`, `audio.mute`, `debug.*` state, `media.recent`, `machine.*`, `input.connectors`, `video.*`, `surfaces.context`, `actions.unavailable`, `analysis.*`, `toggle.*` |
-| Frames | the events above, and every emulated frame or CPU step of that instance (`NC_VIDEO_FRAME_REFRESH`, `NC_EXECUTION_CPU_STEP`) | everything that moves with emulated time: `ttd.position`, `emulator.stats`, `audio.mixer`, `media.tape`, `game.events`, ... (the default) |
+| Frames | the events above, and every emulated frame or CPU step of that instance (`NC_VIDEO_FRAME_REFRESH`, `NC_EXECUTION_CPU_STEP`, and `NC_READOUTS_CHANGED` `frame` once the TTD cursor of the frame is written: the frame refresh is posted before it) | everything that moves with emulated time: `ttd.position`, `emulator.stats`, `audio.mixer`, `media.tape`, `game.events`, ... (the default) |
 | Meter | on time, at the subscriber's `max_hz` | `host.stats`, `host.clients`, `streamdeck.status` |
 
 - Frames of an instance are only taken while somebody subscribes to one of its Frames values: a deck that shows
   toggles and names ignores the emulated frames entirely.
-- A burst of changes within one interval (`1 / max_hz`) is read once: a one-shot timer fires for the values held
-  back, and is not armed when nothing waits. `instances` refreshes once a second while subscribed.
+- A burst of changes within one interval (`1 / max_hz`) after a message is read once: a one-shot timer fires for the
+  values held back, and is not armed when nothing waits. The interval runs from the last message sent, not the last
+  read: a read that found nothing new (a frame read before its cursor was written) holds the next one back by nothing.
+- The frame's own signal (`NotifyFramePublished`) is posted only while the hub watches some instance's frames
+  (`FrameReadersWanted`); otherwise it costs one relaxed load per frame. `instances` is compared on its notifications, and at the moment an idle
+  lease runs out or a re-take cooldown ends (`companion::NextTimedChange`): nothing waits on the clock otherwise.
 - A producer of new state with no notification calls `NotifyReadoutsChanged(context, area)`
   (`emulator/readoutschanged.h`); a value cached by monitoring (`CachedValue`) is dropped on that mark.
 
