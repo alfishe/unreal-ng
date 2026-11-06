@@ -207,6 +207,10 @@ StateNode VideoPresent()
     display["original_hz"] = Round2(p.originalHz);
     display["machine_hz"] = Round2(p.machineHz);
     node["display"] = display;
+    StateNode delay = StateNode::Object();
+    delay["clamped"] = p.delayClamped;
+    delay["max_ms"] = Round2(p.maxDelayMs);
+    node["delay"] = delay;
     return node;
 }
 

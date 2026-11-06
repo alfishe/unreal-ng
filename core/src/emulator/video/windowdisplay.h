@@ -25,7 +25,6 @@
 #include <cstdint>
 #include <string>
 #include <utility>
-#include <utility>
 #include <vector>
 
 namespace WindowDisplay
@@ -456,8 +455,9 @@ inline Result Set(const WindowDisplayChange& change)
 }
 
 /// The frame presenter's part of the report: presenter, fixed_display, vrr, sync {mode, reason}, refresh_hz {min, max},
-/// clock, presented, shown, dropped, late, beat {frames, off}, lead_ms, error_ms {p50, p99, max}, sound_offset_ms
-/// {p50, p99}, gpu_wait_ms {p50, max}, gpu_ms {smooth, picture: {p50, max, longest, measured}}, smooth {mode, device, game, frames, pictures,
+/// clock, timing {delay_clamped, max_delay_ms, clamped_frames, early, carried, cuts, carry_ms}, presented, shown,
+/// dropped, late, beat {frames, off}, lead_ms, error_ms {p50, p99, max}, sound_offset_ms {p50, p99}, gpu_wait_ms
+/// {p50, max}, gpu_ms {smooth, picture: {p50, max, longest, measured}}, smooth {mode, device, game, frames, pictures,
 /// renders, blended, interpolated, motion_fields, on_device, held_flicker}, display {state, reason, hz, original_hz,
 /// machine_hz}
 inline StateNode PresentReport(const WindowPresentStats& p)
@@ -475,6 +475,15 @@ inline StateNode PresentReport(const WindowPresentStats& p)
     refresh["max"] = p.maxRefreshHz;
     node["refresh_hz"] = refresh;
     node["clock"] = p.clock;
+    StateNode timing = StateNode::Object();
+    timing["delay_clamped"] = p.delayClamped;
+    timing["max_delay_ms"] = p.maxDelayMs;
+    timing["clamped_frames"] = p.clampedFrames;
+    timing["early"] = p.early;
+    timing["carried"] = p.carried;
+    timing["cuts"] = p.cuts;
+    timing["carry_ms"] = p.carryMs;
+    node["timing"] = timing;
     node["presented"] = p.presented;
     node["shown"] = p.shown;
     node["dropped"] = p.dropped;
@@ -626,6 +635,9 @@ inline std::string Summary(const WindowDisplaySettings& s)
                            NumberWord(p.originalHz) + ")"
                      : (p.displayReason.empty() ? "" : " (" + p.displayReason + ")"));
     }
+    if (s.present.delayClamped)
+        line += ", video delay held at " + NumberWord(std::round(s.present.maxDelayMs)) +
+                " ms (the sound comes later: the picture leads it)";
     if (s.lipSyncOffsetMs != 0)
         line += ", lip sync " + std::string(s.lipSyncOffsetMs > 0 ? "+" : "") + std::to_string(s.lipSyncOffsetMs) +
                 " ms";

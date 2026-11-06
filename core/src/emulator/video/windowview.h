@@ -83,6 +83,17 @@ struct WindowPresentStats
     uint64_t offBeat = 0;     ///< ... on screen for a refresh count outside it: a refresh missed, held, never shown
     double soundOffsetP50Ms = 0.0;  ///< screen time minus the picture's sound (the clock's time, the lip-sync trim out)
     double soundOffsetP99Ms = 0.0;
+    /// How the frames are timed (Screen::GetPresentTimingStats, FillPresentTiming). The frame timed last: its sound
+    /// comes later than the screen holds its frames (a long audio path such as a Bluetooth headset, a large lip-sync
+    /// trim), so it is due `maxDelayMs` after its frame's end, ahead of its sound
+    bool delayClamped = false;
+    double maxDelayMs = 0.0;   ///< the longest video delay the screen holds
+    uint64_t clampedFrames = 0;
+    uint64_t early = 0;        ///< refreshes that found no frame due yet (start up)
+    uint64_t carried = 0;      ///< steps of the frames' clock carried and paid back slowly (a device came or went, an
+                               ///< underrun moved the stream)
+    uint64_t cuts = 0;         ///< breaks of the frame sequence (a pause, a seek, a stall, turbo)
+    double carryMs = 0.0;      ///< the carry being paid back now
 
     std::string smooth = "off";  ///< smooth motion in effect: off / blend / interpolate (off with temporal blending)
     std::string smoothDevice;    ///< where its steps run: "gpu" / "cpu" ("" while off)
@@ -96,6 +107,18 @@ struct WindowPresentStats
     uint64_t onDevice = 0;
     uint64_t heldFlicker = 0;
 };
+
+/// The screen's timing counters into a front end's present report
+inline void FillPresentTiming(WindowPresentStats& p, const PresentTimingStats& t)
+{
+    p.delayClamped = t.delayClamped;
+    p.maxDelayMs = static_cast<double>(t.maxDelayNs) / 1e6;
+    p.clampedFrames = t.clampedFrames;
+    p.early = t.early;
+    p.carried = t.carried;
+    p.cuts = t.cuts;
+    p.carryMs = static_cast<double>(t.carryNs) / 1e6;
+}
 
 /// How a window draws the picture: its display settings as the View menu shows them
 struct WindowDisplaySettings
@@ -111,12 +134,13 @@ struct WindowDisplaySettings
     std::string blendingWeights;           ///< "equal" / "exponential"
     double blendingDecay = 0.5;            ///< exponential weights: each older frame's share of the newer one, 0.1..0.9
     std::string emulatorId;                ///< the instance the window shows ("" = none)
-    std::string smoothMotion = "off";      ///< [VIDEO] SmoothMotion of the shown instance: off / blend / interpolate
+    std::string smoothMotion = "off";      ///< [VIDEO] SmoothMotion of the shown instance: off / blend / interpolate / auto
     std::string effectsDevice = "gpu";     ///< [VIDEO] EffectsDevice of the shown instance: gpu / cpu
     std::string presentPolicy = "auto";    ///< [VIDEO] PresentPolicy of the shown instance: auto / vrr / vsync
     std::string displayRate = "keep";      ///< [VIDEO] DisplayRate of the shown instance: keep / match
     int lipSyncOffsetMs = 0;               ///< [VIDEO] LipSyncOffsetMs of the shown instance, -200..200
-    WindowPresentStats present;            ///< read with the settings (Get), not published
+    WindowPresentStats present;            ///< read with the settings (Get) and published with them (Publish: the
+                                           ///< counters as of the publish, at most once a second)
 
     bool fullscreen = false;               ///< the window fills the display
     int scale = 0;                         ///< the whole zoom the window was fitted to, 1..4; 0 = none (resized by hand)
