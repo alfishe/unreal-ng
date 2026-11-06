@@ -26,6 +26,7 @@
 
 #include "emulator/video/screenbeat.h"
 #include "platform/presentlead.h"
+#include "widgets/framesource.h"
 
 namespace
 {
@@ -48,23 +49,85 @@ fragment float4 fs(V v [[stage_in]], texture2d<float, access::read> t [[texture(
 }
 )";
 
-int64_t SteadyNs()
-{
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
-
 int64_t SecondsToNs(CFTimeInterval s)
 {
     return static_cast<int64_t>(std::llround(s * 1e9));
 }
 
-/// Statistics window: the last presents
-constexpr size_t kStatsWindow = 600;
 /// IOSurfaces in the ring: one being drawn, one waiting for its time, one on screen
 constexpr size_t kSlots = 3;
 /// The adaptive lead's first margin over a refresh (LeadNs: presentDrawable:atTime: wants the drawable a refresh ahead)
 constexpr int64_t kLeadStartNs = 6'000'000;
+/// The GL fence before the Metal pass: polled this long, then waited for (glClientWaitSync with a timeout sleeps in
+/// steps of about 10 ms on macOS's GL: the poll serves the usual short waits, p90 0.85 ms), up to the timeout
+constexpr int64_t kFencePollNs = 4'000'000;
+constexpr int64_t kFenceTimeoutNs = 100'000'000;
+
+/// What the presenter's Metal handlers touch: shared with them, so a handler that runs after the presenter is gone
+/// (a window closed, a context lost, a presenter made anew) finds it alive
+struct Feedback
+{
+    std::array<std::atomic<bool>, kSlots> busy{};  // a Metal pass reads the slot
+    std::atomic<bool> dumpBusy{false};             // UNREAL_PRESENT_DUMP: a drawable on its way to the file
+
+    mutable std::mutex statsMutex;
+    presentstats::Ring errors;         // ms, statsMutex
+    presentstats::Ring gpuWaits;       // ms, statsMutex
+    presentstats::Ring drawableWaits;  // ms, statsMutex
+    ScreenBeat beat;                   // statsMutex
+    presentstats::Trace trace;         // UNREAL_PRESENT_TRACE, statsMutex
+    std::atomic<uint64_t> presented{0};
+    std::atomic<uint64_t> shown{0};
+    std::atomic<uint64_t> dropped{0};
+    std::atomic<uint64_t> gpuWaitTimeouts{0};
+    std::atomic<int64_t> lastPresentedNs{0};  // the newest presentedTime: a refresh of the display
+    PresentLead lead{kLeadStartNs};           // LeadNs: a refresh and this margin
+
+    // The window system's state, read on the GUI thread (AppKit's) and cached for any thread
+    std::atomic<bool> visible{true};
+    std::atomic<int64_t> shortestRefreshNs{0};  // the screen's refresh interval range (0: unknown)
+    std::atomic<int64_t> longestRefreshNs{0};
+};
+
+/// GUI thread: the window's occlusion and its screen's refresh range into `fb`
+void CacheWindowState(NSView* view, Feedback& fb)
+{
+    NSWindow* window = view.window;
+    fb.visible.store(window && (window.occlusionState & NSWindowOcclusionStateVisible) != 0,
+                     std::memory_order_relaxed);
+    NSScreen* screen = window.screen ?: [NSScreen mainScreen];
+    fb.shortestRefreshNs.store(screen.minimumRefreshInterval > 0 ? SecondsToNs(screen.minimumRefreshInterval) : 0,
+                               std::memory_order_relaxed);
+    fb.longestRefreshNs.store(screen.maximumRefreshInterval > 0 ? SecondsToNs(screen.maximumRefreshInterval) : 0,
+                              std::memory_order_relaxed);
+}
+
+/// The pipeline that turns the IOSurface over into the drawable: the library compiles from source, once per process
+/// (and device)
+id<MTLRenderPipelineState> FlipPipeline(id<MTLDevice> device)
+{
+    static id<MTLDevice> builtFor = nil;
+    static id<MTLRenderPipelineState> pipeline = nil;
+    if (builtFor == device)
+        return pipeline;
+    builtFor = device;
+    pipeline = nil;
+    NSError* err = nil;
+    id<MTLLibrary> lib = [device newLibraryWithSource:[NSString stringWithUTF8String:kShader] options:nil error:&err];
+    if (!lib)
+    {
+        NSLog(@"MetalPresenter: shader: %@", err);
+        return nil;
+    }
+    MTLRenderPipelineDescriptor* pd = [MTLRenderPipelineDescriptor new];
+    pd.vertexFunction = [lib newFunctionWithName:@"vs"];
+    pd.fragmentFunction = [lib newFunctionWithName:@"fs"];
+    pd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+    pipeline = [device newRenderPipelineStateWithDescriptor:pd error:&err];
+    if (!pipeline)
+        NSLog(@"MetalPresenter: pipeline: %@", err);
+    return pipeline;
+}
 }  // namespace
 
 struct MetalPresenter::Impl
@@ -77,7 +140,6 @@ struct MetalPresenter::Impl
         GLuint framebuffer = 0;
         int width = 0;
         int height = 0;
-        std::atomic<bool> busy{false};  // a Metal pass reads it
     };
 
     CAMetalLayer* layer = nil;
@@ -87,35 +149,50 @@ struct MetalPresenter::Impl
     id<MTLRenderPipelineState> pipeline = nil;
     CGLContextObj glContext = nullptr;  // the context the slots' GL objects belong to
     id<NSObject> activity = nil;        // latency critical while the presenter lives: no App Nap, no timer coalescing
+    std::array<id<NSObject>, 3> observers{};  // the window system's changes into fb (CacheWindowState)
     std::array<Slot, kSlots> slots;
     size_t current = 0;
     bool drawing = false;
-
-    mutable std::mutex statsMutex;
-    std::vector<double> errors;  // ms, ring
-    ScreenBeat beat;             // under statsMutex
-    size_t errorNext = 0;
-    std::vector<double> gpuWaits;  // ms, ring
-    size_t gpuWaitNext = 0;
-    std::vector<double> drawableWaits;  // ms, ring
-    size_t drawableWaitNext = 0;
-    std::atomic<uint64_t> presented{0};
-    std::atomic<uint64_t> shown{0};
-    std::atomic<uint64_t> dropped{0};
-    std::atomic<int64_t> lastPresentedNs{0};  // the newest presentedTime: a refresh of the display
-    std::atomic<uint8_t> policy{0};           // a PresentPolicy
-    PresentLead lead{kLeadStartNs};  // LeadNs: a refresh and this margin
-    FILE* trace = nullptr;  // UNREAL_PRESENT_TRACE: one line per present (see environment-variables.md)
-    std::string dumpPath;   // UNREAL_PRESENT_DUMP: a drawable as shown, a PPM (from the 200th present, again once deleted)
-    std::shared_ptr<std::atomic<bool>> dumpBusy = std::make_shared<std::atomic<bool>>(false);
+    std::atomic<uint8_t> policy{0};  // a PresentPolicy
+    std::string dumpPath;  // UNREAL_PRESENT_DUMP: a drawable as shown, a PPM (from the 200th present, again once deleted)
+    std::shared_ptr<Feedback> fb = std::make_shared<Feedback>();
 
     ~Impl()
     {
+        for (id<NSObject> observer : observers)
+        {
+            if (observer)
+                [[NSNotificationCenter defaultCenter] removeObserver:observer];
+        }
         if (activity)
             [[NSProcessInfo processInfo] endActivity:activity];
         ReleaseSlots();
-        if (trace)
-            fclose(trace);
+    }
+
+    /// GUI thread: the window system's state cached now and on every change of it
+    void WatchWindow()
+    {
+        CacheWindowState(view, *fb);
+        __weak NSView* weakView = view;
+        std::shared_ptr<Feedback> shared = fb;
+        void (^update)(NSNotification*) = ^(NSNotification*) {
+          if (NSView* v = weakView)
+              CacheWindowState(v, *shared);
+        };
+        NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+        NSOperationQueue* main = [NSOperationQueue mainQueue];
+        observers[0] = [center addObserverForName:NSWindowDidChangeOcclusionStateNotification
+                                           object:nil
+                                            queue:main
+                                       usingBlock:update];
+        observers[1] = [center addObserverForName:NSWindowDidChangeScreenNotification
+                                           object:nil
+                                            queue:main
+                                       usingBlock:update];
+        observers[2] = [center addObserverForName:NSApplicationDidChangeScreenParametersNotification
+                                           object:nil
+                                            queue:main
+                                       usingBlock:update];
     }
 
     void ReleaseSlot(Slot& s)
@@ -182,15 +259,6 @@ struct MetalPresenter::Impl
         s.height = height;
         return true;
     }
-
-    void AddSample(std::vector<double>& ring, size_t& next, double value)
-    {
-        if (ring.size() < kStatsWindow)
-            ring.push_back(value);
-        else
-            ring[next] = value;
-        next = (next + 1) % kStatsWindow;
-    }
 };
 
 MetalPresenter::MetalPresenter() : _impl(std::make_unique<Impl>())
@@ -201,7 +269,7 @@ MetalPresenter::~MetalPresenter()
 {
     if (_impl && _impl->queue)
     {
-        // The passes in flight read the slots
+        // The passes in flight read the slots; their handlers hold what they touch (Feedback)
         id<MTLCommandBuffer> last = [_impl->queue commandBuffer];
         [last commit];
         [last waitUntilCompleted];
@@ -216,12 +284,16 @@ std::unique_ptr<MetalPresenter> MetalPresenter::Create(void* nsView)
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
     if (!device)
         return nullptr;
+    id<MTLRenderPipelineState> pipeline = FlipPipeline(device);
+    if (!pipeline)
+        return nullptr;
 
     std::unique_ptr<MetalPresenter> presenter(new MetalPresenter());
     Impl& p = *presenter->_impl;
     p.view = view;
     p.layer = (CAMetalLayer*)view.layer;
     p.device = device;
+    p.pipeline = pipeline;
     p.queue = [device newCommandQueue];
     p.layer.device = device;
     p.layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
@@ -235,26 +307,7 @@ std::unique_ptr<MetalPresenter> MetalPresenter::Create(void* nsView)
     p.activity = [[NSProcessInfo processInfo]
         beginActivityWithOptions:NSActivityLatencyCritical | NSActivityUserInitiatedAllowingIdleSystemSleep
                           reason:@"Presenting emulator frames at their audio time"];
-    if (const char* tracePath = getenv("UNREAL_PRESENT_TRACE"); tracePath && *tracePath)
-        p.trace = fopen(tracePath, "w");
-
-    NSError* err = nil;
-    id<MTLLibrary> lib = [device newLibraryWithSource:[NSString stringWithUTF8String:kShader] options:nil error:&err];
-    if (!lib)
-    {
-        NSLog(@"MetalPresenter: shader: %@", err);
-        return nullptr;
-    }
-    MTLRenderPipelineDescriptor* pd = [MTLRenderPipelineDescriptor new];
-    pd.vertexFunction = [lib newFunctionWithName:@"vs"];
-    pd.fragmentFunction = [lib newFunctionWithName:@"fs"];
-    pd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-    p.pipeline = [device newRenderPipelineStateWithDescriptor:pd error:&err];
-    if (!p.pipeline)
-    {
-        NSLog(@"MetalPresenter: pipeline: %@", err);
-        return nullptr;
-    }
+    p.WatchWindow();
     return presenter;
 }
 
@@ -271,6 +324,8 @@ unsigned MetalPresenter::BeginFrame(int width, int height)
     const CGLContextObj context = CGLGetCurrentContext();
     if (!context)
         return 0;
+    // A window moved to another window or screen without a notification for this view
+    CacheWindowState(p.view, *p.fb);
     if (context != p.glContext)
     {
         // A new context: the old one's objects are gone with it
@@ -284,11 +339,12 @@ unsigned MetalPresenter::BeginFrame(int width, int height)
     }
 
     // The next slot no pass reads; with all three busy, the oldest pass is waited for
+    Feedback& fb = *p.fb;
     size_t index = (p.current + 1) % kSlots;
-    for (size_t i = 0; i < kSlots && p.slots[index].busy.load(std::memory_order_acquire); i++)
+    for (size_t i = 0; i < kSlots && fb.busy[index].load(std::memory_order_acquire); i++)
         index = (index + 1) % kSlots;
     Impl::Slot& slot = p.slots[index];
-    if (slot.busy.load(std::memory_order_acquire))
+    if (fb.busy[index].load(std::memory_order_acquire))
     {
         id<MTLCommandBuffer> fence = [p.queue commandBuffer];
         [fence commit];
@@ -311,9 +367,9 @@ unsigned MetalPresenter::BeginFrame(int width, int height)
 namespace
 {
 /// The drawable's pixels as they go to the screen, row 0 = the top, written to `path` as a binary PPM once the pass is
-/// done; `busy` cleared then (UNREAL_PRESENT_DUMP: the check that the picture is upright and its colours right without a screen capture)
-void EncodeDump(id<MTLCommandBuffer> cb, id<MTLTexture> texture, const std::string& path,
-                std::shared_ptr<std::atomic<bool>> busy)
+/// done; fb.dumpBusy cleared then (UNREAL_PRESENT_DUMP: the check that the picture is upright and its colours right
+/// without a screen capture)
+void EncodeDump(id<MTLCommandBuffer> cb, id<MTLTexture> texture, const std::string& path, std::shared_ptr<Feedback> fb)
 {
     const NSUInteger width = texture.width;
     const NSUInteger height = texture.height;
@@ -335,7 +391,7 @@ void EncodeDump(id<MTLCommandBuffer> cb, id<MTLTexture> texture, const std::stri
       FILE* f = fopen(file.c_str(), "wb");
       if (!f)
       {
-          busy->store(false, std::memory_order_release);
+          fb->dumpBusy.store(false, std::memory_order_release);
           return;
       }
       fprintf(f, "P6\n%lu %lu\n255\n", static_cast<unsigned long>(width), static_cast<unsigned long>(height));
@@ -353,7 +409,7 @@ void EncodeDump(id<MTLCommandBuffer> cb, id<MTLTexture> texture, const std::stri
           fwrite(row.data(), 1, row.size(), f);
       }
       fclose(f);
-      busy->store(false, std::memory_order_release);
+      fb->dumpBusy.store(false, std::memory_order_release);
     }];
 }
 }  // namespace
@@ -365,20 +421,35 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
         return;
     p.drawing = false;
     Impl::Slot& slot = p.slots[p.current];
+    const size_t slotIndex = p.current;
+    const std::shared_ptr<Feedback> fb = p.fb;
 
-    // The GL commands done before Metal reads the surface: IOSurface sharing has no cross-API fence
-    const int64_t wait0 = SteadyNs();
-    // Polled: a blocking wait with a timeout sleeps in steps of about 10 ms on macOS's GL (gpu wait p90 10.2 ms with
-    // smooth motion, measured 2026-11-02), a refresh's time; flushed once, then asked without waiting, 0.1 ms apart
+    // The GL commands done before Metal reads the surface: IOSurface sharing has no cross-API fence. Flushed once,
+    // polled 0.1 ms apart for the usual short wait, then waited for with a timeout (kFencePollNs)
+    const int64_t wait0 = SteadyNowNs();
     GLsync sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     GLenum state = glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
-    while (state == GL_TIMEOUT_EXPIRED && SteadyNs() - wait0 < 100'000'000)
+    while (state == GL_TIMEOUT_EXPIRED && SteadyNowNs() - wait0 < kFencePollNs)
     {
         usleep(100);
         state = glClientWaitSync(sync, 0, 0);
     }
+    if (state == GL_TIMEOUT_EXPIRED)
+    {
+        const int64_t left = kFenceTimeoutNs - (SteadyNowNs() - wait0);
+        if (left > 0)
+            state = glClientWaitSync(sync, 0, static_cast<GLuint64>(left));
+    }
     glDeleteSync(sync);
-    const double waitMs = static_cast<double>(SteadyNs() - wait0) / 1e6;
+    const double waitMs = static_cast<double>(SteadyNowNs() - wait0) / 1e6;
+    if (state != GL_ALREADY_SIGNALED && state != GL_CONDITION_SATISFIED)
+    {
+        // GL's draw not done (a GPU stalled or gone): Metal would show it half drawn; the picture before stays
+        fb->gpuWaitTimeouts.fetch_add(1, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> lock(fb->statsMutex);
+        fb->gpuWaits.Add(waitMs);
+        return;
+    }
 
     int64_t drawableWaitNs = 0;
     @autoreleasepool
@@ -386,9 +457,9 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
         const CGSize want = CGSizeMake(slot.width, slot.height);
         if (!CGSizeEqualToSize(p.layer.drawableSize, want))
             p.layer.drawableSize = want;
-        const int64_t drawable0 = SteadyNs();
+        const int64_t drawable0 = SteadyNowNs();
         id<CAMetalDrawable> drawable = [p.layer nextDrawable];
-        drawableWaitNs = SteadyNs() - drawable0;
+        drawableWaitNs = SteadyNowNs() - drawable0;
         if (!drawable)
             return;
 
@@ -402,50 +473,44 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
         [enc setFragmentTexture:slot.texture atIndex:0];
         [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [enc endEncoding];
-        if (!p.dumpPath.empty() && p.presented.load(std::memory_order_relaxed) >= 200 &&
-            !p.dumpBusy->load(std::memory_order_acquire) && access(p.dumpPath.c_str(), F_OK) != 0)
+        if (!p.dumpPath.empty() && fb->presented.load(std::memory_order_relaxed) >= 200 &&
+            !fb->dumpBusy.load(std::memory_order_acquire) && access(p.dumpPath.c_str(), F_OK) != 0)
         {
-            p.dumpBusy->store(true, std::memory_order_release);
-            EncodeDump(cb, drawable.texture, p.dumpPath, p.dumpBusy);
+            fb->dumpBusy.store(true, std::memory_order_release);
+            EncodeDump(cb, drawable.texture, p.dumpPath, fb);
         }
 
-        slot.busy.store(true, std::memory_order_release);
-        Impl::Slot* slotPtr = &slot;
+        fb->busy[slotIndex].store(true, std::memory_order_release);
         [cb addCompletedHandler:^(id<MTLCommandBuffer>) {
-          slotPtr->busy.store(false, std::memory_order_release);
+          fb->busy[slotIndex].store(false, std::memory_order_release);
         }];
 
-        const int64_t now = SteadyNs();
+        const int64_t now = SteadyNowNs();
         const int64_t asked = std::max(atNs, now);
-        const uint64_t number = p.presented.load(std::memory_order_relaxed) + 1;
-        Impl* impl = &p;
+        const uint64_t number = fb->presented.load(std::memory_order_relaxed) + 1;
         const TraceInfo traced = info;
-        // The display's shortest refresh, read here (NSScreen on this thread): the beat's unit
-        NSScreen* display = p.view.window.screen ?: [NSScreen mainScreen];
-        const int64_t refreshNs = display.minimumRefreshInterval > 0 ? SecondsToNs(display.minimumRefreshInterval) : 0;
+        // The display's shortest refresh: the beat's unit
+        const int64_t refreshNs = fb->shortestRefreshNs.load(std::memory_order_relaxed);
         [drawable addPresentedHandler:^(id<MTLDrawable> d) {
           const CFTimeInterval t = d.presentedTime;
-          if (impl->trace)
+          const int64_t screenNs = t > 0 ? SecondsToNs(t) : 0;
+          if (fb->trace.Active())
           {
-              std::lock_guard<std::mutex> lock(impl->statsMutex);
-              fprintf(impl->trace, "%llu %lld %lld %lld %lld %lld %lld %lld\n",
-                      static_cast<unsigned long long>(traced.serial), static_cast<long long>(atNs),
-                      static_cast<long long>(now), static_cast<long long>(t > 0 ? SecondsToNs(t) : 0),
-                      static_cast<long long>(traced.latchNs), static_cast<long long>(traced.plannedNs),
-                      static_cast<long long>(traced.wokeNs), static_cast<long long>(drawableWaitNs));
+              std::lock_guard<std::mutex> lock(fb->statsMutex);
+              fb->trace.Write(traced, atNs, now, screenNs, drawableWaitNs);
           }
-          if (t <= 0)
+          if (screenNs == 0)
           {
-              impl->dropped.fetch_add(1, std::memory_order_relaxed);
+              fb->dropped.fetch_add(1, std::memory_order_relaxed);
               return;
           }
-          impl->shown.fetch_add(1, std::memory_order_relaxed);
-          impl->lastPresentedNs.store(SecondsToNs(t), std::memory_order_relaxed);
+          fb->shown.fetch_add(1, std::memory_order_relaxed);
+          fb->lastPresentedNs.store(screenNs, std::memory_order_relaxed);
           // The lead from the frame's own time: a window that handed it over late was late too
-          impl->lead.Shown(SecondsToNs(t) - (atNs > 0 ? atNs : asked), number, asked - now);
-          std::lock_guard<std::mutex> lock(impl->statsMutex);
-          impl->AddSample(impl->errors, impl->errorNext, static_cast<double>(SecondsToNs(t) - asked) / 1e6);
-          impl->beat.Shown(traced.picture, traced.targetNs, SecondsToNs(t), refreshNs);
+          fb->lead.Shown(screenNs - (atNs > 0 ? atNs : asked), number, asked - now);
+          std::lock_guard<std::mutex> lock(fb->statsMutex);
+          fb->errors.Add(static_cast<double>(screenNs - asked) / 1e6);
+          fb->beat.Shown(traced.picture, traced.targetNs, screenNs, refreshNs);
         }];
         if (atNs > now)
             [cb presentDrawable:drawable atTime:static_cast<CFTimeInterval>(atNs) / 1e9];
@@ -453,41 +518,40 @@ void MetalPresenter::PresentFrame(int64_t atNs, const TraceInfo& info)
             [cb presentDrawable:drawable];
         [cb commit];
     }
-    p.presented.fetch_add(1, std::memory_order_relaxed);
-    std::lock_guard<std::mutex> lock(p.statsMutex);
-    p.AddSample(p.gpuWaits, p.gpuWaitNext, waitMs);
-    p.AddSample(p.drawableWaits, p.drawableWaitNext, static_cast<double>(drawableWaitNs) / 1e6);
+    fb->presented.fetch_add(1, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(fb->statsMutex);
+    fb->gpuWaits.Add(waitMs);
+    fb->drawableWaits.Add(static_cast<double>(drawableWaitNs) / 1e6);
 }
 
 uint64_t MetalPresenter::Presented() const
 {
-    return _impl->presented.load(std::memory_order_relaxed);
+    return _impl->fb->presented.load(std::memory_order_relaxed);
 }
 
 uint64_t MetalPresenter::LastLatePresent() const
 {
-    return _impl->lead.LastLate();
+    return _impl->fb->lead.LastLate();
 }
 
 uint32_t MetalPresenter::LastLateLag() const
 {
-    return _impl->lead.LastLateLag();
+    return _impl->fb->lead.LastLateLag();
 }
 
 uint64_t MetalPresenter::LastOnTimePresent() const
 {
-    return _impl->lead.LastOnTime();
+    return _impl->fb->lead.LastOnTime();
 }
 
 int64_t MetalPresenter::LeadNs(int64_t refreshPeriodNs) const
 {
-    return refreshPeriodNs + _impl->lead.Margin(refreshPeriodNs);
+    return refreshPeriodNs + _impl->fb->lead.Margin(refreshPeriodNs);
 }
 
 bool MetalPresenter::IsVisible() const
 {
-    NSWindow* window = _impl->view.window;
-    return window && (window.occlusionState & NSWindowOcclusionStateVisible) != 0;
+    return _impl->fb->visible.load(std::memory_order_relaxed);
 }
 
 void MetalPresenter::SetPolicy(PresentPolicy policy)
@@ -501,74 +565,51 @@ bool MetalPresenter::Vrr() const
     if (policy != PresentPolicy::Auto)
         return policy == PresentPolicy::Vrr;
     // A refresh range (ProMotion, adaptive sync) shows each present at its time
-    NSScreen* screen = _impl->view.window.screen ?: [NSScreen mainScreen];
-    const CFTimeInterval shortest = screen.minimumRefreshInterval;
-    const CFTimeInterval longest = screen.maximumRefreshInterval;
-    return shortest > 0 && longest - shortest > shortest * 0.01;
+    const int64_t shortest = _impl->fb->shortestRefreshNs.load(std::memory_order_relaxed);
+    const int64_t longest = _impl->fb->longestRefreshNs.load(std::memory_order_relaxed);
+    return shortest > 0 && longest - shortest > shortest / 100;
 }
 
 bool MetalPresenter::RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const
 {
-    const int64_t last = _impl->lastPresentedNs.load(std::memory_order_relaxed);
-    NSScreen* screen = _impl->view.window.screen ?: [NSScreen mainScreen];
+    const int64_t last = _impl->fb->lastPresentedNs.load(std::memory_order_relaxed);
     // vsync on a refresh range: its top rate
-    const CFTimeInterval shortest = screen.minimumRefreshInterval;
+    const int64_t shortest = _impl->fb->shortestRefreshNs.load(std::memory_order_relaxed);
     if (last == 0 || shortest <= 0 || Vrr())
         return false;
     refreshNs = last;
-    periodNs = SecondsToNs(shortest);
-    return periodNs > 0;
+    periodNs = shortest;
+    return true;
 }
 
 MetalPresenter::Stats MetalPresenter::GetStats() const
 {
-    const Impl& p = *_impl;
+    const Feedback& fb = *_impl->fb;
     Stats s;
-    s.presented = p.presented.load(std::memory_order_relaxed);
-    s.shown = p.shown.load(std::memory_order_relaxed);
-    s.dropped = p.dropped.load(std::memory_order_relaxed);
-    s.late = p.lead.Late();
-    s.leadMs = static_cast<double>(p.lead.PeriodNs() + p.lead.MarginNs()) / 1e6;
+    s.presented = fb.presented.load(std::memory_order_relaxed);
+    s.shown = fb.shown.load(std::memory_order_relaxed);
+    s.dropped = fb.dropped.load(std::memory_order_relaxed);
+    s.gpuWaitTimeouts = fb.gpuWaitTimeouts.load(std::memory_order_relaxed);
+    s.late = fb.lead.Late();
+    s.leadMs = static_cast<double>(fb.lead.PeriodNs() + fb.lead.MarginNs()) / 1e6;
     std::vector<double> errors, waits, drawableWaits;
     {
-        std::lock_guard<std::mutex> lock(p.statsMutex);
-        errors = p.errors;
-        waits = p.gpuWaits;
-        drawableWaits = p.drawableWaits;
-        const ScreenBeat::Stats beat = p.beat.GetStats();
+        std::lock_guard<std::mutex> lock(fb.statsMutex);
+        errors = fb.errors.Values();
+        waits = fb.gpuWaits.Values();
+        drawableWaits = fb.drawableWaits.Values();
+        const ScreenBeat::Stats beat = fb.beat.GetStats();
         s.beatFrames = beat.frames;
         s.offBeat = beat.offBeat;
         s.soundOffsetP50 = beat.offsetP50Ms;
         s.soundOffsetP99 = beat.offsetP99Ms;
     }
-    auto at = [](std::vector<double>& v, double q) {
-        const size_t i = static_cast<size_t>(q * static_cast<double>(v.size() - 1) + 0.5);
-        return v[std::min(i, v.size() - 1)];
-    };
-    s.window = static_cast<uint32_t>(errors.size());
-    if (!errors.empty())
-    {
-        std::sort(errors.begin(), errors.end());
-        s.errorP50 = at(errors, 0.50);
-        s.errorP99 = at(errors, 0.99);
-        s.errorMax = errors.back();
-    }
-    if (!waits.empty())
-    {
-        std::sort(waits.begin(), waits.end());
-        s.gpuWaitP50 = at(waits, 0.50);
-        s.gpuWaitMax = waits.back();
-    }
-    if (!drawableWaits.empty())
-    {
-        std::sort(drawableWaits.begin(), drawableWaits.end());
-        s.drawableWaitP50 = at(drawableWaits, 0.50);
-        s.drawableWaitMax = drawableWaits.back();
-    }
+    presentstats::Fill(s, std::move(errors), std::move(waits), std::move(drawableWaits));
     s.visible = IsVisible();
-    NSScreen* screen = p.view.window.screen ?: [NSScreen mainScreen];
-    s.maxRefreshHz = screen.minimumRefreshInterval > 0 ? 1.0 / screen.minimumRefreshInterval : 0.0;
-    s.minRefreshHz = screen.maximumRefreshInterval > 0 ? 1.0 / screen.maximumRefreshInterval : 0.0;
+    const int64_t shortest = fb.shortestRefreshNs.load(std::memory_order_relaxed);
+    const int64_t longest = fb.longestRefreshNs.load(std::memory_order_relaxed);
+    s.maxRefreshHz = shortest > 0 ? 1e9 / static_cast<double>(shortest) : 0.0;
+    s.minRefreshHz = longest > 0 ? 1e9 / static_cast<double>(longest) : 0.0;
     s.vrr = Vrr();
     return s;
 }
@@ -576,16 +617,17 @@ MetalPresenter::Stats MetalPresenter::GetStats() const
 std::string MetalPresenter::Describe() const
 {
     const Stats s = GetStats();
-    char line[384];
+    char line[448];
     std::snprintf(line, sizeof(line),
                   "Metal present-at-time: %llu presented, %llu shown, %llu dropped, %llu a refresh late (lead %.1f ms); "
                   "error p50 %.2f p99 %.2f max %.2f ms; "
-                  "GL wait p50 %.2f max %.2f ms; drawable wait p50 %.2f max %.2f ms; display %.1f-%.1f Hz%s, %s%s",
+                  "GL wait p50 %.2f max %.2f ms, %llu timed out; drawable wait p50 %.2f max %.2f ms; display "
+                  "%.1f-%.1f Hz%s, %s%s",
                   static_cast<unsigned long long>(s.presented), static_cast<unsigned long long>(s.shown),
                   static_cast<unsigned long long>(s.dropped), static_cast<unsigned long long>(s.late), s.leadMs,
-                  s.errorP50, s.errorP99, s.errorMax, s.gpuWaitP50,
-                  s.gpuWaitMax, s.drawableWaitP50, s.drawableWaitMax, s.minRefreshHz, s.maxRefreshHz,
-                  s.maxRefreshHz - s.minRefreshHz > 1.0 ? " (VRR)" : " (fixed)",
+                  s.errorP50, s.errorP99, s.errorMax, s.gpuWaitP50, s.gpuWaitMax,
+                  static_cast<unsigned long long>(s.gpuWaitTimeouts), s.drawableWaitP50, s.drawableWaitMax,
+                  s.minRefreshHz, s.maxRefreshHz, s.maxRefreshHz - s.minRefreshHz > 1.0 ? " (VRR)" : " (fixed)",
                   s.vrr ? "each frame at its time" : "on the refresh grid", s.visible ? "" : "; occluded");
     return line;
 }

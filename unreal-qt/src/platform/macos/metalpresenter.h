@@ -8,7 +8,9 @@
 /// Every present gets a presented handler: MTLDrawable.presentedTime (CACurrentMediaTime = mach_absolute_time, the
 /// steady clock) against the time asked for gives the on-screen error, 0 = the system dropped the frame.
 ///
-/// The handlers run on Metal's threads and only touch the statistics.
+/// The handlers run on Metal's threads and touch only the statistics, which they share with the presenter: a handler
+/// that comes after the presenter is gone finds them alive. The window's occlusion and its screen's refresh range are
+/// read on the GUI thread (AppKit) and cached, so the getters answer from any thread.
 class MetalPresenter final : public NativePresenter
 {
 public:
@@ -19,7 +21,7 @@ public:
 
     unsigned BeginFrame(int width, int height) override;
     void PresentFrame(int64_t atNs, const TraceInfo& trace) override;
-    /// NSWindowOcclusionStateVisible
+    /// NSWindowOcclusionStateVisible (cached)
     bool IsVisible() const override;
     /// The window server composes a refresh ahead, so a drawable needs about a refresh before its vsync, and the
     /// draw (a GL fence wait up to 10 ms on a busy GPU) comes on top. Frames latch some 60 ms before their target, so
