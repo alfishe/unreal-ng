@@ -12,7 +12,8 @@ class ThreadPool;
 ///
 /// This is the CPU reference. Integer arithmetic only (the weight in 1/256 steps, the warp in whole pixels), so the
 /// output is the same bits on every compiler; the presenters' GPU passes implement the same steps and are tested
-/// against it. No thread, no OS calls.
+/// against it. The engine (SmoothMotion) splits its heavy steps over a pool of its own (UNREAL_SMOOTH_THREADS), the
+/// same bits for any thread count; no other OS calls.
 namespace smoothmotion
 {
 
@@ -311,7 +312,10 @@ private:
     /// FindFlicker's motion look-alike: a shift within a block's size explains at least kFlickerNumerator /
     /// kFlickerDenominator of the block's `changed` pixels both ways (b(p) = a(p - d) and a(p) = b(p + d))
     bool MovesBy(const uint32_t* a, const uint32_t* b, int bx, int by, int x1, int y1, int changed) const;
-    std::vector<int> _flickerChanged, _flickerAlternating;  ///< FindFlicker's per-block counts, kept from call to call
+    /// FindFlicker's per-block counts and verdicts, kept from call to call
+    std::vector<int> _flickerChanged, _flickerAlternating;
+    std::vector<uint8_t> _flickerHeld;
+    static constexpr std::ptrdiff_t kFlickerParallelBlocks = 64;  ///< changing blocks past which FindFlicker uses the pool
     void BuildMask();
     int64_t FramePeriodNs() const;
 
