@@ -3,12 +3,11 @@
 # FRAMES=<dir>: the captures (default POC 046's). Each clip: grid.mp4 + single videos of every filter, and
 # grid-short.mp4 (the shortlist, 3x).
 cd "$(dirname "$0")/../../.."
-D=scratch/2026-10-28-poc-039
-F=${FRAMES:-scratch/2026-10-26-poc-038/frames}
+D=scratch/2026-10-28-poc-047
+F=${FRAMES:-scratch/2026-10-26-poc-046/frames}
 SHORT=${SHORT:-off,blend-narrow,interpolate,interp-rows}
 mkdir -p $D
-clang++ -std=c++20 -O2 -Wall -Wextra -Icore/src tools/poc/047-smoothing-filters/filters.cpp \
-    core/src/emulator/video/smoothmotion.cpp core/src/emulator/video/smoothlayers.cpp -o $D/filters || exit 1
+tools/verification/smoothmotion/compile-tool.sh tools/verification/smoothmotion/filters.cpp $D/filters || exit 1
 clips=("$@")
 [ ${#clips[@]} -eq 0 ] && clips=($(ls $F | sed -n 's/\.rgba$//p'))
 one()

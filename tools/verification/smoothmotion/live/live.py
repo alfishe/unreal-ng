@@ -8,7 +8,7 @@ then replay.cpp (the core on the CPU: every plan and picture must be the window'
 
     python3 -I live.py --bin cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt \\
         --replay scratch/live/replay --out scratch/live testdata/loaders/sna/aleste1.sna@8 \\
-        scratch/2026-10-28-poc-039/rzx/zynaps.rzx@30
+        scratch/2026-10-28-poc-047/rzx/zynaps.rzx@30
 
 A clip is `<file>[@<warm-up seconds>]` (.sna / .z80 / .rzx). Writes <out>/<clip>/trace (the trace), <clip>/score (the
 inputs of smoothness.py), <clip>.json (its results) and prints a table.

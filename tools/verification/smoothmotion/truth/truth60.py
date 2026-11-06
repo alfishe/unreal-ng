@@ -1,7 +1,7 @@
-"""The truth of a POC 047 scene refreshed at 60 Hz from 3 ms: the best a 60 Hz display can show"""
+"""The truth of a generic scene (scenes.py) refreshed at 60 Hz from 3 ms: the best a 60 Hz display can show"""
 import sys
 import numpy as np
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[4] / "tools/poc/047-smoothing-filters"))
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
 import scenes as S
 out, name = sys.argv[1], sys.argv[2]
 el = S.scenes()[name]

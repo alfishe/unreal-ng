@@ -1,9 +1,9 @@
-"""Dumps a POC 047 scene's truth for truthscore: <out>/<scene>.rgba (300 source frames at 50 Hz), <scene>.truth
-(rgb + element id per pixel, 500 Hz from 1 ms: frame j at j / 500 + 0.001 s), <scene>.eyes (per source frame, per
+"""Dumps the truth of a generic scene (scenes.py) for truthscore: <out>/<scene>.rgba (300 source frames at 50 Hz),
+<scene>.truth (rgb + element id per pixel, 500 Hz from 1 ms: frame j at j / 500 + 0.001 s), <scene>.eyes (per source frame, per
 element: the seen velocity in px/s or -, the eye following a layer)"""
 import sys
 import numpy as np
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[4] / "tools/poc/047-smoothing-filters"))
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
 import scenes as S
 
 out, name = sys.argv[1], sys.argv[2]

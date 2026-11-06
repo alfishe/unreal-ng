@@ -1,4 +1,5 @@
-"""Generic frame-rate conversion scenes with ground truth at any time (POC 047, README "Generic suite").
+"""Generic frame-rate conversion scenes with ground truth at any time (made in POC 047: its README,
+"Generic suite"; truth/ here scores filters on them).
 
 Every scene is a stack of elements on a 352 x 288 ZX-like picture (256 x 192 screen at 48, 48, a border round it):
 

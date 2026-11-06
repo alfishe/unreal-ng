@@ -28,7 +28,7 @@ Proposal (owner decisions 2026-10-26 applied):
 - `interpolate` becomes the third `SmoothMotion` mode after `blend` (design section 4.4), off by default.
 - Games' cadence modes come from the game profile's `video:` section (period, mode, play window, excluded regions,
   optionally the "picture done" probe), not from run-time guessing (design section 4.5, profile format
-  `mapping-and-profiles.md` section 7.7). `capture.py` and `cadence-eval` become the drafting tool.
+  `mapping-and-profiles.md` section 7.7). `capture.py` and `cadence-eval` become the drafting tool (`tools/smoothmotion/capture.py`, `draft-video-profile.py`).
 - Every effect runs on the GPU and on the CPU, on every platform: an integer, bit-exact CPU reference in `core/`
   and GPU passes per presenter tested against it (design section 6.5).
 - Owner review of the 60 Hz videos picks the default game mode (`cadence` or `carry`).

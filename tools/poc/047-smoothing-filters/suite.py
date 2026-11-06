@@ -16,7 +16,7 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../verification/smoothmotion"))
 import scenes as S  # noqa: E402
 
 ROM = os.path.join(os.path.dirname(__file__), "../../../data/rom/48.rom")

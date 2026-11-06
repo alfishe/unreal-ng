@@ -2,17 +2,22 @@
 
 Measures how smoothly a smoothing filter (smooth motion of the
 [frame presenter](../../../docs/inprogress/2026-10-26-frame-presenter/README.md), or an experiment of
-[POC 047](../../poc/047-smoothing-filters/README.md)) shows motion, from the pictures alone: the source frames and the
-pictures it put on the display, refresh by refresh. Built like the
+[POC 047](../../poc/047-smoothing-filters/README.md) in `filters.cpp`) shows motion, from the pictures alone: the
+source frames and the pictures it put on the display, refresh by refresh. Built like the
 [ZX DLSS verification](../zxdlss/README.md): synthetic programs with a known answer, independent oracles, hard gates
 and a baseline.
 
 | Part | What it is |
 |---|---|
-| [`testdata/video/smoothmotion`](../../../testdata/video/smoothmotion/README.md) | the synthetic scenes (Z80, `.sna` / `.tap` / `.trd`) and their ground truth |
+| [`testdata/video/smoothmotion`](../../../testdata/video/smoothmotion/README.md) | the synthetic Z80 programs (`.sna`) and their ground truth, synced from their own repo |
+| `sync-testdata.sh` | copies the built programs and the truth from that repo, checks the sums |
+| `filters.cpp` | the filters harness: the shipped modes through the core's CPU reference plus POC 047's experiments, 60 Hz refreshes as raw RGBA (`FILTERS_RAW=1`) and videos |
+| `compile-tool.sh` | builds a tool (`filters.cpp`, `live/replay.cpp`, POC 046's `smoothmotion-eval.cpp`) with the core sources it needs, no CMake |
+| `run_scenes.sh` | the scenes end to end: capture, filters, `smoothness.py`, `regress.py` |
 | `smoothness.py` | the measurement: source frames + a filter's refreshes -> numbers per region and filter |
 | `regress.py` | hard gates and the baseline comparison of `smoothness.py` results |
 | `baseline.json` | the measured numbers of the current filters on the synthetic scenes |
+| `scenes.py` | the generic scenes of the eye's model (`truth/` below) |
 
 ## What is measured
 
@@ -29,7 +34,8 @@ motion has it at the refresh's time, sharp and whole. So per region that moves r
 4. **Oracle B (ideal picture)**: the refresh against the source placed at the ideal position rounded to whole pixels
    (the best picture without blending), normalised squared error. It knows nothing of how filters work.
 5. **Oracle C (ground truth)**, synthetic scenes only: every unbroken stretch of the source track must be exactly the
-   program's trajectory (`floor(floor(n / period) * step16 / 16)` px for some frame phase).
+   program's trajectory (`floor(floor(n / period) * step16 / 16)` px for some frame phase; with the truth's `end`
+   and `cycle`, at n mod `cycle` and gone from `end` on: a stretch while the ball is gone must not move).
 6. **Static pixels**: outside the regions, pixels that do not change in the source must be the source's.
 
 | Number | Meaning |
@@ -49,20 +55,28 @@ motion has it at the refresh's time, sharp and whole. So per region that moves r
 ## Run
 
 ```
-# the scenes: build (or use the committed files), capture through the WebAPI, render the filters, measure
-SJASMPLUS=/path/to/sjasmplus testdata/video/smoothmotion/build.sh
-python3 -I tools/poc/047-smoothing-filters/capture.py --port <webapi> --out scratch/smoothcap --warmup 50 --frames 300 \
-    testdata/video/smoothmotion/smooth-speeds.sna
-FILTERS_RAW=1 scratch/2026-10-28-poc-039/filters scratch/smoothcap/smooth-speeds.rgba 352 288 300 \
-    scratch/smoothcap/speeds data/rom/48.rom
-python3 -I tools/verification/smoothmotion/smoothness.py --source scratch/smoothcap/smooth-speeds.rgba \
-    --truth testdata/video/smoothmotion/truth/speeds.json --out-dir scratch/smoothcap/speeds --json scratch/smoothcap/speeds.json
+# the scenes end to end against a running emulator (its WebAPI port): a Pentagon 128K instance of its own
+tools/verification/smoothmotion/run_scenes.sh <webapi port> [--update] [scene ...]
+
+# the same by hand, one scene
+tools/verification/smoothmotion/compile-tool.sh tools/verification/smoothmotion/filters.cpp scratch/smoothmotion/filters
+python3 -I tools/smoothmotion/capture.py --port <webapi> --model PENTAGON:128 --out scratch/smoothmotion --warmup 50 \
+    --frames 400 testdata/video/smoothmotion/bin/smooth-speeds.sna
+FILTERS_RAW=1 scratch/smoothmotion/filters scratch/smoothmotion/smooth-speeds.rgba 352 288 400 \
+    scratch/smoothmotion/speeds data/rom/48.rom
+python3 -I tools/verification/smoothmotion/smoothness.py --source scratch/smoothmotion/smooth-speeds.rgba \
+    --truth testdata/video/smoothmotion/truth/speeds.json --out-dir scratch/smoothmotion/speeds \
+    --json scratch/smoothmotion/speeds.json
 python3 -I tools/verification/smoothmotion/regress.py --baseline tools/verification/smoothmotion/baseline.json \
-    scratch/smoothcap/speeds.json
+    scratch/smoothmotion/speeds.json
 
 # any capture (a game): 16-line strips of the paper instead of the ground truth
 python3 -I tools/verification/smoothmotion/smoothness.py --source <clip>.rgba --out-dir <filters' pictures>
 ```
+
+The baseline follows the core: a change to smooth motion's output (a cap, a rule) or to the test programs (after
+`sync-testdata.sh`) needs `run_scenes.sh <port> --update` and the new `baseline.json` in the same commit. The action
+screen (`truth/action.json`) has no regions; it is not scored here.
 
 The filters tool renders refresh r at `3 ms + r / 60 s`, frame k due at `k / 50 s` (`--phase-ms`, `--src-hz`,
 `--disp-hz` change that). numpy and scipy; one worker process per region (`--jobs`).
@@ -70,8 +84,8 @@ The filters tool renders refresh r at `3 ms + r / 60 s`, frame k due at `k / 50 
 ## What the eye sees: `truth/`
 
 `smoothness.py` measures positions; [`truth/`](truth/) measures pictures against what the eye should see. It renders the
-[POC 047](../../poc/047-smoothing-filters/README.md) scenes (`scenes.py`: scrollers, parallax, sprites, text, dot
-matrices, animated shapes, flicker, overlays), whose motion is known at any time, and scores a filter's 60 Hz
+generic scenes of [POC 047](../../poc/047-smoothing-filters/README.md) (`scenes.py` here: scrollers, parallax, sprites,
+text, dot matrices, animated shapes, flicker, overlays), whose motion is known at any time, and scores a filter's 60 Hz
 refreshes the way the eye integrates them: a 20 ms box per sample, the eye either following a moving element
 (pursuit) or resting (fixation).
 
@@ -85,8 +99,8 @@ refreshes the way the eye integrates them: a 20 ms box per sample, the eye eithe
 | `table.py` | pursuit / fixation per scene and filter |
 
 ```
-tools/poc/047-smoothing-filters/run.sh       # or build the filters tool alone, as run.sh does
-tools/verification/smoothmotion/truth/truth.sh <filters binary> off,blend,layers [scenes...]
+tools/verification/smoothmotion/compile-tool.sh tools/verification/smoothmotion/filters.cpp scratch/smoothmotion/filters
+tools/verification/smoothmotion/truth/truth.sh scratch/smoothmotion/filters off,blend,layers [scenes...]
 ```
 
 The columns `truth60` (the 60 Hz truth itself) and `native` (the source at 50 Hz on a 50 Hz display) bracket the
@@ -115,9 +129,7 @@ settings off), loads each clip through the WebAPI, warms it up, records the fram
   same mode on a perfect clock (what the timing costs).
 
 ```
-clang++ -std=c++20 -O2 -Wall -Wextra -Icore/src tools/verification/smoothmotion/live/replay.cpp \
-    core/src/emulator/video/smoothmotion.cpp core/src/emulator/video/smoothlayers.cpp core/src/common/threadpool.cpp \
-    core/src/common/threadhelper.cpp -o scratch/live/replay
+tools/verification/smoothmotion/compile-tool.sh tools/verification/smoothmotion/live/replay.cpp scratch/live/replay
 python3 -I tools/verification/smoothmotion/live/live.py \
     --bin cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt --replay scratch/live/replay \
     --out scratch/live testdata/loaders/sna/aleste1.sna@8 <clip.rzx>@30

@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Scores POC 047 smoothing filters on the synthetic scenes against the scenes' own truth (README.md).
+# Scores the smoothing filters (filters.cpp) on the generic scenes (scenes.py) against their own truth.
 #
 #   truth.sh <filters bin> [filters] [scenes...]     (filters: comma list, default off,blend,layers)
 #
@@ -9,7 +9,7 @@
 set -e
 here=${0:A:h}
 root=${here:h:h:h:h}
-bin=${1:?filters binary (tools/poc/047-smoothing-filters/run.sh builds it)}; shift
+bin=${1:?filters binary (tools/verification/smoothmotion/compile-tool.sh builds it)}; shift
 F=${1:-off,blend,layers}; (( $# )) && shift
 S=($@); (( $#S )) || S=(strips vertical diagonal overlay textlines parallax sprites cadence dotmatrix thin flux animated)
 D=${TRUTH_DIR:-$root/scratch/smoothmotion-truth}

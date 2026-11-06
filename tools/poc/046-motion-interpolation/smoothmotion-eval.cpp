@@ -1,5 +1,6 @@
 // smoothmotion-eval: the CPU reference of smooth motion (core/src/emulator/video/smoothmotion.h) on captured frame
-// sequences (capture.py: RGBA frames back to back), the measurements of POC 046 on the production code.
+// sequences (tools/smoothmotion/capture.py: RGBA frames back to back), the measurements of POC 046 on the production
+// code.
 //
 //   smoothmotion-eval eval <seq.rgba> <width> <height> <count>
 //       hold-out triples: frames k and k+2 at w = 1/2 against frame k+1 (blend and interpolate), and the cost of
@@ -12,8 +13,8 @@
 //       what a fixed display shows: repeat | blend | interpolate side by side (3 x width), one picture per refresh
 //
 // Build (no CMake target: a measuring tool, as the POC):
-//   c++ -std=c++20 -O3 -Icore/src -o scratch/smoothmotion-eval tools/smoothmotion/smoothmotion-eval.cpp \
-//       core/src/emulator/video/smoothmotion.cpp core/src/emulator/video/smoothlayers.cpp
+//   CXXFLAGS=-O3 tools/verification/smoothmotion/compile-tool.sh tools/poc/046-motion-interpolation/smoothmotion-eval.cpp \
+//       scratch/2026-10-26-poc-046/smoothmotion-eval
 #include <algorithm>
 #include <chrono>
 #include <cstdint>

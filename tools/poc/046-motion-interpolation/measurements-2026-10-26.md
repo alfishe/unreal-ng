@@ -1,9 +1,9 @@
 # 046 — measurements 2026-10-26
 
-Setup: frames captured with `capture.py` from unreal-qt (offscreen, Pentagon, own ports): 200 consecutive frames per
+Setup: frames captured with `tools/smoothmotion/capture.py` (then here) from unreal-qt (offscreen, Pentagon, own ports): 200 consecutive frames per
 title after a warmup, the presented RGBA framebuffer 352 x 288. Interpolator `interp.cpp` built with
 `c++ -std=c++20 -O3`, Mac Studio (M-series), run while the machine had a load of 40-60 (other sessions' builds), so
-the tail of the times is preemption. Raw frames, `eval.txt` and the 60 Hz videos: `scratch/2026-10-26-poc-038/`.
+the tail of the times is preemption. Raw frames, `eval.txt` and the 60 Hz videos: `scratch/2026-10-26-poc-046/`.
 
 Quality: hold-out triples (frames k and k+2 at `w = 0.5` against frame k+1), only triples with motion on both steps,
 only pixels that change across the triple. MAE = mean absolute error per channel (0-255); exact = pixels exactly
@@ -57,4 +57,4 @@ frame later); the period is the median distance between pictures. Variants on pi
 (MAE / exact over the pixels changing across the three pictures.) Dizzy and Green Beret cycle animation frames in
 place (no translation): interpolation has nothing to find. `interp cadence-render`: 60 Hz videos, four panels
 `a-repeat | c-block consecutive frames | e-cadence (lookahead 2 frames) | f-carry`:
-`scratch/2026-10-26-poc-038/*-cadence-60hz.mp4`.
+`scratch/2026-10-26-poc-046/*-cadence-60hz.mp4`.

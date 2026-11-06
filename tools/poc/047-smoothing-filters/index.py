@@ -2,7 +2,7 @@
 """POC 047: index.html over the rendered clips: the long smooth scrollers first, each clip's grids looping, the single
 filters as links."""
 import os, sys
-d = sys.argv[1] if len(sys.argv) > 1 else "scratch/2026-10-28-poc-039"
+d = sys.argv[1] if len(sys.argv) > 1 else "scratch/2026-10-28-poc-047"
 long_clips = ["hysteria", "cobra", "zynaps", "slapfight", "moonstrike", "scramblespirits", "uridiumplus", "flyingshark"]
 short_clips = ["aleste1", "s4b-2", "across-the-edge-second", "vibrations", "earshaver-1", "insult-3", "action",
                "greenberet-300", "garfield-300", "thundercats-300", "Dizzy_X", "dargonscrypt-300", "eyeache1",

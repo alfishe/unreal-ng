@@ -23,7 +23,7 @@ refreshes at 60 Hz, 2 or 3 at 120 Hz). The questions:
   playback), per-frame colour cycling (Scroller by Demarche), demo effects (Across the Edge), mostly static screens
   (Action, 7th Reality, the RZX oracle snapshots).
 - Frames as the presenter gets them: the RGBA framebuffer with the border (352 x 288), captured through the WebAPI
-  (`capture.py`: `run_frame` + `capture/framebuffer?format=rgba`). No machine-specific input (the 1-bit bitmap is
+  ([`tools/smoothmotion/capture.py`](../../smoothmotion/capture.py): `run_frame` + `capture/framebuffer?format=rgba`). No machine-specific input (the 1-bit bitmap is
   ZX-only; the presenter serves every machine).
 - Variants, named the same everywhere:
   - `a-repeat`: the newest frame (today);
@@ -37,7 +37,7 @@ refreshes at 60 Hz, 2 or 3 at 120 Hz). The questions:
 - Ground truth: a refresh's true in-between picture does not exist. The measure is the hold-out triple: interpolate
   frames k and k+2 at `w = 0.5` and compare with frame k+1. It understates the quality for motion that is not
   linear over two frames, and overstates it nowhere.
-- Raw frames and outputs in `scratch/2026-10-26-poc-038/`.
+- Raw frames and outputs in `scratch/2026-10-26-poc-046/`.
 
 ## Acceptance criteria / expected results
 
@@ -49,3 +49,14 @@ refreshes at 60 Hz, 2 or 3 at 120 Hz). The questions:
 - Expected failures: the colour-cycled dots of Demarche (no motion, a palette change) and full-screen effects fall
   back to the blend.
 - The owner looks at side-by-side 60 Hz animations of the three variants (GIF) before the presenters get the mode.
+
+## Files
+
+| File | What it is |
+|---|---|
+| `interp.cpp` | the POC's interpolator and its measurements (`c++ -std=c++20 -O3`, standalone) |
+| `smoothmotion-eval.cpp` | the same measurements on the production CPU reference (`core/src/emulator/video/smoothmotion.h`); built by `tools/verification/smoothmotion/compile-tool.sh` (the command is at the top of the file) |
+| [`measurements-2026-10-26.md`](measurements-2026-10-26.md), [`conclusions.md`](conclusions.md) | the results and the proposal |
+
+Frames: [`tools/smoothmotion/capture.py`](../../smoothmotion/capture.py). Superseded by
+[POC 047](../047-smoothing-filters/README.md) (the filters, `layers`).

@@ -17,7 +17,7 @@ The owner watched `interpolate` live on Aleste (60 Hz fixed display) and saw jud
 
 ## Requirements
 
-- The frames of POC 046 (`scratch/2026-10-26-poc-038/frames/*.rgba`, 352 x 288 RGBA, 200 consecutive frames each,
+- The frames of POC 046 (`scratch/2026-10-26-poc-046/frames/*.rgba`, 352 x 288 RGBA, 200 consecutive frames each,
   captured through the WebAPI).
 - The shipped variants (`off`, `blend`, `interpolate`, `cadence`, `carry`) through the CPU reference
   `core/src/emulator/video/smoothmotion.cpp` itself, so the videos show the bits the window shows; the others as
@@ -25,7 +25,7 @@ The owner watched `interpolate` live on Aleste (60 Hz fixed display) and saw jud
 - A refresh at 60 Hz shows the picture for the time it reaches the screen; frame k is due at k / 50 s. No presenter
   timing: every picture is exactly on its refresh.
 - Output per clip: one 60 fps video per filter (3x nearest) and a labelled 3 x 3 grid of the filters side by side
-  (2x nearest), H.264, in `scratch/2026-10-28-poc-039/`.
+  (2x nearest), H.264, in `scratch/2026-10-28-poc-047/`.
 
 ## Constraints
 
@@ -41,10 +41,18 @@ The owner watched `interpolate` live on Aleste (60 Hz fixed display) and saw jud
 
 ## Measurement
 
-`motion.py` (the step evenness of one scroller band) is superseded by
 [tools/verification/smoothmotion](../../verification/smoothmotion/README.md): position error, jerk, ghost and tear per
 moving region against the ideal trajectory, on the synthetic scenes of `testdata/video/smoothmotion` (known motion)
-and on any capture.
+and on any capture. The filters harness (`filters.cpp`) and the generic scenes (`scenes.py`) began here and live
+there now, with the product verification; this folder keeps the runners:
+
+| File | What it is |
+|---|---|
+| `run.sh` | the clips through every filter, the videos and grids (builds `filters.cpp` with `compile-tool.sh`) |
+| `suite.py` | the generic suite: `scenes.py` through a filters binary, scored per element |
+| `index.py` | an `index.html` over the rendered clips: grids looping, the single filters as links |
+
+Frames: [`tools/smoothmotion/capture.py`](../../smoothmotion/capture.py) (snapshots and `.rzx`).
 
 ## Results (2026-10-28)
 
@@ -107,8 +115,9 @@ python3 tools/poc/047-smoothing-filters/suite.py <filters binary> off,blend,inte
 
 ### `layers`
 
-`struct LayerFlow` in `filters.cpp`. Candidate vectors come from the shipped block estimator: the common ones
-(several blocks share them) plus those of the 3 x 3 blocks round each block. Every rule below is explained in a
+`struct LayerFlow`, built here in `filters.cpp`, shipped as `core/src/emulator/video/smoothlayers.{h,cpp}` (the
+harness calls the core's now). Candidate vectors come from the shipped block estimator: the common ones (several
+blocks share them) plus those of the 3 x 3 blocks round each block. Every rule below is explained in a
 comment where its code lives.
 
 - **Per pixel**: a vector fits a pixel when a(x - s) and b(x - s + v) agree with what the pair shows (s is the

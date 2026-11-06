@@ -1,4 +1,5 @@
-// POC 047: every 50 -> 60 Hz smoothing filter on the same frames, as 60 fps videos (README.md).
+// The filters harness: every 50 -> 60 Hz smoothing filter on the same frames, as 60 fps videos and raw pictures
+// (README.md here; the experiments are POC 047's, tools/poc/047-smoothing-filters). Built by compile-tool.sh.
 //
 //   filters <seq.rgba> <width> <height> <count> <out dir> <rom 48.rom> [sourceHz] [displayHz]
 //
