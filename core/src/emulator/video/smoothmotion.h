@@ -68,6 +68,9 @@ struct Picture
     int width = 0;
     int height = 0;
     const uint32_t* pixels = nullptr;
+    /// Non-zero: the same id, the same pixels, for the life of the process (a device keeps a frame it holds without
+    /// comparing it); 0: unknown
+    uint64_t id = 0;
     /// Clamped to the edges
     uint32_t At(int x, int y) const
     {
@@ -291,7 +294,8 @@ private:
         /// (per pixel, non-zero: not in such a block) is empty while none flickers
         size_t flicker = 0;
         std::vector<uint8_t> smooth;
-        Picture View(int width, int height) const { return {width, height, pixels.data()}; }
+        uint64_t id = 0;  ///< Picture::id: new for every frame pushed
+        Picture View(int width, int height) const { return {width, height, pixels.data(), id}; }
     };
     struct CachedField
     {

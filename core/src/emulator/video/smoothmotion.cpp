@@ -3,6 +3,7 @@
 #include "smoothlayers.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
@@ -485,8 +486,10 @@ void SmoothMotion::Push(uint64_t serial, int64_t targetNs, const uint32_t* pixel
         frame = std::move(_frames.front());
         _frames.erase(_frames.begin());
     }
+    static std::atomic<uint64_t> nextId{0};
     frame.serial = serial;
     frame.targetNs = targetNs;
+    frame.id = ++nextId;
     frame.pixels.assign(pixels, pixels + size);
     frame.changed = size;
     frame.flicker = 0;
@@ -513,6 +516,7 @@ void SmoothMotion::Push(uint64_t serial, int64_t targetNs, const uint32_t* pixel
         }
         picture.serial = serial;
         picture.targetNs = targetNs;
+        picture.id = frame.id;  // the frame's pixels
         picture.pixels.assign(pixels, pixels + size);
         _pictures.push_back(std::move(picture));
         _stats.pictures++;

@@ -2,6 +2,7 @@
 
 #include "emulator/video/smoothmotion.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -43,6 +44,11 @@ public:
     static constexpr int kDominant = 3, kDominantOf = 4;  ///< nearStill: the main motion's share of the moving blocks
     static constexpr int kInkTile = 24;        ///< keepInk's tile: a few dots' worth of a dot cloud
     static constexpr int kInkOff = 4;          ///< keepInk: a tile off by more than 1/kInkOff of its ink falls back
+    /// The vectors of a refresh at most: the common ones and the blocks' most matched (a full-screen effect matches
+    /// up to 289 vectors at range 8, and every per-vector pass scales with their count)
+    static constexpr size_t kMaxVectors = 32;
+    /// A block's allowed vectors at most: the common ones and the 3 x 3 blocks' of both fields
+    static constexpr size_t kMaxAllowed = kCommon + 2 * 9;
 
     /// The common vectors of the two fields: zero, then the moving vectors at least two matched blocks share, most
     /// shared first (equals in the order the blocks are met: `next` row by row, then `prev`)
@@ -62,11 +68,16 @@ public:
     /// The vectors of a refresh
     struct Layers
     {
-        std::vector<V> all;  ///< every vector some pixel may take: the common ones, then the blocks' (next, prev)
+        /// every vector some pixel may take: the common ones, then the blocks' (next, prev) in the order met; past
+        /// kMaxVectors the blocks' matched by the most blocks of both fields (equals: the first met)
+        std::vector<V> all;
         size_t common = 0;   ///< the common ones at the front of `all`
         int reach = 0;       ///< the longest component of a vector
         int blocksWide = 0, blocksHigh = 0;
-        std::vector<std::vector<int>> allowed;  ///< per block: the common vectors, then the 3 x 3 blocks' (next, prev)
+        /// per block: the common vectors, then the 3 x 3 blocks' (next, prev) that are in `all`
+        std::vector<std::vector<int>> allowed;
+        std::vector<std::pair<V, int>> counts;  ///< Prepare's own: the matched vectors and their blocks
+        std::vector<uint8_t> kept;              ///< ... and which of them stay
     };
     static void Prepare(const MotionField& prev, const MotionField& next, int width, int height, Layers& layers);
 
@@ -95,11 +106,23 @@ public:
         virtual bool Continues(size_t index, int vector) = 0;
     };
 
+    /// Decide's buffers, kept by the caller from refresh to refresh
+    struct DecideScratch
+    {
+        std::vector<std::vector<int>> tiedAt;
+        std::vector<int> fitCountOf, region, border;
+        std::vector<std::pair<size_t, int>> asks;
+        std::vector<uint8_t> nearStill;
+        std::vector<size_t> seeds, members, memberEnd, edgeEnd;
+        std::vector<Edge> edges;
+    };
+
     /// The block decisions: per block the vector its pixels take (-1: none) and whether others tie with it.
     /// `fitCounts`, `usableCounts`: per vector c and block, the pixels c fits and may take, at c * blocks + block
     /// `a`: the frame the field starts from (nearStill's periodic test)
     static void Decide(const Layers& layers, const Picture& a, const uint8_t* fitCounts, const uint8_t* usableCounts,
-                       Evidence& evidence, std::vector<int>& blockVector, std::vector<uint8_t>& tied);
+                       Evidence& evidence, std::vector<int>& blockVector, std::vector<uint8_t>& tied,
+                       DecideScratch& scratch);
 
     /// carryFirst's test: `v` explains at least half of the block's changes from a to b
     static bool Explains(const Picture& a, const Picture& b, int bi, int bj, V v);
@@ -110,12 +133,47 @@ public:
     /// takes `nearer` instead. The CPU's and the GPU's pictures both go through it
     static void KeepInk(const Picture& a, const Picture& b, const Picture& nearer, uint32_t* out);
 
+    /// The cover rule's window sums of a moving vector's balance over the pixels of one colour (an integral image
+    /// of the rows y0 .. y1 - 1, the windows clipped to the picture's `height` rows): a refresh builds them only for
+    /// the vectors and colours many pixels ask about
+    struct Box
+    {
+        int width = 0, height = 0, radius = 0, y0 = 0, y1 = 0;
+        std::vector<int> sum;
+
+        void Reset(int w, int h, int r, int first, int end);
+        int& At(int x, int y) { return sum[static_cast<size_t>(y - y0) * (width + 1) + x]; }
+        /// `count(x, y)`: the value of a pixel
+        template <typename Count>
+        void Build(Count count)
+        {
+            for (int y = y0; y < y1; y++)
+                for (int x = 0; x < width; x++)
+                    At(x + 1, y + 1) = count(x, y) + At(x + 1, y) + At(x, y + 1) - At(x, y);
+        }
+        /// The window round (x, y), y within the rows y0 + radius .. y1 - radius - 1 or at the picture's edges
+        int Window(int x, int y);
+    };
+
+    /// The aliases rule's fitting vector with its support
+    struct TopOf
+    {
+        int vector = -1, support = -1;
+    };
+
 private:
-    // kept from call to call: a refresh allocates nothing once the sizes settle
+    // kept from call to call: once the sizes settle a refresh allocates no buffer (the pool's hand-off of its parts
+    // aside)
     std::vector<uint32_t> _paddedP, _paddedA, _paddedB;
     std::vector<uint8_t> _fits, _score, _usable, _changed, _explained, _calm;
     std::vector<uint16_t> _support;
     std::vector<int> _column, _sums, _unexplained;
+    std::vector<uint32_t> _palette;
+    std::vector<uint8_t> _colourAt, _fitCounts, _usableCounts, _tied;
+    std::vector<int> _blockVector;
+    std::vector<int8_t> _explainsAt;
+    DecideScratch _decide;
+    std::vector<std::array<TopOf, 3>> _topAt;  ///< the aliases rule's top three per pixel of a block
     Layers _layers;
     ThreadPool* _pool = nullptr;
     static constexpr int kVectorParts = 8;  ///< the per-vector pass's split over a pool
@@ -127,6 +185,14 @@ private:
         std::vector<int> column;
     };
     std::vector<Part> _parts;
+    /// A band's own cover windows: per (vector, colour) its window image's index (-1: none yet) and the asks so far
+    struct Band
+    {
+        std::vector<int> balanceOf, asks;
+        std::vector<Box> boxes;
+        size_t used = 0;
+    };
+    std::vector<Band> _bands;
 };
 
 }  // namespace smoothmotion

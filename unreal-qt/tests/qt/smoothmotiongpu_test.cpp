@@ -1,7 +1,8 @@
 /// @file smoothmotiongpu_test.cpp
 /// @brief Smooth motion's GPU passes (SmoothMotionGPU) against the CPU reference (core smoothmotion.h): the same motion
 /// field block for block, the same blend, interpolation, extrapolation and masked composition bit for bit, LayerFlow's
-/// pictures bit for bit, and the engine on the GPU device the same pictures as on the CPU.
+/// pictures bit for bit (more vectors than the cap, the cover rule's worst content, a picture cut into stripes, frames
+/// known by their ids), and the engine on the GPU device the same pictures as on the CPU.
 /// The test needs an OpenGL 3.3 core context: the offscreen platform has none on macOS (UNREAL_QT_TEST_PLATFORM=cocoa),
 /// it skips without one.
 
@@ -12,8 +13,10 @@
 #include <cstdint>
 #include <vector>
 
+#include "_helpers/testtier.h"
 #include "emulator/video/smoothlayers.h"
 #include "emulator/video/smoothmotion.h"
+#include "emulator/video/smoothscenes.h"
 #include "widgets/smoothmotiongpu.h"
 
 using namespace smoothmotion;
@@ -39,6 +42,13 @@ struct Image
     uint32_t& At(int x, int y) { return pixels[static_cast<size_t>(y) * width + x]; }
     Picture View() const { return {width, height, pixels.data()}; }
 };
+
+Image DotsImage(int width, int height, int k, bool layered)
+{
+    Image img(width, height);
+    img.pixels = smoothscenes::Dots(width, height, k, layered);
+    return img;
+}
 
 /// A band scrolled by (dx, dy) over a still background, a sprite at (sx, sy), a line that changes unrelated
 Image Scene(int width, int height, int dx, int dy, int sx, int sy, int noise)
@@ -127,8 +137,8 @@ TEST(SmoothMotionGPU_Test, TheGpuStepsAreTheCpuSteps)
     if (!context.create())
         GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
     SmoothMotionGPU gpu;
-    ASSERT_TRUE(gpu.create()) << gpu.log().toStdString();
-    gpu.setFieldsOnGpu(true);
+    ASSERT_TRUE(gpu.Create()) << gpu.Log().toStdString();
+    gpu.SetFieldsOnGpu(true);
 
     // An odd size (a partial block row and column), motion along both axes, both ranges
     struct Case
@@ -146,7 +156,7 @@ TEST(SmoothMotionGPU_Test, TheGpuStepsAreTheCpuSteps)
 
         MotionField cpuField, gpuField;
         cpuField.Estimate(a.View(), b.View(), c.range);
-        ASSERT_TRUE(gpu.Estimate(a.View(), b.View(), c.range, gpuField)) << gpu.log().toStdString();
+        ASSERT_TRUE(gpu.Estimate(a.View(), b.View(), c.range, gpuField)) << gpu.Log().toStdString();
         ASSERT_EQ(gpuField.BlocksWide(), cpuField.BlocksWide());
         ASSERT_EQ(gpuField.BlocksHigh(), cpuField.BlocksHigh());
         for (int j = 0; j < cpuField.BlocksHigh(); j++)
@@ -183,7 +193,7 @@ TEST(SmoothMotionGPU_Test, TheGpuStepsAreTheCpuSteps)
             EXPECT_EQ(FirstDifference(out.pixels, cpu.pixels), -1) << "masked compose at " << w;
         }
     }
-    gpu.destroy();
+    gpu.Destroy();
 }
 
 TEST(SmoothMotionGPU_Test, LayerFlowOnTheGpuIsTheCpus)
@@ -192,7 +202,7 @@ TEST(SmoothMotionGPU_Test, LayerFlowOnTheGpuIsTheCpus)
     if (!context.create())
         GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
     SmoothMotionGPU gpu;
-    ASSERT_TRUE(gpu.create()) << gpu.log().toStdString();
+    ASSERT_TRUE(gpu.Create()) << gpu.Log().toStdString();
 
     // An odd size (a partial block row and column); the first pair after a seek (p = a, everything still before)
     LayerFlow cpu;
@@ -211,10 +221,10 @@ TEST(SmoothMotionGPU_Test, LayerFlowOnTheGpuIsTheCpus)
                 Image expected(width, height), out(width, height);
                 cpu.Compose(p.View(), a.View(), b.View(), prev, next, w, expected.pixels.data());
                 ASSERT_TRUE(gpu.ComposeLayers(p.View(), a.View(), b.View(), prev, next, w, out.pixels.data()))
-                    << gpu.log().toStdString();
+                    << gpu.Log().toStdString();
                 EXPECT_EQ(FirstDifference(out.pixels, expected.pixels), -1) << "w " << w;
-                asks += gpu.layerCounts().ownAsks;
-                edges += gpu.layerCounts().edges;
+                asks += gpu.LastLayerCounts().ownAsks;
+                edges += gpu.LastLayerCounts().edges;
                 cpu.Compose(a.View(), a.View(), b.View(), prev, next, w, expected.pixels.data());
                 ASSERT_TRUE(gpu.ComposeLayers(a.View(), a.View(), b.View(), prev, next, w, out.pixels.data()));
                 EXPECT_EQ(FirstDifference(out.pixels, expected.pixels), -1) << "p = a, w " << w;
@@ -222,7 +232,7 @@ TEST(SmoothMotionGPU_Test, LayerFlowOnTheGpuIsTheCpus)
         }
     EXPECT_GT(asks, 0) << "the aliases rule asked the GPU";
     EXPECT_GT(edges, 0) << "the regions rule asked the GPU";
-    gpu.destroy();
+    gpu.Destroy();
 }
 
 TEST(SmoothMotionGPU_Test, TheEngineOnTheGpuShowsTheCpuPictures)
@@ -231,7 +241,7 @@ TEST(SmoothMotionGPU_Test, TheEngineOnTheGpuShowsTheCpuPictures)
     if (!context.create())
         GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
     SmoothMotionGPU gpu;
-    ASSERT_TRUE(gpu.create()) << gpu.log().toStdString();
+    ASSERT_TRUE(gpu.Create()) << gpu.Log().toStdString();
 
     constexpr int64_t kPeriod = 20'000'000;
     SmoothMotion cpu, onGpu;
@@ -264,5 +274,83 @@ TEST(SmoothMotionGPU_Test, TheEngineOnTheGpuShowsTheCpuPictures)
     }
     EXPECT_GT(onGpu.GetStats().onDevice, 0u);
     EXPECT_EQ(cpu.GetStats().onDevice, 0u);
-    gpu.destroy();
+    gpu.Destroy();
+}
+
+TEST(SmoothMotionGPU_Test, TheWorstContentIsTheCpusBits)
+{
+    // More vectors than the cap (a block a vector of its own) and every still pixel asking the cover rule about many
+    // moving vectors: the GPU keeps the CPU's vectors and bits. The screen's size in the long tier
+    GLContext context;
+    if (!context.create())
+        GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
+    SmoothMotionGPU gpu;
+    ASSERT_TRUE(gpu.Create()) << gpu.Log().toStdString();
+    const int width = TestTier::Long() ? 352 : 96, height = TestTier::Long() ? 288 : 64;
+    LayerFlow cpu;
+    for (bool layered : {false, true})
+    {
+        SCOPED_TRACE(layered ? "layered" : "a vector a block");
+        // layered: every pass cut into stripes of a few rows
+        gpu.SetMaxReadsPerDraw(layered ? int64_t{1} << 20 : SmoothMotionGPU::kMaxReadsPerDraw);
+        const Image p = DotsImage(width, height, 0, layered), a = DotsImage(width, height, 1, layered),
+                    b = DotsImage(width, height, 2, layered);
+        MotionField prev, next;
+        prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
+        next.Estimate(a.View(), b.View(), MotionField::kRangeFrames);
+        LayerFlow::Layers layers;
+        LayerFlow::Prepare(prev, next, width, height, layers);
+        for (int w : {43, 128, 213})
+        {
+            Image expected(width, height), out(width, height);
+            cpu.Compose(p.View(), a.View(), b.View(), prev, next, w, expected.pixels.data());
+            ASSERT_TRUE(gpu.ComposeLayers(p.View(), a.View(), b.View(), prev, next, w, out.pixels.data()))
+                << gpu.Log().toStdString();
+            EXPECT_EQ(FirstDifference(out.pixels, expected.pixels), -1) << "w " << w;
+            EXPECT_EQ(gpu.LastLayerCounts().vectors, static_cast<int>(layers.all.size()));
+        }
+        if (!layered)
+            EXPECT_EQ(layers.all.size(), LayerFlow::kMaxVectors) << "the scene reaches the cap";
+    }
+    gpu.Destroy();
+}
+
+TEST(SmoothMotionGPU_Test, FramesAreKnownByTheirIds)
+{
+    // A frame with an id is not compared again: the same id, the texture it is in. A new id uploads; pictures
+    // without one compare their pixels. Released buffers come back on the next step
+    GLContext context;
+    if (!context.create())
+        GTEST_SKIP() << "no OpenGL 3.3 core context on this platform";
+    SmoothMotionGPU gpu;
+    ASSERT_TRUE(gpu.Create()) << gpu.Log().toStdString();
+    const Image f0 = LayerScene(96, 64, 0), f1 = LayerScene(96, 64, 1), f2 = LayerScene(96, 64, 2),
+                f3 = LayerScene(96, 64, 3);
+    const auto withId = [](const Image& img, uint64_t id) { return Picture{img.width, img.height, img.pixels.data(), id}; };
+    LayerFlow cpu;
+    const Image* frames[4] = {&f0, &f1, &f2, &f3};
+    for (int round = 0; round < 3; round++)
+    {
+        SCOPED_TRACE(testing::Message() << "round " << round);
+        for (int k = 1; k + 1 < 4; k++)
+        {
+            const Image &p = *frames[k - 1], &a = *frames[k], &b = *frames[k + 1];
+            MotionField prev, next;
+            prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
+            next.Estimate(a.View(), b.View(), MotionField::kRangeFrames);
+            Image expected(96, 64), out(96, 64);
+            cpu.Compose(p.View(), a.View(), b.View(), prev, next, 128, expected.pixels.data());
+            // round 0: ids, the frames moving on by one; round 1: no ids; round 2: ids again after a release
+            const uint64_t base = round == 1 ? 0 : 100 * static_cast<uint64_t>(round + 1);
+            const auto view = [&](const Image& img, int index) {
+                return base == 0 ? img.View() : withId(img, base + static_cast<uint64_t>(index));
+            };
+            ASSERT_TRUE(gpu.ComposeLayers(view(p, k - 1), view(a, k), view(b, k + 1), prev, next, 128,
+                                          out.pixels.data()));
+            EXPECT_EQ(FirstDifference(out.pixels, expected.pixels), -1) << "k " << k;
+        }
+        if (round == 1)
+            gpu.ReleaseBuffers();
+    }
+    gpu.Destroy();
 }

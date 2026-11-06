@@ -1,12 +1,18 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
+#include "_helpers/testtier.h"
+#include "common/threadpool.h"
 #include "emulator/video/smoothlayers.h"
 #include "emulator/video/smoothmotion.h"
+#include "emulator/video/smoothscenes.h"
 
 /// SmoothMotion: the CPU reference of the blend, the interpolation and the game cadence modes
 /// (docs/inprogress/2026-10-26-frame-presenter, sections 4.3-4.5). Synthetic pictures, no emulator
@@ -730,4 +736,183 @@ TEST(SmoothMotion_Test, SizeChangeStartsOver)
     const auto r = feed.engine.Render(feed.TargetOf(1) + PERIOD / 2, out.pixels.data());
     EXPECT_EQ(r.kind, SmoothMotion::Kind::Frame);
     EXPECT_EQ(r.serial, 2u);
+}
+
+namespace
+{
+Image DotsImage(int width, int height, int k, bool layered)
+{
+    Image img(width, height);
+    img.pixels = smoothscenes::Dots(width, height, k, layered);
+    return img;
+}
+}  // namespace
+
+TEST(SmoothMotion_Test, LayersKeepTheMostMatchedVectorsPastTheCap)
+{
+    // A block a vector of its own: more vectors than kMaxVectors. The common ones stay, then those the most blocks
+    // matched; every block's allowed ones among them, kMaxAllowed at most
+    const Image p = DotsImage(128, 96, 0, false), a = DotsImage(128, 96, 1, false), b = DotsImage(128, 96, 2, false);
+    MotionField prev, next;
+    prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
+    next.Estimate(a.View(), b.View(), MotionField::kRangeFrames);
+    std::vector<std::pair<MotionField::Vector, int>> counts;
+    for (const MotionField* f : {&next, &prev})
+        for (int j = 0; j < f->BlocksHigh(); j++)
+            for (int i = 0; i < f->BlocksWide(); i++)
+                if (f->At(i, j).matched)
+                {
+                    auto it = std::find_if(counts.begin(), counts.end(),
+                                           [&](const auto& c) { return c.first == f->At(i, j).v; });
+                    if (it == counts.end())
+                        counts.push_back({f->At(i, j).v, 1});
+                    else
+                        it->second++;
+                }
+    ASSERT_GT(counts.size(), LayerFlow::kMaxVectors) << "the scene has more vectors than the cap";
+
+    LayerFlow::Layers layers;
+    LayerFlow::Prepare(prev, next, a.width, a.height, layers);
+    ASSERT_EQ(layers.all.size(), LayerFlow::kMaxVectors);
+    EXPECT_EQ(std::vector<MotionField::Vector>(layers.all.begin(), layers.all.begin() + layers.common),
+              LayerFlow::CommonVectors(prev, next));
+    const auto countOf = [&](MotionField::Vector v) {
+        auto it = std::find_if(counts.begin(), counts.end(), [&](const auto& c) { return c.first == v; });
+        return it == counts.end() ? 0 : it->second;
+    };
+    int leastKept = 1 << 30;
+    for (size_t c = layers.common; c < layers.all.size(); c++)
+        leastKept = std::min(leastKept, countOf(layers.all[c]));
+    for (const auto& [v, count] : counts)
+        if (std::find(layers.all.begin(), layers.all.end(), v) == layers.all.end())
+            EXPECT_LE(count, leastKept) << "a dropped vector matched more blocks than a kept one";
+    for (const auto& allowed : layers.allowed)
+    {
+        EXPECT_LE(allowed.size(), LayerFlow::kMaxAllowed);
+        for (int c : allowed)
+            EXPECT_LT(static_cast<size_t>(c), layers.all.size());
+    }
+}
+
+TEST(SmoothMotion_Test, LayersOnAPoolAreTheCallersBits)
+{
+    // The per-vector and per-pixel passes split over a pool: the same picture as the caller's thread alone, the
+    // scroller, more vectors than the cap and the cover rule's worst content; the full size in the long tier
+    const int width = TestTier::Long() ? 352 : 80, height = TestTier::Long() ? 288 : 48;
+    ThreadPool pool(3, "smooth-test", ThreadPool::Priority::Interactive);
+    LayerFlow alone, split;
+    split.SetPool(&pool);
+    for (int scene = 0; scene < 3; scene++)
+    {
+        SCOPED_TRACE(testing::Message() << "scene " << scene);
+        const auto frame = [&](int k) {
+            return scene == 0 ? Scroller(width, height, 3 * k, 8, height - 24) : DotsImage(width, height, k, scene == 2);
+        };
+        const Image p = frame(0), a = frame(1), b = frame(2);
+        MotionField prev, next;
+        prev.Estimate(p.View(), a.View(), MotionField::kRangeFrames);
+        next.Estimate(a.View(), b.View(), MotionField::kRangeFrames, &pool);
+        for (int w : {85, 256})
+        {
+            Image one(width, height), many(width, height);
+            alone.Compose(p.View(), a.View(), b.View(), prev, next, w, one.pixels.data());
+            split.Compose(p.View(), a.View(), b.View(), prev, next, w, many.pixels.data());
+            EXPECT_EQ(one.pixels, many.pixels) << "w " << w;
+        }
+    }
+}
+
+TEST(SmoothMotion_Test, BoxIsTheWindowSummedPixelByPixel)
+{
+    // The summed-area window over a band of rows (Compose builds a band's rows +-16 only): every window of the band's
+    // rows the sum of its pixels, clipped at the picture's edges
+    const int width = 37, height = 45;
+    std::vector<int> bits(static_cast<size_t>(width) * height);
+    for (size_t i = 0; i < bits.size(); i++)
+        bits[i] = smoothscenes::Hash(static_cast<uint32_t>(i), 7, 1) % 3 == 0;
+    for (int radius : {LayerFlow::kRadius, LayerFlow::kSupportRadius})
+        for (const auto& [rowsFrom, rowsTo] : {std::pair{0, 45}, {8, 24}, {24, 45}, {0, 8}})
+        {
+            SCOPED_TRACE(testing::Message() << "radius " << radius << " rows " << rowsFrom << ".." << rowsTo);
+            LayerFlow::Box box;
+            box.Reset(width, height, radius, std::max(rowsFrom - 16, 0), std::min(rowsTo + 16, height));
+            box.Build([&](int x, int y) { return bits[static_cast<size_t>(y) * width + x]; });
+            for (int y = rowsFrom; y < rowsTo; y++)
+                for (int x = 0; x < width; x++)
+                {
+                    int sum = 0;
+                    for (int j = std::max(y - radius, 0); j <= std::min(y + radius, height - 1); j++)
+                        for (int i = std::max(x - radius, 0); i <= std::min(x + radius, width - 1); i++)
+                            sum += bits[static_cast<size_t>(j) * width + i];
+                    ASSERT_EQ(box.Window(x, y), sum) << x << "," << y;
+                }
+        }
+}
+
+namespace
+{
+/// UNREAL_SMOOTH_THREADS for an engine made in the scope (the engine reads it at its first step)
+class SmoothThreads
+{
+public:
+    explicit SmoothThreads(const char* value)
+    {
+        if (const char* old = std::getenv("UNREAL_SMOOTH_THREADS"))
+        {
+            _had = true;
+            _old = old;
+        }
+        Set(value);
+    }
+    ~SmoothThreads() { Set(_had ? _old.c_str() : nullptr); }
+
+private:
+    static void Set(const char* value)
+    {
+#ifdef _WIN32
+        _putenv_s("UNREAL_SMOOTH_THREADS", value ? value : "");
+#else
+        if (value)
+            setenv("UNREAL_SMOOTH_THREADS", value, 1);
+        else
+            unsetenv("UNREAL_SMOOTH_THREADS");
+#endif
+    }
+    bool _had = false;
+    std::string _old;
+};
+}  // namespace
+
+TEST(SmoothMotion_Test, FlickerOnThePoolIsTheFlickerAlone)
+{
+    // Gigascreen over most of the picture (past the blocks FindFlicker splits over its pool) and a scroller: the
+    // engine on one thread and on four hold the same blocks and show the same pictures
+    const int width = 128, height = 64;
+    const auto frame = [&](int k) {
+        Image img = Scroller(width, height, 4 * k, 0, 16);
+        for (int y = 16; y < height; y++)
+            for (int x = 0; x < width; x++)
+                img.At(x, y) = PatternAt(x + (k % 2) * 500, y);
+        return img;
+    };
+    std::vector<uint32_t> pictures[2];
+    uint64_t held[2] = {};
+    for (int run = 0; run < 2; run++)
+    {
+        SmoothThreads threads(run == 0 ? "1" : "4");
+        Feed feed;
+        feed.engine.SetMode(Mode::Interpolate);
+        for (int k = 0; k < 6; k++)
+            feed.Push(frame(k));
+        Image out(width, height);
+        for (int64_t t = feed.TargetOf(5); t < feed.TargetOf(6); t += PERIOD / 2)
+        {
+            feed.engine.Render(t, out.pixels.data());
+            pictures[run].insert(pictures[run].end(), out.pixels.begin(), out.pixels.end());
+        }
+        held[run] = feed.engine.GetStats().heldFlicker;
+    }
+    EXPECT_GT(held[0], 0u) << "the scene flickers";
+    EXPECT_EQ(held[1], held[0]);
+    EXPECT_EQ(pictures[1], pictures[0]);
 }

@@ -135,32 +135,6 @@ bool Slower(V u, V v)
     return u.x * u.x + u.y * u.y < v.x * v.x + v.y * v.y;
 }
 
-/// Window sums over an image of counts (an integral image)
-struct Box
-{
-    int width, height, radius;
-    std::vector<int> sum;
-
-    Box(int w, int h, int r) : width(w), height(h), radius(r), sum(static_cast<size_t>(w + 1) * (h + 1)) {}
-
-    int& At(int x, int y) { return sum[static_cast<size_t>(y) * (width + 1) + x]; }
-
-    /// `count(x, y)`: the value of a pixel
-    template <typename Count>
-    void Build(Count count)
-    {
-        for (int y = 0; y < height; y++)
-            for (int x = 0; x < width; x++)
-                At(x + 1, y + 1) = count(x, y) + At(x + 1, y) + At(x, y + 1) - At(x, y);
-    }
-
-    int Window(int x, int y)
-    {
-        const int x0 = std::max(x - radius, 0), x1 = std::min(x + radius + 1, width);
-        const int y0 = std::max(y - radius, 0), y1 = std::min(y + radius + 1, height);
-        return At(x1, y1) - At(x1, y0) - At(x0, y1) + At(x0, y0);
-    }
-};
 /// carryFirst's test over a picture read clamped (Picture, View)
 template <typename Reader>
 bool ExplainsIn(const Reader& a, const Reader& b, int width, int height, int bi, int bj, V v)
@@ -180,13 +154,17 @@ bool ExplainsIn(const Reader& a, const Reader& b, int width, int height, int bi,
 class CpuEvidence final : public LayerFlow::Evidence
 {
 public:
+    using Top = LayerFlow::TopOf;
+
+    /// `topAt`: the caller's buffer, a block's pixels
     CpuEvidence(const View& a, int blocksWide, int n, const uint8_t* fits, const uint16_t* support,
-                const uint8_t* fitCounts)
+                const uint8_t* fitCounts, std::vector<std::array<Top, 3>>& topAt)
         : _a(a), _blocksWide(blocksWide), _n(n), _pixels(static_cast<size_t>(a.width) * a.height), _fits(fits),
           _support(support), _fitCounts(fitCounts), _blocks(static_cast<size_t>(blocksWide) *
                                                             ((a.height + MotionField::kBlock - 1) / MotionField::kBlock)),
-          _topAt(static_cast<size_t>(MotionField::kBlock) * MotionField::kBlock)
+          _topAt(topAt)
     {
+        _topAt.resize(static_cast<size_t>(MotionField::kBlock) * MotionField::kBlock);
     }
 
     int Own(size_t block, int c, int s) override
@@ -259,37 +237,47 @@ public:
             y1 = y0 + kb / 2;
         x1 = std::min(x1, width);
         y1 = std::min(y1, height);
-        // the neighbour's paper: its most frequent colour
+        // the neighbour's paper: its most frequent colour, the first met of equals (a block has 64 pixels at most)
         uint32_t paper = 0;
         {
-            std::vector<std::pair<uint32_t, int>> seen;
+            std::array<uint32_t, kBlockPixels> colours;
+            std::array<int, kBlockPixels> counts;
+            size_t kinds = 0;
             for (int y = (bj + dj) * kb; y < std::min((bj + dj + 1) * kb, height); y++)
                 for (int x = (bi + di) * kb; x < std::min((bi + di + 1) * kb, width); x++)
                 {
-                    auto it = std::find_if(seen.begin(), seen.end(), [&](const auto& e) { return e.first == _a.At(x, y); });
-                    if (it == seen.end())
-                        seen.push_back({_a.At(x, y), 1});
-                    else
-                        it->second++;
+                    const uint32_t colour = _a.At(x, y);
+                    size_t i = 0;
+                    while (i < kinds && colours[i] != colour)
+                        i++;
+                    if (i == kinds)
+                    {
+                        colours[kinds] = colour;
+                        counts[kinds++] = 0;
+                    }
+                    counts[i]++;
                 }
             int most = 0;
-            for (const auto& [colour, count] : seen)
-                if (count > most)
+            for (size_t i = 0; i < kinds; i++)
+                if (counts[i] > most)
                 {
-                    most = count;
-                    paper = colour;
+                    most = counts[i];
+                    paper = colours[i];
                 }
         }
-        std::vector<uint32_t> own;
+        std::array<uint32_t, kBlockPixels> own;
+        size_t owned = 0;
         for (int y = bj * kb; y < std::min((bj + 1) * kb, height); y++)
             for (int x = bi * kb; x < std::min((bi + 1) * kb, width); x++)
-                if (std::find(own.begin(), own.end(), _a.At(x, y)) == own.end())
-                    own.push_back(_a.At(x, y));
+                if (std::find(own.begin(), own.begin() + static_cast<ptrdiff_t>(owned), _a.At(x, y)) ==
+                    own.begin() + static_cast<ptrdiff_t>(owned))
+                    own[owned++] = _a.At(x, y);
         int content = 0, foreign = 0;
         for (int y = y0; y < y1; y++)
             for (int x = x0; x < x1; x++)
             {
-                foreign += std::find(own.begin(), own.end(), _a.At(x, y)) == own.end();
+                foreign += std::find(own.begin(), own.begin() + static_cast<ptrdiff_t>(owned), _a.At(x, y)) ==
+                           own.begin() + static_cast<ptrdiff_t>(owned);
                 content += _a.At(x, y) != paper;
             }
         if (content == 0 || foreign > 0)
@@ -304,10 +292,7 @@ public:
     }
 
 private:
-    struct Top
-    {
-        int vector = -1, support = -1;
-    };
+    static constexpr size_t kBlockPixels = static_cast<size_t>(MotionField::kBlock) * MotionField::kBlock;
 
     const View& _a;
     int _blocksWide, _n;
@@ -316,16 +301,18 @@ private:
     const uint16_t* _support;
     const uint8_t* _fitCounts;
     size_t _blocks;
-    std::vector<std::array<Top, 3>> _topAt;
+    std::vector<std::array<Top, 3>>& _topAt;
     size_t _topBlock = static_cast<size_t>(-1);
     const std::vector<LayerFlow::Edge>* _edges = nullptr;
 };
 }  // namespace
 
-std::vector<V> LayerFlow::CommonVectors(const MotionField& prev, const MotionField& next)
+namespace
 {
-    // the vectors several blocks share, most shared first
-    std::vector<std::pair<V, int>> counts;
+/// The matched vectors of both fields with their blocks, in the order met: `next` row by row, then `prev`
+void CountMatched(const MotionField& prev, const MotionField& next, std::vector<std::pair<V, int>>& counts)
+{
+    counts.clear();
     for (const MotionField* f : {&next, &prev})
         for (int j = 0; j < f->BlocksHigh(); j++)
             for (int i = 0; i < f->BlocksWide(); i++)
@@ -339,26 +326,68 @@ std::vector<V> LayerFlow::CommonVectors(const MotionField& prev, const MotionFie
                 else
                     it->second++;
             }
-    std::stable_sort(counts.begin(), counts.end(), [](const auto& x, const auto& y) { return x.second > y.second; });
-    std::vector<V> common = {V{}};
-    for (const auto& [v, n] : counts)
-        if (n >= 2 && common.size() < kCommon && !(v == V{}))
-            common.push_back(v);
+}
+
+/// Of the entries `state` marks 0 with at least `least` blocks, the one with the most, the first met of equals; -1
+int MostMatched(const std::vector<std::pair<V, int>>& counts, const std::vector<uint8_t>& state, int least)
+{
+    int best = -1;
+    for (size_t i = 0; i < counts.size(); i++)
+        if (state[i] == 0 && counts[i].second >= least && (best < 0 || counts[i].second > counts[best].second))
+            best = static_cast<int>(i);
+    return best;
+}
+
+/// The common vectors into `common` (zero, then the moving ones at least two blocks share, most shared first); their
+/// entries and zero's marked 1 in `state`
+void CommonOf(const std::vector<std::pair<V, int>>& counts, std::vector<V>& common, std::vector<uint8_t>& state)
+{
+    common.assign(1, V{});
+    state.assign(counts.size(), 0);
+    for (size_t i = 0; i < counts.size(); i++)
+        if (counts[i].first == V{})
+            state[i] = 1;
+    while (common.size() < LayerFlow::kCommon)
+    {
+        const int i = MostMatched(counts, state, 2);
+        if (i < 0)
+            break;
+        state[static_cast<size_t>(i)] = 1;
+        common.push_back(counts[static_cast<size_t>(i)].first);
+    }
+}
+}  // namespace
+
+std::vector<V> LayerFlow::CommonVectors(const MotionField& prev, const MotionField& next)
+{
+    std::vector<std::pair<V, int>> counts;
+    std::vector<uint8_t> state;
+    std::vector<V> common;
+    CountMatched(prev, next, counts);
+    CommonOf(counts, common, state);
     return common;
 }
 
 void LayerFlow::Prepare(const MotionField& prev, const MotionField& next, int width, int height, Layers& layers)
 {
     auto& all = layers.all;
-    all = CommonVectors(prev, next);
+    auto& counts = layers.counts;
+    auto& state = layers.kept;  // 0: out, 1: common, 2: kept
+    CountMatched(prev, next, counts);
+    CommonOf(counts, all, state);
     layers.common = all.size();
+    // the blocks' other vectors in the order met; past kMaxVectors the most matched
+    const size_t rest = static_cast<size_t>(std::count(state.begin(), state.end(), uint8_t{0}));
+    if (layers.common + rest <= kMaxVectors)
+        std::replace(state.begin(), state.end(), uint8_t{0}, uint8_t{2});
+    else
+        for (size_t k = layers.common; k < kMaxVectors; k++)
+            state[static_cast<size_t>(MostMatched(counts, state, 1))] = 2;
+    for (size_t i = 0; i < counts.size(); i++)
+        if (state[i] == 2)
+            all.push_back(counts[i].first);
     const int bw = next.BlocksWide(), bh = next.BlocksHigh();
     const auto indexOf = [&](V v) { return static_cast<int>(std::find(all.begin(), all.end(), v) - all.begin()); };
-    for (const MotionField* f : {&next, &prev})
-        for (int j = 0; j < bh; j++)
-            for (int i = 0; i < bw; i++)
-                if (f->At(i, j).matched && indexOf(f->At(i, j).v) == static_cast<int>(all.size()))
-                    all.push_back(f->At(i, j).v);
     layers.reach = 0;
     for (const V& v : all)
         layers.reach = std::max({layers.reach, std::abs(v.x), std::abs(v.y)});
@@ -380,7 +409,7 @@ void LayerFlow::Prepare(const MotionField& prev, const MotionField& next, int wi
                         if (i < 0 || j < 0 || i >= bw || j >= bh || !f->At(i, j).matched)
                             continue;
                         const int c = indexOf(f->At(i, j).v);
-                        if (std::find(allowed.begin(), allowed.end(), c) == allowed.end())
+                        if (c < static_cast<int>(all.size()) && std::find(allowed.begin(), allowed.end(), c) == allowed.end())
                             allowed.push_back(c);
                     }
         }
@@ -421,17 +450,24 @@ bool LayerFlow::Explains(const Picture& a, const Picture& b, int bi, int bj, V v
 }
 
 void LayerFlow::Decide(const Layers& layers, const Picture& a, const uint8_t* fitCounts, const uint8_t* usableCounts,
-                       Evidence& evidence, std::vector<int>& blockVector, std::vector<uint8_t>& tied)
+                       Evidence& evidence, std::vector<int>& blockVector, std::vector<uint8_t>& tied,
+                       DecideScratch& scratch)
 {
     const std::vector<V>& all = layers.all;
     const int n = static_cast<int>(all.size());
     const int blocksWide = layers.blocksWide, blocksHigh = layers.blocksHigh;
     const size_t blocks = static_cast<size_t>(blocksWide) * blocksHigh;
     blockVector.assign(blocks, -1);
-    std::vector<std::vector<int>> tiedAt(blocks);  // the vectors equal to the block's best
-    std::vector<int> fitCountOf(n);
-    std::vector<std::pair<size_t, int>> asks;
-    std::vector<uint8_t> nearStill(blocks, 0);
+    auto& tiedAt = scratch.tiedAt;  // the vectors equal to the block's best
+    tiedAt.resize(blocks);
+    for (auto& t : tiedAt)
+        t.clear();
+    auto& fitCountOf = scratch.fitCountOf;
+    fitCountOf.resize(static_cast<size_t>(n));
+    auto& asks = scratch.asks;
+    asks.clear();
+    auto& nearStill = scratch.nearStill;
+    nearStill.assign(blocks, 0);
     const auto blockPixels = [&](size_t block) {
         const int kb = MotionField::kBlock;
         const int x0 = static_cast<int>(block % blocksWide) * kb, y0 = static_cast<int>(block / blocksWide) * kb;
@@ -464,7 +500,7 @@ void LayerFlow::Decide(const Layers& layers, const Picture& a, const uint8_t* fi
             {
                 most = count;
                 blockVector[block] = c;
-                tiedAt[block] = {c};
+                tiedAt[block].assign(1, c);
             }
             else if (count == most && count > 0)
             {
@@ -533,7 +569,7 @@ void LayerFlow::Decide(const Layers& layers, const Picture& a, const uint8_t* fi
         const bool dominant = moving > 0 && main * kDominantOf >= moving * kDominant;
         for (size_t block = 0; block < blocks; block++)
             if (nearStill[block] && dominant)
-                tiedAt[block] = {0, 1};
+                tiedAt[block].assign({0, 1});
             else
                 nearStill[block] = 0;
     }
@@ -541,9 +577,15 @@ void LayerFlow::Decide(const Layers& layers, const Picture& a, const uint8_t* fi
     // 4-connected blocks with the same tie set; the decided blocks bordering a region where their layer continues
     // into it vote (a dot row's ends tell its motion to the row's middle, where the static look-alike fits as well).
     // The bordering blocks are decided alone: no region changes their vectors
-    std::vector<int> region(blocks, -1);
-    std::vector<size_t> seeds, members, memberEnd, edgeEnd;
-    std::vector<Edge> edges;
+    auto& region = scratch.region;
+    region.assign(blocks, -1);
+    auto &seeds = scratch.seeds, &members = scratch.members, &memberEnd = scratch.memberEnd, &edgeEnd = scratch.edgeEnd;
+    seeds.clear();
+    members.clear();
+    memberEnd.clear();
+    edgeEnd.clear();
+    auto& edges = scratch.edges;
+    edges.clear();
     for (size_t seed = 0; seed < blocks; seed++)
     {
         if (tiedAt[seed].size() < 2 || region[seed] >= 0)
@@ -590,7 +632,7 @@ void LayerFlow::Decide(const Layers& layers, const Picture& a, const uint8_t* fi
                 chosen = s;
         blockVector[block] = chosen;
     }
-    std::vector<int> border;
+    auto& border = scratch.border;
     for (size_t r = 0, m0 = 0, e0 = 0; r < seeds.size(); m0 = memberEnd[r], e0 = edgeEnd[r], r++)
     {
         border.clear();
@@ -725,9 +767,10 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
     // (still pixels of it turn into the layer's content) more than it goes under it (the layer's content due there
     // and the still colour staying): a fast sprite's holes. Per moving vector, the still pixels whose colour the
     // vector's layer covers round here more than it goes under
-    std::vector<uint32_t> palette;
-    std::vector<uint8_t> colourAt(pixels);
-    Palette(pictureA, palette, colourAt.data());
+    const std::vector<uint32_t>& palette = _palette;
+    std::vector<uint8_t>& colourAt = _colourAt;
+    colourAt.resize(pixels);
+    Palette(pictureA, _palette, colourAt.data());
     // per moving vector and colour: the wins less the losses of the colour's pixels round a pixel. Summed at the
     // pixel while few pixels ask (a sprite's holes), a window image built once many do
     const auto balance = [&](V v, int col, int px, int py) {
@@ -767,7 +810,9 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
     const auto usable = [&](int c, size_t q) { return usableAt[static_cast<size_t>(c) * pixels + q] != 0; };
     // per vector and block, the pixels it fits and the ones it may take
     const size_t blocks = _layers.allowed.size();
-    std::vector<uint8_t> fitCounts(blocks * n), usableCounts(blocks * n);
+    std::vector<uint8_t>&fitCounts = _fitCounts, &usableCounts = _usableCounts;
+    fitCounts.resize(blocks * n);
+    usableCounts.resize(blocks * n);
     byVectors(0, [&](int c0, int c1) {
         for (int c = c0; c < c1; c++)
         {
@@ -777,13 +822,14 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
         }
     });
     const int blocksWide = _layers.blocksWide;
-    std::vector<int> blockVector;
-    std::vector<uint8_t> tied;
-    CpuEvidence evidence(a, blocksWide, n, fits.data(), support.data(), fitCounts.data());
-    Decide(_layers, pictureA, fitCounts.data(), usableCounts.data(), evidence, blockVector, tied);
+    std::vector<int>& blockVector = _blockVector;
+    std::vector<uint8_t>& tied = _tied;
+    CpuEvidence evidence(a, blocksWide, n, fits.data(), support.data(), fitCounts.data(), _topAt);
+    Decide(_layers, pictureA, fitCounts.data(), usableCounts.data(), evidence, blockVector, tied, _decide);
     // carryFirst: the block's vector explains at least half of the block's changes (the motion of what is there,
     // not a chance match of content appearing)
-    std::vector<int8_t> explainsAt(blockVector.size(), -1);
+    std::vector<int8_t>& explainsAt = _explainsAt;
+    explainsAt.assign(blockVector.size(), -1);
     const auto blockExplains = [&](size_t block) {
         if (explainsAt[block] < 0)
             explainsAt[block] = ExplainsIn(a, b, width, height, static_cast<int>(block % blocksWide),
@@ -791,12 +837,20 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
         return explainsAt[block] == 1;
     };
     // The pixels, split over the pool by block rows: a block's lazy answers (explainsAt) are its band's alone; each
-    // band its own cover windows (summed at the pixel or built, the same count either way)
+    // band its own cover windows (summed at the pixel or built, the same count either way), over its rows and the
+    // window's reach round them
     const int blockRows = (height + MotionField::kBlock - 1) / MotionField::kBlock;
+    const int bandRows = (blockRows + kBandParts - 1) / kBandParts;
+    _bands.resize(static_cast<size_t>(_pool ? kBandParts : 1));
     const auto band = [&](int by0, int by1) {
         constexpr int kAsksBeforeBuild = 64;  // a window image costs about as much as 64 windows summed at the pixel
-        std::vector<int> balanceOf(static_cast<size_t>(n) * palette.size(), -1), asks(balanceOf.size());
-        std::vector<Box> balances;
+        Band& own = _bands[static_cast<size_t>(_pool ? by0 / bandRows : 0)];
+        own.balanceOf.assign(static_cast<size_t>(n) * palette.size(), -1);
+        own.asks.assign(own.balanceOf.size(), 0);
+        own.used = 0;
+        auto &balanceOf = own.balanceOf, &asks = own.asks;
+        const int rowFirst = std::max(by0 * MotionField::kBlock - kSupportRadius, 0);
+        const int rowEnd = std::min(by1 * MotionField::kBlock + kSupportRadius, height);
         const auto coverable = [&](int c, int x, int y) {
             const size_t q = static_cast<size_t>(y) * width + x;
             const int col = colourAt[q];
@@ -815,11 +869,14 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
             }
             if (index < 0)
             {
-                index = static_cast<int>(balances.size());
-                balances.emplace_back(width, height, kSupportRadius);
-                balances.back().Build([&](int px, int py) { return balance(v, col, px, py); });
+                index = static_cast<int>(own.used++);
+                if (own.boxes.size() < own.used)
+                    own.boxes.emplace_back();
+                Box& box = own.boxes[static_cast<size_t>(index)];
+                box.Reset(width, height, kSupportRadius, rowFirst, rowEnd);
+                box.Build([&](int px, int py) { return balance(v, col, px, py); });
             }
-            return balances[static_cast<size_t>(index)].Window(x, y) > 0;
+            return own.boxes[static_cast<size_t>(index)].Window(x, y) > 0;
         };
         for (int y = by0 * MotionField::kBlock; y < std::min(by1 * MotionField::kBlock, height); y++)
             for (int x = 0; x < width; x++)
@@ -906,6 +963,23 @@ void LayerFlow::Compose(const Picture& pictureP, const Picture& pictureA, const 
     else
         band(0, blockRows);
     KeepInk(pictureA, pictureB, nearer, out);
+}
+
+void LayerFlow::Box::Reset(int w, int h, int r, int first, int end)
+{
+    width = w;
+    height = h;
+    radius = r;
+    y0 = first;
+    y1 = end;
+    sum.assign(static_cast<size_t>(w + 1) * (end - first + 1), 0);
+}
+
+int LayerFlow::Box::Window(int x, int y)
+{
+    const int x0 = std::max(x - radius, 0), x1 = std::min(x + radius + 1, width);
+    const int ya = std::max(y - radius, 0), yb = std::min(y + radius + 1, height);
+    return At(x1, yb) - At(x1, ya) - At(x0, yb) + At(x0, ya);
 }
 
 void LayerFlow::KeepInk(const Picture& a, const Picture& b, const Picture& nearer, uint32_t* out)
