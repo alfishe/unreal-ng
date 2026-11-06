@@ -1,5 +1,7 @@
 #include "streamdeckpage.h"
 
+#include "studiolauncher.h"
+
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QClipboard>
@@ -202,8 +204,8 @@ StreamDeckSupervision::~StreamDeckSupervision()
 
 // ---------------------------------------------------------------- StreamDeckDialog
 
-StreamDeckDialog::StreamDeckDialog(CompanionController* companions, QWidget* parent)
-    : QWidget(parent, Qt::Window), _companions(companions)
+StreamDeckDialog::StreamDeckDialog(CompanionController* companions, QWidget* parent, StudioLauncher* studio)
+    : QWidget(parent, Qt::Window), _companions(companions), _studio(studio)
 {
     setWindowTitle(tr("Stream Deck"));
     resize(640, 640);
@@ -245,6 +247,25 @@ StreamDeckDialog::StreamDeckDialog(CompanionController* companions, QWidget* par
     form->addRow(tr("Activity of other surfaces:"), _activity);
     daemonLayout->addLayout(form);
     root->addWidget(daemonBox);
+
+    // Stream Deck Studio: the software deck, its own application (not stopped when unreal-qt quits)
+    if (_studio == nullptr)
+        _studio = new StudioLauncher(this);
+    else
+        _studio->setParent(this);
+    auto* studioBox = new QGroupBox(tr("Stream Deck Studio (the software deck and scenario editor)"), this);
+    auto* studioLayout = new QHBoxLayout(studioBox);
+    _studioState = new QLabel(studioBox);
+    _studioState->setWordWrap(true);
+    _studioState->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    _studioButton = new QPushButton(studioBox);
+    _studioButton->setToolTip(tr("Start Stream Deck Studio, or bring its window to the front when it runs"));
+    studioLayout->addWidget(_studioState, 1);
+    studioLayout->addWidget(_studioButton);
+    root->addWidget(studioBox);
+    connect(_studioButton, &QPushButton::clicked, _studio, &StudioLauncher::Open);
+    connect(_studio, &StudioLauncher::Changed, this, &StreamDeckDialog::showStudio);
+    showStudio();
 
     // Pairing
     auto* pairBox = new QGroupBox(tr("Companion pairing"), this);
@@ -402,6 +423,20 @@ void StreamDeckDialog::fillPackBox(QComboBox* box, const QString& setting) const
         box->addItem(setting, setting);  // set elsewhere, not among the packs the daemon listed
 }
 
+void StreamDeckDialog::showStudio()
+{
+    using S = StudioLauncher::State;
+    const S state = _studio->GetState();
+    const char* color = state == S::Running ? "#2a2" : state == S::Failed ? "#c33" : state == S::Starting ? "#c80" : "";
+    const QString text = _studio->StatusText().toHtmlEscaped();
+    _studioState->setText(*color ? QStringLiteral("<b><span style='color:%1'>&#9679;</span> %2</b>").arg(color, text)
+                                 : QStringLiteral("<b>%1</b>").arg(text));
+    if (!_studio->Path().isEmpty())
+        _studioState->setToolTip(QDir::toNativeSeparators(_studio->Path()));
+    _studioButton->setText(_studio->ButtonText());
+    _studioButton->setEnabled(_studio->CanOpen());
+}
+
 void StreamDeckDialog::approve()
 {
     if (_pendingPairing.isEmpty())
@@ -443,6 +478,11 @@ void StreamDeckDialog::refresh()
     _start->setEnabled(attached && !up);
     _stop->setEnabled(attached && (up || state == QLatin1String("starting") || state == QLatin1String("backoff")));
     _restart->setEnabled(attached);
+
+    // Studio: started here it joins this daemon; the daemon's viewers count one whose own port is off
+    _studio->SetDaemonPorts(Text(status.find("viewers_port")).toInt(), Text(status.find("api_port")).toInt());
+    _studio->SetViewers(up ? Text(daemon->find("viewers")).toInt() : -1);
+    _studio->Probe();
 
     {
         const QSignalBlocker b1(_mode), b2(_activity);
