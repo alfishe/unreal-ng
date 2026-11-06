@@ -6989,6 +6989,29 @@ namespace PythonBindings
                "to_frame, to_tinframe, sections ('cpu,memory'), limit, writers, text",
                 py::arg("from_frame"));
 
+        emulatorClass.def("ttd_replay_check", [](Emulator& self, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "replay-check", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "Each frame replayed from its checkpoint and compared with the next checkpoint (default: the whole "
+               "history): checked / matched / diverged / skipped counts and what diverged per frame (cpu, chipset, "
+               "ram pages, devices, device regions). kwargs: from_frame, to_frame, stride, limit, text");
+
+        emulatorClass.def("ttd_seek_check", [](Emulator& self, py::object enabled) -> py::object {
+                std::map<std::string, std::string> options;
+                if (!enabled.is_none())
+                    options["enabled"] = enabled.cast<bool>() ? "true" : "false";
+                return StateNodeToPy(TtdBodyOrThrow(TtdRunPy(self, "seek-check", options)));
+            }, "Every seek also replay-checks the frame it lands in (off by default; None keeps the setting). Returns "
+               "{enabled, seek_checks, seek_check_divergences, last_seek_divergence}",
+               py::arg("enabled") = py::none());
+
         // ================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI/Lua:
         // step out, skip until, memory find, screen digest, beam, frame cost,

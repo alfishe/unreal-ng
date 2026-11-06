@@ -1,0 +1,297 @@
+// TTD replay check (docs/inprogress/2026-11-05-ttd-replay-check/README.md): each recorded frame replayed from its
+// checkpoint and compared with the next checkpoint, the state the live machine had there.
+
+#include <gtest/gtest.h>
+
+#include <string>
+
+#include "_helpers/emulatortesthelper.h"
+#include "base/featuremanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/ttdcontrol.h"
+#include "debugger/ttd/ttdreplaycheck.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/io/keyboard/keyboard.h"
+#include "emulator/memory/memory.h"
+
+namespace
+{
+
+class TTDReplayCheck_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
+
+    void TearDown() override
+    {
+        if (_emulator)
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+    }
+
+    /// The model boots its ROM for @p frames frames while recording
+    void Record(const std::string& model, unsigned frames)
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr);
+        _context = _emulator->GetContext();
+        _context->pFeatureManager->setFeature(Features::kDebugMode, true);
+        _context->pFeatureManager->setFeature(Features::kTimeTravel, true);
+        _context->pMemory->UpdateFeatureCache();
+        _emulator->EnableTurboMode();
+        _ttd = _context->pTimeTravelController;
+        ASSERT_NE(_ttd, nullptr);
+        ASSERT_TRUE(_ttd->StartRecording());
+        _emulator->RunNFrames(frames, /*skipBreakpoints=*/true);
+        _ttd->StopRecording();
+    }
+
+    /// The check over the whole history; the machine must stay where it was
+    ttd::TTDReplayCheckResult Check(ttd::TTDReplayCheckQuery q = {})
+    {
+        const ttd::TTDTimePoint before = _ttd->CurrentPosition();
+        const uint16_t pc = _context->pCore->GetZ80()->pc;
+        ttd::TTDReplayCheckResult r = _ttd->QueryReplayCheck(q);
+        EXPECT_EQ(_ttd->CurrentPosition().frame, before.frame);
+        EXPECT_EQ(_ttd->CurrentPosition().tInFrame, before.tInFrame);
+        EXPECT_EQ(_context->pCore->GetZ80()->pc, pc);
+        return r;
+    }
+};
+
+/// R1: a ROM boot replays exactly: every frame checked matches its next checkpoint
+TEST_F(TTDReplayCheck_Test, R1_RomBootReplaysExactly)
+{
+    Record("PENTAGON", 12);
+    const ttd::TTDReplayCheckResult r = Check();
+    ASSERT_TRUE(r.error.empty()) << r.error;
+    EXPECT_GT(r.checked, 8u);
+    EXPECT_EQ(r.diverged, 0u) << ttd::TTDReplayCheckText(r);
+    EXPECT_EQ(r.matched, r.checked);
+    EXPECT_EQ(r.checked + r.skippedBarrier + r.skippedCut + r.skippedNoNext, r.toFrame - r.fromFrame + 1);
+}
+
+/// R2: a stored checkpoint damaged on purpose (one bit of one RAM piece): the frame before it diverges, and the check
+/// names the RAM page and the offset; the other frames still match
+TEST_F(TTDReplayCheck_Test, R2_ADamagedCheckpointIsNamed)
+{
+    Record("PENTAGON", 12);
+    ttd::TimeTravelEngine& engine = _ttd->GetEngine();
+    const uint64_t first = _ttd->GetSessionInfo().sessionStartFrame;
+    const uint64_t damagedFrame = first + 6;
+    const int64_t index = engine.CheckpointIndexOf({0, damagedFrame, 0});
+    ASSERT_GE(index, 0);
+    // Page 0 piece 0 holds the ROM's system variables area on no machine: take any piece the session knows there
+    uint32_t piece = UINT32_MAX;
+    for (uint32_t p = 0; p < 8 * 4 && piece == UINT32_MAX; ++p)
+        if (engine.VersionAt(size_t(index), 0, p) != ttd::TimeTravelEngine::kAbsent)
+            piece = p;
+    ASSERT_NE(piece, UINT32_MAX);
+    ASSERT_TRUE(engine.DamageForTesting(size_t(index), 0, piece));
+
+    const ttd::TTDReplayCheckResult r = Check();
+    ASSERT_TRUE(r.error.empty()) << r.error;
+    ASSERT_GE(r.diverged, 1u) << ttd::TTDReplayCheckText(r);
+    bool named = false;
+    for (const ttd::TTDReplayCheckFrame& f : r.frames)
+        for (const ttd::TTDReplayCheckItem& i : f.items)
+            if (i.section == "ram" && i.name == "page " + std::to_string(piece / 4))
+                named = true;
+    EXPECT_TRUE(named) << ttd::TTDReplayCheckText(r);
+    EXPECT_EQ(r.frames.front().frame, damagedFrame - 1) << ttd::TTDReplayCheckText(r);
+}
+
+/// R3: range, stride and limit
+TEST_F(TTDReplayCheck_Test, R3_RangeStrideLimit)
+{
+    Record("PENTAGON", 12);
+    const uint64_t first = _ttd->GetSessionInfo().sessionStartFrame;
+    ttd::TTDReplayCheckQuery q;
+    q.hasFrom = true;
+    q.fromFrame = first + 2;
+    q.hasTo = true;
+    q.toFrame = first + 8;
+    q.stride = 3;
+    const ttd::TTDReplayCheckResult r = Check(q);
+    ASSERT_TRUE(r.error.empty()) << r.error;
+    EXPECT_EQ(r.checked + r.skippedBarrier + r.skippedCut + r.skippedNoNext, 3u) << "frames +2, +5, +8";
+
+    q.toFrame = _ttd->SessionEndPosition().frame;   // no next checkpoint
+    EXPECT_FALSE(Check(q).error.empty());
+}
+
+/// R4: the verb on the shared control layer (every plane forwards to it)
+TEST_F(TTDReplayCheck_Test, R4_TheVerb)
+{
+    Record("PENTAGON", 6);
+    ttd::TTDControl control(_context);
+    const ttd::TTDReply ok = control.Execute({"replay-check", {{"text", "true"}}});
+    ASSERT_TRUE(ok.Ok()) << ok.message;
+    ASSERT_NE(ok.body.find("text"), nullptr);
+    EXPECT_NE(ok.body.find("text")->s.find("replay check f"), std::string::npos) << ok.body.find("text")->s;
+    EXPECT_EQ(ok.body.find("diverged")->i, 0);
+    EXPECT_GT(ok.body.find("checked")->i, 0);
+    ASSERT_NE(ok.body.find("skipped"), nullptr);
+
+    EXPECT_FALSE(control.Execute({"replay-check", {{"stride", "0"}}}).Ok());
+    EXPECT_FALSE(control.Execute({"replay-check", {{"limit", "0"}}}).Ok());
+    EXPECT_FALSE(control.Execute({"replay-check", {{"from_frame", "999999"}}}).Ok()) << "outside the history";
+}
+
+/// S1: check_seeks on: a seek into a frame checks that frame's replay; a damaged checkpoint after it is counted as a
+/// divergence, with its text; off, a seek checks nothing
+TEST_F(TTDReplayCheck_Test, S1_SeeksCheckTheirFrame)
+{
+    Record("PENTAGON", 12);
+    const uint64_t first = _ttd->GetSessionInfo().sessionStartFrame;
+    ttd::TTDSeekResult plain;
+    ASSERT_TRUE(_ttd->SeekTo({first + 3, 100}, &plain));
+    EXPECT_FALSE(plain.checked) << "off by default";
+
+    _ttd->SetCheckSeeks(true);
+    ttd::TTDSeekResult ok;
+    ASSERT_TRUE(_ttd->SeekTo({first + 4, 100}, &ok));
+    EXPECT_TRUE(ok.checked);
+    EXPECT_FALSE(ok.checkDiverged) << ok.checkText;
+    EXPECT_EQ(ok.arrivedAt.frame, first + 4);
+    const uint16_t pc = _context->pCore->GetZ80()->pc;
+
+    // Damage checkpoint +7: the replay of frame +6 no longer reaches it
+    ttd::TimeTravelEngine& engine = _ttd->GetEngine();
+    const int64_t index = engine.CheckpointIndexOf({0, first + 7, 0});
+    ASSERT_GE(index, 0);
+    uint32_t piece = UINT32_MAX;
+    for (uint32_t p = 0; p < 8 * 4 && piece == UINT32_MAX; ++p)
+        if (engine.VersionAt(size_t(index), 0, p) != ttd::TimeTravelEngine::kAbsent)
+            piece = p;
+    ASSERT_NE(piece, UINT32_MAX);
+    ASSERT_TRUE(engine.DamageForTesting(size_t(index), 0, piece));
+    ttd::TTDSeekResult bad;
+    ASSERT_TRUE(_ttd->SeekTo({first + 6, 100}, &bad));
+    EXPECT_TRUE(bad.checked);
+    EXPECT_TRUE(bad.checkDiverged);
+    EXPECT_NE(bad.checkText.find("ram page"), std::string::npos) << bad.checkText;
+    EXPECT_EQ(_ttd->CurrentPosition().frame, first + 6) << "the check puts the machine back where the seek landed";
+
+    const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
+    EXPECT_TRUE(info.checkSeeks);
+    EXPECT_EQ(info.seekChecks, 2u);
+    EXPECT_EQ(info.seekCheckDivergences, 1u);
+    EXPECT_EQ(info.lastSeekDivergence, bad.checkText);
+
+    // The same seek as before the damage lands on the same machine
+    ASSERT_TRUE(_ttd->SeekTo({first + 4, 100}, &ok));
+    EXPECT_EQ(_context->pCore->GetZ80()->pc, pc);
+}
+
+/// S2: the verb and the seek's answer on the shared control layer
+TEST_F(TTDReplayCheck_Test, S2_SeekCheckVerb)
+{
+    Record("PENTAGON", 8);
+    ttd::TTDControl control(_context);
+    ttd::TTDReply r = control.Execute({"seek-check", {}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_FALSE(r.body.find("enabled")->b);
+    r = control.Execute({"seek-check", {{"enabled", "true"}}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_TRUE(r.body.find("enabled")->b);
+    EXPECT_FALSE(control.Execute({"seek-check", {{"enabled", "maybe"}}}).Ok());
+
+    const uint64_t first = _ttd->GetSessionInfo().sessionStartFrame;
+    const ttd::TTDReply seek =
+        control.Execute({"seek", {{"frame", std::to_string(first + 3)}, {"tinframe", "200"}}});
+    ASSERT_TRUE(seek.Ok()) << seek.message;
+    const StateNode* check = seek.body.find("replay_check");
+    ASSERT_NE(check, nullptr);
+    EXPECT_FALSE(check->find("diverged")->b) << check->find("text")->s;
+
+    const ttd::TTDReply status = control.Execute({"status", {}});
+    ASSERT_TRUE(status.Ok());
+    EXPECT_TRUE(status.body.find("check_seeks")->b);
+    EXPECT_EQ(status.body.find("seek_checks")->i, 1);
+    EXPECT_EQ(status.body.find("seek_check_divergences")->i, 0);
+}
+
+/// R6: the ZX Next DMA reads a port on its own, past the CPU's IN and so past the port journal: every frame a
+/// port-to-memory block of 64 reads of #FE while a key goes down and up through the journaled input. The replayed
+/// DMA reads the live keyboard, which the replay drives from the same input journal: the frames still match
+TEST_F(TTDReplayCheck_Test, R6_NextDmaReadingAPortReplaysExactly)
+{
+    _emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(_emulator, nullptr);
+    _context = _emulator->GetContext();
+    _context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    _context->pFeatureManager->setFeature(Features::kTimeTravel, true);
+    _context->pMemory->UpdateFeatureCache();
+    _emulator->EnableTurboMode();
+    _ttd = _context->pTimeTravelController;
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);   // the boot sets the board up
+
+    constexpr uint16_t kCode = 0x8000, kDmaProgram = 0x8100, kBlock = 0xC000;
+    // DI; loop: LD HL,dma; LD BC,#0D6B (13 bytes to port #6B); OTIR; LD B,0; DJNZ $; JR loop
+    const uint8_t code[] = {0xF3, 0x21, 0x00, 0x81, 0x01, 0x6B, 0x0D, 0xED, 0xB3, 0x06, 0x00, 0x10, 0xFE, 0x18, 0xF2};
+    const uint8_t dma[] = {
+        0x83,                          // WR6: disable
+        0x7D, 0xFE, 0x00, 0x40, 0x00,  // WR0: A -> B, port A #00FE, length 64
+        0x2C,                          // WR1: port A is I/O, fixed
+        0x10,                          // WR2: port B is memory, increment
+        0xAD, 0x00, 0xC0,              // WR4: continuous, port B #C000
+        0xCF,                          // WR6: load
+        0x87,                          // WR6: enable
+    };
+    static_assert(sizeof(dma) == 13);
+    for (size_t i = 0; i < sizeof(code); ++i)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(kCode + i), code[i]);
+    for (size_t i = 0; i < sizeof(dma); ++i)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(kDmaProgram + i), dma[i]);
+    _context->pCore->GetZ80()->pc = kCode;
+
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    ttd::TTDInputEvent key;
+    key.kind = ttd::TTDInputKind::Key;
+    key.key = ZXKEY_SPACE;
+    key.pressed = true;
+    ASSERT_TRUE(_ttd->SubmitLiveInput(key));
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    bool keySeen = false;  // the DMA moved the keyboard's answer: a row with a key down
+    for (uint16_t i = 0; i < 64; ++i)
+        keySeen |= (_context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(kBlock + i)) & 0x1F) != 0x1F;
+    key.pressed = false;
+    ASSERT_TRUE(_ttd->SubmitLiveInput(key));
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    _ttd->StopRecording();
+    ASSERT_TRUE(keySeen) << "the DMA block at #C000 holds no pressed key: the transfer did not run";
+
+    const ttd::TTDReplayCheckResult r = Check();
+    ASSERT_TRUE(r.error.empty()) << r.error;
+    EXPECT_GE(r.checked, 7u) << ttd::TTDReplayCheckText(r);
+    EXPECT_EQ(r.diverged, 0u) << ttd::TTDReplayCheckText(r);
+}
+
+/// R5: every model the TTD tests boot: the ROM boot's replay matches each next checkpoint
+class TTDReplayCheckModels_Test : public TTDReplayCheck_Test, public ::testing::WithParamInterface<const char*>
+{
+};
+
+TEST_P(TTDReplayCheckModels_Test, R5_RomBootReplaysExactly)
+{
+    Record(GetParam(), 10);
+    const ttd::TTDReplayCheckResult r = Check();
+    ASSERT_TRUE(r.error.empty()) << r.error;
+    EXPECT_GT(r.checked, 0u);
+    EXPECT_EQ(r.diverged, 0u) << GetParam() << "\n" << ttd::TTDReplayCheckText(r);
+    RecordProperty("checked", static_cast<int>(r.checked));
+    RecordProperty("ms", static_cast<int>(r.ms));
+}
+
+INSTANTIATE_TEST_SUITE_P(AcrossModels, TTDReplayCheckModels_Test,
+                         ::testing::Values("48K", "128k", "PENTAGON", "PLUS2A", "PLUS3", "SCORPION", "PROFSCORP", "GMX",
+                                           "PROFI", "ATM710", "ATM3", "TSL", "SPRINTER", "NEXT"),
+                         [](const ::testing::TestParamInfo<const char*>& info) { return std::string(info.param); });
+
+}  // namespace

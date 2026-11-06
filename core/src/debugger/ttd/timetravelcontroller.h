@@ -88,6 +88,7 @@
 #include "ttdfindevent.h"
 #include "ttdexplainframe.h"
 #include "ttddiffmoments.h"
+#include "ttdreplaycheck.h"
 #include "ttdcoverageindex.h"
 #include "ttdtimeline.h"
 #include "ttdperipheralregistry.h"
@@ -1320,6 +1321,19 @@ public:
     /// screen and border, the devices, and the time, keys and markers in between. Replays to each moment and puts the
     /// machine back where it stood.
     TTDDiffMomentsResult QueryDiffMoments(const TTDDiffMomentsQuery& query);
+
+    /// @brief Replay check (docs/inprogress/2026-11-05-ttd-replay-check/README.md): each frame of the range replayed
+    /// from its checkpoint to its end and compared with the next checkpoint, the state the live machine had there:
+    /// the CPU, the chipset, the RAM per page, every registered device, the engine's device regions. Frames with a
+    /// barrier inside or a cut at their end are skipped and counted. The machine is put back where it stood; a live
+    /// recording pauses for browsing
+    TTDReplayCheckResult QueryReplayCheck(const TTDReplayCheckQuery& query);
+
+    /// @brief check_seeks (the replay check's README, section 3): each seek also runs the replay check of the frame
+    /// it lands in, before the picture is composed; the seek's result carries the outcome and the session info counts
+    /// checks and divergences. Off by default: a check costs a frame's replay and two state copies
+    void SetCheckSeeks(bool on) { _checkSeeks.store(on, std::memory_order_relaxed); }
+    bool GetCheckSeeks() const { return _checkSeeks.load(std::memory_order_relaxed); }
     
     /// @brief Step back one instruction (TDD §10.2 + §16 row 2).
     ///
@@ -1612,6 +1626,9 @@ private:
     /// device pieces their trackers marked (taken and cleared), every piece of a region no tracker watches. Valid
     /// only while _engineMemoryKnown holds
     TTDWrittenFn TakeWrittenSinceRestore();
+    /// @brief The same marks, kept: the next TakeWrittenSinceRestore adds its own to them (a replay check reads the
+    /// frame's writes, the next restore still needs them)
+    TTDWrittenFn PeekWrittenSinceRestore();
 
     /// @brief ReadCpuView at a checkpoint (a frame start the restore lands on) from the store: the four windows
     /// the capture mapped, their pages decoded, the machine untouched. False where only a replay can tell (no
@@ -1835,8 +1852,9 @@ private:
     LiveStateSnapshot _liveSnapshot;
 
     /// @brief Capture the live machine state into `out` (pure copies; no
-    /// timeline or dirty-tracker effects).
-    void SaveLiveState(LiveStateSnapshot& out);
+    /// timeline or dirty-tracker effects). Without @p withMemory the RAM, the framebuffer and plane B are left
+    /// empty (a replay check compares memory through the engine's versions; such a snapshot is not restored)
+    void SaveLiveState(LiveStateSnapshot& out, bool withMemory = true);
 
     /// @brief Restore a SaveLiveState snapshot verbatim, mirroring
     /// RestoreCheckpoint's ordering: CPU → chipset → bank rebuild → RAM →
@@ -2023,6 +2041,7 @@ private:
     TTDRestoreStats _lastMemoryRestore;
     std::vector<uint8_t> _writtenRamPages;            ///< TakeWrittenSinceRestore: per RAM page
     std::vector<std::vector<uint8_t>> _writtenPieces; ///< TakeWrittenSinceRestore: per engine region, per piece
+    bool _writtenHeld = false;                        ///< PeekWrittenSinceRestore: the next take merges
     std::vector<uint16_t> _writtenPages;              ///< TakeWrittenSinceRestore: the dirty tracker's pages
     std::vector<uint32_t> _writtenScratch;
     /// Hand this capture to the shadow engine
@@ -2226,6 +2245,12 @@ private:
     /// Set via SetEnableWriteJournal() before StartRecording().
 
     bool _enableWriteJournal = false;   ///< D40: the journal is recorded on demand
+    std::atomic<bool> _checkSeeks{false};  ///< SetCheckSeeks
+    uint64_t _seekChecks = 0;
+    uint64_t _seekCheckDivergences = 0;
+    std::string _lastSeekDivergence;
+    /// check_seeks: the replay check of the frame a seek landed in, into the seek's result and the counters
+    void CheckSeekLanding(TTDSeekResult& result);
     /// The live ring holds one frame's writes: it is drained into the engine at
     /// each capture and cleared, its memory committed in chunks as it fills.
     /// This is the most one frame may write before the oldest records are lost

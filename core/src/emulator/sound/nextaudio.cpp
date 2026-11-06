@@ -2,6 +2,7 @@
 
 #include "nextaudio.h"
 
+
 #include <cmath>
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <cstring>
 
 #include "debugger/breakpoints/chipregister.h"
+#include "debugger/ttd/timetravelhooks.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/chips/ayhistory.h"
 #include "emulator/sound/soundmanager.h"
@@ -331,7 +333,12 @@ void NextAudio::AdvanceTo(double t)
 
 void NextAudio::AudioFrameStart(bool synthesisSuppressed)
 {
-    _suppressed = synthesisSuppressed;
+    // The generators' phase is machine state (the TTD image carries it): with the output stage off (turbo without
+    // audio, sound off) they skip their ticks only while no TTD session records or replays, as the TSFM core does,
+    // so a replay advances them as the recording did whatever the host's audio settings
+    const ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+    const bool ttdActive = ttd != nullptr && (ttd->IsRecording() || ttd->IsReplayActive());
+    _suppressed = synthesisSuppressed && !ttdActive;
     if (_now)
     {
         _frameStartT = _now();

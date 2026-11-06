@@ -763,6 +763,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getTTDFindEvent, "/api/v1/emulator/{id}/ttd/find-event", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDExplainFrame, "/api/v1/emulator/{id}/ttd/explain-frame", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDDiffMoments, "/api/v1/emulator/{id}/ttd/diff", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDReplayCheck, "/api/v1/emulator/{id}/ttd/replay-check", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::seekCheckTTD, "/api/v1/emulator/{id}/ttd/seek-check", drogon::Get, drogon::Post);
     // endregion TTD
 
     // region Labels/Symbols (implementation: api/debug_api.cpp)
@@ -2386,6 +2388,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getTTDDiffMoments(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDReplayCheck(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void seekCheckTTD(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion TTD Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)

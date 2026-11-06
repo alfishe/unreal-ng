@@ -8,12 +8,23 @@ Every phase's recipe and test starts a TTD recording before the run under test (
 seek). Recording holds speed at 1x and turns fast loaders off; the Next's 28 MHz boot therefore records at 1x
 host speed: use short sections or the `EnableTurboMode()` rules of the tests only when TTD is off.
 
-## 2. Existing MM_NEXT cases
+## 2. Port journals on the Next
 
-`TimeTravelManager::PortJournalUnsupportedReason` and the same function in `timetravelcontroller.cpp` return "ZX
-Next: its DMA moves data into RAM without IN (not isolated by the first version)". Consequences: checkpoints and
-input journaling work; the sealed replay (isolation of port reads) is not available, so replay runs against the
-live devices. Both cases stay until the DMA is covered (section 4).
+The first version refused the port journals on the Next ("its DMA moves data into RAM without IN"). The engine
+records them on every machine since 2026-10-09 (ee81b3cbf; the refusal and its `TtdEnginesSealed` hook are gone),
+so a Next session has `port_journal_active` true and `/ttd/port-events` answers.
+
+The journals replace what the **CPU's** `IN` gets. The DMA reads ports itself (`bus.readIo` -> `DecodePortIn`), past
+the journal, in the recording and in the replay alike: its reads go to the live devices. That reproduces the
+recording as long as the devices' answers follow from the checkpointed state and the journaled input (keys,
+joystick, mouse), which holds for every port the Next models. Measured 2026-11-05 with the replay check
+([2026-11-05-ttd-replay-check](../2026-11-05-ttd-replay-check/README.md)): a DMA block of 64 reads of `#FE`
+every frame while a key goes down and up, every frame replays exactly (`TTDReplayCheck_Test.R6_*`).
+
+The same check found what did diverge on the Next: the AY generators' phase. The audio render clock (`_tickT`,
+`_frameStartT`) was not in the `NextState` image and was reset after a load, so a replayed frame did not tick the
+generators. Image version 17 carries the clock, and the generators keep ticking with the output stage off while a
+TTD session records or replays (as the TSFM core does).
 
 ## 3. Serializers and ids
 
@@ -62,11 +73,11 @@ git diff testdata/slots/fitted-devices.txt   # only the `62:` number of the next
 Open: compare only the presence of id 62, as the test already does for `EthernetNics` (`:var`), since the layout of `NextState` is guarded
 by its own image version and codec tests; see [TODO.md](TODO.md), "Remaining".
 
-## 4. Isolating port reads later
+## 4. DMA port reads and media
 
-DMA transfers memory-to-memory without `IN`. A journal for the Next would also record the DMA's port reads and be
-replayed at the DMA's cycle; alternatively sealed replay is allowed only while the DMA is idle in the checkpoint.
-Decision deferred to N11 after measuring how often NextZXOS uses the DMA.
+A DMA read of a medium's port (the SD card's SPI data) needs no port journal either: the card's sectors come through
+the media manager, whose read journal (`TTDMediaJournal`) hands a replay the sectors the recording read, whoever
+reads the port afterwards. Not measured with the DMA yet; a divergence would show in the replay check.
 
 ## 5. Inputs journaled
 

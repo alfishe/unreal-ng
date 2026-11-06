@@ -508,6 +508,16 @@ public:
     /// writes every piece
     void ForgetMemory();
 
+    /// The version whose content the last RestoreToMemory left in live memory for @p piece of @p region (writes
+    /// since are the caller's to know), or kAbsent when not known
+    TTDPieceId VersionInMemory(uint32_t region, uint32_t piece) const
+    {
+        if (region >= _inMemory.size() || piece >= _inMemory[region].size())
+            return kAbsent;
+        const TTDPieceId id = _inMemory[region][piece];
+        return id == kUnknown ? kAbsent : id;
+    }
+
     /// endregion </Restore>
 
     /// The whole session checked without touching the machine: every stored
@@ -604,8 +614,17 @@ private:
         Missing,   ///< no state in this checkpoint (length 0), or no such device
         Damaged,   ///< a piece failed its integrity check: *damagedPiece
     };
+    /// A device state region's pieces as last decoded (RestoreDevices): a restore decodes only the pieces whose
+    /// version differs from the ones held (a 256 KB state that hardly changes costs a copy, not 64 decodes)
+    struct DecodedState
+    {
+        uint64_t generation = 0;           ///< the store's ReuseGeneration the ids are good for
+        const TTDPieceStore* store = nullptr;
+        std::vector<TTDPieceId> ids;       ///< per piece: the version in bytes, kUnknown when none
+        std::vector<uint8_t> bytes;
+    };
     DeviceStateRead ReadDeviceState(size_t index, uint32_t device, std::vector<uint8_t>& out,
-                                    uint32_t* damagedPiece = nullptr) const;
+                                    uint32_t* damagedPiece = nullptr, DecodedState* decoded = nullptr) const;
     /// Checkpoint @p index's entry for @p region, or null when it has none
     const TTDEngineCheckpoint::RegionRefs* RefsOf(size_t index, uint32_t region) const
     {
@@ -625,6 +644,7 @@ private:
     /// Per region: the version whose content is in live memory now, or kUnknown
     std::vector<std::vector<TTDPieceId>> _inMemory;
     static constexpr TTDPieceId kUnknown = 0xFFFFFFFEu;
+    std::vector<DecodedState> _decodedStates;   ///< RestoreDevices: per device of the table
     std::vector<std::vector<uint32_t>> _sinceSnapshot;
     std::vector<std::vector<uint8_t>> _sinceSnapshotFlag;
     std::vector<TTDRefTables::Table*> _lastSnapshot;

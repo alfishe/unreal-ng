@@ -6566,6 +6566,25 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("diff", options)));
         });
 
+        // ttd_replay_check{from_frame = F, to_frame = G, stride = N, limit = N, text = true}: each frame replayed from its
+        // checkpoint and compared with the next checkpoint (default: the whole history) - what diverged, by part
+        lua.set_function("ttd_replay_check", [this](sol::this_state ts, sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("replay-check", options)));
+        });
+
+        // ttd_seek_check(true | false | nil): every seek also replay-checks the frame it lands in (off by default);
+        // nil keeps the setting. Returns {enabled, seek_checks, seek_check_divergences, last_seek_divergence}
+        lua.set_function("ttd_seek_check", [this](sol::this_state ts, sol::optional<bool> enabled) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (enabled)
+                options["enabled"] = *enabled ? "true" : "false";
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("seek-check", options)));
+        });
+
         // A memory at a past checkpoint and what changed between two, from the store (no seek):
         // ttd_memory_at{space = "vram", frame = F, offset = 0x4805, length = 16}
         // ttd_memory_diff{space = "ram5", from_frame = F1, to_frame = F2, limit = 100}

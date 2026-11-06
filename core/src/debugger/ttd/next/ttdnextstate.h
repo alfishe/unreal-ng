@@ -5,6 +5,8 @@
 /// the memory map, the palettes, sprites, copper, DMA, CTC, interrupt controller, I2C RTC, Multiface and DivMMC back to the checkpoint.
 /// Without it a restore left all of those at their values from the moment of the seek (the guest RAM came back, its machine did not).
 
+#include <vector>
+
 #include "debugger/ttd/ttdserializable.h"
 
 class PortDecoder_Next;
@@ -28,6 +30,7 @@ public:
 private:
     PortDecoder_Next& _decoder;
     size_t _size;  ///< the image has a fixed length for the life of the machine
+    mutable std::vector<uint8_t> _image;   ///< the save's buffer, reused (no allocation per frame)
 };
 
 /// The system area (pages 0-15 of the SRAM, 256 KB): the ROMs (pages 0-7, which the firmware loads in config mode) and the DivMMC RAM (pages 8-15,

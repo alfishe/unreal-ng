@@ -250,6 +250,7 @@ void TTDPieceStore::Release(TTDPieceId id)
         v = Version{};
         _free.push_back(id);
         _liveVersions--;
+        ++_reuseGeneration;
         id = base;
     }
 }
@@ -312,6 +313,7 @@ size_t TTDPieceStore::HeapBytes() const
 
 void TTDPieceStore::Clear()
 {
+    ++_reuseGeneration;
     _versions.clear();
     _versions.shrink_to_fit();
     _free.clear();

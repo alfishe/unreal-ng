@@ -52,7 +52,19 @@ time_travel {"action":"load","path":"scratch/session-001.ttd"} # same model only
 
 # coverage
 time_travel {"action":"coverage_summary","kind":"executed"}    # activity heatmap buckets
+
+# does the replay reproduce the recording (each frame replayed, compared with the next checkpoint; the machine stays)
+time_travel {"action":"replay_check"}                          # the whole history; "from_frame"/"to_frame", "stride"
+#   replay check f100..f399: 299 checked, 299 match, 0 diverged; skipped 0 barrier, 0 cut, 0 no next checkpoint
+#   a diverged frame lists what differs: cpu / chipset fields (recorded, replayed), "ram page N", "device <name>"
+#   and engine "region"s with the bytes that differ and the first offset; stops after "limit" frames (default 8)
+time_travel {"action":"seek_check_on"}                         # every seek then checks the frame it lands in
+#   the seek's text ends "the frame's replay matches the recording" or "DIVERGED" with the check's text;
+#   status counts seek_checks / seek_check_divergences; seek_check_off switches it off (off by default)
 ```
+
+A divergence means every answer after it in that frame (screen, memory, cause chain, found events) may be wrong:
+report it with the check's text (the machine, the frame, the parts that differ).
 
 The target is resolved as usual (`"target"` argument, or `auto`).
 
@@ -206,6 +218,11 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" \
 # Frame stepping
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/step-back"    | jq '.frame'
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/step-forward" | jq '.frame'
+
+# Replay check and seek check (does the replay reproduce the recording)
+curl -s "$BASE/emulator/$EMU_ID/ttd/replay-check?from_frame=12000&to_frame=12100&text=true" | jq -r .text
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek-check" \
+     -H 'Content-Type: application/json' -d '{"enabled": true}'     # each seek's answer gains replay_check
 
 # Instruction stepping (either direction)
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/step-instruction" \
