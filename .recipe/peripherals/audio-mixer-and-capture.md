@@ -186,6 +186,54 @@ How to use them:
 - **Compare before and after a change:** capture the same `source` for the
   same number of frames twice and diff `left`/`right` `rms`.
 
+## Sound or AY writes of a recorded (TTD) span: rewind, drop the TTD, free-run with a capture
+
+A replay cannot record these. The device histories (`ay-socket`, the AY log) write nothing while TTD replays
+(`ttdReplayActive`: a seek re-executes what a history already holds), and a `seek` fast-forwards from the nearest
+checkpoint without rendering sound, so only the last frame of the jump reaches the audio capture. The way that
+works is a plain run from the point you want:
+
+```bash
+# 1. The session back from disk (a fresh instance of the same model is fine); it comes up idle
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/load" -H 'Content-Type: application/json' -d '{"path":"scratch/session-001.ttd"}'
+# 2. Rewind to the start of the span
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" -H 'Content-Type: application/json' -d '{"frame": 12000}'
+# 3. Drop the TTD: stop it, then forget the history
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/stop"
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/invalidate"
+# 4. Arm what you want while the machine is still paused at that point
+curl -s -X POST "$BASE/emulator/$EMU_ID/audio/capture" -H 'Content-Type: application/json' \
+     -d '{"action":"start","seconds":600,"to_file":true,"path":"scratch/span.wav"}'
+curl -s -X POST "$BASE/emulator/$EMU_ID/history/ay-socket/config" -H 'Content-Type: application/json' \
+     -d '{"mode":"capture","limit":0,"stream":"scratch/span-ay.jsonl"}'
+# 5. Free-run (resume) for the length of the span; the capture closes itself at its target.
+#    The FIRST resume after the TTD stop is followed by a pause (seen 5 of 5 times, also after 2 s of waiting):
+#    ask GET /emulator for is_paused and POST /resume again until it is false (the second one holds)
+curl -s -X POST "$BASE/emulator/$EMU_ID/resume"
+# 6. Read /audio/capture/status until file_closed, then switch the history off (closes its stream)
+curl -s -X POST "$BASE/emulator/$EMU_ID/history/ay-socket/config" -H 'Content-Type: application/json' -d '{"mode":"off"}'
+```
+
+Notes:
+
+- **Measured end to end** (Pentagon, a loop writing AY registers and toggling the beeper; dump, load, seek, stop,
+  invalidate, both captures armed, resume): the WAV is exactly 1.0 s (88 200 samples, 176 444 bytes, header patched),
+  the AY history holds all 123 988 writes of that second with none dropped, its stream file has the same number of
+  lines. Without the second resume the same run collected 3 614 samples in 2 s: the machine stood paused.
+- **Both captures together.** The audio capture and the AY history see the same frames, so one pass gives the sound
+  and the register writes of a span (`frame` / `tacts` of each write against the sample position:
+  `samples = frames * samples_per_frame + tacts * rate / cpu_clock`).
+- **The AY history has no 65 536 ceiling**, unlike `/ay/log` (a ring clamped to 65 536, 128 194 entries lost in 2 s
+  of a busy loop). `capture` with `limit` 0 and a `stream` kept all 294 469 writes of 3 s with none dropped. The
+  device is `ay-socket` on a machine with a TurboSound / TSFM card, else `ay`: `GET /history` lists the name.
+- **Input of the original session is not fed again by a free run.** Keys, the mouse and tape / disk actions
+  journaled in the recording replay during `seek` / `step-forward` only. For a span that needs them (a menu to get
+  through, a tape to load), drive them yourself (`keyboard/type`, `tape/...`) after the rewind. Not measured here:
+  check a span with input against the original before trusting its audio.
+- **Short spans without leaving the replay.** `step-forward` renders the sound of each frame it replays, so a few
+  dozen frames can be captured in place (see the TTD recipe, "Audio during a replay"); the AY history stays silent
+  there.
+
 ## Pitfalls
 
 - **The machine must run to fill the buffer.** Arming on a paused machine

@@ -237,9 +237,11 @@ sound differs by move:
   last frame of the jump reaches the capture (about 1 frame of samples for a 40-, 50- or 80-frame jump).
 - `step-forward` renders the sound of every frame it replays (50 steps gave 51.2 frames of samples).
 
-To hear a recorded span: seek to its start, arm a capture (`to_file` for a long one), step forward frame by frame.
-Sound of a live run is captured the same way, with no TTD. The synthesizer phase after a `seek` (AY envelope /
-noise, FM) was not compared with the original on music, only the tone.
+Short spans: seek to the start, arm a capture, step forward frame by frame. A long span, or the AY register
+writes (the device histories write nothing during a replay): rewind, drop the TTD and free-run with the captures
+armed - [audio-mixer-and-capture.md](../peripherals/audio-mixer-and-capture.md#sound-or-ay-writes-of-a-recorded-ttd-span-rewind-drop-the-ttd-free-run-with-a-capture).
+The synthesizer phase after a `seek` (AY envelope / noise, FM) was not compared with the original on music, only the
+tone; a free run does not have that question.
 
 ### Bookmarks (agent-friendly labels)
 
