@@ -7840,9 +7840,11 @@ public:
             return StateNodeToLua(s, AudioMixer::Levels(emulator->GetContext()));
         });
 
-        // audio_capture_start(seconds [, source]): source = a mixer key (beeper, ay1, covox, gs ...) records that
-        // device's own buffer; default the master mix
-        lua.set_function("audio_capture_start", [this](double seconds, sol::optional<std::string> sourceKey) -> sol::table {
+        // audio_capture_start(seconds [, source [, file]]): source = a mixer key (beeper, ay1, covox, gs ...) records
+        // that device's own buffer; default the master mix. file = a WAV path: the samples are written there while
+        // they come (seconds up to 86400, no memory ceiling); it closes by itself at the target
+        lua.set_function("audio_capture_start", [this](double seconds, sol::optional<std::string> sourceKey,
+                                                       sol::optional<std::string> fileOpt) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
@@ -7850,9 +7852,12 @@ public:
             auto* context = emulator->GetContext();
             if (!context || !context->pDebugManager) { result["error"] = "debug manager not available"; return result; }
 
-            if (seconds < 0.01 || seconds > 30.0)
+            const std::string file = fileOpt.value_or("");
+            const double maxSeconds = file.empty() ? 30.0 : AudioCaptureAnalyzer::MAX_STREAM_SECONDS;
+            if (seconds < 0.01 || seconds > maxSeconds)
             {
-                result["error"] = "seconds must be within [0.01, 30.0]";
+                result["error"] = file.empty() ? "seconds must be within [0.01, 30.0] (give a file for longer)"
+                                               : "seconds must be within [0.01, 86400]";
                 return result;
             }
 
@@ -7873,7 +7878,18 @@ public:
             const size_t target = static_cast<size_t>(seconds * static_cast<double>(rate)) * 2;
 
             manager->activate("audiocapture");
-            capture->startCapture(target, source);
+            if (!file.empty())
+            {
+                std::string streamError;
+                if (!capture->startStreamCapture(file, static_cast<uint32_t>(rate), target, source, streamError))
+                {
+                    result["error"] = streamError;
+                    return result;
+                }
+                result["wav_path"] = file;
+            }
+            else
+                capture->startCapture(target, source);
 
             result["armed"] = capture->isCaptureArmed();
             result["source"] = AudioMixer::Key(source);
@@ -7898,6 +7914,13 @@ public:
             result["complete"] = capture->isCaptureComplete();
             result["captured_samples"] = static_cast<uint64_t>(capture->getCapturedSamples());
             result["target_samples"] = static_cast<uint64_t>(capture->getTargetSamples());
+            result["to_file"] = capture->isStreaming();
+            if (capture->isStreaming())
+            {
+                result["wav_path"] = capture->getStreamPath();
+                result["file_closed"] = capture->isStreamClosed();
+                result["file_failed"] = capture->hasStreamFailed();
+            }
             return result;
         });
 
@@ -7915,8 +7938,27 @@ public:
                 manager ? manager->getAnalyzer<AudioCaptureAnalyzer>("audiocapture") : nullptr;
             if (!capture || !manager) { result["error"] = "audio capture analyzer not available"; return result; }
 
+            if (capture->isStreaming())
+            {
+                // The audio is in the WAV, not in memory: nothing to analyze
+                if (!capture->isStreamClosed())
+                {
+                    result["error"] = "the capture file is still being written - poll audio_capture_status";
+                    return result;
+                }
+                const size_t streamRate = context->pSoundManager ? context->pSoundManager->getCoreRate() : 44100;
+                const size_t streamFrames = capture->getCapturedSamples() / 2;
+                result["frames"] = static_cast<uint64_t>(streamFrames);
+                result["sample_rate"] = static_cast<uint64_t>(streamRate);
+                result["duration_seconds"] = static_cast<double>(streamFrames) / streamRate;
+                result["complete"] = capture->isCaptureComplete();
+                result["wav_path"] = capture->getStreamPath();
+                result["file_failed"] = capture->hasStreamFailed();
+                return result;
+            }
+
             const auto& buffer = capture->getBuffer();
-            const size_t frames = buffer.size() / 2;
+            const size_t frames = std::min(buffer.size(), capture->getCapturedSamples()) / 2;
             if (frames == 0)
             {
                 result["error"] = "no captured audio — call audio_capture_start first";

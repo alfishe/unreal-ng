@@ -375,7 +375,8 @@ class Emulator:
     def audio_levels(self) -> dict: ...              # every row's and channel's peak, active, mute, solo (topic audio.mixer)
     # get_sound_character() / set_sound_character(name, value) also serve ay_stereo, ay_chip, fm_trim_db,
     # neogs_stereo, covox_dc_removal, fir_filter ("unavailable" where the machine has no such part)
-    # audio_capture_start(seconds=1.0, source="") records one mixer device's own buffer
+    # audio_capture_start(seconds=1.0, source="", file="") records one mixer device's own buffer; file="out.wav"
+    # writes the WAV while the samples come (seconds up to 86400, closes at the target; status: file_closed)
 
     def tsconf_tsu(self) -> dict:
         """TS-Conf TSU objects and palette for debug views: t_config, tilemap_page,

@@ -100,7 +100,7 @@ struct WsConnection
     /// region <Topics>
     std::set<std::string> topics;
     double topicHz = 10;
-    std::chrono::steady_clock::time_point topicSentAt{};  ///< the last read of its values (the rate's clock)
+    std::chrono::steady_clock::time_point topicSentAt{};  ///< the last send of its values (the rate's clock)
     bool topicFull = false;                         ///< send every value at the next tick (after a subscribe)
     uint8_t topicStale = 0;                         ///< kStaleEvent / kStaleFrame: what to read again
     std::map<std::string, std::string> topicSent;   ///< "topic|instance" -> value as last sent
@@ -234,7 +234,7 @@ public:
     /// NC_SURFACE_CONTEXT: `ctx` to the surfaces bound to the instance; the `surfaces.context` topic at the next tick
     void OnContext(const std::string& instanceId, const std::string& context, const std::string& by);
     /// The `instances` topic: compares every subscriber's view with what it was sent and sends the changes (the
-    /// notifications that can change an entry and, once a second, the tick)
+    /// notifications that can change an entry and, at the next change with time alone, the tick); keeps that moment
     void RefreshInstances();
     /// A debugger event (DebugEventHub's sink, any thread): queued for the loop, never sent from the producer.
     /// `topic`: DebugEventHub's ("debug", "asm_sync"); `event` carries its seq and emulator
@@ -329,7 +329,8 @@ private:
     Snapshot _snapshot;
     std::chrono::milliseconds _slowAfter{kSlowConsumerMs};
     std::atomic<uint64_t> _highWater{kHighWaterBytes};
-    std::chrono::steady_clock::time_point _instancesAt{};  ///< the last refresh of `instances`
+    /// When `instances` changes with time alone next (an idle lease, a re-take cooldown; companion::NextTimedChange)
+    std::optional<std::chrono::steady_clock::time_point> _instancesDue;
 
     mutable std::mutex _postMutex;  ///< `_post` alone: producers post without the hub's lock
 

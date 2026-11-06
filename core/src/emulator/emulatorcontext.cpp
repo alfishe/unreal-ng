@@ -501,6 +501,27 @@ EmulatorContext::RunControlState EmulatorContext::GetRunControlState() const
     return RunControlStateLocked();
 }
 
+std::optional<std::chrono::milliseconds> EmulatorContext::RunControlTimeToChange() const
+{
+    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+    const auto now = RunControlNow();
+    std::optional<std::chrono::steady_clock::time_point> next;
+    auto earliest = [&](std::chrono::steady_clock::time_point at) {
+        if (!next || at < *next)
+            next = at;
+    };
+    if (!_runControlClaim.owner.isNil() && _runControlClaim.lease.count() > 0)
+        earliest(_runControlClaim.lastActivity + _runControlClaim.lease);
+    for (const auto& c : _runControlClaim.cooldowns)
+        if (c.second > now)
+            earliest(c.second);
+    if (!next)
+        return std::nullopt;
+    // Rounded up and 1 ms past it: the queries compare strictly, at the boundary itself nothing has changed yet
+    const auto left = std::chrono::ceil<std::chrono::milliseconds>(*next - now) + std::chrono::milliseconds(1);
+    return std::max(left, std::chrono::milliseconds(1));
+}
+
 EmulatorContext::RunControlState EmulatorContext::RunControlStateLocked() const
 {
     RunControlState state;

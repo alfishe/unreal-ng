@@ -2186,7 +2186,10 @@ void EmulatorAPI::audioCaptureResult(const HttpRequestPtr& req,
 
     if (capture->isStreaming())
     {
-        // File mode: the audio is in the WAV, nothing is held in memory to analyze
+        // File mode: the audio is in the WAV, nothing is held in memory to analyze. A capture that reached its
+        // target closes the file by itself a moment later
+        if (capture->isCaptureComplete())
+            capture->waitStreamClosed(3000);
         if (!capture->isStreamClosed())
         {
             Json::Value error;

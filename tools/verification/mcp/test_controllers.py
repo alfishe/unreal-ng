@@ -2,11 +2,15 @@
 """controllers: the host-side verbs of the controller manager as an agent sees them - devices, probe, the device
 database and an import (save=false: the user's devices.user.json stays as it is), role / pin / identify refusals for
 an unknown device, learn refused with the planes that offer it, and the session haptics trial (events laid over the
-loaded game in memory, seen by game.events, cleared)"""
+loaded game in memory, seen by game.events, cleared), and the `controllers.devices` value: REST, the WebSocket topic and
+the MCP monitor text agree with `devices`"""
 
+import json
 import sys
+import urllib.parse
+import urllib.request
 
-from mcplib import expect, main
+from mcplib import COMPANION_NARROW_TOKEN, WebSocket, expect, main
 
 RETROARCH = '\n'.join([
     'input_device = "Verify Pad"',
@@ -85,6 +89,42 @@ def test_haptics_trial_fires_and_clears(s):
     expect('no haptics trial' in r.text, 'clear drops it', r.text)
     r = s.call('controllers', {'action': 'context'})
     expect('session trial' not in r.text, 'the haptics reason without the trial', r.text)
+
+
+def webapi_port(s):
+    return urllib.parse.urlparse(s.url).port - 200
+
+
+def get(s, path):
+    with urllib.request.urlopen(f'http://127.0.0.1:{webapi_port(s)}{path}', timeout=30) as response:
+        return json.loads(response.read().decode())
+
+
+def test_controllers_devices_topic_rest_and_monitor_agree(s):
+    listed = [d['id'] for d in get(s, '/api/v1/controllers/devices')['devices']]
+    value = expect_until_published(s)
+    expect([d['id'] for d in value['devices']] == listed, 'the published devices are the devices verb\'s',
+           (value, listed))
+    expect(value['revision'] >= 1, 'a revision', value)
+    ws = WebSocket(webapi_port(s), token=COMPANION_NARROW_TOKEN)
+    try:
+        ws.send({'op': 'subscribe', 'topics': ['controllers.devices']})
+        state = ws.until(lambda m: m.get('t') == 'controllers.devices' and m.get('op') == 'state', 'the topic')
+        expect('instance' not in state, 'a topic of the process', state)
+        expect(state['value'] == value, 'the topic pushes the REST value', (state, value))
+    finally:
+        ws.close()
+    r = s.call('inspect_state', {'aspects': ['monitor']})
+    expect(f'host devices (revision {value["revision"]})' in r.text, 'the host devices line in the text', r.text)
+    for device in value['devices']:
+        expect(device['id'] in r.text, f'{device["id"]} in the text', r.text)
+
+
+def expect_until_published(s):
+    # The owner's first poll publishes it (250 ms after the start): long past when the tests run
+    value = get(s, '/api/v1/monitor/controllers.devices')
+    expect(value.get('ok') is True and value.get('available') is True, 'the Qt client publishes the devices', value)
+    return {k: v for k, v in value.items() if k != 'ok'}
 
 
 if __name__ == '__main__':

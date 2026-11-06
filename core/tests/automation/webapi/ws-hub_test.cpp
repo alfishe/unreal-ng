@@ -17,7 +17,9 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testwaithelper.h"
 #include "emulator/media/recentfiles.h"
+#include "emulator/readoutschanged.h"
 #include "emulator/monitoring/clientstats.h"
+#include "emulator/monitoring/hostdevices.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/activityfeed.h"
 #include "emulator/actions/contextstate.h"
@@ -748,6 +750,7 @@ TEST_F(WsHub_Test, AFrameReadsOnlyTheValuesThatMoveWithEmulatedTimeOfThatInstanc
     Send(inbox, R"({"op":"subscribe","readouts":["ttd.position","debug.mode","audio.mute"],"max_hz":10})");
     ASSERT_EQ(inbox.Ops("readout").size(), 1u);
     inbox.Clear();
+    EXPECT_TRUE(FrameReadersWanted()) << "the TTD cursor's publish tells (NotifyFramePublished)";
 
     // A frame of another instance: nobody watches its frames, nothing is read
     const uint64_t reads = _hub->ValuesRead();
@@ -761,15 +764,13 @@ TEST_F(WsHub_Test, AFrameReadsOnlyTheValuesThatMoveWithEmulatedTimeOfThatInstanc
     EXPECT_EQ(_hub->ValuesRead(), reads + 1) << "ttd.position alone";
     EXPECT_TRUE(inbox.Ops("readout").empty()) << "unchanged: not sent";
 
-    // A burst of frames within the interval: one read at its end
+    // A frame whose state is not written yet when it is read (NC_VIDEO_FRAME_REFRESH comes before the TTD cursor):
+    // the read sent nothing, so the cursor's own mark right after it is read at once, not held for the interval
     Advance(10);
     _hub->OnFrame(_id);
-    _hub->OnFrame(_id);
-    EXPECT_EQ(_hub->ValuesRead(), reads + 1) << "held back";
-    EXPECT_NEAR(_hub->TimerDelay(), 0.065, 1e-6) << "75 ms at 10 Hz, 10 ms gone";
+    EXPECT_EQ(_hub->ValuesRead(), reads + 2) << "a read that sent nothing holds nothing back";
+    EXPECT_EQ(_hub->TimerDelay(), 0);
     Advance(65);
-    _hub->Tick();
-    EXPECT_EQ(_hub->ValuesRead(), reads + 2) << "the frames coalesced";
 
     // An event: every value
     Advance(100);
@@ -778,6 +779,7 @@ TEST_F(WsHub_Test, AFrameReadsOnlyTheValuesThatMoveWithEmulatedTimeOfThatInstanc
 
     // A surface of toggles and names alone does not watch the frames at all
     Send(inbox, R"({"op":"unsubscribe","readouts":["ttd.position"]})");
+    EXPECT_FALSE(FrameReadersWanted()) << "nobody reads a frame's state: its publish posts nothing";
     Advance(100);
     _hub->OnFrame(_id);
     _hub->Tick();
@@ -820,6 +822,55 @@ TEST_F(WsHub_Test, AChangeWithoutFramesReachesTheSurfaceThroughItsProducersNotif
     RecentFiles::Instance().Note("tape", "/games/elite.tzx");
     EXPECT_TRUE(arrives("media.recent")) << "RecentFiles posts NC_READOUTS_CHANGED (of the process)";
     RecentFiles::Instance().Clear();
+    _hub->Stop();
+}
+
+/// controllers.devices (monitoring/hostdevices.h): the value at once, then each change the owner publishes, pushed by
+/// its NC_CONTROLLER_DEVICES_CHANGED; never read on time or on a frame (no timer while it is the only topic)
+TEST_F(WsHub_Test, ControllersDevicesPushesWhatTheOwnerPublishesAndNothingElse)
+{
+    monitoring::HostDevices& board = monitoring::HostDevices::Instance();
+    board.Withdraw();
+    _hub->SetClock({});
+    _hub->Start();
+    Inbox inbox;
+    Connect(inbox);
+    Send(inbox, R"({"op":"subscribe","topics":["controllers.devices"],"max_hz":50})");
+    std::vector<Json::Value> states = InTopic(inbox, "controllers.devices");
+    ASSERT_EQ(states.size(), 1u);
+    EXPECT_FALSE(states[0].isMember("instance")) << "a topic of the process";
+    EXPECT_FALSE(states[0]["value"]["available"].asBool()) << "no host input owner in the test";
+    EXPECT_EQ(_hub->TimerDelay(), 0) << "an event topic: no timer";
+
+    const uint64_t reads = _hub->ValuesRead();
+    _hub->OnFrame(_id);
+    _hub->Tick();
+    EXPECT_EQ(_hub->ValuesRead(), reads) << "a frame never reads it";
+
+    StateNode devices = StateNode::Array();
+    StateNode pad = StateNode::Object();
+    pad["id"] = "fake:1";
+    pad["battery"]["text"] = "80 %";
+    devices.push(pad);
+    board.Publish(devices, 1);
+    const auto arrived = [&](size_t count) {
+        return TestWait::For(
+            [&] {
+                _hub->Tick();
+                return InTopic(inbox, "controllers.devices").size() >= count;
+            },
+            std::chrono::seconds(5));
+    };
+    ASSERT_TRUE(arrived(2)) << "the publish's notification wakes the hub";
+    Json::Value value = InTopic(inbox, "controllers.devices")[1]["value"];
+    EXPECT_TRUE(value["available"].asBool());
+    EXPECT_EQ(value["revision"].asInt(), 1);
+    ASSERT_EQ(value["devices"].size(), 1u);
+    EXPECT_EQ(value["devices"][0]["battery"]["text"].asString(), "80 %");
+
+    board.Withdraw();
+    ASSERT_TRUE(arrived(3)) << "the owner went";
+    EXPECT_FALSE(InTopic(inbox, "controllers.devices")[2]["value"]["available"].asBool());
     _hub->Stop();
 }
 
@@ -1026,17 +1077,41 @@ TEST_F(WsHub_Test, InstancesSendsTheViewOnceThenEachChangedEntryAndGoneAsTheEven
     EXPECT_EQ(inbox.Last()["id"].asString(), "b");
     EXPECT_EQ(inbox.Last()["seq"].asUInt64(), 3u);
 
-    // {"op":"snapshot"}: the whole view again; the tick re-checks once a second (what changes with time alone)
+    // {"op":"snapshot"}: the whole view again
     inbox.Clear();
     EXPECT_TRUE(Send(inbox, R"({"op":"snapshot"})"));
     ASSERT_EQ(inbox.Ops("snapshot").size(), 1u);
     EXPECT_EQ(inbox.Ops("snapshot")[0]["emulators"].size(), 1u);
+
+    // Nothing changes with time alone: no beat re-reads the view (a change waits for its notification)
     view["emulators"].append(entry("c", "paused"));
+    inbox.Clear();
+    Advance(5000);
+    _hub->Tick();
+    EXPECT_TRUE(inbox.Messages().empty()) << "no beat";
+    EXPECT_EQ(_hub->TimerDelay(), 0) << "nothing waits on the clock";
+
+    // An idle lease under way: the view is compared again at its end (it expires there with no notification)
+    EmulatorContext* context = _emulator->GetContext();
+    const auto rc = std::chrono::steady_clock::time_point(std::chrono::hours(2));
+    context->SetRunControlClock([rc] { return rc; });
+    const unreal::UUID owner = unreal::UUID::Generate();
+    ASSERT_TRUE(context->TakeRunControl(owner, "webapi", nullptr, "agent", std::chrono::milliseconds(2000)));
+    _hub->RefreshInstances();  // NC_RUN_CONTROL_CHANGED's refresh: sends "c", keeps the lease's moment
+    ASSERT_EQ(inbox.Ops("emulator").size(), 1u);
+    EXPECT_EQ(inbox.Ops("emulator")[0]["emulator"]["id"].asString(), "c");
+    EXPECT_NEAR(_hub->TimerDelay(), 2.001, 1e-6) << "armed for the lease's end";
+    view["emulators"][0]["state"] = "paused";
     inbox.Clear();
     Advance(1000);
     _hub->Tick();
+    EXPECT_TRUE(inbox.Messages().empty()) << "before that moment: nothing read";
+    Advance(1001);
+    _hub->Tick();  // the timer
     ASSERT_EQ(inbox.Ops("emulator").size(), 1u);
-    EXPECT_EQ(inbox.Ops("emulator")[0]["emulator"]["id"].asString(), "c");
+    EXPECT_EQ(inbox.Ops("emulator")[0]["emulator"]["id"].asString(), "a");
+    context->ReleaseRunControl(owner);
+    context->SetRunControlClock({});
 
     Send(inbox, R"({"op":"unsubscribe","topics":["instances"]})");
     Send(inbox, R"({"op":"snapshot"})");

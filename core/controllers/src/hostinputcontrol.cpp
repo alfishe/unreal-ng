@@ -1,12 +1,14 @@
 #include "hostinputcontrol.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <mutex>
+#include <set>
 #include <sstream>
 
 #include "devicedatabase.h"
@@ -457,8 +459,27 @@ HostReply HostInputControl::Process(const HostRequest& request)
     return reply;
 }
 
+namespace
+{
+std::atomic<uint64_t>& ChangeCount()
+{
+    static std::atomic<uint64_t> count{0};
+    return count;
+}
+}  // namespace
+
+uint64_t HostInputControl::Changes()
+{
+    return ChangeCount().load(std::memory_order_relaxed);
+}
+
 HostReply HostInputControl::Execute(const HostRequest& request)
 {
+    // What only reads leaves the devices' value alone (DevicesFeed); anything else may have changed it
+    static const std::set<std::string> reads = {"devices", "context",  "profiles", "profile", "bindings",
+                                                "probe",   "reports",  "database", "aliases", "match"};
+    if (reads.count(request.verb) == 0)
+        ChangeCount().fetch_add(1, std::memory_order_relaxed);
     for (const auto& [name, value] : request.options)
     {
         const std::vector<std::string>& known = OptionsFor(request.verb);

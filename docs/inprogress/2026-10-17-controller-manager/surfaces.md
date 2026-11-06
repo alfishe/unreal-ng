@@ -102,8 +102,36 @@ Where they come from:
 | Python | `controllers_host("devices")` | `controllers_light(device, color)` |
 | Lua | `controllers_host("devices")` | `controllers_light(device, color)` |
 
-No topic pushes the host devices yet (`devices` is a call; a `controllers.devices` topic for arrivals, battery and
-notices is left, TODO.md).
+### The `controllers.devices` topic (built)
+
+The `devices` reply, pushed: a client (the Stream Deck, a status page, an agent) subscribes instead of polling `devices`
+for arrivals, a battery or a notice. The value is `{available, revision, devices: [...]}` with the `devices` entries;
+`available` is false where no host input owner runs (no Qt client in the process). The same value is the monitoring
+name `controllers.devices` (the process's, as `host.stats`), so every plane reads it the one way it reads monitoring:
+
+| Plane | Read | Pushed |
+|:--|:--|:--|
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/monitor/controllers.devices"}` | topic `controllers.devices` (no `instance`), at once on `subscribe`, then each change |
+| REST | `GET /api/v1/monitor/controllers.devices` (and `devices` in `GET /api/v1/monitor`) | - |
+| CLI | `monitor controllers.devices` (a line per device: id, name, battery, notice; `--json`) | - |
+| MCP | `inspect_state` aspect `monitor` (a `host devices` line: name, id, battery, notice) | - |
+| Python | `emu.monitor("controllers.devices")` | - |
+| Lua | `monitor("controllers.devices")` (P3) | - |
+
+How it costs nothing while nothing changes:
+
+- The owner publishes, the planes read a copy (`monitoring::HostDevices`): a read is a short lock and a copy, never a
+  request to the GUI thread, as `devices` itself is.
+- The owner's 250 ms poll asks `DevicesFeed` (`core/controllers/src/devicesfeed.h`) whether to build the reply again:
+  only after an arrival, a departure or a promotion (`HostInputService::Revision`), a host verb that may change it
+  (`HostInputControl::Changes`: role, pin, player, light, a database entry; the read verbs do not count), or 2 s since
+  the last build (the battery, notice and light, which the backends refresh on their own threads every 10-30 s).
+  Otherwise the poll is two integer compares. A built reply with the same bytes publishes nothing.
+- A publish posts `NC_CONTROLLER_DEVICES_CHANGED`; the hub reads the topic on that notification only (Events cadence:
+  never on a timer, never on an emulated frame).
+
+Measured (`DevicesFeed_Test`, the WebSocket hub's `ControllersDevicesPushesWhatTheOwnerPublishesAndNothingElse`): one
+build per 2 s with nothing changing, and no hub read on frames.
 
 ## 3. Selectors
 
@@ -244,6 +272,7 @@ build a `HostRequest`; the CLI and Python reach `scheme` through `controllers sc
 | Notification | When |
 |:--|:--|
 | `NC_CONTROLLER_HOST_CHANGED` | a host device connected, disconnected, changed role or pin |
+| `NC_CONTROLLER_DEVICES_CHANGED` | built: the `controllers.devices` value changed (no payload, process-wide), posted by `monitoring::HostDevices` on the owner's thread |
 | `NC_CONTROLLER_CONNECTOR_CHANGED` | plug or unplug on a connector (revision increments); built in C1c: `ControllerConnectorPayload` (emulator id, connector id, device kind or `none`, revision), posted after the manager's lock is released; a rebuild of the connector list posts once with an empty connector id |
 | `NC_CONTROLLER_AUTO_DECIDED` | the auto decision changed (the toast listens) |
 | `NC_CONTROLLER_LAYER` | the debug layer was entered or left (the status bar listens) |

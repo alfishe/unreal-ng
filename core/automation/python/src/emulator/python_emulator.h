@@ -766,11 +766,10 @@ inline pybind11::object StreamDeckPy(const std::string& verb, const pybind11::kw
     return StateNodeToPy(companion::streamdeck::Call(verb, args).body);
 }
 
-/// A monitoring verb (monitoring::Call: all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots,
-/// recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events, devices.access) with its
-/// args as keywords
-/// (instance=
-/// an id or an index; default this emulator for an instance's name); the reply every plane returns
+/// A monitoring verb (monitoring::Call: all, host.stats, host.clients, controllers.devices, emulator.stats,
+/// debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state,
+/// game.events, devices.access) with its args as keywords (instance= an id or an index; default this emulator for an
+/// instance's name); the reply every plane returns
 inline pybind11::object MonitorPy(Emulator& self, const std::string& verb, const pybind11::kwargs& options)
 {
     StateNode args = StateNode::Object();
@@ -2855,7 +2854,8 @@ namespace PythonBindings
             .def("monitor", [](Emulator& self, const std::string& verb, const py::kwargs& options) {
                      return MonitorPy(self, verb, options);
                  }, py::arg("verb") = "all",
-                 "Monitoring (all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots, "
+                 "Monitoring (all, host.stats, host.clients, controllers.devices, emulator.stats, debug.breakpoints, "
+                 "media.slots, "
                  "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events, devices.access): "
                  "monitor('emulator.stats') -> {ok, instance, fps, speed_percent, ...} as WebAPI /api/v1/monitor")
             .def("surfaces", [](Emulator&, const std::string& verb, const py::kwargs& options) {
@@ -7969,14 +7969,16 @@ namespace PythonBindings
         .def("audio_levels", [](Emulator& self) -> py::object {
             return StateNodeToPy(AudioMixer::Levels(self.GetContext()));
         }, "Every mixer row's and channel's levels and mute / solo (the WebSocket topic audio.mixer)")
-        .def("audio_capture_start", [](Emulator& self, double seconds, const std::string& sourceKey) -> py::dict {
+        .def("audio_capture_start", [](Emulator& self, double seconds, const std::string& sourceKey, const std::string& file) -> py::dict {
             py::dict d;
             auto* context = self.GetContext();
             if (!context || !context->pDebugManager) { d["error"] = "debug manager not available"; return d; }
 
-            if (seconds < 0.01 || seconds > 30.0)
+            const double maxSeconds = file.empty() ? 30.0 : AudioCaptureAnalyzer::MAX_STREAM_SECONDS;
+            if (seconds < 0.01 || seconds > maxSeconds)
             {
-                d["error"] = "seconds must be within [0.01, 30.0]";
+                d["error"] = file.empty() ? "seconds must be within [0.01, 30.0] (give file= for longer)"
+                                          : "seconds must be within [0.01, 86400]";
                 return d;
             }
 
@@ -7994,15 +7996,28 @@ namespace PythonBindings
             const size_t target = static_cast<size_t>(seconds * static_cast<double>(rate)) * 2;
 
             manager->activate("audiocapture");
-            capture->startCapture(target, source);
+            if (!file.empty())
+            {
+                // The samples go to the WAV while they come; it closes by itself at the target
+                std::string streamError;
+                if (!capture->startStreamCapture(file, static_cast<uint32_t>(rate), target, source, streamError))
+                {
+                    d["error"] = streamError;
+                    return d;
+                }
+                d["wav_path"] = file;
+            }
+            else
+                capture->startCapture(target, source);
 
             d["armed"] = capture->isCaptureArmed();
             d["source"] = AudioMixer::Key(source);
             d["target_samples"] = static_cast<uint64_t>(target);
             d["sample_rate"] = static_cast<uint64_t>(rate);
             return d;
-        }, "Arm a buffered stereo capture (source: a mixer key - beeper, ay1, covox, gs ... - for one device's own buffer; default the master mix)",
-           py::arg("seconds") = 1.0, py::arg("source") = "")
+        }, "Arm a stereo capture (source: a mixer key - beeper, ay1, covox, gs ... - for one device's own buffer; default the master mix). "
+           "file: a WAV path - the samples are written there while they come (seconds up to 86400, no memory ceiling)",
+           py::arg("seconds") = 1.0, py::arg("source") = "", py::arg("file") = "")
 
         .def("set_speed", [](Emulator& self, int multiplier) -> bool {
             if (multiplier != 1 && multiplier != 2 && multiplier != 4 && multiplier != 8 && multiplier != 16)
@@ -8091,8 +8106,15 @@ namespace PythonBindings
             d["complete"] = capture->isCaptureComplete();
             d["captured_samples"] = static_cast<uint64_t>(capture->getCapturedSamples());
             d["target_samples"] = static_cast<uint64_t>(capture->getTargetSamples());
+            d["to_file"] = capture->isStreaming();
+            if (capture->isStreaming())
+            {
+                d["wav_path"] = capture->getStreamPath();
+                d["file_closed"] = capture->isStreamClosed();
+                d["file_failed"] = capture->hasStreamFailed();
+            }
             return d;
-        }, "Audio capture progress")
+        }, "Audio capture progress (to_file / wav_path / file_closed for a capture written to a file)")
 
         .def("audio_capture_result", [](Emulator& self, py::object pathValue) -> py::dict {
             py::dict d;
@@ -8104,8 +8126,27 @@ namespace PythonBindings
                 manager ? manager->getAnalyzer<AudioCaptureAnalyzer>("audiocapture") : nullptr;
             if (!capture || !manager) { d["error"] = "audio capture analyzer not available"; return d; }
 
+            if (capture->isStreaming())
+            {
+                // The audio is in the WAV, not in memory: nothing to analyze
+                if (!capture->isStreamClosed())
+                {
+                    d["error"] = "the capture file is still being written - poll audio_capture_status";
+                    return d;
+                }
+                const size_t streamRate = context->pSoundManager ? context->pSoundManager->getCoreRate() : 44100;
+                const size_t streamFrames = capture->getCapturedSamples() / 2;
+                d["frames"] = static_cast<uint64_t>(streamFrames);
+                d["sample_rate"] = static_cast<uint64_t>(streamRate);
+                d["duration_seconds"] = static_cast<double>(streamFrames) / streamRate;
+                d["complete"] = capture->isCaptureComplete();
+                d["wav_path"] = capture->getStreamPath();
+                d["file_failed"] = capture->hasStreamFailed();
+                return d;
+            }
+
             const auto& buffer = capture->getBuffer();
-            const size_t frames = buffer.size() / 2;
+            const size_t frames = std::min(buffer.size(), capture->getCapturedSamples()) / 2;
             if (frames == 0)
             {
                 d["error"] = "no captured audio — call audio_capture_start first";

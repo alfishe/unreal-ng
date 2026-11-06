@@ -44,6 +44,7 @@
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/monitoring/clientstats.h"
+#include "emulator/monitoring/hostdevices.h"
 #include "emulator/platform.h"
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
@@ -858,7 +859,7 @@ StateNode InstanceEntry(const std::string& id, size_t index, Emulator& emulator)
 
 const std::vector<std::string>& ProcessNames()
 {
-    static const std::vector<std::string> names = {"host.stats", "host.clients"};
+    static const std::vector<std::string> names = {"host.stats", "host.clients", "controllers.devices"};
     return names;
 }
 
@@ -890,6 +891,8 @@ StateNode ReadProcess(const std::string& name)
         return HostStats();
     if (name == "host.clients")
         return HostClients();
+    if (name == "controllers.devices")
+        return HostDevices::Instance().Read();
     return {};
 }
 
@@ -953,6 +956,7 @@ Reply Call(std::string_view verbView, const StateNode& args)
     {
         reply.body["host"] = HostStats();
         reply.body["clients"] = HostClients();
+        reply.body["devices"] = HostDevices::Instance().Read();
         StateNode& instances = reply.body["instances"];
         instances = StateNode::Array();
         const std::vector<std::string> ids = manager->GetEmulatorIds();

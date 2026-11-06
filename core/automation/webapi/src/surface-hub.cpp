@@ -586,7 +586,6 @@ void SurfaceHub::Deliver(WsConnection& connection, SurfaceSession& session, cons
                          std::chrono::steady_clock::time_point now, WsOutbox& out)
 {
     session.stale = 0;
-    session.sentAt = now;
     if (session.instance.empty())
     {
         session.full = false;
@@ -610,7 +609,8 @@ void SurfaceHub::Deliver(WsConnection& connection, SurfaceSession& session, cons
     }
     session.full = false;
     if (text.empty())
-        return;
+        return;  // nothing new: the next read is not held back (a frame's state may land just after this read)
+    session.sentAt = now;
     out.Message(connection, "{\"op\":\"readout\",\"t\":\"surface\",\"session\":\"" + session.session +
                                 "\",\"instance\":\"" + session.instance + "\",\"values\":{" + text + "}}");
 }
