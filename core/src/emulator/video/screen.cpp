@@ -965,7 +965,8 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
             // The present queue holds the external picture while one is shown
             if (IsExternalPictureActive())
                 return;
-            std::lock_guard<std::mutex> lock(_presentMutex);
+            std::unique_lock<std::mutex> lock(_presentMutex);
+            WaitSlotUnpinnedLocked(lock, PRESENT_SLOTS);
             for (size_t i = 0; i < PRESENT_SLOTS; i++)
             {
                 if (_presentSlots[i])
@@ -1037,8 +1038,8 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         // (not while an external picture is shown: the queue is sized for it)
         if (!IsExternalPictureActive())
         {
-            std::lock_guard<std::mutex> lock(_presentMutex);
-            ResizePresentSlotsLocked(_framebuffer.memoryBufferSize);
+            std::unique_lock<std::mutex> lock(_presentMutex);
+            ResizePresentSlotsLocked(lock, _framebuffer.memoryBufferSize);
         }
 
 #ifdef _DEBUG
@@ -1066,7 +1067,8 @@ void Screen::DeallocateFramebuffer()
     }
 
     {
-        std::lock_guard<std::mutex> lock(_presentMutex);
+        std::unique_lock<std::mutex> lock(_presentMutex);
+        WaitSlotUnpinnedLocked(lock, PRESENT_SLOTS);
         for (size_t i = 0; i < PRESENT_SLOTS; i++)
         {
             delete[] _presentSlots[i];
@@ -1078,8 +1080,9 @@ void Screen::DeallocateFramebuffer()
     }
 }
 
-void Screen::ResizePresentSlotsLocked(size_t size)
+void Screen::ResizePresentSlotsLocked(std::unique_lock<std::mutex>& lock, size_t size)
 {
+    WaitSlotUnpinnedLocked(lock, PRESENT_SLOTS);
     for (size_t i = 0; i < PRESENT_SLOTS; i++)
     {
         delete[] _presentSlots[i];
@@ -1233,9 +1236,16 @@ void Screen::SetExternalPicture(uint8_t* buffer, uint16_t width, uint16_t height
     const size_t size = static_cast<size_t>(width) * height * RGBA_SIZE;
     bool changed = false;
     {
-        std::lock_guard<std::mutex> lock(_presentMutex);
+        std::unique_lock<std::mutex> lock(_presentMutex);
         changed = !IsExternalPictureActive() || _external.memoryBuffer != buffer || _external.width != width ||
                   _external.height != height;
+        if (changed)
+        {
+            // The slots are made anew: no reader copies one
+            WaitSlotUnpinnedLocked(lock, PRESENT_SLOTS);
+            changed = !IsExternalPictureActive() || _external.memoryBuffer != buffer || _external.width != width ||
+                      _external.height != height;
+        }
         _external.videoMode = M_NUL;  // no raster descriptor of the machine: consumers take the whole picture
         _external.width = width;
         _external.height = height;
@@ -1243,7 +1253,7 @@ void Screen::SetExternalPicture(uint8_t* buffer, uint16_t width, uint16_t height
         _external.memoryBufferSize = size;
         _externalFramePeriodUs = framePeriodUs;
         if (changed)
-            ResizePresentSlotsLocked(size);
+            ResizePresentSlotsLocked(lock, size);
         _externalActive.store(true, std::memory_order_release);
     }
     if (changed)
@@ -1255,10 +1265,11 @@ void Screen::ClearExternalPicture()
     if (!IsExternalPictureActive())
         return;
     {
-        std::lock_guard<std::mutex> lock(_presentMutex);
+        std::unique_lock<std::mutex> lock(_presentMutex);
+        WaitSlotUnpinnedLocked(lock, PRESENT_SLOTS);
         _externalActive.store(false, std::memory_order_release);
         _external = FramebufferDescriptor{};
-        ResizePresentSlotsLocked(_framebuffer.memoryBufferSize);
+        ResizePresentSlotsLocked(lock, _framebuffer.memoryBufferSize);
     }
     PostVideoModeChanged();
 }
@@ -1277,7 +1288,9 @@ void Screen::LatchExternalFrame()
     if (!IsExternalPictureActive() || _external.memoryBuffer == nullptr)
         return;
 
-    std::lock_guard<std::mutex> lock(_presentMutex);
+    std::unique_lock<std::mutex> lock(_presentMutex);
+    while (_presentSlotPins[_presentLatchCounter % PRESENT_SLOTS] != 0)  // a reader copies the slot to be written
+        WaitSlotUnpinnedLocked(lock, _presentLatchCounter % PRESENT_SLOTS);
     if (_presentSlots[0] == nullptr || _presentBufferSize != _external.memoryBufferSize)
         return;
     const size_t index = _presentLatchCounter % PRESENT_SLOTS;
@@ -1313,7 +1326,9 @@ void Screen::LatchFramebuffer()
     if (IsExternalPictureActive())
         return;
 
-    std::lock_guard<std::mutex> lock(_presentMutex);
+    std::unique_lock<std::mutex> lock(_presentMutex);
+    while (_presentSlotPins[_presentLatchCounter % PRESENT_SLOTS] != 0)  // a reader copies the slot to be written
+        WaitSlotUnpinnedLocked(lock, _presentLatchCounter % PRESENT_SLOTS);
     if (_presentSlots[0] && _presentBufferSize == _framebuffer.memoryBufferSize)
     {
         const size_t index = _presentLatchCounter % PRESENT_SLOTS;
@@ -1370,7 +1385,8 @@ void Screen::FlushAndPresentFramebuffer()
     if (shown.memoryBuffer == nullptr)
         return;
 
-    std::lock_guard<std::mutex> lock(_presentMutex);
+    std::unique_lock<std::mutex> lock(_presentMutex);
+    WaitSlotUnpinnedLocked(lock, 0);
     if (_presentSlots[0] == nullptr || _presentBufferSize != shown.memoryBufferSize)
         return;
 
@@ -1470,6 +1486,7 @@ void Screen::StampPresentTiming(const FrameStampInput& in)
         input.offsetNs = offsetNs;
         input.emulatedDelayNs = emulatedDelay;
         input.latchDelayNs = latchDelay;
+        input.maxDelayNs = static_cast<int64_t>(kMaxVideoDelayFrames) * input.periodNs;
         if (in.haveAudio && device)
         {
             const uint64_t streamFrame =
@@ -1530,11 +1547,16 @@ int64_t Screen::SlotTargetLocked(size_t index) const
     return _stampingActive ? INT64_MAX : timing.latchNs;
 }
 
-void Screen::MarkShownLocked(size_t index) const
+void Screen::MarkServedLocked(size_t index) const
 {
     _presentSlotShown[index] = true;
     _showingProcessed.store(_presentSlotProcessed[index], std::memory_order_relaxed);
     _shownReport = _presentSlotReport[index];
+}
+
+void Screen::MarkShownLocked(size_t index) const
+{
+    MarkServedLocked(index);
     _shownSerial = _presentSlotSerial[index];
     const PresentSlotTiming& timing = _presentSlotTiming[index];
     const int64_t target = timing.timed ? timing.targetNs : timing.latchNs;
@@ -1585,43 +1607,90 @@ bool Screen::ChooseSlotLocked(int64_t hostNs, size_t* chosen, size_t* next, bool
     return true;
 }
 
+void Screen::WaitSlotUnpinnedLocked(std::unique_lock<std::mutex>& lock, size_t index)
+{
+    const auto unpinned = [this, index] {
+        if (index < PRESENT_SLOTS)
+            return _presentSlotPins[index] == 0;
+        for (uint32_t pins : _presentSlotPins)
+            if (pins != 0)
+                return false;
+        return true;
+    };
+    if (unpinned())
+        return;
+    _presentPinWaiters++;
+    _presentSlotUnpinned.wait(lock, unpinned);
+    _presentPinWaiters--;
+}
+
+void Screen::UnpinSlots(size_t first, size_t second)
+{
+    bool wake = false;
+    {
+        std::lock_guard<std::mutex> lock(_presentMutex);
+        for (size_t index : {first, second})
+            if (index < PRESENT_SLOTS && --_presentSlotPins[index] == 0 && _presentPinWaiters > 0)
+                wake = true;
+    }
+    if (wake)
+        _presentSlotUnpinned.notify_all();
+}
+
 bool Screen::CopyFrameAt(int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFrameInfo* info, uint8_t* nextDst)
 {
     if (dst == nullptr)
         return false;
-    std::lock_guard<std::mutex> lock(_presentMutex);
-    if (dstSize < _presentBufferSize)
-        return false;
     size_t chosen = PRESENT_SLOTS;
     size_t next = PRESENT_SLOTS;
-    bool early = false;
-    if (!ChooseSlotLocked(hostNs, &chosen, &next, &early) || SlotTargetLocked(chosen) == INT64_MAX)
-        return false;
-
-    VideoUtils::CopyFrameBuffer(dst, _presentSlots[chosen], _presentBufferSize);
-    MarkShownLocked(chosen);
-    if (nextDst && next != PRESENT_SLOTS)
-        VideoUtils::CopyFrameBuffer(nextDst, _presentSlots[next], _presentBufferSize);
-    if (info)
+    const uint8_t* source = nullptr;
+    const uint8_t* nextSource = nullptr;
+    size_t size = 0;
     {
-        *info = PresentFrameInfo{};
-        info->serial = _presentSlotSerial[chosen];
-        info->targetNs = SlotTargetLocked(chosen);
-        info->latchNs = _presentSlotTiming[chosen].latchNs;
-        info->source = _presentSlotTiming[chosen].source;
-        info->periodNs = _presentSlotTiming[chosen].periodNs;
-        info->geometry = _presentSlotGeometry[chosen];
-        info->early = early;
+        std::lock_guard<std::mutex> lock(_presentMutex);
+        if (dstSize < _presentBufferSize)
+            return false;
+        bool early = false;
+        if (!ChooseSlotLocked(hostNs, &chosen, &next, &early) || SlotTargetLocked(chosen) == INT64_MAX)
+            return false;
+        MarkShownLocked(chosen);
+        _earlyServed += early ? 1 : 0;
+        if (info)
+        {
+            *info = PresentFrameInfo{};
+            info->serial = _presentSlotSerial[chosen];
+            info->targetNs = SlotTargetLocked(chosen);
+            info->latchNs = _presentSlotTiming[chosen].latchNs;
+            info->source = _presentSlotTiming[chosen].source;
+            info->periodNs = _presentSlotTiming[chosen].periodNs;
+            info->geometry = _presentSlotGeometry[chosen];
+            info->early = early;
+            if (next != PRESENT_SLOTS)
+            {
+                info->nextSerial = _presentSlotSerial[next];
+                info->nextTargetNs = SlotTargetLocked(next);
+                const int64_t span = info->nextTargetNs - info->targetNs;
+                if (span > 0)
+                    info->blend = static_cast<float>(std::clamp(
+                        static_cast<double>(hostNs - info->targetNs) / static_cast<double>(span), 0.0, 1.0));
+            }
+        }
+        if (!nextDst)
+            next = PRESENT_SLOTS;
+        // Pinned: copied below, outside the lock; their writers wait for the copy (WaitSlotUnpinnedLocked)
+        _presentSlotPins[chosen]++;
+        source = _presentSlots[chosen];
         if (next != PRESENT_SLOTS)
         {
-            info->nextSerial = _presentSlotSerial[next];
-            info->nextTargetNs = SlotTargetLocked(next);
-            const int64_t span = info->nextTargetNs - info->targetNs;
-            if (span > 0)
-                info->blend = static_cast<float>(
-                    std::clamp(static_cast<double>(hostNs - info->targetNs) / static_cast<double>(span), 0.0, 1.0));
+            _presentSlotPins[next]++;
+            nextSource = _presentSlots[next];
         }
+        size = _presentBufferSize;
     }
+    VideoUtils::CopyFrameBuffer(dst, source, size);
+    if (nextSource)
+        VideoUtils::CopyFrameBuffer(nextDst, nextSource, size);
+    UnpinSlots(chosen, next);
     return true;
 }
 
@@ -1629,36 +1698,49 @@ bool Screen::CopyNextFrame(uint64_t afterSerial, uint8_t* dst, size_t dstSize, P
 {
     if (dst == nullptr)
         return false;
-    std::lock_guard<std::mutex> lock(_presentMutex);
-    if (dstSize < _presentBufferSize)
-        return false;
-    size_t indices[PRESENT_SLOTS];
-    size_t count = EligibleSlotsLocked(indices);
-    // A temporal effect's newest frames are not written yet (see ChooseSlotLocked)
-    const size_t temporal = _temporalDelayFrames.load(std::memory_order_acquire);
-    if (temporal > 0 && !IsExternalPictureActive())
-        count = count > temporal ? count - temporal : 0;
-    for (size_t k = 0; k < count; k++)
+    size_t found = PRESENT_SLOTS;
+    const uint8_t* source = nullptr;
+    size_t size = 0;
     {
-        const size_t index = indices[k];
-        if (_presentSlotSerial[index] <= afterSerial || SlotTargetLocked(index) == INT64_MAX)
-            continue;
-        VideoUtils::CopyFrameBuffer(dst, _presentSlots[index], _presentBufferSize);
+        std::lock_guard<std::mutex> lock(_presentMutex);
+        if (dstSize < _presentBufferSize)
+            return false;
+        size_t indices[PRESENT_SLOTS];
+        size_t count = EligibleSlotsLocked(indices);
+        // A temporal effect's newest frames are not written yet (see ChooseSlotLocked)
+        const size_t temporal = _temporalDelayFrames.load(std::memory_order_acquire);
+        if (temporal > 0 && !IsExternalPictureActive())
+            count = count > temporal ? count - temporal : 0;
+        for (size_t k = 0; k < count; k++)
+        {
+            const size_t index = indices[k];
+            if (_presentSlotSerial[index] > afterSerial && SlotTargetLocked(index) != INT64_MAX)
+            {
+                found = index;
+                break;
+            }
+        }
+        if (found == PRESENT_SLOTS)
+            return false;
         if (markShown)
-            MarkShownLocked(index);
+            MarkShownLocked(found);
         if (info)
         {
             *info = PresentFrameInfo{};
-            info->serial = _presentSlotSerial[index];
-            info->targetNs = SlotTargetLocked(index);
-            info->latchNs = _presentSlotTiming[index].latchNs;
-            info->source = _presentSlotTiming[index].source;
-            info->periodNs = _presentSlotTiming[index].periodNs;
-            info->geometry = _presentSlotGeometry[index];
+            info->serial = _presentSlotSerial[found];
+            info->targetNs = SlotTargetLocked(found);
+            info->latchNs = _presentSlotTiming[found].latchNs;
+            info->source = _presentSlotTiming[found].source;
+            info->periodNs = _presentSlotTiming[found].periodNs;
+            info->geometry = _presentSlotGeometry[found];
         }
-        return true;
+        _presentSlotPins[found]++;  // copied outside the lock (CopyFrameAt)
+        source = _presentSlots[found];
+        size = _presentBufferSize;
     }
-    return false;
+    VideoUtils::CopyFrameBuffer(dst, source, size);
+    UnpinSlots(found, PRESENT_SLOTS);
+    return true;
 }
 
 void Screen::SettlePresentTiming()
@@ -1703,10 +1785,27 @@ uint32_t Screen::GetShownDelayFrames()
                                                               : 0;
 }
 
-FrameClock::Stats Screen::GetFrameClockStats()
+PresentTimingStats Screen::GetPresentTimingStats()
 {
     std::lock_guard<std::mutex> lock(_presentMutex);
-    return _frameClock.GetStats();
+    const FrameClock::Stats& clock = _frameClock.GetStats();
+    PresentTimingStats out;
+    out.source = clock.source;
+    out.carried = clock.carried;
+    out.cuts = clock.cuts;
+    out.carryNs = clock.carryNs;
+    out.delayClamped = clock.lastClamped;
+    out.clampedFrames = clock.clamped;
+    out.early = _earlyServed;
+    // At the period of the frame timed last
+    int64_t period = 0;
+    for (size_t i = 0; i < PRESENT_SLOTS; i++)
+        if (_presentSlotSerial[i] == _lastStampedSerial && _presentSlotTiming[i].timed)
+            period = _presentSlotTiming[i].periodNs;
+    if (period <= 0)
+        period = static_cast<int64_t>(NativeFramePeriodUs()) * 1000;
+    out.maxDelayNs = static_cast<int64_t>(kMaxVideoDelayFrames) * period;
+    return out;
 }
 
 /// endregion </Frames by time>
@@ -1725,16 +1824,23 @@ bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize, PictureGeome
     // mutex: _framebuffer.memoryBufferSize is published outside the lock
     // during mode-switch reallocation, and trusting it here could overread
     // a present buffer from the previous video mode
-    std::lock_guard<std::mutex> lock(_presentMutex);
-    if (dstSize < _presentBufferSize)
-        return false;
     size_t index = 0;
-    const uint8_t* slot = PresentedSlotLocked(&index);
-    if (!slot)
-        return false;
-    VideoUtils::CopyFrameBuffer(dst, slot, _presentBufferSize);
-    if (geometry != nullptr)
-        *geometry = _presentSlotGeometry[index];
+    const uint8_t* slot = nullptr;
+    size_t size = 0;
+    {
+        std::lock_guard<std::mutex> lock(_presentMutex);
+        if (dstSize < _presentBufferSize)
+            return false;
+        slot = PresentedSlotLocked(&index);
+        if (!slot)
+            return false;
+        if (geometry != nullptr)
+            *geometry = _presentSlotGeometry[index];
+        _presentSlotPins[index]++;  // copied outside the lock (CopyFrameAt)
+        size = _presentBufferSize;
+    }
+    VideoUtils::CopyFrameBuffer(dst, slot, size);
+    UnpinSlots(index, PRESENT_SLOTS);
     return true;
 }
 
@@ -1764,7 +1870,8 @@ const uint8_t* Screen::PresentedSlotLocked(size_t* index) const
         chosen = static_cast<size_t>((_presentLatchCounter - 1) % PRESENT_SLOTS);
     if (index)
         *index = chosen;
-    MarkShownLocked(chosen);
+    // A screenshot or a capture: the temporal effect's marks, not the window's shown frame
+    MarkServedLocked(chosen);
     return _presentSlots[chosen];
 }
 
@@ -1839,7 +1946,7 @@ TemporalEffects::WriteResult Screen::WriteTemporalOutput(uint64_t serial, const 
                                                         const zxdlss::FrameReport& report)
 {
     using Result = TemporalEffects::WriteResult;
-    std::lock_guard<std::mutex> lock(_presentMutex);
+    std::unique_lock<std::mutex> lock(_presentMutex);
     const int fbWidth = static_cast<int>(_framebuffer.width);
     const int fbHeight = static_cast<int>(_framebuffer.height);
     if (_presentSlots[0] == nullptr || _presentBufferSize != static_cast<size_t>(fbWidth) * fbHeight * RGBA_SIZE)
@@ -1848,6 +1955,17 @@ TemporalEffects::WriteResult Screen::WriteTemporalOutput(uint64_t serial, const 
     {
         if (_presentSlotSerial[i] != serial)
             continue;
+        if (_presentSlotPins[i] != 0)
+        {
+            // A reader copies the frame: it gets it raw; the output goes in once the copy is done (the slot may hold
+            // another frame by then: look again)
+            WaitSlotUnpinnedLocked(lock, i);
+            if (_presentSlots[0] == nullptr ||
+                _presentBufferSize != static_cast<size_t>(fbWidth) * fbHeight * RGBA_SIZE)
+                return Result::Gone;
+            i = static_cast<size_t>(-1);
+            continue;
+        }
         // The ZX frame's place in this slot's framebuffer (recorded at its latch)
         const TemporalWindow& w = _presentSlotWindow[i];
         if (w.width != width || w.height != height || w.scaleX < 1 || w.x0 < 0 || w.y0 < 0 ||
@@ -1918,7 +2036,7 @@ void Screen::TemporalInput(TemporalFrame& frame)
 /// A/V delay (the temporal effect's look-ahead), so picture and sound stay in sync
 void Screen::UpdateAudioDelay()
 {
-    const int base = IsExternalPictureActive() ? ExternalDelayFrames(AUDIO_PATH_DELAY_FRAMES) : AUDIO_PATH_DELAY_FRAMES;
+    const int base = IsExternalPictureActive() ? ExternalDelayFrames(kAudioPathDelayFrames) : kAudioPathDelayFrames;
     const int effective = GetEffectivePresentDelayFrames();
     const int extra = effective > base ? effective - base : 0;
     if (extra == _audioExtraDelayFrames || !_context || !_context->pSoundManager)

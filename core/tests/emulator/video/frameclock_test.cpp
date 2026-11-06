@@ -12,20 +12,21 @@
 
 namespace
 {
-constexpr int64_t MS = 1'000'000;
-constexpr int64_t PERIOD = 19'968'000;  // ZX 48K: 69888 T-states at 3.5 MHz
+constexpr int64_t kMs = 1'000'000;
+constexpr int64_t kPeriod = 19'968'000;  // ZX 48K: 69888 T-states at 3.5 MHz
 
 struct Sequence
 {
     FrameClock clock;
-    int64_t latch = 1'000'000 * MS;
+    int64_t latch = 1'000'000 * kMs;
     int64_t audio = 0;  // when the frame's sound is heard: latch + audioDelay
-    int64_t audioDelay = 52 * MS;
-    int64_t emulatedDelay = PERIOD;
+    int64_t audioDelay = 52 * kMs;
+    int64_t emulatedDelay = kPeriod;
     int64_t latchDelay = 0;
+    int64_t maxDelay = 0;
     std::vector<int64_t> targets;
 
-    FrameTimingResult Frame(bool haveAudio, bool haveEmulated = true, int64_t period = PERIOD)
+    FrameTimingResult Frame(bool haveAudio, bool haveEmulated = true, int64_t period = kPeriod)
     {
         latch += period;
         FrameTimingInput in;
@@ -37,6 +38,7 @@ struct Sequence
         in.emulatedNs = latch;
         in.emulatedDelayNs = emulatedDelay;
         in.latchDelayNs = latchDelay;
+        in.maxDelayNs = maxDelay;
         const FrameTimingResult r = clock.Next(in);
         targets.push_back(r.targetNs);
         return r;
@@ -66,7 +68,7 @@ TEST(FrameClock_Test, NoAudioUsesTheEmulatedClock)
     EXPECT_EQ(r.targetNs, s.latch + s.emulatedDelay);
 }
 
-/// The device appears (or this instance gets the sound): the targets move 32 ms later, by at most SLEW_NS per
+/// The device appears (or this instance gets the sound): the targets move 32 ms later, by at most kSlewNs per
 /// frame, never in one step
 TEST(FrameClock_Test, SwitchToAudioIsSlewed)
 {
@@ -84,7 +86,7 @@ TEST(FrameClock_Test, SwitchToAudioIsSlewed)
     ASSERT_LT(frames, 1000) << "the carry is paid back";
     for (size_t i = first; i < s.targets.size(); i++)
     {
-        EXPECT_LE(std::llabs(s.Interval(i) - PERIOD), FrameClock::SLEW_NS) << "frame " << i;
+        EXPECT_LE(std::llabs(s.Interval(i) - kPeriod), FrameClock::kSlewNs) << "frame " << i;
     }
     EXPECT_EQ(s.targets.back(), s.latch + s.audioDelay) << "on the audio clock in the end";
     EXPECT_EQ(s.clock.GetStats().carried, 1u);
@@ -99,7 +101,7 @@ TEST(FrameClock_Test, AudioStepIsCarried)
         s.Frame(true);
     s.audioDelay += 5'800'000;
     s.Frame(true);
-    EXPECT_LE(std::llabs(s.Interval(s.targets.size() - 1) - PERIOD), FrameClock::SLEW_NS);
+    EXPECT_LE(std::llabs(s.Interval(s.targets.size() - 1) - kPeriod), FrameClock::kSlewNs);
     EXPECT_EQ(s.clock.GetStats().carried, 1u);
 }
 
@@ -121,8 +123,8 @@ TEST(FrameClock_Test, GapCuts)
     Sequence s;
     for (int i = 0; i < 5; i++)
         s.Frame(true);
-    s.latch += 10 * PERIOD;
-    s.audioDelay += 30 * MS;
+    s.latch += 10 * kPeriod;
+    s.audioDelay += 30 * kMs;
     const FrameTimingResult r = s.Frame(true);
     EXPECT_EQ(r.targetNs, s.latch + s.audioDelay);
     EXPECT_EQ(s.clock.GetStats().cuts, 1u);
@@ -136,12 +138,12 @@ TEST(FrameClock_Test, TurboUsesLatchTimes)
     Sequence s;
     for (int i = 0; i < 5; i++)
     {
-        const FrameTimingResult r = s.Frame(false, false, PERIOD / 10);
+        const FrameTimingResult r = s.Frame(false, false, kPeriod / 10);
         EXPECT_EQ(r.source, FrameClockSource::Latch);
         EXPECT_EQ(r.targetNs, s.latch) << "nothing to wait for";
     }
-    s.latchDelay = 7 * PERIOD;  // ZX DLSS looks ahead
-    EXPECT_EQ(s.Frame(false, false, PERIOD / 10).targetNs, s.latch + s.latchDelay);
+    s.latchDelay = 7 * kPeriod;  // ZX DLSS looks ahead
+    EXPECT_EQ(s.Frame(false, false, kPeriod / 10).targetNs, s.latch + s.latchDelay);
     const FrameTimingResult r = s.Frame(true);
     EXPECT_EQ(r.targetNs, s.latch + s.audioDelay);
     EXPECT_EQ(s.clock.GetStats().carried, 0u);
@@ -153,21 +155,72 @@ TEST(FrameClock_Test, NeverOutOfOrder)
     for (int i = 0; i < 5; i++)
         s.Frame(true);
     // A carried step back by most of a period, then the carry pays back: every frame still after the last one
-    s.audioDelay -= PERIOD - 1 * MS;
+    s.audioDelay -= kPeriod - 1 * kMs;
     for (int i = 0; i < 200; i++)
         s.Frame(true);
     for (size_t i = 1; i < s.targets.size(); i++)
-        EXPECT_GE(s.Interval(i), PERIOD / 2) << "frame " << i;
+        EXPECT_GE(s.Interval(i), kPeriod / 2) << "frame " << i;
 }
 
 TEST(FrameClock_Test, LipSyncOffset)
 {
     FrameClock clock;
     FrameTimingInput in;
-    in.latchNs = 100 * MS;
-    in.periodNs = PERIOD;
+    in.latchNs = 100 * kMs;
+    in.periodNs = kPeriod;
     in.haveAudio = true;
-    in.audioNs = 150 * MS;
-    in.offsetNs = -10 * MS;
-    EXPECT_EQ(clock.Next(in).targetNs, 140 * MS);
+    in.audioNs = 150 * kMs;
+    in.offsetNs = -10 * kMs;
+    EXPECT_EQ(clock.Next(in).targetNs, 140 * kMs);
+}
+
+/// A long audio path (a Bluetooth headset: 250 ms) the screen cannot hold its frames for: the targets stay at the
+/// longest delay it can, in cadence, and say so
+TEST(FrameClock_Test, DelayBeyondTheHeldFramesIsClamped)
+{
+    Sequence s;
+    s.maxDelay = 9 * kPeriod;
+    for (int i = 0; i < 5; i++)
+        EXPECT_FALSE(s.Frame(true).clamped) << "52 ms fits";
+    s.audioDelay = 250 * kMs;
+    for (int i = 0; i < 700; i++)  // the step is carried, paid back by kSlewNs a frame
+    {
+        const FrameTimingResult r = s.Frame(true);
+        EXPECT_LE(r.targetNs, s.latch + s.maxDelay) << "frame " << i;
+        EXPECT_LE(std::llabs(s.Interval(s.targets.size() - 1) - kPeriod), FrameClock::kSlewNs) << "frame " << i;
+    }
+    EXPECT_EQ(s.targets.back(), s.latch + s.maxDelay) << "at the limit in the end";
+    EXPECT_TRUE(s.clock.GetStats().lastClamped);
+    EXPECT_EQ(s.clock.GetStats().clamped, 700u);
+
+    // The sound comes back within reach: the clock's own time again
+    s.audioDelay = 52 * kMs;
+    EXPECT_FALSE(s.Frame(true).clamped);  // the step back is carried as well
+    EXPECT_NE(s.clock.GetStats().carryNs, 0);
+    for (int i = 0; i < 1000 && s.clock.GetStats().carryNs != 0; i++)
+        s.Frame(true);
+    EXPECT_FALSE(s.Frame(true).clamped);
+    EXPECT_EQ(s.targets.back(), s.latch + s.audioDelay);
+    EXPECT_FALSE(s.clock.GetStats().lastClamped);
+}
+
+/// An external picture (VDAC2's FT812) at its own rate: its frames are timed with its period, every interval one of
+/// its periods, nothing carried
+TEST(FrameClock_Test, ExternalPicturePeriod)
+{
+    constexpr int64_t external = 16'683'350;  // 59.94 Hz
+    Sequence s;
+    for (int i = 0; i < 50; i++)
+    {
+        const FrameTimingResult r = s.Frame(true, true, external);
+        EXPECT_EQ(r.targetNs, s.latch + s.audioDelay);
+    }
+    for (size_t i = 1; i < s.targets.size(); i++)
+        EXPECT_EQ(s.Interval(i), external) << "frame " << i;
+    EXPECT_EQ(s.clock.GetStats().carried, 0u);
+    EXPECT_EQ(s.clock.GetStats().cuts, 0u);
+    // A latch gap of more than 4 of its periods breaks its sequence
+    s.latch += 4 * external;
+    s.Frame(true, true, external);
+    EXPECT_EQ(s.clock.GetStats().cuts, 1u);
 }
